@@ -96,7 +96,7 @@ pub struct Capability<T> {
     provider: Activation,
     export: String,
     epoch: Uuid,
-    value: Arc<T>,
+    _type: std::marker::PhantomData<fn() -> T>,
 }
 
 impl<T> Clone for Capability<T> {
@@ -106,7 +106,7 @@ impl<T> Clone for Capability<T> {
             provider: self.provider.clone(),
             export: self.export.clone(),
             epoch: self.epoch,
-            value: self.value.clone(),
+            _type: std::marker::PhantomData,
         }
     }
 }
@@ -461,7 +461,7 @@ impl<T> Runtime<T> {
             provider: live.activation.clone(),
             export: export.clone(),
             epoch: registration.epoch,
-            value: registration.value.clone(),
+            _type: std::marker::PhantomData,
         }))
     }
 
@@ -489,6 +489,9 @@ impl<T> Runtime<T> {
     /// before dispatch; a queued capability is not itself accepted work.
     pub fn admit(&mut self, capability: &Capability<T>) -> Result<Execution<T>, Error> {
         self.inspect(capability)?;
+        let value = self.owner(&capability.provider)?.exports[&capability.export]
+            .value
+            .clone();
         let id = Uuid::new_v4();
         self.live
             .get_mut(&capability.provider.origin)
@@ -497,7 +500,7 @@ impl<T> Runtime<T> {
             .insert(
                 id,
                 Work {
-                    _value: capability.value.clone(),
+                    _value: value.clone(),
                     failure: None,
                 },
             );
@@ -505,7 +508,7 @@ impl<T> Runtime<T> {
             kernel: self.identity,
             id,
             provider: capability.provider.clone(),
-            value: capability.value.clone(),
+            value,
         })
     }
 

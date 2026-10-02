@@ -1082,3 +1082,39 @@ fn installing_unreferenced_input_retires_remote_without_rewriting_original_work(
     runtime.settle(&work, Ok(())).unwrap();
     runtime.finish_cleanup(&remote).unwrap();
 }
+
+#[test]
+fn bound_tokens_do_not_own_values_but_accepted_execution_survives_retirement_and_handle_drop() {
+    let fixture = Fixture::new();
+    let mut runtime = Runtime::new(fixture.plan());
+    let value = Arc::new(());
+    let weak = Arc::downgrade(&value);
+    let provider = fixture.activate(
+        &mut runtime,
+        "p",
+        BTreeMap::from([(
+            "action".into(),
+            Published {
+                contract: contract(),
+                value,
+            },
+        )]),
+    );
+    let consumer = fixture.activate(&mut runtime, "a", BTreeMap::new());
+    let token = runtime.bind(&consumer, "action").unwrap().remove(0);
+    let old = token.clone();
+    let execution = runtime.admit(&token).unwrap();
+    drop(token);
+    runtime.retire(&provider).unwrap();
+    runtime.finish_cleanup(&consumer).unwrap();
+    assert!(runtime.finish_cleanup(&provider).is_err());
+    assert!(weak.upgrade().is_some());
+    runtime.settle(&execution, Ok(())).unwrap();
+    drop(execution);
+    runtime.finish_cleanup(&provider).unwrap();
+    assert!(
+        weak.upgrade().is_none(),
+        "old bound token is not a second value owner"
+    );
+    assert!(runtime.inspect(&old).is_err());
+}

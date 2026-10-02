@@ -81,6 +81,7 @@ impl Policy for RecoveryGrant {
     }
 }
 struct VerifiedEcho {
+    caller: InstanceId,
     store: Arc<EventLog>,
     calls: Arc<AtomicUsize>,
 }
@@ -92,6 +93,7 @@ impl Handler for VerifiedEcho {
         context: Context,
     ) -> BoxFuture<'static, Result<Value>> {
         let store = self.store.clone();
+        let caller = self.caller.clone();
         let calls = self.calls.clone();
         Box::pin(async move {
             let reference = context.operation().expect("actual operation context");
@@ -102,6 +104,15 @@ impl Handler for VerifiedEcho {
                 .expect("dispatch must precede effect");
             assert_eq!(observation.outcome, OperationOutcome::Unresolved);
             assert_eq!(observation.cleanup, OperationCleanup::Unconfirmed);
+            assert!(
+                store
+                    .application_intents(reference.source.deployment, caller, 0, 128)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .any(|intent| intent.reference == *reference),
+                "caller commit must also precede effect"
+            );
             if input == json!("escaped-fail") {
                 calls.fetch_add(1, Ordering::SeqCst);
                 return Err("\u{00}\n\"".repeat(64 * 1024));
@@ -144,6 +155,29 @@ async fn launch(
     app.ready().await.unwrap();
     (app, deployment)
 }
+// Native callers use their actual persisted Host source; UI callers use their own Root.
+async fn mutate(
+    client: &maka_runtime_host::application::Client,
+    store: &EventLog,
+    binding: maka_runtime_host::application::Binding,
+    method: String,
+    input: Value,
+    scope: Scope,
+    operation: Uuid,
+) -> Result<maka_runtime_host::application::Mutation> {
+    let prepared = client
+        .prepare_mutation(binding, method, input, scope, operation)
+        .await?;
+    let recorded = store
+        .record_application_intent(
+            prepared.reference().source.clone(),
+            prepared.consumer().instance().clone(),
+            prepared.reference().clone(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    client.mutate(prepared, recorded).await
+}
 async fn close(store: Arc<EventLog>) {
     Arc::try_unwrap(store)
         .ok()
@@ -165,6 +199,7 @@ async fn real_mutation_commits_before_effect_and_duplicate_requires_recovery_gra
             &issuer,
             recovery.clone(),
             Arc::new(VerifiedEcho {
+                caller: id(2),
                 store: store.clone(),
                 calls: calls.clone(),
             }),
@@ -190,41 +225,44 @@ async fn real_mutation_commits_before_effect_and_duplicate_requires_recovery_gra
                 .is_err()
         );
         assert!(
-            client
-                .mutate(
-                    binding.clone(),
-                    "echo".into(),
-                    json!("original"),
-                    scope(&issuer, true),
-                    Uuid::nil()
-                )
-                .await
-                .is_err()
-        );
-        assert!(
-            client
-                .mutate(
-                    binding.clone(),
-                    "echo".into(),
-                    json!("original"),
-                    scope(&issuer, false),
-                    Uuid::new_v4()
-                )
-                .await
-                .is_err()
-        );
-        assert_eq!(calls.load(Ordering::SeqCst), 0);
-        let operation = Uuid::new_v4();
-        let accepted = client
-            .mutate(
+            mutate(
+                &client,
+                &store,
                 binding.clone(),
                 "echo".into(),
                 json!("original"),
                 scope(&issuer, true),
-                operation,
+                Uuid::nil()
             )
             .await
-            .unwrap();
+            .is_err()
+        );
+        assert!(
+            mutate(
+                &client,
+                &store,
+                binding.clone(),
+                "echo".into(),
+                json!("original"),
+                scope(&issuer, false),
+                Uuid::new_v4()
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let operation = Uuid::new_v4();
+        let accepted = mutate(
+            &client,
+            &store,
+            binding.clone(),
+            "echo".into(),
+            json!("original"),
+            scope(&issuer, true),
+            operation,
+        )
+        .await
+        .unwrap();
         let reference = accepted.reference.clone();
         assert_eq!(returned(accepted.result().await), json!("original"));
         let observation = store
@@ -242,18 +280,19 @@ async fn real_mutation_commits_before_effect_and_duplicate_requires_recovery_gra
         );
         assert!(
             unavailable(
-                client
-                    .mutate(
-                        binding.clone(),
-                        "echo".into(),
-                        json!("original"),
-                        scope(&issuer, true),
-                        operation
-                    )
-                    .await
-                    .unwrap()
-                    .result()
-                    .await
+                mutate(
+                    &client,
+                    &store,
+                    binding.clone(),
+                    "echo".into(),
+                    json!("original"),
+                    scope(&issuer, true),
+                    operation
+                )
+                .await
+                .unwrap()
+                .result()
+                .await
             )
             .contains("historical grant denied")
         );
@@ -269,36 +308,35 @@ async fn real_mutation_commits_before_effect_and_duplicate_requires_recovery_gra
         );
         assert_eq!(
             returned(
-                client
-                    .mutate(
-                        binding.clone(),
-                        "echo".into(),
-                        json!("original"),
-                        scope(&issuer, true),
-                        operation
-                    )
-                    .await
-                    .unwrap()
-                    .result()
-                    .await
+                mutate(
+                    &client,
+                    &store,
+                    binding.clone(),
+                    "echo".into(),
+                    json!("original"),
+                    scope(&issuer, true),
+                    operation
+                )
+                .await
+                .unwrap()
+                .result()
+                .await
             ),
             json!("original")
         );
         assert!(
-            unavailable(
-                client
-                    .mutate(
-                        binding,
-                        "echo".into(),
-                        json!("changed"),
-                        scope(&issuer, true),
-                        operation
-                    )
-                    .await
-                    .unwrap()
-                    .result()
-                    .await
+            mutate(
+                &client,
+                &store,
+                binding,
+                "echo".into(),
+                json!("changed"),
+                scope(&issuer, true),
+                operation
             )
+            .await
+            .err()
+            .unwrap()
             .contains("conflicts")
         );
         let foreign = Issuer::default();
@@ -364,6 +402,7 @@ async fn unknown_result_is_not_replayed_and_default_recovery_policy_denies() {
             deployment,
             registry_contract(
                 Arc::new(VerifiedEcho {
+                    caller: id(2),
                     store: store.clone(),
                     calls: calls.clone(),
                 }),
@@ -385,16 +424,17 @@ async fn unknown_result_is_not_replayed_and_default_recovery_policy_denies() {
             .remove(0);
         for input in ["fail", "bad-result", "escaped-fail"] {
             let operation = Uuid::new_v4();
-            let accepted = client
-                .mutate(
-                    binding.clone(),
-                    "echo".into(),
-                    json!(input),
-                    scope(&issuer, true),
-                    operation,
-                )
-                .await
-                .unwrap();
+            let accepted = mutate(
+                &client,
+                &store,
+                binding.clone(),
+                "echo".into(),
+                json!(input),
+                scope(&issuer, true),
+                operation,
+            )
+            .await
+            .unwrap();
             let reference = accepted.reference.clone();
             assert!(unknown(accepted.result().await));
             let observation = store
@@ -409,18 +449,19 @@ async fn unknown_result_is_not_replayed_and_default_recovery_policy_denies() {
             assert_eq!(observation.cleanup, OperationCleanup::Confirmed);
             assert!(
                 unavailable(
-                    client
-                        .mutate(
-                            binding.clone(),
-                            "echo".into(),
-                            json!(input),
-                            scope(&issuer, true),
-                            operation
-                        )
-                        .await
-                        .unwrap()
-                        .result()
-                        .await
+                    mutate(
+                        &client,
+                        &store,
+                        binding.clone(),
+                        "echo".into(),
+                        json!(input),
+                        scope(&issuer, true),
+                        operation
+                    )
+                    .await
+                    .unwrap()
+                    .result()
+                    .await
                 )
                 .contains("not authorized")
             );
@@ -463,6 +504,7 @@ async fn original_receipt_survives_restart_and_new_composition_without_provider(
             &issuer,
             recovery.clone(),
             Arc::new(VerifiedEcho {
+                caller: id(2),
                 store: store.clone(),
                 calls: calls.clone(),
             }),
@@ -474,16 +516,17 @@ async fn original_receipt_survives_restart_and_new_composition_without_provider(
             .await
             .unwrap()
             .remove(0);
-        let accepted = client
-            .mutate(
-                binding,
-                "echo".into(),
-                json!("original"),
-                scope(&issuer, true),
-                Uuid::new_v4(),
-            )
-            .await
-            .unwrap();
+        let accepted = mutate(
+            &client,
+            &store,
+            binding,
+            "echo".into(),
+            json!("original"),
+            scope(&issuer, true),
+            Uuid::new_v4(),
+        )
+        .await
+        .unwrap();
         let reference = accepted.reference.clone();
         returned(accepted.result().await);
         let mut declaration = entry(
@@ -521,16 +564,17 @@ async fn original_receipt_survives_restart_and_new_composition_without_provider(
             .await
             .unwrap()
             .remove(0);
-        let old_accepted = client
-            .mutate(
-                old_binding,
-                "echo".into(),
-                json!("old-owner"),
-                scope(&issuer, true),
-                Uuid::new_v4(),
-            )
-            .await
-            .unwrap();
+        let old_accepted = mutate(
+            &client,
+            &store,
+            old_binding,
+            "echo".into(),
+            json!("old-owner"),
+            scope(&issuer, true),
+            Uuid::new_v4(),
+        )
+        .await
+        .unwrap();
         assert_eq!(old_accepted.reference.source, reference.source);
         assert_eq!(returned(old_accepted.result().await), json!("old-owner"));
         assert_eq!(
@@ -651,8 +695,8 @@ async fn javascript_mutation_receives_original_reference_and_dispatches_once() {
         let consumer=mutation_packages().1;let deployment=Uuid::new_v4();store.commit_application(deployment,0,input(&provider,&consumer),vec![],vec![provider,consumer]).await.unwrap();
         let app=Application::start_from_store(store.clone(),deployment,NativeRegistry::default(),issuer.clone(),Arc::new(RecoveryGrant {issuer:issuer.clone(),recovery}),Limits::default()).await.unwrap();app.ready().await.unwrap();
         let client=app.client();let binding=client.bind(client.activation(&id(2)).unwrap(),"echo".into()).await.unwrap().remove(0);let operation=Uuid::new_v4();
-        let accepted=client.mutate(binding.clone(),"echo".into(),json!("script"),scope(&issuer,true),operation).await.unwrap();let reference=accepted.reference.clone();assert_eq!(returned(accepted.result().await),json!("script:1"));
-        assert_eq!(returned(client.mutate(binding,"echo".into(),json!("script"),scope(&issuer,true),operation).await.unwrap().result().await),json!("script:1"));
+        let accepted=mutate(&client, &store, binding.clone(),"echo".into(),json!("script"),scope(&issuer,true),operation).await.unwrap();let reference=accepted.reference.clone();assert_eq!(returned(accepted.result().await),json!("script:1"));
+        assert_eq!(returned(mutate(&client, &store, binding,"echo".into(),json!("script"),scope(&issuer,true),operation).await.unwrap().result().await),json!("script:1"));
         assert_eq!(store.operation_observation(&reference).await.unwrap().unwrap().outcome,OperationOutcome::Returned {value:json!("script:1")});
         app.shutdown().await.unwrap();drop(app);drop(client);close(store).await;
     }).await.unwrap();
@@ -678,7 +722,7 @@ async fn javascript_forwarded_mutation_preserves_original_evidence_and_parent_cl
         let mut input=input(&forwarder,&consumer);let parent=input.instances.get_mut("provider").unwrap();parent.key=Uuid::from_u128(4);
         parent.bindings.insert("child".into(),vec![Target::Instance {path:vec!["sink".into()],export:"echo".into()}]);input.instances.insert("sink".into(),node(&sink,1,true));
         let deployment=Uuid::new_v4();store.commit_application(deployment,0,input,vec![],vec![sink,forwarder,consumer]).await.unwrap();
-        let app=Application::start_from_store(store.clone(),deployment,registry_contract(Arc::new(VerifiedEcho {store:store.clone(),calls:calls.clone()}),contract(MethodMode::Mutation)),issuer.clone(),Arc::new(RecoveryGrant {issuer:issuer.clone(),recovery:Arc::new(AtomicBool::new(true))}),Limits::default()).await.unwrap();app.ready().await.unwrap();
+        let app=Application::start_from_store(store.clone(),deployment,registry_contract(Arc::new(VerifiedEcho {caller:id(4),store:store.clone(),calls:calls.clone()}),contract(MethodMode::Mutation)),issuer.clone(),Arc::new(RecoveryGrant {issuer:issuer.clone(),recovery:Arc::new(AtomicBool::new(true))}),Limits::default()).await.unwrap();app.ready().await.unwrap();
         let client=app.client();let binding=client.bind(client.activation(&id(2)).unwrap(),"echo".into()).await.unwrap().remove(0);
         for _ in 0..2 {assert_eq!(client.start(binding.clone(),"echo".into(),json!("child"),scope(&issuer,true),Attachments::new()).await.unwrap().result().await.unwrap(),json!("child:parent"));}
         assert_eq!(calls.load(Ordering::SeqCst),1);
@@ -805,16 +849,17 @@ async fn dropped_root_and_all_observers_keep_mutation_resources_native_close_and
             .await
             .unwrap()
             .remove(0);
-        let accepted = client
-            .mutate(
-                binding,
-                "echo".into(),
-                json!("held"),
-                scope(&issuer, true),
-                Uuid::new_v4(),
-            )
-            .await
-            .unwrap();
+        let accepted = mutate(
+            &client,
+            &store,
+            binding,
+            "echo".into(),
+            json!("held"),
+            scope(&issuer, true),
+            Uuid::new_v4(),
+        )
+        .await
+        .unwrap();
         let reference = accepted.reference.clone();
         permit(&started).await;
         let weak = Arc::downgrade(&store);
@@ -888,6 +933,7 @@ async fn returned_mutation_and_failed_cleanup_are_separate_persistent_facts() {
             &issuer,
             Arc::new(AtomicBool::new(true)),
             Arc::new(VerifiedEcho {
+                caller: id(2),
                 store: store.clone(),
                 calls: calls.clone(),
             }),
@@ -899,16 +945,17 @@ async fn returned_mutation_and_failed_cleanup_are_separate_persistent_facts() {
             .await
             .unwrap()
             .remove(0);
-        let accepted = client
-            .mutate(
-                binding,
-                "echo".into(),
-                json!("resource-fail"),
-                scope(&issuer, true),
-                Uuid::new_v4(),
-            )
-            .await
-            .unwrap();
+        let accepted = mutate(
+            &client,
+            &store,
+            binding,
+            "echo".into(),
+            json!("resource-fail"),
+            scope(&issuer, true),
+            Uuid::new_v4(),
+        )
+        .await
+        .unwrap();
         let reference = accepted.reference.clone();
         assert_eq!(returned(accepted.result().await), json!("resource-fail"));
         let observation = store
@@ -995,16 +1042,17 @@ async fn uncertain_durable_settlement_does_not_replay_effect_or_invent_cleanup_f
             .unwrap()
             .remove(0);
         let operation = Uuid::new_v4();
-        let accepted = client
-            .mutate(
-                binding.clone(),
-                "echo".into(),
-                json!("effect"),
-                scope(&issuer, true),
-                operation,
-            )
-            .await
-            .unwrap();
+        let accepted = mutate(
+            &client,
+            &store,
+            binding.clone(),
+            "echo".into(),
+            json!("effect"),
+            scope(&issuer, true),
+            operation,
+        )
+        .await
+        .unwrap();
         let reference = accepted.reference.clone();
         assert!(unavailable(accepted.result().await).contains("settlement outcome unknown"));
         assert!(client.snapshot().cleanup_error.is_none());
@@ -1015,18 +1063,19 @@ async fn uncertain_durable_settlement_does_not_replay_effect_or_invent_cleanup_f
             .unwrap();
         assert_eq!(observation.outcome, OperationOutcome::Unresolved);
         assert_eq!(observation.cleanup, OperationCleanup::Unconfirmed);
-        let duplicate = client
-            .mutate(
-                binding,
-                "echo".into(),
-                json!("effect"),
-                scope(&issuer, true),
-                operation,
-            )
-            .await
-            .unwrap()
-            .result()
-            .await;
+        let duplicate = mutate(
+            &client,
+            &store,
+            binding,
+            "echo".into(),
+            json!("effect"),
+            scope(&issuer, true),
+            operation,
+        )
+        .await
+        .unwrap()
+        .result()
+        .await;
         assert!(matches!(
             duplicate.receipt,
             Receipt::Recorded {
@@ -1265,18 +1314,19 @@ async fn undeliverable_reference_is_rejected_before_mutation_acceptance_or_effec
         .remove(0);
     let operation = Uuid::new_v4();
     assert!(
-        client
-            .mutate(
-                binding.clone(),
-                "echo".into(),
-                json!("effect"),
-                scope(&issuer, true),
-                operation
-            )
-            .await
-            .err()
-            .unwrap()
-            .contains("cannot be represented exactly")
+        mutate(
+            &client,
+            &store,
+            binding.clone(),
+            "echo".into(),
+            json!("effect"),
+            scope(&issuer, true),
+            operation
+        )
+        .await
+        .err()
+        .unwrap()
+        .contains("cannot be represented exactly")
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     app.shutdown().await.unwrap();
@@ -1284,4 +1334,471 @@ async fn undeliverable_reference_is_rejected_before_mutation_acceptance_or_effec
     drop(app);
     drop(client);
     close(store).await;
+}
+
+#[tokio::test]
+async fn preparation_is_effect_free_does_not_lock_native_root_and_never_redirects_after_restart() {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let (dir, ns, store) = store().await;
+        let issuer = Issuer::default();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (app, deployment) = launch(
+            store.clone(),
+            &issuer,
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(VerifiedEcho {
+                caller: id(2),
+                store: store.clone(),
+                calls: calls.clone(),
+            }),
+        )
+        .await;
+        let client = app.client();
+        let binding = client
+            .bind(client.activation(&id(2)).unwrap(), "echo".into())
+            .await
+            .unwrap()
+            .remove(0);
+        let prepared = client
+            .prepare_mutation(
+                binding,
+                "echo".into(),
+                json!("prepared"),
+                scope(&issuer, true),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        let reference = prepared.reference().clone();
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(
+            store
+                .operation_observation(&reference)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .application_intents(deployment, id(2), 0, 128)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(client.snapshot().instances.iter().all(|s| s.calls == 0));
+        app.shutdown().await.unwrap();
+        drop(app);
+        close(store).await;
+        // Prepared still exists. It must not retain VerifiedEcho -> EventLog -> RootOwner.
+        let owner = Arc::new(RootOwner::open(&dir.path().join("root"), &ns).unwrap());
+        let reopened = Arc::new(EventLog::for_root(owner).await.unwrap());
+        let replacement = Application::start_from_store(
+            reopened.clone(),
+            deployment,
+            registry_contract(
+                Arc::new(Echo {
+                    calls: calls.clone(),
+                }),
+                contract(MethodMode::Mutation),
+            ),
+            issuer.clone(),
+            Arc::new(Grant(issuer.clone())),
+            Limits::default(),
+        )
+        .await
+        .unwrap();
+        replacement.ready().await.unwrap();
+        let recorded = reopened
+            .record_application_intent(reference.source.clone(), id(2), reference.clone())
+            .await
+            .unwrap();
+        assert!(
+            replacement
+                .client()
+                .mutate(prepared, recorded)
+                .await
+                .is_err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(
+            reopened
+                .operation_observation(&reference)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        replacement.shutdown().await.unwrap();
+        drop(replacement);
+        drop(client);
+        close(reopened).await;
+    })
+    .await
+    .unwrap();
+}
+#[tokio::test]
+async fn recorded_intent_does_not_override_revocation_between_prepare_and_dispatch() {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let (_dir, _ns, store) = store().await;
+        let issuer = Issuer::default();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (app, _) = launch(
+            store.clone(),
+            &issuer,
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(VerifiedEcho {
+                caller: id(2),
+                store: store.clone(),
+                calls: calls.clone(),
+            }),
+        )
+        .await;
+        let client = app.client();
+        let binding = client
+            .bind(client.activation(&id(2)).unwrap(), "echo".into())
+            .await
+            .unwrap()
+            .remove(0);
+        for provider_retired in [false, true] {
+            let scope = scope(&issuer, true);
+            let cancellation = scope.cancellation.clone();
+            let prepared = client
+                .prepare_mutation(
+                    binding.clone(),
+                    "echo".into(),
+                    json!("effect"),
+                    scope,
+                    Uuid::new_v4(),
+                )
+                .await
+                .unwrap();
+            let reference = prepared.reference().clone();
+            let recorded = store
+                .record_application_intent(reference.source.clone(), id(2), reference.clone())
+                .await
+                .unwrap();
+            if provider_retired {
+                client.retire(binding.provider().clone()).await.unwrap();
+            } else {
+                cancellation.cancel();
+            }
+            assert!(client.mutate(prepared, recorded).await.is_err());
+            assert!(
+                store
+                    .operation_observation(&reference)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        app.shutdown().await.unwrap();
+        drop(app);
+        drop(client);
+        // Holding a retired binding no longer keeps the handler or storage owner alive.
+        close(store).await;
+        drop(binding);
+    })
+    .await
+    .unwrap();
+}
+
+struct CallerCheckedMutation {
+    caller_database: std::path::PathBuf,
+    started: Arc<tokio::sync::Semaphore>,
+    release: Arc<tokio::sync::Semaphore>,
+    fail_cleanup: bool,
+}
+impl Handler for CallerCheckedMutation {
+    fn call(&self, _: String, input: Value, context: Context) -> BoxFuture<'static, Result<Value>> {
+        let database = self.caller_database.clone();
+        let started = self.started.clone();
+        let release = self.release.clone();
+        let fail_cleanup = self.fail_cleanup;
+        Box::pin(async move {
+            use sqlx::Connection;
+            let reference = context.operation().unwrap();
+            let mut connection = sqlx::SqliteConnection::connect_with(
+                &sqlx::sqlite::SqliteConnectOptions::new()
+                    .filename(database)
+                    .read_only(true),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            let saved: String = sqlx::query_scalar(
+                "SELECT reference_json FROM application_intents WHERE operation=?",
+            )
+            .bind(reference.operation.to_string())
+            .fetch_one(&mut connection)
+            .await
+            .map_err(|e| e.to_string())?;
+            let saved: maka_plugin_core::operation::RecoveryRef =
+                serde_json::from_str(&saved).unwrap();
+            assert_eq!(
+                &saved, reference,
+                "the separate caller Root committed the original reference before effects"
+            );
+            connection.close().await.map_err(|e| e.to_string())?;
+            started.add_permits(1);
+            release.acquire().await.unwrap().forget();
+            if fail_cleanup {
+                let mut ticket = context.scope().resources.reserve().unwrap();
+                ticket.start();
+                ticket.complete(Err("caller effect cleanup unconfirmed".into()));
+            }
+            Ok(input)
+        })
+    }
+}
+fn remote_mutation_packages() -> (Package, Package, Contract) {
+    let mut declared = contract(MethodMode::Mutation);
+    declared.transport = Transport::Remote;
+    let (provider, consumer) = mutation_packages();
+    let mut p = provider.manifest().application.clone().unwrap();
+    p.entries
+        .get_mut(&EntryTarget::Host)
+        .unwrap()
+        .exports
+        .get_mut("echo")
+        .unwrap()
+        .contract = declared.clone();
+    let mut c = consumer.manifest().application.clone().unwrap();
+    c.entries
+        .get_mut(&EntryTarget::Host)
+        .unwrap()
+        .imports
+        .get_mut("echo")
+        .unwrap()
+        .contract = declared.clone();
+    (
+        package(
+            "native",
+            p.entries.remove(&EntryTarget::Host).unwrap(),
+            None,
+        ),
+        package(
+            "consumer",
+            c.entries.remove(&EntryTarget::Host).unwrap(),
+            Some("export function activate(){return {}; }".into()),
+        ),
+        declared,
+    )
+}
+
+struct RecordingGate {
+    issuer: Issuer,
+    prepared: Arc<Semaphore>,
+    allowed: Arc<AtomicBool>,
+}
+impl Policy for RecordingGate {
+    fn admit(&self, invocation: Invocation<'_>) -> Result<()> {
+        let maka_plugin_core::contract::Interface::Service { methods } =
+            &invocation.contract.interface
+        else {
+            unreachable!()
+        };
+        let mutation = methods[invocation.method].mode == MethodMode::Mutation;
+        Grant(self.issuer.clone()).admit(invocation)?;
+        if mutation {
+            if !self.allowed.load(Ordering::SeqCst) {
+                return Err("recording gate revoked".into());
+            }
+            self.prepared.add_permits(1);
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn internal_caller_commit_precedes_final_admission_and_failed_record_never_dispatches() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        for mode in ["retire", "revoke", "record-failure", "commit-error"] {
+            let (dir, _ns, store) = store().await;
+            let issuer = Issuer::default();
+            let calls = Arc::new(AtomicUsize::new(0));
+            let prepared = Arc::new(Semaphore::new(0));
+            let allowed = Arc::new(AtomicBool::new(true));
+            let (sink, _) = mutation_packages();
+            let mut forwarder_entry = entry(true, Implementation::JavaScript {
+                module: "host.mjs".into(), realm: Realm::Shared,
+            }, MethodMode::Query);
+            forwarder_entry.imports.insert("child".into(), Import {
+                contract: contract(MethodMode::Mutation), cardinality: Cardinality::One,
+            });
+            let operation = Uuid::new_v4();
+            let source = format!(r#"
+                export const service={{async echo(input,_observation,context) {{
+                    try {{ await context.invoke({{operation:'mutate',import:'child',provider:0,method:'echo',input,operationId:'{operation}'}}); }}
+                    catch(error) {{ return String(error); }}
+                    throw Error('unexpected accepted child');
+                }}}};
+                export function activate() {{return {{echo:{{contract:{},service:['service']}}}};}}
+            "#, serde_json::to_string(&contract(MethodMode::Query)).unwrap());
+            let forwarder = package("forwarder", forwarder_entry, Some(source));
+            let consumer = consumer();
+            let mut composition = input(&forwarder, &consumer);
+            let parent = composition.instances.get_mut("provider").unwrap();
+            parent.key = Uuid::from_u128(4);
+            parent.bindings.insert("child".into(), vec![Target::Instance {
+                path: vec!["sink".into()], export: "echo".into(),
+            }]);
+            composition.instances.insert("sink".into(), node(&sink, 1, true));
+            let deployment = Uuid::new_v4();
+            store.commit_application(deployment, 0, composition, vec![], vec![sink, forwarder, consumer]).await.unwrap();
+            let app = Application::start_from_store(store.clone(), deployment,
+                registry_contract(Arc::new(VerifiedEcho {caller: id(4), store: store.clone(), calls: calls.clone()}), contract(MethodMode::Mutation)),
+                issuer.clone(), Arc::new(RecordingGate {issuer: issuer.clone(), prepared: prepared.clone(), allowed: allowed.clone()}), Limits::default()).await.unwrap();
+            app.ready().await.unwrap();
+            let client = app.client();
+            let binding = client.bind(client.activation(&id(2)).unwrap(), "echo".into()).await.unwrap().remove(0);
+            let connection = rusqlite::Connection::open(dir.path().join("root").join(maka_event_log::root::ROOT_DATABASE)).unwrap();
+            if mode == "record-failure" {
+                connection.execute_batch("CREATE TRIGGER reject_caller_intent BEFORE INSERT ON application_intents BEGIN SELECT RAISE(ABORT,'caller record unavailable'); END;").unwrap();
+            }
+            if mode == "commit-error" {
+                connection.execute_batch("CREATE TABLE caller_commit_probe (deployment TEXT, revision INTEGER, FOREIGN KEY(deployment,revision) REFERENCES application_sources(deployment,revision) DEFERRABLE INITIALLY DEFERRED); CREATE TRIGGER reject_caller_commit AFTER INSERT ON application_intents BEGIN INSERT INTO caller_commit_probe VALUES ('missing',1); END;").unwrap();
+            }
+            // A real competing SQLite writer keeps the caller commit pending.
+            connection.execute_batch("BEGIN IMMEDIATE;").unwrap();
+            let parent = client.start(binding, "echo".into(), json!("no-effect"), scope(&issuer, true), Attachments::new()).await.unwrap();
+            prepared.acquire().await.unwrap().forget();
+            match mode {
+                "retire" => client.retire(client.activation(&id(1)).unwrap()).await.unwrap(),
+                "revoke" => allowed.store(false, Ordering::SeqCst),
+                _ => {},
+            }
+            connection.execute_batch("COMMIT;").unwrap();
+            let error = parent.result().await.unwrap();
+            let error = error.as_str().unwrap();
+            match mode {
+                "retire" => assert!(error.contains("retired") || error.contains("not active"), "{error}"),
+                "revoke" => assert!(error.contains("recording gate revoked"), "{error}"),
+                _ => assert!(error.contains("caller intent was not confirmed"), "{error}"),
+            }
+            let saved = store.application_intents(deployment, id(4), 0, 128).await.unwrap();
+            if mode == "record-failure" || mode == "commit-error" {
+                assert!(saved.is_empty());
+            } else {
+                assert_eq!(saved.len(), 1);
+                assert_eq!(saved[0].reference.operation, operation);
+                assert!(store.operation_observation(&saved[0].reference).await.unwrap().is_none());
+            }
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+            assert!(client.snapshot().cleanup_error.is_none(), "no effect admission is not a physical cleanup failure");
+            app.shutdown().await.unwrap();
+            drop(connection); drop(app); drop(client); close(store).await;
+        }
+    }).await.unwrap();
+}
+async fn ui_caller_source(
+    store: &EventLog,
+    deployment: Uuid,
+    expected: u64,
+    declared: Contract,
+    role: &str,
+) -> maka_plugin_core::deployment::DeploymentRef {
+    let declaration = Declaration {
+        entries: BTreeMap::from([(
+            EntryTarget::Desktop,
+            EntryDeclaration {
+                implementation: Implementation::Native {
+                    implementation: "test.caller".into(),
+                },
+                configuration: json!({"type":"object"}),
+                imports: BTreeMap::from([(
+                    "echo".into(),
+                    Import {
+                        contract: declared.clone(),
+                        cardinality: Cardinality::One,
+                    },
+                )]),
+                exports: BTreeMap::new(),
+            },
+        )]),
+        composition: None,
+    };
+    let caller = Package::new(BTreeMap::from([(
+        MANIFEST_FILE.into(),
+        serde_json::to_vec(&json!({"schemaVersion":2,"id":"ui.caller","application":declaration}))
+            .unwrap(),
+    )]))
+    .unwrap();
+    let mut node = node(&caller, 41, false);
+    node.bindings.insert(
+        "echo".into(),
+        vec![Target::Remote {
+            deployment: role.into(),
+            instance: id(1),
+            export: "echo".into(),
+        }],
+    );
+    let input = Input {
+        environment: Environment {
+            location: ExecutionLocation::Ui,
+            presentation: Some(maka_plugin_core::composition::PresentationTarget::Desktop),
+        },
+        instances: BTreeMap::from([("caller".into(), node)]),
+        launch: None,
+    };
+    let observed = maka_plugin_core::deployment::RemoteObservation {
+        capability: maka_plugin_core::plan::RemoteCapability {
+            deployment: role.into(),
+            instance: id(1),
+            export: "echo".into(),
+        },
+        declaration: Export {
+            contract: declared,
+            availability: Availability::Required,
+        },
+    };
+    store
+        .commit_application(deployment, expected, input, vec![observed], vec![caller])
+        .await
+        .unwrap()
+}
+#[tokio::test]
+async fn separate_caller_root_stays_owned_through_effect_cleanup_and_keeps_original_after_rebinding()
+ {
+    tokio::time::timeout(Duration::from_secs(30),async {
+        for fail_cleanup in [false,true] {
+            let (_host_dir,_host_ns,host_store)=store().await;
+            let (caller_dir,caller_ns,caller_store)=store().await;
+            let (provider,consumer,declared)=remote_mutation_packages();
+            let host_deployment=Uuid::new_v4();
+            host_store.commit_application(host_deployment,0,input(&provider,&consumer),vec![],vec![provider,consumer]).await.unwrap();
+            let caller_deployment=Uuid::new_v4();
+            let caller_source=ui_caller_source(&caller_store,caller_deployment,0,declared.clone(),"original-host").await;
+            let started=Arc::new(tokio::sync::Semaphore::new(0));let release=Arc::new(tokio::sync::Semaphore::new(0));let issuer=Issuer::default();
+            let host=Application::start_from_store(host_store.clone(),host_deployment,registry_contract(Arc::new(CallerCheckedMutation {caller_database:caller_dir.path().join("root").join(maka_event_log::root::ROOT_DATABASE),started:started.clone(),release:release.clone(),fail_cleanup}),declared.clone()),issuer.clone(),Arc::new(RecoveryGrant {issuer:issuer.clone(),recovery:Arc::new(AtomicBool::new(true))}),Limits::default()).await.unwrap();
+            host.ready().await.unwrap();let client=host.client();
+            let binding=client.bind(client.activation(&id(2)).unwrap(),"echo".into()).await.unwrap().remove(0);
+            let prepared=client.prepare_mutation(binding,"echo".into(),json!("original"),scope(&issuer,true),Uuid::new_v4()).await.unwrap();
+            let reference=prepared.reference().clone();
+            assert!(host_store.operation_observation(&reference).await.unwrap().is_none());
+            let recorded=caller_store.record_application_intent(caller_source.clone(),id(41),reference.clone()).await.unwrap();
+            let next=ui_caller_source(&caller_store,caller_deployment,1,declared,"replacement-host").await;
+            assert_ne!(next,caller_source);
+            let accepted=client.mutate(prepared,recorded).await.unwrap();
+            started.acquire().await.unwrap().forget();
+            close(caller_store).await;
+            assert!(RootOwner::open(&caller_dir.path().join("root"),&caller_ns).is_err(),"the actual accepted effect retains the caller lease, not its observer or connection");
+            release.add_permits(1);
+            let reply=accepted.result().await;
+            assert_eq!(reply.reference,reference);
+            assert_eq!(returned(reply),json!("original"));
+            if fail_cleanup {
+                assert!(host.shutdown().await.is_err());drop(host);drop(client);drop(host_store);
+                assert!(RootOwner::open(&caller_dir.path().join("root"),&caller_ns).is_err(),"failed physical cleanup retains the original caller lease");
+            } else {
+                let owner=Arc::new(RootOwner::open(&caller_dir.path().join("root"),&caller_ns).unwrap());
+                let caller=Arc::new(EventLog::for_root(owner).await.unwrap());
+                assert_eq!(caller.load_application(caller_deployment).await.unwrap().unwrap().source.reference,next);
+                let saved=caller.application_intents(caller_deployment,id(41),0,128).await.unwrap();
+                assert_eq!(saved.len(),1);assert_eq!(saved[0].caller,caller_source);assert_eq!(saved[0].reference,reference);
+                assert!(caller.operation_observation(&reference).await.is_err(),"the current caller Root cannot substitute a not-recorded business receipt");
+                let original=client.recover(client.activation(&id(2)).unwrap(),saved[0].reference.clone(),scope(&issuer,true)).await.unwrap().unwrap();
+                assert_eq!(original.outcome,OperationOutcome::Returned {value:json!("original")});
+                host.shutdown().await.unwrap();drop(host);drop(client);close(host_store).await;close(caller).await;
+            }
+        }
+    }).await.unwrap();
 }

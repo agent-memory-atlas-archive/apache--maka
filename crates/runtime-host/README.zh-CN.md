@@ -68,9 +68,18 @@ queued 与 accepted 请求共用 64 MiB，清理未确认时保留实际 payload
 可信 Host transport、live 组合收敛、业务恢复 hook 及 server/TUI/UI 接线仍须实现。这是执行基础，不是完整 Host 迁移或旧 catalog 兼容 facade。
 
 持久 mutation 要求 `Application::start_from_store`、声明 mutation 方法和显式非 nil 操作 UUID。
-`Client::mutate`、`Context::mutate` 与 query 共用真实 native/JS handler；JS 使用
+原生调用端先 `Client::prepare_mutation`，在自己的 Root 中通过
+`EventLog::record_application_intent` 确认原 Ref，再把准备结果和私有 `RecordedIntent`
+交给 `Client::mutate`。准备持有输入预算，但不接受执行、不写业务 journal；最终准入重新检查
+捕获的 binding、Scope、执行域与 Policy，不重定位当前 target。`Context::mutate` 在原 Host caller
+source 中执行同样的记录与最终准入顺序，并与 query 共用真实 native/JS handler。JS 使用
 `context.invoke({operation:'mutate', import, provider, method, input, operationId})`。
 回调实际 `HostObservation.operation` 提供原回执引用；mutation 附件快照与 subscription 执行器仍待实现。
+
+caller 历史按稳定 consumer 与 operation 保留首次 source 和原 Ref，跨 source 修订或目标变化
+仍读取原记录；不同 Ref 冲突。caller 记录不宣称业务结果，不产生 Host 授权。记录失败或 commit
+不确定不能执行 effect；确认 token 在接受工作及真实清理期间持有 caller Root，清理失败继续保留。
+纯历史观察不能构造执行 token。
 
 原 Input、准确包 bytes 和契约保留在不可变部署修订中。派发事务确认后才产生私有首次执行 claim；
 重复请求不执行 callback、不覆盖原 cleanup。指纹归一对象键序，保守保留实际 JSON 数字表示，

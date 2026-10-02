@@ -45,6 +45,8 @@ fences replacement. Failure settlement returns newly retired owners so the adapt
 can deliver stop signals. Structural template imports route dependencies without
 turning them into dependencies of the whole product.
 
+Bound capabilities retain exact identities and epochs, without owning the service
+value. Only a live registration or accepted execution/work owns that value.
 `Runtime::inspect` borrows the exact live registration without accepting work.
 `Capability::consumer` exposes the original consumer for policy and execution-domain
 checks. Neither inspection nor identity grants authorization; the adapter still

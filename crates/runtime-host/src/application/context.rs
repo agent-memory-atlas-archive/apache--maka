@@ -83,7 +83,11 @@ impl Context {
             method,
             input,
             Attachments::new(),
-            CallKind::Mutation { operation, reply },
+            CallKind::Mutation {
+                operation,
+                recorded: None,
+                reply,
+            },
         )?;
         Ok(Box::pin(async move {
             Ok(result

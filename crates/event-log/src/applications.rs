@@ -18,6 +18,7 @@
  */
 
 //! Atomic durable application sources; no legacy composition translation.
+pub mod intents;
 pub mod operations;
 use crate::{EventLog, StoreError};
 use maka_plugin_core::{

@@ -97,11 +97,25 @@ and server/TUI/UI integration remain required work. This foundation is not a
 completed Host migration or a compatibility facade for the previous catalog.
 
 Durable mutations require `Application::start_from_store`, a declared mutation
-method and an explicit non-nil operation UUID. `Client::mutate` and
-`Context::mutate` share native/JavaScript execution with queries. JavaScript uses
+method and an explicit non-nil operation UUID. Native callers first use
+`Client::prepare_mutation`, commit its original reference through their own
+`EventLog::record_application_intent`, then pass the prepared invocation and private
+`RecordedIntent` to `Client::mutate`. Preparation holds input capacity but creates
+no accepted execution or business journal entry. Dispatch rechecks the captured
+binding, Scope, execution domain and policy; it never redirects to a current target.
+`Context::mutate` performs the same caller commit and final admission sequence in
+the original Host caller source. Native and JavaScript mutations share execution
+with queries. JavaScript uses
 `context.invoke({operation:'mutate', import, provider, method, input, operationId})`;
 the callback's actual `HostObservation.operation` contains its original receipt
 reference. Mutation resource attachments and subscriptions still need executors.
+
+Caller history retains the first source and original reference for each stable
+consumer and operation, across source revisions and target changes. A different
+reference conflicts. Caller records do not assert business outcomes or grant Host
+authority. Failed or uncertain caller commits cannot dispatch effects; confirmed
+tokens keep the caller Root owned through accepted execution and real cleanup,
+including failed cleanup. Readable history cannot mint an execution token.
 
 The original Input, package bytes and contract remain in immutable deployment
 revision history. Dispatch commits before any callback; only its private first

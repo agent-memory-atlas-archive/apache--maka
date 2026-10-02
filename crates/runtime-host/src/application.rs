@@ -205,6 +205,26 @@ impl Accepted {
     }
 }
 
+/// Checked original invocation data, not accepted work or effect authority.
+/// Holds input capacity until dispatch/drop; the binding does not own its service value.
+pub struct PreparedMutation {
+    binding: Binding,
+    method: String,
+    input: Value,
+    scope: Scope,
+    reference: RecoveryRef,
+    slot: OwnedSemaphorePermit,
+    bytes: OwnedSemaphorePermit,
+}
+impl PreparedMutation {
+    pub fn reference(&self) -> &RecoveryRef {
+        &self.reference
+    }
+    pub fn consumer(&self) -> &Activation {
+        self.binding.0.consumer()
+    }
+}
+
 /// An accepted mutation always retains its original reference, even when its
 /// result observer loses the owner. Only a recorded receipt confirms journal facts.
 pub struct Mutation {
@@ -289,9 +309,14 @@ pub(super) struct Call {
     resources: OwnedSemaphorePermit,
 }
 pub(super) enum CallKind {
+    PrepareMutation {
+        operation: Uuid,
+        reply: oneshot::Sender<Result<PreparedMutation>>,
+    },
     Query(oneshot::Sender<Result<Accepted>>),
     Mutation {
         operation: Uuid,
+        recorded: Option<Box<maka_event_log::applications::intents::RecordedIntent>>,
         reply: oneshot::Sender<Result<Mutation>>,
     },
 }
@@ -299,13 +324,16 @@ impl CallKind {
     fn operation(&self) -> Option<Uuid> {
         match self {
             Self::Query(_) => None,
-            Self::Mutation { operation, .. } => Some(*operation),
+            Self::Mutation { operation, .. } | Self::PrepareMutation { operation, .. } => {
+                Some(*operation)
+            }
         }
     }
     fn closed(&self) -> bool {
         match self {
             Self::Query(reply) => reply.is_closed(),
             Self::Mutation { reply, .. } => reply.is_closed(),
+            Self::PrepareMutation { reply, .. } => reply.is_closed(),
         }
     }
     fn reject(self, error: String) {
@@ -316,10 +344,31 @@ impl CallKind {
             Self::Mutation { reply, .. } => {
                 let _ = reply.send(Err(error));
             }
+            Self::PrepareMutation { reply, .. } => {
+                let _ = reply.send(Err(error));
+            }
+        }
+    }
+    fn take_intent(
+        &mut self,
+    ) -> Option<Box<maka_event_log::applications::intents::RecordedIntent>> {
+        match self {
+            Self::Mutation { recorded, .. } => recorded.take(),
+            _ => None,
+        }
+    }
+    fn expected(&self) -> Option<&RecoveryRef> {
+        match self {
+            Self::Mutation {
+                recorded: Some(intent),
+                ..
+            } => Some(&intent.intent().reference),
+            _ => None,
         }
     }
     fn accept(self, id: Uuid, reference: Option<RecoveryRef>) -> Reply {
         match self {
+            Self::PrepareMutation { .. } => unreachable!("preparation cannot accept execution"),
             Self::Query(reply) => {
                 let (output, result) = oneshot::channel();
                 let _ = reply.send(Ok(Accepted { id, result }));
@@ -612,14 +661,15 @@ impl Client {
             .await
             .map_err(|_| "Host deployment is closed".to_string())?
     }
-    pub async fn mutate(
+    /// Checks and captures the original invocation without dispatching an effect.
+    pub async fn prepare_mutation(
         &self,
         binding: Binding,
         method: String,
         input: Value,
         scope: Scope,
         operation: Uuid,
-    ) -> Result<Mutation> {
+    ) -> Result<PreparedMutation> {
         let (reply, result) = oneshot::channel();
         self.dispatch.enqueue(
             binding,
@@ -628,8 +678,56 @@ impl Client {
             scope,
             Attachments::new(),
             None,
-            CallKind::Mutation { operation, reply },
+            CallKind::PrepareMutation { operation, reply },
         )?;
+        result
+            .await
+            .map_err(|_| "Host deployment is closed".to_string())?
+    }
+    /// Requires caller persistence, then rechecks the original invocation at dispatch.
+    pub async fn mutate(
+        &self,
+        prepared: PreparedMutation,
+        recorded: maka_event_log::applications::intents::RecordedIntent,
+    ) -> Result<Mutation> {
+        if prepared.reference != recorded.intent().reference {
+            return Err("caller intent disagrees with original preparation".into());
+        }
+        let PreparedMutation {
+            binding,
+            method,
+            input,
+            scope,
+            reference,
+            slot,
+            bytes,
+        } = prepared;
+        let resources = self
+            .dispatch
+            .resources
+            .clone()
+            .try_acquire_many_owned(0)
+            .map_err(|e| e.to_string())?;
+        let (reply, result) = oneshot::channel();
+        self.dispatch
+            .commands
+            .try_send(Command::Call(Box::new(Call {
+                parent: None,
+                kind: CallKind::Mutation {
+                    operation: reference.operation,
+                    recorded: Some(Box::new(recorded)),
+                    reply,
+                },
+                binding,
+                method,
+                input,
+                scope,
+                attachments: Attachments::new(),
+                slot,
+                bytes,
+                resources,
+            })))
+            .map_err(|e| e.to_string())?;
         result
             .await
             .map_err(|_| "Host deployment is closed".to_string())?

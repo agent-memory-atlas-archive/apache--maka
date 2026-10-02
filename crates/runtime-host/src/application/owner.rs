@@ -37,6 +37,7 @@ struct Failed {
     _bytes: OwnedSemaphorePermit,
     _attachments: Attachments,
     _resources: OwnedSemaphorePermit,
+    _intent: Option<Box<maka_event_log::applications::intents::RecordedIntent>>,
 }
 struct Owned {
     imports: Arc<BTreeMap<String, Vec<Binding>>>,
@@ -48,6 +49,10 @@ struct Owned {
     vm: Option<usize>,
 }
 enum Done {
+    IntentRecorded {
+        call: Box<Call>,
+        recorded: Result<Box<maka_event_log::applications::intents::RecordedIntent>>,
+    },
     Initialized {
         activation: Activation,
         exports: Result<BTreeMap<String, Published<Service>>>,
@@ -69,6 +74,7 @@ enum Done {
         _bytes: OwnedSemaphorePermit,
         attachments: Attachments,
         _resources: OwnedSemaphorePermit,
+        intent: Option<Box<maka_event_log::applications::intents::RecordedIntent>>,
     },
     Recovered {
         consumer: Activation,
@@ -174,10 +180,19 @@ impl Owner {
         let mut control_open = true;
         loop {
             self.drive();
-            self.publish();
             if self.closed {
+                let snapshot = self.snapshot();
+                let updates = self.updates.clone();
+                // The closing acknowledgement follows all of this owner's drops,
+                // including native factories that may retain a store themselves.
+                drop(commands);
+                drop(control);
+                drop(stop);
+                drop(self);
+                updates.send_replace(snapshot);
                 return;
             }
+            self.publish();
             tokio::select! {
                 _ = stop.cancelled(), if !self.closing => {
                     self.stop();
@@ -518,7 +533,7 @@ impl Owner {
                 let Call {
                     mut parent,
                     binding,
-                    kind,
+                    mut kind,
                     method,
                     input,
                     scope,
@@ -590,6 +605,12 @@ impl Owner {
                         .map_err(|e| e.to_string())?;
                     if let Some(reference) = &reference {
                         check_reference(reference)?;
+                        if kind
+                            .expected()
+                            .is_some_and(|expected| expected != reference)
+                        {
+                            return Err("prepared original reference no longer matches".into());
+                        }
                     }
                     match std::panic::catch_unwind(AssertUnwindSafe(|| {
                         let Interface::Service { methods } = &service.contract.interface else {
@@ -633,15 +654,79 @@ impl Owner {
                     if scope.cancellation.is_cancelled() {
                         return Err("Host invocation was revoked".into());
                     }
+                    if matches!(
+                        kind,
+                        CallKind::PrepareMutation { .. }
+                            | CallKind::Mutation { recorded: None, .. }
+                    ) {
+                        return Ok((None, None, request, reference));
+                    }
                     let child = scope.child().map_err(|e| e.to_string())?;
                     let execution = self.runtime.admit(&binding.0).map_err(|e| e.to_string())?;
-                    Ok((execution, child, request, reference))
+                    Ok((Some(execution), Some(child), request, reference))
                 })();
                 match admission {
                     Err(error) => {
+                        if let Some(ticket) = parent.take() {
+                            ticket.complete(Ok(()));
+                        }
                         kind.reject(error);
                     }
                     Ok((execution, child, request, reference)) => {
+                        if let CallKind::PrepareMutation { reply, .. } = kind {
+                            let _ = reply.send(Ok(PreparedMutation {
+                                binding,
+                                method,
+                                input,
+                                scope,
+                                reference: reference.expect("mutation reference"),
+                                slot,
+                                bytes,
+                            }));
+                            return;
+                        }
+                        if matches!(kind, CallKind::Mutation { recorded: None, .. }) {
+                            let request = request.expect("checked original mutation");
+                            let store = self
+                                .persisted
+                                .as_ref()
+                                .expect("persisted mutation")
+                                .1
+                                .clone();
+                            if let Some(ticket) = &mut parent {
+                                ticket.start();
+                            }
+                            let call = Box::new(Call {
+                                parent,
+                                binding,
+                                kind,
+                                method,
+                                input,
+                                scope,
+                                attachments,
+                                slot,
+                                bytes,
+                                resources,
+                            });
+                            // Persistence owns no child Execution. Return the exact captured
+                            // call to this owner for final admission after the SQL task ends.
+                            self.jobs.push(Box::pin(async move {
+                                let recorded = store
+                                    .record_application_intent(
+                                        request.source,
+                                        request.consumer,
+                                        reference.expect("checked original reference"),
+                                    )
+                                    .await
+                                    .map(Box::new)
+                                    .map_err(|e| format!("caller intent was not confirmed: {e}"));
+                                Done::IntentRecorded { call, recorded }
+                            }));
+                            return;
+                        }
+                        let execution = execution.expect("accepted execution");
+                        let child = child.expect("accepted child scope");
+                        let intent = kind.take_intent();
                         let caller = scope;
                         let scope = child;
                         let consumer = binding.0.consumer().clone();
@@ -664,7 +749,8 @@ impl Owner {
                             let mut claim = None;
                             let mut receipt = None;
                             let dispatched = if let Some(request) = request {
-                                match store.as_ref().expect("persisted mutation").dispatch_operation(request).await {
+                                let store = store.as_ref().expect("persisted mutation");
+                                match store.dispatch_operation(request).await.map_err(|e| e.to_string()) {
                                     Ok(OperationDispatch::New(new)) => { claim = Some(new); Ok(()) },
                                     Ok(OperationDispatch::Existing(observation)) => { historical = Some(Box::new(observation)); Ok(()) },
                                     Err(error) => {
@@ -709,7 +795,7 @@ impl Owner {
                                 receipt=Some(Err("operation receipt unavailable; read original reference".into()));
                             }
                             Done::Called { parent, execution, result, historical, consumer, caller: Box::new(caller),
-                                scope: Box::new(scope), cleanup, receipt: receipt.map(Box::new), reply: output, _slot: slot, _bytes: bytes, attachments, _resources: resources }
+                                scope: Box::new(scope), cleanup, receipt: receipt.map(Box::new), reply: output, _slot: slot, _bytes: bytes, attachments, _resources: resources, intent }
                         }));
                     }
                 }
@@ -802,6 +888,21 @@ impl Owner {
     }
     fn complete(&mut self, done: Done) {
         match done {
+            Done::IntentRecorded { mut call, recorded } => match recorded {
+                Ok(intent) => {
+                    let CallKind::Mutation { recorded, .. } = &mut call.kind else {
+                        unreachable!("recording belongs to a mutation")
+                    };
+                    *recorded = Some(intent);
+                    self.command(Command::Call(call));
+                }
+                Err(error) => {
+                    if let Some(ticket) = call.parent.take() {
+                        ticket.complete(Ok(()));
+                    }
+                    call.kind.reject(error);
+                }
+            },
             Done::Initialized {
                 activation,
                 exports,
@@ -855,6 +956,7 @@ impl Owner {
                 _bytes,
                 attachments,
                 _resources,
+                intent,
             } => {
                 if let Some(observation) = historical {
                     receipt = Some(Box::new(
@@ -881,7 +983,12 @@ impl Owner {
                         _bytes,
                         _attachments: attachments,
                         _resources,
+                        _intent: intent,
                     });
+                } else {
+                    // Confirmed physical cleanup releases caller custody before waking
+                    // an observer that may immediately reopen the caller Root.
+                    drop(intent);
                 }
                 reply.send(result, cleanup, receipt.map(|receipt| *receipt));
             }
@@ -923,8 +1030,8 @@ impl Owner {
             Done::VmsClosed => self.closed = true,
         }
     }
-    fn publish(&self) {
-        self.updates.send_replace(Snapshot {
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
             starting: self.starting,
             startup_error: self.startup_error.clone(),
             closing: self.closing,
@@ -935,7 +1042,10 @@ impl Owner {
                 .values()
                 .map(|a| self.runtime.status(a).expect("live activation"))
                 .collect(),
-        });
+        }
+    }
+    fn publish(&self) {
+        self.updates.send_replace(self.snapshot());
     }
 }
 
