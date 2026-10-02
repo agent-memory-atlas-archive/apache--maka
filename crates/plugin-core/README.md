@@ -19,7 +19,7 @@
 
 # Plugin core
 
-Shared declarations and composition planning for Host, TUI and Desktop. This crate
+Shared declarations, composition planning and lifecycle authority for Host, TUI and Desktop. This crate
 has no dependency on Host business plugins, a JavaScript engine or a renderer.
 
 `composition::Input` is the editable deployment input. `plan::Plan::prepare` expands
@@ -33,6 +33,21 @@ Contract declarations derive their JSON schemas through `schemars`. Entry export
 batches must pass `EntryDeclaration::check_exports` before publication. Current
 compatibility is conservative: nominal name, version and full shape must match.
 Remote declarations prove compatibility only, never readiness or authority.
+
+`runtime::Runtime<T>` owns activation and registration epochs, atomically checks
+actual export batches, revokes consumers and tracks accepted execution and resource
+cleanup. The embedding adapter owns execution, cancellation and close confirmation;
+the core has no executor and imposes no `Send`/`Sync` bound on native values.
+Loading consumers can invoke live dependencies before publishing their own exports.
+Retirement closes admission; accepted work stays with its provider until explicit
+settlement. Dropping an executor token is not settlement. Failed or unknown cleanup
+fences replacement. Failure settlement returns newly retired owners so the adapter
+can deliver stop signals. Structural template imports route dependencies without
+turning them into dependencies of the whole product.
+
+Authorization and durable business-operation admission remain embedding obligations.
+This lifecycle kernel currently resolves local actual registrations; configured
+remote bindings remain unready until a transport registration adapter is implemented.
 
 Application packages use manifest schema version 2 and an `application` declaration.
 The CLI checks them without activating a deployment:

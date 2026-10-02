@@ -19,7 +19,7 @@
 
 # 插件核心
 
-Host、TUI 与 Desktop 共用的声明和组合解析机制，不依赖 Host 业务、JavaScript
+Host、TUI 与 Desktop 共用的声明、组合解析与生命周期权威，不依赖 Host 业务、JavaScript
 引擎或呈现框架。
 
 `composition::Input` 是可编辑的部署输入。`plan::Plan::prepare` 展开不可变包模板、
@@ -30,6 +30,16 @@ Host、TUI 与 Desktop 共用的声明和组合解析机制，不依赖 Host 业
 契约声明通过 `schemars` 派生 JSON schema。激活导出批次发布前必须通过
 `EntryDeclaration::check_exports`。目前采用保守兼容规则：名义名称、版本和完整
 公开结构一致。远端声明只能证明兼容，不能证明就绪或授予权限。
+
+`runtime::Runtime<T>` 管理激活和注册 epoch、原子检查实际导出批次、撤销消费者，
+并跟踪已接受执行及资源清理。执行适配器负责运行、取消和关闭确认；核心没有执行器，
+不要求原生值实现 `Send`/`Sync`。初始化中的消费者可以调用就绪依赖，然后才发布自身导出。
+撤销关闭新准入，已接受工作仍由提供者持有，直到明确结算；丢弃执行 token 不等于结算。
+失败或未知清理阻止替换，失败结算返回新撤销的 owner，供适配器发送停止信号。
+纯模板的 imports 只路由依赖，不成为整个产品的执行依赖。
+
+授权和持久业务操作准入仍由执行环境负责。此生命周期核心目前解析本地实际注册；
+配置的远端绑定在 transport 注册适配器实现前保持未就绪。
 
 应用包使用 Manifest schema version 2 的 `application` 声明。CLI 可以在不激活
 部署的情况下检查它们：

@@ -23,6 +23,7 @@ pub mod composition;
 pub mod contract;
 pub mod package;
 pub mod plan;
+pub mod runtime;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -32,6 +33,16 @@ pub enum Error {
     Composition(String),
     #[error("capability contract mismatch: {0}")]
     Contract(String),
+    #[error("plugin capability or activation is retired")]
+    Retired,
+    #[error("plugin capability is not ready: {0}")]
+    NotReady(String),
+    #[error("invalid plugin lifecycle transition: {0}")]
+    Lifecycle(&'static str),
+    #[error("plugin cleanup is pending")]
+    CleanupPending,
+    #[error("plugin cleanup is unconfirmed: {0:?}")]
+    CleanupFailed(Vec<String>),
 }
 
 pub(crate) fn name(value: &str) -> Result<(), Error> {
