@@ -43,6 +43,14 @@ imports or top-level await; they do not embed native extensions or confer author
 Host application services currently support queries; mutations, subscriptions and
 legacy business migration remain unfinished.
 
+Deployment sources can be stored in an owned State Root with
+`maka application commit --root ROOT --deployment UUID --expected-revision 0 --input input.json --package bundle.maka-plugin`.
+A replacement requires the observed revision. `maka application read --root ROOT --deployment UUID`
+validates the persisted source and exact package bytes. The returned `DeploymentRef` identifies
+that state domain and source revision; it grants no access and makes no readiness claim.
+The Host executor can start from this snapshot and retains storage ownership through accepted
+work and cleanup. Durable mutations, recovery of pending effects and live reconciliation remain unfinished.
+
 The `./host` API and the guide below belong to the implementation still awaiting
 migration and removal. They are not an adapter for the application API.
 

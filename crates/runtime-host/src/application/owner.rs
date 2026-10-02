@@ -77,6 +77,8 @@ pub(super) struct Owner {
     runtime: Runtime<Service>,
     // The source input remains the only composition authority; the plan is derived.
     _input: Input,
+    // This lease belongs to accepted work, including sticky cleanup failures.
+    _store: Option<Arc<maka_event_log::EventLog>>,
     pending: Vec<Instance>,
     activations: BTreeMap<InstanceId, Activation>,
     owned: BTreeMap<InstanceId, Owned>,
@@ -112,6 +114,7 @@ impl Owner {
         limits: Limits,
         updates: watch::Sender<Snapshot>,
         dispatch: Weak<Dispatch>,
+        store: Option<Arc<maka_event_log::EventLog>>,
     ) -> Self {
         Self {
             dispatch,
@@ -123,6 +126,7 @@ impl Owner {
                 .collect(),
             runtime: Runtime::new(plan),
             _input: input,
+            _store: store,
             activations: BTreeMap::new(),
             owned: BTreeMap::new(),
             sources,

@@ -27,13 +27,13 @@ use std::{
 use clap::{Args, Subcommand};
 use maka_plugin_core::{
     composition::Input,
-    contract::Export,
+    deployment::RemoteObservation,
     package::Packages,
-    plan::{Plan, RemoteCapability, RemoteExports},
+    plan::{Plan, RemoteExports},
 };
 use maka_plugins::package::Package;
 use maka_runtime_host::server::HostError;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 #[derive(Subcommand)]
 pub(super) enum Command {
@@ -43,6 +43,10 @@ pub(super) enum Command {
     Schema,
     /// Run a plugin composition with native terminal presentation.
     Run(Run),
+    /// Atomically commit desired deployment input and exact immutable bytes.
+    Commit(Commit),
+    /// Read and validate the persisted source and every selected package.
+    Read(ReadSource),
 }
 
 #[derive(Args)]
@@ -66,11 +70,26 @@ pub(super) struct Run {
     packages: Vec<PathBuf>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RemoteObservation {
-    capability: RemoteCapability,
-    declaration: Export,
+#[derive(Args)]
+pub(super) struct Commit {
+    /// Existing owned State Root.
+    #[arg(long)]
+    root: PathBuf,
+    #[arg(long)]
+    deployment: uuid::Uuid,
+    /// Zero creates; replacement requires the currently observed revision.
+    #[arg(long)]
+    expected_revision: u64,
+    #[command(flatten)]
+    source: Check,
+}
+
+#[derive(Args)]
+pub(super) struct ReadSource {
+    #[arg(long)]
+    root: PathBuf,
+    #[arg(long)]
+    deployment: uuid::Uuid,
 }
 
 #[derive(Serialize)]
@@ -82,17 +101,49 @@ struct Report<'a> {
 
 impl Command {
     pub(super) async fn run(self) -> Result<(), HostError> {
+        self.run_inner().await.map_err(|error| -> HostError {
+            maka_tui::application::sanitize(&error.to_string()).into()
+        })
+    }
+
+    async fn run_inner(self) -> Result<(), HostError> {
         match self {
             Self::Schema => println!("{}", serde_json::to_string_pretty(&schema::catalog())?),
             Self::Check(args) => {
                 let report = tokio::task::spawn_blocking(move || args.check()).await??;
                 println!("{report}");
             }
+            Self::Commit(args) => {
+                let (input, observations, packages) =
+                    tokio::task::spawn_blocking(move || args.source.read()).await??;
+                let store = open_store(args.root).await?;
+                let result = store
+                    .commit_application(
+                        args.deployment,
+                        args.expected_revision,
+                        input,
+                        observations,
+                        packages,
+                    )
+                    .await;
+                let closed = store.close().await;
+                let source = result?;
+                closed?;
+                println!("{}", serde_json::to_string_pretty(&source)?);
+            }
+            Self::Read(args) => {
+                let store = open_store(args.root).await?;
+                let result = store.load_application(args.deployment).await;
+                let closed = store.close().await;
+                let loaded = result?.ok_or("deployment not found")?;
+                closed?;
+                println!("{}", serde_json::to_string_pretty(&loaded.source)?);
+            }
             Self::Run(args) => {
                 // Keep the foreground VM on one dedicated blocking owner, with
                 // no deeply nested CLI async stack under V8 initialization.
                 let scheduler = tokio::runtime::Handle::current();
-                let result = tokio::task::spawn_blocking(move || -> Result<(), HostError> {
+                tokio::task::spawn_blocking(move || -> Result<(), HostError> {
                     let input: Input = read_json(&args.input)?;
                     let packages = args
                         .packages
@@ -103,14 +154,7 @@ impl Command {
                         .collect::<Result<Vec<_>, _>>()?;
                     maka_tui::application::run(&input, packages, scheduler).map_err(Into::into)
                 })
-                .await
-                .map_err(|error| -> HostError {
-                    maka_tui::application::sanitize(&error.to_string()).into()
-                })?;
-                // All errors from this terminal-facing command are untrusted.
-                result.map_err(|error| -> HostError {
-                    maka_tui::application::sanitize(&error.to_string()).into()
-                })?;
+                .await??;
             }
         }
         Ok(())
@@ -118,12 +162,32 @@ impl Command {
 }
 
 impl Check {
-    fn check(self) -> Result<String, HostError> {
-        let input: Input = read_json(&self.input)?;
-        let mut packages = Packages::default();
+    fn read(self) -> Result<(Input, Vec<RemoteObservation>, Vec<Package>), HostError> {
+        let input = read_json(&self.input)?;
+        if self.packages.len() > 128 {
+            return Err("application package count exceeds 128".into());
+        }
+        let mut size = 0usize;
+        let mut packages = Vec::new();
         for source in self.packages {
-            let source = std::path::absolute(source)?;
-            let package = Package::read_from(&source)?;
+            let package = Package::read_from(&std::path::absolute(source)?)?;
+            size += package.files().values().map(Vec::len).sum::<usize>();
+            if size > 128 * 1024 * 1024 {
+                return Err("application packages exceed 128 MiB".into());
+            }
+            packages.push(package);
+        }
+        let observations = self
+            .remote_exports
+            .map(|source| read_json(&source))
+            .transpose()?
+            .unwrap_or_default();
+        Ok((input, observations, packages))
+    }
+    fn check(self) -> Result<String, HostError> {
+        let (input, observations, bytes) = self.read()?;
+        let mut packages = Packages::default();
+        for package in bytes {
             let declaration = package
                 .manifest()
                 .application
@@ -132,15 +196,12 @@ impl Check {
             packages.insert(package.application_ref(), declaration.clone())?;
         }
         let mut remote = RemoteExports::new();
-        if let Some(source) = self.remote_exports {
-            let observations: Vec<RemoteObservation> = read_json(&source)?;
-            for observation in observations {
-                if remote
-                    .insert(observation.capability, observation.declaration)
-                    .is_some()
-                {
-                    return Err("duplicate remote capability observation".into());
-                }
+        for observation in observations {
+            if remote
+                .insert(observation.capability, observation.declaration)
+                .is_some()
+            {
+                return Err("duplicate remote capability observation".into());
             }
         }
         let plan = Plan::prepare(&input, &packages, &remote)?;
@@ -160,4 +221,15 @@ fn read_json<T: serde::de::DeserializeOwned>(source: &Path) -> Result<T, HostErr
         return Err("application input exceeds 512 KiB".into());
     }
     Ok(serde_json::from_slice(&bytes)?)
+}
+
+async fn open_store(root: PathBuf) -> Result<maka_event_log::EventLog, HostError> {
+    let owner = tokio::task::spawn_blocking(move || {
+        maka_event_log::root::RootOwner::open(
+            &root,
+            &maka_event_log::root::RootNamespaces::for_current_account()?,
+        )
+    })
+    .await??;
+    Ok(maka_event_log::EventLog::for_root(std::sync::Arc::new(owner)).await?)
 }

@@ -32,6 +32,7 @@ pub(super) fn catalog() -> Value {
     let mut g = SchemaGenerator::default();
     let roots = vec![
         root::<composition::Input>(&mut g),
+        root::<maka_plugin_core::deployment::Deployment>(&mut g),
         root::<package::Declaration>(&mut g),
         root::<package::PackageRef>(&mut g),
         root::<contract::Contract>(&mut g),

@@ -159,6 +159,7 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
             Limits::default(),
             watch::channel(Snapshot::default()).0,
             Weak::new(),
+            None,
         );
         owner.pending.clear();
         owner.starting = false;

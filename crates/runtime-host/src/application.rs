@@ -29,6 +29,7 @@ use maka_js_runtime::plugin::Limits;
 use maka_plugin_core::{
     composition::{ExecutionLocation, Input, InstanceId},
     contract::{Contract, Interface, MethodMode},
+    deployment::DeploymentRef,
     package::{Implementation, PackageRef, Packages},
     plan::{Plan, RemoteExports},
     runtime::{Activation, Capability, Published, Status},
@@ -194,6 +195,7 @@ pub struct Snapshot {
 pub struct Application {
     client: Client,
     stop: CancellationToken,
+    source: Option<DeploymentRef>,
 }
 impl Drop for Application {
     fn drop(&mut self) {
@@ -249,6 +251,54 @@ impl Application {
         issuer: Issuer,
         policy: Arc<dyn Policy>,
         limits: Limits,
+    ) -> Result<Self> {
+        Self::start_owned(input, packages, native, issuer, policy, limits, None)
+    }
+
+    /// Loads the original source and exact bytes in one storage snapshot.
+    /// The execution owner retains the storage lease through actual cleanup.
+    pub async fn start_from_store(
+        store: Arc<maka_event_log::EventLog>,
+        deployment: Uuid,
+        native: NativeRegistry,
+        issuer: Issuer,
+        policy: Arc<dyn Policy>,
+        limits: Limits,
+    ) -> Result<Self> {
+        let loaded = store
+            .load_application(deployment)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or("deployment not found")?;
+        // Persisted remote declarations are compatibility observations. This
+        // executor has no trusted remote transport and cannot turn them into grants.
+        if !loaded.source.remote_exports.is_empty() {
+            return Err("remote Host executor is unavailable".into());
+        }
+        Self::start_owned(
+            loaded.source.input,
+            loaded.packages,
+            native,
+            issuer,
+            policy,
+            limits,
+            Some((loaded.source.reference, store)),
+        )
+    }
+
+    pub fn source(&self) -> Option<&DeploymentRef> {
+        self.source.as_ref()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_owned(
+        input: Input,
+        packages: Vec<Package>,
+        native: NativeRegistry,
+        issuer: Issuer,
+        policy: Arc<dyn Policy>,
+        limits: Limits,
+        persisted: Option<(DeploymentRef, Arc<maka_event_log::EventLog>)>,
     ) -> Result<Self> {
         if input.environment.location != ExecutionLocation::Host || input.launch.is_some() {
             return Err("Host service deployment required".into());
@@ -310,6 +360,8 @@ impl Application {
             control,
             updates: observations,
         };
+        let (source, store) =
+            persisted.map_or((None, None), |(source, store)| (Some(source), Some(store)));
         scheduler.spawn(
             owner::Owner::new(
                 plan,
@@ -321,10 +373,15 @@ impl Application {
                 limits,
                 updates,
                 Arc::downgrade(&dispatch),
+                store,
             )
             .run(receiver, controls, stop.clone()),
         );
-        Ok(Self { client, stop })
+        Ok(Self {
+            client,
+            stop,
+            source,
+        })
     }
     pub fn client(&self) -> Client {
         self.client.clone()

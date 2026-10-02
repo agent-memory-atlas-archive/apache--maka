@@ -40,6 +40,13 @@ Bundle 必须没有未解析 import 和顶层 await；它不包含原生扩展�
 
 Host 应用服务目前支持 query；mutation、subscription 和旧业务迁移仍未完成。
 
+可以通过 `maka application commit --root ROOT --deployment UUID --expected-revision 0 --input input.json --package bundle.maka-plugin`
+将部署来源存入实际持锁的 State Root；替换时必须提供已观察的修订号。
+`maka application read --root ROOT --deployment UUID` 会检查已保存的输入与精确包字节。
+返回的 `DeploymentRef` 只标识数据域与来源修订，不授予权限，也不表示运行就绪。
+Host 可以从该快照启动，并在已接受的工作及资源实际收尾期间保留存储所有权。
+持久 mutation、未结副作用恢复与在线组合收敛仍待实现。
+
 `./host` API 及下方指南属于仍待迁移和删除的旧实现，不是新应用 API 的适配层。
 
 Rust Runtime Host 的公开 TypeScript 契约。当前为 **Host SDK 3**、

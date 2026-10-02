@@ -21,6 +21,7 @@
 
 pub mod composition;
 pub mod contract;
+pub mod deployment;
 pub mod package;
 pub mod plan;
 pub mod runtime;

@@ -21,6 +21,7 @@
 
 export type RuntimeProtocol =
   | CompositionInput
+  | Deployment
   | PackageDeclaration
   | PackageRef
   | Contract
@@ -75,17 +76,6 @@ export type Target =
  * Hierarchical, stable source keys. Display aliases never become data identities.
  */
 export type InstanceId = string[];
-export type Implementation =
-  | {
-      module: string;
-      realm: Realm;
-      kind: 'javascript';
-    }
-  | {
-      implementation: string;
-      kind: 'native';
-    };
-export type Realm = 'shared' | 'dedicated';
 export type Transport = 'local' | 'remote';
 export type Interface =
   | {
@@ -114,6 +104,18 @@ export type Interface =
       kind: 'resource';
     };
 export type MethodMode = 'query' | 'mutation' | 'subscription';
+export type Availability = 'required' | 'optional';
+export type Implementation =
+  | {
+      module: string;
+      realm: Realm;
+      kind: 'javascript';
+    }
+  | {
+      implementation: string;
+      kind: 'native';
+    };
+export type Realm = 'shared' | 'dedicated';
 export type Cardinality =
   | {
       kind: 'one';
@@ -126,7 +128,6 @@ export type Cardinality =
       max: number;
       kind: 'many';
     };
-export type Availability = 'required' | 'optional';
 /**
  * Input origin is assigned by the application, never by plugin event payloads.
  */
@@ -335,27 +336,31 @@ export interface Override {
   };
   disabled?: boolean | null;
 }
-export interface PackageDeclaration {
-  entries?: {
-    desktop?: EntryDeclaration;
-    host?: EntryDeclaration;
-    tui?: EntryDeclaration;
-  };
-  composition?: Template | null;
+export interface Deployment {
+  reference: DeploymentRef;
+  input: CompositionInput;
+  remoteExports: RemoteObservation[];
 }
-export interface EntryDeclaration {
-  implementation: Implementation;
-  configuration: unknown;
-  imports?: {
-    [k: string]: Import | undefined;
-  };
-  exports?: {
-    [k: string]: Export | undefined;
-  };
+export interface DeploymentRef {
+  stateDomain: string;
+  deployment: string;
+  revision: number;
 }
-export interface Import {
+/**
+ * A static compatibility observation, never a remote registration or grant.
+ */
+export interface RemoteObservation {
+  capability: RemoteCapability;
+  declaration: Export;
+}
+export interface RemoteCapability {
+  deployment: string;
+  instance: InstanceId;
+  export: string;
+}
+export interface Export {
   contract: Contract;
-  cardinality: Cardinality;
+  availability: Availability;
 }
 /**
  * Public contract definitions are package data, not live registration records.
@@ -385,9 +390,27 @@ export interface Capture {
   input: unknown;
   resource: ResourceType;
 }
-export interface Export {
+export interface PackageDeclaration {
+  entries?: {
+    desktop?: EntryDeclaration;
+    host?: EntryDeclaration;
+    tui?: EntryDeclaration;
+  };
+  composition?: Template | null;
+}
+export interface EntryDeclaration {
+  implementation: Implementation;
+  configuration: unknown;
+  imports?: {
+    [k: string]: Import | undefined;
+  };
+  exports?: {
+    [k: string]: Export | undefined;
+  };
+}
+export interface Import {
   contract: Contract;
-  availability: Availability;
+  cardinality: Cardinality;
 }
 export interface Template {
   parameters?: {

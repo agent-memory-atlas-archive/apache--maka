@@ -20,6 +20,7 @@
 //! Separate prototype database; does not open or migrate old Maka State Roots.
 
 mod append;
+pub mod applications;
 pub mod archive;
 pub mod artifacts;
 pub mod bundle;

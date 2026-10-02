@@ -719,3 +719,34 @@ INSERT INTO session_catalog_revision VALUES (1, 0);
 INSERT INTO plugin_composition VALUES (1, '{"generation":0,"packageLayers":[],"overlays":[]}');
 
 PRAGMA user_version = 1;
+
+
+-- Application Input is authoritative; a runtime Plan is only a projection.
+CREATE TABLE application_deployments (
+    id TEXT PRIMARY KEY NOT NULL,
+    revision INTEGER NOT NULL CHECK(revision BETWEEN 1 AND 9007199254740991),
+    input_json TEXT NOT NULL CHECK(json_valid(input_json)),
+    remote_exports_json TEXT NOT NULL CHECK(json_valid(remote_exports_json))
+);
+CREATE TABLE application_packages (
+    id TEXT NOT NULL,
+    revision TEXT NOT NULL,
+    PRIMARY KEY(id, revision)
+);
+CREATE TABLE application_package_files (
+    id TEXT NOT NULL,
+    revision TEXT NOT NULL,
+    path TEXT NOT NULL,
+    payload BLOB NOT NULL,
+    PRIMARY KEY(id, revision, path),
+    FOREIGN KEY(id, revision) REFERENCES application_packages(id, revision) ON DELETE CASCADE
+);
+CREATE TABLE application_deployment_packages (
+    deployment TEXT NOT NULL REFERENCES application_deployments(id) ON DELETE CASCADE,
+    id TEXT NOT NULL,
+    revision TEXT NOT NULL,
+    PRIMARY KEY(deployment, id, revision),
+    FOREIGN KEY(id, revision) REFERENCES application_packages(id, revision)
+);
+
+CREATE INDEX application_package_references ON application_deployment_packages(id, revision);

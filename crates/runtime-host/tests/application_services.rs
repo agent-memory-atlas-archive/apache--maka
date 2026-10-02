@@ -17,6 +17,9 @@
  * under the License.
  */
 
+#[path = "application_services/persistence.rs"]
+mod persistence;
+
 use futures_util::{FutureExt, future::BoxFuture};
 use maka_js_runtime::plugin::Limits;
 use maka_plugin_core::{
