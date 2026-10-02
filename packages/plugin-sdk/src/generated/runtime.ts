@@ -40,6 +40,8 @@ export type RuntimeProtocol =
   | TextChunk
   | HostActivation
   | HostRequest
+  | HostObservation
+  | OperationObservation
   | ResourceMetadata;
 export type ExecutionLocation = 'host' | 'ui';
 export type PresentationTarget = 'tui' | 'desktop';
@@ -255,6 +257,14 @@ export type HostRequest =
       operation: 'call';
     }
   | {
+      import: string;
+      provider: number;
+      method: string;
+      input: unknown;
+      operationId: string;
+      operation: 'mutate';
+    }
+  | {
       slot: string;
       operation: 'metadata';
     }
@@ -263,6 +273,55 @@ export type HostRequest =
       start: number;
       end: number;
       operation: 'read';
+    };
+export type Identity =
+  | {
+      invocation: Invocation;
+      operationId?: string | null;
+      kind: 'agent';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      requestId: string;
+      kind: 'remote';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      grant: Id;
+      kind: 'background';
+      [k: string]: unknown | undefined;
+    };
+/**
+ * Resolving a reference requires the original package/scope, a live activation,
+ * an unrevoked Host record and the issuing principal's current authorization.
+ */
+export type Id = string;
+export type RecoveryProtocol = 'journal_v1';
+/**
+ * Unresolved means no durable result is known, including after process loss.
+ */
+export type OperationOutcome =
+  | {
+      kind: 'unresolved';
+    }
+  | {
+      value: unknown;
+      kind: 'returned';
+    }
+  | {
+      diagnostic: string;
+      kind: 'unknown';
+    };
+export type OperationCleanup =
+  | {
+      kind: 'unconfirmed';
+    }
+  | {
+      kind: 'confirmed';
+    }
+  | {
+      diagnostic: string;
+      kind: 'failed';
     };
 
 /**
@@ -525,6 +584,35 @@ export interface TextChunk {
 export interface HostActivation {
   contract: Contract;
   service: string[];
+}
+/**
+ * Actual callback observation. Neither the source nor receipt is a grant.
+ */
+export interface HostObservation {
+  source: Identity;
+  operation?: RecoveryRef | null;
+}
+export interface Invocation {
+  session_id: string;
+  turn_id: string;
+  run_id: string;
+  invocation_id: string;
+  [k: string]: unknown | undefined;
+}
+export interface RecoveryRef {
+  source: DeploymentRef;
+  namespace: InstanceId;
+  export: string;
+  method: string;
+  operation: string;
+  fingerprint: string;
+  contract: Contract;
+  recovery: RecoveryProtocol;
+}
+export interface OperationObservation {
+  reference: RecoveryRef;
+  outcome: OperationOutcome;
+  cleanup: OperationCleanup;
 }
 export interface ResourceMetadata {
   type: ResourceType;

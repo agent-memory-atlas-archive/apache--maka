@@ -22,7 +22,7 @@ export type * from './generated/runtime.js';
 export { contracts } from './contracts.js';
 
 import type { ComponentInput, ComponentOutput, CapturePlan } from './generated/runtime.js';
-import type { HostRequest } from './generated/runtime.js';
+import type { HostRequest, HostObservation } from './generated/runtime.js';
 
 /** State is private to this component; external props and events still need their contract. */
 export type Output<State = unknown> = Omit<ComponentOutput, 'frame'> & {
@@ -44,5 +44,5 @@ export interface RequestContext {
 
 export type HostService = Record<
   string,
-  (input: unknown, observation: unknown, context: RequestContext) => unknown
+  (input: unknown, observation: HostObservation, context: RequestContext) => unknown
 >;

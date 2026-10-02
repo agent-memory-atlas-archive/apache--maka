@@ -93,6 +93,13 @@ impl maka_js_runtime::plugin::RequestBridge for Context {
                     .collect::<Result<Attachments>>()?;
                 self.call(&import, provider, method, input, attachments)
             }
+            HostRequest::Mutate {
+                import,
+                provider,
+                method,
+                input,
+                operation_id,
+            } => self.mutate(&import, provider, method, input, operation_id),
             operation => {
                 let result = self.read(operation);
                 Ok(Box::pin(async move { result }) as BoxFuture<'static, Result<Value>>)
@@ -114,7 +121,7 @@ impl Context {
         }
         let slot = match &operation {
             HostRequest::Metadata { slot } | HostRequest::Read { slot, .. } => slot,
-            HostRequest::Call { .. } => unreachable!(),
+            HostRequest::Call { .. } | HostRequest::Mutate { .. } => unreachable!(),
         };
         let resource = self
             .attachments
@@ -143,7 +150,7 @@ impl Context {
                 }
                 Ok(serde_json::json!(bytes))
             }
-            HostRequest::Call { .. } => unreachable!(),
+            HostRequest::Call { .. } | HostRequest::Mutate { .. } => unreachable!(),
         }));
         match result {
             Ok(result) => {

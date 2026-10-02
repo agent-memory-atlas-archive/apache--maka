@@ -721,12 +721,18 @@ INSERT INTO plugin_composition VALUES (1, '{"generation":0,"packageLayers":[],"o
 PRAGMA user_version = 1;
 
 
--- Application Input is authoritative; a runtime Plan is only a projection.
-CREATE TABLE application_deployments (
-    id TEXT PRIMARY KEY NOT NULL,
+-- Application Input is authoritative; immutable revisions preserve original operation sources.
+CREATE TABLE application_sources (
+    deployment TEXT NOT NULL,
     revision INTEGER NOT NULL CHECK(revision BETWEEN 1 AND 9007199254740991),
     input_json TEXT NOT NULL CHECK(json_valid(input_json)),
-    remote_exports_json TEXT NOT NULL CHECK(json_valid(remote_exports_json))
+    remote_exports_json TEXT NOT NULL CHECK(json_valid(remote_exports_json)),
+    PRIMARY KEY(deployment, revision)
+);
+CREATE TABLE application_deployments (
+    id TEXT PRIMARY KEY NOT NULL,
+    revision INTEGER NOT NULL,
+    FOREIGN KEY(id, revision) REFERENCES application_sources(deployment, revision)
 );
 CREATE TABLE application_packages (
     id TEXT NOT NULL,
@@ -741,12 +747,25 @@ CREATE TABLE application_package_files (
     PRIMARY KEY(id, revision, path),
     FOREIGN KEY(id, revision) REFERENCES application_packages(id, revision) ON DELETE CASCADE
 );
-CREATE TABLE application_deployment_packages (
-    deployment TEXT NOT NULL REFERENCES application_deployments(id) ON DELETE CASCADE,
+CREATE TABLE application_source_packages (
+    deployment TEXT NOT NULL,
+    source_revision INTEGER NOT NULL,
     id TEXT NOT NULL,
     revision TEXT NOT NULL,
-    PRIMARY KEY(deployment, id, revision),
+    PRIMARY KEY(deployment, source_revision, id, revision),
+    FOREIGN KEY(deployment, source_revision) REFERENCES application_sources(deployment, revision),
     FOREIGN KEY(id, revision) REFERENCES application_packages(id, revision)
 );
+CREATE INDEX application_package_references ON application_source_packages(id, revision);
 
-CREATE INDEX application_package_references ON application_deployment_packages(id, revision);
+CREATE TABLE application_operations (
+    deployment TEXT NOT NULL,
+    namespace TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    source_revision INTEGER NOT NULL,
+    request_json TEXT NOT NULL CHECK(json_valid(request_json)),
+    outcome_json TEXT NOT NULL CHECK(json_valid(outcome_json)),
+    cleanup_json TEXT NOT NULL CHECK(json_valid(cleanup_json)),
+    PRIMARY KEY(deployment, namespace, operation),
+    FOREIGN KEY(deployment, source_revision) REFERENCES application_sources(deployment, revision)
+);

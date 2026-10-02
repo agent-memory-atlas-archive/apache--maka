@@ -24,11 +24,15 @@ use super::*;
 /// guest-supplied global name. Calls preserve the original private Scope evidence.
 pub struct Context {
     pub(super) scope: Scope,
+    pub(super) operation: Option<RecoveryRef>,
     pub(super) attachments: Attachments,
     pub(super) imports: Arc<BTreeMap<String, Vec<Binding>>>,
     pub(super) dispatch: Weak<Dispatch>,
 }
 impl Context {
+    pub fn operation(&self) -> Option<&RecoveryRef> {
+        self.operation.as_ref()
+    }
     pub fn scope(&self) -> &Scope {
         &self.scope
     }
@@ -45,6 +49,35 @@ impl Context {
         method: String,
         input: Value,
         attachments: Attachments,
+    ) -> Result<BoxFuture<'static, Result<Value>>> {
+        self.enqueue(import, provider, method, input, attachments, None)
+    }
+    pub fn mutate(
+        &self,
+        import: &str,
+        provider: usize,
+        method: String,
+        input: Value,
+        operation: Uuid,
+    ) -> Result<BoxFuture<'static, Result<Value>>> {
+        self.enqueue(
+            import,
+            provider,
+            method,
+            input,
+            Attachments::new(),
+            Some(operation),
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue(
+        &self,
+        import: &str,
+        provider: usize,
+        method: String,
+        input: Value,
+        attachments: Attachments,
+        operation: Option<Uuid>,
     ) -> Result<BoxFuture<'static, Result<Value>>> {
         if self.scope.cancellation.is_cancelled() {
             return Err("Host request was revoked".into());
@@ -66,6 +99,7 @@ impl Context {
             self.scope.clone(),
             attachments,
             Some(ticket),
+            operation,
         )?;
         Ok(Box::pin(async move {
             result

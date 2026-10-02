@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 /// Resolving a reference requires the original package/scope, a live activation,
 /// an unrevoked Host record and the issuing principal's current authorization.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct Id(pub Uuid);
 

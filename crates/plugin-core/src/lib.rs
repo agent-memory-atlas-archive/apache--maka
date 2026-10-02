@@ -22,6 +22,7 @@
 pub mod composition;
 pub mod contract;
 pub mod deployment;
+pub mod operation;
 pub mod package;
 pub mod plan;
 pub mod runtime;
@@ -56,6 +57,15 @@ pub(crate) fn name(value: &str) -> Result<(), Error> {
         return Err(Error::Declaration(format!("invalid name: {value:?}")));
     }
     Ok(())
+}
+
+pub(crate) fn content_hash(value: &str) -> bool {
+    value.strip_prefix("sha256-").is_some_and(|hash| {
+        hash.len() == 64
+            && hash
+                .bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+    })
 }
 
 pub(crate) fn schema(value: &serde_json::Value) -> Result<(), Error> {

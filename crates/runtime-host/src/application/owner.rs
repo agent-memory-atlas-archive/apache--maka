@@ -19,6 +19,7 @@
 
 use super::*;
 use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
+use maka_event_log::applications::operations::{Dispatch as OperationDispatch, OperationRequest};
 use maka_js_runtime::plugin::Vm;
 use maka_plugin_core::{
     package::Realm,
@@ -57,6 +58,9 @@ enum Done {
         parent: Option<Ticket>,
         execution: Execution<Service>,
         result: Result<Value>,
+        historical: Option<Box<OperationObservation>>,
+        consumer: Activation,
+        caller: Box<Scope>,
         scope: Box<Scope>,
         cleanup: Result<()>,
         reply: oneshot::Sender<Result<Value>>,
@@ -64,6 +68,16 @@ enum Done {
         _bytes: OwnedSemaphorePermit,
         attachments: Attachments,
         _resources: OwnedSemaphorePermit,
+    },
+    Recovered {
+        consumer: Activation,
+        reference: Box<RecoveryRef>,
+        caller: Box<Scope>,
+        resource: Resource,
+        result: Box<Result<Option<OperationObservation>>>,
+        reply: oneshot::Sender<Result<Option<OperationObservation>>>,
+        _slot: OwnedSemaphorePermit,
+        _bytes: OwnedSemaphorePermit,
     },
     Closed {
         activation: Activation,
@@ -78,7 +92,7 @@ pub(super) struct Owner {
     // The source input remains the only composition authority; the plan is derived.
     _input: Input,
     // This lease belongs to accepted work, including sticky cleanup failures.
-    _store: Option<Arc<maka_event_log::EventLog>>,
+    persisted: Option<(DeploymentRef, Arc<maka_event_log::EventLog>)>,
     pending: Vec<Instance>,
     activations: BTreeMap<InstanceId, Activation>,
     owned: BTreeMap<InstanceId, Owned>,
@@ -114,7 +128,7 @@ impl Owner {
         limits: Limits,
         updates: watch::Sender<Snapshot>,
         dispatch: Weak<Dispatch>,
-        store: Option<Arc<maka_event_log::EventLog>>,
+        persisted: Option<(DeploymentRef, Arc<maka_event_log::EventLog>)>,
     ) -> Self {
         Self {
             dispatch,
@@ -126,7 +140,7 @@ impl Owner {
                 .collect(),
             runtime: Runtime::new(plan),
             _input: input,
-            _store: store,
+            persisted,
             activations: BTreeMap::new(),
             owned: BTreeMap::new(),
             sources,
@@ -502,6 +516,7 @@ impl Owner {
                 let Call {
                     mut parent,
                     binding,
+                    operation,
                     method,
                     input,
                     scope,
@@ -533,6 +548,43 @@ impl Owner {
                         .ok_or_else(|| "undeclared service method".to_string())?
                         .input
                         .validate(&input)
+                        .map_err(|e| e.to_string())?;
+                    let Interface::Service { methods } = &service.contract.interface else {
+                        unreachable!()
+                    };
+                    let declared_method = &methods[&method];
+                    if operation.is_some_and(|id| id.is_nil())
+                        || match declared_method.mode {
+                            MethodMode::Query => operation.is_some(),
+                            MethodMode::Mutation => operation.is_none(),
+                            MethodMode::Subscription => true,
+                        }
+                    {
+                        return Err("service method mode or operation identity mismatch".into());
+                    }
+                    let request = operation
+                        .map(|operation| {
+                            let (source, _) = self
+                                .persisted
+                                .as_ref()
+                                .ok_or("durable mutation requires original deployment source")?;
+                            Ok::<OperationRequest, String>(OperationRequest {
+                                source: source.clone(),
+                                namespace: binding.provider().instance().clone(),
+                                consumer: binding.0.consumer().instance().clone(),
+                                export: binding.0.export().into(),
+                                method: method.clone(),
+                                contract: service.contract.clone(),
+                                operation,
+                                input: input.clone(),
+                                origin: scope.identity.clone(),
+                            })
+                        })
+                        .transpose()?;
+                    let reference = request
+                        .as_ref()
+                        .map(OperationRequest::reference)
+                        .transpose()
                         .map_err(|e| e.to_string())?;
                     match std::panic::catch_unwind(AssertUnwindSafe(|| {
                         let Interface::Service { methods } = &service.contract.interface else {
@@ -578,18 +630,23 @@ impl Owner {
                     }
                     let child = scope.child().map_err(|e| e.to_string())?;
                     let execution = self.runtime.admit(&binding.0).map_err(|e| e.to_string())?;
-                    Ok((execution, child))
+                    Ok((execution, child, request, reference))
                 })();
                 match admission {
                     Err(error) => {
                         let _ = reply.send(Err(error));
                     }
-                    Ok((execution, scope)) => {
+                    Ok((execution, child, request, reference)) => {
+                        let caller = scope;
+                        let scope = child;
+                        let consumer = binding.0.consumer().clone();
+                        let store = self.persisted.as_ref().map(|(_, store)| store.clone());
                         if let Some(ticket) = &mut parent {
                             ticket.start();
                         }
                         let context = Context {
                             scope: scope.clone(),
+                            operation: reference.clone(),
                             attachments: attachments.clone(),
                             imports: self.owned[execution.provider().instance()].imports.clone(),
                             dispatch: self.dispatch.clone(),
@@ -597,58 +654,139 @@ impl Owner {
                         let (output, result) = oneshot::channel();
                         let id = execution.id();
                         self.jobs.push(Box::pin(async move {
+                            let mut historical = None;
+                            let mut claim = None;
+                            let dispatched = if let Some(request) = request {
+                                match store.as_ref().expect("persisted mutation").dispatch_operation(request).await {
+                                    Ok(OperationDispatch::New(new)) => { claim = Some(new); Ok(()) },
+                                    Ok(OperationDispatch::Existing(observation)) => { historical = Some(Box::new(observation)); Ok(()) },
+                                    Err(error) => Err(format!("operation dispatch was not confirmed: {error}")),
+                                }
+                            } else { Ok(()) };
                             let invocation = async {
+                                dispatched?;
+                                if historical.is_some() { return Ok::<Value, String>(Value::Null); }
+                                if scope.cancellation.is_cancelled() { return Err("Host invocation was revoked before callback".into()); }
                                 let service = execution.value();
                                 let value = match &service.implementation {
-                                    ImplementationValue::Native(provider) => {
-                                        provider.call(method.clone(), input, context).await
-                                    }
-                                    ImplementationValue::JavaScript(callbacks) => callbacks
-                                        .call_with_context(
-                                            &method,
-                                            vec![
-                                                input,
-                                                serde_json::json!({"source":scope.identity}),
-                                            ],
-                                            Arc::new(context),
-                                        )
-                                        .await
-                                        .map_err(|e| e.to_string()),
+                                    ImplementationValue::Native(provider) => provider.call(method.clone(), input, context).await,
+                                    ImplementationValue::JavaScript(callbacks) => callbacks.call_with_context(
+                                        &method, vec![input, serde_json::to_value(abi::HostObservation {source:scope.identity.clone(), operation:context.operation().cloned()}).map_err(|e| e.to_string())?], Arc::new(context),
+                                    ).await.map_err(|e| e.to_string()),
                                 }?;
                                 check_json(&value)?;
-                                service.methods[&method]
-                                    .output
-                                    .validate(&value)
-                                    .map_err(|e| e.to_string())?;
+                                service.methods[&method].output.validate(&value).map_err(|e| e.to_string())?;
                                 Ok(value)
                             };
                             let result = AssertUnwindSafe(invocation).catch_unwind().await;
                             let cleanup = scope.finish().await.map_err(|e| e.to_string());
-                            let (result, cleanup) = match result {
+                            let (mut result, cleanup) = match result {
                                 Ok(result) => (result, cleanup),
-                                Err(_) => (
-                                    Err("Host query executor panicked".into()),
-                                    Err("Host query executor disappeared".into()),
-                                ),
+                                Err(_) => (Err("Host service executor panicked".into()), Err("Host service executor disappeared".into())),
                             };
-                            Done::Called {
-                                parent,
-                                execution,
-                                result,
-                                scope: Box::new(scope),
-                                cleanup,
-                                reply: output,
-                                _slot: slot,
-                                _bytes: bytes,
-                                attachments,
-                                _resources: resources,
+                            if let Some(claim) = claim {
+                                let outcome = match &result {
+                                    Ok(value) => OperationOutcome::Returned { value: value.clone() },
+                                    Err(error) => OperationOutcome::Unknown { diagnostic: diagnostic(error) },
+                                };
+                                let settled_cleanup = match &cleanup {
+                                    Ok(()) => OperationCleanup::Confirmed,
+                                    Err(error) => OperationCleanup::Failed { diagnostic: diagnostic(error) },
+                                };
+                                if let Err(error) = store.as_ref().expect("original operation store").finish_operation(&claim, outcome, settled_cleanup).await {
+                                    // Durable uncertainty is not failed physical cleanup.
+                                    result = Err(format!("operation settlement outcome unknown; read original receipt: {error}"));
+                                }
                             }
+                            Done::Called { parent, execution, result, historical, consumer, caller: Box::new(caller),
+                                scope: Box::new(scope), cleanup, reply: output, _slot: slot, _bytes: bytes, attachments, _resources: resources }
                         }));
-                        let _ = reply.send(Ok(Accepted { id, result }));
+                        let _ = reply.send(Ok(Accepted {
+                            id,
+                            recovery: reference,
+                            result,
+                        }));
                     }
                 }
             }
+            Command::Recover {
+                consumer,
+                reference,
+                scope,
+                reply,
+                _slot,
+                _bytes,
+            } => {
+                let admission = self
+                    .recovery_gate(&consumer, &reference, &scope)
+                    .and_then(|()| {
+                        let store = self
+                            .persisted
+                            .as_ref()
+                            .ok_or("operation recovery requires an owned State Root")?
+                            .1
+                            .clone();
+                        let resource = self
+                            .runtime
+                            .own_resource(&consumer, "original operation receipt lookup")
+                            .map_err(|e| e.to_string())?;
+                        Ok((store, resource))
+                    });
+                match admission {
+                    Err(error) => {
+                        let _ = reply.send(Err(error));
+                    }
+                    Ok((store, resource)) => self.jobs.push(Box::pin(async move {
+                        let result = store
+                            .operation_observation(&reference)
+                            .await
+                            .map_err(|e| e.to_string());
+                        Done::Recovered {
+                            consumer,
+                            reference,
+                            caller: Box::new(scope),
+                            resource,
+                            result: Box::new(result),
+                            reply,
+                            _slot,
+                            _bytes,
+                        }
+                    })),
+                }
+            }
         }
+    }
+    fn recovery_gate(
+        &mut self,
+        consumer: &Activation,
+        reference: &RecoveryRef,
+        scope: &Scope,
+    ) -> Result<()> {
+        if self.closing || !self.issuer.owns(scope) || scope.cancellation.is_cancelled() {
+            return Err("foreign or closed Host recovery invocation".into());
+        }
+        self.check_vm(consumer)?;
+        if self
+            .runtime
+            .status(consumer)
+            .map_err(|e| e.to_string())?
+            .phase
+            != Phase::Active
+        {
+            return Err("Host recovery consumer is not active".into());
+        }
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            self.policy.recover(RecoveryInvocation {
+                scope,
+                consumer,
+                reference,
+            })
+        }));
+        result.map_err(|_| "Host recovery policy panicked".to_string())??;
+        if scope.cancellation.is_cancelled() {
+            return Err("Host recovery invocation was revoked".into());
+        }
+        Ok(())
     }
     fn complete(&mut self, done: Done) {
         match done {
@@ -693,7 +831,10 @@ impl Owner {
             Done::Called {
                 parent,
                 execution,
-                result,
+                mut result,
+                historical,
+                consumer,
+                caller,
                 scope,
                 cleanup,
                 reply,
@@ -702,6 +843,20 @@ impl Owner {
                 attachments,
                 _resources,
             } => {
+                if let Some(observation) = historical {
+                    result = self
+                        .recovery_gate(&consumer, &observation.reference, &caller)
+                        .and_then(|()| match observation.outcome {
+                            OperationOutcome::Returned { value } => Ok(value),
+                            OperationOutcome::Unknown { diagnostic } => {
+                                Err(format!("original operation outcome unknown: {diagnostic}"))
+                            }
+                            OperationOutcome::Unresolved => Err(
+                                "original operation outcome unresolved; no replay was performed"
+                                    .into(),
+                            ),
+                        });
+                }
                 let _ = self.check_vm(execution.provider());
                 let failed = cleanup.is_err();
                 let cleanup_error = cleanup.as_ref().err().cloned();
@@ -723,6 +878,24 @@ impl Owner {
                         _resources,
                     });
                 }
+                let _ = reply.send(result);
+            }
+            Done::Recovered {
+                consumer,
+                reference,
+                caller,
+                resource,
+                result,
+                reply,
+                _slot,
+                _bytes,
+            } => {
+                let result = self
+                    .recovery_gate(&consumer, &reference, &caller)
+                    .and(*result);
+                self.runtime
+                    .complete_resource(&resource, Ok(()))
+                    .expect("owned receipt lookup");
                 let _ = reply.send(result);
             }
             Done::Closed { activation, result } => {
@@ -755,6 +928,30 @@ impl Owner {
                 .collect(),
         });
     }
+}
+
+fn diagnostic(error: &str) -> String {
+    // Keep the encoded diagnostic within the journal budget as well as its
+    // raw UTF-8 size. A control character may occupy six JSON bytes.
+    let mut size = 0;
+    let mut end = 0;
+    for (offset, character) in error.char_indices() {
+        let bytes = match character {
+            '"' | '\\' | '\n' | '\r' | '\t' | '\u{08}' | '\u{0c}' => 2,
+            '\u{00}'..='\u{1f}' => 6,
+            _ => character.len_utf8(),
+        };
+        if size + bytes > 64 * 1024 - 64 {
+            break;
+        }
+        size += bytes;
+        end = offset + character.len_utf8();
+    }
+    let mut diagnostic = error[..end].to_owned();
+    if end < error.len() {
+        diagnostic.push('…');
+    }
+    diagnostic
 }
 
 #[cfg(test)]

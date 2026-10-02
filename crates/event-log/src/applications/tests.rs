@@ -22,7 +22,7 @@ use crate::root::{RootNamespaces, RootOwner};
 use maka_plugin_core::composition::{Environment, ExecutionLocation};
 use std::sync::Arc;
 
-fn input() -> Input {
+pub(super) fn input() -> Input {
     Input {
         environment: Environment {
             location: ExecutionLocation::Host,
@@ -32,7 +32,7 @@ fn input() -> Input {
         launch: None,
     }
 }
-async fn store() -> (tempfile::TempDir, EventLog) {
+pub(super) async fn store() -> (tempfile::TempDir, EventLog) {
     let dir = tempfile::tempdir().unwrap();
     let namespaces = RootNamespaces {
         ownership: dir.path().join("owners"),
@@ -84,6 +84,22 @@ async fn exact_source_cas_and_domain() {
             .reference,
         second
     );
+    assert_eq!(
+        store
+            .load_application_at(&first)
+            .await
+            .unwrap()
+            .unwrap()
+            .source
+            .reference,
+        first
+    );
+    let mut absent = first.clone();
+    absent.revision = 3;
+    assert!(store.load_application_at(&absent).await.unwrap().is_none());
+    let mut foreign = first.clone();
+    foreign.state_domain = "0".repeat(64);
+    assert!(store.load_application_at(&foreign).await.is_err());
     store.close().await.unwrap();
 }
 
@@ -96,7 +112,7 @@ async fn oversized_source_is_rejected_before_materialization() {
         .await
         .unwrap();
     store.connection.run(move |conn| Box::pin(async move {
-        sqlx::query("UPDATE application_deployments SET input_json = json_object('huge', printf('%.*c', 1048576, 'x')) WHERE id = ?")
+        sqlx::query("UPDATE application_sources SET input_json = json_object('huge', printf('%.*c', 1048576, 'x')) WHERE deployment = ?")
             .bind(id.to_string()).execute(conn).await?;
         Ok(())
     })).await.unwrap();
@@ -192,13 +208,13 @@ fn selected(package: &Package) -> Input {
 }
 
 #[tokio::test]
-async fn immutable_bytes_survive_shared_replacement_then_collect() {
+async fn immutable_bytes_preserve_every_committed_source_revision() {
     let (_dir, store) = store().await;
     let a = Uuid::new_v4();
     let b = Uuid::new_v4();
     let old = package("export default {}; // original");
     let new = package("export default {}; // replacement");
-    store
+    let original = store
         .commit_application(a, 0, selected(&old), vec![], vec![old.clone()])
         .await
         .unwrap();
@@ -235,7 +251,17 @@ async fn immutable_bytes_survive_shared_replacement_then_collect() {
         })
         .await
         .unwrap();
-    assert_eq!(count, 1);
+    assert_eq!(count, 2);
+    assert_eq!(
+        store
+            .load_application_at(&original)
+            .await
+            .unwrap()
+            .unwrap()
+            .packages[0]
+            .files(),
+        old.files()
+    );
     store.close().await.unwrap();
 }
 

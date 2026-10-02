@@ -18,6 +18,7 @@
  */
 
 //! Atomic durable application sources; no legacy composition translation.
+pub mod operations;
 use crate::{EventLog, StoreError};
 use maka_plugin_core::{
     composition::Input,
@@ -54,7 +55,7 @@ struct LimitedJson {
 impl Write for LimitedJson {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         if bytes.len() > self.limit.saturating_sub(self.bytes.len()) {
-            return Err(std::io::Error::other("application source exceeds 512 KiB"));
+            return Err(std::io::Error::other("JSON exceeds byte limit"));
         }
         self.bytes.extend_from_slice(bytes);
         Ok(bytes.len())
@@ -150,9 +151,10 @@ impl EventLog {
                 expected: expected_revision.to_string(), actual: current.to_string(),
             }); }
             let revision = expected_revision + 1;
-            sqlx::query("INSERT INTO application_deployments VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision, input_json=excluded.input_json, remote_exports_json=excluded.remote_exports_json")
+            sqlx::query("INSERT INTO application_sources VALUES (?, ?, ?, ?)")
                 .bind(&id).bind(revision as i64).bind(encoded).bind(remote).execute(&mut *tx).await?;
-            sqlx::query("DELETE FROM application_deployment_packages WHERE deployment = ?").bind(&id).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO application_deployments VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision")
+                .bind(&id).bind(revision as i64).execute(&mut *tx).await?;
             for package in bytes {
                 let reference = package.application_ref();
                 // Existing immutable content must match as well; never repair corruption by an overwrite.
@@ -169,11 +171,9 @@ impl EventLog {
                             .bind(&reference.id).bind(&reference.revision).bind(path).bind(payload).execute(&mut *tx).await?;
                     }
                 }
-                sqlx::query("INSERT INTO application_deployment_packages VALUES (?, ?, ?)")
-                    .bind(&id).bind(&reference.id).bind(&reference.revision).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO application_source_packages VALUES (?, ?, ?, ?)")
+                    .bind(&id).bind(revision as i64).bind(&reference.id).bind(&reference.revision).execute(&mut *tx).await?;
             }
-            sqlx::query("DELETE FROM application_packages WHERE NOT EXISTS (SELECT 1 FROM application_deployment_packages p WHERE p.id=application_packages.id AND p.revision=application_packages.revision)")
-                .execute(&mut *tx).await?;
             tx.commit().await.map_err(StoreError::CommitUnknown)?;
             commits.send_modify(|_| {});
             Ok(DeploymentRef { state_domain: domain, deployment, revision })
@@ -184,6 +184,27 @@ impl EventLog {
         &self,
         deployment: Uuid,
     ) -> Result<Option<LoadedDeployment>, StoreError> {
+        self.read_application(deployment, None).await
+    }
+
+    /// Reads a committed original revision, independent of the current head.
+    pub async fn load_application_at(
+        &self,
+        reference: &DeploymentRef,
+    ) -> Result<Option<LoadedDeployment>, StoreError> {
+        reference.validate().map_err(invalid)?;
+        if reference.state_domain != self.application_domain()? {
+            return Err(invalid("foreign application state domain"));
+        }
+        self.read_application(reference.deployment, Some(reference.revision))
+            .await
+    }
+
+    async fn read_application(
+        &self,
+        deployment: Uuid,
+        revision: Option<u64>,
+    ) -> Result<Option<LoadedDeployment>, StoreError> {
         let domain = self.application_domain()?;
         if deployment.is_nil() {
             return Err(invalid("invalid deployment"));
@@ -191,11 +212,18 @@ impl EventLog {
         self.connection.run(move |connection| Box::pin(async move {
             let mut tx = connection.begin().await?;
             let id = deployment.to_string();
+            let revision = match revision {
+                Some(revision) => revision,
+                None => match sqlx::query_scalar::<_, i64>("SELECT revision FROM application_deployments WHERE id = ?").bind(&id).fetch_optional(&mut *tx).await? {
+                    Some(revision) => revision as u64,
+                    None => return Ok(None),
+                },
+            };
             let Some(row) = sqlx::query("SELECT revision,
                 CASE WHEN length(CAST(input_json AS BLOB)) + length(CAST(remote_exports_json AS BLOB)) <= 524288 THEN input_json END AS input_json,
                 CASE WHEN length(CAST(input_json AS BLOB)) + length(CAST(remote_exports_json AS BLOB)) <= 524288 THEN remote_exports_json END AS remote_exports_json
-                FROM application_deployments WHERE id = ?")
-                .bind(&id).fetch_optional(&mut *tx).await? else { return Ok(None); };
+                FROM application_sources WHERE deployment = ? AND revision = ?")
+                .bind(&id).bind(revision as i64).fetch_optional(&mut *tx).await? else { return Ok(None); };
             let input_json: String = row.try_get::<Option<String>, _>("input_json")?.ok_or_else(|| invalid("application source exceeds 512 KiB"))?;
             let remote_json: String = row.try_get::<Option<String>, _>("remote_exports_json")?.ok_or_else(|| invalid("application source exceeds 512 KiB"))?;
             let input: Input = serde_json::from_str(&input_json)?;
@@ -204,8 +232,8 @@ impl EventLog {
             reference.validate().map_err(invalid)?;
             let refs = sqlx::query("SELECT CASE WHEN length(CAST(id AS BLOB)) <= 128 THEN id END AS id,
                 CASE WHEN length(CAST(revision AS BLOB)) = 71 THEN revision END AS revision
-                FROM application_deployment_packages WHERE deployment = ? ORDER BY id, revision LIMIT 129")
-                .bind(&id).fetch_all(&mut *tx).await?;
+                FROM application_source_packages WHERE deployment = ? AND source_revision = ? ORDER BY id, revision LIMIT 129")
+                .bind(&id).bind(revision as i64).fetch_all(&mut *tx).await?;
             if refs.len() > MAX_PACKAGES { return Err(invalid("application package count exceeds 128")); }
             let mut packages = Vec::new();
             let mut size = 0;

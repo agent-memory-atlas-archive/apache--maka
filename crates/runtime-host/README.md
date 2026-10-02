@@ -39,7 +39,7 @@ then accepts work through the core without waiting between those checks. Forward
 child Scopes retain the original private evidence. A package name, source identity
 in JSON, or binding is not effect authorization.
 
-Native `Query::call` receives method, input and a request `Context`. Its Scope,
+Native `Handler::call` receives method, input and a request `Context`. Its Scope,
 attachments and declared import bindings are actual capabilities; the owner captures
 imports before asynchronous activation. Native and JavaScript calls use this same
 Context and final admission path. `Context::call` enqueues synchronously and returns
@@ -62,7 +62,7 @@ slots resolve only within this request's actual attachments. Revocation blocks
 new reads. Saved contexts expire before callback completion is reported, without
 retaining snapshots. Native read/metadata panics record Scope cleanup failure,
 even if JavaScript catches the rejection; unrelated modules remain runnable.
-The public SDK and initialization grants are not yet implemented.
+The public application SDK types come from the actual Rust ABI; initialization grants remain required work.
 
 Policy receives a borrowed `Invocation` with named consumer, provider, Scope,
 contract, method, input and attachment fields; this observation is not a new grant.
@@ -87,9 +87,36 @@ its actual registrations and consumers, leaving unrelated domains independent.
 Calls have a 1 MiB JSON limit, with 128-call and 32 MiB in-flight input budgets.
 Attachments allow 16 exact slots and 64 MiB across queued and accepted requests;
 unconfirmed cleanup retains their payloads and capacity. This adapter currently
-executes native and JavaScript queries, including attached resources. Mutation
-and subscription are rejected before activation until their durable and stream
-executors are implemented. Host transport, persistent composition
-commit/reconciliation, operation recovery, the public SDK,
+executes native and JavaScript queries with attached resources and resource-free
+durable mutations. Mutation resource snapshots and subscription executors,
+trusted Host transport, live composition reconciliation, business recovery hooks,
 and server/TUI/UI integration remain required work. This foundation is not a
 completed Host migration or a compatibility facade for the previous catalog.
+
+Durable mutations require `Application::start_from_store`, a declared mutation
+method and an explicit non-nil operation UUID. `Client::mutate` and
+`Context::mutate` share native/JavaScript execution with queries. JavaScript uses
+`context.invoke({operation:'mutate', import, provider, method, input, operationId})`;
+the callback's actual `HostObservation.operation` contains its original receipt
+reference. Mutation resource attachments and subscriptions still need executors.
+
+The original Input, package bytes and contract remain in immutable deployment
+revision history. Dispatch commits before any callback; only its private first
+commit claim can execute. Duplicate requests never execute or overwrite original
+cleanup. Fingerprints canonicalize object key order but conservatively retain
+actual JSON number representations; changed input is a conflict. A cross-VM
+representation change must read the original reference rather than resubmit input.
+`Accepted.recovery` is observation, and acceptance alone is not dispatch confirmation.
+
+Returned values, unknown results and real resource cleanup are separate journal
+facts. Errors, invalid output and process loss do not prove rollback. SQL settlement
+uncertainty does not imply failed physical cleanup. Observer or application Drop
+does not cancel already accepted work; failed physical cleanup keeps actual work,
+capacity and the Root lease. No uncertain operation is automatically replayed.
+
+`Client::recover` reads a fixed original Root/reference without resolving a current
+provider. Current consumer lifetime, the original issuer, revocation and explicit
+`Policy::recover` authorization are checked before and after lookup; recovery is
+denied by default, including duplicate result release. References grant no access.
+Recovery remains available after replacing the deployment or removing its provider,
+provided the new consumer has a real recovery grant in the original State Root.

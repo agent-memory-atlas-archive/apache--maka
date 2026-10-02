@@ -30,6 +30,7 @@ use maka_plugin_core::{
     composition::{ExecutionLocation, Input, InstanceId},
     contract::{Contract, Interface, MethodMode},
     deployment::DeploymentRef,
+    operation::{OperationCleanup, OperationObservation, OperationOutcome, RecoveryRef},
     package::{Implementation, PackageRef, Packages},
     plan::{Plan, RemoteExports},
     runtime::{Activation, Capability, Published, Status},
@@ -50,9 +51,9 @@ use uuid::Uuid;
 
 pub type Result<T> = std::result::Result<T, String>;
 
-/// Runs only after final lifetime and Host policy admission. A query error does
+/// Runs only after final lifetime and Host policy admission. A handler error does
 /// not prove failed cleanup; the owner separately settles Scope resources.
-pub trait Query: Send + Sync + 'static {
+pub trait Handler: Send + Sync + 'static {
     fn call(
         &self,
         method: String,
@@ -65,6 +66,10 @@ pub trait Query: Send + Sync + 'static {
 /// Scope observation, package identity and a binding are not authorization.
 pub trait Policy: Send + Sync + 'static {
     fn admit(&self, invocation: Invocation<'_>) -> Result<()>;
+    /// Mutation admission never grants access to historical operation records.
+    fn recover(&self, _invocation: RecoveryInvocation<'_>) -> Result<()> {
+        Err("operation recovery is not authorized".into())
+    }
 }
 
 /// Borrowed facts at final admission. Exact execution identities and actual
@@ -79,6 +84,12 @@ pub struct Invocation<'a> {
     pub attachments: &'a Attachments,
 }
 
+pub struct RecoveryInvocation<'a> {
+    pub scope: &'a Scope,
+    pub consumer: &'a Activation,
+    pub reference: &'a RecoveryRef,
+}
+
 /// The actual native owner survives rejected exports and failed close futures.
 /// Successful close confirms its resources have settled; dropping a close
 /// observer or future is not that confirmation.
@@ -86,7 +97,7 @@ pub trait NativeOwner: Send + Sync + 'static {
     fn close(&self) -> BoxFuture<'static, Result<()>>;
 }
 pub struct NativeActivation {
-    pub exports: Result<BTreeMap<String, Published<Arc<dyn Query>>>>,
+    pub exports: Result<BTreeMap<String, Published<Arc<dyn Handler>>>>,
     pub owner: Arc<dyn NativeOwner>,
 }
 type Factory = Arc<dyn Fn(Value) -> BoxFuture<'static, NativeActivation> + Send + Sync>;
@@ -108,7 +119,7 @@ pub(super) struct Method {
 }
 pub(super) enum ImplementationValue {
     JavaScript(maka_js_runtime::plugin::Captured),
-    Native(Arc<dyn Query>),
+    Native(Arc<dyn Handler>),
 }
 pub(super) struct Service {
     contract: Contract,
@@ -123,12 +134,13 @@ impl Service {
         let compiled = methods
             .iter()
             .map(|(name, method)| {
-                if method.mode != MethodMode::Query
+                if method.mode == MethodMode::Subscription
+                    || method.mode == MethodMode::Mutation && !method.resources.is_empty()
                     || method.resources.len() > 16
 
                 {
                     return Err(
-                        "mutation and subscription require their executors; maximum 16 resource slots"
+                        "subscriptions and mutation resource snapshots require their executors; maximum 16 resource slots"
                             .into(),
                     );
                 }
@@ -169,6 +181,9 @@ impl Binding {
 
 pub struct Accepted {
     pub id: Uuid,
+    /// Original receipt identity. Acceptance owns execution; only the result
+    /// observer confirms durable dispatch/settlement. This value grants nothing.
+    pub recovery: Option<RecoveryRef>,
     result: oneshot::Receiver<Result<Value>>,
 }
 impl Accepted {
@@ -223,9 +238,18 @@ pub(super) enum Command {
         reply: oneshot::Sender<Result<Vec<Binding>>>,
     },
     Call(Box<Call>),
+    Recover {
+        consumer: Activation,
+        reference: Box<RecoveryRef>,
+        scope: Scope,
+        reply: oneshot::Sender<Result<Option<OperationObservation>>>,
+        _slot: OwnedSemaphorePermit,
+        _bytes: OwnedSemaphorePermit,
+    },
 }
 pub(super) struct Call {
     parent: Option<Ticket>,
+    operation: Option<Uuid>,
     binding: Binding,
     method: String,
     input: Value,
@@ -325,11 +349,13 @@ impl Application {
                     let Interface::Service { methods } = &export.contract.interface else {
                         return Err("Host service executor requires service exports".into());
                     };
-                    if methods
-                        .values()
-                        .any(|m| m.mode != MethodMode::Query || m.resources.len() > 16)
-                    {
-                        return Err("mutation and subscription require their executors; maximum 16 resource slots".into());
+                    if methods.values().any(|m| {
+                        m.mode == MethodMode::Subscription
+                            || m.mode == MethodMode::Mutation
+                                && (persisted.is_none() || !m.resources.is_empty())
+                            || m.resources.len() > 16
+                    }) {
+                        return Err("subscriptions and mutation resource snapshots require their executors; maximum 16 resource slots".into());
                     }
                 }
                 if let Implementation::Native { implementation } = &entry.implementation
@@ -360,8 +386,7 @@ impl Application {
             control,
             updates: observations,
         };
-        let (source, store) =
-            persisted.map_or((None, None), |(source, store)| (Some(source), Some(store)));
+        let source = persisted.as_ref().map(|(source, _)| source.clone());
         scheduler.spawn(
             owner::Owner::new(
                 plan,
@@ -373,7 +398,7 @@ impl Application {
                 limits,
                 updates,
                 Arc::downgrade(&dispatch),
-                store,
+                persisted,
             )
             .run(receiver, controls, stop.clone()),
         );
@@ -453,7 +478,64 @@ impl Client {
         attachments: Attachments,
     ) -> Result<Accepted> {
         self.dispatch
-            .enqueue(binding, method, input, scope, attachments, None)?
+            .enqueue(binding, method, input, scope, attachments, None, None)?
+            .await
+            .map_err(|_| "Host deployment is closed".to_string())?
+    }
+    pub async fn mutate(
+        &self,
+        binding: Binding,
+        method: String,
+        input: Value,
+        scope: Scope,
+        operation: Uuid,
+    ) -> Result<Accepted> {
+        self.dispatch
+            .enqueue(
+                binding,
+                method,
+                input,
+                scope,
+                Attachments::new(),
+                None,
+                Some(operation),
+            )?
+            .await
+            .map_err(|_| "Host deployment is closed".to_string())?
+    }
+    /// A fixed-root observation; no current provider is resolved or invoked.
+    pub async fn recover(
+        &self,
+        consumer: Activation,
+        reference: RecoveryRef,
+        scope: Scope,
+    ) -> Result<Option<OperationObservation>> {
+        let size = check_json(&serde_json::to_value(&reference).map_err(|e| e.to_string())?)?;
+        let slot = self
+            .dispatch
+            .slots
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| "Host recovery capacity exhausted")?;
+        let bytes = self
+            .dispatch
+            .bytes
+            .clone()
+            .try_acquire_many_owned(size.max(1) as u32)
+            .map_err(|_| "Host recovery budget exhausted")?;
+        let (reply, result) = oneshot::channel();
+        self.dispatch
+            .commands
+            .try_send(Command::Recover {
+                consumer,
+                reference: Box::new(reference),
+                scope,
+                reply,
+                _slot: slot,
+                _bytes: bytes,
+            })
+            .map_err(|e| e.to_string())?;
+        result
             .await
             .map_err(|_| "Host deployment is closed".to_string())?
     }
@@ -515,6 +597,8 @@ fn check_json(value: &Value) -> Result<usize> {
 }
 
 impl Dispatch {
+    // Transfer each actual work owner explicitly; none is encoded as a grant.
+    #[allow(clippy::too_many_arguments)]
     fn enqueue(
         &self,
         binding: Binding,
@@ -523,6 +607,7 @@ impl Dispatch {
         scope: Scope,
         attachments: Attachments,
         mut parent: Option<Ticket>,
+        operation: Option<Uuid>,
     ) -> Result<oneshot::Receiver<Result<Accepted>>> {
         let size = check_json(&input)?;
         let resource_bytes = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -559,6 +644,7 @@ impl Dispatch {
         self.commands
             .try_send(Command::Call(Box::new(Call {
                 parent,
+                operation,
                 binding,
                 method,
                 input,

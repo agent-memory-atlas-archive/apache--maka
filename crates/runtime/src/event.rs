@@ -24,7 +24,7 @@ use serde_json::Value;
 use std::time::SystemTime;
 use uuid::Uuid;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Invocation {
     pub session_id: String,
     pub turn_id: String,

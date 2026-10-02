@@ -862,7 +862,7 @@ struct HostRead {
         std::sync::Mutex<Option<std::sync::Weak<dyn maka_plugins::call::ReadResource>>>,
     >,
 }
-impl maka_runtime_host::application::Query for HostRead {
+impl maka_runtime_host::application::Handler for HostRead {
     fn call(
         &self,
         _: String,
@@ -954,7 +954,7 @@ impl maka_ui::actions::NativeService for ForwardHostRead {
     }
 }
 fn host_read_fixture(
-    query: std::sync::Arc<dyn maka_runtime_host::application::Query>,
+    query: std::sync::Arc<dyn maka_runtime_host::application::Handler>,
     issuer: maka_plugins::call::Issuer,
 ) -> maka_runtime_host::application::Application {
     use maka_plugin_core::{

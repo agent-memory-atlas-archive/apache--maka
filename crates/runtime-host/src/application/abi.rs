@@ -31,6 +31,14 @@ pub struct HostActivation {
     pub service: Vec<String>,
 }
 
+/// Actual callback observation. Neither the source nor receipt is a grant.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HostObservation {
+    pub source: maka_plugins::call::Identity,
+    pub operation: Option<maka_plugin_core::operation::RecoveryRef>,
+}
+
 /// Resource names select slots in the current request, not durable grants.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "operation", rename_all = "camelCase", deny_unknown_fields)]
@@ -41,6 +49,14 @@ pub enum HostRequest {
         method: String,
         input: Value,
         attachments: BTreeMap<String, String>,
+    },
+    Mutate {
+        import: String,
+        provider: usize,
+        method: String,
+        input: Value,
+        #[serde(rename = "operationId")]
+        operation_id: uuid::Uuid,
     },
     Metadata {
         slot: String,

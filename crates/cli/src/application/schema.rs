@@ -18,7 +18,9 @@
  */
 
 use maka_plugin_core::{composition, contract, package};
-use maka_runtime_host::application::abi::{HostActivation, HostRequest, ResourceMetadata};
+use maka_runtime_host::application::abi::{
+    HostActivation, HostObservation, HostRequest, ResourceMetadata,
+};
 use maka_ui::{abi, actions, editor, text};
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde_json::{Value, json};
@@ -51,6 +53,8 @@ pub(super) fn catalog() -> Value {
         root::<text::TextChunk>(&mut g),
         root::<HostActivation>(&mut g),
         root::<HostRequest>(&mut g),
+        root::<HostObservation>(&mut g),
+        root::<maka_plugin_core::operation::OperationObservation>(&mut g),
         root::<ResourceMetadata>(&mut g),
     ];
     // The union makes actual ABI types reachable to the generator. It is not

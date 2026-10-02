@@ -17,6 +17,8 @@
  * under the License.
  */
 
+#[path = "application_services/operations.rs"]
+mod operations;
 #[path = "application_services/persistence.rs"]
 mod persistence;
 
@@ -38,8 +40,8 @@ use maka_plugins::{
     package::{MANIFEST_FILE, Package},
 };
 use maka_runtime_host::application::{
-    Application, Context, Invocation, NativeActivation, NativeOwner, NativeRegistry, Policy, Query,
-    Result,
+    Application, Context, Handler, Invocation, NativeActivation, NativeOwner, NativeRegistry,
+    Policy, Result,
 };
 use serde_json::{Value, json};
 use std::{
@@ -237,7 +239,7 @@ async fn javascript_exports_use_shared_core_exact_binding_and_private_realms() {
 struct Echo {
     calls: Arc<AtomicUsize>,
 }
-impl Query for Echo {
+impl Handler for Echo {
     fn call(&self, _: String, input: Value, context: Context) -> BoxFuture<'static, Result<Value>> {
         let scope = context.scope().clone();
         let calls = self.calls.clone();
@@ -282,10 +284,10 @@ fn native_owner(
 ) -> Arc<dyn NativeOwner> {
     Arc::new(CloseFn(Arc::new(f)))
 }
-fn registry(query: Arc<dyn Query>) -> NativeRegistry {
+fn registry(query: Arc<dyn Handler>) -> NativeRegistry {
     registry_contract(query, contract(MethodMode::Query))
 }
-fn registry_contract(query: Arc<dyn Query>, contract: Contract) -> NativeRegistry {
+fn registry_contract(query: Arc<dyn Handler>, contract: Contract) -> NativeRegistry {
     let mut registry = NativeRegistry::default();
     registry
         .insert(
@@ -437,7 +439,7 @@ struct Held {
     resource_started: Arc<Semaphore>,
     resource_release: Arc<Semaphore>,
 }
-impl Query for Held {
+impl Handler for Held {
     fn call(&self, _: String, input: Value, context: Context) -> BoxFuture<'static, Result<Value>> {
         let scope = context.scope().clone();
         let started = self.started.clone();
@@ -479,7 +481,7 @@ async fn abandoned_observer_and_root_keep_actual_query_resource_and_native_close
             .insert(
                 "native.echo".into(),
                 Arc::new(move |_| {
-                    let query: Arc<dyn Query> = query.clone();
+                    let query: Arc<dyn Handler> = query.clone();
                     let close = close.clone();
                     Box::pin(async move {
                         NativeActivation {
@@ -581,7 +583,8 @@ async fn initialization_is_fenced_before_await_and_late_exports_close_under_orig
                                     contract: contract(MethodMode::Query),
                                     value: Arc::new(Echo {
                                         calls: Arc::new(AtomicUsize::new(0)),
-                                    }) as Arc<dyn Query>,
+                                    })
+                                        as Arc<dyn Handler>,
                                 },
                             )])),
                             owner: native_owner(move || {
@@ -1073,7 +1076,7 @@ async fn shared_vm_failure_revokes_its_actual_registrations_but_preserves_unrela
 }
 
 struct Forward;
-impl Query for Forward {
+impl Handler for Forward {
     fn call(
         &self,
         method: String,
@@ -1143,7 +1146,7 @@ async fn forwarding_preserves_private_evidence_and_never_substitutes_wrapper_aut
             .insert(
                 "native.wrapper".into(),
                 Arc::new(move |_| {
-                    let implementation: Arc<dyn Query> = implementation.clone();
+                    let implementation: Arc<dyn Handler> = implementation.clone();
                     Box::pin(async move {
                         NativeActivation {
                             exports: Ok(BTreeMap::from([(
@@ -1214,7 +1217,7 @@ async fn forwarding_preserves_private_evidence_and_never_substitutes_wrapper_aut
     .unwrap();
 }
 struct InputResource(Arc<Semaphore>);
-impl Query for InputResource {
+impl Handler for InputResource {
     fn call(&self, _: String, input: Value, context: Context) -> BoxFuture<'static, Result<Value>> {
         let scope = context.scope().clone();
         let release = self.0.clone();
@@ -1234,7 +1237,7 @@ struct LargeHeld {
     started: Arc<Semaphore>,
     release: Arc<Semaphore>,
 }
-impl Query for LargeHeld {
+impl Handler for LargeHeld {
     fn call(&self, _: String, input: Value, _: Context) -> BoxFuture<'static, Result<Value>> {
         let started = self.started.clone();
         let release = self.release.clone();
@@ -1288,7 +1291,7 @@ async fn resource_timeout_keeps_input_quota_until_actual_cleanup_is_confirmed() 
             .insert(
                 "native.held".into(),
                 Arc::new(move |_| {
-                    let implementation: Arc<dyn Query> = implementation.clone();
+                    let implementation: Arc<dyn Handler> = implementation.clone();
                     Box::pin(async move {
                         NativeActivation {
                             exports: Ok(BTreeMap::from([(
@@ -1488,7 +1491,7 @@ struct ReadAttachment {
     started: Arc<Semaphore>,
     release: Arc<Semaphore>,
 }
-impl Query for ReadAttachment {
+impl Handler for ReadAttachment {
     fn call(&self, _: String, input: Value, context: Context) -> BoxFuture<'static, Result<Value>> {
         let scope = context.scope().clone();
         let attachments = context.attachments().clone();
@@ -1727,7 +1730,7 @@ async fn failed_cleanup_retains_actual_attachments_and_the_shared_64_mib_capacit
         let calls = Arc::new(AtomicUsize::new(0));
         let started = Arc::new(Semaphore::new(0));
         let release = Arc::new(Semaphore::new(0));
-        let query: Arc<dyn Query> = Arc::new(ReadAttachment {
+        let query: Arc<dyn Handler> = Arc::new(ReadAttachment {
             calls: calls.clone(),
             started: started.clone(),
             release: release.clone(),
@@ -2424,7 +2427,7 @@ struct HeldChild {
     release: Arc<Semaphore>,
     calls: Arc<AtomicUsize>,
 }
-impl Query for HeldChild {
+impl Handler for HeldChild {
     fn call(&self, _: String, input: Value, context: Context) -> BoxFuture<'static, Result<Value>> {
         let started = if input == "held" {
             self.started.lock().unwrap().take()
@@ -2539,7 +2542,7 @@ async fn unobserved_accepted_child_keeps_parent_work_until_actual_cleanup_after_
     .unwrap();
 }
 struct DescriptorForward;
-impl Query for DescriptorForward {
+impl Handler for DescriptorForward {
     fn call(&self, _: String, input: Value, context: Context) -> BoxFuture<'static, Result<Value>> {
         let attachments = if input == "ordinary-reject" {
             Attachments::new()
@@ -2590,7 +2593,7 @@ async fn accepted_parent_descriptor_panics_are_cleanup_failure_but_ordinary_chil
                                     "echo".into(),
                                     Published {
                                         contract: attached_contract(),
-                                        value: Arc::new(DescriptorForward) as Arc<dyn Query>,
+                                        value: Arc::new(DescriptorForward) as Arc<dyn Handler>,
                                     },
                                 )])),
                                 owner: native_owner(|| Box::pin(async { Ok(()) })),

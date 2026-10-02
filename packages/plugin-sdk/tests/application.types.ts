@@ -94,3 +94,27 @@ void [
   missingSlots,
   unknownResult,
 ];
+
+const mutation = {
+  operation: 'mutate',
+  import: 'echo',
+  provider: 0,
+  method: 'echo',
+  input: null,
+  operationId: '00000000-0000-4000-8000-000000000001',
+} satisfies HostRequest;
+const incompleteMutation = {
+  operation: 'mutate',
+  import: 'echo',
+  provider: 0,
+  method: 'echo',
+  input: null,
+} as const;
+// @ts-expect-error An explicit durable operation identity is required.
+const missingOperation: HostRequest = incompleteMutation;
+const fabricatedMutation = {
+  ...mutation,
+  // @ts-expect-error Live resource attachments cannot masquerade as durable snapshots.
+  attachments: { text: 'text' },
+} satisfies HostRequest;
+void [mutation, missingOperation, fabricatedMutation];

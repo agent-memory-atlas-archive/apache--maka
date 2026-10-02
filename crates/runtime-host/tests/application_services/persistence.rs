@@ -54,7 +54,7 @@ async fn stored_source_and_lease_survive_abandoned_query_resources_and_native_cl
         let resource_release = Arc::new(Semaphore::new(0));
         let close_started = Arc::new(Semaphore::new(0));
         let close_release = Arc::new(Semaphore::new(0));
-        let query: Arc<dyn Query> = Arc::new(Held {
+        let query: Arc<dyn Handler> = Arc::new(Held {
             started: started.clone(),
             release: release.clone(),
             resource_started: resource_started.clone(),

@@ -34,7 +34,7 @@ impl Policy for Allowed {
     }
 }
 struct Count(Arc<AtomicUsize>);
-impl Query for Count {
+impl Handler for Count {
     fn call(&self, _: String, input: Value, _: Context) -> BoxFuture<'static, Result<Value>> {
         let count = self.0.clone();
         Box::pin(async move {
@@ -246,6 +246,7 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
             .unwrap();
         let (reply, result) = oneshot::channel();
         owner.command(Command::Call(Box::new(Call {
+            operation: None,
             parent: None,
             binding,
             method: "echo".into(),

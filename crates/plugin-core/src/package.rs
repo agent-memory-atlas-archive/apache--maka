@@ -39,12 +39,7 @@ pub struct PackageRef {
 impl PackageRef {
     pub fn validate(&self) -> Result<(), Error> {
         crate::name(&self.id)?;
-        if !self.revision.strip_prefix("sha256-").is_some_and(|hash| {
-            hash.len() == 64
-                && hash
-                    .bytes()
-                    .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
-        }) {
+        if !crate::content_hash(&self.revision) {
             return Err(Error::Declaration(
                 "package revision must pin immutable bytes".into(),
             ));

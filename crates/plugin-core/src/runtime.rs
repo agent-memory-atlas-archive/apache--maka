@@ -102,6 +102,9 @@ impl<T> Capability<T> {
     pub fn provider(&self) -> &Activation {
         &self.provider
     }
+    pub fn export(&self) -> &str {
+        self.export.as_str()
+    }
     pub fn registration_epoch(&self) -> Uuid {
         self.epoch
     }
