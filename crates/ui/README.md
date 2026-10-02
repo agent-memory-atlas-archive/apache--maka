@@ -148,6 +148,11 @@ published scene. `current` explicitly selects the barrier's current text;
 the actual resource. Metadata, JSON slot names and UUIDs are not read authority.
 The snapshot retains no live input, entity or mount resource lease.
 
+`ReadResource` and `Attachments` live in `maka_plugins::call`, shared by UI and
+Host execution adapters. The UI capture path owns its snapshots and capacity;
+local Host queries accept actual payloads with independent admission and cleanup.
+Cross-process resource transfer still requires a transport executor.
+
 Final admission rechecks the exact consumer mount and service registration.
 Native service futures run on the background executor, independently of the
 window. Result events use `{ kind: "action", key, event }`, which raw input cannot

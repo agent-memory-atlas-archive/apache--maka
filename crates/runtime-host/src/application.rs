@@ -31,7 +31,7 @@ use maka_plugin_core::{
     runtime::{Activation, Capability, Published, Status},
 };
 use maka_plugins::{
-    call::{Issuer, Scope},
+    call::{Attachments, Issuer, Scope},
     package::Package,
 };
 use serde_json::Value;
@@ -45,22 +45,31 @@ pub type Result<T> = std::result::Result<T, String>;
 /// Runs only after final lifetime and Host policy admission. A query error does
 /// not prove failed cleanup; the owner separately settles Scope resources.
 pub trait Query: Send + Sync + 'static {
-    fn call(&self, method: String, input: Value, scope: Scope)
-    -> BoxFuture<'static, Result<Value>>;
+    fn call(
+        &self,
+        method: String,
+        input: Value,
+        scope: Scope,
+        attachments: Attachments,
+    ) -> BoxFuture<'static, Result<Value>>;
 }
 
 /// Trusted Host policy, checked in the same owner turn as core admission.
 /// Scope observation, package identity and a binding are not authorization.
 pub trait Policy: Send + Sync + 'static {
-    fn admit(
-        &self,
-        scope: &Scope,
-        consumer: &Activation,
-        provider: &Activation,
-        contract: &Contract,
-        method: &str,
-        input: &Value,
-    ) -> Result<()>;
+    fn admit(&self, invocation: Invocation<'_>) -> Result<()>;
+}
+
+/// Borrowed facts at final admission. Exact execution identities and actual
+/// payloads stay distinct from the Scope's private authorization evidence.
+pub struct Invocation<'a> {
+    pub scope: &'a Scope,
+    pub consumer: &'a Activation,
+    pub provider: &'a Activation,
+    pub contract: &'a Contract,
+    pub method: &'a str,
+    pub input: &'a Value,
+    pub attachments: &'a Attachments,
 }
 
 /// The actual native owner survives rejected exports and failed close futures.
@@ -107,9 +116,13 @@ impl Service {
         let compiled = methods
             .iter()
             .map(|(name, method)| {
-                if method.mode != MethodMode::Query || !method.resources.is_empty() {
+                if method.mode != MethodMode::Query
+                    || method.resources.len() > 16
+                    || (!method.resources.is_empty()
+                        && matches!(implementation, ImplementationValue::JavaScript(_)))
+                {
                     return Err(
-                        "mutation, subscription and resource attachments require their executors"
+                        "mutation, subscription and JavaScript attachments require their executors; maximum 16 resource slots"
                             .into(),
                     );
                 }
@@ -189,6 +202,7 @@ pub struct Client {
     updates: watch::Receiver<Snapshot>,
     slots: Arc<Semaphore>,
     bytes: Arc<Semaphore>,
+    resources: Arc<Semaphore>,
 }
 
 pub(super) enum Command {
@@ -204,8 +218,10 @@ pub(super) struct Call {
     method: String,
     input: Value,
     scope: Scope,
+    attachments: Attachments,
     slot: OwnedSemaphorePermit,
     bytes: OwnedSemaphorePermit,
+    resources: OwnedSemaphorePermit,
     reply: oneshot::Sender<Result<Accepted>>,
 }
 pub(super) enum Control {
@@ -249,11 +265,16 @@ impl Application {
                     let Interface::Service { methods } = &export.contract.interface else {
                         return Err("Host service executor requires service exports".into());
                     };
-                    if methods
-                        .values()
-                        .any(|m| m.mode != MethodMode::Query || !m.resources.is_empty())
-                    {
-                        return Err("mutation, subscription and resource attachments require their executors".into());
+                    if methods.values().any(|m| {
+                        m.mode != MethodMode::Query
+                            || m.resources.len() > 16
+                            || (!m.resources.is_empty()
+                                && matches!(
+                                    entry.implementation,
+                                    Implementation::JavaScript { .. }
+                                ))
+                    }) {
+                        return Err("mutation, subscription and JavaScript attachments require their executors; maximum 16 resource slots".into());
                     }
                 }
                 if let Implementation::Native { implementation } = &entry.implementation
@@ -279,6 +300,7 @@ impl Application {
             updates: observations,
             slots: Arc::new(Semaphore::new(128)),
             bytes: Arc::new(Semaphore::new(32 * 1024 * 1024)),
+            resources: Arc::new(Semaphore::new(64 * 1024 * 1024)),
         };
         scheduler.spawn(
             owner::Owner::new(
@@ -354,8 +376,13 @@ impl Client {
         method: String,
         input: Value,
         scope: Scope,
+        attachments: Attachments,
     ) -> Result<Accepted> {
         let size = check_json(&input)?;
+        let resource_bytes = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            check_attachments(&attachments)
+        }))
+        .unwrap_or_else(|_| Err("Host attachment descriptor panicked".into()))?;
         if method.is_empty() || method.len() > 128 {
             return Err("invalid service method".into());
         }
@@ -369,6 +396,11 @@ impl Client {
             .clone()
             .try_acquire_many_owned(size.max(1) as u32)
             .map_err(|_| "Host input budget exhausted")?;
+        let resources = self
+            .resources
+            .clone()
+            .try_acquire_many_owned(resource_bytes as u32)
+            .map_err(|_| "Host attachment budget exhausted")?;
         let (reply, result) = oneshot::channel();
         self.commands
             .try_send(Command::Call(Box::new(Call {
@@ -376,8 +408,10 @@ impl Client {
                 method,
                 input,
                 scope,
+                attachments,
                 slot,
                 bytes,
+                resources,
                 reply,
             })))
             .map_err(|e| e.to_string())?;
@@ -403,6 +437,24 @@ impl Client {
             .map(|s| s.activation.clone())
             .ok_or_else(|| "activation unavailable".into())
     }
+}
+
+fn check_attachments(attachments: &Attachments) -> Result<usize> {
+    if attachments.len() > 16 {
+        return Err("maximum 16 resource slots".into());
+    }
+    let mut bytes = 0usize;
+    for (slot, resource) in attachments {
+        if slot.is_empty() || slot.len() > 128 {
+            return Err("invalid resource slot".into());
+        }
+        check_json(&resource.metadata())?;
+        bytes = bytes
+            .checked_add(resource.bytes())
+            .filter(|&n| n <= 64 * 1024 * 1024)
+            .ok_or("Host attachments exceed 64 MiB")?;
+    }
+    Ok(bytes)
 }
 
 fn check_json(value: &Value) -> Result<usize> {

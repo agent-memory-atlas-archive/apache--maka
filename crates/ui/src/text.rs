@@ -18,10 +18,11 @@
  */
 
 //! Bounded asynchronous UTF-8 reads through explicit request-local resources.
-use super::actions::{NativeService, Resources, ServiceCompletion, ServiceFuture};
+use super::actions::{NativeService, ServiceCompletion, ServiceFuture};
 use maka_plugin_core::contract::{
     Contract, Interface, Method, MethodMode, ResourceType, Transport,
 };
+use maka_plugins::call::Attachments;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -66,7 +67,7 @@ pub fn reader_contract() -> Contract {
 }
 pub(super) struct Reader;
 impl NativeService for Reader {
-    fn call(&self, method: String, input: Value, mut resources: Resources) -> ServiceFuture {
+    fn call(&self, method: String, input: Value, mut resources: Attachments) -> ServiceFuture {
         Box::pin(async move {
             let result = (|| {
                 if method != "read" {

@@ -29,21 +29,19 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 struct Allowed;
 impl Policy for Allowed {
-    fn admit(
-        &self,
-        _: &Scope,
-        _: &Activation,
-        _: &Activation,
-        _: &Contract,
-        _: &str,
-        _: &Value,
-    ) -> Result<()> {
+    fn admit(&self, _: Invocation<'_>) -> Result<()> {
         Ok(())
     }
 }
 struct Count(Arc<AtomicUsize>);
 impl Query for Count {
-    fn call(&self, _: String, input: Value, _: Scope) -> BoxFuture<'static, Result<Value>> {
+    fn call(
+        &self,
+        _: String,
+        input: Value,
+        _: Scope,
+        _: Attachments,
+    ) -> BoxFuture<'static, Result<Value>> {
         let count = self.0.clone();
         Box::pin(async move {
             count.fetch_add(1, Ordering::SeqCst);
@@ -255,6 +253,10 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
             method: "echo".into(),
             input: Value::Null,
             scope,
+            attachments: Attachments::new(),
+            resources: Arc::new(Semaphore::new(0))
+                .try_acquire_many_owned(0)
+                .unwrap(),
             slot: Arc::new(Semaphore::new(1)).try_acquire_owned().unwrap(),
             bytes: Arc::new(Semaphore::new(1)).try_acquire_owned().unwrap(),
             reply,

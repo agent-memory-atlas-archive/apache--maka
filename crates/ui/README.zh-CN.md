@@ -97,6 +97,10 @@ Desktop 单次发布 scene → 准备 native owner → 在 native read barrier �
 请求 sidecar 中；metadata、JSON 槽名及 UUID 都不是读取权限。快照不保留 LiveInput、entity
 或 mount resource lease。
 
+`ReadResource` / `Attachments` 位于 `maka_plugins::call`，供 UI 与 Host 执行适配器共用。
+UI capture 拥有自己的快照和容量；本地 Host query 接收实际 payload，独立准入与清理。
+跨进程资源传输仍须 transport executor。
+
 最终准入再次核对原 consumer Mount 与 service registration。原生服务 future 在后台运行，
 独立于窗口；结果事件为 `{ kind: "action", key, event }`，原始输入无法伪造该来源。
 executor 先结算再投递结果，已退出 consumer 不再接收；结果 handler 失败会退休 consumer，

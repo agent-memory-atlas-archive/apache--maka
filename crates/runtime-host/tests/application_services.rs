@@ -25,17 +25,17 @@ use maka_plugin_core::{
     },
     contract::{
         Availability, Cardinality, Contract, Export, Import, Interface, Method, MethodMode,
-        Transport,
+        ResourceType, Transport,
     },
     package::{Declaration, EntryDeclaration, EntryTarget, Implementation, Realm},
-    runtime::{Activation, Phase, Published},
+    runtime::{Phase, Published},
 };
 use maka_plugins::{
-    call::{Identity, Issuer, Scope},
+    call::{Attachments, Identity, Issuer, ReadResource, Scope},
     package::{MANIFEST_FILE, Package},
 };
 use maka_runtime_host::application::{
-    Application, NativeActivation, NativeOwner, NativeRegistry, Policy, Query, Result,
+    Application, Invocation, NativeActivation, NativeOwner, NativeRegistry, Policy, Query, Result,
 };
 use serde_json::{Value, json};
 use std::{
@@ -177,16 +177,8 @@ fn scope(issuer: &Issuer, allowed: bool) -> Scope {
 }
 struct Grant(Issuer);
 impl Policy for Grant {
-    fn admit(
-        &self,
-        scope: &Scope,
-        _: &Activation,
-        _: &Activation,
-        _: &Contract,
-        _: &str,
-        _: &Value,
-    ) -> Result<()> {
-        if self.0.evidence::<bool>(scope) == Some(&true) {
+    fn admit(&self, invocation: Invocation<'_>) -> Result<()> {
+        if self.0.evidence::<bool>(invocation.scope) == Some(&true) {
             Ok(())
         } else {
             Err("query grant denied".into())
@@ -226,12 +218,12 @@ async fn javascript_exports_use_shared_core_exact_binding_and_pure_realms() {
             let second = client.bind(b, "echo".into()).await.unwrap().remove(0);
             assert_eq!(first.registration_epoch(), second.registration_epoch());
             for (binding, text, count) in [(first.clone(), "one", 1), (first.clone(), "two", 2)] {
-                let value = client.start(binding, "echo".into(), json!(text), scope(&issuer, true)).await.unwrap().result().await.unwrap();
+                let value = client.start(binding, "echo".into(), json!(text), scope(&issuer, true), Attachments::new()).await.unwrap().result().await.unwrap();
                 assert_eq!(value, json!(format!("original:{text}:{count}")));
             }
             client.retire(a).await.unwrap();
-            assert!(client.start(first, "echo".into(), json!("late"), scope(&issuer, true)).await.is_err());
-            assert_eq!(client.start(second, "echo".into(), json!("other"), scope(&issuer, true)).await.unwrap().result().await.unwrap(), json!("original:other:3"));
+            assert!(client.start(first, "echo".into(), json!("late"), scope(&issuer, true), Attachments::new()).await.is_err());
+            assert_eq!(client.start(second, "echo".into(), json!("other"), scope(&issuer, true), Attachments::new()).await.unwrap().result().await.unwrap(), json!("original:other:3"));
             app.shutdown().await.unwrap();
             assert!(client.snapshot().closed);
         }
@@ -242,7 +234,13 @@ struct Echo {
     calls: Arc<AtomicUsize>,
 }
 impl Query for Echo {
-    fn call(&self, _: String, input: Value, scope: Scope) -> BoxFuture<'static, Result<Value>> {
+    fn call(
+        &self,
+        _: String,
+        input: Value,
+        scope: Scope,
+        _: Attachments,
+    ) -> BoxFuture<'static, Result<Value>> {
         let calls = self.calls.clone();
         Box::pin(async move {
             calls.fetch_add(1, Ordering::SeqCst);
@@ -286,18 +284,22 @@ fn native_owner(
     Arc::new(CloseFn(Arc::new(f)))
 }
 fn registry(query: Arc<dyn Query>) -> NativeRegistry {
+    registry_contract(query, contract(MethodMode::Query))
+}
+fn registry_contract(query: Arc<dyn Query>, contract: Contract) -> NativeRegistry {
     let mut registry = NativeRegistry::default();
     registry
         .insert(
             "native.echo".into(),
             Arc::new(move |_| {
                 let query = query.clone();
+                let contract = contract.clone();
                 Box::pin(async move {
                     NativeActivation {
                         exports: Ok(BTreeMap::from([(
                             "echo".into(),
                             Published {
-                                contract: contract(MethodMode::Query),
+                                contract,
                                 value: query,
                             },
                         )])),
@@ -338,7 +340,13 @@ async fn authority_and_validation_reject_before_work_and_business_errors_settle_
         for denied in [scope(&Issuer::default(), true), scope(&issuer, false)] {
             assert!(
                 client
-                    .start(binding.clone(), "echo".into(), json!("input"), denied)
+                    .start(
+                        binding.clone(),
+                        "echo".into(),
+                        json!("input"),
+                        denied,
+                        Attachments::new()
+                    )
                     .await
                     .is_err()
             );
@@ -347,7 +355,13 @@ async fn authority_and_validation_reject_before_work_and_business_errors_settle_
         revoked.cancellation.cancel();
         assert!(
             client
-                .start(binding.clone(), "echo".into(), json!("input"), revoked)
+                .start(
+                    binding.clone(),
+                    "echo".into(),
+                    json!("input"),
+                    revoked,
+                    Attachments::new()
+                )
                 .await
                 .is_err()
         );
@@ -358,7 +372,13 @@ async fn authority_and_validation_reject_before_work_and_business_errors_settle_
         ] {
             assert!(
                 client
-                    .start(binding.clone(), method.into(), input, scope(&issuer, true))
+                    .start(
+                        binding.clone(),
+                        method.into(),
+                        input,
+                        scope(&issuer, true),
+                        Attachments::new()
+                    )
                     .await
                     .is_err()
             );
@@ -371,7 +391,8 @@ async fn authority_and_validation_reject_before_work_and_business_errors_settle_
                         binding.clone(),
                         "echo".into(),
                         json!(value),
-                        scope(&issuer, true)
+                        scope(&issuer, true),
+                        Attachments::new()
                     )
                     .await
                     .unwrap()
@@ -395,7 +416,8 @@ async fn authority_and_validation_reject_before_work_and_business_errors_settle_
                     binding,
                     "echo".into(),
                     json!("healthy"),
-                    scope(&issuer, true)
+                    scope(&issuer, true),
+                    Attachments::new()
                 )
                 .await
                 .unwrap()
@@ -417,7 +439,13 @@ struct Held {
     resource_release: Arc<Semaphore>,
 }
 impl Query for Held {
-    fn call(&self, _: String, input: Value, scope: Scope) -> BoxFuture<'static, Result<Value>> {
+    fn call(
+        &self,
+        _: String,
+        input: Value,
+        scope: Scope,
+        _: Attachments,
+    ) -> BoxFuture<'static, Result<Value>> {
         let started = self.started.clone();
         let release = self.release.clone();
         let resource_started = self.resource_started.clone();
@@ -500,7 +528,13 @@ async fn abandoned_observer_and_root_keep_actual_query_resource_and_native_close
             .unwrap()
             .remove(0);
         let observer = client
-            .start(binding, "echo".into(), json!("held"), scope(&issuer, true))
+            .start(
+                binding,
+                "echo".into(),
+                json!("held"),
+                scope(&issuer, true),
+                Attachments::new(),
+            )
             .await
             .unwrap();
         permit(&started).await;
@@ -643,7 +677,13 @@ async fn cleanup_failure_or_executor_panic_keeps_work_and_owner_after_every_clie
                 .unwrap()
                 .remove(0);
             let result = client
-                .start(binding, "echo".into(), json!(value), scope(&issuer, true))
+                .start(
+                    binding,
+                    "echo".into(),
+                    json!(value),
+                    scope(&issuer, true),
+                    Attachments::new(),
+                )
                 .await
                 .unwrap()
                 .result()
@@ -706,6 +746,32 @@ async fn undeclared_exports_fail_startup_and_unsupported_modes_never_activate() 
                 .contains("missing required export")
         );
         app.shutdown().await.unwrap();
+        let (_, consumer) = attached_packages();
+        let provider = package(
+            "unsupported.attached-js",
+            attached_entry(
+                true,
+                Implementation::JavaScript {
+                    module: "host.mjs".into(),
+                    realm: Realm::Shared,
+                },
+            ),
+            Some("throw Error('must not activate without an attachment bridge');".into()),
+        );
+        let issuer = Issuer::default();
+        assert!(
+            Application::start(
+                input(&provider, &consumer),
+                vec![provider, consumer],
+                NativeRegistry::default(),
+                issuer.clone(),
+                Arc::new(Grant(issuer)),
+                Limits::default(),
+            )
+            .err()
+            .unwrap()
+            .contains("JavaScript attachments require their executors")
+        );
         for mode in [MethodMode::Mutation, MethodMode::Subscription] {
             let provider = package(
                 "unsupported",
@@ -908,7 +974,8 @@ async fn shared_vm_failure_revokes_its_actual_registrations_but_preserves_unrela
                     a.clone(),
                     "echo".into(),
                     json!("throw"),
-                    scope(&issuer, true)
+                    scope(&issuer, true),
+                    Attachments::new()
                 )
                 .await
                 .unwrap()
@@ -922,7 +989,8 @@ async fn shared_vm_failure_revokes_its_actual_registrations_but_preserves_unrela
                     b.clone(),
                     "echo".into(),
                     json!("still-live"),
-                    scope(&issuer, true)
+                    scope(&issuer, true),
+                    Attachments::new()
                 )
                 .await
                 .unwrap()
@@ -933,7 +1001,13 @@ async fn shared_vm_failure_revokes_its_actual_registrations_but_preserves_unrela
         );
         assert!(
             client
-                .start(a, "echo".into(), json!("stall"), scope(&issuer, true))
+                .start(
+                    a,
+                    "echo".into(),
+                    json!("stall"),
+                    scope(&issuer, true),
+                    Attachments::new()
+                )
                 .await
                 .unwrap()
                 .result()
@@ -946,14 +1020,21 @@ async fn shared_vm_failure_revokes_its_actual_registrations_but_preserves_unrela
                     b,
                     "echo".into(),
                     json!("retired-domain"),
-                    scope(&issuer, true)
+                    scope(&issuer, true),
+                    Attachments::new()
                 )
                 .await
                 .is_err()
         );
         assert_eq!(
             client
-                .start(c, "echo".into(), json!("unrelated"), scope(&issuer, true))
+                .start(
+                    c,
+                    "echo".into(),
+                    json!("unrelated"),
+                    scope(&issuer, true),
+                    Attachments::new()
+                )
                 .await
                 .unwrap()
                 .result()
@@ -979,6 +1060,7 @@ impl Query for Forward {
         method: String,
         input: Value,
         scope: Scope,
+        attachments: Attachments,
     ) -> BoxFuture<'static, Result<Value>> {
         let (client, binding) = self.0.get().unwrap().clone();
         Box::pin(async move {
@@ -988,6 +1070,7 @@ impl Query for Forward {
                     method,
                     input,
                     scope.child().map_err(|e| e.to_string())?,
+                    attachments,
                 )
                 .await?
                 .result()
@@ -997,16 +1080,10 @@ impl Query for Forward {
 }
 struct ForwardPolicy(Issuer);
 impl Policy for ForwardPolicy {
-    fn admit(
-        &self,
-        scope: &Scope,
-        _: &Activation,
-        provider: &Activation,
-        _: &Contract,
-        _: &str,
-        _: &Value,
-    ) -> Result<()> {
-        if provider.instance() == &id(4) || self.0.evidence::<bool>(scope) == Some(&true) {
+    fn admit(&self, invocation: Invocation<'_>) -> Result<()> {
+        if invocation.provider.instance() == &id(4)
+            || self.0.evidence::<bool>(invocation.scope) == Some(&true)
+        {
             Ok(())
         } else {
             Err("leaf effect grant denied".into())
@@ -1016,21 +1093,18 @@ impl Policy for ForwardPolicy {
 #[tokio::test]
 async fn forwarding_preserves_private_evidence_and_never_substitutes_wrapper_authority() {
     tokio::time::timeout(Duration::from_secs(15), async {
-        let provider = native_package();
-        let consumer = consumer();
-        let mut wrapper_entry = entry(
+        let (provider, consumer) = attached_packages();
+        let mut wrapper_entry = attached_entry(
             true,
             Implementation::Native {
                 implementation: "native.wrapper".into(),
             },
-            MethodMode::Query,
         );
-        wrapper_entry.imports = entry(
+        wrapper_entry.imports = attached_entry(
             false,
             Implementation::Native {
                 implementation: "unused".into(),
             },
-            MethodMode::Query,
         )
         .imports;
         let wrapper = package("wrapper", wrapper_entry, None);
@@ -1049,9 +1123,14 @@ async fn forwarding_preserves_private_evidence_and_never_substitutes_wrapper_aut
             export: "echo".into(),
         };
         let calls = Arc::new(AtomicUsize::new(0));
-        let mut native = registry(Arc::new(Echo {
-            calls: calls.clone(),
-        }));
+        let mut native = registry_contract(
+            Arc::new(ReadAttachment {
+                calls: calls.clone(),
+                started: Arc::new(Semaphore::new(0)),
+                release: Arc::new(Semaphore::new(0)),
+            }),
+            attached_contract(),
+        );
         let forward = Arc::new(Forward(std::sync::OnceLock::new()));
         let implementation = forward.clone();
         native
@@ -1064,7 +1143,7 @@ async fn forwarding_preserves_private_evidence_and_never_substitutes_wrapper_aut
                             exports: Ok(BTreeMap::from([(
                                 "echo".into(),
                                 Published {
-                                    contract: contract(MethodMode::Query),
+                                    contract: attached_contract(),
                                     value: implementation,
                                 },
                             )])),
@@ -1103,6 +1182,7 @@ async fn forwarding_preserves_private_evidence_and_never_substitutes_wrapper_aut
                 "echo".into(),
                 json!("narrow"),
                 scope(&issuer, false),
+                bytes(5).0,
             )
             .await
             .unwrap()
@@ -1117,14 +1197,15 @@ async fn forwarding_preserves_private_evidence_and_never_substitutes_wrapper_aut
                     binding,
                     "echo".into(),
                     json!("allowed"),
-                    scope(&issuer, true)
+                    scope(&issuer, true),
+                    bytes(5).0
                 )
                 .await
                 .unwrap()
                 .result()
                 .await
                 .unwrap(),
-            json!("allowed")
+            json!("xxxxx")
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         app.shutdown().await.unwrap();
@@ -1134,7 +1215,13 @@ async fn forwarding_preserves_private_evidence_and_never_substitutes_wrapper_aut
 }
 struct InputResource(Arc<Semaphore>);
 impl Query for InputResource {
-    fn call(&self, _: String, input: Value, scope: Scope) -> BoxFuture<'static, Result<Value>> {
+    fn call(
+        &self,
+        _: String,
+        input: Value,
+        scope: Scope,
+        _: Attachments,
+    ) -> BoxFuture<'static, Result<Value>> {
         let release = self.0.clone();
         Box::pin(async move {
             let mut ticket = scope.resources.reserve().unwrap();
@@ -1153,7 +1240,13 @@ struct LargeHeld {
     release: Arc<Semaphore>,
 }
 impl Query for LargeHeld {
-    fn call(&self, _: String, input: Value, _: Scope) -> BoxFuture<'static, Result<Value>> {
+    fn call(
+        &self,
+        _: String,
+        input: Value,
+        _: Scope,
+        _: Attachments,
+    ) -> BoxFuture<'static, Result<Value>> {
         let started = self.started.clone();
         let release = self.release.clone();
         Box::pin(async move {
@@ -1247,7 +1340,13 @@ async fn resource_timeout_keeps_input_quota_until_actual_cleanup_is_confirmed() 
         let large = json!("x".repeat(1024 * 1024 - 2));
         assert_eq!(
             client
-                .start(failed, "echo".into(), large.clone(), scope(&issuer, true))
+                .start(
+                    failed,
+                    "echo".into(),
+                    large.clone(),
+                    scope(&issuer, true),
+                    Attachments::new()
+                )
                 .await
                 .unwrap()
                 .result()
@@ -1271,6 +1370,7 @@ async fn resource_timeout_keeps_input_quota_until_actual_cleanup_is_confirmed() 
                         "echo".into(),
                         large.clone(),
                         scope(&issuer, true),
+                        Attachments::new(),
                     )
                     .await
                     .unwrap(),
@@ -1281,7 +1381,13 @@ async fn resource_timeout_keeps_input_quota_until_actual_cleanup_is_confirmed() 
         }
         assert!(
             client
-                .start(healthy, "echo".into(), large, scope(&issuer, true))
+                .start(
+                    healthy,
+                    "echo".into(),
+                    large,
+                    scope(&issuer, true),
+                    Attachments::new()
+                )
                 .await
                 .err()
                 .unwrap()
@@ -1293,6 +1399,461 @@ async fn resource_timeout_keeps_input_quota_until_actual_cleanup_is_confirmed() 
             assert_eq!(observer.result().await.unwrap(), json!("done"));
         }
         assert!(app.shutdown().await.is_err()); // Timeout remains fenced until explicit recovery.
+    })
+    .await
+    .unwrap();
+}
+
+fn attached_contract() -> Contract {
+    let mut contract = contract(MethodMode::Query);
+    let Interface::Service { methods } = &mut contract.interface else {
+        unreachable!()
+    };
+    methods.get_mut("echo").unwrap().resources = BTreeMap::from([(
+        "text".into(),
+        ResourceType {
+            name: "example.Bytes".into(),
+            version: 1,
+        },
+    )]);
+    contract
+}
+fn attached_entry(provider: bool, implementation: Implementation) -> EntryDeclaration {
+    let mut declaration = entry(provider, implementation, MethodMode::Query);
+    if provider {
+        declaration.exports.get_mut("echo").unwrap().contract = attached_contract();
+    } else {
+        declaration.imports.get_mut("echo").unwrap().contract = attached_contract();
+    }
+    declaration
+}
+fn attached_packages() -> (Package, Package) {
+    (
+        package(
+            "attached.provider",
+            attached_entry(
+                true,
+                Implementation::Native {
+                    implementation: "native.echo".into(),
+                },
+            ),
+            None,
+        ),
+        package(
+            "attached.consumer",
+            attached_entry(
+                false,
+                Implementation::JavaScript {
+                    module: "host.mjs".into(),
+                    realm: Realm::Shared,
+                },
+            ),
+            Some("export function activate() { return {}; }".into()),
+        ),
+    )
+}
+struct Bytes {
+    data: Vec<u8>,
+    version: u32,
+}
+impl ReadResource for Bytes {
+    fn resource_type(&self) -> ResourceType {
+        ResourceType {
+            name: "example.Bytes".into(),
+            version: self.version,
+        }
+    }
+    fn bytes(&self) -> usize {
+        self.data.len()
+    }
+    fn metadata(&self) -> Value {
+        json!({"bytes":self.data.len()})
+    }
+    fn read(&self, range: std::ops::Range<usize>) -> Result<Vec<u8>> {
+        if range
+            .end
+            .checked_sub(range.start)
+            .is_none_or(|n| n > 64 * 1024)
+        {
+            return Err("chunk exceeds 64 KiB".into());
+        }
+        self.data
+            .get(range)
+            .map(|r| r.to_vec())
+            .ok_or("invalid byte range".into())
+    }
+}
+fn bytes(size: usize) -> (Attachments, std::sync::Weak<Bytes>) {
+    let value = Arc::new(Bytes {
+        data: vec![b'x'; size],
+        version: 1,
+    });
+    let weak = Arc::downgrade(&value);
+    (
+        BTreeMap::from([("text".into(), value as Arc<dyn ReadResource>)]),
+        weak,
+    )
+}
+struct ReadAttachment {
+    calls: Arc<AtomicUsize>,
+    started: Arc<Semaphore>,
+    release: Arc<Semaphore>,
+}
+impl Query for ReadAttachment {
+    fn call(
+        &self,
+        _: String,
+        input: Value,
+        scope: Scope,
+        attachments: Attachments,
+    ) -> BoxFuture<'static, Result<Value>> {
+        let calls = self.calls.clone();
+        let started = self.started.clone();
+        let release = self.release.clone();
+        Box::pin(async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            if input == "held" {
+                started.add_permits(1);
+                permit(&release).await;
+            }
+            if input == "fail-cleanup" {
+                let mut ticket = scope.resources.reserve().unwrap();
+                ticket.start();
+                ticket.complete(Err("attachment cleanup unconfirmed".into()));
+            }
+            Ok(json!(
+                String::from_utf8(attachments["text"].read(0..5)?).unwrap()
+            ))
+        })
+    }
+}
+struct BadDescriptor(bool);
+impl ReadResource for BadDescriptor {
+    fn resource_type(&self) -> ResourceType {
+        panic!("type descriptor panicked during final admission")
+    }
+    fn bytes(&self) -> usize {
+        5
+    }
+    fn metadata(&self) -> Value {
+        assert!(!self.0, "metadata descriptor panicked before enqueue");
+        Value::Null
+    }
+    fn read(&self, _: std::ops::Range<usize>) -> Result<Vec<u8>> {
+        panic!("invalid payload must not be read")
+    }
+}
+#[tokio::test]
+async fn attachment_validation_and_descriptor_panics_do_not_cancel_other_accepted_work() {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let (provider, consumer) = attached_packages();
+        let issuer = Issuer::default();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let started = Arc::new(Semaphore::new(0));
+        let release = Arc::new(Semaphore::new(0));
+        let app = Application::start(
+            input(&provider, &consumer),
+            vec![provider, consumer],
+            registry_contract(
+                Arc::new(ReadAttachment {
+                    calls: calls.clone(),
+                    started: started.clone(),
+                    release: release.clone(),
+                }),
+                attached_contract(),
+            ),
+            issuer.clone(),
+            Arc::new(Grant(issuer.clone())),
+            Limits::default(),
+        )
+        .unwrap();
+        app.ready().await.unwrap();
+        let client = app.client();
+        let binding = client
+            .bind(client.activation(&id(2)).unwrap(), "echo".into())
+            .await
+            .unwrap()
+            .remove(0);
+        let (attachments, held) = bytes(5);
+        let observer = client
+            .start(
+                binding.clone(),
+                "echo".into(),
+                json!("held"),
+                scope(&issuer, true),
+                attachments,
+            )
+            .await
+            .unwrap();
+        permit(&started).await;
+        // JSON observation contains no actual payload, even with the correct slot.
+        assert!(
+            client
+                .start(
+                    binding.clone(),
+                    "echo".into(),
+                    json!("text:{bytes:5}"),
+                    scope(&issuer, true),
+                    Attachments::new()
+                )
+                .await
+                .err()
+                .unwrap()
+                .contains("slots or types")
+        );
+        let (mut extra, _) = bytes(5);
+        extra.insert("extra".into(), extra["text"].clone());
+        assert!(
+            client
+                .start(
+                    binding.clone(),
+                    "echo".into(),
+                    json!("extra"),
+                    scope(&issuer, true),
+                    extra
+                )
+                .await
+                .is_err()
+        );
+        let wrong = Attachments::from([(
+            "text".into(),
+            Arc::new(Bytes {
+                data: vec![b'x'; 5],
+                version: 2,
+            }) as Arc<dyn ReadResource>,
+        )]);
+        assert!(
+            client
+                .start(
+                    binding.clone(),
+                    "echo".into(),
+                    json!("wrong-type"),
+                    scope(&issuer, true),
+                    wrong
+                )
+                .await
+                .err()
+                .unwrap()
+                .contains("slots or types")
+        );
+        for before_enqueue in [true, false] {
+            let bad = Attachments::from([(
+                "text".into(),
+                Arc::new(BadDescriptor(before_enqueue)) as Arc<dyn ReadResource>,
+            )]);
+            assert!(
+                client
+                    .start(
+                        binding.clone(),
+                        "echo".into(),
+                        json!("panic-descriptor"),
+                        scope(&issuer, true),
+                        bad
+                    )
+                    .await
+                    .err()
+                    .unwrap()
+                    .contains("panicked")
+            );
+            assert_eq!(
+                client
+                    .snapshot()
+                    .instances
+                    .iter()
+                    .find(|s| s.activation.instance() == &id(1))
+                    .unwrap()
+                    .calls,
+                1
+            );
+            assert!(held.upgrade().is_some());
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
+        let (attachments, denied) = bytes(5);
+        assert!(
+            client
+                .start(
+                    binding.clone(),
+                    "echo".into(),
+                    json!("denied"),
+                    scope(&issuer, false),
+                    attachments
+                )
+                .await
+                .is_err()
+        );
+        assert!(denied.upgrade().is_none());
+        release.add_permits(1);
+        assert_eq!(observer.result().await.unwrap(), json!("xxxxx"));
+        assert!(held.upgrade().is_none());
+        let (attachments, done) = bytes(5);
+        assert_eq!(
+            client
+                .start(
+                    binding,
+                    "echo".into(),
+                    json!("healthy"),
+                    scope(&issuer, true),
+                    attachments
+                )
+                .await
+                .unwrap()
+                .result()
+                .await
+                .unwrap(),
+            json!("xxxxx")
+        );
+        assert!(done.upgrade().is_none());
+        app.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+#[tokio::test]
+async fn failed_cleanup_retains_actual_attachments_and_the_shared_64_mib_capacity() {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let (provider, consumer) = attached_packages();
+        let healthy = package(
+            "attached.healthy",
+            attached_entry(
+                true,
+                Implementation::Native {
+                    implementation: "native.healthy".into(),
+                },
+            ),
+            None,
+        );
+        let mut composition = input(&provider, &consumer);
+        composition
+            .instances
+            .insert("healthy".into(), node(&healthy, 4, true));
+        composition
+            .instances
+            .get_mut("b")
+            .unwrap()
+            .bindings
+            .get_mut("echo")
+            .unwrap()[0] = Target::Instance {
+            path: vec!["healthy".into()],
+            export: "echo".into(),
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let started = Arc::new(Semaphore::new(0));
+        let release = Arc::new(Semaphore::new(0));
+        let query: Arc<dyn Query> = Arc::new(ReadAttachment {
+            calls: calls.clone(),
+            started: started.clone(),
+            release: release.clone(),
+        });
+        let mut native = registry_contract(query.clone(), attached_contract());
+        native
+            .insert(
+                "native.healthy".into(),
+                Arc::new(move |_| {
+                    let query = query.clone();
+                    Box::pin(async move {
+                        NativeActivation {
+                            exports: Ok(BTreeMap::from([(
+                                "echo".into(),
+                                Published {
+                                    contract: attached_contract(),
+                                    value: query,
+                                },
+                            )])),
+                            owner: native_owner(|| Box::pin(async { Ok(()) })),
+                        }
+                    })
+                }),
+            )
+            .unwrap();
+        let issuer = Issuer::default();
+        let app = Application::start(
+            composition,
+            vec![provider, consumer, healthy],
+            native,
+            issuer.clone(),
+            Arc::new(Grant(issuer.clone())),
+            Limits::default(),
+        )
+        .unwrap();
+        app.ready().await.unwrap();
+        let client = app.client();
+        let failed = client
+            .bind(client.activation(&id(2)).unwrap(), "echo".into())
+            .await
+            .unwrap()
+            .remove(0);
+        let healthy = client
+            .bind(client.activation(&id(3)).unwrap(), "echo".into())
+            .await
+            .unwrap()
+            .remove(0);
+        let (attachments, retained) = bytes(1024 * 1024);
+        assert_eq!(
+            client
+                .start(
+                    failed,
+                    "echo".into(),
+                    json!("fail-cleanup"),
+                    scope(&issuer, true),
+                    attachments
+                )
+                .await
+                .unwrap()
+                .result()
+                .await
+                .unwrap(),
+            json!("xxxxx")
+        );
+        assert!(retained.upgrade().is_some());
+        assert!(
+            client
+                .snapshot()
+                .cleanup_error
+                .unwrap()
+                .contains("unconfirmed")
+        );
+        let (attachments, large) = bytes(63 * 1024 * 1024);
+        let observer = client
+            .start(
+                healthy.clone(),
+                "echo".into(),
+                json!("held"),
+                scope(&issuer, true),
+                attachments,
+            )
+            .await
+            .unwrap();
+        permit(&started).await;
+        let (attachments, rejected) = bytes(5);
+        assert!(
+            client
+                .start(
+                    healthy,
+                    "echo".into(),
+                    json!("over-quota"),
+                    scope(&issuer, true),
+                    attachments
+                )
+                .await
+                .err()
+                .unwrap()
+                .contains("attachment budget")
+        );
+        assert!(rejected.upgrade().is_none());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        drop(observer);
+        drop(app);
+        drop(client);
+        assert!(retained.upgrade().is_some());
+        assert!(large.upgrade().is_some());
+        release.add_permits(1);
+        // A successful query releases the actual payload even after all observers
+        // and roots exit; the unrelated failed record remains independently owned.
+        while large.upgrade().is_some() {
+            tokio::task::yield_now().await;
+        }
+        assert!(large.upgrade().is_none());
+        assert!(retained.upgrade().is_some());
     })
     .await
     .unwrap();

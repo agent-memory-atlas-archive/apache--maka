@@ -7959,10 +7959,12 @@ dependencies = [
  "maka-js-runtime",
  "maka-plugin-core",
  "maka-plugins",
+ "maka-runtime-host",
  "maka-ui",
  "schemars 1.2.2",
  "serde_json",
  "tokio",
+ "tokio-util",
  "uuid",
 ]
 

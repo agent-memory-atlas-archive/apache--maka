@@ -23,9 +23,10 @@ use maka_plugin_core::{
     contract::ResourceType,
     runtime::{Capability, Execution},
 };
+use maka_plugins::call::{Attachments, ReadResource};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{collections::VecDeque, future::Future, ops::Range, pin::Pin, sync::Arc};
+use std::{collections::VecDeque, future::Future, pin::Pin, sync::Arc};
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -51,20 +52,11 @@ pub enum CapturePlan {
     Forward { source: CaptureSource },
     Native,
 }
-/// Trusted immutable payload. Its owner must not retain a native UI entity,
-/// live input, mount lease or a writable buffer. Reads use UTF-8 byte ranges.
-pub trait ReadResource: Send + Sync + 'static {
-    fn resource_type(&self) -> ResourceType;
-    fn bytes(&self) -> usize;
-    fn metadata(&self) -> Value;
-    fn read(&self, range: Range<usize>) -> std::result::Result<Vec<u8>, String>;
-}
-pub type Resources = BTreeMap<String, Arc<dyn ReadResource>>;
 pub type ServiceFuture = Pin<Box<dyn Future<Output = ServiceCompletion> + Send + 'static>>;
 /// Construct a background future only. Polling performs the operation after
 /// final admission; the executor retains it independently of any UI waiter.
 pub trait NativeService: Send + Sync + 'static {
-    fn call(&self, method: String, input: Value, resources: Resources) -> ServiceFuture;
+    fn call(&self, method: String, input: Value, resources: Attachments) -> ServiceFuture;
 }
 /// Business outcome and actual executor cleanup are separate facts.
 pub struct ServiceCompletion {
@@ -125,7 +117,7 @@ pub(super) struct Prepared<V: ?Sized> {
     pub capability: Capability<Export<V>>,
     pub captures: BTreeMap<String, CaptureTarget>,
     pub invalidated: bool,
-    resources: Option<Resources>,
+    resources: Option<Attachments>,
 }
 struct Running<V: ?Sized> {
     consumer: Mount,
@@ -133,7 +125,7 @@ struct Running<V: ?Sized> {
     method: String,
     completed: bool,
     execution: Execution<Export<V>>,
-    resources: Resources,
+    resources: Attachments,
 }
 pub(super) struct Outcome {
     pub consumer: Mount,
@@ -392,7 +384,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 continue;
             }
             let result = (|| {
-                let mut resources = Resources::new();
+                let mut resources = Attachments::new();
                 let mut bytes = self.actions.bytes();
                 for (slot, target) in &action.captures {
                     let resource = capture(target)?;

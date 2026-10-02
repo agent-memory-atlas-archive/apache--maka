@@ -23,6 +23,7 @@ use maka_plugin_core::{
     contract::ResourceType,
     runtime::Mount,
 };
+use maka_plugins::call::{Attachments, ReadResource};
 use maka_ui::actions::*;
 use maka_ui::{
     Application, ComponentCall, ComponentOutput, Frame, NativeCapability, NativeComponent,
@@ -354,7 +355,7 @@ struct CompletionService {
     cleanup_error: bool,
 }
 impl NativeService for CompletionService {
-    fn call(&self, _: String, _: Value, _: Resources) -> ServiceFuture {
+    fn call(&self, _: String, _: Value, _: Attachments) -> ServiceFuture {
         let value = self.value.clone();
         let failed = self.cleanup_error;
         Box::pin(async move {

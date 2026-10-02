@@ -45,7 +45,7 @@ pub(super) trait Widget: Any {
         _: &maka_ui::actions::CaptureTarget,
         _: &mut Window,
         _: &mut App,
-    ) -> maka_ui::Result<std::sync::Arc<dyn maka_ui::actions::ReadResource>> {
+    ) -> maka_ui::Result<std::sync::Arc<dyn maka_plugins::call::ReadResource>> {
         Err(maka_ui::Error::Invalid("widget capture unavailable".into()))
     }
     fn commit(&self, _: &mut dyn Any, _: &mut Window, _: &mut App) {}

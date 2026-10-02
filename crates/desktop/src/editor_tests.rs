@@ -717,7 +717,7 @@ struct HeldRead {
     release: std::sync::Arc<tokio::sync::Semaphore>,
     panic: bool,
     snapshot: std::sync::Arc<
-        std::sync::Mutex<Option<std::sync::Weak<dyn maka_ui::actions::ReadResource>>>,
+        std::sync::Mutex<Option<std::sync::Weak<dyn maka_plugins::call::ReadResource>>>,
     >,
 }
 impl maka_ui::actions::NativeService for HeldRead {
@@ -725,7 +725,7 @@ impl maka_ui::actions::NativeService for HeldRead {
         &self,
         _: String,
         _: serde_json::Value,
-        resources: maka_ui::actions::Resources,
+        resources: maka_plugins::call::Attachments,
     ) -> maka_ui::actions::ServiceFuture {
         *self.snapshot.lock().unwrap() = Some(std::sync::Arc::downgrade(&resources["text"]));
         let release = self.release.clone();
@@ -853,4 +853,384 @@ fn application_owner_preserves_failed_and_panicked_work_after_real_window_cleanu
         cx.run_until_parked();
         assert!(weak.upgrade().is_none());
     }
+}
+
+struct HostRead {
+    started: std::sync::Arc<tokio::sync::Semaphore>,
+    release: std::sync::Arc<tokio::sync::Semaphore>,
+    snapshot: std::sync::Arc<
+        std::sync::Mutex<Option<std::sync::Weak<dyn maka_plugins::call::ReadResource>>>,
+    >,
+}
+impl maka_runtime_host::application::Query for HostRead {
+    fn call(
+        &self,
+        _: String,
+        input: serde_json::Value,
+        _: maka_plugins::call::Scope,
+        attachments: maka_plugins::call::Attachments,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send + 'static>,
+    > {
+        *self.snapshot.lock().unwrap() = Some(std::sync::Arc::downgrade(&attachments["text"]));
+        let started = self.started.clone();
+        let release = self.release.clone();
+        Box::pin(async move {
+            started.add_permits(1);
+            release.acquire_owned().await.unwrap().forget();
+            let range: maka_ui::text::ReadText = serde_json::from_value(input).unwrap();
+            let text = String::from_utf8(attachments["text"].read(range.start..range.end)?)
+                .map_err(|e| e.to_string())?;
+            assert_eq!(text, "Start");
+            // The real Rope snapshot still enforces the native text contract.
+            assert!(attachments["text"].read(0..64 * 1024 + 1).is_err());
+            serde_json::to_value(maka_ui::text::TextChunk {
+                text,
+                metadata: attachments["text"].metadata(),
+            })
+            .map_err(|e| e.to_string())
+        })
+    }
+}
+struct HostGrant(maka_plugins::call::Issuer);
+impl maka_runtime_host::application::Policy for HostGrant {
+    fn admit(
+        &self,
+        invocation: maka_runtime_host::application::Invocation<'_>,
+    ) -> Result<(), String> {
+        if self.0.evidence::<bool>(invocation.scope) == Some(&true) {
+            Ok(())
+        } else {
+            Err("native read grant denied".into())
+        }
+    }
+}
+struct HostClose;
+impl maka_runtime_host::application::NativeOwner for HostClose {
+    fn close(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'static>>
+    {
+        Box::pin(async { Ok(()) })
+    }
+}
+struct ForwardHostRead {
+    client: maka_runtime_host::application::Client,
+    binding: maka_runtime_host::application::Binding,
+    issuer: maka_plugins::call::Issuer,
+}
+impl maka_ui::actions::NativeService for ForwardHostRead {
+    fn call(
+        &self,
+        method: String,
+        input: serde_json::Value,
+        attachments: maka_plugins::call::Attachments,
+    ) -> maka_ui::actions::ServiceFuture {
+        let client = self.client.clone();
+        let binding = self.binding.clone();
+        let issuer = self.issuer.clone();
+        Box::pin(async move {
+            let scope = issuer
+                .issue_with(
+                    maka_plugins::call::Identity::Remote {
+                        request_id: uuid::Uuid::new_v4(),
+                    },
+                    true,
+                    tokio_util::sync::CancellationToken::new(),
+                )
+                .unwrap();
+            let result = match client
+                .start(binding, method, input, scope, attachments)
+                .await
+            {
+                Ok(accepted) => accepted.result().await,
+                Err(e) => Err(e),
+            };
+            maka_ui::actions::ServiceCompletion {
+                result,
+                cleanup: Ok(()),
+            }
+        })
+    }
+}
+fn host_read_fixture(
+    query: std::sync::Arc<dyn maka_runtime_host::application::Query>,
+    issuer: maka_plugins::call::Issuer,
+) -> maka_runtime_host::application::Application {
+    use maka_plugin_core::{
+        composition::{
+            Configuration, Environment, ExecutionLocation, Input, Node, PackageUse, Target,
+        },
+        contract::{Availability, Cardinality, Export, Import},
+        package::{Declaration, EntryDeclaration, EntryTarget, Implementation},
+        runtime::Published,
+    };
+    use maka_runtime_host::application::{Application, NativeActivation, NativeRegistry};
+    let contract = maka_ui::text::reader_contract();
+    let provider = support::package(
+        "host.reader",
+        Declaration {
+            entries: BTreeMap::from([(
+                EntryTarget::Host,
+                EntryDeclaration {
+                    implementation: Implementation::Native {
+                        implementation: "test.host-reader".into(),
+                    },
+                    configuration: serde_json::json!({"type":"object"}),
+                    imports: BTreeMap::new(),
+                    exports: BTreeMap::from([(
+                        "Reader".into(),
+                        Export {
+                            contract: contract.clone(),
+                            availability: Availability::Required,
+                        },
+                    )]),
+                },
+            )]),
+            composition: None,
+        },
+        None,
+    );
+    let consumer = support::package(
+        "host.consumer",
+        Declaration {
+            entries: BTreeMap::from([(
+                EntryTarget::Host,
+                EntryDeclaration {
+                    implementation: Implementation::Native {
+                        implementation: "test.host-consumer".into(),
+                    },
+                    configuration: serde_json::json!({"type":"object"}),
+                    imports: BTreeMap::from([(
+                        "reader".into(),
+                        Import {
+                            contract,
+                            cardinality: Cardinality::One,
+                        },
+                    )]),
+                    exports: BTreeMap::new(),
+                },
+            )]),
+            composition: None,
+        },
+        None,
+    );
+    let nodes = [
+        ("reader", 11, &provider, true),
+        ("consumer", 12, &consumer, false),
+    ]
+    .into_iter()
+    .map(|(name, id, p, provider)| {
+        (
+            name.into(),
+            Node {
+                key: uuid::Uuid::from_u128(id),
+                package: p.application_ref().into(),
+                use_package: PackageUse::Entry,
+                configuration: Configuration::default(),
+                parameters: Configuration::default(),
+                bindings: if provider {
+                    BTreeMap::new()
+                } else {
+                    BTreeMap::from([(
+                        "reader".into(),
+                        vec![Target::Instance {
+                            path: vec!["reader".into()],
+                            export: "Reader".into(),
+                        }],
+                    )])
+                },
+                disabled: false,
+                overrides: Vec::new(),
+            },
+        )
+    })
+    .collect();
+    let input = Input {
+        environment: Environment {
+            location: ExecutionLocation::Host,
+            presentation: None,
+        },
+        instances: nodes,
+        launch: None,
+    };
+    let mut native = NativeRegistry::default();
+    native
+        .insert(
+            "test.host-reader".into(),
+            std::sync::Arc::new(move |_| {
+                let query = query.clone();
+                Box::pin(async move {
+                    NativeActivation {
+                        exports: Ok(BTreeMap::from([(
+                            "Reader".into(),
+                            Published {
+                                contract: maka_ui::text::reader_contract(),
+                                value: query,
+                            },
+                        )])),
+                        owner: std::sync::Arc::new(HostClose),
+                    }
+                })
+            }),
+        )
+        .unwrap();
+    native
+        .insert(
+            "test.host-consumer".into(),
+            std::sync::Arc::new(|_| {
+                Box::pin(async {
+                    NativeActivation {
+                        exports: Ok(BTreeMap::new()),
+                        owner: std::sync::Arc::new(HostClose),
+                    }
+                })
+            }),
+        )
+        .unwrap();
+    Application::start(
+        input,
+        vec![provider, consumer],
+        native,
+        issuer.clone(),
+        std::sync::Arc::new(HostGrant(issuer)),
+        Default::default(),
+    )
+    .unwrap()
+}
+#[gpui::test]
+fn host_query_keeps_real_kit_snapshot_after_edit_remove_and_window_cleanup(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let timer = timer();
+    let started = std::sync::Arc::new(tokio::sync::Semaphore::new(0));
+    let release = std::sync::Arc::new(tokio::sync::Semaphore::new(0));
+    let snapshot = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let issuer = maka_plugins::call::Issuer::default();
+    let host = {
+        let _guard = timer.enter();
+        host_read_fixture(
+            std::sync::Arc::new(HostRead {
+                started: started.clone(),
+                release: release.clone(),
+                snapshot: snapshot.clone(),
+            }),
+            issuer.clone(),
+        )
+    };
+    timer.block_on(host.ready()).unwrap();
+    let client = host.client();
+    let consumer = client
+        .activation(&maka_plugin_core::composition::InstanceId(vec![
+            uuid::Uuid::from_u128(12),
+        ]))
+        .unwrap();
+    let binding = timer
+        .block_on(client.bind(consumer, "reader".into()))
+        .unwrap()
+        .remove(0);
+    let bridge = std::sync::Arc::new(ForwardHostRead {
+        client,
+        binding,
+        issuer,
+    });
+    let (mut input, mut packages) = support::resource_fixture();
+    let index = packages
+        .iter()
+        .position(|p| p.manifest().id == "native.reader")
+        .unwrap();
+    let old = packages.remove(index);
+    let mut declaration = old.manifest().application.clone().unwrap();
+    declaration
+        .entries
+        .get_mut(&maka_plugin_core::package::EntryTarget::Desktop)
+        .unwrap()
+        .implementation = maka_plugin_core::package::Implementation::Native {
+        implementation: "test.forward-host-read".into(),
+    };
+    let package = support::package("native.reader", declaration, None);
+    input.instances.get_mut("reader").unwrap().package = package.application_ref().into();
+    packages.push(package);
+    let mut native = widgets::registry();
+    native
+        .register("test.forward-host-read", move |_| {
+            Ok(BTreeMap::from([(
+                "Reader".into(),
+                maka_ui::NativeExport {
+                    contract: maka_ui::text::reader_contract(),
+                    value: maka_ui::NativeCapability::Service(bridge.clone()),
+                },
+            )]))
+        })
+        .unwrap();
+    let scene = Scene::with_registry(cx, &timer, false, (input, packages), native);
+    scene.draw(cx);
+    let owner = scene.owner();
+    cx.update_window(scene.window, |_, window, cx| {
+        let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
+        scene
+            .app
+            .borrow_mut()
+            .dispatch(&scene.root, revision, "read", serde_json::Value::Null)
+            .unwrap();
+        scene
+            .surface
+            .update(cx, |s, cx| s.sync_native(window, cx).unwrap());
+        owner.update(cx, |o, cx| {
+            o.replace_text_in_range(Some(0..5), "After", window, cx)
+        });
+    })
+    .unwrap();
+    timer.block_on(async {
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            started.acquire().await.unwrap().forget();
+        })
+        .await
+        .unwrap();
+    });
+    let weak = snapshot.lock().unwrap().clone().unwrap();
+    assert!(weak.upgrade().is_some());
+    cx.update_window(scene.window, |_, window, cx| {
+        let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
+        scene
+            .app
+            .borrow_mut()
+            .dispatch(&scene.root, revision, "remove", serde_json::Value::Null)
+            .unwrap();
+        scene
+            .surface
+            .update(cx, |s, cx| s.sync_native(window, cx).unwrap());
+    })
+    .unwrap();
+    let editor = cx.update(|cx| owner.read(cx).state.clone());
+    let editor_released = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let observed = editor_released.clone();
+    let subscription = cx.update(|cx| {
+        cx.observe_release(&editor, move |_, _| {
+            observed.store(true, std::sync::atomic::Ordering::SeqCst);
+        })
+    });
+    drop(editor);
+    drop(owner);
+    scene.close(cx);
+    assert!(scene.resources.borrow().surface_closed);
+    assert!(editor_released.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(weak.upgrade().is_some());
+    assert_eq!(
+        host.client()
+            .snapshot()
+            .instances
+            .iter()
+            .find(|s| s.activation.instance()
+                == &maka_plugin_core::composition::InstanceId(vec![uuid::Uuid::from_u128(11)]))
+            .unwrap()
+            .calls,
+        1
+    );
+    release.add_permits(1);
+    await_action(cx, &scene.app, |a| a.accepted_action_count() == 0);
+    assert!(weak.upgrade().is_none());
+    timer.block_on(host.shutdown()).unwrap();
+    drop(subscription);
 }

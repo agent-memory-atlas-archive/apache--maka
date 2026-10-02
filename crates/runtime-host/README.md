@@ -33,13 +33,22 @@ asynchronous work starts. Rejected or late exports still close under that origin
 owner; failed close retains the actual native owner and lifecycle fence.
 
 Bindings capture the exact consumer and registration. Final admission checks the
-Host `Issuer`, current Scope cancellation, method input and explicit Host `Policy`,
+Host `Issuer`, current Scope cancellation, method input, exact attachment slots/types
+and explicit Host `Policy`,
 then accepts work through the core without waiting between those checks. Forwarded
 child Scopes retain the original private evidence. A package name, source identity
 in JSON, or binding is not effect authorization.
 
-An `Accepted` result is only an observer. The owner retains execution, Scope and
-input capacity until the actual query and its resources settle. Ordinary business
+Native queries accept `maka_plugins::call::Attachments`: actual immutable
+`ReadResource` payloads, shared with UI capture adapters. Metadata and JSON slot
+names cannot construct these values. Forwarders pass actual payloads explicitly;
+text resources enforce their own UTF-8 ranges and chunk limits. Native descriptor
+panics before admission reject that request while preserving existing work.
+Policy receives a borrowed `Invocation` with named consumer, provider, Scope,
+contract, method, input and attachment fields; this observation is not a new grant.
+
+An `Accepted` result is only an observer. The owner retains execution, Scope,
+actual attachments and capacity until the query and its resources settle. Ordinary business
 errors and result validation errors settle cleanly when resource cleanup succeeds.
 Unconfirmed cleanup or an executor panic preserves work, Scope and capacity, and
 retires affected registrations. Dropping the application root requests retirement;
@@ -48,9 +57,11 @@ requires native/module cleanup and actual VM shutdown. Shared VM failure retires
 its actual registrations and consumers, leaving unrelated domains independent.
 
 Calls have a 1 MiB JSON limit, with 128-call and 32 MiB in-flight input budgets.
-This adapter currently executes queries. Mutation, subscription and request-local
-resource attachments are rejected before activation until their durable, stream
-and attachment executors are implemented. Host transport, persistent composition
+Attachments allow 16 exact slots and 64 MiB across queued and accepted requests;
+unconfirmed cleanup retains their payloads and capacity. This adapter currently
+executes queries. Mutation, subscription and JavaScript methods with attachments
+are rejected before activation until their durable, stream and bridge executors
+are implemented. Host transport, persistent composition
 commit/reconciliation, operation recovery, the JavaScript binding bridge and SDK,
 and server/TUI/UI integration remain required work. This foundation is not a
 completed Host migration or a compatibility facade for the previous catalog.

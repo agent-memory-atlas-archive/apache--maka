@@ -432,7 +432,7 @@ struct TextSnapshot {
     text: Rope,
     revision: u64,
 }
-impl maka_ui::actions::ReadResource for TextSnapshot {
+impl maka_plugins::call::ReadResource for TextSnapshot {
     fn resource_type(&self) -> maka_plugin_core::contract::ResourceType {
         text_resource_type()
     }
@@ -463,7 +463,7 @@ impl Widget for EditorRecipe {
         target: &maka_ui::actions::CaptureTarget,
         window: &mut Window,
         cx: &mut App,
-    ) -> maka_ui::Result<std::sync::Arc<dyn maka_ui::actions::ReadResource>> {
+    ) -> maka_ui::Result<std::sync::Arc<dyn maka_plugins::call::ReadResource>> {
         if target.method() != "snapshot" {
             return Err(maka_ui::Error::Invalid("unknown editor capture".into()));
         }
@@ -486,7 +486,7 @@ impl Widget for EditorRecipe {
                     text: owner.snapshot.text.clone(),
                     revision: owner.revision,
                 })
-                    as std::sync::Arc<dyn maka_ui::actions::ReadResource>)
+                    as std::sync::Arc<dyn maka_plugins::call::ReadResource>)
             })
     }
 

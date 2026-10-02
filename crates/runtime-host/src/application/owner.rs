@@ -34,6 +34,8 @@ struct Failed {
     _scope: Scope,
     _slot: OwnedSemaphorePermit,
     _bytes: OwnedSemaphorePermit,
+    _attachments: Attachments,
+    _resources: OwnedSemaphorePermit,
 }
 struct Owned {
     resource: Resource,
@@ -58,6 +60,8 @@ enum Done {
         reply: oneshot::Sender<Result<Value>>,
         _slot: OwnedSemaphorePermit,
         _bytes: OwnedSemaphorePermit,
+        attachments: Attachments,
+        _resources: OwnedSemaphorePermit,
     },
     Closed {
         activation: Activation,
@@ -480,8 +484,10 @@ impl Owner {
                     method,
                     input,
                     scope,
+                    attachments,
                     slot,
                     bytes,
+                    resources,
                     reply,
                 } = *call;
                 if reply.is_closed() {
@@ -508,16 +514,37 @@ impl Owner {
                         .validate(&input)
                         .map_err(|e| e.to_string())?;
                     std::panic::catch_unwind(AssertUnwindSafe(|| {
-                        self.policy.admit(
-                            &scope,
-                            binding.0.consumer(),
-                            binding.provider(),
-                            &service.contract,
-                            &method,
-                            &input,
-                        )
+                        let Interface::Service { methods } = &service.contract.interface else {
+                            unreachable!()
+                        };
+                        let declared = &methods[&method].resources;
+                        if declared.len() != attachments.len()
+                            || declared.iter().any(|(slot, resource_type)| {
+                                attachments.get(slot).is_none_or(|resource| {
+                                    resource.resource_type() != *resource_type
+                                })
+                            })
+                        {
+                            return Err("Host attachment slots or types mismatch".into());
+                        }
+                        if check_attachments(&attachments)? != resources.num_permits() {
+                            return Err(
+                                "Host attachment descriptor changed before admission".into()
+                            );
+                        }
+                        self.policy.admit(Invocation {
+                            scope: &scope,
+                            consumer: binding.0.consumer(),
+                            provider: binding.provider(),
+                            contract: &service.contract,
+                            method: &method,
+                            input: &input,
+                            attachments: &attachments,
+                        })
                     }))
-                    .unwrap_or_else(|_| Err("Host admission policy panicked".into()))?;
+                    .unwrap_or_else(|_| {
+                        Err("Host admission policy or attachment descriptor panicked".into())
+                    })?;
                     if scope.cancellation.is_cancelled() {
                         return Err("Host invocation was revoked".into());
                     }
@@ -537,7 +564,14 @@ impl Owner {
                                 let service = execution.value();
                                 let value = match &service.implementation {
                                     ImplementationValue::Native(provider) => {
-                                        provider.call(method.clone(), input, scope.clone()).await
+                                        provider
+                                            .call(
+                                                method.clone(),
+                                                input,
+                                                scope.clone(),
+                                                attachments.clone(),
+                                            )
+                                            .await
                                     }
                                     ImplementationValue::JavaScript(callbacks) => callbacks
                                         .call(
@@ -574,6 +608,8 @@ impl Owner {
                                 reply: output,
                                 _slot: slot,
                                 _bytes: bytes,
+                                attachments,
+                                _resources: resources,
                             }
                         }));
                         let _ = reply.send(Ok(Accepted { id, result }));
@@ -630,6 +666,8 @@ impl Owner {
                 reply,
                 _slot,
                 _bytes,
+                attachments,
+                _resources,
             } => {
                 let _ = self.check_vm(execution.provider());
                 let failed = cleanup.is_err();
@@ -645,6 +683,8 @@ impl Owner {
                         _scope: *scope,
                         _slot,
                         _bytes,
+                        _attachments: attachments,
+                        _resources,
                     });
                 }
                 let _ = reply.send(result);
