@@ -49,3 +49,7 @@ maka application check --input deployment.json --package /absolute/package/path
 ```
 
 检查器不执行 JavaScript，也不创建原生 UI 资源。
+
+组件挂载是独立所有者；撤销一个挂载会停止其子挂载，不撤销可复用提供者。
+提供者撤销会停止依赖挂载。原生 close 确认与 accepted call 结算是两个独立清理条件，
+不能互相替代或提前释放清理阻塞。

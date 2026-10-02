@@ -57,3 +57,8 @@ maka application check --input deployment.json --package /absolute/package/path
 ```
 
 The checker does not execute JavaScript or create native UI resources.
+
+Component mounts are independent owners. Retiring one mount stops its owned children
+without retiring reusable component providers. Provider retirement stops dependent
+mounts. Explicit native close confirmation and accepted-call settlement remain separate
+cleanup obligations; neither can release the other's fence.

@@ -35,6 +35,9 @@ use crate::{
     plan::{Binding, Instance, Plan, Provider},
 };
 
+mod mount;
+pub use mount::{Mount, MountStatus};
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Activation {
     kernel: Uuid,
@@ -172,6 +175,7 @@ pub struct Runtime<T> {
     identity: Uuid,
     desired: Plan,
     live: BTreeMap<InstanceId, Live<T>>,
+    mounts: BTreeMap<Uuid, mount::Mounted<T>>,
 }
 
 impl<T> Runtime<T> {
@@ -180,12 +184,16 @@ impl<T> Runtime<T> {
             identity: Uuid::new_v4(),
             desired: plan,
             live: BTreeMap::new(),
+            mounts: BTreeMap::new(),
         }
     }
 
     /// Input durability belongs to the embedding deployment. Install only a
     /// checked plan after committing its input, then drive retirement/activation.
     pub fn install(&mut self, plan: Plan) -> Vec<Activation> {
+        if self.desired.launch() != plan.launch() {
+            self.retire_launch_mounts();
+        }
         let changed: Vec<_> = self
             .live
             .iter()
@@ -512,6 +520,7 @@ impl<T> Runtime<T> {
                 retired.push(live.activation.clone());
             }
         }
+        self.retire_invalid_mounts();
         Ok(retired)
     }
 
@@ -527,6 +536,7 @@ impl<T> Runtime<T> {
         }
         if !live.calls.is_empty()
             || !live.resources.is_empty()
+            || self.mounts_depend_on(activation)
             || self
                 .live
                 .values()

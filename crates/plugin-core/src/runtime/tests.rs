@@ -651,3 +651,169 @@ fn remote_metadata_does_not_count_as_an_actual_registration() {
         Error::NotReady(_)
     ));
 }
+
+fn component_fixture() -> Fixture {
+    let mut fixture = Fixture::new();
+    fixture.input.environment = Environment {
+        location: ExecutionLocation::Ui,
+        presentation: Some(crate::composition::PresentationTarget::Desktop),
+    };
+    fixture.input.launch = Some(target("p"));
+    fixture.packages = Packages::default();
+    for (name, provider) in [("provider", true), ("consumer", false)] {
+        let mut declaration = entry(provider);
+        for export in declaration.exports.values_mut() {
+            export.contract = component_contract();
+        }
+        for import in declaration.imports.values_mut() {
+            import.contract = component_contract();
+        }
+        fixture
+            .packages
+            .insert(
+                reference(name),
+                Declaration {
+                    entries: BTreeMap::from([(EntryTarget::Desktop, declaration)]),
+                    composition: None,
+                },
+            )
+            .unwrap();
+    }
+    fixture
+}
+fn component_contract() -> Contract {
+    Contract {
+        name: "example.Component".into(),
+        version: 1,
+        transport: Transport::Local,
+        interface: Interface::Component {
+            props: json!({"type":"object"}),
+            events: BTreeMap::new(),
+        },
+    }
+}
+fn component_export() -> BTreeMap<String, Published<()>> {
+    BTreeMap::from([(
+        "action".into(),
+        Published {
+            contract: component_contract(),
+            value: (),
+        },
+    )])
+}
+
+#[test]
+fn mount_close_and_accepted_work_are_independent_cleanup_obligations() {
+    let fixture = component_fixture();
+    let mut runtime = Runtime::new(fixture.plan());
+    let provider = fixture.activate(&mut runtime, "p", component_export());
+    let a = runtime.mount_launch().unwrap();
+    let b = runtime.mount_launch().unwrap();
+    runtime.publish_mount(&a).unwrap();
+    runtime.publish_mount(&b).unwrap();
+    let accepted = runtime.admit_mount(&a).unwrap();
+    runtime.retire_mount(&a).unwrap();
+    assert!(runtime.admit_mount(&a).is_err());
+    let other = runtime.admit_mount(&b).unwrap();
+    runtime.settle(&other, Ok(())).unwrap();
+    assert_eq!(runtime.status(&provider).unwrap().phase, Phase::Active);
+    assert!(
+        runtime
+            .complete_mount(&a, Err("unknown native close".into()))
+            .is_err()
+    );
+    runtime.retire(&provider).unwrap();
+    assert!(runtime.admit_mount(&b).is_err());
+    assert!(matches!(
+        runtime.finish_cleanup(&provider),
+        Err(Error::CleanupPending)
+    ));
+    runtime.complete_mount(&a, Ok(())).unwrap();
+    runtime.complete_mount(&b, Ok(())).unwrap();
+    assert!(matches!(
+        runtime.finish_cleanup(&provider),
+        Err(Error::CleanupPending)
+    ));
+    runtime.settle(&accepted, Ok(())).unwrap();
+    runtime.finish_cleanup(&provider).unwrap();
+    let replacement = fixture.activate(&mut runtime, "p", component_export());
+    assert_ne!(provider, replacement);
+    assert!(runtime.admit_mount(&a).is_err());
+}
+
+#[test]
+fn owned_mount_children_close_before_parent_without_retiring_providers() {
+    let mut fixture = component_fixture();
+    // Root P explicitly imports an independent Q component. Ownership attaches
+    // to the mounted child, not Q's reusable provider registration.
+    fixture.input.instances.retain(|name, _| name == "p");
+    fixture
+        .input
+        .instances
+        .insert("q".into(), node("child", 4, true));
+    fixture
+        .input
+        .instances
+        .get_mut("p")
+        .unwrap()
+        .bindings
+        .insert("action".into(), vec![target("q")]);
+    let mut parent = entry(false);
+    parent.imports.get_mut("action").unwrap().contract = component_contract();
+    parent.exports.insert(
+        "action".into(),
+        crate::contract::Export {
+            contract: component_contract(),
+            availability: Availability::Required,
+        },
+    );
+    let mut child = entry(true);
+    child.exports.get_mut("action").unwrap().contract = component_contract();
+    // Use fresh identities for immutable package declarations.
+    fixture.input.instances.get_mut("p").unwrap().package = reference("parent").into();
+    for (name, entry) in [("parent", parent), ("child", child)] {
+        fixture
+            .packages
+            .insert(
+                reference(name),
+                Declaration {
+                    entries: BTreeMap::from([(EntryTarget::Desktop, entry)]),
+                    composition: None,
+                },
+            )
+            .unwrap();
+    }
+    let mut runtime = Runtime::new(fixture.plan());
+    let q = fixture.activate(&mut runtime, "q", component_export());
+    let p = fixture.activate(&mut runtime, "p", component_export());
+    let root = runtime.mount_launch().unwrap();
+    runtime.publish_mount(&root).unwrap();
+    let capability = runtime.bind(&p, "action").unwrap().remove(0);
+    let child = runtime.mount_component(&capability, Some(&root)).unwrap();
+    runtime.publish_mount(&child).unwrap();
+    assert_eq!(runtime.retire_mount(&root).unwrap().len(), 2);
+    assert!(runtime.admit_mount(&child).is_err());
+    assert!(matches!(
+        runtime.complete_mount(&root, Ok(())),
+        Err(Error::CleanupPending)
+    ));
+    runtime.complete_mount(&child, Ok(())).unwrap();
+    runtime.complete_mount(&root, Ok(())).unwrap();
+    assert_eq!(runtime.status(&p).unwrap().phase, Phase::Active);
+    assert_eq!(runtime.status(&q).unwrap().phase, Phase::Active);
+}
+
+#[test]
+fn launch_changes_retire_existing_roots_without_retiring_unchanged_providers() {
+    let mut fixture = component_fixture();
+    let mut runtime = Runtime::new(fixture.plan());
+    let provider = fixture.activate(&mut runtime, "p", component_export());
+    let root = runtime.mount_launch().unwrap();
+    runtime.publish_mount(&root).unwrap();
+    fixture.input.launch = None;
+    assert!(runtime.install(fixture.plan()).is_empty());
+    assert!(runtime.admit_mount(&root).is_err());
+    assert_eq!(runtime.status(&provider).unwrap().phase, Phase::Active);
+    runtime.complete_mount(&root, Ok(())).unwrap();
+    assert!(runtime.mount_launch().is_err());
+}

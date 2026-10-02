@@ -66,5 +66,17 @@
   ],
   "@workflow/serde@4.1.0": [
     "https://raw.githubusercontent.com/vercel/workflow/4e435e03329c0b4f8dba9608e3fc6ea4058b67fa/LICENSE.md"
+  ],
+  "simd_helpers@0.1.0": [
+    {
+      "file": "scripts/rust/licenses/declared-mit.txt",
+      "source": "https://github.com/lu-zero/simd_helpers/blob/ca1a2f84aa386d758e98f8a609d990263932fb85/Cargo.toml"
+    }
+  ],
+  "zune-inflate@0.2.54": [
+    {
+      "file": "scripts/rust/licenses/declared-mit.txt",
+      "source": "https://github.com/etemesi254/zune-image/blob/69502ce83fdfecdd0beefd677e2abb3781b29d98/zune-inflate/Cargo.toml"
+    }
   ]
 }

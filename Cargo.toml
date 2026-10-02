@@ -27,6 +27,7 @@ members = [
     "crates/client",
     "crates/client-capability",
     "crates/config",
+    "crates/desktop",
     "crates/computer-use",
     "crates/event-log",
     "crates/external-agent",
@@ -57,6 +58,7 @@ members = [
     "crates/tools",
     "crates/transport",
     "crates/tui",
+    "crates/ui",
     "crates/web",
     "crates/workhub",
 ]
@@ -124,6 +126,7 @@ maka-tool-catalog = { path = "crates/tool-catalog" }
 maka-tools = { path = "crates/tools" }
 maka-transport = { path = "crates/transport" }
 maka-tui = { path = "crates/tui" }
+maka-ui = { path = "crates/ui" }
 maka-web = { path = "crates/web" }
 maka-workhub = { path = "crates/workhub" }
 pulldown-cmark = { version = "0.13.4", default-features = false }
@@ -149,3 +152,10 @@ uuid = { version = "1", features = ["v4", "serde"] }
 [profile.dev]
 # Keep useful backtraces without embedding hundreds of MiB of dependency types.
 debug = "line-tables-only"
+
+[patch.crates-io]
+gpui-pre = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }
+gpui-pre-platform = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }
+gpui-pre-web = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }
+gpui-pre-macros = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }
+gpui-pre-sum-tree = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }

@@ -1,0 +1,44 @@
+<!--
+  Licensed to the Apache Software Foundation (ASF) under one
+  or more contributor license agreements.  See the NOTICE file
+  distributed with this work for additional information
+  regarding copyright ownership.  The ASF licenses this file
+  to you under the Apache License, Version 2.0 (the
+  "License"); you may not use this file except in compliance
+  with the License.  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing,
+  software distributed under the License is distributed on an
+  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  KIND, either express or implied.  See the License for the
+  specific language governing permissions and limitations
+  under the License.
+-->
+
+# Native desktop
+
+`maka-desktop` presents package-backed components with Longbridge GPUI Fast and
+GPUI Kit. It selects only Desktop deployments, reads immutable package bytes and
+runs the shared component adapter on the UI owner thread. Layout/paint read Rust
+frames; button callbacks dispatch revision-bound input before notifying GPUI.
+No business shell or default product is embedded in this binary.
+
+Run the [component example](../ui/README.md). This is an initial renderer, not the
+completed desktop product: native editor/IME, child surfaces, recovery UI, dynamic
+in-process installation and full Host/TUI integration remain pending.
+
+The current GPUI window-removal callback fires before platform teardown. This
+process-exit path retires its mount and preserves the cleanup fence; it does not
+claim a native close acknowledgement. Reusable in-process surfaces require a
+platform destruction-completion adapter before `Application::close(Ok(()))`.
+
+Dependencies are pinned to GPUI Fast `e4aabe75` and GPUI Kit `f89c5cc9`; later Fast
+text-wrapping API changes are incompatible with this Kit version. Upstream
+`gpui-pre-*` reexports select Fast without a second GPUI implementation.
+
+Native dependencies include MPL-2.0 [dwrote](https://github.com/servo/dwrote)
+(Windows) and build-time [cbindgen](https://github.com/mozilla/cbindgen).
+Their source is not vendored. Binary distribution must include licenses and
+source references; this crate does not yet provide release packaging.
