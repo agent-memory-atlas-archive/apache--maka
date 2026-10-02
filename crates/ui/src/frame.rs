@@ -20,7 +20,30 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// One callback's result. Events are finite transaction intents, never retained
+/// in a committed Frame or replayed during rendering.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentOutput<V = Node> {
+    pub frame: Frame<V>,
+    pub events: Vec<Emission>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Emission {
+    pub name: String,
+    pub value: Value,
+}
+impl<V> ComponentOutput<V> {
+    pub fn map_view<T>(self, map: impl FnOnce(V) -> T) -> ComponentOutput<T> {
+        ComponentOutput {
+            frame: self.frame.map_view(map),
+            events: self.events,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -69,9 +92,16 @@ pub enum Node {
         binding: String,
         member: u32,
         props: Value,
+        on: BTreeMap<String, String>,
     },
 }
 impl<V> Frame<V> {
+    pub fn output(self, events: Vec<Emission>) -> ComponentOutput<V> {
+        ComponentOutput {
+            frame: self,
+            events,
+        }
+    }
     pub fn validate_metadata(&self) -> Result<(), String> {
         if self.revision > 9_007_199_254_740_991
             || self.window.as_ref().is_some_and(|window| {
@@ -145,8 +175,17 @@ impl Node {
                     return Err("invalid button label".into());
                 }
             }
-            Self::Component { binding, .. } => {
-                if binding.is_empty() || binding.len() > 128 {
+            Self::Component { binding, on, .. } => {
+                if binding.is_empty()
+                    || binding.len() > 128
+                    || on.len() > 64
+                    || on.iter().any(|(event, handler)| {
+                        event.is_empty()
+                            || event.len() > 128
+                            || handler.is_empty()
+                            || handler.len() > 128
+                    })
+                {
                     return Err("invalid component binding".into());
                 }
             }
@@ -161,14 +200,21 @@ impl Node {
         }
     }
 
-    pub(crate) fn components<'a>(&'a self, output: &mut Vec<(&'a str, &'a str, u32, &'a Value)>) {
+    pub(crate) fn components<'a>(&'a self, output: &mut Vec<ComponentRef<'a>>) {
         match self {
             Self::Component {
                 key,
                 binding,
                 member,
                 props,
-            } => output.push((key, binding, *member, props)),
+                on,
+            } => output.push(ComponentRef {
+                key,
+                binding,
+                member: *member,
+                props,
+                on,
+            }),
             Self::Stack { children, .. } => {
                 for child in children {
                     child.components(output);
@@ -177,4 +223,12 @@ impl Node {
             _ => {}
         }
     }
+}
+
+pub(crate) struct ComponentRef<'a> {
+    pub key: &'a str,
+    pub binding: &'a str,
+    pub member: u32,
+    pub props: &'a Value,
+    pub on: &'a BTreeMap<String, String>,
 }

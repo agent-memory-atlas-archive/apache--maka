@@ -24,7 +24,8 @@ component registrations through `maka-plugin-core`. Foreground JavaScript execut
 only during activation, mount initialization, props updates and input. Required
 `mount`, `event` and `update` functions and their receiver are captured before
 publication; later namespace mutation cannot replace a registered handler.
-Renderers read committed
+Callbacks return `ComponentOutput { frame, events }`; events are one-shot transaction
+intents, separate from retained state. Renderers read committed
 `Frame` values; successful, bounded, validated batches replace a frame atomically.
 Each mount has independent state and a revision, so old view events cannot invoke
 new handlers. A realm failure retires every registration and mount in that realm.
@@ -50,10 +51,27 @@ All changed parents and children share one deadline and commit together. A faile
 child leaves every prior frame unchanged. Removed mounts retire until real native
 cleanup is confirmed; uncommitted mounts have no native resources to acknowledge.
 Window configuration is fixed for a root mount; embedded components cannot create
-windows. Action imports, outward component events
-and recovery surfaces are still pending. `close` requires an actual
+windows. Action imports and recovery surfaces are still pending. `close` requires an actual
 native cleanup acknowledgement; `retire` only stops new input. `shutdown` retains
 owners while mounts/work/resources remain unconfirmed.
+
+Imported references declare `on`, mapping a public event name to the parent's
+local handler key. Names and every emitted payload are checked against the actual
+export's public contract, including unobserved events. JavaScript `event` receives
+`{ kind: "raw", key, event }` or `{ kind: "component", key, event, child, name }`,
+plus mounted props as its third argument. Native callbacks receive the equivalent
+`EventOrigin`. A raw payload cannot impersonate a component origin.
+
+Events capture the exact parent/child mount and handler, then run FIFO within the
+same transaction. Every callback reads the latest staged state. Detaching or
+changing a subscription permanently removes its queued events; restoring the
+same name cannot revive them. All callbacks share the deadline, 64-callback and
+64-emission limits, and a 4 MiB cumulative work budget. The 32 MiB retained budget
+counts only final scenes. Multiple causal callbacks may advance one revision
+several times, but renderers observe only the final scene. Exceptions or budget
+failure roll back the whole batch. Temporary subtrees created and removed within
+it are never published and close without a renderer acknowledgement. Root and
+unobserved events are validated then discarded; there is no global event bus.
 
 Desktop owns each window's cleanup separately from its visual Surface. Logical
 removal revokes inputs and drops renderer owners; root completion also waits for
@@ -84,10 +102,19 @@ pending.
 Use `editor` instead of `native` and additionally pass `native.editor.maka-plugin`
 to import the native Kit Editor. Its Rust contract describes initial text, explicit
 revision-based replace/reset commands, metadata observations and command receipts.
-The native buffer remains outside serialized component state. Observation inputs
-update local state; outward delivery and public plugin resource reads remain
-pending. Native component events receive the current mounted props as well as
+The native buffer remains outside serialized component state. The public `changed`
+event contains typed metadata observations and receipts;
+receiving a TextRef does not grant a global lookup or text-read authority. Public
+plugin resource reads remain pending. `command: null` proposes no new command;
+an accepted request remains pending until its matching receipt commits, even if
+later props clear the command. The final native recipe consumes that request once.
+Native component events receive the current mounted props as well as
 state, key and input; JavaScript `event` receives props as its third argument.
 
 The example's component contract uses the same Rust declaration types as runtime
 validation. It does not depend on the previous plugin SDK or global service catalog.
+
+Use `events` instead of `editor` to generate a product component that explicitly
+subscribes to Editor `changed` and displays its observed native draft revision.
+Pass the same five packages as the editor example. This exercises public delivery,
+not text-resource reads, business actions, or a finished product design.

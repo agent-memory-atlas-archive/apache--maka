@@ -22,7 +22,8 @@
 `maka-ui` 从不可变包激活已检查的 UI entry，向共用核心发布实际组件。
 前台 JavaScript 只在激活、挂载初始化、props 更新和输入处理时执行。
 发布前捕获必需的 `mount`、`event`、`update` 函数及 receiver；命名空间后续变更
-不能替换已注册处理器。呈现器只读取已提交
+不能替换已注册处理器。回调返回 `ComponentOutput { frame, events }`；events 是
+本次事务的一次性意图，不属于保留状态。呈现器只读取已提交
 `Frame`。有界批次完整校验后原子替换，每个挂载有独立状态与 revision，旧视图事件
 不会调用新处理器。执行域故障撤销该域全部注册与挂载。
 
@@ -40,9 +41,21 @@ schema，不计原生内存；原生 owner 负责其实际分配限额。
 稳定 key 在父组件 props 更新时保留子挂载和局部状态。父子组件共用一次 deadline，
 整批提交；任一子组件失败，原有 frame 全部保留。移除后挂载只进入退休，等待真实原生
 清理确认；未提交的挂载尚无原生资源。根挂载窗口配置固定，嵌入组件不能创建窗口。
-action import、组件对外事件与恢复界面尚未实现。
+action import 与恢复界面尚未实现。
 `retire` 只停止新输入；`close` 必须收到实际原生清理确认；`shutdown` 不丢弃
 尚未确认的 mount、work 或 resource。
+
+导入引用用 `on` 将公开事件名绑定到父组件的内部 handler key。事件名与每份 payload
+按实际导出的公开契约检查；没有订阅的事件也检查。JavaScript `event` 收到
+`{ kind: "raw", key, event }` 或 `{ kind: "component", key, event, child, name }`，
+第三参数是挂载 props；原生回调收到等价 `EventOrigin`。原始 payload 无法伪造组件来源。
+
+事件捕获准确的父/子 Mount 与 handler，在同一事务内 FIFO 处理；后续回调读取最新 staged
+状态。订阅断开或改变时永久剔除其待发事件，恢复同名订阅也不能复活。全部回调共享
+deadline、64 次回调与 64 个 emission 限额、4 MiB 累计工作预算；32 MiB 保留限额只计
+最终场景。多次因果回调可推进多次 revision，但呈现器只观察最后一次原子发布。异常或
+超预算整批回滚。批内创建又移除的私有子树不发布，也不等待呈现器从未拥有的资源回执。
+根组件及未订阅事件校验后丢弃，没有全局 event bus。
 
 Desktop 的窗口清理 owner 独立于视觉 Surface。逻辑移除撤销输入并释放 renderer owner；
 根挂载还等待平台销毁回执、所有真实资源 lease 和子挂载清理。已知失败保留 failed fence。
@@ -56,9 +69,15 @@ props 由产品决定。opaque 原生子组件槽位、同步 consume/default �
 
 使用 `editor` 并额外传入 `native.editor.maka-plugin` 可导入 Kit Editor。Rust 契约表达
 初始文本、基于原生 revision 的 replace/reset 命令、元数据观察与命令回执；原生 buffer
-不放进序列化组件 state。观察输入更新局部 state，对外事件与公开插件资源读取能力
-尚未接线。原生组件 event 同时收到当前挂载 props、state、key 与 input；JavaScript
+不放进序列化组件 state。公开 `changed` 事件包含类型化元数据观察与回执；收到
+TextRef 不获得全局查找或读取权限，公开插件资源读取尚未接线。`command: null` 不提出
+新命令，不取消已接受的请求；请求保留 pending 直到匹配回执提交，最终原生描述只消费一次。
+原生组件 event 同时收到当前挂载 props、state、key 与 input；JavaScript
 `event` 的第三个参数是 props。
 
 包驱动的桌面示例命令见 [English README](README.md)。示例与校验使用同一套 Rust
 契约类型，无旧插件 SDK 或全局 service catalog。
+
+改用 `events` 生成显式订阅 Editor `changed` 的产品组件，并显示原生草稿 revision；
+向 desktop 传入与 editor 示例相同的五个包。该示例验证公开事件送达，不代表资源读取、
+业务 action 或最终产品视觉设计已完成。

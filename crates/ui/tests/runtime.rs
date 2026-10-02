@@ -17,6 +17,8 @@
  * under the License.
  */
 
+#[path = "runtime/events.rs"]
+mod events;
 #[path = "runtime/native.rs"]
 mod native;
 #[path = "../examples/counter/support.rs"]
@@ -79,7 +81,7 @@ fn dynamic_components_publish_then_mount_independent_state_and_commit_input() {
 fn invalid_batch_and_script_failure_keep_the_last_committed_view() {
     let timer = timer();
     for handler in [
-        "const value=frame({count:999,revision:state.revision+1});value.view.children.push(value.view.children[0]);return value;",
+        "const value=frame({count:999,revision:state.revision+1});value.frame.view.children.push(value.frame.view.children[0]);return value;",
         "const value=frame({count:999,revision:state.revision+1});throw new Error('failed batch');",
     ] {
         let mut app = app(handler, &timer);
@@ -185,7 +187,7 @@ fn structural_imports_route_to_owned_providers_without_startup_deadlock() {
 fn unimplemented_window_mutation_is_rejected_without_scene_commit() {
     let timer = timer();
     let mut app = app(
-        "const next=frame({count:state.count+1,revision:state.revision+1});next.window.width=900;return next;",
+        "const next=frame({count:state.count+1,revision:state.revision+1});next.frame.window.width=900;return next;",
         &timer,
     );
     let mount = app.mount_launch(json!({})).unwrap();
@@ -285,7 +287,7 @@ fn invalid_child_props_do_not_publish_parent_or_prior_sibling_updates() {
     let timer = timer();
     let mut app = composed(
         support::CHILD_UPDATE,
-        "const next=frame({...state,version:state.version+1,revision:state.revision+1});next.view.children[0].children[1].props.label=42;return next;",
+        "const next=frame({...state,version:state.version+1,revision:state.revision+1});next.frame.view.children[0].children[1].props.label=42;return next;",
         &timer,
     );
     let root = app.mount_launch(json!({})).unwrap();
@@ -413,7 +415,7 @@ fn dispatch_at_a_deep_mount_cannot_restart_the_whole_tree_depth_budget() {
         .unwrap()
         .replace(
             "children:[",
-            "children:[...(state.count>0?[{kind:'component',key:'nested',binding:'counter',member:0,props:{label:state.label,initial:state.count-1}}]:[]),",
+            "children:[...(state.count>0?[{kind:'component',key:'nested',binding:'counter',member:0,on:{},props:{label:state.label,initial:state.count-1}}]:[]),",
         );
     let branch = package("dynamic.branch", declaration, Some(source));
     // Acyclic providers: each component imports the next instance. Initially

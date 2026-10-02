@@ -22,8 +22,8 @@ use gpui_kit::component::input::{Editor as KitEditor, EditorState, Rope, RopeExt
 use gpui_kit::*;
 use maka_ui::editor::*;
 use maka_ui::{
-    ComponentCall, Frame, NativeCapability, NativeComponent, NativeExport, NativeRegistry,
-    NativeView, Presentation,
+    ComponentCall, ComponentOutput, Emission, Frame, NativeCapability, NativeComponent,
+    NativeExport, NativeRegistry, NativeView, Presentation,
 };
 use serde_json::json;
 use std::{any::Any, collections::BTreeMap, ops::Range, rc::Rc};
@@ -448,7 +448,10 @@ impl Widget for EditorRecipe {
 }
 struct EditorComponent;
 impl NativeComponent<dyn Widget> for EditorComponent {
-    fn call(&self, call: ComponentCall<'_>) -> maka_ui::Result<Frame<Presentation<dyn Widget>>> {
+    fn call(
+        &self,
+        call: ComponentCall<'_>,
+    ) -> maka_ui::Result<ComponentOutput<Presentation<dyn Widget>>> {
         let (props, revision, observation, mut request, mut pending) = match call {
             ComponentCall::Mount { props } => {
                 (props.clone(), 0, serde_json::Value::Null, None, false)
@@ -482,7 +485,14 @@ impl NativeComponent<dyn Widget> for EditorComponent {
                     input.clone(),
                     request,
                     state["pending"].as_bool().expect("editor pending command") && !settled,
-                );
+                )
+                .map(|mut output| {
+                    output.events.push(Emission {
+                        name: "changed".into(),
+                        value: input.clone(),
+                    });
+                    output
+                });
             }
         };
         let typed: EditorProps = serde_json::from_value(props.clone())
@@ -516,9 +526,12 @@ impl EditorComponent {
         observation: serde_json::Value,
         request: Option<EditorCommand>,
         pending: bool,
-    ) -> maka_ui::Result<Frame<Presentation<dyn Widget>>> {
-        let typed: EditorProps =
+    ) -> maka_ui::Result<ComponentOutput<Presentation<dyn Widget>>> {
+        let mut typed: EditorProps =
             serde_json::from_value(props).map_err(|e| maka_ui::Error::Invalid(e.to_string()))?;
+        // Props propose new commands; the accepted request remains authoritative
+        // until its receipt commits. None does not cancel a staged request.
+        typed.command = request.clone().filter(|_| pending);
         Ok(Frame {
             revision,
             state: json!({"revision":revision,"request":request,"pending":pending,"observation":observation}),
@@ -527,7 +540,7 @@ impl EditorComponent {
                 Rc::new(EditorRecipe { props: typed }),
                 BTreeMap::from([("observe".into(), maka_ui::editor::observation_schema())]),
             )?),
-        })
+        }.output(Vec::new()))
     }
 }
 pub(super) fn register(registry: &mut NativeRegistry<dyn Widget>) {

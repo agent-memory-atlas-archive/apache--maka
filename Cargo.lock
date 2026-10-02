@@ -7960,6 +7960,7 @@ dependencies = [
  "maka-plugin-core",
  "maka-plugins",
  "maka-ui",
+ "schemars 1.2.2",
  "serde_json",
  "tokio",
  "uuid",

@@ -24,8 +24,8 @@ use maka_plugin_core::{
     package::{EntryTarget, Implementation},
 };
 use maka_ui::{
-    Application, ComponentCall, Frame, NativeCapability, NativeComponent, NativeExport,
-    NativeRegistry, NativeView, Node, Presentation, Window,
+    Application, ComponentCall, ComponentOutput, Frame, NativeCapability, NativeComponent,
+    NativeExport, NativeRegistry, NativeView, Node, Presentation, Window,
 };
 use serde_json::{Value, json};
 use std::{cell::Cell, collections::BTreeMap, rc::Rc};
@@ -34,7 +34,10 @@ struct Counter {
     calls: Rc<Cell<usize>>,
 }
 impl NativeComponent<String> for Counter {
-    fn call(&self, call: ComponentCall<'_>) -> maka_ui::Result<Frame<Presentation<String>>> {
+    fn call(
+        &self,
+        call: ComponentCall<'_>,
+    ) -> maka_ui::Result<ComponentOutput<Presentation<String>>> {
         self.calls.set(self.calls.get() + 1);
         let state = match call {
             ComponentCall::Mount { props } => {
@@ -65,7 +68,7 @@ impl NativeComponent<String> for Counter {
                 )]),
             )?),
             state,
-        })
+        }.output(Vec::new()))
     }
 }
 fn registered(contract: Contract, calls: Rc<Cell<usize>>) -> NativeRegistry<String> {
@@ -248,7 +251,10 @@ fn native_availability_is_not_activation_and_actual_contract_or_value_mismatches
 
 struct Root;
 impl NativeComponent<String> for Root {
-    fn call(&self, call: ComponentCall<'_>) -> maka_ui::Result<Frame<Presentation<String>>> {
+    fn call(
+        &self,
+        call: ComponentCall<'_>,
+    ) -> maka_ui::Result<ComponentOutput<Presentation<String>>> {
         assert!(matches!(call, ComponentCall::Mount { .. }));
         Ok(Frame {
             revision: 0,
@@ -264,8 +270,10 @@ impl NativeComponent<String> for Root {
                 binding: "counter".into(),
                 member: 0,
                 props: json!({"label":"Native","initial":4}),
+                on: BTreeMap::new(),
             }),
-        })
+        }
+        .output(Vec::new()))
     }
 }
 #[test]

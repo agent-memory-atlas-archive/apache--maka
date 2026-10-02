@@ -33,6 +33,8 @@ pub struct EditorProps {
     #[schemars(length(max = 512))]
     pub placeholder: String,
     #[serde(default)]
+    /// None issues no new command; an accepted command remains pending until
+    /// its matching receipt commits. Clearing props is not cancellation.
     pub command: Option<EditorCommand>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
@@ -112,7 +114,7 @@ pub fn editor_contract() -> Contract {
         interface: Interface::Component {
             props: serde_json::to_value(schemars::schema_for!(EditorProps))
                 .expect("editor props schema"),
-            events: BTreeMap::new(),
+            events: BTreeMap::from([("changed".into(), observation_schema())]),
         },
     }
 }

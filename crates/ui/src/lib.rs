@@ -23,10 +23,10 @@ pub mod editor;
 mod frame;
 mod native;
 mod tree;
-pub use frame::{Direction, Frame, Node, Window};
+pub use frame::{ComponentOutput, Direction, Emission, Frame, Node, Window};
 pub use native::{
-    ComponentCall, LabelProps, NativeCapability, NativeComponent, NativeExport, NativeRegistry,
-    NativeView, Presentation, label_contract,
+    ComponentCall, EventOrigin, LabelProps, NativeCapability, NativeComponent, NativeExport,
+    NativeRegistry, NativeView, Presentation, label_contract,
 };
 
 use maka_js_runtime::plugin::{Foreground, ForegroundCallbacks, ForegroundModule, Limits};
@@ -66,6 +66,7 @@ enum Export<V: ?Sized> {
     Component {
         implementation: Component<V>,
         props: jsonschema::Validator,
+        events: BTreeMap<String, jsonschema::Validator>,
     },
     Surface(PresentationTarget),
 }
@@ -163,7 +164,7 @@ impl<V: ?Sized + 'static> Application<V> {
                                 let value = match actual.value {
                                     NativeCapability::Surface(target) => Export::Surface(target),
                                     NativeCapability::Component(component) => {
-                                        let Interface::Component { props, .. } =
+                                        let Interface::Component { props, events } =
                                             &actual.contract.interface
                                         else {
                                             unreachable!()
@@ -173,6 +174,7 @@ impl<V: ?Sized + 'static> Application<V> {
                                             props: jsonschema::validator_for(props).map_err(
                                                 |error| Error::Invalid(error.to_string()),
                                             )?,
+                                            events: event_schemas(events)?,
                                         }
                                     }
                                 };
@@ -229,18 +231,21 @@ impl<V: ?Sized + 'static> Application<V> {
                                         "local JS export must declare a component".into(),
                                     ));
                                 }
-                                let Interface::Component { props, .. } = &actual.contract.interface
+                                let Interface::Component { props, events } =
+                                    &actual.contract.interface
                                 else {
                                     unreachable!()
                                 };
                                 let props = jsonschema::validator_for(props)
                                     .map_err(|error| Error::Invalid(error.to_string()))?;
+                                let events = event_schemas(events)?;
                                 batch.insert(
                                     name,
                                     Published {
                                         contract: actual.contract,
                                         value: Export::Component {
                                             props,
+                                            events,
                                             implementation: Component::JavaScript {
                                                 realm: realm.clone(),
                                                 callbacks: realm.borrow_mut().capture(
@@ -284,10 +289,15 @@ impl<V: ?Sized + 'static> Application<V> {
         method: &str,
         args: &[Value],
         deadline: std::time::Instant,
-    ) -> Result<Frame<Presentation<V>>> {
+    ) -> Result<ComponentOutput<Presentation<V>>> {
         tree::check_call_bytes(&args)?;
         let execution = self.runtime.admit_mount(mount)?;
-        let Export::Component { implementation, .. } = execution.value() else {
+        let Export::Component {
+            implementation,
+            events,
+            ..
+        } = execution.value()
+        else {
             unreachable!()
         };
         let mut failed_realm = None;
@@ -297,7 +307,7 @@ impl<V: ?Sized + 'static> Application<V> {
                     .borrow_mut()
                     .call_bound_until(callbacks, method, args, deadline)
                     .and_then(|value| {
-                        serde_json::from_value::<Frame>(value)
+                        serde_json::from_value::<ComponentOutput>(value)
                             .map_err(|error| maka_js_runtime::plugin::Error(error.to_string()))
                     });
                 if result.is_err() {
@@ -319,12 +329,36 @@ impl<V: ?Sized + 'static> Application<V> {
                         props: &args[2],
                         key: args[1]["key"].as_str().expect("typed UI input key"),
                         input: &args[1]["event"],
+                        origin: if args[1]["kind"] == "component" {
+                            EventOrigin::Component {
+                                child: args[1]["child"].as_str().expect("typed child slot"),
+                                name: args[1]["name"].as_str().expect("typed public event"),
+                            }
+                        } else {
+                            EventOrigin::Raw
+                        },
                     },
                     _ => unreachable!(),
                 };
                 component.call(call)
             }
         };
+        let result = result.and_then(|output| {
+            if output.events.len() > 64 {
+                return Err(Error::Invalid("component emission limit".into()));
+            }
+            tree::check_call_bytes(&output.events)?;
+            for event in &output.events {
+                events
+                    .get(&event.name)
+                    .ok_or_else(|| Error::Invalid("undeclared component emission".into()))?
+                    .validate(&event.value)
+                    .map_err(|error| Error::Invalid(error.to_string()))?;
+            }
+            output.frame.validate_metadata().map_err(Error::Invalid)?;
+            output.frame.view.validate().map_err(Error::Invalid)?;
+            Ok(output)
+        });
         self.runtime.settle(&execution, Ok(()))?; // Only declarative scene preparation.
         if let Some(realm) = failed_realm {
             for (id, loaded) in &self.modules {
@@ -333,10 +367,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 }
             }
         }
-        let frame = result?;
-        frame.validate_metadata().map_err(Error::Invalid)?;
-        frame.view.validate().map_err(Error::Invalid)?;
-        Ok(frame)
+        result
     }
 
     fn validate_surface(&mut self, mount: &Mount, frame: &Frame<Presentation<V>>) -> Result<()> {
@@ -440,6 +471,19 @@ impl<V: ?Sized + 'static> Application<V> {
             }
         }
     }
+}
+
+fn event_schemas(
+    events: &BTreeMap<String, Value>,
+) -> Result<BTreeMap<String, jsonschema::Validator>> {
+    events
+        .iter()
+        .map(|(name, schema)| {
+            jsonschema::validator_for(schema)
+                .map(|schema| (name.clone(), schema))
+                .map_err(|error| Error::Invalid(error.to_string()))
+        })
+        .collect()
 }
 
 pub fn surface_contract(target: PresentationTarget) -> Contract {

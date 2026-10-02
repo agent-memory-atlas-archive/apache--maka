@@ -35,5 +35,6 @@ tokio.workspace = true
 maka-js-runtime.workspace = true
 
 [dev-dependencies]
+schemars.workspace = true
 uuid.workspace = true
 gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "f89c5cc9576d823d253b4563806e5f842e9d69f9", features = ["test-support"] }

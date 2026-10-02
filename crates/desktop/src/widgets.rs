@@ -23,8 +23,8 @@ use gpui_kit::{
     AnyElement, App, IntoElement, ParentElement, SharedString, Styled, Window, div, px, rgb,
 };
 use maka_ui::{
-    ComponentCall, Frame, LabelProps, NativeCapability, NativeComponent, NativeExport,
-    NativeRegistry, NativeView, Presentation, label_contract,
+    ComponentCall, ComponentOutput, Frame, LabelProps, NativeCapability, NativeComponent,
+    NativeExport, NativeRegistry, NativeView, Presentation, label_contract,
 };
 use serde_json::{Value, json};
 use std::{any::Any, cell::RefCell, collections::BTreeMap, rc::Rc};
@@ -90,7 +90,10 @@ impl Widget for Label {
 }
 struct LabelComponent;
 impl NativeComponent<dyn Widget> for LabelComponent {
-    fn call(&self, call: ComponentCall<'_>) -> maka_ui::Result<Frame<Presentation<dyn Widget>>> {
+    fn call(
+        &self,
+        call: ComponentCall<'_>,
+    ) -> maka_ui::Result<ComponentOutput<Presentation<dyn Widget>>> {
         let (props, revision) = match call {
             ComponentCall::Mount { props } => (props, 0),
             ComponentCall::Update { state, props } => (
@@ -114,7 +117,8 @@ impl NativeComponent<dyn Widget> for LabelComponent {
                 }),
                 BTreeMap::new(),
             )?),
-        })
+        }
+        .output(Vec::new()))
     }
 }
 pub(super) fn registry() -> NativeRegistry<dyn Widget> {

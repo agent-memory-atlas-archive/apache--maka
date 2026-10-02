@@ -92,7 +92,7 @@ pub fn fixture(handler: &str) -> (Input, Vec<Package>) {
         r#"
         const contract = {};
         export function activate(configuration) {{ return {{App:{{contract,component:['app']}}}}; }}
-        function frame(state) {{ return {{revision:state.revision,state,window:{{surface:'surface',title:'Dynamic product',width:640,height:400}},view:{{kind:'stack',key:'root',direction:'column',padding:16,gap:8,background:1513239,children:[{{kind:'text',key:'count',text:String(state.count),color:16777215}},{{kind:'button',key:'inc',label:'Increment'}}]}}}}; }}
+        function frame(state) {{ return {{events:[],frame:{{revision:state.revision,state,window:{{surface:'surface',title:'Dynamic product',width:640,height:400}},view:{{kind:'stack',key:'root',direction:'column',padding:16,gap:8,background:1513239,children:[{{kind:'text',key:'count',text:String(state.count),color:16777215}},{{kind:'button',key:'inc',label:'Increment'}}]}}}}}}; }}
         export const app = {{mount(props){{ return frame({{count:props.count??0,revision:0}}); }},event(state,event){{ {} }},update(state,props){{ return frame({{...state,revision:state.revision+1}}); }} }};
     "#,
         serde_json::to_string(&component).unwrap(),
@@ -188,9 +188,9 @@ pub(crate) fn composed_fixture(child_update: &str, parent_event: &str) -> (Input
         r#"
         export function activate(){{return {{App:{{contract:{},component:['app']}}}};}}
         function frame(state){{
-            const children=[{{kind:'component',key:'left',binding:'counter',member:0,props:{{label:'Left '+state.version,initial:10}}}}];
-            if(state.right)children.push({{kind:'component',key:'right',binding:'counter',member:0,props:{{label:'Right '+state.version,initial:20}}}});
-            return {{state,revision:state.revision,window:{{surface:'surface',title:'Composed product',width:640,height:400}},view:{{kind:'stack',key:'root',direction:'column',gap:8,padding:16,background:1513239,children:[{{kind:'stack',key:'counters',direction:'row',gap:16,padding:0,background:1513239,children}},{{kind:'button',key:'parent',label:'Change labels'}},{{kind:'button',key:'toggle',label:'Toggle right counter'}}]}}}};
+            const children=[{{kind:'component',key:'left',binding:'counter',member:0,on:{{}},props:{{label:'Left '+state.version,initial:10}}}}];
+            if(state.right)children.push({{kind:'component',key:'right',binding:'counter',member:0,on:{{}},props:{{label:'Right '+state.version,initial:20}}}});
+            return {{events:[],frame:{{state,revision:state.revision,window:{{surface:'surface',title:'Composed product',width:640,height:400}},view:{{kind:'stack',key:'root',direction:'column',gap:8,padding:16,background:1513239,children:[{{kind:'stack',key:'counters',direction:'row',gap:16,padding:0,background:1513239,children}},{{kind:'button',key:'parent',label:'Change labels'}},{{kind:'button',key:'toggle',label:'Toggle right counter'}}]}}}}}};
         }}
         export const app={{mount(){{return frame({{revision:0,version:0,right:true}});}},event(state,event){{{}}},update(state,props){{return frame({{...state,revision:state.revision+1}});}}}};
     "#,
@@ -201,7 +201,7 @@ pub(crate) fn composed_fixture(child_update: &str, parent_event: &str) -> (Input
     let source = format!(
         r#"
         export function activate(){{return {{Counter:{{contract:{},component:['counter']}}}};}}
-        function frame(state){{return {{state,revision:state.revision,window:null,view:{{kind:'stack',key:'counter',direction:'column',gap:8,padding:8,background:1513239,children:[{{kind:'text',key:'label',text:state.label,color:16777215}},{{kind:'text',key:'count',text:String(state.count),color:16777215}},{{kind:'button',key:'inc',label:'Increment '+state.label}}]}}}};}}
+        function frame(state){{return {{events:[],frame:{{state,revision:state.revision,window:null,view:{{kind:'stack',key:'counter',direction:'column',gap:8,padding:8,background:1513239,children:[{{kind:'text',key:'label',text:state.label,color:16777215}},{{kind:'text',key:'count',text:String(state.count),color:16777215}},{{kind:'button',key:'inc',label:'Increment '+state.label}}]}}}}}};}}
         export const counter={{mount(props){{return frame({{count:props.initial,label:props.label,revision:0}});}},event(state,event){{return frame({{...state,count:state.count+1,revision:state.revision+1}});}},update(state,props){{{}}}}};
     "#,
         serde_json::to_string(&counter_contract).unwrap(),
@@ -273,7 +273,7 @@ pub(crate) fn native_fixture() -> (Input, Vec<Package>) {
             },
         );
     let source = std::str::from_utf8(root.file("index.mjs").unwrap()).unwrap();
-    let source = source.replace("children:[{kind:'stack',key:'counters'", "children:[...(state.right?[{kind:'component',key:'nativeLabel',binding:'label',member:0,props:{text:'Native '+state.version,emphasis:true}}]:[]),{kind:'stack',key:'counters'");
+    let source = source.replace("children:[{kind:'stack',key:'counters'", "children:[...(state.right?[{kind:'component',key:'nativeLabel',binding:'label',member:0,on:{},props:{text:'Native '+state.version,emphasis:true}}]:[]),{kind:'stack',key:'counters'");
     let root = package("dynamic.app", declaration, Some(source));
     let label = package(
         "native.label",
@@ -335,7 +335,7 @@ pub(crate) fn editor_fixture() -> (Input, Vec<Package>) {
             },
         );
     let source = std::str::from_utf8(root.file("index.mjs").unwrap()).unwrap();
-    let source = source.replace("...(state.right?[{kind:'component',key:'nativeLabel'", "...(state.right?[{kind:'component',key:'editor',binding:'editor',member:0,props:{initialText:'Start',placeholder:'Write here',command:state.command??null}},{kind:'component',key:'nativeLabel'");
+    let source = source.replace("...(state.right?[{kind:'component',key:'nativeLabel'", "...(state.right?[{kind:'component',key:'editor',binding:'editor',member:0,on:{},props:{initialText:'Start',placeholder:'Write here',command:state.command??null}},{kind:'component',key:'nativeLabel'");
     let source = source.replace("const next={...state,revision:state.revision+1};", "const next={...state,revision:state.revision+1};if(event.event?.command)next.command=event.event.command;");
     let source = source.replace(
         "title:'Composed product',width:640,height:400",
@@ -377,5 +377,31 @@ pub(crate) fn editor_fixture() -> (Input, Vec<Package>) {
     );
     input.instances.insert("editor".into(), node(&editor, 5));
     packages.extend([root, editor]);
+    (input, packages)
+}
+
+/// A product component subscribes to the Editor's public metadata event. No
+/// global lookup or text-resource read is granted by receiving this payload.
+#[allow(dead_code)] // Shared with tests that do not load the Desktop editor.
+pub(crate) const EDITOR_RECEIVE: &str = "if(event.kind==='component'&&event.name==='changed'){return frame({...state,revision:state.revision+1,observation:event.event});}";
+#[allow(dead_code)] // Shared with tests that do not load the Desktop editor.
+pub(crate) fn editor_events_fixture() -> (Input, Vec<Package>) {
+    let (mut input, mut packages) = editor_fixture();
+    let index = packages
+        .iter()
+        .position(|package| package.manifest().id == "dynamic.app")
+        .unwrap();
+    let old = packages.remove(index);
+    let source=std::str::from_utf8(old.file("index.mjs").unwrap()).unwrap()
+        .replace("on:{},props:{initialText:","on:{changed:'editor_changed'},props:{initialText:")
+        .replace("const next={...state,revision:state.revision+1};",&format!("{EDITOR_RECEIVE}const next={{...state,revision:state.revision+1}};"))
+        .replace("children:[...(state.right?", "children:[{kind:'text',key:'editor_status',text:'Draft revision '+(state.observation?.revision??0),color:16777215},...(state.right?");
+    let root = package(
+        "dynamic.app",
+        old.manifest().application.clone().unwrap(),
+        Some(source),
+    );
+    input.instances.get_mut("app").unwrap().package = root.application_ref().into();
+    packages.push(root);
     (input, packages)
 }

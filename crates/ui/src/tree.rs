@@ -18,7 +18,7 @@
  */
 
 use super::*;
-use std::{io::Write, time::Instant};
+use std::{collections::VecDeque, io::Write, time::Instant};
 
 /// Count JSON without allocating a serialized copy. Both adapters have the
 /// same call boundary; reject oversized input before schema evaluation/cloning.
@@ -44,6 +44,24 @@ struct Child {
     binding: String,
     member: u32,
     mount: Mount,
+    on: BTreeMap<String, String>,
+}
+
+#[derive(Clone)]
+struct Subscription {
+    parent: Mount,
+    slot: String,
+    on: BTreeMap<String, String>,
+}
+struct Route {
+    parent: Mount,
+    child: Mount,
+    slot: String,
+    handler: String,
+}
+struct Notification {
+    route: Route,
+    event: Emission,
 }
 
 pub(super) struct Mounted<V: ?Sized> {
@@ -59,7 +77,9 @@ pub(super) struct Mounted<V: ?Sized> {
 struct Update<V: ?Sized> {
     changed: BTreeMap<Uuid, Mounted<V>>,
     created: Vec<Mount>,
-    removed: Vec<Mount>,
+    removed: BTreeMap<Uuid, Mount>,
+    events: VecDeque<Notification>,
+    emitted: usize,
     deadline: Instant,
     bytes: usize,
     touched: usize,
@@ -69,24 +89,29 @@ impl<V: ?Sized> Update<V> {
         Self {
             changed: BTreeMap::new(),
             created: Vec::new(),
-            removed: Vec::new(),
+            removed: BTreeMap::new(),
+            events: VecDeque::new(),
+            emitted: 0,
             deadline: Instant::now() + slice,
             bytes: 0,
             touched: 0,
         }
     }
-    fn charge(
-        &mut self,
-        frame: &Frame<Presentation<V>>,
-        props: &Value,
-        depth: usize,
-    ) -> Result<usize> {
+    fn step(&mut self, depth: usize) -> Result<()> {
         self.touched += 1;
         if depth > 32 || self.touched > 64 {
             return Err(Error::Invalid(
                 "component update exceeds mount/depth limits".into(),
             ));
         }
+        Ok(())
+    }
+    fn charge(
+        &mut self,
+        frame: &Frame<Presentation<V>>,
+        props: &Value,
+        events: &[Emission],
+    ) -> Result<usize> {
         struct Counter(usize);
         impl Write for Counter {
             fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -112,8 +137,37 @@ impl<V: ?Sized> Update<V> {
         }
         .map_err(|error| Error::Invalid(error.to_string()))?;
         let bytes = counter.0 - self.bytes;
+        serde_json::to_writer(&mut counter, events)
+            .map_err(|error| Error::Invalid(error.to_string()))?;
         self.bytes = counter.0;
         Ok(bytes)
+    }
+    fn emit(
+        &mut self,
+        mount: &Mount,
+        subscription: Option<Subscription>,
+        events: Vec<Emission>,
+    ) -> Result<()> {
+        self.emitted += events.len();
+        if self.emitted > 64 {
+            return Err(Error::Invalid("composed component emission limit".into()));
+        }
+        if let Some(subscription) = subscription {
+            for event in events {
+                if let Some(handler) = subscription.on.get(&event.name) {
+                    self.events.push_back(Notification {
+                        route: Route {
+                            parent: subscription.parent.clone(),
+                            child: mount.clone(),
+                            slot: subscription.slot.clone(),
+                            handler: handler.clone(),
+                        },
+                        event,
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -124,15 +178,17 @@ impl<V: ?Sized + 'static> Application<V> {
         update.created.push(mount.clone());
         let result = (|| {
             self.check_props(&mount, &props)?;
+            update.step(0)?;
             let frame = self.invoke(
                 &mount,
                 "mount",
                 std::slice::from_ref(&props),
                 update.deadline,
             )?;
-            Self::check_initial(&frame)?;
-            self.validate_surface(&mount, &frame)?;
-            self.stage(&mount, props, frame, 0, &mut update)?;
+            Self::check_initial(&frame.frame)?;
+            self.validate_surface(&mount, &frame.frame)?;
+            self.stage(&mount, props, frame, None, 0, &mut update)?;
+            self.deliver(&mut update)?;
             self.commit(&mut update)
         })();
         if let Err(error) = result {
@@ -163,16 +219,19 @@ impl<V: ?Sized + 'static> Application<V> {
         current.frame.view.validate_input(key, &event)?;
         let args = [
             current.frame.state.clone(),
-            json!({"key":key,"event":event}),
+            json!({"kind":"raw","key":key,"event":event}),
             current.props.clone(),
         ];
         let props = current.props.clone();
         let window = current.frame.window.clone();
         let depth = self.mount_depth(mount)?;
+        let subscription = self.subscription(mount, &update)?;
         let result = (|| {
+            update.step(depth)?;
             let next = self.invoke(mount, "event", &args, update.deadline)?;
-            Self::check_next(revision, &window, &next)?;
-            self.stage(mount, props, next, depth, &mut update)?;
+            Self::check_next(revision, &window, &next.frame)?;
+            self.stage(mount, props, next, subscription, depth, &mut update)?;
+            self.deliver(&mut update)?;
             self.commit(&mut update)
         })();
         if let Err(error) = result {
@@ -254,81 +313,192 @@ impl<V: ?Sized + 'static> Application<V> {
             }
         }
     }
+    fn current<'a>(&'a self, mount: &Mount, update: &'a Update<V>) -> Result<&'a Mounted<V>> {
+        update
+            .changed
+            .get(&mount.id())
+            .or_else(|| self.views.get(&mount.id()))
+            .filter(|view| view.mount == *mount && !update.removed.contains_key(&mount.id()))
+            .ok_or_else(|| Error::Invalid("component is absent from the transaction".into()))
+    }
+    fn subscription(&self, mount: &Mount, update: &Update<V>) -> Result<Option<Subscription>> {
+        let status = self
+            .runtime
+            .mount_statuses()
+            .into_iter()
+            .find(|status| status.mount == *mount)
+            .ok_or(maka_plugin_core::Error::Retired)?;
+        let Some(parent) = status.parent else {
+            return Ok(None);
+        };
+        let view = self.current(&parent, update)?;
+        Ok(view
+            .children
+            .iter()
+            .find(|(_, child)| child.mount == *mount)
+            .map(|(slot, child)| Subscription {
+                parent,
+                slot: slot.clone(),
+                on: child.on.clone(),
+            }))
+    }
+    fn detach(&self, mount: &Mount, update: &mut Update<V>) {
+        let statuses = self.runtime.mount_statuses();
+        update.removed.insert(mount.id(), mount.clone());
+        loop {
+            let before = update.removed.len();
+            for status in &statuses {
+                if status
+                    .parent
+                    .as_ref()
+                    .is_some_and(|parent| update.removed.contains_key(&parent.id()))
+                {
+                    update
+                        .removed
+                        .insert(status.mount.id(), status.mount.clone());
+                }
+            }
+            if before == update.removed.len() {
+                break;
+            }
+        }
+        update
+            .changed
+            .retain(|id, _| !update.removed.contains_key(id));
+        update.events.retain(|notification| {
+            !update.removed.contains_key(&notification.route.parent.id())
+                && !update.removed.contains_key(&notification.route.child.id())
+        });
+    }
+    fn check_subscription(&mut self, mount: &Mount, on: &BTreeMap<String, String>) -> Result<()> {
+        let execution = self.runtime.admit_mount(mount)?;
+        let Export::Component { events, .. } = execution.value() else {
+            unreachable!()
+        };
+        let valid = on.keys().all(|name| events.contains_key(name));
+        self.runtime.settle(&execution, Ok(()))?;
+        if valid {
+            Ok(())
+        } else {
+            Err(Error::Invalid(
+                "subscription to undeclared component event".into(),
+            ))
+        }
+    }
     fn stage(
         &mut self,
         mount: &Mount,
         props: Value,
-        frame: Frame<Presentation<V>>,
+        output: ComponentOutput<Presentation<V>>,
+        subscription: Option<Subscription>,
         depth: usize,
         update: &mut Update<V>,
     ) -> Result<()> {
-        let bytes = update.charge(&frame, &props, depth)?;
-        let mut previous = self
-            .views
+        let bytes = update.charge(&output.frame, &props, &output.events)?;
+        update.emit(mount, subscription, output.events)?;
+        let frame = output.frame;
+        let mut previous = update
+            .changed
             .get(&mount.id())
+            .or_else(|| self.views.get(&mount.id()))
             .map(|view| view.children.clone())
             .unwrap_or_default();
         let mut children = BTreeMap::new();
         let mut desired = Vec::new();
         frame.view.components(&mut desired);
-        for (key, binding, member, child_props) in desired {
-            let old = previous.remove(key);
+        for reference in desired {
+            let old = previous.remove(reference.key);
             let retained = old.as_ref().filter(|child| {
-                child.binding == binding
-                    && child.member == member
+                child.binding == reference.binding
+                    && child.member == reference.member
                     && !self.is_retiring(&child.mount)
+                    && !update.removed.contains_key(&child.mount.id())
+            });
+            let subscription = Some(Subscription {
+                parent: mount.clone(),
+                slot: reference.key.into(),
+                on: reference.on.clone(),
             });
             let child_mount = if let Some(old) = retained {
-                let child = &self.views[&old.mount.id()];
-                if child.props != *child_props {
+                self.check_subscription(&old.mount, reference.on)?;
+                let child = self.current(&old.mount, update)?;
+                if child.props != *reference.props {
                     let revision = child.frame.revision;
                     let window = child.frame.window.clone();
-                    let args = [child.frame.state.clone(), child_props.clone()];
-                    self.check_props(&old.mount, child_props)?;
+                    let args = [child.frame.state.clone(), reference.props.clone()];
+                    self.check_props(&old.mount, reference.props)?;
+                    update.step(depth + 1)?;
                     let next = self.invoke(&old.mount, "update", &args, update.deadline)?;
-                    Self::check_next(revision, &window, &next)?;
-                    self.stage(&old.mount, child_props.clone(), next, depth + 1, update)?;
+                    Self::check_next(revision, &window, &next.frame)?;
+                    self.stage(
+                        &old.mount,
+                        reference.props.clone(),
+                        next,
+                        subscription,
+                        depth + 1,
+                        update,
+                    )?;
                 }
                 old.mount.clone()
             } else {
                 if let Some(old) = old {
-                    update.removed.push(old.mount);
+                    self.detach(&old.mount, update);
                 }
                 let provider = self.provider(mount)?;
-                let capabilities = self.runtime.bind(&provider, binding)?;
+                let capabilities = self.runtime.bind(&provider, reference.binding)?;
                 let capability = capabilities
-                    .get(member as usize)
+                    .get(reference.member as usize)
                     .ok_or_else(|| Error::Invalid("component binding member unavailable".into()))?;
                 let child = self.runtime.mount_component(capability, Some(mount))?;
                 update.created.push(child.clone());
-                self.check_props(&child, child_props)?;
+                self.check_subscription(&child, reference.on)?;
+                self.check_props(&child, reference.props)?;
+                update.step(depth + 1)?;
                 let next = self.invoke(
                     &child,
                     "mount",
-                    std::slice::from_ref(child_props),
+                    std::slice::from_ref(reference.props),
                     update.deadline,
                 )?;
-                Self::check_initial(&next)?;
-                if next.window.is_some() {
+                Self::check_initial(&next.frame)?;
+                if next.frame.window.is_some() {
                     return Err(Error::Invalid(
                         "embedded component cannot create a window".into(),
                     ));
                 }
-                self.stage(&child, child_props.clone(), next, depth + 1, update)?;
+                self.stage(
+                    &child,
+                    reference.props.clone(),
+                    next,
+                    subscription,
+                    depth + 1,
+                    update,
+                )?;
                 child
             };
             children.insert(
-                key.into(),
+                reference.key.into(),
                 Child {
-                    binding: binding.into(),
-                    member,
+                    binding: reference.binding.into(),
+                    member: reference.member,
                     mount: child_mount,
+                    on: reference.on.clone(),
                 },
             );
         }
-        update
-            .removed
-            .extend(previous.into_values().map(|child| child.mount));
+        for child in previous.into_values() {
+            self.detach(&child.mount, update);
+        }
+        // Revoke queued routes permanently at each edge diff. Later restoring
+        // the same subscription cannot resurrect a previously detached event.
+        update.events.retain(|notification| {
+            notification.route.parent != *mount
+                || children.get(&notification.route.slot).is_some_and(|child| {
+                    child.mount == notification.route.child
+                        && child.on.get(&notification.event.name)
+                            == Some(&notification.route.handler)
+                })
+        });
         update.changed.insert(
             mount.id(),
             Mounted {
@@ -341,7 +511,53 @@ impl<V: ?Sized + 'static> Application<V> {
         );
         Ok(())
     }
+    fn deliver(&mut self, update: &mut Update<V>) -> Result<()> {
+        while let Some(notification) = update.events.pop_front() {
+            let route = notification.route;
+            let current = self.current(&route.parent, update)?;
+            if !current.children.get(&route.slot).is_some_and(|child| {
+                child.mount == route.child
+                    && child.on.get(&notification.event.name) == Some(&route.handler)
+            }) {
+                continue;
+            }
+            let args = [
+                current.frame.state.clone(),
+                json!({"kind":"component", "key":route.handler,
+                "child":route.slot, "name":notification.event.name, "event":notification.event.value}),
+                current.props.clone(),
+            ];
+            let revision = current.frame.revision;
+            let props = current.props.clone();
+            let window = current.frame.window.clone();
+            let depth = self.mount_depth(&route.parent)?;
+            let subscription = self.subscription(&route.parent, update)?;
+            update.step(depth)?;
+            let output = self.invoke(&route.parent, "event", &args, update.deadline)?;
+            Self::check_next(revision, &window, &output.frame)?;
+            self.stage(&route.parent, props, output, subscription, depth, update)?;
+        }
+        Ok(())
+    }
+    fn discard_private(&mut self, update: &mut Update<V>) -> Result<()> {
+        let private: Vec<_> = update
+            .created
+            .iter()
+            .rev()
+            .filter(|mount| update.removed.contains_key(&mount.id()))
+            .cloned()
+            .collect();
+        for mount in private {
+            self.runtime.retire_mount(&mount)?;
+            // Never published, never exposed to a renderer, no native effects.
+            self.runtime.complete_mount(&mount, Ok(()))?;
+            update.created.retain(|created| *created != mount);
+            update.removed.remove(&mount.id());
+        }
+        Ok(())
+    }
     fn commit(&mut self, update: &mut Update<V>) -> Result<()> {
+        self.discard_private(update)?;
         if Instant::now() >= update.deadline {
             return Err(Error::Invalid(
                 "composed UI update deadline exceeded".into(),
@@ -354,7 +570,8 @@ impl<V: ?Sized + 'static> Application<V> {
         let (count, bytes) = retained.fold((0, 0), |(count, bytes), (_, view)| {
             (count + 1, bytes + view.bytes)
         });
-        if count + update.changed.len() > 512 || bytes + update.bytes > 32 * 1024 * 1024 {
+        let changed_bytes: usize = update.changed.values().map(|view| view.bytes).sum();
+        if count + update.changed.len() > 512 || bytes + changed_bytes > 32 * 1024 * 1024 {
             return Err(Error::Invalid(
                 "UI state limit reached; confirm retired mount cleanup".into(),
             ));
@@ -375,7 +592,7 @@ impl<V: ?Sized + 'static> Application<V> {
         for mount in &update.created {
             self.runtime.publish_mount(mount)?;
         }
-        for mount in &update.removed {
+        for mount in update.removed.values() {
             self.runtime.retire_mount(mount)?;
         }
         self.views.append(&mut update.changed);

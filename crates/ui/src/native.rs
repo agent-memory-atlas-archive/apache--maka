@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use super::{Error, Frame, Node, Result, surface_contract};
+use super::{ComponentOutput, Error, Node, Result, surface_contract};
 use maka_plugin_core::{
     composition::PresentationTarget,
     contract::{Contract, Interface},
@@ -90,7 +90,7 @@ impl<V: ?Sized> Presentation<V> {
             _ => Err(Error::Invalid("undeclared UI event".into())),
         }
     }
-    pub(crate) fn components<'a>(&'a self, output: &mut Vec<(&'a str, &'a str, u32, &'a Value)>) {
+    pub(crate) fn components<'a>(&'a self, output: &mut Vec<super::frame::ComponentRef<'a>>) {
         if let Self::Tree(node) = self {
             node.components(output);
         }
@@ -112,10 +112,17 @@ pub enum ComponentCall<'a> {
         props: &'a Value,
         key: &'a str,
         input: &'a Value,
+        origin: EventOrigin<'a>,
     },
 }
+/// The adapter constructs this origin; an arbitrary raw input payload cannot
+/// impersonate a child component notification.
+pub enum EventOrigin<'a> {
+    Raw,
+    Component { child: &'a str, name: &'a str },
+}
 pub trait NativeComponent<V: ?Sized>: 'static {
-    fn call(&self, call: ComponentCall<'_>) -> Result<Frame<Presentation<V>>>;
+    fn call(&self, call: ComponentCall<'_>) -> Result<ComponentOutput<Presentation<V>>>;
 }
 pub enum NativeCapability<V: ?Sized> {
     Component(Rc<dyn NativeComponent<V>>),
