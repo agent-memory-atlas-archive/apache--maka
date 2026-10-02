@@ -103,6 +103,13 @@ Desktop 单次发布 scene → 准备 native owner → 在 native read barrier �
 UI capture 拥有自己的快照和容量；本地 Host query 接收实际 payload，独立准入与清理。
 跨进程资源传输仍须 transport executor。
 
+`Application::new` 显式接收 `RemoteServices`：静态契约观察与 `RemoteService` 实际 endpoint
+注册分开。本地及远端服务目前只执行 Query；Mutation / Subscription 在持久 caller 与 stream
+协议完成前拒绝。`NativeService::call` 接收 `ServiceRequest`，包含已检查输入、实际附件及
+准入时由内核创建的私有 `ServiceSource`。consumer、mount 与 execution 观察不授予 Host 权限。
+transport callback 捕获 `remote_activation` 的准确 token，只把该 token 交给 `retire_remote`，
+延迟断连不能撤销 replacement kernel。
+
 最终准入再次核对原 consumer Mount 与 service registration。原生服务 future 在后台运行，
 独立于窗口；结果事件为 `{ kind: "action", key, event }`，原始输入无法伪造该来源。
 executor 先结算再投递结果，已退出 consumer 不再接收；结果 handler 失败会退休 consumer，
@@ -112,8 +119,8 @@ executor 先结算再投递结果，已退出 consumer 不再接收；结果 han
 每次输出最多 16 个 action，每请求 16 个资源槽；排队加已接受请求最多 64 个，已捕获资源
 累计最多 64 MiB，UTF-8 chunk 最多 64 KiB 且检查字节边界。完整 capture 参数在 clone/
 callback 前受 1 MiB 限额，也共用事务的 callback/deadline/累计工作预算。Reader 必须由包组合
-显式导入。Host transfer/持久准入、JavaScript binding bridge 与 UI 集成、TUI 接线及产品
-恢复界面尚未实现。独立 Host query executor 见[Host 应用服务](../runtime-host/README.zh-CN.md)；
+显式导入。可信跨进程 transport、UI 持久 caller 准入、subscription 与产品恢复界面仍待实现。
+直接 remote 注册调用实际 Host query 已用 Kit 快照跨两个内核验证。独立 Host query executor 见[Host 应用服务](../runtime-host/README.zh-CN.md)；
 resource 示例证明这条原生异步路径，不代表产品已完成。
 
 使用 `dual` 生成同一不可变包修订的两端 entry；`input.json` 选择 Desktop，

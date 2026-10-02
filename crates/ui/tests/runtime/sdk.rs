@@ -83,6 +83,7 @@ fn sdk_typescript_bundles_execute_the_same_package_in_both_presentations() {
                 ..Default::default()
             },
             NativeRegistry::<()>::with_surface(target),
+            Default::default(),
         )
         .unwrap();
         let first = app.mount_launch(json!({"count":10})).unwrap();

@@ -23,7 +23,7 @@ use maka_plugin_core::{
     contract::ResourceType,
     runtime::Mount,
 };
-use maka_plugins::call::{Attachments, ReadResource};
+use maka_plugins::call::ReadResource;
 use maka_ui::actions::*;
 use maka_ui::{
     Application, ComponentCall, ComponentOutput, Frame, NativeCapability, NativeComponent,
@@ -107,6 +107,7 @@ fn application(
         timer.handle().clone(),
         Default::default(),
         native,
+        Default::default(),
     )
     .unwrap();
     let root = app.mount_launch(json!({})).unwrap();
@@ -215,6 +216,7 @@ fn untrusted_metadata_or_native_plan_cannot_manufacture_resource_authority() {
         timer.handle().clone(),
         Default::default(),
         native,
+        Default::default(),
     )
     .unwrap();
     let root = app.mount_launch(json!({})).unwrap();
@@ -336,6 +338,7 @@ fn failed_or_lost_result_handlers_do_not_hold_accepted_work_or_healthy_pending_m
         timer.handle().clone(),
         Default::default(),
         native,
+        Default::default(),
     )
     .unwrap();
     let root = app.mount_launch(json!({})).unwrap();
@@ -355,7 +358,7 @@ struct CompletionService {
     cleanup_error: bool,
 }
 impl NativeService for CompletionService {
-    fn call(&self, _: String, _: Value, _: Attachments) -> ServiceFuture {
+    fn call(&self, _: ServiceRequest) -> ServiceFuture {
         let value = self.value.clone();
         let failed = self.cleanup_error;
         Box::pin(async move {
@@ -442,6 +445,7 @@ fn service_fixture(
         timer.handle().clone(),
         Default::default(),
         native,
+        Default::default(),
     )
     .unwrap();
     let root = app.mount_launch(json!({})).unwrap();
@@ -515,4 +519,222 @@ fn actual_snapshot_byte_budget_rejects_before_business_admission() {
         "not_accepted"
     );
     close_all(&mut app, &[root]);
+}
+
+type RemoteFixture = (
+    Input,
+    Vec<maka_plugins::package::Package>,
+    NativeRegistry<()>,
+    RemoteServices,
+    maka_plugin_core::plan::RemoteCapability,
+);
+fn remote_fixture(
+    mode: maka_plugin_core::contract::MethodMode,
+    cardinality: maka_plugin_core::contract::Cardinality,
+    actual: bool,
+) -> RemoteFixture {
+    use maka_plugin_core::{
+        contract::{Availability, Export, Interface, Transport},
+        package::EntryTarget,
+        plan::RemoteCapability,
+    };
+    let (mut input, mut packages, native, _) = fixture(false);
+    input.instances.remove("reader");
+    packages.retain(|p| p.manifest().id != "native.reader");
+    let old = packages.remove(
+        packages
+            .iter()
+            .position(|p| p.manifest().id == "dynamic.app")
+            .unwrap(),
+    );
+    let mut contract = maka_ui::text::reader_contract();
+    contract.transport = Transport::Remote;
+    let Interface::Service { methods } = &mut contract.interface else {
+        unreachable!()
+    };
+    methods.get_mut("read").unwrap().mode = mode;
+    let mut declaration = old.manifest().application.clone().unwrap();
+    let import = declaration
+        .entries
+        .get_mut(&EntryTarget::Desktop)
+        .unwrap()
+        .imports
+        .get_mut("reader")
+        .unwrap();
+    import.contract = contract.clone();
+    import.cardinality = cardinality;
+    let package = support::package(
+        "dynamic.app",
+        declaration,
+        Some(
+            std::str::from_utf8(old.file("index.mjs").unwrap())
+                .unwrap()
+                .to_owned(),
+        ),
+    );
+    let target = RemoteCapability {
+        deployment: "host-a".into(),
+        instance: maka_plugin_core::composition::InstanceId(vec![uuid::Uuid::from_u128(11)]),
+        export: "Reader".into(),
+    };
+    let app = input.instances.get_mut("app").unwrap();
+    app.package = package.application_ref().into();
+    app.bindings.insert(
+        "reader".into(),
+        vec![maka_plugin_core::composition::Target::Remote {
+            deployment: target.deployment.clone(),
+            instance: target.instance.clone(),
+            export: target.export.clone(),
+        }],
+    );
+    packages.push(package);
+    let remotes = RemoteServices {
+        declarations: BTreeMap::from([(
+            target.clone(),
+            Export {
+                contract: contract.clone(),
+                availability: Availability::Required,
+            },
+        )]),
+        registrations: if actual {
+            vec![RemoteService {
+                target: target.clone(),
+                registration_epoch: uuid::Uuid::new_v4(),
+                contract,
+                implementation: Arc::new(CompletionService {
+                    value: json!({"text":"Start","metadata":{}}),
+                    cleanup_error: false,
+                }),
+            }]
+        } else {
+            vec![]
+        },
+    };
+    (input, packages, native, remotes, target)
+}
+#[test]
+fn remote_metadata_proves_compatibility_but_only_actual_endpoint_proves_readiness() {
+    use maka_plugin_core::contract::{Cardinality, MethodMode};
+    let timer = timer();
+    let (input, packages, native, remotes, _) =
+        remote_fixture(MethodMode::Query, Cardinality::One, false);
+    assert!(matches!(
+        Application::new(
+            &input,
+            packages,
+            timer.handle().clone(),
+            Default::default(),
+            native,
+            remotes
+        ),
+        Err(maka_ui::Error::Core(maka_plugin_core::Error::NotReady(_)))
+    ));
+    let (input, packages, native, remotes, _) =
+        remote_fixture(MethodMode::Query, Cardinality::Optional, false);
+    let mut app = Application::new(
+        &input,
+        packages,
+        timer.handle().clone(),
+        Default::default(),
+        native,
+        remotes,
+    )
+    .unwrap();
+    let root = app.mount_launch(json!({})).unwrap();
+    close_all(&mut app, &[root]);
+}
+#[test]
+fn remote_disconnect_retires_consumer_but_preserves_accepted_query_and_snapshot() {
+    use maka_plugin_core::contract::{Cardinality, MethodMode};
+    let timer = timer();
+    let (input, packages, native, remotes, target) =
+        remote_fixture(MethodMode::Query, Cardinality::One, true);
+    let mut app = Application::new(
+        &input,
+        packages,
+        timer.handle().clone(),
+        Default::default(),
+        native,
+        remotes,
+    )
+    .unwrap();
+    let root = app.mount_launch(json!({})).unwrap();
+    app.dispatch(&root, 0, "read", Value::Null).unwrap();
+    let snapshot = capture(&mut app, &root, "Start");
+    let weak = Arc::downgrade(&snapshot);
+    drop(snapshot);
+    let work = app.start_action(&root).unwrap().unwrap();
+    let attachment = app.remote_activation(&target).unwrap();
+    app.retire_remote(&attachment).unwrap();
+    assert!(app.is_retiring(&root));
+    assert!(app.dispatch(&root, 1, "read", Value::Null).is_err());
+    for mount in app.retiring_mounts() {
+        app.close(&mount, Ok(())).unwrap();
+    }
+    assert!(app.shutdown().is_err());
+    assert!(weak.upgrade().is_some());
+    let done = timer.block_on(work.future);
+    assert_eq!(done.result.as_ref().unwrap()["text"], "Start");
+    app.finish_action(work.id, done).unwrap();
+    assert!(weak.upgrade().is_none());
+    app.shutdown().unwrap();
+}
+#[test]
+fn ui_does_not_execute_mutations_or_subscriptions_without_their_required_protocol() {
+    use maka_plugin_core::contract::{Cardinality, MethodMode};
+    let timer = timer();
+    for mode in [MethodMode::Mutation, MethodMode::Subscription] {
+        let (input, packages, native, remotes, _) = remote_fixture(mode, Cardinality::One, true);
+        let result = Application::new(
+            &input,
+            packages,
+            timer.handle().clone(),
+            Default::default(),
+            native,
+            remotes,
+        );
+        assert!(
+            matches!(result, Err(maka_ui::Error::Invalid(ref message)) if message.contains("durable caller or stream execution"))
+        );
+    }
+}
+
+#[test]
+fn delayed_disconnect_token_cannot_retire_same_target_in_a_replacement_ui_kernel() {
+    use maka_plugin_core::contract::{Cardinality, MethodMode};
+    let timer = timer();
+    let (input, packages, native, remotes, target) =
+        remote_fixture(MethodMode::Query, Cardinality::One, true);
+    let wire_epoch = remotes.registrations[0].registration_epoch;
+    let mut old = Application::new(
+        &input,
+        packages,
+        timer.handle().clone(),
+        Default::default(),
+        native,
+        remotes,
+    )
+    .unwrap();
+    let old_root = old.mount_launch(json!({})).unwrap();
+    let old_attachment = old.remote_activation(&target).unwrap();
+    let (input, packages, native, mut remotes, _) =
+        remote_fixture(MethodMode::Query, Cardinality::One, true);
+    remotes.registrations[0].registration_epoch = wire_epoch;
+    let mut replacement = Application::new(
+        &input,
+        packages,
+        timer.handle().clone(),
+        Default::default(),
+        native,
+        remotes,
+    )
+    .unwrap();
+    let root = replacement.mount_launch(json!({})).unwrap();
+    assert!(replacement.retire_remote(&old_attachment).is_err());
+    assert!(!replacement.is_retiring(&root));
+    let actual_attachment = replacement.remote_activation(&target).unwrap();
+    replacement.retire_remote(&actual_attachment).unwrap();
+    assert!(replacement.is_retiring(&root));
+    close_all(&mut replacement, &[root]);
+    close_all(&mut old, &[old_root]);
 }

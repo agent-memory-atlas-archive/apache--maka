@@ -310,6 +310,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         timer.handle().clone(),
         maka_js_limits(),
         widgets::registry(),
+        Default::default(),
     )?;
     let mount = application.mount_launch(serde_json::json!({}))?;
     let frame = application.frame(&mount)?;
@@ -451,6 +452,7 @@ mod tests {
             timer.handle().clone(),
             Default::default(),
             widgets::registry(),
+            Default::default(),
         )
         .unwrap()
     }

@@ -62,7 +62,7 @@ impl<T> Runtime<T> {
         };
         let provider = self
             .live
-            .get(instance)
+            .get(&Origin::Local(instance.clone()))
             .ok_or_else(|| Error::NotReady("launch component".into()))?
             .activation
             .clone();
@@ -79,6 +79,11 @@ impl<T> Runtime<T> {
         capability: &Capability<T>,
         parent: Option<&Mount>,
     ) -> Result<Mount, Error> {
+        if capability.provider.remote_target().is_some() {
+            return Err(Error::Contract(
+                "remote services cannot be mounted as local components".into(),
+            ));
+        }
         // Admission checks both epochs. Mount creation is its own owner, not
         // accepted business work, so the validation lease settles immediately.
         let execution = self.admit(capability)?;

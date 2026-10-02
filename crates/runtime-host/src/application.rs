@@ -184,14 +184,24 @@ impl Binding {
 
 pub struct Accepted {
     pub id: Uuid,
-    result: oneshot::Receiver<Result<Value>>,
+    result: oneshot::Receiver<QueryCompletion>,
+}
+/// Independent business and executor-cleanup observations from the original Host owner.
+pub struct QueryCompletion {
+    pub result: Result<Value>,
+    pub cleanup: Result<()>,
 }
 impl Accepted {
-    /// This is only an observer. Drop never cancels the executor or its cleanup.
+    /// Observe business only. This does not acknowledge executor cleanup.
     pub async fn result(self) -> Result<Value> {
-        self.result
-            .await
-            .map_err(|_| "Host executor owner disappeared".to_string())?
+        self.completion().await.result
+    }
+    /// Dropping this observer never cancels execution or acknowledges cleanup.
+    pub async fn completion(self) -> QueryCompletion {
+        self.result.await.unwrap_or_else(|_| QueryCompletion {
+            result: Err("Host executor owner disappeared".into()),
+            cleanup: Err("Host executor cleanup unconfirmed: owner disappeared".into()),
+        })
     }
 }
 
@@ -332,17 +342,22 @@ impl CallKind {
     }
 }
 pub(super) enum Reply {
-    Query(oneshot::Sender<Result<Value>>),
+    Query(oneshot::Sender<QueryCompletion>),
     Mutation {
         reference: Box<RecoveryRef>,
         reply: oneshot::Sender<OperationReply>,
     },
 }
 impl Reply {
-    fn send(self, result: Result<Value>, receipt: Option<Result<OperationObservation>>) {
+    fn send(
+        self,
+        result: Result<Value>,
+        cleanup: Result<()>,
+        receipt: Option<Result<OperationObservation>>,
+    ) {
         match self {
             Self::Query(reply) => {
-                let _ = reply.send(result);
+                let _ = reply.send(QueryCompletion { result, cleanup });
             }
             Self::Mutation { reference, reply } => {
                 let receipt = match receipt.expect("mutation completion carries receipt knowledge")

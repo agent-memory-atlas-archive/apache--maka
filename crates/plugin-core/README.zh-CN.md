@@ -42,8 +42,10 @@ Host、TUI 与 Desktop 共用的声明、组合解析与生命周期权威，不
 身份，供适配器检查策略与执行域。检查和身份本身不授予权限；执行前仍需最终策略检查
 和 `admit`。
 
-授权和持久业务操作准入仍由执行环境负责。此生命周期核心目前解析本地实际注册；
-配置的远端绑定在 transport 注册适配器实现前保持未就绪。
+授权和持久业务操作准入仍由执行环境负责。`Runtime::attach_remote` 接收受信任适配器提供的实际 endpoint 与注册 epoch，
+目标必须被组合显式引用。本地与远端 owner 共用 work、resource、撤销和清理机制。
+附着 token 捕获完整 target 与私有 lifetime epoch，同 wire epoch 重连不能重定向旧句柄。
+可选 endpoint 缺席时绑定为空；必需 endpoint 缺席仍未就绪。附着不证明 transport 身份或授予权限。
 
 应用包使用 Manifest schema version 2 的 `application` 声明。CLI 可以在不激活
 部署的情况下检查它们：

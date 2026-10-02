@@ -55,7 +55,8 @@ child 请求携带父调用的 resource Ticket，沿队列、executor 与实际 
 即使 JS catch 或未 await 子调用，父子工作与容量仍保留。Context 与 owner 只持弱 dispatch，
 观察 future 不持附件 map 或 endpoint。
 
-`Accepted` 结果只是观察者。owner 保留 execution、Scope、实际附件与容量，直到 query 和资源真实
+`Accepted::completion` 分别观察原 owner 的业务结果与真实 executor 清理结果；owner
+消失时报告清理未确认。`Accepted::result` 只观察业务，不能确认清理。owner 保留 execution、Scope、实际附件与容量，直到 query 和资源真实
 结算。普通业务错误或结果校验失败，在资源清理成功时正常释放工作；无法确认清理或 executor
 panic 保留 work、Scope 与容量，并退休相关注册。应用 root Drop 仅请求退休，client handle
 不能保活 root 或取消已接受工作。关停成功须 native/module 清理及 VM 真实关闭；共享 VM 失败
@@ -74,7 +75,9 @@ queued 与 accepted 请求共用 64 MiB，清理未确认时保留实际 payload
 原 Input、准确包 bytes 和契约保留在不可变部署修订中。派发事务确认后才产生私有首次执行 claim；
 重复请求不执行 callback、不覆盖原 cleanup。指纹归一对象键序，保守保留实际 JSON 数字表示，
 输入变化报冲突；跨 VM 改写数字表示后应读取原 Ref，不能重新提交改写输入。
-`Accepted.recovery` 只是观察，接受工作本身不证明持久派发已确认。
+`Mutation::reference` 只是观察，接受工作本身不证明持久派发已确认。
+`Mutation::result` 返回保留原 Ref 的 `OperationReply`，owner 消失也不丢失引用；
+只有 recorded receipt 才证明原 journal 事实。
 
 returned、unknown 与真实资源 cleanup 分别记录。业务错误、非法结果或进程丢失不能证明回滚；
 SQL 结算不确定也不冒充物理 cleanup failure。丢弃观察者或应用 root 不取消已接受工作；

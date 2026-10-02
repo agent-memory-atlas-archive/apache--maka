@@ -99,6 +99,7 @@ fn application(
         timer.handle().clone(),
         Default::default(),
         NativeRegistry::with_surface(PresentationTarget::Desktop),
+        Default::default(),
     )
     .unwrap()
 }
@@ -433,6 +434,7 @@ fn native_application(
         timer.handle().clone(),
         Default::default(),
         registry,
+        Default::default(),
     )
     .unwrap()
 }

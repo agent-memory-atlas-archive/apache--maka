@@ -31,23 +31,39 @@ use uuid::Uuid;
 use crate::{
     Error,
     composition::InstanceId,
-    contract::Contract,
-    plan::{Binding, Instance, Plan, Provider},
+    contract::{Contract, Transport},
+    plan::{Binding, Instance, Plan, Provider, RemoteCapability},
 };
 
 mod mount;
 pub use mount::{Mount, MountStatus};
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Origin {
+    Local(InstanceId),
+    Remote(RemoteCapability),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Activation {
     kernel: Uuid,
-    instance: InstanceId,
+    origin: Origin,
     epoch: Uuid,
 }
 
 impl Activation {
     pub fn instance(&self) -> &InstanceId {
-        &self.instance
+        match &self.origin {
+            Origin::Local(instance) => instance,
+            Origin::Remote(target) => &target.instance,
+        }
+    }
+    /// Attachment identity, not transport authentication or a recovery locator.
+    pub fn remote_target(&self) -> Option<&RemoteCapability> {
+        match &self.origin {
+            Origin::Remote(target) => Some(target),
+            Origin::Local(_) => None,
+        }
     }
     pub fn epoch(&self) -> Uuid {
         self.epoch
@@ -158,7 +174,7 @@ struct OwnedResource {
 }
 struct Live<T> {
     activation: Activation,
-    plan: Instance,
+    plan: Option<Instance>,
     phase: Phase,
     exports: BTreeMap<String, Registration<T>>,
     calls: BTreeMap<Uuid, Work<T>>,
@@ -180,7 +196,7 @@ pub struct Status {
 pub struct Runtime<T> {
     identity: Uuid,
     desired: Plan,
-    live: BTreeMap<InstanceId, Live<T>>,
+    live: BTreeMap<Origin, Live<T>>,
     mounts: BTreeMap<Uuid, mount::Mounted<T>>,
 }
 
@@ -203,20 +219,28 @@ impl<T> Runtime<T> {
         let changed: Vec<_> = self
             .live
             .iter()
-            .filter(|(id, live)| {
-                !plan
-                    .instances()
-                    .get(*id)
-                    .is_some_and(|next| same_instance(&live.plan, next))
+            .filter(|(origin, live)| match origin {
+                Origin::Local(id) => !plan.instances().get(id).is_some_and(|next| {
+                    live.plan
+                        .as_ref()
+                        .is_some_and(|previous| same_instance(previous, next))
+                }),
+                Origin::Remote(target) => {
+                    !remote_expected(&plan, target, &live.exports[&target.export].contract)
+                }
             })
             .map(|(_, live)| live.activation.clone())
             .collect();
         self.desired = plan;
-        for (id, live) in &mut self.live {
-            if let Some(next) = self.desired.instances().get(id)
-                && same_instance(&live.plan, next)
+        for (origin, live) in &mut self.live {
+            if let Origin::Local(id) = origin
+                && let Some(next) = self.desired.instances().get(id)
+                && live
+                    .plan
+                    .as_ref()
+                    .is_some_and(|previous| same_instance(previous, next))
             {
-                live.plan = next.clone();
+                live.plan = Some(next.clone());
             }
         }
         let mut retired = Vec::new();
@@ -230,7 +254,7 @@ impl<T> Runtime<T> {
     }
 
     pub fn begin(&mut self, instance: &InstanceId) -> Result<Activation, Error> {
-        if self.live.contains_key(instance) {
+        if self.live.contains_key(&Origin::Local(instance.clone())) {
             return Err(Error::Lifecycle(
                 "previous activation has not completed cleanup",
             ));
@@ -244,22 +268,83 @@ impl<T> Runtime<T> {
             .clone();
         if let Some(parent) = &plan.parent {
             self.live
-                .get(parent)
+                .get(&Origin::Local(parent.clone()))
                 .filter(|parent| parent.phase == Phase::Active)
                 .ok_or_else(|| Error::NotReady("instance owner".into()))?;
         }
         let activation = Activation {
             kernel: self.identity,
-            instance: instance.clone(),
+            origin: Origin::Local(instance.clone()),
             epoch: Uuid::new_v4(),
         };
         self.live.insert(
-            instance.clone(),
+            Origin::Local(instance.clone()),
             Live {
                 activation: activation.clone(),
-                plan,
+                plan: Some(plan),
                 phase: Phase::Loading,
                 exports: BTreeMap::new(),
+                calls: BTreeMap::new(),
+                resources: BTreeMap::new(),
+            },
+        );
+        Ok(activation)
+    }
+
+    /// Attach an actual transport endpoint, independently of static metadata.
+    /// The trusted adapter owns authentication and the remote execution protocol.
+    /// Replacing an attachment requires confirmed local work/resource cleanup.
+    pub fn attach_remote(
+        &mut self,
+        target: RemoteCapability,
+        registration_epoch: Uuid,
+        actual: Published<T>,
+    ) -> Result<Activation, Rejected<T>> {
+        let origin = Origin::Remote(target.clone());
+        let validation = (|| {
+            actual.contract.validate()?;
+            if registration_epoch.is_nil() || actual.contract.transport != Transport::Remote {
+                return Err(Error::Contract(
+                    "remote attachment requires an actual transport registration".into(),
+                ));
+            }
+            if self.live.contains_key(&origin) {
+                return Err(Error::Lifecycle(
+                    "previous remote attachment has not completed cleanup",
+                ));
+            }
+            if !remote_expected(&self.desired, &target, &actual.contract) {
+                return Err(Error::Contract(
+                    "remote registration does not match desired references".into(),
+                ));
+            }
+            Ok(())
+        })();
+        if let Err(error) = validation {
+            return Err(Rejected {
+                error,
+                batch: BTreeMap::from([(target.export, actual)]),
+            });
+        }
+        let activation = Activation {
+            kernel: self.identity,
+            origin: origin.clone(),
+            epoch: Uuid::new_v4(),
+        };
+        self.live.insert(
+            origin,
+            Live {
+                activation: activation.clone(),
+                plan: None,
+                phase: Phase::Active,
+                exports: BTreeMap::from([(
+                    target.export,
+                    Registration {
+                        epoch: registration_epoch,
+                        contract: actual.contract,
+                        value: Arc::new(actual.value),
+                    },
+                )]),
                 calls: BTreeMap::new(),
                 resources: BTreeMap::new(),
             },
@@ -279,7 +364,7 @@ impl<T> Runtime<T> {
             if live.phase != Phase::Loading {
                 return Err(Error::Lifecycle("activation is not loading"));
             }
-            if let Some(entry) = &live.plan.entry {
+            if let Some(entry) = &self.instance(activation)?.entry {
                 entry.check_exports(
                     &batch
                         .iter()
@@ -299,7 +384,7 @@ impl<T> Runtime<T> {
         if let Err(error) = validation {
             return Err(Rejected { error, batch });
         }
-        let live = self.live.get_mut(&activation.instance).unwrap();
+        let live = self.live.get_mut(&activation.origin).unwrap();
         live.exports = batch
             .into_iter()
             .map(|(name, published)| {
@@ -324,14 +409,14 @@ impl<T> Runtime<T> {
         if live.phase == Phase::Retiring {
             return Err(Error::Retired);
         }
-        let declaration = live
-            .plan
+        let plan = self.instance(consumer)?;
+        let declaration = plan
             .entry
             .as_ref()
             .and_then(|entry| entry.imports.get(import))
             .ok_or_else(|| Error::Contract(format!("undeclared executable import: {import}")))?;
         let mut handles = Vec::new();
-        for binding in &live.plan.bindings[import] {
+        for binding in &plan.bindings[import] {
             if let Some(handle) = self.resolve(consumer, binding)? {
                 handles.push(handle);
             }
@@ -350,14 +435,15 @@ impl<T> Runtime<T> {
         consumer: &Activation,
         binding: &Binding,
     ) -> Result<Option<Capability<T>>, Error> {
-        let Provider::Local { instance, export } = &binding.provider else {
-            return Err(Error::NotReady(
-                "remote registration has not been attached".into(),
-            ));
+        let (origin, export) = match &binding.provider {
+            Provider::Local { instance, export } => (Origin::Local(instance.clone()), export),
+            Provider::Remote { capability } => {
+                (Origin::Remote(capability.clone()), &capability.export)
+            }
         };
         let Some(live) = self
             .live
-            .get(instance)
+            .get(&origin)
             .filter(|live| live.phase == Phase::Active)
         else {
             return Ok(None);
@@ -405,7 +491,7 @@ impl<T> Runtime<T> {
         self.inspect(capability)?;
         let id = Uuid::new_v4();
         self.live
-            .get_mut(&capability.provider.instance)
+            .get_mut(&capability.provider.origin)
             .unwrap()
             .calls
             .insert(
@@ -513,13 +599,23 @@ impl<T> Runtime<T> {
     /// the adapter which initialization/tasks/resources need stop signals.
     pub fn retire(&mut self, activation: &Activation) -> Result<Vec<Activation>, Error> {
         self.owner(activation)?;
-        let mut affected = BTreeSet::from([activation.instance.clone()]);
+        let mut affected = BTreeSet::from([activation.origin.clone()]);
         loop {
             let before = affected.len();
-            for (id, live) in &self.live {
-                if live.plan.parent.as_ref().is_some_and(|parent| affected.contains(parent))
-                    || (live.plan.entry.is_some() && live.plan.bindings.values().flatten().any(|binding| matches!(&binding.provider, Provider::Local { instance, .. } if affected.contains(instance)))) {
-                    affected.insert(id.clone());
+            for (origin, live) in &self.live {
+                let Some(plan) = &live.plan else { continue };
+                if plan
+                    .parent
+                    .as_ref()
+                    .is_some_and(|parent| affected.contains(&Origin::Local(parent.clone())))
+                    || (plan.entry.is_some()
+                        && plan
+                            .bindings
+                            .values()
+                            .flatten()
+                            .any(|binding| affected.contains(&provider_origin(&binding.provider))))
+                {
+                    affected.insert(origin.clone());
                 }
             }
             if affected.len() == before {
@@ -551,14 +647,17 @@ impl<T> Runtime<T> {
         if !live.calls.is_empty()
             || !live.resources.is_empty()
             || self.mounts_depend_on(activation)
-            || self
-                .live
-                .values()
-                .any(|child| child.plan.parent.as_ref() == Some(&activation.instance))
+            || self.live.values().any(|child| {
+                child
+                    .plan
+                    .as_ref()
+                    .and_then(|plan| plan.parent.as_ref())
+                    .is_some_and(|parent| Origin::Local(parent.clone()) == activation.origin)
+            })
         {
             return Err(Error::CleanupPending);
         }
-        self.live.remove(&activation.instance);
+        self.live.remove(&activation.origin);
         Ok(())
     }
 
@@ -573,10 +672,20 @@ impl<T> Runtime<T> {
         })
     }
 
-    /// Configuration and entry descriptor for this exact activation. Retiring
-    /// owners retain their original plan until cleanup finishes.
+    /// Exact local and remote owners, including those awaiting cleanup.
+    pub fn activations(&self) -> impl Iterator<Item = &Activation> {
+        self.live.values().map(|live| &live.activation)
+    }
+
+    /// Configuration and entry descriptor for this exact local activation.
+    /// Retiring owners retain their original plan until cleanup finishes.
     pub fn instance(&self, activation: &Activation) -> Result<&Instance, Error> {
-        Ok(&self.owner(activation)?.plan)
+        self.owner(activation)?
+            .plan
+            .as_ref()
+            .ok_or(Error::Lifecycle(
+                "remote attachment has no local instance plan",
+            ))
     }
 
     fn owner(&self, activation: &Activation) -> Result<&Live<T>, Error> {
@@ -584,7 +693,7 @@ impl<T> Runtime<T> {
             return Err(Error::Retired);
         }
         self.live
-            .get(&activation.instance)
+            .get(&activation.origin)
             .filter(|live| live.activation == *activation)
             .ok_or(Error::Retired)
     }
@@ -593,7 +702,7 @@ impl<T> Runtime<T> {
             return Err(Error::Retired);
         }
         self.live
-            .get_mut(&activation.instance)
+            .get_mut(&activation.origin)
             .filter(|live| live.activation == *activation)
             .ok_or(Error::Retired)
     }
@@ -624,6 +733,32 @@ fn failures<T>(live: &Live<T>) -> Vec<String> {
                 .filter_map(|resource| resource.failure.clone()),
         )
         .collect()
+}
+
+fn provider_origin(provider: &Provider) -> Origin {
+    match provider {
+        Provider::Local { instance, .. } => Origin::Local(instance.clone()),
+        Provider::Remote { capability } => Origin::Remote(capability.clone()),
+    }
+}
+
+fn remote_expected(plan: &Plan, target: &RemoteCapability, actual: &Contract) -> bool {
+    let mut found = false;
+    for binding in plan.instances().values().flat_map(|instance| {
+        instance
+            .bindings
+            .values()
+            .flatten()
+            .chain(instance.exports.values())
+    }) {
+        if matches!(&binding.provider, Provider::Remote {capability} if capability == target) {
+            found = true;
+            if !binding.declaration.contract.accepts(actual) {
+                return false;
+            }
+        }
+    }
+    found
 }
 
 fn same_instance(left: &Instance, right: &Instance) -> bool {

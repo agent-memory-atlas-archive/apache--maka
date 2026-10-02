@@ -56,7 +56,46 @@ pub type ServiceFuture = Pin<Box<dyn Future<Output = ServiceCompletion> + Send +
 /// Construct a background future only. Polling performs the operation after
 /// final admission; the executor retains it independently of any UI waiter.
 pub trait NativeService: Send + Sync + 'static {
-    fn call(&self, method: String, input: Value, resources: Attachments) -> ServiceFuture;
+    fn call(&self, request: ServiceRequest) -> ServiceFuture;
+}
+
+/// Immutable facts from final local admission. They do not grant Host access.
+/// Guest JSON cannot supply or replace this source.
+#[derive(Clone, Debug)]
+pub struct ServiceSource {
+    consumer: maka_plugin_core::runtime::Activation,
+    mount: Mount,
+    execution: Uuid,
+}
+impl ServiceSource {
+    pub fn consumer(&self) -> &maka_plugin_core::runtime::Activation {
+        &self.consumer
+    }
+    pub fn mount(&self) -> &Mount {
+        &self.mount
+    }
+    pub fn execution_id(&self) -> Uuid {
+        self.execution
+    }
+}
+pub struct ServiceRequest {
+    pub source: ServiceSource,
+    pub method: String,
+    pub input: Value,
+    pub resources: Attachments,
+}
+
+/// Static source observations and actual endpoint values are separate facts.
+#[derive(Default)]
+pub struct RemoteServices {
+    pub declarations: maka_plugin_core::plan::RemoteExports,
+    pub registrations: Vec<RemoteService>,
+}
+pub struct RemoteService {
+    pub target: maka_plugin_core::plan::RemoteCapability,
+    pub registration_epoch: Uuid,
+    pub contract: maka_plugin_core::contract::Contract,
+    pub implementation: Arc<dyn NativeService>,
 }
 /// Business outcome and actual executor cleanup are separate facts.
 pub struct ServiceCompletion {
@@ -446,8 +485,17 @@ impl<V: ?Sized + 'static> Application<V> {
             };
             let resources = action.resources.expect("captured");
             let method = action.method;
-            let future = implementation.call(method.clone(), action.input, resources.clone());
             let id = execution.id();
+            let future = implementation.call(ServiceRequest {
+                source: ServiceSource {
+                    consumer: action.capability.consumer().clone(),
+                    mount: action.consumer.clone(),
+                    execution: id,
+                },
+                method: method.clone(),
+                input: action.input,
+                resources: resources.clone(),
+            });
             self.actions.running.insert(
                 id,
                 Running {

@@ -37,7 +37,7 @@ use maka_plugin_core::{
     composition::{ExecutionLocation, Input, InstanceId, PresentationTarget},
     contract::{Contract, Interface, Transport},
     package::{Implementation, PackageRef, Packages, Realm},
-    plan::{Plan, Provider, RemoteExports},
+    plan::{Plan, Provider},
     runtime::{Activation, Mount, Phase, Published, Resource, Runtime},
 };
 use maka_plugins::package::Package;
@@ -110,6 +110,7 @@ impl<V: ?Sized + 'static> Application<V> {
         timer: tokio::runtime::Handle,
         limits: Limits,
         native: NativeRegistry<V>,
+        remotes: actions::RemoteServices,
     ) -> Result<Self> {
         if input.environment.location != ExecutionLocation::Ui {
             return Err(Error::Invalid("UI deployment required".into()));
@@ -129,7 +130,7 @@ impl<V: ?Sized + 'static> Application<V> {
             packages.insert(package.application_ref(), declaration.clone())?;
             sources.insert(package.application_ref(), package);
         }
-        let plan = Plan::prepare(input, &packages, &RemoteExports::new())?;
+        let plan = Plan::prepare(input, &packages, &remotes.declarations)?;
         let mut pending: Vec<_> = plan
             .instances()
             .values()
@@ -146,6 +147,19 @@ impl<V: ?Sized + 'static> Application<V> {
             target,
             scheduler: timer.clone(),
         };
+        for remote in remotes.registrations {
+            let value = service_export(remote.implementation, &remote.contract)?;
+            app.runtime
+                .attach_remote(
+                    remote.target,
+                    remote.registration_epoch,
+                    Published {
+                        contract: remote.contract,
+                        value,
+                    },
+                )
+                .map_err(|rejected| Error::Core(rejected.error))?;
+        }
         let mut shared: Option<ExecutionRealm> = None;
         while !pending.is_empty() {
             let before = pending.len();
@@ -160,7 +174,7 @@ impl<V: ?Sized + 'static> Application<V> {
                                 Provider::Local { instance, .. } => {
                                     !app.activations.contains_key(instance)
                                 }
-                                Provider::Remote { .. } => true,
+                                Provider::Remote { .. } => false,
                             }
                         }))
                 {
@@ -178,40 +192,7 @@ impl<V: ?Sized + 'static> Application<V> {
                                 let value = match actual.value {
                                     NativeCapability::Surface(target) => Export::Surface(target),
                                     NativeCapability::Service(implementation) => {
-                                        let Interface::Service { methods } =
-                                            &actual.contract.interface
-                                        else {
-                                            unreachable!()
-                                        };
-                                        let mut compiled = BTreeMap::new();
-                                        for (name, method) in methods {
-                                            if method.mode
-                                                == maka_plugin_core::contract::MethodMode::Subscription
-                                            {
-                                                return Err(Error::Invalid(
-                                                    "service subscription requires a stream executor"
-                                                        .into(),
-                                                ));
-                                            }
-                                            compiled.insert(
-                                                name.clone(),
-                                                ServiceMethod {
-                                                    input: jsonschema::validator_for(&method.input)
-                                                        .map_err(|e| {
-                                                            Error::Invalid(e.to_string())
-                                                        })?,
-                                                    output: jsonschema::validator_for(
-                                                        &method.output,
-                                                    )
-                                                    .map_err(|e| Error::Invalid(e.to_string()))?,
-                                                    resources: method.resources.clone(),
-                                                },
-                                            );
-                                        }
-                                        Export::Service {
-                                            implementation,
-                                            methods: compiled,
-                                        }
+                                        service_export(implementation, &actual.contract)?
                                     }
                                     NativeCapability::Component(component) => {
                                         let Interface::Component {
@@ -514,6 +495,28 @@ impl<V: ?Sized + 'static> Application<V> {
         self.runtime.retire_mount(mount)?;
         Ok(())
     }
+    /// Capture the exact attachment when installing a transport disconnect callback.
+    /// The target identifies a source reference; only this token identifies its lifetime.
+    pub fn remote_activation(
+        &self,
+        target: &maka_plugin_core::plan::RemoteCapability,
+    ) -> Result<Activation> {
+        self.runtime
+            .activations()
+            .find(|a| a.remote_target() == Some(target))
+            .cloned()
+            .ok_or(maka_plugin_core::Error::Retired.into())
+    }
+    /// Late notifications cannot retire a replacement attachment or another kernel.
+    /// Accepted calls stay with the original attachment until actual cleanup.
+    pub fn retire_remote(&mut self, attachment: &Activation) -> Result<()> {
+        if attachment.remote_target().is_none() {
+            return Err(Error::Invalid("remote attachment required".into()));
+        }
+        self.runtime.retire(attachment)?;
+        Ok(())
+    }
+
     pub fn is_retiring(&self, mount: &Mount) -> bool {
         self.runtime
             .mount_statuses()
@@ -526,8 +529,8 @@ impl<V: ?Sized + 'static> Application<V> {
     /// first confirm each mount's actual close through `close`; pending native
     /// cleanup remains an error rather than an implicit shutdown acknowledgement.
     pub fn shutdown(&mut self) -> Result<()> {
-        for activation in self.activations.values() {
-            self.runtime.retire(activation)?;
+        for activation in self.runtime.activations().cloned().collect::<Vec<_>>() {
+            self.runtime.retire(&activation)?;
         }
         self.actions.queue.clear();
         self.actions.outcomes.clear();
@@ -550,24 +553,59 @@ impl<V: ?Sized + 'static> Application<V> {
         // ownership cycles; a fixed point with owners left is genuine pending
         // work/resources/mounts, not a reason to discard them.
         loop {
-            let before = self.activations.len();
-            for id in self.activations.keys().cloned().collect::<Vec<_>>() {
-                match self.runtime.finish_cleanup(&self.activations[&id]) {
+            let pending = self.runtime.activations().cloned().collect::<Vec<_>>();
+            let before = pending.len();
+            for activation in pending {
+                match self.runtime.finish_cleanup(&activation) {
                     Ok(()) => {
-                        self.activations.remove(&id);
+                        if activation.remote_target().is_none() {
+                            self.activations.remove(activation.instance());
+                        }
                     }
                     Err(maka_plugin_core::Error::CleanupPending) => {}
                     Err(error) => return Err(error.into()),
                 }
             }
-            if self.activations.is_empty() {
+            let remaining = self.runtime.activations().count();
+            if remaining == 0 {
                 return Ok(());
             }
-            if self.activations.len() == before {
+            if remaining == before {
                 return Err(maka_plugin_core::Error::CleanupPending.into());
             }
         }
     }
+}
+
+fn service_export<V: ?Sized>(
+    implementation: std::sync::Arc<dyn actions::NativeService>,
+    contract: &Contract,
+) -> Result<Export<V>> {
+    let Interface::Service { methods } = &contract.interface else {
+        return Err(Error::Invalid("service contract required".into()));
+    };
+    let mut compiled = BTreeMap::new();
+    for (name, method) in methods {
+        if method.mode != maka_plugin_core::contract::MethodMode::Query {
+            return Err(Error::Invalid(
+                "UI mutation and subscription require durable caller or stream execution".into(),
+            ));
+        }
+        compiled.insert(
+            name.clone(),
+            ServiceMethod {
+                input: jsonschema::validator_for(&method.input)
+                    .map_err(|e| Error::Invalid(e.to_string()))?,
+                output: jsonschema::validator_for(&method.output)
+                    .map_err(|e| Error::Invalid(e.to_string()))?,
+                resources: method.resources.clone(),
+            },
+        );
+    }
+    Ok(Export::Service {
+        implementation,
+        methods: compiled,
+    })
 }
 
 fn event_schemas(

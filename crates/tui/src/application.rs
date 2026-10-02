@@ -65,8 +65,14 @@ impl Presenter {
         if input.environment.presentation != Some(PresentationTarget::Tui) {
             return Err(Error::Invalid("terminal deployment required".into()));
         }
-        let mut application =
-            Application::new(input, packages, scheduler, Default::default(), native)?;
+        let mut application = Application::new(
+            input,
+            packages,
+            scheduler,
+            Default::default(),
+            native,
+            Default::default(),
+        )?;
         let root = application.mount_launch(props)?;
         Ok(Self {
             application,

@@ -605,7 +605,7 @@ fn remote_metadata_does_not_count_as_an_actual_registration() {
     remote_contract.transport = Transport::Remote;
     let mut remote_entry = entry(false);
     remote_entry.imports.get_mut("action").unwrap().contract = remote_contract.clone();
-    remote_entry.imports.get_mut("action").unwrap().cardinality = Cardinality::Optional;
+    remote_entry.imports.get_mut("action").unwrap().cardinality = Cardinality::One;
     fixture
         .packages
         .insert(
@@ -820,4 +820,265 @@ fn launch_changes_retire_existing_roots_without_retiring_unchanged_providers() {
     assert_eq!(runtime.status(&provider).unwrap().phase, Phase::Active);
     runtime.complete_mount(&root, Ok(())).unwrap();
     assert!(runtime.mount_launch().is_err());
+}
+
+fn remote_plan(optional: bool) -> (Fixture, RemoteCapability, Contract, Plan) {
+    let mut fixture = Fixture::new();
+    let mut declared = contract();
+    declared.transport = Transport::Remote;
+    let mut declaration = entry(false);
+    declaration.imports.get_mut("action").unwrap().contract = declared.clone();
+    declaration.imports.get_mut("action").unwrap().cardinality = if optional {
+        Cardinality::Optional
+    } else {
+        Cardinality::One
+    };
+    fixture
+        .packages
+        .insert(
+            reference("remote-consumer"),
+            Declaration {
+                entries: BTreeMap::from([(EntryTarget::Host, declaration)]),
+                composition: None,
+            },
+        )
+        .unwrap();
+    // Deliberately share the local provider's stable ID; origin must distinguish it.
+    let target = RemoteCapability {
+        deployment: "host-a".into(),
+        instance: InstanceId(vec![Uuid::from_u128(1)]),
+        export: "action".into(),
+    };
+    for (alias, key) in [("a", 2), ("b", 3)] {
+        let mut consumer = node("remote-consumer", key, false);
+        consumer.bindings.insert(
+            "action".into(),
+            vec![Target::Remote {
+                deployment: target.deployment.clone(),
+                instance: target.instance.clone(),
+                export: target.export.clone(),
+            }],
+        );
+        fixture.input.instances.insert(alias.into(), consumer);
+    }
+    let observations = BTreeMap::from([(
+        target.clone(),
+        Export {
+            contract: declared.clone(),
+            availability: Availability::Required,
+        },
+    )]);
+    let plan = Plan::prepare(&fixture.input, &fixture.packages, &observations).unwrap();
+    (fixture, target, declared, plan)
+}
+
+#[test]
+fn actual_remote_attachment_distinguishes_local_identity_and_fences_reconnect_and_old_handles() {
+    let (_, target, declared, plan) = remote_plan(false);
+    let mut runtime = Runtime::<usize>::new(plan);
+    let local = runtime.begin(&target.instance).unwrap();
+    runtime
+        .publish(
+            &local,
+            BTreeMap::from([(
+                "action".into(),
+                Published {
+                    contract: contract(),
+                    value: 1,
+                },
+            )]),
+        )
+        .unwrap();
+    let wire_epoch = Uuid::new_v4();
+    let remote = runtime
+        .attach_remote(
+            target.clone(),
+            wire_epoch,
+            Published {
+                contract: declared.clone(),
+                value: 7,
+            },
+        )
+        .unwrap();
+    assert_ne!(local, remote);
+    assert_eq!(local.instance(), remote.instance());
+    assert!(local.remote_target().is_none());
+    assert_eq!(remote.remote_target(), Some(&target));
+    assert!(runtime.instance(&remote).is_err());
+    let consumer = runtime
+        .begin(&InstanceId(vec![Uuid::from_u128(2)]))
+        .unwrap();
+    runtime.publish(&consumer, BTreeMap::new()).unwrap();
+    let capability = runtime.bind(&consumer, "action").unwrap().remove(0);
+    assert_eq!(capability.provider(), &remote);
+    assert_eq!(capability.registration_epoch(), wire_epoch);
+    let work = runtime.admit(&capability).unwrap();
+    assert_eq!(*work.value(), 7);
+    let resource = runtime.own_resource(&remote, "actual connection").unwrap();
+    let retired = runtime.retire(&remote).unwrap();
+    assert!(retired.contains(&remote));
+    assert!(retired.contains(&consumer));
+    assert_eq!(runtime.status(&local).unwrap().phase, Phase::Active);
+    assert!(runtime.admit(&capability).is_err());
+    assert!(matches!(
+        runtime.finish_cleanup(&remote),
+        Err(Error::CleanupPending)
+    ));
+    assert!(
+        runtime
+            .attach_remote(
+                target.clone(),
+                wire_epoch,
+                Published {
+                    contract: declared.clone(),
+                    value: 8
+                }
+            )
+            .is_err()
+    );
+    runtime
+        .settle(&work, Err("transport cleanup unknown".into()))
+        .unwrap();
+    assert!(matches!(
+        runtime.finish_cleanup(&remote),
+        Err(Error::CleanupFailed(_))
+    ));
+    runtime.complete_resource(&resource, Ok(())).unwrap();
+    assert!(
+        runtime
+            .attach_remote(
+                target.clone(),
+                wire_epoch,
+                Published {
+                    contract: declared.clone(),
+                    value: 8
+                }
+            )
+            .is_err()
+    );
+    assert_eq!(*work.value(), 7);
+    runtime.settle(&work, Ok(())).unwrap();
+    runtime.finish_cleanup(&remote).unwrap();
+    let replacement = runtime
+        .attach_remote(
+            target,
+            wire_epoch,
+            Published {
+                contract: declared,
+                value: 8,
+            },
+        )
+        .unwrap();
+    assert_ne!(replacement, remote);
+    assert!(runtime.admit(&capability).is_err());
+    runtime.finish_cleanup(&consumer).unwrap();
+    let consumer2 = runtime.begin(consumer.instance()).unwrap();
+    runtime.publish(&consumer2, BTreeMap::new()).unwrap();
+    let new = runtime.bind(&consumer2, "action").unwrap().remove(0);
+    assert_eq!(new.provider(), &replacement);
+    let next = runtime.admit(&new).unwrap();
+    assert_eq!(*next.value(), 8);
+    runtime.settle(&next, Ok(())).unwrap();
+    // Tokens belong to exactly one runtime, even if target and wire epoch agree.
+    let (_, _, _, other_plan) = remote_plan(false);
+    let mut other = Runtime::<usize>::new(other_plan);
+    assert!(other.admit(&new).is_err());
+    assert!(other.settle(&work, Ok(())).is_err());
+}
+
+#[test]
+fn optional_remote_metadata_is_empty_and_actual_mismatch_does_not_become_ready() {
+    let (_, target, declared, plan) = remote_plan(true);
+    let mut runtime = Runtime::<usize>::new(plan);
+    let consumer = runtime
+        .begin(&InstanceId(vec![Uuid::from_u128(2)]))
+        .unwrap();
+    runtime.publish(&consumer, BTreeMap::new()).unwrap();
+    assert!(runtime.bind(&consumer, "action").unwrap().is_empty());
+    let mut incompatible = declared.clone();
+    incompatible.version += 1;
+    let rejected = runtime
+        .attach_remote(
+            target.clone(),
+            Uuid::new_v4(),
+            Published {
+                contract: incompatible,
+                value: 9,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(rejected.batch["action"].value, 9);
+    assert!(runtime.bind(&consumer, "action").unwrap().is_empty());
+    assert!(
+        runtime
+            .attach_remote(
+                target.clone(),
+                Uuid::nil(),
+                Published {
+                    contract: declared.clone(),
+                    value: 9
+                }
+            )
+            .is_err()
+    );
+    assert!(
+        runtime
+            .attach_remote(
+                target.clone(),
+                Uuid::new_v4(),
+                Published {
+                    contract: contract(),
+                    value: 9
+                }
+            )
+            .is_err()
+    );
+    runtime
+        .attach_remote(
+            target,
+            Uuid::new_v4(),
+            Published {
+                contract: declared,
+                value: 9,
+            },
+        )
+        .unwrap();
+    let capability = runtime.bind(&consumer, "action").unwrap().remove(0);
+    assert_eq!(*runtime.inspect(&capability).unwrap(), 9);
+    assert!(runtime.mount_component(&capability, None).is_err());
+}
+
+#[test]
+fn installing_unreferenced_input_retires_remote_without_rewriting_original_work() {
+    let (mut fixture, target, declared, plan) = remote_plan(false);
+    let mut runtime = Runtime::<usize>::new(plan);
+    let remote = runtime
+        .attach_remote(
+            target,
+            Uuid::new_v4(),
+            Published {
+                contract: declared,
+                value: 41,
+            },
+        )
+        .unwrap();
+    let consumer = runtime
+        .begin(&InstanceId(vec![Uuid::from_u128(2)]))
+        .unwrap();
+    runtime.publish(&consumer, BTreeMap::new()).unwrap();
+    let capability = runtime.bind(&consumer, "action").unwrap().remove(0);
+    let work = runtime.admit(&capability).unwrap();
+    fixture.input.instances.remove("a");
+    fixture.input.instances.remove("b");
+    let next = fixture.plan();
+    let retired = runtime.install(next);
+    assert!(retired.contains(&remote));
+    assert_eq!(*work.value(), 41);
+    assert!(runtime.admit(&capability).is_err());
+    assert!(matches!(
+        runtime.finish_cleanup(&remote),
+        Err(Error::CleanupPending)
+    ));
+    runtime.settle(&work, Ok(())).unwrap();
+    runtime.finish_cleanup(&remote).unwrap();
 }

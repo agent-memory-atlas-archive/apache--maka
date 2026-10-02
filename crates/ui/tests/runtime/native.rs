@@ -129,6 +129,7 @@ fn opaque_native_children_share_transaction_identity_and_input_admission_with_js
         timer.handle().clone(),
         Default::default(),
         registered(contract, calls.clone()),
+        Default::default(),
     )
     .unwrap();
     let root = app.mount_launch(json!({})).unwrap();
@@ -225,6 +226,7 @@ fn native_availability_is_not_activation_and_actual_contract_or_value_mismatches
             timer.handle().clone(),
             Default::default(),
             registry,
+            Default::default(),
         );
         if failure == 3 {
             let mut app = result.unwrap();
@@ -243,7 +245,8 @@ fn native_availability_is_not_activation_and_actual_contract_or_value_mismatches
             packages,
             timer.handle().clone(),
             Default::default(),
-            NativeRegistry::<String>::with_surface(PresentationTarget::Desktop)
+            NativeRegistry::<String>::with_surface(PresentationTarget::Desktop),
+            Default::default()
         )
         .is_err()
     );
@@ -312,6 +315,7 @@ fn native_root_uses_explicit_surface_and_can_compose_an_imported_component() {
         timer.handle().clone(),
         Default::default(),
         registry,
+        Default::default(),
     )
     .unwrap();
     let root = app.mount_launch(json!({})).unwrap();

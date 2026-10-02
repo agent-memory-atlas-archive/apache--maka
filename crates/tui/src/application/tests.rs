@@ -55,6 +55,7 @@ fn same_package_has_native_surfaces_and_distinct_layouts_and_paint_never_calls_g
         runtime.handle().clone(),
         Default::default(),
         maka_ui::NativeRegistry::with_surface(PresentationTarget::Desktop),
+        Default::default(),
     )
     .unwrap();
     let mount = desktop.mount_launch(json!({})).unwrap();
@@ -180,7 +181,7 @@ fn accepted_worker_survives_surface_close_and_cleanup_failure_keeps_actual_capac
         cleanup_failed: bool,
     }
     impl NativeService for Gate {
-        fn call(&self, _: String, _: Value, _: maka_plugins::call::Attachments) -> ServiceFuture {
+        fn call(&self, _: maka_ui::actions::ServiceRequest) -> ServiceFuture {
             let permits = self.permits.clone();
             let started = self.started.clone();
             let failed = self.cleanup_failed;
@@ -213,7 +214,8 @@ fn accepted_worker_survives_surface_close_and_cleanup_failure_keeps_actual_capac
                 methods: BTreeMap::from([(
                     "run".into(),
                     Method {
-                        mode: MethodMode::Mutation,
+                        // This fixture waits on a resource; it performs no business mutation.
+                        mode: MethodMode::Query,
                         input: json!({"type":"object"}),
                         output: json!({}),
                         resources: BTreeMap::new(),

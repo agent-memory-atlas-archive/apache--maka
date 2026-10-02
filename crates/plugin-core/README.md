@@ -51,8 +51,12 @@ checks. Neither inspection nor identity grants authorization; the adapter still
 performs final policy checks and `admit` before executing a call.
 
 Authorization and durable business-operation admission remain embedding obligations.
-This lifecycle kernel currently resolves local actual registrations; configured
-remote bindings remain unready until a transport registration adapter is implemented.
+`Runtime::attach_remote` accepts a trusted adapter’s actual endpoint and registration
+epoch for an explicitly referenced remote target. Local and remote owners share
+work, resource, retirement and cleanup rules. Attachment tokens capture the full
+target and a private lifetime epoch; reconnecting with the same wire epoch cannot
+redirect old handles. An absent optional endpoint binds empty; required endpoints
+remain unready. Attachment does not authenticate a transport or grant access.
 
 Application packages use manifest schema version 2 and an `application` declaration.
 The CLI checks them without activating a deployment:

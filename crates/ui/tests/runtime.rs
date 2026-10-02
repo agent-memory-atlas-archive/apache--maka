@@ -48,6 +48,7 @@ fn app(handler: &str, timer: &tokio::runtime::Runtime) -> Application {
             ..Default::default()
         },
         NativeRegistry::<()>::with_surface(PresentationTarget::Desktop),
+        Default::default(),
     )
     .unwrap()
 }
@@ -175,6 +176,7 @@ fn structural_imports_route_to_owned_providers_without_startup_deadlock() {
         timer.handle().clone(),
         Default::default(),
         NativeRegistry::<()>::with_surface(PresentationTarget::Desktop),
+        Default::default(),
     )
     .unwrap();
     let mount = app.mount_launch(json!({})).unwrap();
@@ -225,6 +227,7 @@ fn composed(
             ..Default::default()
         },
         NativeRegistry::<()>::with_surface(PresentationTarget::Desktop),
+        Default::default(),
     )
     .unwrap()
 }
@@ -355,6 +358,7 @@ fn invalid_child_initialization_rolls_back_all_private_mounts_without_native_ack
         timer.handle().clone(),
         Default::default(),
         NativeRegistry::<()>::with_surface(PresentationTarget::Desktop),
+        Default::default(),
     )
     .unwrap();
     assert!(app.mount_launch(json!({})).is_err());
@@ -382,7 +386,8 @@ fn a_component_without_a_real_required_callback_cannot_publish() {
             packages,
             timer.handle().clone(),
             Default::default(),
-            NativeRegistry::<()>::with_surface(PresentationTarget::Desktop)
+            NativeRegistry::<()>::with_surface(PresentationTarget::Desktop),
+            Default::default()
         )
         .is_err()
     );
@@ -455,6 +460,7 @@ fn dispatch_at_a_deep_mount_cannot_restart_the_whole_tree_depth_budget() {
         timer.handle().clone(),
         Default::default(),
         NativeRegistry::<()>::with_surface(PresentationTarget::Desktop),
+        Default::default(),
     )
     .unwrap();
     let root = app.mount_launch(json!({})).unwrap();
@@ -483,6 +489,7 @@ fn one_immutable_revision_selects_both_presentation_variants() {
             timer.handle().clone(),
             Default::default(),
             NativeRegistry::<()>::with_surface(target),
+            Default::default(),
         )
         .unwrap();
         let root = app.mount_launch(json!({})).unwrap();

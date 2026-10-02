@@ -75,7 +75,10 @@ even when JavaScript catches the error or returns without awaiting the child.
 Context and owner hold only weak dispatch endpoints; observer futures retain no
 attachment map or endpoint.
 
-An `Accepted` result is only an observer. The owner retains execution, Scope,
+`Accepted::completion` observes separate business and actual executor-cleanup results
+from the original owner; losing the owner reports cleanup as unconfirmed.
+`Accepted::result` observes business only and cannot confirm cleanup. The owner
+retains execution, Scope,
 actual attachments and capacity until the query and its resources settle. Ordinary business
 errors and result validation errors settle cleanly when resource cleanup succeeds.
 Unconfirmed cleanup or an executor panic preserves work, Scope and capacity, and
@@ -106,7 +109,9 @@ commit claim can execute. Duplicate requests never execute or overwrite original
 cleanup. Fingerprints canonicalize object key order but conservatively retain
 actual JSON number representations; changed input is a conflict. A cross-VM
 representation change must read the original reference rather than resubmit input.
-`Accepted.recovery` is observation, and acceptance alone is not dispatch confirmation.
+`Mutation::reference` is observation, and acceptance alone is not dispatch confirmation.
+`Mutation::result` returns an `OperationReply` retaining that reference even when the
+owner is unavailable; only a recorded receipt proves original journal facts.
 
 Returned values, unknown results and real resource cleanup are separate journal
 facts. Errors, invalid output and process loss do not prove rollback. SQL settlement

@@ -869,7 +869,7 @@ impl Owner {
                     .settle(&execution, cleanup.clone())
                     .expect("accepted execution belongs to owner");
                 if let Some(ticket) = parent {
-                    ticket.complete(cleanup);
+                    ticket.complete(cleanup.clone());
                 }
                 if failed {
                     self.cleanup_error
@@ -883,7 +883,7 @@ impl Owner {
                         _resources,
                     });
                 }
-                reply.send(result, receipt.map(|receipt| *receipt));
+                reply.send(result, cleanup, receipt.map(|receipt| *receipt));
             }
             Done::Recovered {
                 consumer,

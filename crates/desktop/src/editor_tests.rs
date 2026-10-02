@@ -46,7 +46,14 @@ impl Scene {
             Vec<maka_plugins::package::Package>,
         ),
     ) -> Self {
-        Self::with_registry(cx, timer, fail_sibling, fixture, widgets::registry())
+        Self::with_registry(
+            cx,
+            timer,
+            fail_sibling,
+            fixture,
+            widgets::registry(),
+            Default::default(),
+        )
     }
     fn with_registry(
         cx: &mut TestAppContext,
@@ -57,6 +64,7 @@ impl Scene {
             Vec<maka_plugins::package::Package>,
         ),
         native: maka_ui::NativeRegistry<dyn widgets::Widget>,
+        remotes: maka_ui::actions::RemoteServices,
     ) -> Self {
         if fail_sibling {
             let index = packages
@@ -79,6 +87,7 @@ impl Scene {
             timer.handle().clone(),
             Default::default(),
             native,
+            remotes,
         )
         .unwrap();
         let root = application.mount_launch(serde_json::json!({})).unwrap();
@@ -721,12 +730,8 @@ struct HeldRead {
     >,
 }
 impl maka_ui::actions::NativeService for HeldRead {
-    fn call(
-        &self,
-        _: String,
-        _: serde_json::Value,
-        resources: maka_plugins::call::Attachments,
-    ) -> maka_ui::actions::ServiceFuture {
+    fn call(&self, request: maka_ui::actions::ServiceRequest) -> maka_ui::actions::ServiceFuture {
+        let resources = request.resources;
         *self.snapshot.lock().unwrap() = Some(std::sync::Arc::downgrade(&resources["text"]));
         let release = self.release.clone();
         let panic = self.panic;
@@ -788,7 +793,14 @@ fn application_owner_preserves_failed_and_panicked_work_after_real_window_cleanu
                 )]))
             })
             .unwrap();
-        let scene = Scene::with_registry(cx, &timer, false, (input, packages), native);
+        let scene = Scene::with_registry(
+            cx,
+            &timer,
+            false,
+            (input, packages),
+            native,
+            Default::default(),
+        );
         cx.update(|cx| actions::own(scene.app.clone(), cx).unwrap());
         scene.draw(cx);
         cx.update_window(scene.window, |_, window, cx| {
@@ -856,6 +868,7 @@ fn application_owner_preserves_failed_and_panicked_work_after_real_window_cleanu
 }
 
 struct HostRead {
+    fail_cleanup: bool,
     started: std::sync::Arc<tokio::sync::Semaphore>,
     release: std::sync::Arc<tokio::sync::Semaphore>,
     snapshot: std::sync::Arc<
@@ -871,6 +884,11 @@ impl maka_runtime_host::application::Handler for HostRead {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send + 'static>,
     > {
+        if self.fail_cleanup {
+            let mut ticket = context.scope().resources.reserve().unwrap();
+            ticket.start();
+            ticket.complete(Err("Host snapshot cleanup unconfirmed".into()));
+        }
         let attachments = context.attachments().clone();
         *self.snapshot.lock().unwrap() = Some(std::sync::Arc::downgrade(&attachments["text"]));
         let started = self.started.clone();
@@ -892,13 +910,27 @@ impl maka_runtime_host::application::Handler for HostRead {
         })
     }
 }
+struct UiReadGrant {
+    source: maka_ui::actions::ServiceSource,
+    approved: bool,
+}
 struct HostGrant(maka_plugins::call::Issuer);
 impl maka_runtime_host::application::Policy for HostGrant {
     fn admit(
         &self,
         invocation: maka_runtime_host::application::Invocation<'_>,
     ) -> Result<(), String> {
-        if self.0.evidence::<bool>(invocation.scope) == Some(&true) {
+        if self
+            .0
+            .evidence::<UiReadGrant>(invocation.scope)
+            .is_some_and(|grant| {
+                grant.approved
+                    && invocation.scope.identity
+                        == maka_plugins::call::Identity::Remote {
+                            request_id: grant.source.execution_id(),
+                        }
+            })
+        {
             Ok(())
         } else {
             Err("native read grant denied".into())
@@ -918,37 +950,50 @@ struct ForwardHostRead {
     client: maka_runtime_host::application::Client,
     binding: maka_runtime_host::application::Binding,
     issuer: maka_plugins::call::Issuer,
+    approved: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    observed: std::sync::Arc<std::sync::Mutex<Option<maka_ui::actions::ServiceSource>>>,
 }
 impl maka_ui::actions::NativeService for ForwardHostRead {
-    fn call(
-        &self,
-        method: String,
-        input: serde_json::Value,
-        attachments: maka_plugins::call::Attachments,
-    ) -> maka_ui::actions::ServiceFuture {
+    fn call(&self, request: maka_ui::actions::ServiceRequest) -> maka_ui::actions::ServiceFuture {
+        let maka_ui::actions::ServiceRequest {
+            source,
+            method,
+            input,
+            resources: attachments,
+        } = request;
         let client = self.client.clone();
         let binding = self.binding.clone();
         let issuer = self.issuer.clone();
+        let approved = self.approved.clone();
+        *self.observed.lock().unwrap() = Some(source.clone());
         Box::pin(async move {
             let scope = issuer
                 .issue_with(
                     maka_plugins::call::Identity::Remote {
-                        request_id: uuid::Uuid::new_v4(),
+                        request_id: source.execution_id(),
                     },
-                    true,
+                    UiReadGrant {
+                        source,
+                        approved: approved.load(std::sync::atomic::Ordering::SeqCst),
+                    },
                     tokio_util::sync::CancellationToken::new(),
                 )
                 .unwrap();
-            let result = match client
+            match client
                 .start(binding, method, input, scope, attachments)
                 .await
             {
-                Ok(accepted) => accepted.result().await,
-                Err(e) => Err(e),
-            };
-            maka_ui::actions::ServiceCompletion {
-                result,
-                cleanup: Ok(()),
+                Ok(accepted) => {
+                    let completion = accepted.completion().await;
+                    maka_ui::actions::ServiceCompletion {
+                        result: completion.result,
+                        cleanup: completion.cleanup,
+                    }
+                }
+                Err(error) => maka_ui::actions::ServiceCompletion {
+                    result: Err(error),
+                    cleanup: Ok(()),
+                },
             }
         })
     }
@@ -966,7 +1011,8 @@ fn host_read_fixture(
         runtime::Published,
     };
     use maka_runtime_host::application::{Application, NativeActivation, NativeRegistry};
-    let contract = maka_ui::text::reader_contract();
+    let mut contract = maka_ui::text::reader_contract();
+    contract.transport = maka_plugin_core::contract::Transport::Remote;
     let provider = support::package(
         "host.reader",
         Declaration {
@@ -1065,7 +1111,12 @@ fn host_read_fixture(
                         exports: Ok(BTreeMap::from([(
                             "Reader".into(),
                             Published {
-                                contract: maka_ui::text::reader_contract(),
+                                contract: {
+                                    let mut contract = maka_ui::text::reader_contract();
+                                    contract.transport =
+                                        maka_plugin_core::contract::Transport::Remote;
+                                    contract
+                                },
                                 value: query,
                             },
                         )])),
@@ -1102,6 +1153,15 @@ fn host_read_fixture(
 fn host_query_keeps_real_kit_snapshot_after_edit_remove_and_window_cleanup(
     cx: &mut TestAppContext,
 ) {
+    host_query_scene(cx, false);
+}
+#[gpui::test]
+fn host_query_cleanup_failure_keeps_remote_work_and_snapshot_after_window_exit(
+    cx: &mut TestAppContext,
+) {
+    host_query_scene(cx, true);
+}
+fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
     cx.executor().allow_parking();
     let timer = timer();
     let started = std::sync::Arc::new(tokio::sync::Semaphore::new(0));
@@ -1112,6 +1172,7 @@ fn host_query_keeps_real_kit_snapshot_after_edit_remove_and_window_cleanup(
         let _guard = timer.enter();
         host_read_fixture(
             std::sync::Arc::new(HostRead {
+                fail_cleanup,
                 started: started.clone(),
                 release: release.clone(),
                 snapshot: snapshot.clone(),
@@ -1130,42 +1191,105 @@ fn host_query_keeps_real_kit_snapshot_after_edit_remove_and_window_cleanup(
         .block_on(client.bind(consumer, "reader".into()))
         .unwrap()
         .remove(0);
+    let registration_epoch = binding.registration_epoch();
+    let approved = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let observed = std::sync::Arc::new(std::sync::Mutex::new(None));
     let bridge = std::sync::Arc::new(ForwardHostRead {
         client,
         binding,
         issuer,
+        approved: approved.clone(),
+        observed: observed.clone(),
     });
     let (mut input, mut packages) = support::resource_fixture();
+    input.instances.remove("reader");
+    packages.retain(|p| p.manifest().id != "native.reader");
     let index = packages
         .iter()
-        .position(|p| p.manifest().id == "native.reader")
+        .position(|p| p.manifest().id == "dynamic.app")
         .unwrap();
     let old = packages.remove(index);
     let mut declaration = old.manifest().application.clone().unwrap();
+    let mut contract = maka_ui::text::reader_contract();
+    contract.transport = maka_plugin_core::contract::Transport::Remote;
     declaration
         .entries
         .get_mut(&maka_plugin_core::package::EntryTarget::Desktop)
         .unwrap()
-        .implementation = maka_plugin_core::package::Implementation::Native {
-        implementation: "test.forward-host-read".into(),
+        .imports
+        .get_mut("reader")
+        .unwrap()
+        .contract = contract.clone();
+    let package = support::package(
+        "dynamic.app",
+        declaration,
+        Some(
+            std::str::from_utf8(old.file("index.mjs").unwrap())
+                .unwrap()
+                .to_owned(),
+        ),
+    );
+    let target = maka_plugin_core::plan::RemoteCapability {
+        deployment: "host-a".into(),
+        instance: maka_plugin_core::composition::InstanceId(vec![uuid::Uuid::from_u128(11)]),
+        export: "Reader".into(),
     };
-    let package = support::package("native.reader", declaration, None);
-    input.instances.get_mut("reader").unwrap().package = package.application_ref().into();
+    let app = input.instances.get_mut("app").unwrap();
+    app.package = package.application_ref().into();
+    let consumer_id = maka_plugin_core::composition::InstanceId(vec![app.key]);
+    app.bindings.insert(
+        "reader".into(),
+        vec![maka_plugin_core::composition::Target::Remote {
+            deployment: target.deployment.clone(),
+            instance: target.instance.clone(),
+            export: target.export.clone(),
+        }],
+    );
     packages.push(package);
-    let mut native = widgets::registry();
-    native
-        .register("test.forward-host-read", move |_| {
-            Ok(BTreeMap::from([(
-                "Reader".into(),
-                maka_ui::NativeExport {
-                    contract: maka_ui::text::reader_contract(),
-                    value: maka_ui::NativeCapability::Service(bridge.clone()),
-                },
-            )]))
-        })
-        .unwrap();
-    let scene = Scene::with_registry(cx, &timer, false, (input, packages), native);
+    let remotes = maka_ui::actions::RemoteServices {
+        declarations: BTreeMap::from([(
+            target.clone(),
+            maka_plugin_core::contract::Export {
+                contract: contract.clone(),
+                availability: maka_plugin_core::contract::Availability::Required,
+            },
+        )]),
+        registrations: vec![maka_ui::actions::RemoteService {
+            target,
+            registration_epoch,
+            contract,
+            implementation: bridge,
+        }],
+    };
+    let scene = Scene::with_registry(
+        cx,
+        &timer,
+        false,
+        (input, packages),
+        widgets::registry(),
+        remotes,
+    );
     scene.draw(cx);
+    // Source facts alone cannot authorize a call in the independent Host kernel.
+    let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
+    scene
+        .app
+        .borrow_mut()
+        .dispatch(&scene.root, revision, "read", serde_json::Value::Null)
+        .unwrap();
+    cx.update_window(scene.window, |_, window, cx| {
+        scene
+            .surface
+            .update(cx, |s, cx| s.sync_native(window, cx).unwrap());
+    })
+    .unwrap();
+    await_action(cx, &scene.app, |a| a.accepted_action_count() == 0);
+    assert_eq!(started.available_permits(), 0);
+    assert!(snapshot.lock().unwrap().is_none());
+    let rejected = scene.app.borrow().frame(&scene.root).unwrap().state.clone();
+    assert!(rejected.to_string().contains("native read grant denied"));
+    approved.store(true, std::sync::atomic::Ordering::SeqCst);
+
     let owner = scene.owner();
     cx.update_window(scene.window, |_, window, cx| {
         let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
@@ -1189,6 +1313,10 @@ fn host_query_keeps_real_kit_snapshot_after_edit_remove_and_window_cleanup(
         .await
         .unwrap();
     });
+    let source = observed.lock().unwrap().clone().unwrap();
+    assert_eq!(source.consumer().instance(), &consumer_id);
+    assert_eq!(source.mount(), &scene.root);
+    assert!(!source.execution_id().is_nil());
     let weak = snapshot.lock().unwrap().clone().unwrap();
     assert!(weak.upgrade().is_some());
     cx.update_window(scene.window, |_, window, cx| {
@@ -1229,8 +1357,26 @@ fn host_query_keeps_real_kit_snapshot_after_edit_remove_and_window_cleanup(
         1
     );
     release.add_permits(1);
-    await_action(cx, &scene.app, |a| a.accepted_action_count() == 0);
-    assert!(weak.upgrade().is_none());
-    timer.block_on(host.shutdown()).unwrap();
+    if fail_cleanup {
+        await_action(cx, &scene.app, |a| a.failed_action_ids().len() == 1);
+        assert_eq!(scene.app.borrow().accepted_action_count(), 1);
+        assert!(scene.app.borrow_mut().shutdown().is_err());
+        assert!(weak.upgrade().is_some());
+        assert!(
+            host.client()
+                .snapshot()
+                .cleanup_error
+                .unwrap()
+                .contains("Host snapshot cleanup unconfirmed")
+        );
+        assert!(timer.block_on(host.shutdown()).is_err());
+        drop(host);
+        cx.run_until_parked();
+        assert!(weak.upgrade().is_some());
+    } else {
+        await_action(cx, &scene.app, |a| a.accepted_action_count() == 0);
+        assert!(weak.upgrade().is_none());
+        timer.block_on(host.shutdown()).unwrap();
+    }
     drop(subscription);
 }

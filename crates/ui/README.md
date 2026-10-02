@@ -155,6 +155,15 @@ Host execution adapters. The UI capture path owns its snapshots and capacity;
 local Host queries accept actual payloads with independent admission and cleanup.
 Cross-process resource transfer still requires a transport executor.
 
+`Application::new` takes explicit `RemoteServices`: static declarations are separate
+from actual `RemoteService` endpoint registrations. Both local and remote services
+currently support Query methods; Mutation and Subscription are rejected until their
+durable caller and stream protocols exist. `NativeService::call` receives a
+`ServiceRequest` with checked input, actual attachments and a private `ServiceSource`
+constructed at admission. Consumer, mount and execution observations grant no Host
+access. A transport callback captures `remote_activation` and passes that exact token
+to `retire_remote`; a late disconnect cannot retire a replacement kernel.
+
 Final admission rechecks the exact consumer mount and service registration.
 Native service futures run on the background executor, independently of the
 window. Result events use `{ kind: "action", key, event }`, which raw input cannot
@@ -169,9 +178,11 @@ accepted work is limited to 64, captured resource bytes to 64 MiB in aggregate,
 and UTF-8 reads to 64 KiB with valid byte boundaries. Complete capture arguments
 are limited to 1 MiB before cloning or callbacks, and share the transaction's
 callback, deadline and cumulative work limits. The Reader is available only
-through explicit package composition. Host transfer/durable admission, the
-JavaScript binding bridge and UI integration, TUI integration and product recovery
-UI remain pending. The standalone Host query executor is described in
+through explicit package composition. Authenticated cross-process transport,
+durable UI caller admission, subscriptions
+and product recovery UI remain pending. Direct remote registration to an actual
+Host query is exercised with native Kit snapshots across the two kernels.
+The standalone Host query executor is described in
 [Host application services](../runtime-host/README.md). The
 resource fixture proves this native asynchronous path, not a finished product.
 
