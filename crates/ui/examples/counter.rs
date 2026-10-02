@@ -27,7 +27,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or("output directory required")?,
     ))?;
     std::fs::create_dir(&output)?;
-    let (input, packages) = if std::env::args().nth(2).as_deref() == Some("events") {
+    let (input, packages) = if std::env::args().nth(2).as_deref() == Some("resource") {
+        support::resource_fixture()
+    } else if std::env::args().nth(2).as_deref() == Some("events") {
         support::editor_events_fixture()
     } else if std::env::args().nth(2).as_deref() == Some("editor") {
         support::editor_fixture()

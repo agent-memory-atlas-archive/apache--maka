@@ -51,6 +51,7 @@ pub enum Interface {
     Component {
         props: Value,
         events: BTreeMap<String, Value>,
+        captures: BTreeMap<String, Capture>,
     },
     Value {
         schema: Value,
@@ -67,6 +68,32 @@ pub struct Method {
     pub mode: MethodMode,
     pub input: Value,
     pub output: Value,
+    pub resources: BTreeMap<String, ResourceType>,
+}
+
+/// Nominal read-only resource shape, not a resource id or authorization token.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceType {
+    pub name: String,
+    pub version: u32,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Capture {
+    pub input: Value,
+    pub resource: ResourceType,
+}
+impl ResourceType {
+    fn validate(&self) -> Result<(), Error> {
+        crate::name(&self.name)?;
+        if self.version == 0 {
+            return Err(Error::Declaration(
+                "resource version must be positive".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -120,10 +147,23 @@ impl Contract {
                     crate::name(name)?;
                     crate::schema(&method.input)?;
                     crate::schema(&method.output)?;
+                    for (slot, resource) in &method.resources {
+                        crate::name(slot)?;
+                        resource.validate()?;
+                    }
                 }
             }
-            Interface::Component { props, events } => {
+            Interface::Component {
+                props,
+                events,
+                captures,
+            } => {
                 crate::schema(props)?;
+                for (name, capture) in captures {
+                    crate::name(name)?;
+                    crate::schema(&capture.input)?;
+                    capture.resource.validate()?;
+                }
                 for (name, schema) in events {
                     crate::name(name)?;
                     crate::schema(schema)?;

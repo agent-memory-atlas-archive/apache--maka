@@ -41,6 +41,7 @@ fn contract() -> Contract {
         interface: Interface::Component {
             props: json!({"type":"object"}),
             events: BTreeMap::new(),
+            captures: BTreeMap::new(),
         },
     }
 }
@@ -374,6 +375,7 @@ fn variant_and_actual_export_checks_use_the_full_public_contract() {
         .interface = Interface::Component {
         props: json!({"type":"string"}),
         events: BTreeMap::new(),
+        captures: BTreeMap::new(),
     };
     assert!(declaration.validate().is_err());
     let entry = entry();

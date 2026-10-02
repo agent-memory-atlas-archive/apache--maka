@@ -62,3 +62,10 @@ Component mounts are independent owners. Retiring one mount stops its owned chil
 without retiring reusable component providers. Provider retirement stops dependent
 mounts. Explicit native close confirmation and accepted-call settlement remain separate
 cleanup obligations; neither can release the other's fence.
+
+Component contracts declare named captures with input schemas and nominal read-only
+resource types. Service methods declare typed resource input slots. Resource type
+names/versions describe shapes, not grants; actual payloads and authorization belong
+to the execution adapter's private request attachments. JSON metadata cannot mint
+these attachments. Declarations require explicit `captures` and `resources` maps;
+there is no decoding fallback for previous shapes.

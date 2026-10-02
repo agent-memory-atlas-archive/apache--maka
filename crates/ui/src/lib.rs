@@ -19,9 +19,11 @@
 
 //! Local component execution. Renderers only read committed frames; JavaScript
 //! executes on initialization or input, never during layout/paint.
+pub mod actions;
 pub mod editor;
 mod frame;
 mod native;
+pub mod text;
 mod tree;
 pub use frame::{ComponentOutput, Direction, Emission, Frame, Node, Window};
 pub use native::{
@@ -62,13 +64,27 @@ enum Component<V: ?Sized> {
     },
     Native(Rc<dyn NativeComponent<V>>),
 }
+struct CaptureDefinition {
+    input: jsonschema::Validator,
+    resource: maka_plugin_core::contract::ResourceType,
+}
+struct ServiceMethod {
+    input: jsonschema::Validator,
+    output: jsonschema::Validator,
+    resources: BTreeMap<String, maka_plugin_core::contract::ResourceType>,
+}
 enum Export<V: ?Sized> {
     Component {
         implementation: Component<V>,
         props: jsonschema::Validator,
         events: BTreeMap<String, jsonschema::Validator>,
+        captures: BTreeMap<String, CaptureDefinition>,
     },
     Surface(PresentationTarget),
+    Service {
+        implementation: std::sync::Arc<dyn actions::NativeService>,
+        methods: BTreeMap<String, ServiceMethod>,
+    },
 }
 struct Loaded {
     realm: ExecutionRealm,
@@ -87,7 +103,9 @@ pub struct Application<V: ?Sized = ()> {
     activations: BTreeMap<InstanceId, Activation>,
     modules: BTreeMap<InstanceId, Loaded>,
     views: BTreeMap<Uuid, tree::Mounted<V>>,
+    actions: actions::Actions<V>,
     slice: std::time::Duration,
+    pub(crate) scheduler: tokio::runtime::Handle,
     target: PresentationTarget,
 }
 
@@ -129,8 +147,10 @@ impl<V: ?Sized + 'static> Application<V> {
             activations: BTreeMap::new(),
             modules: BTreeMap::new(),
             views: BTreeMap::new(),
+            actions: actions::Actions::default(),
             slice: limits.synchronous_slice,
             target,
+            scheduler: timer.clone(),
         };
         let mut shared: Option<ExecutionRealm> = None;
         while !pending.is_empty() {
@@ -163,9 +183,48 @@ impl<V: ?Sized + 'static> Application<V> {
                             {
                                 let value = match actual.value {
                                     NativeCapability::Surface(target) => Export::Surface(target),
-                                    NativeCapability::Component(component) => {
-                                        let Interface::Component { props, events } =
+                                    NativeCapability::Service(implementation) => {
+                                        let Interface::Service { methods } =
                                             &actual.contract.interface
+                                        else {
+                                            unreachable!()
+                                        };
+                                        let mut compiled = BTreeMap::new();
+                                        for (name, method) in methods {
+                                            if method.mode
+                                                == maka_plugin_core::contract::MethodMode::Subscription
+                                            {
+                                                return Err(Error::Invalid(
+                                                    "service subscription requires a stream executor"
+                                                        .into(),
+                                                ));
+                                            }
+                                            compiled.insert(
+                                                name.clone(),
+                                                ServiceMethod {
+                                                    input: jsonschema::validator_for(&method.input)
+                                                        .map_err(|e| {
+                                                            Error::Invalid(e.to_string())
+                                                        })?,
+                                                    output: jsonschema::validator_for(
+                                                        &method.output,
+                                                    )
+                                                    .map_err(|e| Error::Invalid(e.to_string()))?,
+                                                    resources: method.resources.clone(),
+                                                },
+                                            );
+                                        }
+                                        Export::Service {
+                                            implementation,
+                                            methods: compiled,
+                                        }
+                                    }
+                                    NativeCapability::Component(component) => {
+                                        let Interface::Component {
+                                            props,
+                                            events,
+                                            captures,
+                                        } = &actual.contract.interface
                                         else {
                                             unreachable!()
                                         };
@@ -175,6 +234,7 @@ impl<V: ?Sized + 'static> Application<V> {
                                                 |error| Error::Invalid(error.to_string()),
                                             )?,
                                             events: event_schemas(events)?,
+                                            captures: capture_schemas(captures)?,
                                         }
                                     }
                                 };
@@ -231,14 +291,23 @@ impl<V: ?Sized + 'static> Application<V> {
                                         "local JS export must declare a component".into(),
                                     ));
                                 }
-                                let Interface::Component { props, events } =
-                                    &actual.contract.interface
+                                let Interface::Component {
+                                    props,
+                                    events,
+                                    captures,
+                                } = &actual.contract.interface
                                 else {
                                     unreachable!()
                                 };
                                 let props = jsonschema::validator_for(props)
                                     .map_err(|error| Error::Invalid(error.to_string()))?;
                                 let events = event_schemas(events)?;
+                                let callback_methods = if captures.is_empty() {
+                                    vec!["mount", "event", "update"]
+                                } else {
+                                    vec!["mount", "event", "update", "capture"]
+                                };
+                                let compiled_captures = capture_schemas(captures)?;
                                 batch.insert(
                                     name,
                                     Published {
@@ -246,12 +315,13 @@ impl<V: ?Sized + 'static> Application<V> {
                                         value: Export::Component {
                                             props,
                                             events,
+                                            captures: compiled_captures,
                                             implementation: Component::JavaScript {
                                                 realm: realm.clone(),
                                                 callbacks: realm.borrow_mut().capture(
                                                     &loaded,
                                                     &actual.component,
-                                                    &["mount", "event", "update"],
+                                                    &callback_methods,
                                                 )?,
                                             },
                                         },
@@ -329,7 +399,9 @@ impl<V: ?Sized + 'static> Application<V> {
                         props: &args[2],
                         key: args[1]["key"].as_str().expect("typed UI input key"),
                         input: &args[1]["event"],
-                        origin: if args[1]["kind"] == "component" {
+                        origin: if args[1]["kind"] == "action" {
+                            EventOrigin::Action
+                        } else if args[1]["kind"] == "component" {
                             EventOrigin::Component {
                                 child: args[1]["child"].as_str().expect("typed child slot"),
                                 name: args[1]["name"].as_str().expect("typed public event"),
@@ -348,6 +420,10 @@ impl<V: ?Sized + 'static> Application<V> {
                 return Err(Error::Invalid("component emission limit".into()));
             }
             tree::check_call_bytes(&output.events)?;
+            if output.actions.len() > 16 {
+                return Err(Error::Invalid("component action limit".into()));
+            }
+            tree::check_call_bytes(&output.actions)?;
             for event in &output.events {
                 events
                     .get(&event.name)
@@ -397,6 +473,14 @@ impl<V: ?Sized + 'static> Application<V> {
         Ok(())
     }
 
+    pub fn can_shutdown(&self) -> bool {
+        self.views.is_empty() && self.actions.accepted_count() == 0
+    }
+
+    pub fn scheduler(&self) -> &tokio::runtime::Handle {
+        &self.scheduler
+    }
+
     pub fn frame(&self, mount: &Mount) -> Result<&Frame<Presentation<V>>> {
         self.views
             .get(&mount.id())
@@ -434,6 +518,8 @@ impl<V: ?Sized + 'static> Application<V> {
         for activation in self.activations.values() {
             self.runtime.retire(activation)?;
         }
+        self.actions.queue.clear();
+        self.actions.outcomes.clear();
         for id in self.modules.keys().cloned().collect::<Vec<_>>() {
             let loaded = &self.modules[&id];
             let result = loaded.realm.borrow_mut().close(&loaded.module);
@@ -500,4 +586,22 @@ pub fn surface_contract(target: PresentationTarget) -> Contract {
             schema: json!({"type":"object","additionalProperties":false}),
         },
     }
+}
+
+fn capture_schemas(
+    captures: &BTreeMap<String, maka_plugin_core::contract::Capture>,
+) -> Result<BTreeMap<String, CaptureDefinition>> {
+    captures
+        .iter()
+        .map(|(name, c)| {
+            Ok((
+                name.clone(),
+                CaptureDefinition {
+                    input: jsonschema::validator_for(&c.input)
+                        .map_err(|e| Error::Invalid(e.to_string()))?,
+                    resource: c.resource.clone(),
+                },
+            ))
+        })
+        .collect()
 }

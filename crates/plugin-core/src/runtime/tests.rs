@@ -689,6 +689,7 @@ fn component_contract() -> Contract {
         interface: Interface::Component {
             props: json!({"type":"object"}),
             events: BTreeMap::new(),
+            captures: BTreeMap::new(),
         },
     }
 }

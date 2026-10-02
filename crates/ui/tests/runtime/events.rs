@@ -65,7 +65,7 @@ fn fixture(
     let source = std::str::from_utf8(old_counter.file("index.mjs").unwrap()).unwrap()
         .replace(&old_contract, &serde_json::to_string(&contract).unwrap())
         .replace("function frame(state)", "function frame(state,events=[])")
-        .replace("events:[],frame:", "events,frame:")
+        .replace("actions:[],events:[],frame:", "actions:[],events,frame:")
         .replace("mount(props){return frame({count:props.initial,label:props.label,revision:0});}", &format!("mount(props){{{mount}}}"))
         .replace("event(state,event){return frame({...state,count:state.count+1,revision:state.revision+1});}", &format!("event(state,event,props){{{event}}}"));
     let counter = support::package("dynamic.counter", declaration, Some(source));

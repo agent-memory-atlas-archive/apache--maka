@@ -39,6 +39,15 @@ pub(super) trait Widget: Any {
     fn create(&self, _: LiveInput, _: &mut Window, _: &mut App) -> Box<dyn Any> {
         Box::new(())
     }
+    fn capture(
+        &self,
+        _: &mut dyn Any,
+        _: &maka_ui::actions::CaptureTarget,
+        _: &mut Window,
+        _: &mut App,
+    ) -> maka_ui::Result<std::sync::Arc<dyn maka_ui::actions::ReadResource>> {
+        Err(maka_ui::Error::Invalid("widget capture unavailable".into()))
+    }
     fn commit(&self, _: &mut dyn Any, _: &mut Window, _: &mut App) {}
     fn render(&self, state: &dyn Any, window: &mut Window, cx: &mut App) -> AnyElement;
 }

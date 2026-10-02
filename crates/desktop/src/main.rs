@@ -18,6 +18,7 @@
  */
 
 extern crate gpui_kit as gpui;
+mod actions;
 mod owned;
 mod resources;
 mod widgets;
@@ -65,13 +66,6 @@ impl Surface {
                 view.application
                     .borrow_mut()
                     .dispatch(lease.mount(), revision, key, event)?;
-                if let Err(error) = view
-                    .resources
-                    .borrow_mut()
-                    .collect(&mut view.application.borrow_mut())
-                {
-                    eprintln!("native component cleanup unconfirmed: {error}");
-                }
                 view.sync_native(window, cx)?;
                 cx.notify();
                 maka_ui::Result::Ok(())
@@ -85,7 +79,7 @@ impl Surface {
     }
     /// Native creation/commands run after the whole declarative transaction,
     /// never during layout/paint. The store owns resources, not component state.
-    fn sync_native(
+    fn prepare_native(
         &self,
         window: &mut gpui_kit::Window,
         cx: &mut Context<Self>,
@@ -116,12 +110,50 @@ impl Surface {
                 let input = widgets::LiveInput(Rc::new(RefCell::new(Some(input.clone()))));
                 resources::NativeInstance {
                     kind,
+                    recipe: native.view.clone(),
                     revision: None,
                     state: native.view.create(input.clone(), window, cx),
                     input,
                 }
             });
             *owner.input.0.borrow_mut() = Some(input);
+            owner.recipe = native.view.clone();
+        }
+        Ok(())
+    }
+    fn sync_native(
+        &self,
+        window: &mut gpui_kit::Window,
+        cx: &mut Context<Self>,
+    ) -> maka_ui::Result<()> {
+        if self.resources.borrow().is_removed() {
+            return Ok(());
+        }
+        self.prepare_native(window, cx)?;
+        self.application
+            .borrow_mut()
+            .capture_actions(&self.mount, |target| {
+                let mut resources = self.resources.borrow_mut();
+                let owner = resources
+                    .owners
+                    .get_mut(&target.mount().id().to_string())
+                    .ok_or_else(|| {
+                        maka_ui::Error::Invalid("native capture owner unavailable".into())
+                    })?;
+                let recipe = owner.recipe.clone();
+                recipe.capture(owner.state.as_mut(), target, window, cx)
+            })?;
+        let application = self.application.borrow();
+        for mount in application.mounted_subtree(&self.mount)? {
+            let frame = application.frame(&mount)?;
+            let Presentation::Native(native) = &frame.view else {
+                continue;
+            };
+            let mut resources = self.resources.borrow_mut();
+            let owner = resources
+                .owners
+                .get_mut(&mount.id().to_string())
+                .expect("prepared native owner");
             if owner.revision != Some(frame.revision) {
                 // A consumed scene revision is not a successful native command:
                 // widgets retain explicit applied/conflict receipts separately.
@@ -129,6 +161,17 @@ impl Surface {
                 owner.revision = Some(frame.revision);
             }
         }
+        drop(application);
+        self.resources
+            .borrow_mut()
+            .collect(&mut self.application.borrow_mut())?;
+        actions::pump(
+            self.application.clone(),
+            self.mount.clone(),
+            cx.weak_entity(),
+            window,
+            cx,
+        )?;
         Ok(())
     }
     fn presentation(
@@ -297,9 +340,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }),
                 ..Default::default()
             };
+            actions::own(application.clone(), cx).expect("unique UI application owner");
             let content = application.clone();
             let content_mount = mount.clone();
             let content_error = startup_error.clone();
+            let quit_application = application.clone();
             if let Err(error) = gpui_kit::open_window(options, cx, move |window, cx| {
                 let result = content_error.clone();
                 match window_owner::start(
@@ -314,9 +359,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             *result.borrow_mut() =
                                 Some(format!("native cleanup unconfirmed: {error}"));
                         }
-                        if cx.windows().is_empty() {
-                            cx.quit();
-                        }
+                        actions::quit_when_drained(&quit_application, cx);
                     },
                 ) {
                     Ok(task) => task.detach(),

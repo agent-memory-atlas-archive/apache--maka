@@ -53,3 +53,8 @@ maka application check --input deployment.json --package /absolute/package/path
 组件挂载是独立所有者；撤销一个挂载会停止其子挂载，不撤销可复用提供者。
 提供者撤销会停止依赖挂载。原生 close 确认与 accepted call 结算是两个独立清理条件，
 不能互相替代或提前释放清理阻塞。
+
+组件契约声明命名 capture、输入 schema 与名义只读资源类型；service method 声明类型化
+资源输入槽。资源名称/版本描述形状，不授予权限；实际 payload 与授权归执行适配器的
+请求私有附件，不能由 JSON metadata 伪造。声明必须显式提供 `captures` / `resources`
+map，不为旧格式保留解码回退。

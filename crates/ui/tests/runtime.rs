@@ -17,6 +17,8 @@
  * under the License.
  */
 
+#[path = "runtime/actions.rs"]
+mod actions;
 #[path = "runtime/events.rs"]
 mod events;
 #[path = "runtime/native.rs"]

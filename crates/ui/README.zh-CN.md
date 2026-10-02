@@ -22,8 +22,8 @@
 `maka-ui` 从不可变包激活已检查的 UI entry，向共用核心发布实际组件。
 前台 JavaScript 只在激活、挂载初始化、props 更新和输入处理时执行。
 发布前捕获必需的 `mount`、`event`、`update` 函数及 receiver；命名空间后续变更
-不能替换已注册处理器。回调返回 `ComponentOutput { frame, events }`；events 是
-本次事务的一次性意图，不属于保留状态。呈现器只读取已提交
+不能替换已注册处理器。回调返回 `ComponentOutput { frame, events, actions }`；events/actions 是
+本次事务的一次性意图，不属于保留状态。声明 capture 时也在发布前捕获其回调。呈现器只读取已提交
 `Frame`。有界批次完整校验后原子替换，每个挂载有独立状态与 revision，旧视图事件
 不会调用新处理器。执行域故障撤销该域全部注册与挂载。
 
@@ -41,7 +41,7 @@ schema，不计原生内存；原生 owner 负责其实际分配限额。
 稳定 key 在父组件 props 更新时保留子挂载和局部状态。父子组件共用一次 deadline，
 整批提交；任一子组件失败，原有 frame 全部保留。移除后挂载只进入退休，等待真实原生
 清理确认；未提交的挂载尚无原生资源。根挂载窗口配置固定，嵌入组件不能创建窗口。
-action import 与恢复界面尚未实现。
+恢复界面尚未实现。
 `retire` 只停止新输入；`close` 必须收到实际原生清理确认；`shutdown` 不丢弃
 尚未确认的 mount、work 或 resource。
 
@@ -70,7 +70,7 @@ props 由产品决定。opaque 原生子组件槽位、同步 consume/default �
 使用 `editor` 并额外传入 `native.editor.maka-plugin` 可导入 Kit Editor。Rust 契约表达
 初始文本、基于原生 revision 的 replace/reset 命令、元数据观察与命令回执；原生 buffer
 不放进序列化组件 state。公开 `changed` 事件包含类型化元数据观察与回执；收到
-TextRef 不获得全局查找或读取权限，公开插件资源读取尚未接线。`command: null` 不提出
+TextRef 不获得全局查找或读取权限；capture 提供请求私有的不可变文本资源。`command: null` 不提出
 新命令，不取消已接受的请求；请求保留 pending 直到匹配回执提交，最终原生描述只消费一次。
 原生组件 event 同时收到当前挂载 props、state、key 与 input；JavaScript
 `event` 的第三个参数是 props。
@@ -81,3 +81,30 @@ TextRef 不获得全局查找或读取权限，公开插件资源读取尚未接
 改用 `events` 生成显式订阅 Editor `changed` 的产品组件，并显示原生草稿 revision；
 向 desktop 传入与 editor 示例相同的五个包。该示例验证公开事件送达，不代表资源读取、
 业务 action 或最终产品视觉设计已完成。
+
+改用 `resource` 生成产品 Root → 动态 Composer → 私有原生 Editor，以及显式导入的原生
+UTF-8 Reader；完整五包命令见 [English README](README.md)。Root 只调用 Composer
+公开 capture，不依赖私有 Editor 的挂载路径。
+
+Action 指明 service binding/member/method 与类型化资源槽，每个槽调用 direct child 的
+公开 capture。JavaScript capture 只返回转发至自己 direct child 的纯计划，不能伪造原生
+资源。整批事务捕获准确 consumer Mount、source edge 与 service registration；之后移除
+或改绑永久取消待接受请求，恢复同名目标不能复活它。
+
+Desktop 单次发布 scene → 准备 native owner → 在 native read barrier 捕获不可变 Rope →
+执行 native command → collect 退休 owner。捕获冲突返回 `not_accepted`，不回滚已发布场景。
+`current` 显式读取 barrier 当前值，`at_revision` 严格拒绝修订变化。真实资源只在受信任的
+请求 sidecar 中；metadata、JSON 槽名及 UUID 都不是读取权限。快照不保留 LiveInput、entity
+或 mount resource lease。
+
+最终准入再次核对原 consumer Mount 与 service registration。原生服务 future 在后台运行，
+独立于窗口；结果事件为 `{ kind: "action", key, event }`，原始输入无法伪造该来源。
+executor 先结算再投递结果，已退出 consumer 不再接收；结果 handler 失败会退休 consumer，
+不会静默遗留 pending。业务结果与清理确认是独立事实；清理失败或未知保留 Work/快照，
+直到实际成功确认。应用 lifetime owner 在全部窗口和 worker task 退出后仍持有这些记录。
+
+每次输出最多 16 个 action，每请求 16 个资源槽；排队加已接受请求最多 64 个，已捕获资源
+累计最多 64 MiB，UTF-8 chunk 最多 64 KiB 且检查字节边界。完整 capture 参数在 clone/
+callback 前受 1 MiB 限额，也共用事务的 callback/deadline/累计工作预算。Reader 必须由包组合
+显式导入。Host transfer/持久准入、JavaScript worker service、TUI 接线与产品恢复界面尚未
+实现；resource 示例证明这条原生异步路径，不代表产品已完成。

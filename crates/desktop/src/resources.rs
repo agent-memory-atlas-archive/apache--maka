@@ -85,6 +85,7 @@ impl Lease {
 }
 
 pub(super) struct NativeInstance {
+    pub recipe: Rc<dyn super::widgets::Widget>,
     pub kind: TypeId,
     pub revision: Option<u64>,
     pub state: Box<dyn Any>,

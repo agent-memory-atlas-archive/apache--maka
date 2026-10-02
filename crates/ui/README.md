@@ -24,8 +24,9 @@ component registrations through `maka-plugin-core`. Foreground JavaScript execut
 only during activation, mount initialization, props updates and input. Required
 `mount`, `event` and `update` functions and their receiver are captured before
 publication; later namespace mutation cannot replace a registered handler.
-Callbacks return `ComponentOutput { frame, events }`; events are one-shot transaction
-intents, separate from retained state. Renderers read committed
+Callbacks return `ComponentOutput { frame, events, actions }`; events and actions are
+one-shot transaction intents, separate from retained state. A declared `capture`
+callback is also captured before publication. Renderers read committed
 `Frame` values; successful, bounded, validated batches replace a frame atomically.
 Each mount has independent state and a revision, so old view events cannot invoke
 new handlers. A realm failure retires every registration and mount in that realm.
@@ -51,7 +52,7 @@ All changed parents and children share one deadline and commit together. A faile
 child leaves every prior frame unchanged. Removed mounts retire until real native
 cleanup is confirmed; uncommitted mounts have no native resources to acknowledge.
 Window configuration is fixed for a root mount; embedded components cannot create
-windows. Action imports and recovery surfaces are still pending. `close` requires an actual
+windows. Recovery surfaces remain pending. `close` requires an actual
 native cleanup acknowledgement; `retire` only stops new input. `shutdown` retains
 owners while mounts/work/resources remain unconfirmed.
 
@@ -105,7 +106,7 @@ revision-based replace/reset commands, metadata observations and command receipt
 The native buffer remains outside serialized component state. The public `changed`
 event contains typed metadata observations and receipts;
 receiving a TextRef does not grant a global lookup or text-read authority. Public
-plugin resource reads remain pending. `command: null` proposes no new command;
+captures produce request-local immutable text resources. `command: null` proposes no new command;
 an accepted request remains pending until its matching receipt commits, even if
 later props clear the command. The final native recipe consumes that request once.
 Native component events receive the current mounted props as well as
@@ -118,3 +119,49 @@ Use `events` instead of `editor` to generate a product component that explicitly
 subscribes to Editor `changed` and displays its observed native draft revision.
 Pass the same five packages as the editor example. This exercises public delivery,
 not text-resource reads, business actions, or a finished product design.
+
+Use `resource` to compose a dynamic Composer with a private native Editor and an
+explicitly imported native UTF-8 Reader:
+
+```sh
+cargo run --locked -p maka-ui --example counter -- /tmp/maka-resource resource
+cargo run --locked -p maka-desktop -- --input /tmp/maka-resource/input.json \
+  --package /tmp/maka-resource/native.surface.maka-plugin \
+  --package /tmp/maka-resource/dynamic.app.maka-plugin \
+  --package /tmp/maka-resource/dynamic.composer.maka-plugin \
+  --package /tmp/maka-resource/native.editor.maka-plugin \
+  --package /tmp/maka-resource/native.reader.maka-plugin
+```
+
+An action names an explicit service binding/member/method and typed resource
+slots. Each slot names a direct child's public capture method. JavaScript capture
+callbacks return a pure forwarding plan to their own direct child; they cannot
+mint native resources. The runtime captures exact mounts, source edges and service
+registrations during the same bounded transaction. Later removal or rebinding
+invalidates pending requests permanently, including same-name replacements.
+
+Desktop publishes the scene, prepares native owners, captures an immutable Rope
+at the native read barrier, then applies native commands and collects retired
+owners. A capture conflict produces `not_accepted`; it does not roll back a
+published scene. `current` explicitly selects the barrier's current text;
+`at_revision` rejects a changed revision. Only the trusted request sidecar carries
+the actual resource. Metadata, JSON slot names and UUIDs are not read authority.
+The snapshot retains no live input, entity or mount resource lease.
+
+Final admission rechecks the exact consumer mount and service registration.
+Native service futures run on the background executor, independently of the
+window. Result events use `{ kind: "action", key, event }`, which raw input cannot
+impersonate. Settlement happens before result delivery; retired consumers receive
+no result. Failed result handlers retire the consumer rather than silently leaving
+it waiting. Business outcome and cleanup confirmation are separate: failed or
+unknown cleanup retains accepted work and its snapshots until a real successful
+confirmation. The application lifetime owner survives all windows and worker tasks.
+
+Each output allows 16 actions and each request 16 resource slots; queued plus
+accepted work is limited to 64, captured resource bytes to 64 MiB in aggregate,
+and UTF-8 reads to 64 KiB with valid byte boundaries. Complete capture arguments
+are limited to 1 MiB before cloning or callbacks, and share the transaction's
+callback, deadline and cumulative work limits. The Reader is available only
+through explicit package composition. Host transfer/durable admission, JavaScript
+worker services, TUI integration and product recovery UI remain pending. The
+resource fixture proves this native asynchronous path, not a finished product.

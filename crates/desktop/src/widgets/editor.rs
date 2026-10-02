@@ -428,7 +428,68 @@ impl EntityInputHandler for EditorOwner {
 struct EditorRecipe {
     props: EditorProps,
 }
+struct TextSnapshot {
+    text: Rope,
+    revision: u64,
+}
+impl maka_ui::actions::ReadResource for TextSnapshot {
+    fn resource_type(&self) -> maka_plugin_core::contract::ResourceType {
+        text_resource_type()
+    }
+    fn bytes(&self) -> usize {
+        self.text.len()
+    }
+    fn metadata(&self) -> serde_json::Value {
+        json!({"revision":self.revision,"bytes":self.text.len()})
+    }
+    fn read(&self, range: Range<usize>) -> Result<Vec<u8>, String> {
+        if range
+            .end
+            .checked_sub(range.start)
+            .is_none_or(|len| len > 64 * 1024)
+        {
+            return Err("invalid text range or chunk exceeds 64 KiB".into());
+        }
+        self.text
+            .try_slice(range)
+            .map(|s| s.to_string().into_bytes())
+            .map_err(|_| "invalid UTF-8 range".into())
+    }
+}
 impl Widget for EditorRecipe {
+    fn capture(
+        &self,
+        state: &mut dyn Any,
+        target: &maka_ui::actions::CaptureTarget,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> maka_ui::Result<std::sync::Arc<dyn maka_ui::actions::ReadResource>> {
+        if target.method() != "snapshot" {
+            return Err(maka_ui::Error::Invalid("unknown editor capture".into()));
+        }
+        let input: EditorCapture = serde_json::from_value(target.input().clone())
+            .map_err(|e| maka_ui::Error::Invalid(e.to_string()))?;
+        state
+            .downcast_ref::<Entity<EditorOwner>>()
+            .expect("editor owner")
+            .update(cx, |owner, cx| {
+                if owner.input.0.borrow().is_none() {
+                    return Err(maka_ui::Error::Invalid("editor closed".into()));
+                }
+                owner.refresh(false, window, cx);
+                if let EditorCapture::AtRevision { revision } = input
+                    && revision != owner.revision
+                {
+                    return Err(maka_ui::Error::Invalid("editor revision changed".into()));
+                }
+                Ok(std::sync::Arc::new(TextSnapshot {
+                    text: owner.snapshot.text.clone(),
+                    revision: owner.revision,
+                })
+                    as std::sync::Arc<dyn maka_ui::actions::ReadResource>)
+            })
+    }
+
     fn create(&self, input: LiveInput, window: &mut Window, cx: &mut App) -> Box<dyn Any> {
         Box::new(EditorOwner::new(&self.props, input, window, cx))
     }
@@ -448,6 +509,13 @@ impl Widget for EditorRecipe {
 }
 struct EditorComponent;
 impl NativeComponent<dyn Widget> for EditorComponent {
+    fn capture(
+        &self,
+        _: maka_ui::actions::CaptureCall<'_>,
+    ) -> maka_ui::Result<maka_ui::actions::CapturePlan> {
+        Ok(maka_ui::actions::CapturePlan::Native)
+    }
+
     fn call(
         &self,
         call: ComponentCall<'_>,

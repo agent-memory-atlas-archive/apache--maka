@@ -18,7 +18,7 @@
  */
 
 //! Native editor protocol. Snapshots are observations, never writable buffers.
-use maka_plugin_core::contract::{Contract, Interface, Transport};
+use maka_plugin_core::contract::{Capture, Contract, Interface, Transport};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -115,6 +115,14 @@ pub fn editor_contract() -> Contract {
             props: serde_json::to_value(schemars::schema_for!(EditorProps))
                 .expect("editor props schema"),
             events: BTreeMap::from([("changed".into(), observation_schema())]),
+            captures: BTreeMap::from([(
+                "snapshot".into(),
+                Capture {
+                    input: serde_json::to_value(schemars::schema_for!(EditorCapture))
+                        .expect("capture schema"),
+                    resource: text_resource_type(),
+                },
+            )]),
         },
     }
 }
@@ -133,3 +141,11 @@ pub enum EditorReadError {
     #[error("invalid editor UTF-8 byte range or range exceeds 64 KiB")]
     Range,
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EditorCapture {
+    Current,
+    AtRevision { revision: u64 },
+}
+pub use super::text::text_resource_type;

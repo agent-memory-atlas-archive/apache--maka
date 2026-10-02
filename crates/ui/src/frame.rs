@@ -29,6 +29,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct ComponentOutput<V = Node> {
     pub frame: Frame<V>,
     pub events: Vec<Emission>,
+    pub actions: Vec<super::actions::Action>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -41,6 +42,7 @@ impl<V> ComponentOutput<V> {
         ComponentOutput {
             frame: self.frame.map_view(map),
             events: self.events,
+            actions: self.actions,
         }
     }
 }
@@ -100,6 +102,7 @@ impl<V> Frame<V> {
         ComponentOutput {
             frame: self,
             events,
+            actions: Vec::new(),
         }
     }
     pub fn validate_metadata(&self) -> Result<(), String> {

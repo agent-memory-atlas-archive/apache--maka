@@ -86,13 +86,14 @@ pub fn fixture(handler: &str) -> (Input, Vec<Package>) {
         interface: Interface::Component {
             props: json!({"type":"object"}),
             events: BTreeMap::new(),
+            captures: BTreeMap::new(),
         },
     };
     let source = format!(
         r#"
         const contract = {};
         export function activate(configuration) {{ return {{App:{{contract,component:['app']}}}}; }}
-        function frame(state) {{ return {{events:[],frame:{{revision:state.revision,state,window:{{surface:'surface',title:'Dynamic product',width:640,height:400}},view:{{kind:'stack',key:'root',direction:'column',padding:16,gap:8,background:1513239,children:[{{kind:'text',key:'count',text:String(state.count),color:16777215}},{{kind:'button',key:'inc',label:'Increment'}}]}}}}}}; }}
+        function frame(state) {{ return {{actions:[],events:[],frame:{{revision:state.revision,state,window:{{surface:'surface',title:'Dynamic product',width:640,height:400}},view:{{kind:'stack',key:'root',direction:'column',padding:16,gap:8,background:1513239,children:[{{kind:'text',key:'count',text:String(state.count),color:16777215}},{{kind:'button',key:'inc',label:'Increment'}}]}}}}}}; }}
         export const app = {{mount(props){{ return frame({{count:props.count??0,revision:0}}); }},event(state,event){{ {} }},update(state,props){{ return frame({{...state,revision:state.revision+1}}); }} }};
     "#,
         serde_json::to_string(&component).unwrap(),
@@ -170,6 +171,7 @@ pub(crate) fn composed_fixture(child_update: &str, parent_event: &str) -> (Input
         interface: Interface::Component {
             props: json!({"type":"object","properties":{"label":{"type":"string"},"initial":{"type":"integer"}},"required":["label","initial"],"additionalProperties":false}),
             events: BTreeMap::new(),
+            captures: BTreeMap::new(),
         },
     };
     declaration
@@ -190,7 +192,7 @@ pub(crate) fn composed_fixture(child_update: &str, parent_event: &str) -> (Input
         function frame(state){{
             const children=[{{kind:'component',key:'left',binding:'counter',member:0,on:{{}},props:{{label:'Left '+state.version,initial:10}}}}];
             if(state.right)children.push({{kind:'component',key:'right',binding:'counter',member:0,on:{{}},props:{{label:'Right '+state.version,initial:20}}}});
-            return {{events:[],frame:{{state,revision:state.revision,window:{{surface:'surface',title:'Composed product',width:640,height:400}},view:{{kind:'stack',key:'root',direction:'column',gap:8,padding:16,background:1513239,children:[{{kind:'stack',key:'counters',direction:'row',gap:16,padding:0,background:1513239,children}},{{kind:'button',key:'parent',label:'Change labels'}},{{kind:'button',key:'toggle',label:'Toggle right counter'}}]}}}}}};
+            return {{actions:[],events:[],frame:{{state,revision:state.revision,window:{{surface:'surface',title:'Composed product',width:640,height:400}},view:{{kind:'stack',key:'root',direction:'column',gap:8,padding:16,background:1513239,children:[{{kind:'stack',key:'counters',direction:'row',gap:16,padding:0,background:1513239,children}},{{kind:'button',key:'parent',label:'Change labels'}},{{kind:'button',key:'toggle',label:'Toggle right counter'}}]}}}}}};
         }}
         export const app={{mount(){{return frame({{revision:0,version:0,right:true}});}},event(state,event){{{}}},update(state,props){{return frame({{...state,revision:state.revision+1}});}}}};
     "#,
@@ -201,7 +203,7 @@ pub(crate) fn composed_fixture(child_update: &str, parent_event: &str) -> (Input
     let source = format!(
         r#"
         export function activate(){{return {{Counter:{{contract:{},component:['counter']}}}};}}
-        function frame(state){{return {{events:[],frame:{{state,revision:state.revision,window:null,view:{{kind:'stack',key:'counter',direction:'column',gap:8,padding:8,background:1513239,children:[{{kind:'text',key:'label',text:state.label,color:16777215}},{{kind:'text',key:'count',text:String(state.count),color:16777215}},{{kind:'button',key:'inc',label:'Increment '+state.label}}]}}}}}};}}
+        function frame(state){{return {{actions:[],events:[],frame:{{state,revision:state.revision,window:null,view:{{kind:'stack',key:'counter',direction:'column',gap:8,padding:8,background:1513239,children:[{{kind:'text',key:'label',text:state.label,color:16777215}},{{kind:'text',key:'count',text:String(state.count),color:16777215}},{{kind:'button',key:'inc',label:'Increment '+state.label}}]}}}}}};}}
         export const counter={{mount(props){{return frame({{count:props.initial,label:props.label,revision:0}});}},event(state,event){{return frame({{...state,count:state.count+1,revision:state.revision+1}});}},update(state,props){{{}}}}};
     "#,
         serde_json::to_string(&counter_contract).unwrap(),
@@ -403,5 +405,140 @@ pub(crate) fn editor_events_fixture() -> (Input, Vec<Package>) {
     );
     input.instances.get_mut("app").unwrap().package = root.application_ref().into();
     packages.push(root);
+    (input, packages)
+}
+
+/// Root consumes the public Composer contract; its private editor slot is only
+/// known by that wrapper. All resource authority stays in the request sidecar.
+pub(crate) fn resource_fixture() -> (Input, Vec<Package>) {
+    let (mut input, mut packages) = editor_fixture();
+    let root_index = packages
+        .iter()
+        .position(|p| p.manifest().id == "dynamic.app")
+        .unwrap();
+    let old = packages.remove(root_index);
+    let mut declaration = old.manifest().application.clone().unwrap();
+    let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
+    entry.imports.remove("counter");
+    entry.imports.remove("label");
+    entry.imports.insert(
+        "reader".into(),
+        Import {
+            contract: maka_ui::text::reader_contract(),
+            cardinality: Cardinality::One,
+        },
+    );
+    let root_source = format!(
+        r#"
+    const contract={};
+    export function activate(){{return {{App:{{contract,component:['app']}}}};}}
+    function frame(state){{return {{actions:[],events:[],frame:{{revision:state.revision,state,window:{{surface:'surface',title:'Immutable draft',width:640,height:480}},view:{{kind:'stack',key:'root',direction:'column',padding:16,gap:12,background:1513239,children:[{{kind:'text',key:'status',text:'Captured: '+(state.outcome?.value?.text??state.outcome?.status??'—'),color:16777215}},...(state.show?[{{kind:'component',key:'editor',binding:'editor',member:0,on:{{changed:'changed'}},props:{{initialText:'Start',placeholder:'Write here',command:state.command??null}}}}]:[]),{{kind:'button',key:'read',label:'Capture draft'}},{{kind:'button',key:'remove',label:'Remove composer'}}]}}}}}};}}
+    export const app={{mount(){{return frame({{revision:0,show:true}});}},update(state){{return frame({{...state,revision:state.revision+1}});}},event(state,event){{
+        const next={{...state,revision:state.revision+1}};
+        if(event.kind==='action')next.outcome=event.event;
+        else if(event.kind==='component')next.observation=event.event;
+        else if(event.key==='remove')next.show=false;
+        else if(event.key==='read'){{if(event.event?.command)next.command=event.event.command;const out=frame(next);out.actions.push({{key:'read_done',binding:'reader',member:0,method:'read',input:{{start:event.event?.start??0,end:event.event?.end??5}},resources:{{text:{{child:'editor',method:'snapshot',input:event.event?.capture??{{kind:'current'}}}}}}}});return out;}}
+        return frame(next);
+    }}}};
+    "#,
+        serde_json::to_string(&entry.exports["App"].contract).unwrap()
+    );
+    let root = package("dynamic.app", declaration, Some(root_source));
+    let editor = maka_ui::editor::editor_contract();
+    let composer = package(
+        "dynamic.composer",
+        Declaration {
+            composition: None,
+            entries: BTreeMap::from([(
+                EntryTarget::Desktop,
+                EntryDeclaration {
+                    implementation: Implementation::JavaScript {
+                        module: "index.mjs".into(),
+                        realm: Realm::Shared,
+                    },
+                    configuration: json!({"type":"object"}),
+                    imports: BTreeMap::from([(
+                        "editor".into(),
+                        Import {
+                            contract: editor.clone(),
+                            cardinality: Cardinality::One,
+                        },
+                    )]),
+                    exports: BTreeMap::from([(
+                        "Editor".into(),
+                        Export {
+                            contract: editor.clone(),
+                            availability: Availability::Required,
+                        },
+                    )]),
+                },
+            )]),
+        },
+        Some(format!(
+            r#"
+        const contract={};export function activate(){{return {{Editor:{{contract,component:['composer']}}}};}}
+        function frame(state,props,events=[]){{return {{actions:[],events,frame:{{revision:state.revision,state,window:null,view:{{kind:'component',key:'draft',binding:'editor',member:0,props,on:{{changed:'changed'}}}}}}}};}}
+        export const composer={{mount(props){{return frame({{revision:0}},props);}},update(state,props){{return frame({{...state,revision:state.revision+1}},props);}},event(state,event,props){{return frame({{revision:state.revision+1}},props,[{{name:'changed',value:event.event}}]);}},capture(state,props,method,input){{return {{kind:'forward',source:{{child:'draft',method,input}}}};}}}};
+    "#,
+            serde_json::to_string(&editor).unwrap()
+        )),
+    );
+    let reader = package(
+        "native.reader",
+        Declaration {
+            composition: None,
+            entries: BTreeMap::from([(
+                EntryTarget::Desktop,
+                EntryDeclaration {
+                    implementation: Implementation::Native {
+                        implementation: "maka.text.reader".into(),
+                    },
+                    configuration: json!({"type":"object"}),
+                    imports: BTreeMap::new(),
+                    exports: BTreeMap::from([(
+                        "Reader".into(),
+                        Export {
+                            contract: maka_ui::text::reader_contract(),
+                            availability: Availability::Required,
+                        },
+                    )]),
+                },
+            )]),
+        },
+        None,
+    );
+    let root_node = input.instances.get_mut("app").unwrap();
+    root_node.package = root.application_ref().into();
+    root_node.bindings.remove("counter");
+    root_node.bindings.remove("label");
+    root_node.bindings.insert(
+        "editor".into(),
+        vec![Target::Instance {
+            path: vec!["composer".into()],
+            export: "Editor".into(),
+        }],
+    );
+    root_node.bindings.insert(
+        "reader".into(),
+        vec![Target::Instance {
+            path: vec!["reader".into()],
+            export: "Reader".into(),
+        }],
+    );
+    let mut composer_node = node(&composer, 6);
+    composer_node.bindings.insert(
+        "editor".into(),
+        vec![Target::Instance {
+            path: vec!["editor".into()],
+            export: "Editor".into(),
+        }],
+    );
+    input.instances.insert("composer".into(), composer_node);
+    input.instances.insert("reader".into(), node(&reader, 7));
+    input.instances.remove("counter");
+    input.instances.remove("label");
+    packages.retain(|p| !matches!(p.manifest().id.as_str(), "dynamic.counter" | "native.label"));
+    packages.extend([root, composer, reader]);
     (input, packages)
 }

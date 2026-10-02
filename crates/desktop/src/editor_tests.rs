@@ -22,6 +22,7 @@ use gpui_kit::{AnyWindowHandle, Entity, EntityInputHandler};
 use maka_ui::editor::{
     EditorCommand, EditorConflict, EditorEdit, EditorObservation, EditorOutcome, EditorReadError,
 };
+use std::collections::BTreeMap;
 use widgets::editor::EditorOwner;
 
 struct Scene {
@@ -40,10 +41,22 @@ impl Scene {
         cx: &mut TestAppContext,
         timer: &tokio::runtime::Runtime,
         fail_sibling: bool,
+        fixture: (
+            maka_plugin_core::composition::Input,
+            Vec<maka_plugins::package::Package>,
+        ),
+    ) -> Self {
+        Self::with_registry(cx, timer, fail_sibling, fixture, widgets::registry())
+    }
+    fn with_registry(
+        cx: &mut TestAppContext,
+        timer: &tokio::runtime::Runtime,
+        fail_sibling: bool,
         (mut input, mut packages): (
             maka_plugin_core::composition::Input,
             Vec<maka_plugins::package::Package>,
         ),
+        native: maka_ui::NativeRegistry<dyn widgets::Widget>,
     ) -> Self {
         if fail_sibling {
             let index = packages
@@ -65,11 +78,15 @@ impl Scene {
             packages,
             timer.handle().clone(),
             Default::default(),
-            widgets::registry(),
+            native,
         )
         .unwrap();
         let root = application.mount_launch(serde_json::json!({})).unwrap();
-        let editor = application.child_mount(&root, "editor").unwrap().clone();
+        let outer = application.child_mount(&root, "editor").unwrap().clone();
+        let editor = application
+            .child_mount(&outer, "draft")
+            .cloned()
+            .unwrap_or(outer);
         let app = Rc::new(RefCell::new(application));
         let (wake, receipts) = tokio::sync::mpsc::unbounded_channel();
         let resources = Rc::new(RefCell::new(resources::NativeResources::new(
@@ -637,5 +654,203 @@ fn public_editor_events_preserve_a_same_batch_command_until_receipt_and_do_not_l
             );
         }
         scene.close(cx);
+    }
+}
+
+fn await_action(
+    cx: &mut TestAppContext,
+    app: &Rc<RefCell<DesktopApplication>>,
+    ready: impl Fn(&DesktopApplication) -> bool,
+) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while !ready(&app.borrow()) {
+        cx.run_until_parked();
+        assert!(
+            std::time::Instant::now() < deadline,
+            "cross-executor action did not complete"
+        );
+        std::thread::yield_now();
+    }
+    cx.run_until_parked();
+}
+#[gpui::test]
+fn real_composer_snapshot_precedes_reset_and_capture_conflict_does_not_fake_scene_rollback(
+    cx: &mut TestAppContext,
+) {
+    // The production executor uses Tokio workers, whose completions wake GPUI from another thread.
+    cx.executor().allow_parking();
+    for conflict in [false, true] {
+        let timer = timer();
+        let scene = Scene::from_packages(cx, &timer, false, support::resource_fixture());
+        scene.draw(cx);
+        let owner = scene.owner();
+        cx.update_window(scene.window, |_, window, cx| {
+            owner.update(cx, |o, cx| {
+                o.replace_text_in_range(Some(0..5), "Draft", window, cx)
+            })
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(scene.window,|_,window,cx| {
+            let native=owner.read(cx).revision;let revision=scene.app.borrow().frame(&scene.root).unwrap().revision;
+            scene.app.borrow_mut().dispatch(&scene.root,revision,"read",serde_json::json!({"capture":if conflict {serde_json::json!({"kind":"at_revision","revision":native+100})} else {serde_json::json!({"kind":"at_revision","revision":native})},"command":{"sequence":1,"basedOn":native,"edit":{"kind":"reset","text":"Reset"}}})).unwrap();
+            assert_eq!(owner.read(cx).state.read(cx).value().as_ref(),"Draft");
+            scene.surface.update(cx,|s,cx|s.sync_native(window,cx).unwrap());
+            assert_eq!(owner.read(cx).state.read(cx).value().as_ref(),"Reset");
+        }).unwrap();
+        await_action(cx, &scene.app, |a| {
+            a.frame(&scene.root).unwrap().state["outcome"].is_object()
+        });
+        let value = scene.app.borrow().frame(&scene.root).unwrap().state["outcome"].clone();
+        if conflict {
+            assert_eq!(value["status"], "not_accepted");
+        } else {
+            assert_eq!(value["status"], "succeeded");
+            assert_eq!(value["value"]["text"], "Draft");
+        }
+        assert_eq!(scene.app.borrow().accepted_action_count(), 0);
+        drop(owner);
+        scene.close(cx);
+    }
+}
+struct HeldRead {
+    release: std::sync::Arc<tokio::sync::Semaphore>,
+    panic: bool,
+    snapshot: std::sync::Arc<
+        std::sync::Mutex<Option<std::sync::Weak<dyn maka_ui::actions::ReadResource>>>,
+    >,
+}
+impl maka_ui::actions::NativeService for HeldRead {
+    fn call(
+        &self,
+        _: String,
+        _: serde_json::Value,
+        resources: maka_ui::actions::Resources,
+    ) -> maka_ui::actions::ServiceFuture {
+        *self.snapshot.lock().unwrap() = Some(std::sync::Arc::downgrade(&resources["text"]));
+        let release = self.release.clone();
+        let panic = self.panic;
+        Box::pin(async move {
+            let _permit = release.acquire_owned().await.unwrap();
+            assert_eq!(resources["text"].read(0..5).unwrap(), b"Start");
+            assert!(
+                !panic,
+                "controlled worker panic after actual window cleanup"
+            );
+            maka_ui::actions::ServiceCompletion {
+                result: Err("read completed but cleanup confirmation unavailable".into()),
+                cleanup: Err("controlled cleanup failure".into()),
+            }
+        })
+    }
+}
+#[gpui::test]
+fn application_owner_preserves_failed_and_panicked_work_after_real_window_cleanup_and_task_exit(
+    cx: &mut TestAppContext,
+) {
+    // Exercise the real external worker rather than GPUI's deterministic test dispatcher.
+    cx.executor().allow_parking();
+    for panic in [false, true] {
+        let timer = timer();
+        let (mut input, mut packages) = support::resource_fixture();
+        let index = packages
+            .iter()
+            .position(|p| p.manifest().id == "native.reader")
+            .unwrap();
+        let old = packages.remove(index);
+        let mut declaration = old.manifest().application.clone().unwrap();
+        declaration
+            .entries
+            .get_mut(&maka_plugin_core::package::EntryTarget::Desktop)
+            .unwrap()
+            .implementation = maka_plugin_core::package::Implementation::Native {
+            implementation: "test.held-reader".into(),
+        };
+        let package = support::package("native.reader", declaration, None);
+        input.instances.get_mut("reader").unwrap().package = package.application_ref().into();
+        packages.push(package);
+        let release = std::sync::Arc::new(tokio::sync::Semaphore::new(0));
+        let snapshot = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let service = std::sync::Arc::new(HeldRead {
+            release: release.clone(),
+            panic,
+            snapshot: snapshot.clone(),
+        });
+        let mut native = widgets::registry();
+        native
+            .register("test.held-reader", move |_| {
+                Ok(BTreeMap::from([(
+                    "Reader".into(),
+                    maka_ui::NativeExport {
+                        contract: maka_ui::text::reader_contract(),
+                        value: maka_ui::NativeCapability::Service(service.clone()),
+                    },
+                )]))
+            })
+            .unwrap();
+        let scene = Scene::with_registry(cx, &timer, false, (input, packages), native);
+        cx.update(|cx| actions::own(scene.app.clone(), cx).unwrap());
+        scene.draw(cx);
+        cx.update_window(scene.window, |_, window, cx| {
+            let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
+            scene
+                .app
+                .borrow_mut()
+                .dispatch(&scene.root, revision, "read", serde_json::Value::Null)
+                .unwrap();
+            scene
+                .surface
+                .update(cx, |s, cx| s.sync_native(window, cx).unwrap());
+        })
+        .unwrap();
+        assert_eq!(scene.app.borrow().accepted_action_count(), 1);
+        scene.close(cx);
+        assert!(
+            scene.resources.borrow().surface_closed,
+            "real window, entity and retained-frame cleanup must complete while accepted snapshot remains"
+        );
+        assert!(scene.app.borrow().retiring_mounts().is_empty());
+        assert!(!scene.app.borrow().can_shutdown());
+        release.add_permits(1);
+        await_action(cx, &scene.app, |a| a.failed_action_ids().len() == 1);
+        let id = scene.app.borrow().failed_action_ids()[0];
+        let weak = Rc::downgrade(&scene.app);
+        drop(scene);
+        cx.run_until_parked();
+        let app = weak
+            .upgrade()
+            .expect("application owner outlives all windows/executor tasks");
+        assert_eq!(app.borrow().accepted_action_count(), 1);
+        assert!(
+            snapshot
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .upgrade()
+                .is_some()
+        );
+        assert!(
+            app.borrow_mut()
+                .complete_action_cleanup(id, Err("still unknown".into()))
+                .is_err()
+        );
+        assert_eq!(app.borrow().accepted_action_count(), 1);
+        app.borrow_mut()
+            .complete_action_cleanup(id, Ok(()))
+            .unwrap();
+        assert!(
+            snapshot
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .upgrade()
+                .is_none()
+        );
+        cx.update(|cx| actions::quit_when_drained(&app, cx));
+        drop(app);
+        cx.run_until_parked();
+        assert!(weak.upgrade().is_none());
     }
 }

@@ -119,14 +119,19 @@ pub enum ComponentCall<'a> {
 /// impersonate a child component notification.
 pub enum EventOrigin<'a> {
     Raw,
+    Action,
     Component { child: &'a str, name: &'a str },
 }
 pub trait NativeComponent<V: ?Sized>: 'static {
+    fn capture(&self, _: super::actions::CaptureCall<'_>) -> Result<super::actions::CapturePlan> {
+        Err(Error::Invalid("native capture method unavailable".into()))
+    }
     fn call(&self, call: ComponentCall<'_>) -> Result<ComponentOutput<Presentation<V>>>;
 }
 pub enum NativeCapability<V: ?Sized> {
     Component(Rc<dyn NativeComponent<V>>),
     Surface(PresentationTarget),
+    Service(std::sync::Arc<dyn super::actions::NativeService>),
 }
 pub struct NativeExport<V: ?Sized> {
     pub contract: Contract,
@@ -182,6 +187,17 @@ impl<V: ?Sized + 'static> NativeRegistry<V> {
             })
             .expect("unique built-in surface");
         registry
+            .register("maka.text.reader", |_| {
+                Ok(BTreeMap::from([(
+                    "Reader".into(),
+                    NativeExport {
+                        contract: super::text::reader_contract(),
+                        value: NativeCapability::Service(std::sync::Arc::new(super::text::Reader)),
+                    },
+                )]))
+            })
+            .expect("unique native text reader");
+        registry
     }
     pub(crate) fn activate(
         &self,
@@ -197,6 +213,7 @@ impl<V: ?Sized + 'static> NativeRegistry<V> {
             export.contract.validate()?;
             match (&export.contract.interface, &export.value) {
                 (Interface::Component { .. }, NativeCapability::Component(_)) => {}
+                (Interface::Service { .. }, NativeCapability::Service(_)) => {}
                 (_, NativeCapability::Surface(target))
                     if export.contract == surface_contract(*target) => {}
                 _ => {
@@ -226,6 +243,7 @@ pub fn label_contract() -> Contract {
         interface: Interface::Component {
             props: serde_json::to_value(schemars::schema_for!(LabelProps)).expect("label schema"),
             events: BTreeMap::new(),
+            captures: BTreeMap::new(),
         },
     }
 }

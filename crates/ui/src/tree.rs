@@ -40,10 +40,10 @@ pub(super) fn check_call_bytes(value: &impl serde::Serialize) -> Result<()> {
 }
 
 #[derive(Clone)]
-struct Child {
+pub(super) struct Child {
     binding: String,
     member: u32,
-    mount: Mount,
+    pub mount: Mount,
     on: BTreeMap<String, String>,
 }
 
@@ -67,22 +67,23 @@ struct Notification {
 pub(super) struct Mounted<V: ?Sized> {
     mount: Mount,
     pub frame: Frame<Presentation<V>>,
-    props: Value,
-    children: BTreeMap<String, Child>,
+    pub props: Value,
+    pub children: BTreeMap<String, Child>,
     bytes: usize,
 }
 
 /// A composed input is one transaction, not a sequence of published child
 /// frames. Newly created mounts cannot be observed by a renderer until commit.
-struct Update<V: ?Sized> {
+pub(super) struct Update<V: ?Sized> {
     changed: BTreeMap<Uuid, Mounted<V>>,
     created: Vec<Mount>,
     removed: BTreeMap<Uuid, Mount>,
     events: VecDeque<Notification>,
     emitted: usize,
-    deadline: Instant,
+    pub deadline: Instant,
     bytes: usize,
     touched: usize,
+    actions: Vec<actions::Prepared<V>>,
 }
 impl<V: ?Sized> Update<V> {
     fn new(slice: std::time::Duration) -> Self {
@@ -95,14 +96,29 @@ impl<V: ?Sized> Update<V> {
             deadline: Instant::now() + slice,
             bytes: 0,
             touched: 0,
+            actions: Vec::new(),
         }
     }
-    fn step(&mut self, depth: usize) -> Result<()> {
+    pub fn step(&mut self, depth: usize) -> Result<()> {
         self.touched += 1;
         if depth > 32 || self.touched > 64 {
             return Err(Error::Invalid(
                 "component update exceeds mount/depth limits".into(),
             ));
+        }
+        Ok(())
+    }
+    pub fn charge_intent(&mut self, value: &impl serde::Serialize) -> Result<()> {
+        // Every intent is already bounded by the per-call output limit.
+        let size = serde_json::to_vec(value)
+            .map_err(|e| Error::Invalid(e.to_string()))?
+            .len();
+        self.bytes = self
+            .bytes
+            .checked_add(size)
+            .ok_or_else(|| Error::Invalid("work byte overflow".into()))?;
+        if self.bytes > 4 * 1024 * 1024 {
+            return Err(Error::Invalid("component work exceeds 4 MiB".into()));
         }
         Ok(())
     }
@@ -207,7 +223,6 @@ impl<V: ?Sized + 'static> Application<V> {
         key: &str,
         event: Value,
     ) -> Result<()> {
-        let mut update = Update::new(self.slice);
         let current = self
             .views
             .get(&mount.id())
@@ -217,12 +232,26 @@ impl<V: ?Sized + 'static> Application<V> {
         }
         check_call_bytes(&(&current.frame.state, &current.props, key, &event))?;
         current.frame.view.validate_input(key, &event)?;
-        let args = [
-            current.frame.state.clone(),
-            json!({"kind":"raw","key":key,"event":event}),
-            current.props.clone(),
-        ];
+        self.dispatch_origin(mount, json!({"kind":"raw","key":key,"event":event}))
+    }
+    pub(super) fn dispatch_action_result(
+        &mut self,
+        mount: &Mount,
+        key: &str,
+        event: Value,
+    ) -> Result<()> {
+        self.dispatch_origin(mount, json!({"kind":"action","key":key,"event":event}))
+    }
+    fn dispatch_origin(&mut self, mount: &Mount, event: Value) -> Result<()> {
+        let mut update = Update::new(self.slice);
+        let current = self
+            .views
+            .get(&mount.id())
+            .ok_or_else(|| Error::Invalid("mount has no committed frame".into()))?;
+        check_call_bytes(&(&current.frame.state, &current.props, &event))?;
+        let args = [current.frame.state.clone(), event, current.props.clone()];
         let props = current.props.clone();
+        let revision = current.frame.revision;
         let window = current.frame.window.clone();
         let depth = self.mount_depth(mount)?;
         let subscription = self.subscription(mount, &update)?;
@@ -274,7 +303,7 @@ impl<V: ?Sized + 'static> Application<V> {
         self.runtime.settle(&execution, Ok(()))?;
         result
     }
-    fn provider(&self, mount: &Mount) -> Result<Activation> {
+    pub(super) fn provider(&self, mount: &Mount) -> Result<Activation> {
         self.runtime
             .mount_statuses()
             .into_iter()
@@ -282,7 +311,7 @@ impl<V: ?Sized + 'static> Application<V> {
             .map(|status| status.provider)
             .ok_or(maka_plugin_core::Error::Retired.into())
     }
-    fn mount_depth(&self, mount: &Mount) -> Result<usize> {
+    pub(super) fn mount_depth(&self, mount: &Mount) -> Result<usize> {
         Ok(self.mount_chain(mount)?.len() - 1)
     }
     /// The owning root comes from the mount parent chain, not display reachability.
@@ -313,7 +342,11 @@ impl<V: ?Sized + 'static> Application<V> {
             }
         }
     }
-    fn current<'a>(&'a self, mount: &Mount, update: &'a Update<V>) -> Result<&'a Mounted<V>> {
+    pub(super) fn current<'a>(
+        &'a self,
+        mount: &Mount,
+        update: &'a Update<V>,
+    ) -> Result<&'a Mounted<V>> {
         update
             .changed
             .get(&mount.id())
@@ -365,6 +398,12 @@ impl<V: ?Sized + 'static> Application<V> {
         update
             .changed
             .retain(|id, _| !update.removed.contains_key(id));
+        for action in &mut update.actions {
+            action.invalidate(|e| {
+                !update.removed.contains_key(&e.parent.id())
+                    && !update.removed.contains_key(&e.child.id())
+            });
+        }
         update.events.retain(|notification| {
             !update.removed.contains_key(&notification.route.parent.id())
                 && !update.removed.contains_key(&notification.route.child.id())
@@ -395,6 +434,8 @@ impl<V: ?Sized + 'static> Application<V> {
         update: &mut Update<V>,
     ) -> Result<()> {
         let bytes = update.charge(&output.frame, &props, &output.events)?;
+        update.charge_intent(&output.actions)?;
+        let actions = output.actions;
         update.emit(mount, subscription, output.events)?;
         let frame = output.frame;
         let mut previous = update
@@ -491,6 +532,12 @@ impl<V: ?Sized + 'static> Application<V> {
         }
         // Revoke queued routes permanently at each edge diff. Later restoring
         // the same subscription cannot resurrect a previously detached event.
+        for action in &mut update.actions {
+            action.invalidate(|e| {
+                !update.removed.contains_key(&e.parent.id())
+                    && !update.removed.contains_key(&e.child.id())
+            });
+        }
         update.events.retain(|notification| {
             notification.route.parent != *mount
                 || children.get(&notification.route.slot).is_some_and(|child| {
@@ -499,6 +546,11 @@ impl<V: ?Sized + 'static> Application<V> {
                             == Some(&notification.route.handler)
                 })
         });
+        for action in &mut update.actions {
+            action.invalidate(|e| {
+                e.parent != *mount || children.get(&e.slot).is_some_and(|c| c.mount == e.child)
+            });
+        }
         update.changed.insert(
             mount.id(),
             Mounted {
@@ -509,6 +561,13 @@ impl<V: ?Sized + 'static> Application<V> {
                 bytes,
             },
         );
+        for action in actions {
+            if self.actions.len() + update.actions.len() >= 64 {
+                return Err(Error::Invalid("pending action limit".into()));
+            }
+            let prepared = self.prepare_action(mount, action, update)?;
+            update.actions.push(prepared);
+        }
         Ok(())
     }
     fn deliver(&mut self, update: &mut Update<V>) -> Result<()> {
@@ -596,6 +655,7 @@ impl<V: ?Sized + 'static> Application<V> {
             self.runtime.retire_mount(mount)?;
         }
         self.views.append(&mut update.changed);
+        self.actions.queue.extend(update.actions.drain(..));
         Ok(())
     }
     fn rollback(&mut self, update: &Update<V>) -> Result<()> {

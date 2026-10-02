@@ -30,7 +30,8 @@ bindings retain the exact mount lease/revision and dispatch outside paint.
 Recipes contain immutable presentation data. Renderer owners hold entities and
 subscriptions separately; GPUI retained state/arena may also hold resource leases.
 Resources must never be cached in a recipe retained during cleanup. Native owners
-create and consume committed intents before rendering, outside layout/paint.
+prepare resources, capture request-local snapshots, then consume committed intents
+before rendering, outside layout/paint.
 
 Each component's element arena, retained GPUI state and input callbacks hold a
 native resource lease. A detached, retired child closes only after its last lease
@@ -51,15 +52,18 @@ not full text. Reads against the bound owner check identity/revision and UTF-8
 boundaries and are limited to 64 KiB. Platform UTF-16 queries use this read path.
 
 Run the [component example](../ui/README.md). This is an initial renderer, not the
-completed desktop product: outward editor events and plugin text-read capabilities,
-real OS IME acceptance, child surfaces, recovery UI, dynamic in-process installation
-and full Host/TUI integration remain pending. Counter/editor fixtures validate the
+completed desktop product: real OS IME acceptance, child surfaces, recovery UI,
+dynamic in-process installation and full Host/TUI integration remain pending. Counter/editor fixtures validate the
 runtime, not the default product's final visual design.
 
-The current GPUI window-removal callback fires before platform teardown. This
-process-exit path retires its mount and preserves the cleanup fence; it does not
-claim a native close acknowledgement. Reusable in-process surfaces require a
-platform destruction-completion adapter before `Application::close(Ok(()))`.
+GPUI window removal starts retirement before platform teardown. The independent
+window owner waits for the patched backend destruction receipt, actual entity and
+retained-frame release, and child cleanup before acknowledging the root. Last-window
+removal alone cannot terminate the application. Failed cleanup keeps its fence.
+Accepted asynchronous service work holds immutable text snapshots independently
+of UI resources; the application lifetime owner retains unresolved work after
+window and executor-task exit. Only successful cleanup allows shutdown. See the
+[resource example and bounds](../ui/README.md) for the explicit Composer/Reader path.
 
 Dependencies are pinned to GPUI Fast `e4aabe75` and GPUI Kit `f89c5cc9`; later Fast
 text-wrapping API changes are incompatible with this Kit version. Upstream

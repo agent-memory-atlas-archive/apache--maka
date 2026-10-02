@@ -26,7 +26,7 @@
 原生 GPUI 元素；共用输入绑定持有准确 mount/revision 和资源凭证，paint 不派发输入。
 呈现描述只包含不可变数据；entity/订阅归独立 renderer owner 所有，GPUI 保留状态与
 arena 也可持有资源凭证，不能缓存到清理期间保活的描述中。owner 在整批提交之后、
-layout/paint 之前创建资源并消费已提交意图。Kit editor 的资源凭证保留到实际 entity
+layout/paint 之前准备资源、捕获请求私有快照，再消费已提交命令。Kit editor 的资源凭证保留到实际 entity
 释放处理；仅 drop handle 不等于实体已销毁。
 
 组件的元素 arena、GPUI 保留状态和输入闭包持有原生资源凭证。子组件从显示树移除并
@@ -42,12 +42,14 @@ layout/paint 之前创建资源并消费已提交意图。Kit editor 的资源�
 读取校验已绑定 owner 的身份、修订与 UTF-8 边界，最多 64 KiB；平台 UTF-16 查询共用
 这条读取路径。
 
-运行方式见 [组件示例](../ui/README.md)。这是初始呈现器；编辑器对外事件、插件文本读取
-能力、真实 OS IME 验收、子 surface、恢复 UI、运行中动态安装与完整 Host/TUI 接线仍
+运行方式见 [组件示例](../ui/README.md)。这是初始呈现器；真实 OS IME 验收、子 surface、恢复 UI、运行中动态安装与完整 Host/TUI 接线仍
 未完成。counter/editor 示例用于验证运行时，不代表默认产品的最终视觉设计。
 
-GPUI 的窗口移除通知早于平台销毁；当前进程退出路径只 retire 挂载并保留清理阻塞，
-不宣称收到原生关闭确认。可复用的进程内 surface 必须先接入真实平台销毁完成通知。
+GPUI 的窗口移除通知早于平台销毁；独立 window owner 等待补丁提供的后端销毁回执、
+实际 entity/保留帧释放与子挂载清理，才确认 root 完成。最后窗口移除不能提前退出应用，
+清理失败继续保留 fence。已接受的异步服务独立持有不可变快照，不保留原生 UI 资源；
+application lifetime owner 在窗口和 executor task 都退出后仍保留未结算 Work，只有真实
+成功清理才允许 shutdown。显式 Composer/Reader 路径与限额见[资源示例](../ui/README.zh-CN.md)。
 
 依赖固定到 GPUI Fast `e4aabe75` 与 GPUI Kit `f89c5cc9`。使用上游 gpui-pre
 重导出选择 Fast，不包含第二套 GPUI。Windows dwrote 与构建期 cbindgen 采用
