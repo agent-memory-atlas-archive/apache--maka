@@ -80,6 +80,7 @@ pub enum EntryTarget {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "PackageDeclaration")]
 pub struct Declaration {
     #[serde(default)]
     pub entries: BTreeMap<EntryTarget, EntryDeclaration>,

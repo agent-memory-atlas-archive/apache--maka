@@ -2153,36 +2153,24 @@ fn wrapper_input(provider: &Package, consumer: &Package, wrapper: &Package) -> I
     composition
 }
 fn script_forwarder(realm: Realm) -> Package {
-    let source = format!(
-        r#"
-        export const service = {{ async echo(input, observation, context) {{
-            const call = value => context.invoke({{operation:'call', import:'echo', provider:0,
-                method:'echo', input:value, attachments:{{text:'text'}}}});
-            if (input==='invalid') {{
-                const request = {{operation:'call',import:'echo',provider:0,method:'echo',input:'healthy',attachments:{{text:'text'}}}};
-                for (const change of [{{import:'undeclared'}}, {{provider:1}}, {{provider:-1}},
-                    {{method:'undeclared'}}, {{scope:{{identity:'forged'}}}},
-                    {{attachments:{{text:'unknown'}}}}, {{attachments:{{text:{{bytes:[120]}}}}}},
-                    {{attachments:{{extra:'text'}}}}, {{input:false}}]) {{
-                    try {{ await context.invoke({{...request,...change}}); return 'unexpected acceptance'; }} catch {{}}
-                }}
-                return 'rejected';
-            }}
-            if (input==='ignore' || input==='terminate') {{
-                call('held').catch(()=>{{}});
-                // This actual second admission occurs after the first queued child;
-                // its receipt lets the parent return with real child work pending.
-                await call('healthy');
-                if (input==='terminate') while(true){{}};
-                return 'returned';
-            }}
-            if (input==='twice') return await call('one') + ':' + await call('two');
-            try {{ return await call(input); }} catch(e) {{ return 'caught:'+e.message; }}
-        }} }};
-        export function activate() {{ return {{echo:{{contract:{},service:['service']}}}}; }}
-    "#,
-        serde_json::to_string(&attached_contract()).unwrap()
-    );
+    static SOURCE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let source = SOURCE
+        .get_or_init(|| {
+            let work = tempfile::tempdir().unwrap();
+            let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+            let sdk = root.join("packages/plugin-sdk");
+            let output = work.path().join("forwarder.mjs");
+            let status = std::process::Command::new("node")
+                .arg(sdk.join("scripts/bundle.mjs"))
+                .arg(sdk.join("examples/forwarder.ts"))
+                .arg(&output)
+                .current_dir(&root)
+                .status()
+                .unwrap();
+            assert!(status.success(), "SDK Host bundle failed");
+            std::fs::read_to_string(output).unwrap()
+        })
+        .clone();
     package(
         "script.forwarder",
         wrapper_entry(Implementation::JavaScript {

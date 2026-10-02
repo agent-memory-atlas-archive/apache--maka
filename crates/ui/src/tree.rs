@@ -232,7 +232,13 @@ impl<V: ?Sized + 'static> Application<V> {
         }
         check_call_bytes(&(&current.frame.state, &current.props, key, &event))?;
         current.frame.view.validate_input(key, &event)?;
-        self.dispatch_origin(mount, json!({"kind":"raw","key":key,"event":event}))
+        self.dispatch_origin(
+            mount,
+            super::abi::ComponentInput::Raw {
+                key: key.into(),
+                event,
+            },
+        )
     }
     pub(super) fn dispatch_action_result(
         &mut self,
@@ -240,9 +246,17 @@ impl<V: ?Sized + 'static> Application<V> {
         key: &str,
         event: Value,
     ) -> Result<()> {
-        self.dispatch_origin(mount, json!({"kind":"action","key":key,"event":event}))
+        self.dispatch_origin(
+            mount,
+            super::abi::ComponentInput::Action {
+                key: key.into(),
+                event,
+            },
+        )
     }
-    fn dispatch_origin(&mut self, mount: &Mount, event: Value) -> Result<()> {
+    fn dispatch_origin(&mut self, mount: &Mount, event: super::abi::ComponentInput) -> Result<()> {
+        let event =
+            serde_json::to_value(event).map_err(|error| Error::Invalid(error.to_string()))?;
         let mut update = Update::new(self.slice);
         let current = self
             .views
@@ -582,8 +596,13 @@ impl<V: ?Sized + 'static> Application<V> {
             }
             let args = [
                 current.frame.state.clone(),
-                json!({"kind":"component", "key":route.handler,
-                "child":route.slot, "name":notification.event.name, "event":notification.event.value}),
+                serde_json::to_value(super::abi::ComponentInput::Component {
+                    key: route.handler.clone(),
+                    child: route.slot.clone(),
+                    name: notification.event.name,
+                    event: notification.event.value,
+                })
+                .map_err(|error| Error::Invalid(error.to_string()))?,
                 current.props.clone(),
             ];
             let revision = current.frame.revision;

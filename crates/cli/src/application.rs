@@ -17,6 +17,8 @@
  * under the License.
  */
 
+mod schema;
+
 use std::{
     io::Read,
     path::{Path, PathBuf},
@@ -37,6 +39,8 @@ use serde::{Deserialize, Serialize};
 pub(super) enum Command {
     /// Check exact package revisions, template overrides, variants and capability bindings.
     Check(Check),
+    /// Emit authoring schemas from the actual runtime wire types.
+    Schema,
     /// Run a plugin composition with native terminal presentation.
     Run(Run),
 }
@@ -79,6 +83,7 @@ struct Report<'a> {
 impl Command {
     pub(super) async fn run(self) -> Result<(), HostError> {
         match self {
+            Self::Schema => println!("{}", serde_json::to_string_pretty(&schema::catalog())?),
             Self::Check(args) => {
                 let report = tokio::task::spawn_blocking(move || args.check()).await??;
                 println!("{report}");

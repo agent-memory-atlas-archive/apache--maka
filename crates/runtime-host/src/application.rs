@@ -18,6 +18,7 @@
  */
 
 //! Host service execution over the shared plugin lifecycle kernel.
+pub mod abi;
 mod context;
 mod owner;
 pub use context::Context;

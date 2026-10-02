@@ -21,6 +21,27 @@
 
 [English](README.md)
 
+根导入 `@maka-agent/plugin-sdk` 对应新的插件应用运行时。
+Wire 类型和内置契约由 Host/UI 实际执行所用的 Rust 类型生成。
+`Component` 定义同步回调；`RequestContext` 使用当前调用的资源槽，服务结果为
+`unknown`，作者需要按服务契约检查结果。TypeScript 泛型不能代替验证；
+数值范围、JSON 限制和权限由 Rust 检查。
+
+```sh
+npm run schema:generate -w @maka-agent/plugin-sdk
+npm run schema:check -w @maka-agent/plugin-sdk
+node packages/plugin-sdk/scripts/bundle.mjs packages/plugin-sdk/examples/counter/desktop.ts /tmp/counter.mjs
+```
+
+[计数器](examples/counter/) 提供独立的 Desktop/TUI 入口；
+[Host 转发器](examples/forwarder.ts) 显式映射当前调用的资源槽。
+打包后的模块在实际应用集成测试中执行。使用包导出前先构建 workspace。
+Bundle 必须没有未解析 import 和顶层 await；它不包含原生扩展，也不授予权限。
+
+Host 应用服务目前支持 query；mutation、subscription 和旧业务迁移仍未完成。
+
+`./host` API 及下方指南属于仍待迁移和删除的旧实现，不是新应用 API 的适配层。
+
 Rust Runtime Host 的公开 TypeScript 契约。当前为 **Host SDK 3**、
 **终端 View 9**，与 Maka 应用版本及 npm workspace 版本分别演进。
 此 workspace 仍为私有包，不应假设能从 npm 仓库安装。

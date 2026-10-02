@@ -48,6 +48,7 @@ lint:
     node node_modules/@biomejs/biome/bin/biome lint .
 
 typecheck:
+    npm --workspace @maka-agent/plugin-sdk run schema:check
     npm --workspace @maka-agent/plugin-sdk run typecheck
 
 test *args:

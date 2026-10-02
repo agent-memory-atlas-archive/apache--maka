@@ -21,6 +21,31 @@
 
 [简体中文](README.zh-CN.md)
 
+The root import `@maka-agent/plugin-sdk` describes the new application runtime.
+Its wire types and built-in contracts are generated from the Rust types used by
+Host and UI execution. `Component` describes synchronous callbacks; `RequestContext`
+uses actual invocation-local slots and returns `unknown` for service results.
+Validate those results against the service contract; a TypeScript generic is not
+validation. Numeric bounds, JSON limits and authority are checked by Rust.
+
+```sh
+npm run schema:generate -w @maka-agent/plugin-sdk
+npm run schema:check -w @maka-agent/plugin-sdk
+node packages/plugin-sdk/scripts/bundle.mjs packages/plugin-sdk/examples/counter/desktop.ts /tmp/counter.mjs
+```
+
+The [counter](examples/counter/) has independent Desktop and TUI entrypoints;
+the [Host forwarder](examples/forwarder.ts) maps request-local slots explicitly.
+Their bundled modules execute in the real application integration tests. Build the
+workspace before importing its package exports. Bundles must contain no unresolved
+imports or top-level await; they do not embed native extensions or confer authority.
+
+Host application services currently support queries; mutations, subscriptions and
+legacy business migration remain unfinished.
+
+The `./host` API and the guide below belong to the implementation still awaiting
+migration and removal. They are not an adapter for the application API.
+
 Public TypeScript contracts for the Rust Runtime Host. **Host SDK 3** and
 **terminal View 9** are independent of Maka's application version and this npm
 workspace's version. The workspace is private and is not an assumed registry package.

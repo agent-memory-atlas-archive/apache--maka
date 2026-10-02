@@ -40,6 +40,7 @@ maka-acp.workspace = true
 maka-client.workspace = true
 maka-config.workspace = true
 maka-tui.workspace = true
+maka-ui.workspace = true
 maka-plugin-core.workspace = true
 maka-plugins.workspace = true
 base64 = "0.22"
@@ -59,6 +60,7 @@ maka-sandbox.workspace = true
 maka-fs-tools.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+schemars.workspace = true
 sha2.workspace = true
 sqlx.workspace = true
 tokio = { workspace = true, features = ["process"] }
@@ -67,7 +69,6 @@ uuid.workspace = true
 tempfile.workspace = true
 
 [dev-dependencies]
-maka-ui.workspace = true
 alacritty_terminal = { version = "0.26.0", default-features = false }
 unicode-width.workspace = true
 libc.workspace = true

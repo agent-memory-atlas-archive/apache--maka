@@ -82,6 +82,7 @@ impl InstanceId {
 /// Durable deployment input. Plans are derived and never persisted as overrides.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "CompositionInput")]
 pub struct Input {
     pub environment: Environment,
     pub instances: BTreeMap<String, Node>,
@@ -91,6 +92,7 @@ pub struct Input {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "CompositionNode")]
 pub struct Node {
     pub key: Uuid,
     pub package: PackageSelection,

@@ -19,6 +19,7 @@
 
 //! Local component execution. Renderers only read committed frames; JavaScript
 //! executes on initialization or input, never during layout/paint.
+pub mod abi;
 pub mod actions;
 pub mod editor;
 mod frame;
@@ -40,7 +41,6 @@ use maka_plugin_core::{
     runtime::{Activation, Mount, Phase, Published, Resource, Runtime},
 };
 use maka_plugins::package::Package;
-use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 use uuid::Uuid;
@@ -90,12 +90,6 @@ struct Loaded {
     realm: ExecutionRealm,
     module: ForegroundModule,
     resource: Resource,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Actual {
-    contract: Contract,
-    component: Vec<String>,
 }
 
 pub struct Application<V: ?Sized = ()> {
@@ -281,8 +275,9 @@ impl<V: ?Sized + 'static> Application<V> {
                                 &["activate".into()],
                                 std::slice::from_ref(&instance.configuration),
                             )?;
-                            let actual: BTreeMap<String, Actual> = serde_json::from_value(value)
-                                .map_err(|error| Error::Invalid(error.to_string()))?;
+                            let actual: BTreeMap<String, abi::ComponentActivation> =
+                                serde_json::from_value(value)
+                                    .map_err(|error| Error::Invalid(error.to_string()))?;
                             for (name, actual) in actual {
                                 if !matches!(actual.contract.interface, Interface::Component { .. })
                                     || actual.component.is_empty()
@@ -387,33 +382,48 @@ impl<V: ?Sized + 'static> Application<V> {
                     .map(|frame| frame.map_view(Presentation::Tree))
                     .map_err(Error::from)
             }
-            Component::Native(component) => {
+            Component::Native(component) => (|| {
+                let input = if method == "event" {
+                    Some(
+                        serde_json::from_value::<abi::ComponentInput>(args[1].clone())
+                            .map_err(|error| Error::Invalid(error.to_string()))?,
+                    )
+                } else {
+                    None
+                };
                 let call = match method {
                     "mount" => ComponentCall::Mount { props: &args[0] },
                     "update" => ComponentCall::Update {
                         state: &args[0],
                         props: &args[1],
                     },
-                    "event" => ComponentCall::Event {
-                        state: &args[0],
-                        props: &args[2],
-                        key: args[1]["key"].as_str().expect("typed UI input key"),
-                        input: &args[1]["event"],
-                        origin: if args[1]["kind"] == "action" {
-                            EventOrigin::Action
-                        } else if args[1]["kind"] == "component" {
-                            EventOrigin::Component {
-                                child: args[1]["child"].as_str().expect("typed child slot"),
-                                name: args[1]["name"].as_str().expect("typed public event"),
+                    "event" => {
+                        let (key, event, origin) = match input.as_ref().expect("event input") {
+                            abi::ComponentInput::Raw { key, event } => {
+                                (key, event, EventOrigin::Raw)
                             }
-                        } else {
-                            EventOrigin::Raw
-                        },
-                    },
+                            abi::ComponentInput::Action { key, event } => {
+                                (key, event, EventOrigin::Action)
+                            }
+                            abi::ComponentInput::Component {
+                                key,
+                                child,
+                                name,
+                                event,
+                            } => (key, event, EventOrigin::Component { child, name }),
+                        };
+                        ComponentCall::Event {
+                            state: &args[0],
+                            props: &args[2],
+                            key,
+                            input: event,
+                            origin,
+                        }
+                    }
                     _ => unreachable!(),
                 };
                 component.call(call)
-            }
+            })(),
         };
         let result = result.and_then(|output| {
             if output.events.len() > 64 {

@@ -107,6 +107,7 @@ pub enum Direction {
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "UiNode")]
 pub enum Node {
     Stack {
         key: String,

@@ -17,22 +17,16 @@
  * under the License.
  */
 
+use super::abi::{HostActivation, HostRequest, ResourceMetadata};
 use super::*;
 use maka_js_runtime::plugin::Module;
-use serde::Deserialize;
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Actual {
-    contract: Contract,
-    service: Vec<String>,
-}
 
 pub(super) async fn activate(
     module: Module,
     entry: maka_plugin_core::package::EntryDeclaration,
     configuration: Value,
 ) -> Result<BTreeMap<String, Published<Service>>> {
-    let actual: BTreeMap<String, Actual> = serde_json::from_value(
+    let actual: BTreeMap<String, HostActivation> = serde_json::from_value(
         module
             .call(vec!["activate".into()], vec![configuration])
             .await
@@ -73,34 +67,14 @@ pub(super) async fn activate(
     Ok(batch)
 }
 
-#[derive(Deserialize)]
-#[serde(tag = "operation", rename_all = "camelCase", deny_unknown_fields)]
-enum Operation {
-    Call {
-        import: String,
-        provider: usize,
-        method: String,
-        input: Value,
-        attachments: BTreeMap<String, String>,
-    },
-    Metadata {
-        slot: String,
-    },
-    Read {
-        slot: String,
-        start: usize,
-        end: usize,
-    },
-}
-
 impl maka_js_runtime::plugin::RequestBridge for Context {
     fn invoke(
         &self,
         input: Value,
     ) -> BoxFuture<'static, std::result::Result<Value, maka_js_runtime::plugin::Error>> {
-        let operation = serde_json::from_value::<Operation>(input).map_err(|e| e.to_string());
+        let operation = serde_json::from_value::<HostRequest>(input).map_err(|e| e.to_string());
         let result = operation.and_then(|operation| match operation {
-            Operation::Call {
+            HostRequest::Call {
                 import,
                 provider,
                 method,
@@ -134,13 +108,13 @@ impl maka_js_runtime::plugin::RequestBridge for Context {
     }
 }
 impl Context {
-    fn read(&self, operation: Operation) -> Result<Value> {
+    fn read(&self, operation: HostRequest) -> Result<Value> {
         if self.scope.cancellation.is_cancelled() {
             return Err("Host request was revoked".into());
         }
         let slot = match &operation {
-            Operation::Metadata { slot } | Operation::Read { slot, .. } => slot,
-            Operation::Call { .. } => unreachable!(),
+            HostRequest::Metadata { slot } | HostRequest::Read { slot, .. } => slot,
+            HostRequest::Call { .. } => unreachable!(),
         };
         let resource = self
             .attachments
@@ -149,12 +123,17 @@ impl Context {
         let mut ticket = self.scope.resources.reserve().map_err(|e| e.to_string())?;
         ticket.start();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match operation {
-            Operation::Metadata { .. } => {
-                let value = serde_json::json!({"type":resource.resource_type(),"bytes":resource.bytes(),"metadata":resource.metadata()});
+            HostRequest::Metadata { .. } => {
+                let value = serde_json::to_value(ResourceMetadata {
+                    resource_type: resource.resource_type(),
+                    bytes: resource.bytes(),
+                    metadata: resource.metadata(),
+                })
+                .map_err(|error| error.to_string())?;
                 check_json(&value)?;
                 Ok(value)
             }
-            Operation::Read { start, end, .. } => {
+            HostRequest::Read { start, end, .. } => {
                 if end < start || end - start > 64 * 1024 || end > resource.bytes() {
                     return Err("invalid request resource byte range".into());
                 }
@@ -164,7 +143,7 @@ impl Context {
                 }
                 Ok(serde_json::json!(bytes))
             }
-            Operation::Call { .. } => unreachable!(),
+            HostRequest::Call { .. } => unreachable!(),
         }));
         match result {
             Ok(result) => {
