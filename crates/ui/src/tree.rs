@@ -184,6 +184,17 @@ impl Application {
             .ok_or(maka_plugin_core::Error::Retired.into())
     }
     fn mount_depth(&self, mount: &Mount) -> Result<usize> {
+        Ok(self.mount_chain(mount)?.len() - 1)
+    }
+    /// The owning root comes from the mount parent chain, not display reachability.
+    /// Detached mounts remain attributed to their original native surface.
+    pub fn mount_root(&self, mount: &Mount) -> Result<Mount> {
+        Ok(self
+            .mount_chain(mount)?
+            .pop()
+            .expect("nonempty mount chain"))
+    }
+    fn mount_chain(&self, mount: &Mount) -> Result<Vec<Mount>> {
         let parents: BTreeMap<_, _> = self
             .runtime
             .mount_statuses()
@@ -191,14 +202,14 @@ impl Application {
             .map(|status| (status.mount.id(), (status.mount, status.parent)))
             .collect();
         let mut current = mount;
-        let mut depth = 0;
+        let mut chain = vec![mount.clone()];
         loop {
             match parents.get(&current.id()) {
                 Some((owner, Some(parent))) if owner == current => {
-                    depth += 1;
+                    chain.push(parent.clone());
                     current = parent;
                 }
-                Some((owner, None)) if owner == current => return Ok(depth),
+                Some((owner, None)) if owner == current => return Ok(chain),
                 _ => return Err(maka_plugin_core::Error::Retired.into()),
             }
         }
@@ -348,6 +359,22 @@ impl Application {
             .and_then(|view| view.children.get(key))
             .map(|child| &child.mount)
             .ok_or_else(|| Error::Invalid("component child is not committed".into()))
+    }
+    /// Read the exact committed display subtree, including retired components
+    /// still displayed pending recovery. Detached mounts are absent.
+    pub fn mounted_subtree(&self, root: &Mount) -> Result<Vec<Mount>> {
+        let mut mounts = Vec::new();
+        let mut pending = vec![root.clone()];
+        while let Some(mount) = pending.pop() {
+            let view = self
+                .views
+                .get(&mount.id())
+                .filter(|view| view.mount == mount)
+                .ok_or_else(|| Error::Invalid("component subtree is not committed".into()))?;
+            pending.extend(view.children.values().map(|child| child.mount.clone()));
+            mounts.push(mount);
+        }
+        Ok(mounts)
     }
     /// Removed/faulted mounts remain fenced until the renderer supplies real
     /// resource close acknowledgements. Leaves precede parents for settlement.

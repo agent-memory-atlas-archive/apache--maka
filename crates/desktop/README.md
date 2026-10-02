@@ -25,6 +25,15 @@ runs the shared component adapter on the UI owner thread. Layout/paint read Rust
 frames; button callbacks dispatch revision-bound input before notifying GPUI.
 No business shell or default product is embedded in this binary.
 
+Each component's element arena, retained GPUI state and input callbacks hold a
+native resource lease. A detached, retired child closes only after its last lease
+has actually been destroyed; the owner-thread receipt task does not wait for more
+input. A visible retired scene stays fenced. Cleanup follows the original mount
+parent chain, so one surface cannot acknowledge another surface's resources.
+The receipt task belongs to the surface, uses weak application references and
+is cancelled when the surface is destroyed. Future native widgets must retain
+leases for their entities, subscriptions and any pending native work too.
+
 Run the [component example](../ui/README.md). This is an initial renderer, not the
 completed desktop product: native editor/IME, child surfaces, recovery UI, dynamic
 in-process installation and full Host/TUI integration remain pending.
