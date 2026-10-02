@@ -246,7 +246,7 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
             .unwrap();
         let (reply, result) = oneshot::channel();
         owner.command(Command::Call(Box::new(Call {
-            operation: None,
+            kind: CallKind::Query(reply),
             parent: None,
             binding,
             method: "echo".into(),
@@ -258,7 +258,6 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
                 .unwrap(),
             slot: Arc::new(Semaphore::new(1)).try_acquire_owned().unwrap(),
             bytes: Arc::new(Semaphore::new(1)).try_acquire_owned().unwrap(),
-            reply,
         })));
         assert!(
             result

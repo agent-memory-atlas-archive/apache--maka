@@ -22,7 +22,7 @@ use maka_event_log::{
     EventLog,
     root::{RootNamespaces, RootOwner},
 };
-use maka_plugin_core::operation::{OperationCleanup, OperationOutcome};
+use maka_plugin_core::operation::{OperationCleanup, OperationOutcome, OperationReply, Receipt};
 use maka_runtime_host::application::RecoveryInvocation;
 use std::sync::atomic::AtomicBool;
 
@@ -225,8 +225,8 @@ async fn real_mutation_commits_before_effect_and_duplicate_requires_recovery_gra
             )
             .await
             .unwrap();
-        let reference = accepted.recovery.clone().unwrap();
-        assert_eq!(accepted.result().await.unwrap(), json!("original"));
+        let reference = accepted.reference.clone();
+        assert_eq!(returned(accepted.result().await), json!("original"));
         let observation = store
             .operation_observation(&reference)
             .await
@@ -241,20 +241,21 @@ async fn real_mutation_commits_before_effect_and_duplicate_requires_recovery_gra
                 .contains("historical grant denied")
         );
         assert!(
-            client
-                .mutate(
-                    binding.clone(),
-                    "echo".into(),
-                    json!("original"),
-                    scope(&issuer, true),
-                    operation
-                )
-                .await
-                .unwrap()
-                .result()
-                .await
-                .unwrap_err()
-                .contains("historical grant denied")
+            unavailable(
+                client
+                    .mutate(
+                        binding.clone(),
+                        "echo".into(),
+                        json!("original"),
+                        scope(&issuer, true),
+                        operation
+                    )
+                    .await
+                    .unwrap()
+                    .result()
+                    .await
+            )
+            .contains("historical grant denied")
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         recovery.store(true, Ordering::SeqCst);
@@ -267,36 +268,38 @@ async fn real_mutation_commits_before_effect_and_duplicate_requires_recovery_gra
             observation
         );
         assert_eq!(
-            client
-                .mutate(
-                    binding.clone(),
-                    "echo".into(),
-                    json!("original"),
-                    scope(&issuer, true),
-                    operation
-                )
-                .await
-                .unwrap()
-                .result()
-                .await
-                .unwrap(),
+            returned(
+                client
+                    .mutate(
+                        binding.clone(),
+                        "echo".into(),
+                        json!("original"),
+                        scope(&issuer, true),
+                        operation
+                    )
+                    .await
+                    .unwrap()
+                    .result()
+                    .await
+            ),
             json!("original")
         );
         assert!(
-            client
-                .mutate(
-                    binding,
-                    "echo".into(),
-                    json!("changed"),
-                    scope(&issuer, true),
-                    operation
-                )
-                .await
-                .unwrap()
-                .result()
-                .await
-                .unwrap_err()
-                .contains("conflicts")
+            unavailable(
+                client
+                    .mutate(
+                        binding,
+                        "echo".into(),
+                        json!("changed"),
+                        scope(&issuer, true),
+                        operation
+                    )
+                    .await
+                    .unwrap()
+                    .result()
+                    .await
+            )
+            .contains("conflicts")
         );
         let foreign = Issuer::default();
         assert!(
@@ -392,8 +395,8 @@ async fn unknown_result_is_not_replayed_and_default_recovery_policy_denies() {
                 )
                 .await
                 .unwrap();
-            let reference = accepted.recovery.clone().unwrap();
-            assert!(accepted.result().await.is_err());
+            let reference = accepted.reference.clone();
+            assert!(unknown(accepted.result().await));
             let observation = store
                 .operation_observation(&reference)
                 .await
@@ -405,20 +408,21 @@ async fn unknown_result_is_not_replayed_and_default_recovery_policy_denies() {
             ));
             assert_eq!(observation.cleanup, OperationCleanup::Confirmed);
             assert!(
-                client
-                    .mutate(
-                        binding.clone(),
-                        "echo".into(),
-                        json!(input),
-                        scope(&issuer, true),
-                        operation
-                    )
-                    .await
-                    .unwrap()
-                    .result()
-                    .await
-                    .unwrap_err()
-                    .contains("not authorized")
+                unavailable(
+                    client
+                        .mutate(
+                            binding.clone(),
+                            "echo".into(),
+                            json!(input),
+                            scope(&issuer, true),
+                            operation
+                        )
+                        .await
+                        .unwrap()
+                        .result()
+                        .await
+                )
+                .contains("not authorized")
             );
             assert!(
                 client
@@ -480,8 +484,8 @@ async fn original_receipt_survives_restart_and_new_composition_without_provider(
             )
             .await
             .unwrap();
-        let reference = accepted.recovery.clone().unwrap();
-        accepted.result().await.unwrap();
+        let reference = accepted.reference.clone();
+        returned(accepted.result().await);
         let mut declaration = entry(
             false,
             Implementation::JavaScript {
@@ -527,11 +531,8 @@ async fn original_receipt_survives_restart_and_new_composition_without_provider(
             )
             .await
             .unwrap();
-        assert_eq!(
-            old_accepted.recovery.as_ref().unwrap().source,
-            reference.source
-        );
-        assert_eq!(old_accepted.result().await.unwrap(), json!("old-owner"));
+        assert_eq!(old_accepted.reference.source, reference.source);
+        assert_eq!(returned(old_accepted.result().await), json!("old-owner"));
         assert_eq!(
             store
                 .load_application_at(&reference.source)
@@ -650,8 +651,8 @@ async fn javascript_mutation_receives_original_reference_and_dispatches_once() {
         let consumer=mutation_packages().1;let deployment=Uuid::new_v4();store.commit_application(deployment,0,input(&provider,&consumer),vec![],vec![provider,consumer]).await.unwrap();
         let app=Application::start_from_store(store.clone(),deployment,NativeRegistry::default(),issuer.clone(),Arc::new(RecoveryGrant {issuer:issuer.clone(),recovery}),Limits::default()).await.unwrap();app.ready().await.unwrap();
         let client=app.client();let binding=client.bind(client.activation(&id(2)).unwrap(),"echo".into()).await.unwrap().remove(0);let operation=Uuid::new_v4();
-        let accepted=client.mutate(binding.clone(),"echo".into(),json!("script"),scope(&issuer,true),operation).await.unwrap();let reference=accepted.recovery.clone().unwrap();assert_eq!(accepted.result().await.unwrap(),json!("script:1"));
-        assert_eq!(client.mutate(binding,"echo".into(),json!("script"),scope(&issuer,true),operation).await.unwrap().result().await.unwrap(),json!("script:1"));
+        let accepted=client.mutate(binding.clone(),"echo".into(),json!("script"),scope(&issuer,true),operation).await.unwrap();let reference=accepted.reference.clone();assert_eq!(returned(accepted.result().await),json!("script:1"));
+        assert_eq!(returned(client.mutate(binding,"echo".into(),json!("script"),scope(&issuer,true),operation).await.unwrap().result().await),json!("script:1"));
         assert_eq!(store.operation_observation(&reference).await.unwrap().unwrap().outcome,OperationOutcome::Returned {value:json!("script:1")});
         app.shutdown().await.unwrap();drop(app);drop(client);close(store).await;
     }).await.unwrap();
@@ -666,7 +667,10 @@ async fn javascript_forwarded_mutation_preserves_original_evidence_and_parent_cl
         forwarder_entry.imports.insert("child".into(), Import {contract:contract(MethodMode::Mutation),cardinality:Cardinality::One});
         let source=format!(r#"
             export const service={{async echo(input,_observation,context) {{
-                return (await context.invoke({{operation:'mutate',import:'child',provider:0,method:'echo',input,operationId:'{operation}'}}))+':parent';
+                const reply=await context.invoke({{operation:'mutate',import:'child',provider:0,method:'echo',input,operationId:'{operation}'}});
+                if(reply.receipt.kind !== 'recorded' || reply.receipt.outcome.kind !== 'returned') throw Error('child receipt not returned');
+                if(!reply.reference || reply.reference.operation !== '{operation}') throw Error('lost child reference');
+                return reply.receipt.outcome.value+':parent';
             }}}};
             export function activate() {{return {{echo:{{contract:{},service:['service']}}}};}}
         "#,serde_json::to_string(&contract(MethodMode::Query)).unwrap());
@@ -811,7 +815,7 @@ async fn dropped_root_and_all_observers_keep_mutation_resources_native_close_and
             )
             .await
             .unwrap();
-        let reference = accepted.recovery.clone().unwrap();
+        let reference = accepted.reference.clone();
         permit(&started).await;
         let weak = Arc::downgrade(&store);
         drop(accepted);
@@ -905,8 +909,8 @@ async fn returned_mutation_and_failed_cleanup_are_separate_persistent_facts() {
             )
             .await
             .unwrap();
-        let reference = accepted.recovery.clone().unwrap();
-        assert_eq!(accepted.result().await.unwrap(), json!("resource-fail"));
+        let reference = accepted.reference.clone();
+        assert_eq!(returned(accepted.result().await), json!("resource-fail"));
         let observation = store
             .operation_observation(&reference)
             .await
@@ -1001,14 +1005,8 @@ async fn uncertain_durable_settlement_does_not_replay_effect_or_invent_cleanup_f
             )
             .await
             .unwrap();
-        let reference = accepted.recovery.clone().unwrap();
-        assert!(
-            accepted
-                .result()
-                .await
-                .unwrap_err()
-                .contains("settlement outcome unknown")
-        );
+        let reference = accepted.reference.clone();
+        assert!(unavailable(accepted.result().await).contains("settlement outcome unknown"));
         assert!(client.snapshot().cleanup_error.is_none());
         let observation = client
             .recover(consumer, reference.clone(), scope(&issuer, true))
@@ -1017,22 +1015,25 @@ async fn uncertain_durable_settlement_does_not_replay_effect_or_invent_cleanup_f
             .unwrap();
         assert_eq!(observation.outcome, OperationOutcome::Unresolved);
         assert_eq!(observation.cleanup, OperationCleanup::Unconfirmed);
-        assert!(
-            client
-                .mutate(
-                    binding,
-                    "echo".into(),
-                    json!("effect"),
-                    scope(&issuer, true),
-                    operation
-                )
-                .await
-                .unwrap()
-                .result()
-                .await
-                .unwrap_err()
-                .contains("no replay")
-        );
+        let duplicate = client
+            .mutate(
+                binding,
+                "echo".into(),
+                json!("effect"),
+                scope(&issuer, true),
+                operation,
+            )
+            .await
+            .unwrap()
+            .result()
+            .await;
+        assert!(matches!(
+            duplicate.receipt,
+            Receipt::Recorded {
+                outcome: OperationOutcome::Unresolved,
+                cleanup: OperationCleanup::Unconfirmed
+            }
+        ));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         app.shutdown().await.unwrap();
         drop(app);
@@ -1045,4 +1046,242 @@ async fn uncertain_durable_settlement_does_not_replay_effect_or_invent_cleanup_f
     })
     .await
     .unwrap();
+}
+
+fn returned(reply: OperationReply) -> Value {
+    match reply.receipt {
+        Receipt::Recorded {
+            outcome: OperationOutcome::Returned { value },
+            ..
+        } => value,
+        other => panic!("expected returned receipt: {other:?}"),
+    }
+}
+fn unavailable(reply: OperationReply) -> String {
+    match reply.receipt {
+        Receipt::Unavailable { diagnostic } => diagnostic,
+        other => panic!("expected unavailable receipt: {other:?}"),
+    }
+}
+fn unknown(reply: OperationReply) -> bool {
+    matches!(
+        reply.receipt,
+        Receipt::Recorded {
+            outcome: OperationOutcome::Unknown { .. },
+            ..
+        }
+    )
+}
+
+struct ReceiptBoundaryEcho(Arc<AtomicUsize>);
+impl Handler for ReceiptBoundaryEcho {
+    fn call(&self, _: String, input: Value, _: Context) -> BoxFuture<'static, Result<Value>> {
+        let calls = self.0.clone();
+        Box::pin(async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            if input == json!("large") {
+                Ok(json!("x".repeat(1024 * 1024 - 2)))
+            } else if input == json!("integer") {
+                Ok(json!(9007199254740993_u64))
+            } else {
+                Err("effect result unknown".into())
+            }
+        })
+    }
+}
+
+#[tokio::test]
+async fn javascript_receipts_preserve_child_reference_unknown_and_oversized_recorded_results() {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let (_dir, _ns, store) = store().await;
+        let issuer = Issuer::default();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let recovery = Arc::new(AtomicBool::new(true));
+        let mut leaf_contract = contract(MethodMode::Mutation);
+        let Interface::Service {methods} = &mut leaf_contract.interface else { unreachable!() };
+        methods.get_mut("echo").unwrap().output = json!({"type":["string","integer"]});
+        let mut sink_entry = entry(true,Implementation::Native {implementation:"native.echo".into()},MethodMode::Mutation);
+        sink_entry.exports.get_mut("echo").unwrap().contract = leaf_contract.clone();
+        let sink = package("sink",sink_entry,None);
+        let mut declaration = entry(true, Implementation::JavaScript { module: "host.mjs".into(), realm: Realm::Shared }, MethodMode::Query);
+        declaration.imports.insert("child".into(), Import { contract: leaf_contract.clone(), cardinality: Cardinality::One });
+        let source = format!(r#"
+            let reference;
+            export const service = {{ async echo(input, _, context) {{
+                let reply;
+                if (input === 'recover') reply = await context.invoke({{ operation:'recover', reference }});
+                else if (input === 'missing') {{
+                    const missing = {{...reference, operation:'00000000-0000-0000-0000-000000000abc'}};
+                    reply = await context.invoke({{ operation:'recover', reference:missing }});
+                }} else {{
+                    reply = await context.invoke({{ operation:'mutate', import:'child', provider:0, method:'echo', input, operationId:input==='large'?'00000000-0000-0000-0000-000000000002':input==='integer'?'00000000-0000-0000-0000-000000000003':'00000000-0000-0000-0000-000000000001' }});
+                    reference = reply.reference;
+                }}
+                return JSON.stringify(reply);
+            }} }};
+            export function activate() {{ return {{echo:{{contract:{},service:['service']}}}}; }}
+        "#, serde_json::to_string(&contract(MethodMode::Query)).unwrap());
+        let forwarder = package("forwarder", declaration, Some(source));
+        let consumer = consumer();
+        let reader = package("reader",entry(true,Implementation::JavaScript {module:"host.mjs".into(),realm:Realm::Shared},MethodMode::Query),Some(format!(r#"
+            export const service = {{ async echo(input,_,context) {{
+                return JSON.stringify(await context.invoke({{operation:'recover',reference:JSON.parse(input)}}));
+            }} }};
+            export function activate() {{ return {{echo:{{contract:{},service:['service']}}}}; }}
+        "#,serde_json::to_string(&contract(MethodMode::Query)).unwrap())));
+        let mut desired = input(&forwarder, &consumer);
+        desired.instances.insert("reader".into(),node(&reader,5,true));
+        let mut reader_client = node(&consumer,6,false);
+        reader_client.bindings.insert("echo".into(),vec![Target::Instance {path:vec!["reader".into()],export:"echo".into()}]);
+        desired.instances.insert("reader-client".into(),reader_client);
+        let parent = desired.instances.get_mut("provider").unwrap();
+        parent.key = Uuid::from_u128(4);
+        parent.bindings.insert("child".into(), vec![Target::Instance { path:vec!["sink".into()],export:"echo".into() }]);
+        desired.instances.insert("sink".into(),node(&sink,1,true));
+        let deployment = Uuid::new_v4();
+        store.commit_application(deployment,0,desired,vec![],vec![sink,forwarder,consumer,reader]).await.unwrap();
+        let app = Application::start_from_store(store.clone(),deployment,registry_contract(Arc::new(ReceiptBoundaryEcho(calls.clone())),leaf_contract),issuer.clone(),Arc::new(RecoveryGrant {issuer:issuer.clone(),recovery:recovery.clone()}),Limits::default()).await.unwrap();
+        app.ready().await.unwrap();
+        let client = app.client();
+        let binding = client.bind(client.activation(&id(2)).unwrap(),"echo".into()).await.unwrap().remove(0);
+        let read = |input: &'static str| {
+            let client = client.clone(); let binding = binding.clone(); let issued = scope(&issuer,true);
+            async move {
+                let value = client.start(binding,"echo".into(),json!(input),issued,Attachments::new()).await.unwrap().result().await.unwrap();
+                serde_json::from_str::<OperationReply>(value.as_str().unwrap()).unwrap()
+            }
+        };
+        let first = read("fail").await;
+        assert!(matches!(first.receipt,Receipt::Recorded {outcome:OperationOutcome::Unknown {..},cleanup:OperationCleanup::Confirmed}));
+        assert_eq!(read("fail").await,first);
+        assert_eq!(read("recover").await,first);
+        assert_eq!(calls.load(Ordering::SeqCst),1);
+        let integer = read("integer").await;
+        assert!(matches!(integer.receipt,Receipt::Unavailable {..}));
+        assert_eq!(read("recover").await,integer);
+        let stored_integer = store.operation_observation(&integer.reference).await.unwrap().unwrap();
+        assert_eq!(stored_integer.outcome,OperationOutcome::Returned {value:json!(9007199254740993_u64)});
+        assert_eq!(stored_integer.cleanup,OperationCleanup::Confirmed);
+        assert_eq!(calls.load(Ordering::SeqCst),2);
+        let large = read("large").await;
+        assert!(matches!(large.receipt,Receipt::Unavailable {..}));
+        let stored = store.operation_observation(&large.reference).await.unwrap().unwrap();
+        assert_eq!(stored.outcome,OperationOutcome::Returned {value:json!("x".repeat(1024*1024-2))});
+        assert_eq!(stored.cleanup,OperationCleanup::Confirmed);
+        assert_eq!(read("large").await.reference,large.reference);
+        assert_eq!(calls.load(Ordering::SeqCst),3);
+        client.retire(client.activation(&id(1)).unwrap()).await.unwrap();
+        let reader_binding = client.bind(client.activation(&id(6)).unwrap(),"echo".into()).await.unwrap().remove(0);
+        let recover = |reference: maka_plugin_core::operation::RecoveryRef| {
+            let client = client.clone(); let binding = reader_binding.clone(); let issued = scope(&issuer,true);
+            async move {
+                let value = client.start(binding,"echo".into(),json!(serde_json::to_string(&reference).unwrap()),issued,Attachments::new()).await.unwrap().result().await.unwrap();
+                serde_json::from_str::<OperationReply>(value.as_str().unwrap()).unwrap()
+            }
+        };
+        // An independent reader has no import of the retired provider.
+        assert_eq!(recover(large.reference.clone()).await,large);
+        let mut missing = large.reference.clone(); missing.operation = Uuid::new_v4();
+        assert!(matches!(recover(missing).await.receipt,Receipt::NotRecorded));
+        recovery.store(false,Ordering::SeqCst);
+        let denied = recover(large.reference.clone()).await;
+        assert_eq!(denied.reference,large.reference);
+        assert!(unavailable(denied).contains("historical grant denied"));
+        assert_eq!(store.operation_observation(&large.reference).await.unwrap().unwrap(),stored);
+        assert_eq!(calls.load(Ordering::SeqCst),3);
+        app.shutdown().await.unwrap();drop(reader_binding);drop(binding);drop(app);drop(client);close(store).await;
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn undeliverable_reference_is_rejected_before_mutation_acceptance_or_effect() {
+    let (_dir, _ns, store) = store().await;
+    let issuer = Issuer::default();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut declared = contract(MethodMode::Mutation);
+    let Interface::Service { methods } = &mut declared.interface else {
+        unreachable!()
+    };
+    methods.get_mut("echo").unwrap().output =
+        json!({"type":"string","minimum":9007199254740993_u64});
+    let mut provider_entry = entry(
+        true,
+        Implementation::Native {
+            implementation: "native.echo".into(),
+        },
+        MethodMode::Mutation,
+    );
+    provider_entry.exports.get_mut("echo").unwrap().contract = declared.clone();
+    let mut consumer_entry = entry(
+        false,
+        Implementation::JavaScript {
+            module: "host.mjs".into(),
+            realm: Realm::Shared,
+        },
+        MethodMode::Mutation,
+    );
+    consumer_entry.imports.get_mut("echo").unwrap().contract = declared.clone();
+    let provider = package("large-contract", provider_entry, None);
+    let consumer = package(
+        "consumer",
+        consumer_entry,
+        Some("export function activate(){return {}; }".into()),
+    );
+    let deployment = Uuid::new_v4();
+    store
+        .commit_application(
+            deployment,
+            0,
+            input(&provider, &consumer),
+            vec![],
+            vec![provider, consumer],
+        )
+        .await
+        .unwrap();
+    let app = Application::start_from_store(
+        store.clone(),
+        deployment,
+        registry_contract(
+            Arc::new(Echo {
+                calls: calls.clone(),
+            }),
+            declared,
+        ),
+        issuer.clone(),
+        Arc::new(RecoveryGrant {
+            issuer: issuer.clone(),
+            recovery: Arc::new(AtomicBool::new(true)),
+        }),
+        Limits::default(),
+    )
+    .await
+    .unwrap();
+    app.ready().await.unwrap();
+    let client = app.client();
+    let binding = client
+        .bind(client.activation(&id(2)).unwrap(), "echo".into())
+        .await
+        .unwrap()
+        .remove(0);
+    let operation = Uuid::new_v4();
+    assert!(
+        client
+            .mutate(
+                binding.clone(),
+                "echo".into(),
+                json!("effect"),
+                scope(&issuer, true),
+                operation
+            )
+            .await
+            .err()
+            .unwrap()
+            .contains("cannot be represented exactly")
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    app.shutdown().await.unwrap();
+    drop(binding);
+    drop(app);
+    drop(client);
+    close(store).await;
 }

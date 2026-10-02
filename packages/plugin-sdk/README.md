@@ -40,8 +40,15 @@ Their bundled modules execute in the real application integration tests. Build t
 workspace before importing its package exports. Bundles must contain no unresolved
 imports or top-level await; they do not embed native extensions or confer authority.
 
-Host application services currently support queries; mutations, subscriptions and
-legacy business migration remain unfinished.
+Host application services support queries and durable, resource-free mutations.
+`context.invoke({ operation: 'mutate', ..., operationId })` returns an `OperationReply`
+with the original `reference` even when the result is unknown or cannot be delivered.
+Only `receipt.kind === 'recorded'` describes journal facts; inspect both `outcome`
+and `cleanup`. `recover` takes that exact reference, independently of current imports,
+and requires a separate recovery grant. `not_recorded` means an authorized lookup
+found no original row; `unavailable` makes no journal claim. Neither triggers replay.
+Keep the original reference for recovery; a new operation identity can execute a new effect.
+Subscriptions, effectful resource snapshots and business migration remain unfinished.
 
 Deployment sources can be stored in an owned State Root with
 `maka application commit --root ROOT --deployment UUID --expected-revision 0 --input input.json --package bundle.maka-plugin`.
@@ -49,7 +56,8 @@ A replacement requires the observed revision. `maka application read --root ROOT
 validates the persisted source and exact package bytes. The returned `DeploymentRef` identifies
 that state domain and source revision; it grants no access and makes no readiness claim.
 The Host executor can start from this snapshot and retains storage ownership through accepted
-work and cleanup. Durable mutations, recovery of pending effects and live reconciliation remain unfinished.
+work and cleanup. Original receipts survive source replacement and restart. Resolving unknown external effects,
+effectful resource snapshots and live reconciliation remain unfinished.
 
 The `./host` API and the guide below belong to the implementation still awaiting
 migration and removal. They are not an adapter for the application API.

@@ -63,7 +63,8 @@ enum Done {
         caller: Box<Scope>,
         scope: Box<Scope>,
         cleanup: Result<()>,
-        reply: oneshot::Sender<Result<Value>>,
+        receipt: Option<Box<Result<OperationObservation>>>,
+        reply: Reply,
         _slot: OwnedSemaphorePermit,
         _bytes: OwnedSemaphorePermit,
         attachments: Attachments,
@@ -74,6 +75,7 @@ enum Done {
         reference: Box<RecoveryRef>,
         caller: Box<Scope>,
         resource: Resource,
+        parent: Option<Ticket>,
         result: Box<Result<Option<OperationObservation>>>,
         reply: oneshot::Sender<Result<Option<OperationObservation>>>,
         _slot: OwnedSemaphorePermit,
@@ -516,7 +518,7 @@ impl Owner {
                 let Call {
                     mut parent,
                     binding,
-                    operation,
+                    kind,
                     method,
                     input,
                     scope,
@@ -524,9 +526,9 @@ impl Owner {
                     slot,
                     bytes,
                     resources,
-                    reply,
                 } = *call;
-                if reply.is_closed() && parent.is_none() {
+                let operation = kind.operation();
+                if kind.closed() && parent.is_none() {
                     return;
                 }
                 let admission = (|| {
@@ -586,6 +588,9 @@ impl Owner {
                         .map(OperationRequest::reference)
                         .transpose()
                         .map_err(|e| e.to_string())?;
+                    if let Some(reference) = &reference {
+                        check_reference(reference)?;
+                    }
                     match std::panic::catch_unwind(AssertUnwindSafe(|| {
                         let Interface::Service { methods } = &service.contract.interface else {
                             unreachable!()
@@ -634,7 +639,7 @@ impl Owner {
                 })();
                 match admission {
                     Err(error) => {
-                        let _ = reply.send(Err(error));
+                        kind.reject(error);
                     }
                     Ok((execution, child, request, reference)) => {
                         let caller = scope;
@@ -646,21 +651,26 @@ impl Owner {
                         }
                         let context = Context {
                             scope: scope.clone(),
+                            consumer: execution.provider().clone(),
                             operation: reference.clone(),
                             attachments: attachments.clone(),
                             imports: self.owned[execution.provider().instance()].imports.clone(),
                             dispatch: self.dispatch.clone(),
                         };
-                        let (output, result) = oneshot::channel();
-                        let id = execution.id();
+                        let output = kind.accept(execution.id(), reference);
+                        let is_mutation = operation.is_some();
                         self.jobs.push(Box::pin(async move {
                             let mut historical = None;
                             let mut claim = None;
+                            let mut receipt = None;
                             let dispatched = if let Some(request) = request {
                                 match store.as_ref().expect("persisted mutation").dispatch_operation(request).await {
                                     Ok(OperationDispatch::New(new)) => { claim = Some(new); Ok(()) },
                                     Ok(OperationDispatch::Existing(observation)) => { historical = Some(Box::new(observation)); Ok(()) },
-                                    Err(error) => Err(format!("operation dispatch was not confirmed: {error}")),
+                                    Err(error) => {
+                                        let error=format!("operation dispatch was not confirmed: {error}");
+                                        receipt=Some(Err(error.clone())); Err(error)
+                                    },
                                 }
                             } else { Ok(()) };
                             let invocation = async {
@@ -680,7 +690,7 @@ impl Owner {
                             };
                             let result = AssertUnwindSafe(invocation).catch_unwind().await;
                             let cleanup = scope.finish().await.map_err(|e| e.to_string());
-                            let (mut result, cleanup) = match result {
+                            let (result, cleanup) = match result {
                                 Ok(result) => (result, cleanup),
                                 Err(_) => (Err("Host service executor panicked".into()), Err("Host service executor disappeared".into())),
                             };
@@ -693,18 +703,13 @@ impl Owner {
                                     Ok(()) => OperationCleanup::Confirmed,
                                     Err(error) => OperationCleanup::Failed { diagnostic: diagnostic(error) },
                                 };
-                                if let Err(error) = store.as_ref().expect("original operation store").finish_operation(&claim, outcome, settled_cleanup).await {
-                                    // Durable uncertainty is not failed physical cleanup.
-                                    result = Err(format!("operation settlement outcome unknown; read original receipt: {error}"));
-                                }
+                                receipt=Some(store.as_ref().expect("original operation store").finish_operation(&claim, outcome, settled_cleanup).await.map_err(|error|format!("operation settlement outcome unknown; read original receipt: {error}")));
+                            }
+                            if is_mutation && historical.is_none() && receipt.is_none() {
+                                receipt=Some(Err("operation receipt unavailable; read original reference".into()));
                             }
                             Done::Called { parent, execution, result, historical, consumer, caller: Box::new(caller),
-                                scope: Box::new(scope), cleanup, reply: output, _slot: slot, _bytes: bytes, attachments, _resources: resources }
-                        }));
-                        let _ = reply.send(Ok(Accepted {
-                            id,
-                            recovery: reference,
-                            result,
+                                scope: Box::new(scope), cleanup, receipt: receipt.map(Box::new), reply: output, _slot: slot, _bytes: bytes, attachments, _resources: resources }
                         }));
                     }
                 }
@@ -713,6 +718,7 @@ impl Owner {
                 consumer,
                 reference,
                 scope,
+                mut parent,
                 reply,
                 _slot,
                 _bytes,
@@ -736,22 +742,28 @@ impl Owner {
                     Err(error) => {
                         let _ = reply.send(Err(error));
                     }
-                    Ok((store, resource)) => self.jobs.push(Box::pin(async move {
-                        let result = store
-                            .operation_observation(&reference)
-                            .await
-                            .map_err(|e| e.to_string());
-                        Done::Recovered {
-                            consumer,
-                            reference,
-                            caller: Box::new(scope),
-                            resource,
-                            result: Box::new(result),
-                            reply,
-                            _slot,
-                            _bytes,
+                    Ok((store, resource)) => {
+                        if let Some(ticket) = &mut parent {
+                            ticket.start();
                         }
-                    })),
+                        self.jobs.push(Box::pin(async move {
+                            let result = store
+                                .operation_observation(&reference)
+                                .await
+                                .map_err(|e| e.to_string());
+                            Done::Recovered {
+                                consumer,
+                                reference,
+                                caller: Box::new(scope),
+                                resource,
+                                parent,
+                                result: Box::new(result),
+                                reply,
+                                _slot,
+                                _bytes,
+                            }
+                        }));
+                    }
                 }
             }
         }
@@ -831,12 +843,13 @@ impl Owner {
             Done::Called {
                 parent,
                 execution,
-                mut result,
+                result,
                 historical,
                 consumer,
                 caller,
                 scope,
                 cleanup,
+                mut receipt,
                 reply,
                 _slot,
                 _bytes,
@@ -844,18 +857,10 @@ impl Owner {
                 _resources,
             } => {
                 if let Some(observation) = historical {
-                    result = self
-                        .recovery_gate(&consumer, &observation.reference, &caller)
-                        .and_then(|()| match observation.outcome {
-                            OperationOutcome::Returned { value } => Ok(value),
-                            OperationOutcome::Unknown { diagnostic } => {
-                                Err(format!("original operation outcome unknown: {diagnostic}"))
-                            }
-                            OperationOutcome::Unresolved => Err(
-                                "original operation outcome unresolved; no replay was performed"
-                                    .into(),
-                            ),
-                        });
+                    receipt = Some(Box::new(
+                        self.recovery_gate(&consumer, &observation.reference, &caller)
+                            .map(|()| *observation),
+                    ));
                 }
                 let _ = self.check_vm(execution.provider());
                 let failed = cleanup.is_err();
@@ -878,13 +883,14 @@ impl Owner {
                         _resources,
                     });
                 }
-                let _ = reply.send(result);
+                reply.send(result, receipt.map(|receipt| *receipt));
             }
             Done::Recovered {
                 consumer,
                 reference,
                 caller,
                 resource,
+                parent,
                 result,
                 reply,
                 _slot,
@@ -896,6 +902,9 @@ impl Owner {
                 self.runtime
                     .complete_resource(&resource, Ok(()))
                     .expect("owned receipt lookup");
+                if let Some(ticket) = parent {
+                    ticket.complete(Ok(()));
+                }
                 let _ = reply.send(result);
             }
             Done::Closed { activation, result } => {
@@ -930,7 +939,7 @@ impl Owner {
     }
 }
 
-fn diagnostic(error: &str) -> String {
+pub(super) fn diagnostic(error: &str) -> String {
     // Keep the encoded diagnostic within the journal budget as well as its
     // raw UTF-8 size. A control character may occupy six JSON bytes.
     let mut size = 0;

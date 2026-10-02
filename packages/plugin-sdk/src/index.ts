@@ -22,7 +22,12 @@ export type * from './generated/runtime.js';
 export { contracts } from './contracts.js';
 
 import type { ComponentInput, ComponentOutput, CapturePlan } from './generated/runtime.js';
-import type { HostRequest, HostObservation } from './generated/runtime.js';
+import type {
+  HostRequest,
+  HostObservation,
+  OperationReply,
+  ResourceMetadata,
+} from './generated/runtime.js';
 
 /** State is private to this component; external props and events still need their contract. */
 export type Output<State = unknown> = Omit<ComponentOutput, 'frame'> & {
@@ -39,6 +44,10 @@ export interface Component<State = unknown, Props = unknown> {
 
 /** Provided by the actual invocation. Retaining it does not retain request resources. */
 export interface RequestContext {
+  invoke(request: Extract<HostRequest, { operation: 'mutate' }>): Promise<OperationReply>;
+  invoke(request: Extract<HostRequest, { operation: 'recover' }>): Promise<OperationReply>;
+  invoke(request: Extract<HostRequest, { operation: 'metadata' }>): Promise<ResourceMetadata>;
+  invoke(request: Extract<HostRequest, { operation: 'read' }>): Promise<number[]>;
   invoke(request: HostRequest): Promise<unknown>;
 }
 

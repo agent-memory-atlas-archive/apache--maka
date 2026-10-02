@@ -31,6 +31,13 @@ impl Json {
             .map_err(|e| JsErrorBox::generic(e.to_string()))
     }
 }
+pub(super) fn check_delivery(value: &Value, limit: usize) -> Result<usize, JsErrorBox> {
+    let size = super::bridge::encoded_size(value, limit)
+        .map_err(|e| JsErrorBox::generic(e.to_string()))?;
+    exact_numbers(value)?;
+    Ok(size)
+}
+
 fn exact_numbers(value: &Value) -> Result<(), JsErrorBox> {
     match value {
         Value::Number(n) => {

@@ -99,7 +99,27 @@ impl maka_js_runtime::plugin::RequestBridge for Context {
                 method,
                 input,
                 operation_id,
-            } => self.mutate(&import, provider, method, input, operation_id),
+            } => {
+                let result = self.mutate(&import, provider, method, input, operation_id)?;
+                Ok(Box::pin(async move { receipt_value(result.await?) })
+                    as BoxFuture<'static, Result<Value>>)
+            }
+            HostRequest::Recover { reference } => {
+                let result = self.recover(reference.clone())?;
+                Ok(Box::pin(async move {
+                    let receipt = match result.await {
+                        Ok(Some(observation)) => Receipt::Recorded {
+                            outcome: observation.outcome,
+                            cleanup: observation.cleanup,
+                        },
+                        Ok(None) => Receipt::NotRecorded,
+                        Err(error) => Receipt::Unavailable {
+                            diagnostic: owner::diagnostic(&error),
+                        },
+                    };
+                    receipt_value(OperationReply { reference, receipt })
+                }) as BoxFuture<'static, Result<Value>>)
+            }
             operation => {
                 let result = self.read(operation);
                 Ok(Box::pin(async move { result }) as BoxFuture<'static, Result<Value>>)
@@ -121,7 +141,9 @@ impl Context {
         }
         let slot = match &operation {
             HostRequest::Metadata { slot } | HostRequest::Read { slot, .. } => slot,
-            HostRequest::Call { .. } | HostRequest::Mutate { .. } => unreachable!(),
+            HostRequest::Call { .. } | HostRequest::Mutate { .. } | HostRequest::Recover { .. } => {
+                unreachable!()
+            }
         };
         let resource = self
             .attachments
@@ -150,7 +172,9 @@ impl Context {
                 }
                 Ok(serde_json::json!(bytes))
             }
-            HostRequest::Call { .. } | HostRequest::Mutate { .. } => unreachable!(),
+            HostRequest::Call { .. } | HostRequest::Mutate { .. } | HostRequest::Recover { .. } => {
+                unreachable!()
+            }
         }));
         match result {
             Ok(result) => {
@@ -164,4 +188,16 @@ impl Context {
             }
         }
     }
+}
+
+// Delivery failure must never replace the original journal's durable outcome.
+fn receipt_value(mut reply: OperationReply) -> Result<Value> {
+    let value = serde_json::to_value(&reply).map_err(|e| e.to_string())?;
+    if maka_js_runtime::plugin::check_json_delivery(&value, 1024 * 1024).is_ok() {
+        return Ok(value);
+    }
+    reply.receipt = Receipt::Unavailable { diagnostic: "original receipt cannot be represented by this observer; read original journal through a compatible observer".into() };
+    let value = serde_json::to_value(reply).map_err(|e| e.to_string())?;
+    maka_js_runtime::plugin::check_json_delivery(&value, 1024 * 1024).map_err(|e| e.to_string())?;
+    Ok(value)
 }

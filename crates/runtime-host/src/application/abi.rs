@@ -58,6 +58,9 @@ pub enum HostRequest {
         #[serde(rename = "operationId")]
         operation_id: uuid::Uuid,
     },
+    Recover {
+        reference: maka_plugin_core::operation::RecoveryRef,
+    },
     Metadata {
         slot: String,
     },

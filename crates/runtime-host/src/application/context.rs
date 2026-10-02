@@ -24,6 +24,7 @@ use super::*;
 /// guest-supplied global name. Calls preserve the original private Scope evidence.
 pub struct Context {
     pub(super) scope: Scope,
+    pub(super) consumer: Activation,
     pub(super) operation: Option<RecoveryRef>,
     pub(super) attachments: Attachments,
     pub(super) imports: Arc<BTreeMap<String, Vec<Binding>>>,
@@ -50,7 +51,22 @@ impl Context {
         input: Value,
         attachments: Attachments,
     ) -> Result<BoxFuture<'static, Result<Value>>> {
-        self.enqueue(import, provider, method, input, attachments, None)
+        let (reply, result) = oneshot::channel();
+        self.enqueue(
+            import,
+            provider,
+            method,
+            input,
+            attachments,
+            CallKind::Query(reply),
+        )?;
+        Ok(Box::pin(async move {
+            result
+                .await
+                .map_err(|_| "Host deployment is closed".to_string())??
+                .result()
+                .await
+        }))
     }
     pub fn mutate(
         &self,
@@ -59,15 +75,45 @@ impl Context {
         method: String,
         input: Value,
         operation: Uuid,
-    ) -> Result<BoxFuture<'static, Result<Value>>> {
+    ) -> Result<BoxFuture<'static, Result<OperationReply>>> {
+        let (reply, result) = oneshot::channel();
         self.enqueue(
             import,
             provider,
             method,
             input,
             Attachments::new(),
-            Some(operation),
-        )
+            CallKind::Mutation { operation, reply },
+        )?;
+        Ok(Box::pin(async move {
+            Ok(result
+                .await
+                .map_err(|_| "Host deployment is closed".to_string())??
+                .result()
+                .await)
+        }))
+    }
+    /// Uses the original reference, never the current import/provider selection.
+    pub fn recover(
+        &self,
+        reference: RecoveryRef,
+    ) -> Result<BoxFuture<'static, Result<Option<OperationObservation>>>> {
+        if self.scope.cancellation.is_cancelled() {
+            return Err("Host request was revoked".into());
+        }
+        let dispatch = self.dispatch.upgrade().ok_or("Host deployment is closed")?;
+        let ticket = self.scope.resources.reserve().map_err(|e| e.to_string())?;
+        let result = dispatch.recover(
+            self.consumer.clone(),
+            reference,
+            self.scope.clone(),
+            Some(ticket),
+        )?;
+        Ok(Box::pin(async move {
+            result
+                .await
+                .map_err(|_| "Host deployment is closed".to_string())?
+        }))
     }
     #[allow(clippy::too_many_arguments)]
     fn enqueue(
@@ -77,8 +123,8 @@ impl Context {
         method: String,
         input: Value,
         attachments: Attachments,
-        operation: Option<Uuid>,
-    ) -> Result<BoxFuture<'static, Result<Value>>> {
+        kind: CallKind,
+    ) -> Result<()> {
         if self.scope.cancellation.is_cancelled() {
             return Err("Host request was revoked".into());
         }
@@ -92,21 +138,15 @@ impl Context {
         // Reserve before the first descriptor trait call. A native preparation
         // panic belongs to this already accepted parent's cleanup facts.
         let ticket = self.scope.resources.reserve().map_err(|e| e.to_string())?;
-        let result = dispatch.enqueue(
+        dispatch.enqueue(
             binding,
             method,
             input,
             self.scope.clone(),
             attachments,
             Some(ticket),
-            operation,
+            kind,
         )?;
-        Ok(Box::pin(async move {
-            result
-                .await
-                .map_err(|_| "Host deployment is closed".to_string())??
-                .result()
-                .await
-        }))
+        Ok(())
     }
 }

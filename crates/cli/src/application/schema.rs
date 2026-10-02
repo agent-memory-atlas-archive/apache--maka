@@ -55,6 +55,7 @@ pub(super) fn catalog() -> Value {
         root::<HostRequest>(&mut g),
         root::<HostObservation>(&mut g),
         root::<maka_plugin_core::operation::OperationObservation>(&mut g),
+        root::<maka_plugin_core::operation::OperationReply>(&mut g),
         root::<ResourceMetadata>(&mut g),
     ];
     // The union makes actual ABI types reachable to the generator. It is not

@@ -118,3 +118,26 @@ const fabricatedMutation = {
   attachments: { text: 'text' },
 } satisfies HostRequest;
 void [mutation, missingOperation, fabricatedMutation];
+
+async function durableReceipt(context: RequestContext) {
+  const reply = await context.invoke(mutation);
+  const operation: string = reply.reference.operation;
+  // @ts-expect-error Acceptance never proves that the journal has a result.
+  const prematureOutcome = reply.receipt.outcome;
+  if (reply.receipt.kind === 'recorded' && reply.receipt.outcome.kind === 'returned') {
+    // @ts-expect-error Business output must still be checked against its contract.
+    const text: string = reply.receipt.outcome.value;
+    void text;
+  }
+  const recovered = await context.invoke({ operation: 'recover', reference: reply.reference });
+  const sameSource = recovered.reference.source;
+  if (recovered.receipt.kind === 'unavailable') {
+    const reason: string = recovered.receipt.diagnostic;
+    void reason;
+  }
+  void [operation, prematureOutcome, sameSource];
+}
+const incompleteRecovery = { operation: 'recover' } as const;
+// @ts-expect-error Recovery requires the original reference, not a current provider alias.
+const missingReference: HostRequest = incompleteRecovery;
+void [durableReceipt, missingReference];

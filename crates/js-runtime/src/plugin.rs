@@ -48,6 +48,12 @@ use tokio_util::sync::CancellationToken;
 pub struct Error(pub String);
 type Result<T> = std::result::Result<T, Error>;
 
+/// Checks the actual JSON-to-JavaScript delivery rules without starting a VM.
+/// Values rejected here must not be silently rounded at a plugin boundary.
+pub fn check_json_delivery(value: &Value, limit: usize) -> std::result::Result<usize, Error> {
+    json::check_delivery(value, limit).map_err(|e| Error(e.to_string()))
+}
+
 #[derive(Clone)]
 pub struct Limits {
     pub heap_bytes: usize,

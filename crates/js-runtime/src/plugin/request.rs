@@ -122,7 +122,7 @@ async fn op_maka_request(
         .await
         .map_err(|_| JsErrorBox::generic("request observer panicked"))?
         .map_err(|e| JsErrorBox::generic(e.to_string()))?;
-    super::bridge::encoded_size(&output, 1024 * 1024)
+    super::json::check_delivery(&output, 1024 * 1024)
         .map_err(|e| JsErrorBox::generic(e.to_string()))?;
     tokio::task::yield_now().await;
     Json::encode(&output)

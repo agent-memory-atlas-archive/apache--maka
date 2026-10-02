@@ -42,6 +42,7 @@ export type RuntimeProtocol =
   | HostRequest
   | HostObservation
   | OperationObservation
+  | OperationReply
   | ResourceMetadata;
 export type ExecutionLocation = 'host' | 'ui';
 export type PresentationTarget = 'tui' | 'desktop';
@@ -265,6 +266,10 @@ export type HostRequest =
       operation: 'mutate';
     }
   | {
+      reference: RecoveryRef;
+      operation: 'recover';
+    }
+  | {
       slot: string;
       operation: 'metadata';
     }
@@ -274,6 +279,7 @@ export type HostRequest =
       end: number;
       operation: 'read';
     };
+export type RecoveryProtocol = 'journal_v1';
 export type Identity =
   | {
       invocation: Invocation;
@@ -296,7 +302,6 @@ export type Identity =
  * an unrevoked Host record and the issuing principal's current authorization.
  */
 export type Id = string;
-export type RecoveryProtocol = 'journal_v1';
 /**
  * Unresolved means no durable result is known, including after process loss.
  */
@@ -322,6 +327,23 @@ export type OperationCleanup =
   | {
       diagnostic: string;
       kind: 'failed';
+    };
+/**
+ * A caller's receipt observation, never an execution grant. Unavailable makes
+ * no claim about the journal's contents or physical cleanup.
+ */
+export type Receipt =
+  | {
+      kind: 'not_recorded';
+    }
+  | {
+      outcome: OperationOutcome;
+      cleanup: OperationCleanup;
+      kind: 'recorded';
+    }
+  | {
+      diagnostic: string;
+      kind: 'unavailable';
     };
 
 /**
@@ -585,6 +607,16 @@ export interface HostActivation {
   contract: Contract;
   service: string[];
 }
+export interface RecoveryRef {
+  source: DeploymentRef;
+  namespace: InstanceId;
+  export: string;
+  method: string;
+  operation: string;
+  fingerprint: string;
+  contract: Contract;
+  recovery: RecoveryProtocol;
+}
 /**
  * Actual callback observation. Neither the source nor receipt is a grant.
  */
@@ -599,20 +631,14 @@ export interface Invocation {
   invocation_id: string;
   [k: string]: unknown | undefined;
 }
-export interface RecoveryRef {
-  source: DeploymentRef;
-  namespace: InstanceId;
-  export: string;
-  method: string;
-  operation: string;
-  fingerprint: string;
-  contract: Contract;
-  recovery: RecoveryProtocol;
-}
 export interface OperationObservation {
   reference: RecoveryRef;
   outcome: OperationOutcome;
   cleanup: OperationCleanup;
+}
+export interface OperationReply {
+  reference: RecoveryRef;
+  receipt: Receipt;
 }
 export interface ResourceMetadata {
   type: ResourceType;

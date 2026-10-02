@@ -30,7 +30,10 @@ use maka_plugin_core::{
     composition::{ExecutionLocation, Input, InstanceId},
     contract::{Contract, Interface, MethodMode},
     deployment::DeploymentRef,
-    operation::{OperationCleanup, OperationObservation, OperationOutcome, RecoveryRef},
+    operation::{
+        OperationCleanup, OperationObservation, OperationOutcome, OperationReply, Receipt,
+        RecoveryRef,
+    },
     package::{Implementation, PackageRef, Packages},
     plan::{Plan, RemoteExports},
     runtime::{Activation, Capability, Published, Status},
@@ -181,9 +184,6 @@ impl Binding {
 
 pub struct Accepted {
     pub id: Uuid,
-    /// Original receipt identity. Acceptance owns execution; only the result
-    /// observer confirms durable dispatch/settlement. This value grants nothing.
-    pub recovery: Option<RecoveryRef>,
     result: oneshot::Receiver<Result<Value>>,
 }
 impl Accepted {
@@ -192,6 +192,24 @@ impl Accepted {
         self.result
             .await
             .map_err(|_| "Host executor owner disappeared".to_string())?
+    }
+}
+
+/// An accepted mutation always retains its original reference, even when its
+/// result observer loses the owner. Only a recorded receipt confirms journal facts.
+pub struct Mutation {
+    pub id: Uuid,
+    pub reference: RecoveryRef,
+    result: oneshot::Receiver<OperationReply>,
+}
+impl Mutation {
+    pub async fn result(self) -> OperationReply {
+        self.result.await.unwrap_or_else(|_| OperationReply {
+            reference: self.reference,
+            receipt: Receipt::Unavailable {
+                diagnostic: "Host executor owner disappeared; read original receipt".into(),
+            },
+        })
     }
 }
 
@@ -242,6 +260,7 @@ pub(super) enum Command {
         consumer: Activation,
         reference: Box<RecoveryRef>,
         scope: Scope,
+        parent: Option<Ticket>,
         reply: oneshot::Sender<Result<Option<OperationObservation>>>,
         _slot: OwnedSemaphorePermit,
         _bytes: OwnedSemaphorePermit,
@@ -249,7 +268,7 @@ pub(super) enum Command {
 }
 pub(super) struct Call {
     parent: Option<Ticket>,
-    operation: Option<Uuid>,
+    kind: CallKind,
     binding: Binding,
     method: String,
     input: Value,
@@ -258,7 +277,94 @@ pub(super) struct Call {
     slot: OwnedSemaphorePermit,
     bytes: OwnedSemaphorePermit,
     resources: OwnedSemaphorePermit,
-    reply: oneshot::Sender<Result<Accepted>>,
+}
+pub(super) enum CallKind {
+    Query(oneshot::Sender<Result<Accepted>>),
+    Mutation {
+        operation: Uuid,
+        reply: oneshot::Sender<Result<Mutation>>,
+    },
+}
+impl CallKind {
+    fn operation(&self) -> Option<Uuid> {
+        match self {
+            Self::Query(_) => None,
+            Self::Mutation { operation, .. } => Some(*operation),
+        }
+    }
+    fn closed(&self) -> bool {
+        match self {
+            Self::Query(reply) => reply.is_closed(),
+            Self::Mutation { reply, .. } => reply.is_closed(),
+        }
+    }
+    fn reject(self, error: String) {
+        match self {
+            Self::Query(reply) => {
+                let _ = reply.send(Err(error));
+            }
+            Self::Mutation { reply, .. } => {
+                let _ = reply.send(Err(error));
+            }
+        }
+    }
+    fn accept(self, id: Uuid, reference: Option<RecoveryRef>) -> Reply {
+        match self {
+            Self::Query(reply) => {
+                let (output, result) = oneshot::channel();
+                let _ = reply.send(Ok(Accepted { id, result }));
+                Reply::Query(output)
+            }
+            Self::Mutation { reply, .. } => {
+                let reference = reference.expect("admitted mutation reference");
+                let (output, result) = oneshot::channel();
+                let _ = reply.send(Ok(Mutation {
+                    id,
+                    reference: reference.clone(),
+                    result,
+                }));
+                Reply::Mutation {
+                    reference: Box::new(reference),
+                    reply: output,
+                }
+            }
+        }
+    }
+}
+pub(super) enum Reply {
+    Query(oneshot::Sender<Result<Value>>),
+    Mutation {
+        reference: Box<RecoveryRef>,
+        reply: oneshot::Sender<OperationReply>,
+    },
+}
+impl Reply {
+    fn send(self, result: Result<Value>, receipt: Option<Result<OperationObservation>>) {
+        match self {
+            Self::Query(reply) => {
+                let _ = reply.send(result);
+            }
+            Self::Mutation { reference, reply } => {
+                let receipt = match receipt.expect("mutation completion carries receipt knowledge")
+                {
+                    Ok(observation) => {
+                        assert_eq!(*reference, observation.reference);
+                        Receipt::Recorded {
+                            outcome: observation.outcome,
+                            cleanup: observation.cleanup,
+                        }
+                    }
+                    Err(error) => Receipt::Unavailable {
+                        diagnostic: owner::diagnostic(&error),
+                    },
+                };
+                let _ = reply.send(OperationReply {
+                    reference: *reference,
+                    receipt,
+                });
+            }
+        }
+    }
 }
 pub(super) enum Control {
     Retire {
@@ -477,8 +583,17 @@ impl Client {
         scope: Scope,
         attachments: Attachments,
     ) -> Result<Accepted> {
-        self.dispatch
-            .enqueue(binding, method, input, scope, attachments, None, None)?
+        let (reply, result) = oneshot::channel();
+        self.dispatch.enqueue(
+            binding,
+            method,
+            input,
+            scope,
+            attachments,
+            None,
+            CallKind::Query(reply),
+        )?;
+        result
             .await
             .map_err(|_| "Host deployment is closed".to_string())?
     }
@@ -489,17 +604,18 @@ impl Client {
         input: Value,
         scope: Scope,
         operation: Uuid,
-    ) -> Result<Accepted> {
-        self.dispatch
-            .enqueue(
-                binding,
-                method,
-                input,
-                scope,
-                Attachments::new(),
-                None,
-                Some(operation),
-            )?
+    ) -> Result<Mutation> {
+        let (reply, result) = oneshot::channel();
+        self.dispatch.enqueue(
+            binding,
+            method,
+            input,
+            scope,
+            Attachments::new(),
+            None,
+            CallKind::Mutation { operation, reply },
+        )?;
+        result
             .await
             .map_err(|_| "Host deployment is closed".to_string())?
     }
@@ -510,32 +626,8 @@ impl Client {
         reference: RecoveryRef,
         scope: Scope,
     ) -> Result<Option<OperationObservation>> {
-        let size = check_json(&serde_json::to_value(&reference).map_err(|e| e.to_string())?)?;
-        let slot = self
-            .dispatch
-            .slots
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| "Host recovery capacity exhausted")?;
-        let bytes = self
-            .dispatch
-            .bytes
-            .clone()
-            .try_acquire_many_owned(size.max(1) as u32)
-            .map_err(|_| "Host recovery budget exhausted")?;
-        let (reply, result) = oneshot::channel();
         self.dispatch
-            .commands
-            .try_send(Command::Recover {
-                consumer,
-                reference: Box::new(reference),
-                scope,
-                reply,
-                _slot: slot,
-                _bytes: bytes,
-            })
-            .map_err(|e| e.to_string())?;
-        result
+            .recover(consumer, reference, scope, None)?
             .await
             .map_err(|_| "Host deployment is closed".to_string())?
     }
@@ -578,12 +670,25 @@ fn check_attachments(attachments: &Attachments) -> Result<usize> {
 }
 
 fn check_json(value: &Value) -> Result<usize> {
-    struct Count(usize);
+    check_json_limit(value, 1024 * 1024)
+}
+
+// Leave room for receipt status and bounded diagnostics in the 1 MiB JS envelope.
+fn check_reference(reference: &RecoveryRef) -> Result<usize> {
+    maka_js_runtime::plugin::check_json_delivery(
+        &serde_json::to_value(reference).map_err(|e| e.to_string())?,
+        512 * 1024,
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn check_json_limit(value: &Value, limit: usize) -> Result<usize> {
+    struct Count(usize, usize);
     impl Write for Count {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
             self.0 = self.0.saturating_add(bytes.len());
-            if self.0 > 1024 * 1024 {
-                return Err(std::io::Error::other("service JSON exceeds 1 MiB"));
+            if self.0 > self.1 {
+                return Err(std::io::Error::other("service JSON exceeds byte budget"));
             }
             Ok(bytes.len())
         }
@@ -591,7 +696,7 @@ fn check_json(value: &Value) -> Result<usize> {
             Ok(())
         }
     }
-    let mut count = Count(0);
+    let mut count = Count(0, limit);
     serde_json::to_writer(&mut count, value).map_err(|e| e.to_string())?;
     Ok(count.0)
 }
@@ -607,8 +712,8 @@ impl Dispatch {
         scope: Scope,
         attachments: Attachments,
         mut parent: Option<Ticket>,
-        operation: Option<Uuid>,
-    ) -> Result<oneshot::Receiver<Result<Accepted>>> {
+        kind: CallKind,
+    ) -> Result<()> {
         let size = check_json(&input)?;
         let resource_bytes = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             check_attachments(&attachments)
@@ -640,11 +745,10 @@ impl Dispatch {
             .clone()
             .try_acquire_many_owned(resource_bytes as u32)
             .map_err(|_| "Host attachment budget exhausted")?;
-        let (reply, result) = oneshot::channel();
         self.commands
             .try_send(Command::Call(Box::new(Call {
                 parent,
-                operation,
+                kind,
                 binding,
                 method,
                 input,
@@ -653,8 +757,39 @@ impl Dispatch {
                 slot,
                 bytes,
                 resources,
-                reply,
             })))
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    fn recover(
+        &self,
+        consumer: Activation,
+        reference: RecoveryRef,
+        scope: Scope,
+        parent: Option<Ticket>,
+    ) -> Result<oneshot::Receiver<Result<Option<OperationObservation>>>> {
+        let size = check_reference(&reference)?;
+        let slot = self
+            .slots
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| "Host recovery capacity exhausted")?;
+        let bytes = self
+            .bytes
+            .clone()
+            .try_acquire_many_owned(size.max(1) as u32)
+            .map_err(|_| "Host recovery budget exhausted")?;
+        let (reply, result) = oneshot::channel();
+        self.commands
+            .try_send(Command::Recover {
+                consumer,
+                reference: Box::new(reference),
+                scope,
+                parent,
+                reply,
+                _slot: slot,
+                _bytes: bytes,
+            })
             .map_err(|e| e.to_string())?;
         Ok(result)
     }

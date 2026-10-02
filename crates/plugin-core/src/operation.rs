@@ -104,3 +104,25 @@ pub struct OperationObservation {
     pub outcome: OperationOutcome,
     pub cleanup: OperationCleanup,
 }
+
+/// A caller's receipt observation, never an execution grant. Unavailable makes
+/// no claim about the journal's contents or physical cleanup.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Receipt {
+    /// An authorized lookup found no row at the exact original reference.
+    NotRecorded,
+    Recorded {
+        outcome: OperationOutcome,
+        cleanup: OperationCleanup,
+    },
+    Unavailable {
+        diagnostic: String,
+    },
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OperationReply {
+    pub reference: RecoveryRef,
+    pub receipt: Receipt,
+}
