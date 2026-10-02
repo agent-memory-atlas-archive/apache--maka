@@ -81,7 +81,7 @@ impl Scene {
             input.instances.get_mut("counter").unwrap().package = counter.application_ref().into();
             packages.push(counter);
         }
-        let mut application = Application::new(
+        let application = Application::new(
             &input,
             packages,
             timer.handle().clone(),
@@ -90,6 +90,9 @@ impl Scene {
             remotes,
         )
         .unwrap();
+        Self::from_application(cx, application)
+    }
+    fn from_application(cx: &mut TestAppContext, mut application: DesktopApplication) -> Self {
         let root = application.mount_launch(serde_json::json!({})).unwrap();
         let outer = application.child_mount(&root, "editor").unwrap().clone();
         let editor = application
@@ -998,9 +1001,10 @@ impl maka_ui::actions::NativeService for ForwardHostRead {
         })
     }
 }
-fn host_read_fixture(
+async fn host_read_fixture(
     query: std::sync::Arc<dyn maka_runtime_host::application::Handler>,
     issuer: maka_plugins::call::Issuer,
+    store: std::sync::Arc<maka_event_log::EventLog>,
 ) -> maka_runtime_host::application::Application {
     use maka_plugin_core::{
         composition::{
@@ -1139,15 +1143,43 @@ fn host_read_fixture(
             }),
         )
         .unwrap();
-    Application::start(
-        input,
-        vec![provider, consumer],
+    let deployment = uuid::Uuid::new_v4();
+    store
+        .commit_application(deployment, 0, input, vec![], vec![provider, consumer])
+        .await
+        .unwrap();
+    Application::start_from_store(
+        store,
+        deployment,
         native,
         issuer.clone(),
         std::sync::Arc::new(HostGrant(issuer)),
         Default::default(),
     )
+    .await
     .unwrap()
+}
+fn stored_root(
+    timer: &tokio::runtime::Runtime,
+) -> (
+    tempfile::TempDir,
+    maka_event_log::root::RootNamespaces,
+    std::sync::Arc<maka_event_log::EventLog>,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let ns = maka_event_log::root::RootNamespaces {
+        ownership: dir.path().join("owners"),
+        control: dir.path().join("control"),
+    };
+    let owner = std::sync::Arc::new(
+        maka_event_log::root::RootOwner::create(&dir.path().join("root"), &ns).unwrap(),
+    );
+    let store = std::sync::Arc::new(
+        timer
+            .block_on(maka_event_log::EventLog::for_root(owner))
+            .unwrap(),
+    );
+    (dir, ns, store)
 }
 #[gpui::test]
 fn host_query_keeps_real_kit_snapshot_after_edit_remove_and_window_cleanup(
@@ -1168,18 +1200,18 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
     let release = std::sync::Arc::new(tokio::sync::Semaphore::new(0));
     let snapshot = std::sync::Arc::new(std::sync::Mutex::new(None));
     let issuer = maka_plugins::call::Issuer::default();
-    let host = {
-        let _guard = timer.enter();
-        host_read_fixture(
-            std::sync::Arc::new(HostRead {
-                fail_cleanup,
-                started: started.clone(),
-                release: release.clone(),
-                snapshot: snapshot.clone(),
-            }),
-            issuer.clone(),
-        )
-    };
+    let (host_dir, host_ns, host_store) = stored_root(&timer);
+    let host_root = host_dir.path().join("root");
+    let host = timer.block_on(host_read_fixture(
+        std::sync::Arc::new(HostRead {
+            fail_cleanup,
+            started: started.clone(),
+            release: release.clone(),
+            snapshot: snapshot.clone(),
+        }),
+        issuer.clone(),
+        host_store,
+    ));
     timer.block_on(host.ready()).unwrap();
     let client = host.client();
     let consumer = client
@@ -1261,14 +1293,36 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
             implementation: bridge,
         }],
     };
-    let scene = Scene::with_registry(
-        cx,
-        &timer,
-        false,
-        (input, packages),
-        widgets::registry(),
-        remotes,
-    );
+    let (dir, namespaces, store) = stored_root(&timer);
+    let root = dir.path().join("root");
+    let deployment = uuid::Uuid::new_v4();
+    let observations = remotes
+        .declarations
+        .into_iter()
+        .map(
+            |(capability, declaration)| maka_plugin_core::deployment::RemoteObservation {
+                capability,
+                declaration,
+            },
+        )
+        .collect();
+    let ui_source = timer
+        .block_on(store.commit_application(deployment, 0, input, observations, packages))
+        .unwrap();
+    let application = timer
+        .block_on(Application::start_from_store(
+            store.clone(),
+            deployment,
+            PresentationTarget::Desktop,
+            timer.handle().clone(),
+            Default::default(),
+            widgets::registry(),
+            remotes.registrations,
+        ))
+        .unwrap();
+    drop(store);
+    let scene = Scene::from_application(cx, application);
+    cx.update(|cx| actions::own(scene.app.clone(), cx).unwrap());
     scene.draw(cx);
     // Source facts alone cannot authorize a call in the independent Host kernel.
     let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
@@ -1314,6 +1368,7 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
         .unwrap();
     });
     let source = observed.lock().unwrap().clone().unwrap();
+    assert_eq!(source.deployment(), Some(&ui_source));
     assert_eq!(source.consumer().instance(), &consumer_id);
     assert_eq!(source.mount(), &scene.root);
     assert!(!source.execution_id().is_nil());
@@ -1344,6 +1399,14 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
     scene.close(cx);
     assert!(scene.resources.borrow().surface_closed);
     assert!(editor_released.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(
+        maka_event_log::root::RootOwner::open(&root, &namespaces).is_err(),
+        "accepted query retains the UI Root after actual native destruction"
+    );
+    assert!(
+        maka_event_log::root::RootOwner::open(&host_root, &host_ns).is_err(),
+        "the independent Host execution owns its own original Root"
+    );
     assert!(weak.upgrade().is_some());
     assert_eq!(
         host.client()
@@ -1370,6 +1433,8 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
                 .contains("Host snapshot cleanup unconfirmed")
         );
         assert!(timer.block_on(host.shutdown()).is_err());
+        assert!(maka_event_log::root::RootOwner::open(&root, &namespaces).is_err());
+        assert!(maka_event_log::root::RootOwner::open(&host_root, &host_ns).is_err());
         drop(host);
         cx.run_until_parked();
         assert!(weak.upgrade().is_some());
@@ -1377,6 +1442,35 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
         await_action(cx, &scene.app, |a| a.accepted_action_count() == 0);
         assert!(weak.upgrade().is_none());
         timer.block_on(host.shutdown()).unwrap();
+        scene.app.borrow_mut().shutdown().unwrap();
+        timer.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                for (path, ns) in [(&root, &namespaces), (&host_root, &host_ns)] {
+                    loop {
+                        match maka_event_log::root::RootOwner::open(path, ns) {
+                            Ok(owner) => break drop(owner),
+                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                tokio::task::yield_now().await
+                            }
+                            Err(e) => panic!("{e}"),
+                        }
+                    }
+                }
+            })
+            .await
+            .unwrap();
+        });
     }
     drop(subscription);
+    let application = Rc::downgrade(&scene.app);
+    drop(scene);
+    cx.run_until_parked();
+    if fail_cleanup {
+        assert!(
+            application.upgrade().is_some(),
+            "failed query remains owned after all visual observers exit"
+        );
+        assert!(maka_event_log::root::RootOwner::open(&root, &namespaces).is_err());
+        assert!(maka_event_log::root::RootOwner::open(&host_root, &host_ns).is_err());
+    }
 }

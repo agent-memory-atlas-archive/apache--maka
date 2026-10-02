@@ -65,7 +65,7 @@ impl Presenter {
         if input.environment.presentation != Some(PresentationTarget::Tui) {
             return Err(Error::Invalid("terminal deployment required".into()));
         }
-        let mut application = Application::new(
+        let application = Application::new(
             input,
             packages,
             scheduler,
@@ -73,6 +73,29 @@ impl Presenter {
             native,
             Default::default(),
         )?;
+        Self::mount(application, props)
+    }
+    /// Construct on the actual terminal owner thread from its owned source.
+    pub async fn start_from_store(
+        store: std::sync::Arc<maka_event_log::EventLog>,
+        deployment: Uuid,
+        scheduler: tokio::runtime::Handle,
+        native: NativeRegistry<dyn Widget>,
+        props: Value,
+    ) -> maka_ui::Result<Self> {
+        let application = Application::start_from_store(
+            store,
+            deployment,
+            PresentationTarget::Tui,
+            scheduler,
+            Default::default(),
+            native,
+            vec![],
+        )
+        .await?;
+        Self::mount(application, props)
+    }
+    fn mount(mut application: Application<dyn Widget>, props: Value) -> maka_ui::Result<Self> {
         let root = application.mount_launch(props)?;
         Ok(Self {
             application,

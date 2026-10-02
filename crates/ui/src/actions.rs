@@ -63,11 +63,15 @@ pub trait NativeService: Send + Sync + 'static {
 /// Guest JSON cannot supply or replace this source.
 #[derive(Clone, Debug)]
 pub struct ServiceSource {
+    deployment: Option<maka_plugin_core::deployment::DeploymentRef>,
     consumer: maka_plugin_core::runtime::Activation,
     mount: Mount,
     execution: Uuid,
 }
 impl ServiceSource {
+    pub fn deployment(&self) -> Option<&maka_plugin_core::deployment::DeploymentRef> {
+        self.deployment.as_ref()
+    }
     pub fn consumer(&self) -> &maka_plugin_core::runtime::Activation {
         &self.consumer
     }
@@ -488,6 +492,7 @@ impl<V: ?Sized + 'static> Application<V> {
             let id = execution.id();
             let future = implementation.call(ServiceRequest {
                 source: ServiceSource {
+                    deployment: self.source.clone(),
                     consumer: action.capability.consumer().clone(),
                     mount: action.consumer.clone(),
                     execution: id,

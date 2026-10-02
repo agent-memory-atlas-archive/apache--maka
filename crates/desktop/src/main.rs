@@ -31,20 +31,17 @@ use gpui_kit::{
 };
 #[cfg(test)]
 use gpui_kit::{App, TestAppContext, point};
-use maka_plugin_core::{
-    composition::{Input, PresentationTarget},
-    runtime::Mount,
-};
+use maka_plugin_core::{composition::PresentationTarget, runtime::Mount};
 use maka_ui::{Application, Direction, Node, Presentation, Surface as SurfaceDeclaration};
 type DesktopApplication = Application<dyn widgets::Widget>;
-use std::{cell::RefCell, io::Read, path::PathBuf, rc::Rc};
+use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc};
 
 #[derive(Parser)]
 struct Args {
     #[arg(long)]
-    input: PathBuf,
-    #[arg(long = "package", required = true)]
-    packages: Vec<PathBuf>,
+    root: PathBuf,
+    #[arg(long)]
+    deployment: uuid::Uuid,
 }
 
 struct Surface {
@@ -284,34 +281,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::set_logger(&NativeLog)?;
     log::set_max_level(log::LevelFilter::Warn);
     let args = Args::parse();
-    let mut bytes = Vec::new();
-    std::fs::File::open(args.input)?
-        .take(512 * 1024 + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() > 512 * 1024 {
-        return Err("application input exceeds 512 KiB".into());
-    }
-    let input: Input = serde_json::from_slice(&bytes)?;
-    if input.environment.presentation != Some(PresentationTarget::Desktop) {
-        return Err("desktop presentation required".into());
-    }
-    let packages = args
-        .packages
-        .into_iter()
-        .map(|path| maka_plugins::package::Package::read_from(&std::path::absolute(path)?))
-        .collect::<Result<Vec<_>, _>>()?;
     let timer = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_time()
         .build()?;
-    let mut application = Application::new(
-        &input,
-        packages,
+    let owner = Arc::new(maka_event_log::root::RootOwner::open(
+        &args.root,
+        &maka_event_log::root::RootNamespaces::for_current_account()?,
+    )?);
+    let store = Arc::new(timer.block_on(maka_event_log::EventLog::for_root(owner))?);
+    let mut application = timer.block_on(Application::start_from_store(
+        store,
+        args.deployment,
+        PresentationTarget::Desktop,
         timer.handle().clone(),
         maka_js_limits(),
         widgets::registry(),
-        Default::default(),
-    )?;
+        vec![],
+    ))?;
     let mount = application.mount_launch(serde_json::json!({}))?;
     let frame = application.frame(&mount)?;
     let Some(SurfaceDeclaration::Window {
@@ -379,7 +366,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .close(&content_mount, Err(error.clone()));
                         *content_error.borrow_mut() = Some(error);
                         window.remove_window();
-                        cx.quit();
                     }
                 }
                 let surface = cx.new(|_| Surface {
@@ -395,9 +381,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 surface
             }) {
                 let _ = application.borrow_mut().retire(&mount);
+                let _ = application
+                    .borrow_mut()
+                    .close(&mount, Err(error.to_string()));
                 *startup_error.borrow_mut() =
                     Some(format!("native window creation failed: {error}"));
-                cx.quit();
+                eprintln!("native window creation failed; cleanup unconfirmed: {error}");
             } else {
                 cx.activate(true);
             }
@@ -485,7 +474,34 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         let timer = timer();
-        let mut application = application(&timer);
+        let dir = tempfile::tempdir().unwrap();
+        let ns = maka_event_log::root::RootNamespaces {
+            ownership: dir.path().join("owners"),
+            control: dir.path().join("control"),
+        };
+        let root_path = dir.path().join("root");
+        let owner = Arc::new(maka_event_log::root::RootOwner::create(&root_path, &ns).unwrap());
+        let store = Arc::new(
+            timer
+                .block_on(maka_event_log::EventLog::for_root(owner))
+                .unwrap(),
+        );
+        let deployment = uuid::Uuid::new_v4();
+        let (input, packages) = support::native_fixture();
+        timer
+            .block_on(store.commit_application(deployment, 0, input, vec![], packages))
+            .unwrap();
+        let mut application = timer
+            .block_on(Application::start_from_store(
+                store,
+                deployment,
+                PresentationTarget::Desktop,
+                timer.handle().clone(),
+                Default::default(),
+                widgets::registry(),
+                vec![],
+            ))
+            .unwrap();
         let root = application.mount_launch(serde_json::json!({})).unwrap();
         let app = Rc::new(RefCell::new(application));
         let (wake, wakes) = tokio::sync::mpsc::unbounded_channel();
@@ -495,6 +511,7 @@ mod tests {
         )));
         cx.update(|cx| {
             gpui_kit::init(cx);
+            actions::own(app.clone(), cx).unwrap();
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 // A real failed claim exercises the startup path. GPUI still
                 // draws the returned content once, even after remove_window.
@@ -529,6 +546,22 @@ mod tests {
         assert!(resources.borrow().owners.is_empty());
         assert!(app.borrow().is_retiring(&root));
         assert!(app.borrow().frame(&root).is_ok());
+        assert!(app.borrow_mut().shutdown().is_err());
+        let weak = Rc::downgrade(&app);
+        drop(app);
+        drop(resources);
+        cx.run_until_parked();
+        assert!(
+            weak.upgrade().is_some(),
+            "failed startup keeps the independent Global owner"
+        );
+        assert_eq!(
+            maka_event_log::root::RootOwner::open(&root_path, &ns)
+                .err()
+                .unwrap()
+                .kind(),
+            std::io::ErrorKind::WouldBlock
+        );
     }
 
     #[gpui::test]

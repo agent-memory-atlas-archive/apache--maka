@@ -7958,6 +7958,7 @@ dependencies = [
  "clap",
  "gpui-kit",
  "log",
+ "maka-event-log",
  "maka-js-runtime",
  "maka-plugin-core",
  "maka-plugins",
@@ -7965,6 +7966,7 @@ dependencies = [
  "maka-ui",
  "schemars 1.2.2",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-util",
  "uuid",
@@ -8613,6 +8615,7 @@ name = "maka-ui"
 version = "0.2.0"
 dependencies = [
  "jsonschema 0.56.0",
+ "maka-event-log",
  "maka-js-runtime",
  "maka-plugin-core",
  "maka-plugins",

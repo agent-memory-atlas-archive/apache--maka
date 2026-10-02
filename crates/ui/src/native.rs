@@ -199,6 +199,14 @@ impl<V: ?Sized + 'static> NativeRegistry<V> {
             .expect("unique native text reader");
         registry
     }
+    pub(crate) fn validate_implementation(&self, implementation: &str) -> Result<()> {
+        if !self.factories.contains_key(implementation) {
+            return Err(Error::Invalid(format!(
+                "native implementation not provided: {implementation}"
+            )));
+        }
+        Ok(())
+    }
     pub(crate) fn activate(
         &self,
         implementation: &str,

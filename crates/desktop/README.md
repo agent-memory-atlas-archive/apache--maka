@@ -38,8 +38,8 @@ native resource lease. A detached, retired child closes only after its last leas
 has actually been destroyed; the owner-thread receipt task does not wait for more
 input. A visible retired scene stays fenced. Cleanup follows the original mount
 parent chain, so one surface cannot acknowledge another surface's resources.
-The receipt task belongs to the surface, uses weak application references and
-is cancelled when the surface is destroyed. GPUI Kit editor entities retain their
+An independent window owner retains the application until backend destruction,
+resource release and mount cleanup are confirmed, even after Surface destruction. GPUI Kit editor entities retain their
 lease through actual release processing; dropping a handle alone is insufficient.
 
 The imported Editor uses Kit's buffer, selection, undo and platform text-input
@@ -73,3 +73,9 @@ Native dependencies include MPL-2.0 [dwrote](https://github.com/servo/dwrote)
 (Windows) and build-time [cbindgen](https://github.com/mozilla/cbindgen).
 Their source is not vendored. Binary distribution must include licenses and
 source references; this crate does not yet provide release packaging.
+
+Production startup takes `--root PATH --deployment UUID`, reads the original
+stored source and exact package bytes, and checks the Desktop target before
+activation. A newer desired source does not rewrite the running source. Root
+custody remains with the application through pending/failed cleanup; successful
+UI shutdown releases its custody separately from actual SQL connection close.

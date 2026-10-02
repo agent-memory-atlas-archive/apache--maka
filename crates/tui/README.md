@@ -76,8 +76,8 @@ A session's **Skill library** imports local Markdown, installs sources, reviews 
 - Local state stores drafts and recovery identities, never authentication input. Uncertain writes require observation, not automatic replay.
 - Fluent catalogs cover English, Simplified Chinese and Traditional Chinese.
 
-The new application presenter runs `maka application run --input FILE --package PATH`
-(repeat packages). It consumes the shared `maka-ui` component kernel directly;
+The new application presenter runs `maka application run --root PATH --deployment UUID`
+and loads the stored source and exact package bytes. It consumes the shared `maka-ui` component kernel directly;
 [the dual-entry example](../ui/README.md) demonstrates the same package revision on
 Desktop and TUI. Tab/Shift+Tab moves focus; Enter/Space or a left click activates a
 button; Ctrl+C retires the surface. Accepted service workers remain owned until

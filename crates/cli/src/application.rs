@@ -64,10 +64,10 @@ pub(super) struct Check {
 
 #[derive(Args)]
 pub(super) struct Run {
-    #[arg(long, value_name = "FILE")]
-    input: PathBuf,
-    #[arg(long = "package", value_name = "PATH", required = true)]
-    packages: Vec<PathBuf>,
+    #[arg(long)]
+    root: PathBuf,
+    #[arg(long)]
+    deployment: uuid::Uuid,
 }
 
 #[derive(Args)]
@@ -143,16 +143,10 @@ impl Command {
                 // Keep the foreground VM on one dedicated blocking owner, with
                 // no deeply nested CLI async stack under V8 initialization.
                 let scheduler = tokio::runtime::Handle::current();
+                let store = std::sync::Arc::new(open_store(args.root).await?);
                 tokio::task::spawn_blocking(move || -> Result<(), HostError> {
-                    let input: Input = read_json(&args.input)?;
-                    let packages = args
-                        .packages
-                        .into_iter()
-                        .map(|source| -> Result<_, HostError> {
-                            Ok(Package::read_from(&std::path::absolute(source)?)?)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    maka_tui::application::run(&input, packages, scheduler).map_err(Into::into)
+                    maka_tui::application::run(store, args.deployment, scheduler)
+                        .map_err(Into::into)
                 })
                 .await??;
             }

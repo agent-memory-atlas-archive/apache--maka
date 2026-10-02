@@ -27,6 +27,8 @@ gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "f89c5cc9576d
 maka-ui.workspace = true
 maka-plugins.workspace = true
 maka-plugin-core.workspace = true
+maka-event-log.workspace = true
+uuid.workspace = true
 clap.workspace = true
 log = "0.4"
 serde_json.workspace = true
@@ -35,8 +37,8 @@ tokio.workspace = true
 maka-js-runtime.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 maka-runtime-host.workspace = true
 tokio-util.workspace = true
 schemars.workspace = true
-uuid.workspace = true
 gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "f89c5cc9576d823d253b4563806e5f842e9d69f9", features = ["test-support"] }

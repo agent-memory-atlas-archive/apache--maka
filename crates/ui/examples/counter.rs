@@ -42,13 +42,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         support::fixture("return frame({count:state.count+1,revision:state.revision+1});")
     };
-    for package in packages {
+    for package in &packages {
         package.export_to(&output.join(format!("{}.maka-plugin", package.manifest().id)))?;
     }
     std::fs::write(
         output.join("input.json"),
         serde_json::to_vec_pretty(&input)?,
     )?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_time()
+        .build()?;
+    let root = output.join("root");
+    let owner = std::sync::Arc::new(maka_event_log::root::RootOwner::create(
+        &root,
+        &maka_event_log::root::RootNamespaces::for_current_account()?,
+    )?);
+    let store = runtime.block_on(maka_event_log::EventLog::for_root(owner))?;
+    runtime.block_on(store.commit_application(
+        uuid::Uuid::from_u128(1),
+        0,
+        input.clone(),
+        vec![],
+        packages.clone(),
+    ))?;
     if std::env::args().nth(2).as_deref() == Some("dual") {
         let mut terminal = input.clone();
         terminal.environment.presentation =
@@ -57,7 +74,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             output.join("input.tui.json"),
             serde_json::to_vec_pretty(&terminal)?,
         )?;
+        runtime.block_on(store.commit_application(
+            uuid::Uuid::from_u128(2),
+            0,
+            terminal,
+            vec![],
+            packages,
+        ))?;
     }
+    runtime.block_on(store.close())?;
     println!("{}", output.display());
     Ok(())
 }

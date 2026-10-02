@@ -64,12 +64,11 @@ Desktop 的窗口清理 owner 独立于视觉 Surface。逻辑移除撤销输入
 有限的 [GPUI 源码补丁](../../third-party/gpui-fast/SOURCE.zh-CN.md) 提供各后端回执，
 不把逻辑关闭或排队的 destroy request 当作资源释放，也不承诺 GPU driver 已回收物理内存。
 
-生成示例时在输出目录后加 `composed`，再向 desktop 传入额外的
-`dynamic.counter.maka-plugin`，即可使用独立包提供的计数器组件。改用 `native` 并传入
-`native.label.maka-plugin` 可显式导入编译的 Label；它直接使用 GPUI 样式，布局位置与
+生成示例时在输出目录后加 `composed`，即可使用独立包提供的计数器组件；
+生成器将全部选中包保存在 Root。改用 `native` 可显式导入编译的 Label；它直接使用 GPUI 样式，布局位置与
 props 由产品决定。opaque 原生子组件槽位、同步 consume/default 决策仍未实现。
 
-使用 `editor` 并额外传入 `native.editor.maka-plugin` 可导入 Kit Editor。Rust 契约表达
+使用 `editor` 可在存储组合中导入 Kit Editor。Rust 契约表达
 初始文本、基于原生 revision 的 replace/reset 命令、元数据观察与命令回执；原生 buffer
 不放进序列化组件 state。公开 `changed` 事件包含类型化元数据观察与回执；收到
 TextRef 不获得全局查找或读取权限；capture 提供请求私有的不可变文本资源。`command: null` 不提出
@@ -81,11 +80,12 @@ TextRef 不获得全局查找或读取权限；capture 提供请求私有的不�
 契约类型，无旧插件 SDK 或全局 service catalog。
 
 改用 `events` 生成显式订阅 Editor `changed` 的产品组件，并显示原生草稿 revision；
-向 desktop 传入与 editor 示例相同的五个包。该示例验证公开事件送达，不代表资源读取、
+生成器把所选包与 Desktop 部署保存到 `root`；以 `--root PATH --deployment UUID` 启动。
+该示例验证公开事件送达，不代表资源读取、
 业务 action 或最终产品视觉设计已完成。
 
 改用 `resource` 生成产品 Root → 动态 Composer → 私有原生 Editor，以及显式导入的原生
-UTF-8 Reader；完整五包命令见 [English README](README.md)。Root 只调用 Composer
+UTF-8 Reader；完整 Root/deployment 命令见 [English README](README.md)。Root 只调用 Composer
 公开 capture，不依赖私有 Editor 的挂载路径。
 
 Action 指明 service binding/member/method 与类型化资源槽，每个槽调用 direct child 的
@@ -128,3 +128,10 @@ resource 示例证明这条原生异步路径，不代表产品已完成。
 终端呈现器只读已提交场景，实际 draw/flush 成功后才发布命中几何。
 原始鼠标坐标没有 screen epoch，送达时按最后成功输出的场景立即解析，
 保留准确 mount/revision。counter 是运行时验收，不是成品 UI/UX。
+
+生产启动直接读取 State Root 的原部署来源和精确包版本，激活前检查选定呈现端。
+运行来源不随 desired 更新而改写；失败或待定清理继续保有存储，成功 UI shutdown
+仅释放自身 custody，数据库 owner 独立确认真实 SQL 关闭。`Application::new` 用于
+未保存的 query-only 检查与预览，没有持久 DeploymentRef。示例生成器同时导出
+JSON/包供检查，并保存 Desktop 部署 `00000000-0000-0000-0000-000000000001`；
+`dual` 保存 TUI 部署 `00000000-0000-0000-0000-000000000002`。

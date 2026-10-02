@@ -23,6 +23,8 @@ mod actions;
 mod events;
 #[path = "runtime/native.rs"]
 mod native;
+#[path = "runtime/persistence.rs"]
+mod persistence;
 #[path = "runtime/sdk.rs"]
 mod sdk;
 #[path = "../examples/counter/support.rs"]

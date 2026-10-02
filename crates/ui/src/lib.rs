@@ -101,9 +101,13 @@ pub struct Application<V: ?Sized = ()> {
     slice: std::time::Duration,
     pub(crate) scheduler: tokio::runtime::Handle,
     target: PresentationTarget,
+    source: Option<maka_plugin_core::deployment::DeploymentRef>,
+    store: Option<std::sync::Arc<maka_event_log::EventLog>>,
 }
 
 impl<V: ?Sized + 'static> Application<V> {
+    /// Unsaved, query-only preview. Production executions load their owned source
+    /// through `start_from_store`; this constructor has no DeploymentRef.
     pub fn new(
         input: &Input,
         bytes: Vec<Package>,
@@ -111,6 +115,68 @@ impl<V: ?Sized + 'static> Application<V> {
         limits: Limits,
         native: NativeRegistry<V>,
         remotes: actions::RemoteServices,
+    ) -> Result<Self> {
+        Self::new_owned(input, bytes, timer, limits, native, remotes, None)
+    }
+
+    /// Loads the owned original source and exact bytes before executing any code.
+    /// Static remote observations come only from that source; endpoints remain
+    /// separate trusted registrations. Construct on the presentation owner thread.
+    pub async fn start_from_store(
+        store: std::sync::Arc<maka_event_log::EventLog>,
+        deployment: Uuid,
+        target: PresentationTarget,
+        timer: tokio::runtime::Handle,
+        limits: Limits,
+        native: NativeRegistry<V>,
+        registrations: Vec<actions::RemoteService>,
+    ) -> Result<Self> {
+        let loaded = store
+            .load_application(deployment)
+            .await
+            .map_err(|e| Error::Invalid(e.to_string()))?
+            .ok_or_else(|| Error::Invalid("UI deployment not found".into()))?;
+        if loaded.source.input.environment.location != ExecutionLocation::Ui
+            || loaded.source.input.environment.presentation != Some(target)
+        {
+            return Err(Error::Invalid("stored presentation target mismatch".into()));
+        }
+        let remotes = actions::RemoteServices {
+            declarations: loaded
+                .source
+                .remote_exports
+                .into_iter()
+                .map(|r| (r.capability, r.declaration))
+                .collect(),
+            registrations,
+        };
+        Self::new_owned(
+            &loaded.source.input,
+            loaded.packages,
+            timer,
+            limits,
+            native,
+            remotes,
+            Some((loaded.source.reference, store)),
+        )
+    }
+
+    /// The immutable source this execution actually loaded, not the latest desire.
+    pub fn source(&self) -> Option<&maka_plugin_core::deployment::DeploymentRef> {
+        self.source.as_ref()
+    }
+
+    fn new_owned(
+        input: &Input,
+        bytes: Vec<Package>,
+        timer: tokio::runtime::Handle,
+        limits: Limits,
+        native: NativeRegistry<V>,
+        remotes: actions::RemoteServices,
+        persisted: Option<(
+            maka_plugin_core::deployment::DeploymentRef,
+            std::sync::Arc<maka_event_log::EventLog>,
+        )>,
     ) -> Result<Self> {
         if input.environment.location != ExecutionLocation::Ui {
             return Err(Error::Invalid("UI deployment required".into()));
@@ -137,6 +203,29 @@ impl<V: ?Sized + 'static> Application<V> {
             .filter(|instance| !instance.disabled)
             .cloned()
             .collect();
+        // Reject known unavailable implementations before any guest or factory
+        // activation. Runtime factory/script failures remain execution failures.
+        for instance in &pending {
+            if let Some(entry) = &instance.entry {
+                match &entry.implementation {
+                    Implementation::Native { implementation } => {
+                        native.validate_implementation(implementation)?
+                    }
+                    Implementation::JavaScript { module, .. } => {
+                        std::str::from_utf8(
+                            sources[&instance.package]
+                                .file(module)
+                                .ok_or_else(|| Error::Invalid("entry bytes missing".into()))?,
+                        )
+                        .map_err(|error| Error::Invalid(error.to_string()))?;
+                    }
+                }
+            }
+        }
+        let (source, store) = match persisted {
+            Some((source, store)) => (Some(source), Some(store)),
+            None => (None, None),
+        };
         let mut app = Self {
             runtime: Runtime::new(plan),
             activations: BTreeMap::new(),
@@ -146,6 +235,8 @@ impl<V: ?Sized + 'static> Application<V> {
             slice: limits.synchronous_slice,
             target,
             scheduler: timer.clone(),
+            source,
+            store,
         };
         for remote in remotes.registrations {
             let value = service_export(remote.implementation, &remote.contract)?;
@@ -568,6 +659,9 @@ impl<V: ?Sized + 'static> Application<V> {
             }
             let remaining = self.runtime.activations().count();
             if remaining == 0 {
+                // EventLog's independent owner confirms its actual SQL close.
+                // This only releases the UI execution's custody after cleanup.
+                self.store.take();
                 return Ok(());
             }
             if remaining == before {

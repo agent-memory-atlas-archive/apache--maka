@@ -88,22 +88,24 @@ Generate a package-backed desktop example (the output directory must be new):
 
 ```sh
 cargo run --locked -p maka-ui --example counter -- /tmp/maka-counter
-cargo run --locked -p maka-desktop -- --input /tmp/maka-counter/input.json \
-  --package /tmp/maka-counter/native.surface.maka-plugin \
-  --package /tmp/maka-counter/dynamic.app.maka-plugin
+cargo run --locked -p maka-desktop -- --root /tmp/maka-counter/root \
+  --deployment 00000000-0000-0000-0000-000000000001
 ```
 
-Add `composed` after the output directory when generating the example to include
-a separately packaged counter component, then pass its
-`dynamic.counter.maka-plugin` as another `--package` to desktop. Use `native`
-instead of `composed` to include an explicitly imported compiled Label, and also
-pass `native.label.maka-plugin`. The label's styling is rendered directly by GPUI,
+The generator commits exact bytes and deployment sources into `root` and also
+exports JSON and package bundles for inspection/import. Desktop uses deployment
+`00000000-0000-0000-0000-000000000001`; `dual` additionally commits the TUI source
+as `00000000-0000-0000-0000-000000000002`. Startup accepts only Root/deployment.
+
+Add `composed` after the output directory for a separately packaged counter, or
+`native` for an explicitly imported compiled Label; the generator persists all
+selected packages. The label's styling is rendered directly by GPUI,
 outside the tree primitive set; its placement and props belong to the product.
 Opaque native child slots and synchronous event consume/default decisions remain
 pending.
 
-Use `editor` instead of `native` and additionally pass `native.editor.maka-plugin`
-to import the native Kit Editor. Its Rust contract describes initial text, explicit
+Use `editor` instead of `native` to persist a composition importing the native Kit
+Editor. Its Rust contract describes initial text, explicit
 revision-based replace/reset commands, metadata observations and command receipts.
 The native buffer remains outside serialized component state. The public `changed`
 event contains typed metadata observations and receipts;
@@ -119,7 +121,7 @@ validation. It does not depend on the previous plugin SDK or global service cata
 
 Use `events` instead of `editor` to generate a product component that explicitly
 subscribes to Editor `changed` and displays its observed native draft revision.
-Pass the same five packages as the editor example. This exercises public delivery,
+The generator persists the selected packages. This exercises public delivery,
 not text-resource reads, business actions, or a finished product design.
 
 Use `resource` to compose a dynamic Composer with a private native Editor and an
@@ -127,12 +129,8 @@ explicitly imported native UTF-8 Reader:
 
 ```sh
 cargo run --locked -p maka-ui --example counter -- /tmp/maka-resource resource
-cargo run --locked -p maka-desktop -- --input /tmp/maka-resource/input.json \
-  --package /tmp/maka-resource/native.surface.maka-plugin \
-  --package /tmp/maka-resource/dynamic.app.maka-plugin \
-  --package /tmp/maka-resource/dynamic.composer.maka-plugin \
-  --package /tmp/maka-resource/native.editor.maka-plugin \
-  --package /tmp/maka-resource/native.reader.maka-plugin
+cargo run --locked -p maka-desktop -- --root /tmp/maka-resource/root \
+  --deployment 00000000-0000-0000-0000-000000000001
 ```
 
 An action names an explicit service binding/member/method and typed resource
@@ -187,14 +185,14 @@ The standalone Host query executor is described in
 resource fixture proves this native asynchronous path, not a finished product.
 
 Generate with `dual` to package both presentation entries in the same immutable
-revision. The desktop input remains `input.json`; the terminal input is
-`input.tui.json`, with cell spacing and no pixel dimensions:
+revision. The generator persists separate Desktop and TUI deployments; exported
+`input.json` and `input.tui.json` describe them for inspection. The terminal uses
+cell spacing and no pixel dimensions:
 
 ```sh
 cargo run --locked -p maka-ui --example counter -- /tmp/maka-dual dual
-cargo run --locked -p maka-cli -- application run --input /tmp/maka-dual/input.tui.json \
-  --package /tmp/maka-dual/native.surface.maka-plugin \
-  --package /tmp/maka-dual/dynamic.app.maka-plugin
+cargo run --locked -p maka-cli -- application run --root /tmp/maka-dual/root \
+  --deployment 00000000-0000-0000-0000-000000000002
 ```
 
 The terminal presenter reads committed scenes and uses exact mount/revision input.

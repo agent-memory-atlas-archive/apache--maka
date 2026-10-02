@@ -32,7 +32,8 @@ layout/paint 之前准备资源、捕获请求私有快照，再消费已提交�
 组件的元素 arena、GPUI 保留状态和输入闭包持有原生资源凭证。子组件从显示树移除并
 退休后，最后一份凭证真实释放才结算；UI owner 的回执任务无需等下一次输入。
 仍显示的退役界面继续保留清理阻塞。按原挂载父链核对归属，一个 surface 不能确认
-另一个 surface 的资源。回执任务归 surface 所有，使用应用弱引用，surface 销毁时取消。
+另一个 surface 的资源。独立 window owner 保有应用，直到后端销毁、资源释放和挂载清理真实确认，
+surface 销毁不会取消该职责。
 后续原生控件的 entity、订阅及未结算原生工作也必须持有相应凭证。
 
 显式导入的 Editor 由 Kit 唯一持有 buffer/selection/undo 与平台输入引擎，父 props 更新
@@ -54,3 +55,7 @@ application lifetime owner 在窗口和 executor task 都退出后仍保留未�
 依赖固定到 GPUI Fast `e4aabe75` 与 GPUI Kit `f89c5cc9`。使用上游 gpui-pre
 重导出选择 Fast，不包含第二套 GPUI。Windows dwrote 与构建期 cbindgen 采用
 MPL-2.0，不 vendoring 源码；分发须带许可证与源码链接。当前尚无此 crate 的发布打包。
+
+生产启动使用 `--root PATH --deployment UUID`，读取原存储来源和精确包字节，
+激活前检查 Desktop 目标。desired source 更新不改写运行来源。应用保有 Root 至真实
+成功清理；UI shutdown 释放自身 custody，与 SQL 连接真实关闭分别确认。

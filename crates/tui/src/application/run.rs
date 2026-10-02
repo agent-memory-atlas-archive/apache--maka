@@ -20,8 +20,6 @@
 use super::{Presenter, registry, sanitize};
 use crate::terminal;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-use maka_plugin_core::composition::Input;
-use maka_plugins::package::Package;
 use serde_json::json;
 use std::{collections::BTreeSet, time::Duration};
 
@@ -29,11 +27,18 @@ use std::{collections::BTreeSet, time::Duration};
 /// Accepted service workers remain owned after the terminal surface closes.
 /// 在前台线程运行；关闭界面后仍等待真实服务执行与资源回执。
 pub fn run(
-    input: &Input,
-    packages: Vec<Package>,
+    store: std::sync::Arc<maka_event_log::EventLog>,
+    deployment: uuid::Uuid,
     scheduler: tokio::runtime::Handle,
 ) -> Result<(), String> {
-    let mut presenter = Presenter::new(input, packages, scheduler, registry(), json!({}))
+    let mut presenter = scheduler
+        .block_on(Presenter::start_from_store(
+            store,
+            deployment,
+            scheduler.clone(),
+            registry(),
+            json!({}),
+        ))
         .map_err(|e| sanitize(&e.to_string()))?;
     let mut guard = terminal::Guard::new();
     let mut failure = None;

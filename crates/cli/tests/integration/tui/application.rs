@@ -54,18 +54,41 @@ fn packages(directory: &std::path::Path, poisoned: bool) -> Vec<String> {
 
     let source = directory.join("input.json");
     std::fs::write(&source, serde_json::to_vec(&input).unwrap()).unwrap();
-    let mut args = vec![
-        "application".into(),
-        "run".into(),
-        "--input".into(),
-        source.to_str().unwrap().into(),
-    ];
+    let root = directory.join("root");
+    let ns = maka_event_log::root::RootNamespaces::for_current_account().unwrap();
+    drop(maka_event_log::root::RootOwner::create(&root, &ns).unwrap());
+    let deployment = uuid::Uuid::new_v4().to_string();
+    let mut commit = Command::new(env!("CARGO_BIN_EXE_maka"));
+    commit
+        .args(["application", "commit", "--root"])
+        .arg(&root)
+        .args([
+            "--deployment",
+            &deployment,
+            "--expected-revision",
+            "0",
+            "--input",
+        ])
+        .arg(&source);
     for package in packages {
         let path = directory.join(format!("{}.maka-plugin", package.manifest().id));
         package.export_to(&path).unwrap();
-        args.extend(["--package".into(), path.to_str().unwrap().into()]);
+        commit.arg("--package").arg(&path);
     }
-    args
+    let result = commit.output().unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    vec![
+        "application".into(),
+        "run".into(),
+        "--root".into(),
+        root.to_str().unwrap().into(),
+        "--deployment".into(),
+        deployment,
+    ]
 }
 #[test]
 fn plugin_application_uses_actual_foreground_transactions_and_restores_the_real_terminal() {
@@ -126,14 +149,45 @@ fn plugin_application_setup_rejection_is_clean_and_diagnostics_cannot_emit_escap
     assert!(!output.stderr.contains(&7));
 
     let mut input: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&args[3]).unwrap()).unwrap();
+        serde_json::from_slice(&std::fs::read(directory.path().join("input.json")).unwrap())
+            .unwrap();
     // Application target validation fails before any terminal mutation.
     input["environment"]["presentation"] = serde_json::json!("desktop");
-    std::fs::write(&args[3], serde_json::to_vec(&input).unwrap()).unwrap();
+    let path = directory.path().join("input.json");
+    std::fs::write(&path, serde_json::to_vec(&input).unwrap()).unwrap();
+    let mut update = Command::new(env!("CARGO_BIN_EXE_maka"));
+    update
+        .args([
+            "application",
+            "commit",
+            "--root",
+            &args[3],
+            "--deployment",
+            &args[5],
+            "--expected-revision",
+            "1",
+            "--input",
+        ])
+        .arg(&path);
+    for entry in std::fs::read_dir(directory.path()).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|s| s == "maka-plugin") {
+            update.arg("--package").arg(path);
+        }
+    }
+    let committed = update.output().unwrap();
+    assert!(
+        committed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&committed.stderr)
+    );
     let output = Command::new(env!("CARGO_BIN_EXE_maka"))
         .args(&args)
         .output()
         .unwrap();
     assert!(!output.status.success());
     assert!(!output.stderr.contains(&0x1b));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("stored presentation target mismatch")
+    );
 }
