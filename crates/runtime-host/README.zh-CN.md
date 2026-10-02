@@ -87,6 +87,9 @@ caller 历史按稳定 consumer 与 operation 保留首次 source 和原 Ref，�
 `Mutation::reference` 只是观察，接受工作本身不证明持久派发已确认。
 `Mutation::result` 返回保留原 Ref 的 `OperationReply`，owner 消失也不丢失引用；
 只有 recorded receipt 才证明原 journal 事实。
+原生呈现适配器通过 `Mutation::completion` 分别观察本次 executor 的实际清理与回执事实。
+回执不可用不代表清理失败；历史回执中的 cleanup 不描述本次读取请求的清理。
+完成通道丢失时保留原 Ref，明确报告清理未确认。
 
 returned、unknown 与真实资源 cleanup 分别记录。业务错误、非法结果或进程丢失不能证明回滚；
 SQL 结算不确定也不冒充物理 cleanup failure。丢弃观察者或应用 root 不取消已接受工作；

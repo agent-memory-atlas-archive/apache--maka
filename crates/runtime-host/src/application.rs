@@ -230,15 +230,30 @@ impl PreparedMutation {
 pub struct Mutation {
     pub id: Uuid,
     pub reference: RecoveryRef,
-    result: oneshot::Receiver<OperationReply>,
+    result: oneshot::Receiver<MutationCompletion>,
+}
+/// Receipt knowledge and this request's actual executor cleanup are independent.
+/// A historical receipt describes the original operation, not a new lookup's cleanup.
+pub struct MutationCompletion {
+    pub reply: OperationReply,
+    pub cleanup: Result<()>,
 }
 impl Mutation {
+    /// Observe original receipt knowledge only; this does not acknowledge cleanup.
     pub async fn result(self) -> OperationReply {
-        self.result.await.unwrap_or_else(|_| OperationReply {
-            reference: self.reference,
-            receipt: Receipt::Unavailable {
-                diagnostic: "Host executor owner disappeared; read original receipt".into(),
+        self.completion().await.reply
+    }
+    /// Original owner reports actual cleanup independently of receipt persistence.
+    /// Losing this observer neither cancels execution nor acknowledges cleanup.
+    pub async fn completion(self) -> MutationCompletion {
+        self.result.await.unwrap_or_else(|_| MutationCompletion {
+            reply: OperationReply {
+                reference: self.reference,
+                receipt: Receipt::Unavailable {
+                    diagnostic: "Host executor owner disappeared; read original receipt".into(),
+                },
             },
+            cleanup: Err("Host executor cleanup unconfirmed: owner disappeared".into()),
         })
     }
 }
@@ -394,7 +409,7 @@ pub(super) enum Reply {
     Query(oneshot::Sender<QueryCompletion>),
     Mutation {
         reference: Box<RecoveryRef>,
-        reply: oneshot::Sender<OperationReply>,
+        reply: oneshot::Sender<MutationCompletion>,
     },
 }
 impl Reply {
@@ -422,9 +437,12 @@ impl Reply {
                         diagnostic: owner::diagnostic(&error),
                     },
                 };
-                let _ = reply.send(OperationReply {
-                    reference: *reference,
-                    receipt,
+                let _ = reply.send(MutationCompletion {
+                    reply: OperationReply {
+                        reference: *reference,
+                        receipt,
+                    },
+                    cleanup,
                 });
             }
         }

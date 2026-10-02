@@ -126,6 +126,11 @@ representation change must read the original reference rather than resubmit inpu
 `Mutation::reference` is observation, and acceptance alone is not dispatch confirmation.
 `Mutation::result` returns an `OperationReply` retaining that reference even when the
 owner is unavailable; only a recorded receipt proves original journal facts.
+Native presentation adapters use `Mutation::completion` to observe this request's
+actual executor cleanup separately from receipt knowledge. An unavailable receipt
+does not imply failed cleanup; a historical receipt's cleanup does not describe the
+new lookup. Losing the completion channel preserves the reference and reports
+cleanup as unconfirmed.
 
 Returned values, unknown results and real resource cleanup are separate journal
 facts. Errors, invalid output and process loss do not prove rollback. SQL settlement

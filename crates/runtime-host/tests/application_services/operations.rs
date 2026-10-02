@@ -264,7 +264,10 @@ async fn real_mutation_commits_before_effect_and_duplicate_requires_recovery_gra
         .await
         .unwrap();
         let reference = accepted.reference.clone();
-        assert_eq!(returned(accepted.result().await), json!("original"));
+        let completion = accepted.completion().await;
+        assert_eq!(completion.reply.reference, reference);
+        assert!(completion.cleanup.is_ok());
+        assert_eq!(returned(completion.reply), json!("original"));
         let observation = store
             .operation_observation(&reference)
             .await
@@ -436,7 +439,10 @@ async fn unknown_result_is_not_replayed_and_default_recovery_policy_denies() {
             .await
             .unwrap();
             let reference = accepted.reference.clone();
-            assert!(unknown(accepted.result().await));
+            let completion = accepted.completion().await;
+            assert_eq!(completion.reply.reference, reference);
+            assert!(completion.cleanup.is_ok());
+            assert!(unknown(completion.reply));
             let observation = store
                 .operation_observation(&reference)
                 .await
@@ -957,7 +963,10 @@ async fn returned_mutation_and_failed_cleanup_are_separate_persistent_facts() {
         .await
         .unwrap();
         let reference = accepted.reference.clone();
-        assert_eq!(returned(accepted.result().await), json!("resource-fail"));
+        let completion = accepted.completion().await;
+        assert_eq!(completion.reply.reference, reference);
+        assert!(completion.cleanup.is_err());
+        assert_eq!(returned(completion.reply), json!("resource-fail"));
         let observation = store
             .operation_observation(&reference)
             .await
@@ -1054,7 +1063,13 @@ async fn uncertain_durable_settlement_does_not_replay_effect_or_invent_cleanup_f
         .await
         .unwrap();
         let reference = accepted.reference.clone();
-        assert!(unavailable(accepted.result().await).contains("settlement outcome unknown"));
+        let completion = accepted.completion().await;
+        assert_eq!(completion.reply.reference, reference);
+        assert!(
+            completion.cleanup.is_ok(),
+            "failed receipt SQL must not invent failed physical cleanup"
+        );
+        assert!(unavailable(completion.reply).contains("settlement outcome unknown"));
         assert!(client.snapshot().cleanup_error.is_none());
         let observation = client
             .recover(consumer, reference.clone(), scope(&issuer, true))
@@ -1074,10 +1089,12 @@ async fn uncertain_durable_settlement_does_not_replay_effect_or_invent_cleanup_f
         )
         .await
         .unwrap()
-        .result()
+        .completion()
         .await;
+        assert!(duplicate.cleanup.is_ok());
+        assert_eq!(duplicate.reply.reference, reference);
         assert!(matches!(
-            duplicate.receipt,
+            duplicate.reply.receipt,
             Receipt::Recorded {
                 outcome: OperationOutcome::Unresolved,
                 cleanup: OperationCleanup::Unconfirmed
@@ -1782,7 +1799,9 @@ async fn separate_caller_root_stays_owned_through_effect_cleanup_and_keeps_origi
             close(caller_store).await;
             assert!(RootOwner::open(&caller_dir.path().join("root"),&caller_ns).is_err(),"the actual accepted effect retains the caller lease, not its observer or connection");
             release.add_permits(1);
-            let reply=accepted.result().await;
+            let completion=accepted.completion().await;
+            assert_eq!(completion.cleanup.is_err(),fail_cleanup);
+            let reply=completion.reply;
             assert_eq!(reply.reference,reference);
             assert_eq!(returned(reply),json!("original"));
             if fail_cleanup {
