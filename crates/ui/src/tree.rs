@@ -159,11 +159,12 @@ impl<V: ?Sized + 'static> Application<V> {
         if current.frame.revision != revision {
             return Err(Error::Invalid("stale or undeclared UI event".into()));
         }
-        check_call_bytes(&(&current.frame.state, key, &event))?;
+        check_call_bytes(&(&current.frame.state, &current.props, key, &event))?;
         current.frame.view.validate_input(key, &event)?;
         let args = [
             current.frame.state.clone(),
             json!({"key":key,"event":event}),
+            current.props.clone(),
         ];
         let props = current.props.clone();
         let window = current.frame.window.clone();

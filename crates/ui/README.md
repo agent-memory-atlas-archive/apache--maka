@@ -40,7 +40,7 @@ the common commit deadline can reject their late result but cannot interrupt the
 The 4 MiB update and 32 MiB retained limits cover serialized metadata/tree/input
 schemas, not native renderer allocations, which the native owner must bound.
 Recipes must not retain entities, input bindings, subscriptions or pending native
-work. Those belong to renderer retained state and retain mount resource leases
+work. Those belong to renderer resource owners and retain mount resource leases
 until actual destruction, independently of the retired frame's recipe.
 
 The tree protocol contains stacks, text, buttons and imported components.
@@ -50,7 +50,7 @@ All changed parents and children share one deadline and commit together. A faile
 child leaves every prior frame unchanged. Removed mounts retire until real native
 cleanup is confirmed; uncommitted mounts have no native resources to acknowledge.
 Window configuration is fixed for a root mount; embedded components cannot create
-windows. Native editor/IME commands, action imports, outward component events
+windows. Action imports, outward component events
 and recovery surfaces are still pending. `close` requires an actual
 native cleanup acknowledgement; `retire` only stops new input. `shutdown` retains
 owners while mounts/work/resources remain unconfirmed.
@@ -71,7 +71,15 @@ instead of `composed` to include an explicitly imported compiled Label, and also
 pass `native.label.maka-plugin`. The label's styling is rendered directly by GPUI,
 outside the tree primitive set; its placement and props belong to the product.
 Opaque native child slots and synchronous event consume/default decisions remain
-pending, alongside editor/IME.
+pending.
+
+Use `editor` instead of `native` and additionally pass `native.editor.maka-plugin`
+to import the native Kit Editor. Its Rust contract describes initial text, explicit
+revision-based replace/reset commands, metadata observations and command receipts.
+The native buffer remains outside serialized component state. Observation inputs
+update local state; outward delivery and public plugin resource reads remain
+pending. Native component events receive the current mounted props as well as
+state, key and input; JavaScript `event` receives props as its third argument.
 
 The example's component contract uses the same Rust declaration types as runtime
 validation. It does not depend on the previous plugin SDK or global service catalog.

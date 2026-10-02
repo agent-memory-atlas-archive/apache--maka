@@ -312,3 +312,70 @@ pub(crate) fn native_fixture() -> (Input, Vec<Package>) {
     packages.extend([root, label]);
     (input, packages)
 }
+
+pub(crate) fn editor_fixture() -> (Input, Vec<Package>) {
+    let (mut input, mut packages) = native_fixture();
+    let index = packages
+        .iter()
+        .position(|package| package.manifest().id == "dynamic.app")
+        .unwrap();
+    let root = packages.remove(index);
+    let mut declaration = root.manifest().application.clone().unwrap();
+    let contract = maka_ui::editor::editor_contract();
+    declaration
+        .entries
+        .get_mut(&EntryTarget::Desktop)
+        .unwrap()
+        .imports
+        .insert(
+            "editor".into(),
+            Import {
+                contract: contract.clone(),
+                cardinality: Cardinality::One,
+            },
+        );
+    let source = std::str::from_utf8(root.file("index.mjs").unwrap()).unwrap();
+    let source = source.replace("...(state.right?[{kind:'component',key:'nativeLabel'", "...(state.right?[{kind:'component',key:'editor',binding:'editor',member:0,props:{initialText:'Start',placeholder:'Write here',command:state.command??null}},{kind:'component',key:'nativeLabel'");
+    let source = source.replace("const next={...state,revision:state.revision+1};", "const next={...state,revision:state.revision+1};if(event.event?.command)next.command=event.event.command;");
+    let source = source.replace(
+        "title:'Composed product',width:640,height:400",
+        "title:'Native editor product',width:640,height:600",
+    );
+    let root = package("dynamic.app", declaration, Some(source));
+    let editor = package(
+        "native.editor",
+        Declaration {
+            entries: BTreeMap::from([(
+                EntryTarget::Desktop,
+                EntryDeclaration {
+                    implementation: Implementation::Native {
+                        implementation: "maka.ui.editor".into(),
+                    },
+                    configuration: json!({"type":"object"}),
+                    imports: BTreeMap::new(),
+                    exports: BTreeMap::from([(
+                        "Editor".into(),
+                        Export {
+                            contract,
+                            availability: Availability::Required,
+                        },
+                    )]),
+                },
+            )]),
+            composition: None,
+        },
+        None,
+    );
+    let app = input.instances.get_mut("app").unwrap();
+    app.package = root.application_ref().into();
+    app.bindings.insert(
+        "editor".into(),
+        vec![Target::Instance {
+            path: vec!["editor".into()],
+            export: "Editor".into(),
+        }],
+    );
+    input.instances.insert("editor".into(), node(&editor, 5));
+    packages.extend([root, editor]);
+    (input, packages)
+}

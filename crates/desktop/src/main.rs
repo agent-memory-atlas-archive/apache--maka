@@ -60,7 +60,7 @@ impl Surface {
     fn input(&self, lease: &resources::Lease, revision: u64, cx: &Context<Self>) -> widgets::Input {
         let lease = lease.clone();
         let view = cx.weak_entity();
-        widgets::Input(Rc::new(move |key, event, cx| {
+        widgets::Input(Rc::new(move |key, event, window, cx| {
             let result = view.update(cx, |view, cx| {
                 view.application
                     .borrow_mut()
@@ -72,6 +72,7 @@ impl Surface {
                 {
                     eprintln!("native component cleanup unconfirmed: {error}");
                 }
+                view.sync_native(window, cx)?;
                 cx.notify();
                 maka_ui::Result::Ok(())
             });
@@ -81,6 +82,51 @@ impl Surface {
                 Err(error) => eprintln!("component input owner unavailable: {error}"),
             }
         }))
+    }
+    /// Native creation/commands run after the whole declarative transaction,
+    /// never during layout/paint. The store owns resources, not component state.
+    fn sync_native(
+        &self,
+        window: &mut gpui_kit::Window,
+        cx: &mut Context<Self>,
+    ) -> maka_ui::Result<()> {
+        let application = self.application.borrow();
+        for mount in application.mounted_subtree(&self.mount)? {
+            let frame = application.frame(&mount)?;
+            let id = mount.id().to_string();
+            let Presentation::Native(native) = &frame.view else {
+                self.resources.borrow_mut().owners.remove(&id);
+                continue;
+            };
+            let lease = self.resources.borrow_mut().acquire(&mount);
+            let input = self.input(&lease, frame.revision, cx);
+            let mut resources = self.resources.borrow_mut();
+            let kind = native.view.as_ref().type_id();
+            if resources
+                .owners
+                .get(&id)
+                .is_some_and(|owner| owner.kind != kind)
+            {
+                resources.owners.remove(&id);
+            }
+            let owner = resources.owners.entry(id).or_insert_with(|| {
+                let input = widgets::LiveInput(Rc::new(RefCell::new(Some(input.clone()))));
+                resources::NativeInstance {
+                    kind,
+                    revision: None,
+                    state: native.view.create(input.clone(), window, cx),
+                    input,
+                }
+            });
+            *owner.input.0.borrow_mut() = Some(input);
+            if owner.revision != Some(frame.revision) {
+                // A consumed scene revision is not a successful native command:
+                // widgets retain explicit applied/conflict receipts separately.
+                native.view.commit(owner.state.as_mut(), window, cx);
+                owner.revision = Some(frame.revision);
+            }
+        }
+        Ok(())
     }
     fn presentation(
         &self,
@@ -105,7 +151,14 @@ impl Surface {
                 window,
                 cx,
             ),
-            Presentation::Native(native) => native.view.render(input, window, cx),
+            Presentation::Native(native) => {
+                let resources = self.resources.borrow();
+                let owner = resources
+                    .owners
+                    .get(&mount.id().to_string())
+                    .expect("native owner synced before rendering");
+                native.view.render(owner.state.as_ref(), window, cx)
+            }
         };
         owned::Owned { content, lease }.into_any_element()
     }
@@ -179,6 +232,8 @@ impl Render for Surface {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    log::set_logger(&NativeLog)?;
+    log::set_max_level(log::LevelFilter::Warn);
     let args = Args::parse();
     let mut bytes = Vec::new();
     std::fs::File::open(args.input)?
@@ -252,13 +307,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .detach();
         let content = application.clone();
         let content_mount = mount.clone();
-        if let Err(error) = gpui_kit::open_window(options, cx, move |_, cx| {
-            cx.new(|_| Surface {
+        if let Err(error) = gpui_kit::open_window(options, cx, move |window, cx| {
+            let surface = cx.new(|_| Surface {
                 _cleanup: cleanup_task,
                 application: content,
                 resources,
                 mount: content_mount,
-            })
+            });
+            surface.update(cx, |surface, cx| {
+                surface
+                    .sync_native(window, cx)
+                    .expect("committed native mounts")
+            });
+            surface
         }) {
             let _ = application.borrow_mut().retire(&mount);
             *startup_error.borrow_mut() = Some(format!("native window creation failed: {error}"));
@@ -271,6 +332,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err(error.into());
     }
     Ok(())
+}
+
+/// GPUI reports platform failures through `log`; without a subscriber even
+/// display-link startup failures are silent. Diagnostics stay on stderr.
+struct NativeLog;
+impl log::Log for NativeLog {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.level() <= log::Level::Warn
+    }
+    fn log(&self, record: &log::Record<'_>) {
+        if self.enabled(record.metadata()) {
+            eprintln!("{} {}: {}", record.level(), record.target(), record.args());
+        }
+    }
+    fn flush(&self) {}
 }
 
 fn start_cleanup(
@@ -374,7 +450,7 @@ mod tests {
             root.clone(),
             wake,
         )));
-        let (handle, _) = cx.update(|cx| {
+        let (handle, surface) = cx.update(|cx| {
             gpui_kit::init(cx);
             let application = app.clone();
             let resources = resources.clone();
@@ -389,19 +465,22 @@ mod tests {
                     ..Default::default()
                 },
                 cx,
-                |_, cx| {
-                    cx.new(|_| Surface {
+                |window, cx| {
+                    let surface = cx.new(|_| Surface {
                         application,
                         resources,
                         mount,
                         _cleanup: cleanup_task,
-                    })
+                    });
+                    surface.update(cx, |surface, cx| surface.sync_native(window, cx).unwrap());
+                    surface
                 },
             )
             .unwrap()
         });
         let draw = |cx: &mut TestAppContext| {
             cx.update_window(handle, |_, window, cx| {
+                surface.update(cx, |surface, cx| surface.sync_native(window, cx).unwrap());
                 window.refresh();
                 window.draw(cx).clear(cx);
             })
@@ -492,6 +571,7 @@ mod tests {
         let released = Rc::downgrade(&app);
         cx.update_window(handle, |_, window, _| window.remove_window())
             .unwrap();
+        cx.update(|_| drop(surface));
         drop(app);
         cx.run_until_parked();
         assert!(
@@ -500,3 +580,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod editor_tests;

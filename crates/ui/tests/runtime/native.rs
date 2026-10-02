@@ -233,7 +233,7 @@ fn native_availability_is_not_activation_and_actual_contract_or_value_mismatches
     }
     // The example imports the label explicitly; the surface factory alone
     // cannot stand in for a declared native component implementation.
-    let (input, packages) = support::native_fixture();
+    let (input, packages) = support::editor_fixture();
     assert!(
         Application::new(
             &input,

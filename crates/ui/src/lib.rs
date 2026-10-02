@@ -19,6 +19,7 @@
 
 //! Local component execution. Renderers only read committed frames; JavaScript
 //! executes on initialization or input, never during layout/paint.
+pub mod editor;
 mod frame;
 mod native;
 mod tree;
@@ -315,6 +316,7 @@ impl<V: ?Sized + 'static> Application<V> {
                     },
                     "event" => ComponentCall::Event {
                         state: &args[0],
+                        props: &args[2],
                         key: args[1]["key"].as_str().expect("typed UI input key"),
                         input: &args[1]["event"],
                     },

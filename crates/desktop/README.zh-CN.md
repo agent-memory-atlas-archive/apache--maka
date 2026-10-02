@@ -24,9 +24,10 @@
 按钮回调携带 revision 派发输入后再通知重绘。二进制没有内置业务壳或默认产品。
 随构建提供的组件由 `NativeRegistry<dyn Widget>` 和普通包绑定选择，Widget 直接呈现
 原生 GPUI 元素；共用输入绑定持有准确 mount/revision 和资源凭证，paint 不派发输入。
-呈现描述只包含不可变数据；entity/订阅属于 GPUI 保留状态或 arena，不能缓存到可能
-在清理期间保活的描述中。当前 Label 验证 opaque 原生呈现和混合组合，不代表已经验证
-编辑器或 entity 的销毁。
+呈现描述只包含不可变数据；entity/订阅归独立 renderer owner 所有，GPUI 保留状态与
+arena 也可持有资源凭证，不能缓存到清理期间保活的描述中。owner 在整批提交之后、
+layout/paint 之前创建资源并消费已提交意图。Kit editor 的资源凭证保留到实际 entity
+释放处理；仅 drop handle 不等于实体已销毁。
 
 组件的元素 arena、GPUI 保留状态和输入闭包持有原生资源凭证。子组件从显示树移除并
 退休后，最后一份凭证真实释放才结算；UI owner 的回执任务无需等下一次输入。
@@ -34,8 +35,16 @@
 另一个 surface 的资源。回执任务归 surface 所有，使用应用弱引用，surface 销毁时取消。
 后续原生控件的 entity、订阅及未结算原生工作也必须持有相应凭证。
 
-运行方式见 [组件示例](../ui/README.md)。这是初始呈现器；原生编辑器/IME、子 surface、
-恢复 UI、运行中动态安装与完整 Host/TUI 接线仍未完成。
+显式导入的 Editor 由 Kit 唯一持有 buffer/selection/undo 与平台输入引擎，父 props 更新
+不会重建它。replace/reset 带原生 revision 与 sequence，修订冲突或活跃 composition 会
+拒绝命令；前一命令回执发布前不准入下一命令。实际执行后给出 applied/conflict 回执。
+非 composition 时 reset 清除 undo，不宣称取消操作系统 IME。观察只携带资源元数据，
+读取校验已绑定 owner 的身份、修订与 UTF-8 边界，最多 64 KiB；平台 UTF-16 查询共用
+这条读取路径。
+
+运行方式见 [组件示例](../ui/README.md)。这是初始呈现器；编辑器对外事件、插件文本读取
+能力、真实 OS IME 验收、子 surface、恢复 UI、运行中动态安装与完整 Host/TUI 接线仍
+未完成。counter/editor 示例用于验证运行时，不代表默认产品的最终视觉设计。
 
 GPUI 的窗口移除通知早于平台销毁；当前进程退出路径只 retire 挂载并保留清理阻塞，
 不宣称收到原生关闭确认。可复用的进程内 surface 必须先接入真实平台销毁完成通知。

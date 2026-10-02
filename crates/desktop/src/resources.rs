@@ -17,8 +17,10 @@
  * under the License.
  */
 
+use super::widgets::LiveInput;
 use maka_plugin_core::{Error as CoreError, runtime::Mount};
 use maka_ui::{Application, Error};
+use std::any::{Any, TypeId};
 use std::{
     cell::Cell,
     collections::{BTreeMap, BTreeSet},
@@ -82,7 +84,20 @@ impl Lease {
     }
 }
 
+pub(super) struct NativeInstance {
+    pub kind: TypeId,
+    pub revision: Option<u64>,
+    pub state: Box<dyn Any>,
+    pub input: LiveInput,
+}
+impl Drop for NativeInstance {
+    fn drop(&mut self) {
+        self.input.0.borrow_mut().take();
+    }
+}
+
 pub(super) struct NativeResources {
+    pub owners: BTreeMap<String, NativeInstance>,
     // The root also owns a platform window. Renderer-resource release alone
     // cannot confirm its cleanup; retain that fence pending a platform receipt.
     surface: Mount,
@@ -93,6 +108,7 @@ impl NativeResources {
     pub fn new(surface: Mount, wake: UnboundedSender<()>) -> Self {
         Self {
             surface,
+            owners: BTreeMap::new(),
             scopes: BTreeMap::new(),
             wake,
         }
@@ -135,6 +151,9 @@ impl NativeResources {
             {
                 continue;
             }
+            // Release resource owners independently of retained frames. Their
+            // entities/input handlers still hold real leases until destruction.
+            self.owners.remove(&mount.id().to_string());
             let scope = self.scope(&mount);
             scope.detach();
             if !scope.ready() {

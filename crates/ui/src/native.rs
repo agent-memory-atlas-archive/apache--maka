@@ -29,7 +29,7 @@ use std::{collections::BTreeMap, rc::Rc};
 /// The embedding chooses V (e.g. a GPUI view recipe or a terminal renderer).
 /// V is immutable presentation data, not a native resource owner. It must not
 /// retain entities, input bindings, subscriptions or pending native work. Those
-/// belong to renderer retained state and keep the mount resource lease until
+/// belong to renderer resource owners and keep the mount resource lease until
 /// actual destruction. Retired frames can retain this recipe during cleanup.
 pub struct NativeView<V: ?Sized> {
     pub view: Rc<V>,
@@ -109,6 +109,7 @@ pub enum ComponentCall<'a> {
     },
     Event {
         state: &'a Value,
+        props: &'a Value,
         key: &'a str,
         input: &'a Value,
     },

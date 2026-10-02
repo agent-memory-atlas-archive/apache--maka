@@ -27,10 +27,10 @@ No business shell or default product is embedded in this binary. Compiled native
 components are selected through `NativeRegistry<dyn Widget>` and the ordinary
 package binding path. Widget recipes render native GPUI elements; common input
 bindings retain the exact mount lease/revision and dispatch outside paint.
-Recipes contain immutable presentation data. Entities and subscriptions belong
-to GPUI retained state/arena and must never be cached in the recipe, which may
-remain alive while cleanup is pending. The included Label proves opaque native
-rendering and mixed composition; it does not prove editor/entity teardown.
+Recipes contain immutable presentation data. Renderer owners hold entities and
+subscriptions separately; GPUI retained state/arena may also hold resource leases.
+Resources must never be cached in a recipe retained during cleanup. Native owners
+create and consume committed intents before rendering, outside layout/paint.
 
 Each component's element arena, retained GPUI state and input callbacks hold a
 native resource lease. A detached, retired child closes only after its last lease
@@ -38,12 +38,23 @@ has actually been destroyed; the owner-thread receipt task does not wait for mor
 input. A visible retired scene stays fenced. Cleanup follows the original mount
 parent chain, so one surface cannot acknowledge another surface's resources.
 The receipt task belongs to the surface, uses weak application references and
-is cancelled when the surface is destroyed. Future native widgets must retain
-leases for their entities, subscriptions and any pending native work too.
+is cancelled when the surface is destroyed. GPUI Kit editor entities retain their
+lease through actual release processing; dropping a handle alone is insufficient.
+
+The imported Editor uses Kit's buffer, selection, undo and platform text-input
+engine. Parent updates preserve it. Explicit replace/reset intents carry a native
+revision and sequence; conflicting revisions or active composition reject them.
+Only one unresolved command is admitted, with an applied/conflict receipt after
+native execution. Reset outside composition clears undo; it does not claim to
+cancel an operating-system IME session. Observations contain resource metadata,
+not full text. Reads against the bound owner check identity/revision and UTF-8
+boundaries and are limited to 64 KiB. Platform UTF-16 queries use this read path.
 
 Run the [component example](../ui/README.md). This is an initial renderer, not the
-completed desktop product: native editor/IME, child surfaces, recovery UI, dynamic
-in-process installation and full Host/TUI integration remain pending.
+completed desktop product: outward editor events and plugin text-read capabilities,
+real OS IME acceptance, child surfaces, recovery UI, dynamic in-process installation
+and full Host/TUI integration remain pending. Counter/editor fixtures validate the
+runtime, not the default product's final visual design.
 
 The current GPUI window-removal callback fires before platform teardown. This
 process-exit path retires its mount and preserves the cleanup fence; it does not

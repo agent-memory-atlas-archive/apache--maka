@@ -17,6 +17,8 @@
  * under the License.
  */
 
+pub(crate) mod editor;
+
 use gpui_kit::{
     AnyElement, App, IntoElement, ParentElement, SharedString, Styled, Window, div, px, rgb,
 };
@@ -25,18 +27,27 @@ use maka_ui::{
     NativeRegistry, NativeView, Presentation, label_contract,
 };
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, rc::Rc};
+use std::{any::Any, cell::RefCell, collections::BTreeMap, rc::Rc};
 
 /// The presenter supplies its native view ABI; the plugin kernel never depends
 /// on GPUI. Only native drawing happens here. Input bindings retain their mount
 /// lease and invoke the component adapter later, during native event delivery.
 /// A Widget is immutable recipe data: do not cache Entity/Input/subscription
-/// handles here. Native state belongs to the GPUI retained element state/arena;
+/// handles here. Native state belongs to renderer owners and GPUI retained state;
 /// its actual destruction releases leases independently of the retired frame.
-pub(super) trait Widget {
-    fn render(&self, input: Input, window: &mut Window, cx: &mut App) -> AnyElement;
+pub(super) trait Widget: Any {
+    fn create(&self, _: LiveInput, _: &mut Window, _: &mut App) -> Box<dyn Any> {
+        Box::new(())
+    }
+    fn commit(&self, _: &mut dyn Any, _: &mut Window, _: &mut App) {}
+    fn render(&self, state: &dyn Any, window: &mut Window, cx: &mut App) -> AnyElement;
 }
-type Dispatch = dyn Fn(&str, Value, &mut App);
+/// Owner-originated observations resolve the current dispatcher at delivery;
+/// they are not button events against a retained old scene. Removal clears it
+/// before dropping the owner, so delayed observations cannot retarget a new one.
+#[derive(Clone)]
+pub(super) struct LiveInput(pub Rc<RefCell<Option<Input>>>);
+type Dispatch = dyn Fn(&str, Value, &mut Window, &mut App);
 #[derive(Clone)]
 pub(super) struct Input(pub Rc<Dispatch>);
 impl Input {
@@ -46,7 +57,7 @@ impl Input {
         encode: impl Fn(&E) -> Value + 'static,
     ) -> impl Fn(&E, &mut Window, &mut App) + 'static {
         let dispatch = self.0.clone();
-        move |event, _, cx| dispatch(&key, encode(event), cx)
+        move |event, window, cx| dispatch(&key, encode(event), window, cx)
     }
 }
 
@@ -55,7 +66,7 @@ struct Label {
     emphasis: bool,
 }
 impl Widget for Label {
-    fn render(&self, _: Input, _: &mut Window, _: &mut App) -> AnyElement {
+    fn render(&self, _: &dyn Any, _: &mut Window, _: &mut App) -> AnyElement {
         // Opaque native payload: GPUI styling is not constrained to the JSON
         // Node primitives. Product placement remains in the importing component.
         let label = div()
@@ -120,5 +131,6 @@ pub(super) fn registry() -> NativeRegistry<dyn Widget> {
             )]))
         })
         .expect("unique native label implementation");
+    editor::register(&mut registry);
     registry
 }

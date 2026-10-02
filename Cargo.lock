@@ -7959,6 +7959,7 @@ version = "0.2.0"
 dependencies = [
  "clap",
  "gpui-kit",
+ "log",
  "maka-js-runtime",
  "maka-plugin-core",
  "maka-plugins",
