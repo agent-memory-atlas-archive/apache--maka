@@ -1,0 +1,63 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+//! Shared plugin declarations and composition planning. No business or platform policy.
+
+pub mod composition;
+pub mod contract;
+pub mod package;
+pub mod plan;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("invalid plugin declaration: {0}")]
+    Declaration(String),
+    #[error("invalid application composition: {0}")]
+    Composition(String),
+    #[error("capability contract mismatch: {0}")]
+    Contract(String),
+}
+
+pub(crate) fn name(value: &str) -> Result<(), Error> {
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+    {
+        return Err(Error::Declaration(format!("invalid name: {value:?}")));
+    }
+    Ok(())
+}
+
+pub(crate) fn schema(value: &serde_json::Value) -> Result<(), Error> {
+    jsonschema::validator_for(value)
+        .map(|_| ())
+        .map_err(|error| Error::Declaration(format!("invalid schema: {error}")))
+}
+
+pub(crate) fn validate_value(
+    schema: &serde_json::Value,
+    value: &serde_json::Value,
+) -> Result<(), Error> {
+    jsonschema::validator_for(schema)
+        .map_err(|error| Error::Declaration(format!("invalid schema: {error}")))?
+        .validate(value)
+        .map_err(|error| Error::Composition(format!("configuration: {error}")))
+}

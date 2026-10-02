@@ -49,6 +49,9 @@ pub(super) struct Cli {
 enum Command {
     /// Open the interactive terminal application (also the default without a command).
     Tui(Tui),
+    /// Validate a plugin application composition without activating it.
+    #[command(subcommand)]
+    Application(crate::application::Command),
     /// Manage the native runtime host.
     #[command(subcommand)]
     Host(HostCommand),
@@ -241,6 +244,7 @@ impl Cli {
             profile: self.tui_profile,
         })) {
             Command::Tui(args) => args.run().await,
+            Command::Application(args) => args.run().await,
             Command::Sandbox(args) => return args.run(self.timeout_ms).await,
             Command::Host(HostCommand::Fetch(args)) => args.run().await,
             Command::Host(HostCommand::Access(args)) => args.run().await,

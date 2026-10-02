@@ -40,6 +40,8 @@ maka-acp.workspace = true
 maka-client.workspace = true
 maka-config.workspace = true
 maka-tui.workspace = true
+maka-plugin-core.workspace = true
+maka-plugins.workspace = true
 base64 = "0.22"
 clap.workspace = true
 flate2 = "1"
@@ -66,7 +68,6 @@ tempfile.workspace = true
 
 [dev-dependencies]
 alacritty_terminal = { version = "0.26.0", default-features = false }
-maka-plugins.workspace = true
 unicode-width.workspace = true
 libc.workspace = true
 tempfile.workspace = true

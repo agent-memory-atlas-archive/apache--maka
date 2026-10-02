@@ -5843,6 +5843,7 @@ dependencies = [
  "maka-event-log",
  "maka-fs-tools",
  "maka-js-runtime",
+ "maka-plugin-core",
  "maka-plugins",
  "maka-process",
  "maka-protocol",
@@ -6184,6 +6185,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "maka-plugin-core"
+version = "0.2.0"
+dependencies = [
+ "jsonschema 0.56.0",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
 name = "maka-plugins"
 version = "0.2.0"
 dependencies = [
@@ -6194,6 +6207,7 @@ dependencies = [
  "futures-util",
  "jsonschema 0.56.0",
  "libc",
+ "maka-plugin-core",
  "maka-runtime",
  "maka-sandbox",
  "rustix 1.1.4",
@@ -8910,6 +8924,7 @@ dependencies = [
  "schemars_derive",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]

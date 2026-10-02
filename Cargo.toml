@@ -39,6 +39,7 @@ members = [
     "crates/model",
     "crates/network",
     "crates/plugins",
+    "crates/plugin-core",
     "crates/presentation",
     "crates/process",
     "crates/protocol",
@@ -105,6 +106,7 @@ maka-js-runtime = { path = "crates/js-runtime" }
 maka-model = { path = "crates/model" }
 maka-network = { path = "crates/network" }
 maka-plugins = { path = "crates/plugins" }
+maka-plugin-core = { path = "crates/plugin-core" }
 maka-presentation = { path = "crates/presentation" }
 maka-process = { path = "crates/process" }
 maka-protocol = { path = "crates/protocol" }

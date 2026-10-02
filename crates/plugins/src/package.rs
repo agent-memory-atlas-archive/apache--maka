@@ -106,6 +106,18 @@ impl Package {
             .map(|entry| &entry.entry)
             .chain(manifest.client.iter().map(|entry| &entry.entry))
             .chain(manifest.composition.iter().map(|entry| &entry.patch))
+            .chain(
+                manifest
+                    .application
+                    .iter()
+                    .flat_map(|application| application.entries.values())
+                    .filter_map(|entry| match &entry.implementation {
+                        maka_plugin_core::package::Implementation::JavaScript {
+                            module, ..
+                        } => Some(module),
+                        maka_plugin_core::package::Implementation::Native { .. } => None,
+                    }),
+            )
         {
             if !files.contains_key(entry) {
                 return Err(Error::Invalid(format!("package entry is missing: {entry}")));
@@ -121,6 +133,12 @@ impl Package {
 
     pub fn manifest(&self) -> &Manifest {
         &self.manifest
+    }
+    pub fn application_ref(&self) -> maka_plugin_core::package::PackageRef {
+        maka_plugin_core::package::PackageRef {
+            id: self.manifest.id.clone(),
+            revision: self.digest.to_string(),
+        }
     }
     pub fn files(&self) -> &BTreeMap<String, Vec<u8>> {
         &self.files
@@ -151,6 +169,64 @@ fn content_digest(files: &BTreeMap<String, Vec<u8>>) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn application_packages_validate_variants_and_allow_pure_composition() {
+        let declaration = json!({
+            "entries": {"desktop": {
+                "implementation": {"kind":"javascript", "module":"desktop.mjs", "realm":"dedicated"},
+                "configuration": {"type":"object"}, "imports": {}, "exports": {}
+            }}
+        });
+        let files = BTreeMap::from([
+            (
+                MANIFEST_FILE.into(),
+                serde_json::to_vec(
+                    &json!({"schemaVersion":2,"id":"example","application":declaration}),
+                )
+                .unwrap(),
+            ),
+            ("desktop.mjs".into(), b"export default {}".to_vec()),
+        ]);
+        let package = Package::new(files.clone()).unwrap();
+        let reference = package.application_ref();
+        reference.validate().unwrap();
+        assert_eq!(reference.revision, package.digest());
+        assert_eq!(
+            Package::from_bundle(&package.to_bundle())
+                .unwrap()
+                .application_ref(),
+            reference
+        );
+        let mut missing = files.clone();
+        missing.remove("desktop.mjs");
+        assert!(Package::new(missing).is_err());
+        let mut mixed = files;
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&mixed[MANIFEST_FILE]).unwrap();
+        manifest["runtime"] = json!({"entry":"desktop.mjs","sdkVersion":3});
+        mixed.insert(MANIFEST_FILE.into(), serde_json::to_vec(&manifest).unwrap());
+        assert!(Package::new(mixed).is_err());
+
+        let structural = Package::new(BTreeMap::from([(
+            MANIFEST_FILE.into(),
+            serde_json::to_vec(&json!({
+                "schemaVersion":2,"id":"product","application":{"composition":{"children":{}}}
+            }))
+            .unwrap(),
+        )]))
+        .unwrap();
+        assert!(structural.manifest().runtime.is_none());
+        assert!(
+            structural
+                .manifest()
+                .application
+                .as_ref()
+                .unwrap()
+                .composition
+                .is_some()
+        );
+    }
 
     #[test]
     fn package_pins_exact_bytes_and_rejects_cross_platform_path_aliases() {

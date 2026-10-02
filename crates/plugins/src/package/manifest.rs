@@ -53,6 +53,8 @@ pub struct Manifest {
     pub client: Option<ClientEntrypoint>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub composition: Option<CompositionFile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub application: Option<maka_plugin_core::package::Declaration>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,10 +90,34 @@ pub struct CompositionFile {
 impl Manifest {
     pub fn validate(&self) -> Result<(), Error> {
         identifier(&self.id)?;
-        if self.schema_version != 1 || (self.runtime.is_none() && self.client.is_none()) {
+        let supported = match self.schema_version {
+            1 => self.application.is_none() && (self.runtime.is_some() || self.client.is_some()),
+            2 => {
+                self.application.is_some()
+                    && self.runtime.is_none()
+                    && self.client.is_none()
+                    && self.composition.is_none()
+                    && self.configuration.is_null()
+                    && self.dependencies.is_empty()
+            }
+            _ => false,
+        };
+        if !supported {
             return Err(Error::Invalid(
                 "unsupported manifest version or missing entrypoints".into(),
             ));
+        }
+        if let Some(application) = &self.application {
+            application
+                .validate()
+                .map_err(|error| Error::Invalid(error.to_string()))?;
+            for entry in application.entries.values() {
+                if let maka_plugin_core::package::Implementation::JavaScript { module, .. } =
+                    &entry.implementation
+                {
+                    validate_path(module)?;
+                }
+            }
         }
         if self.display_name.len() > 512 || self.description.len() > 4096 {
             return Err(Error::Invalid(
