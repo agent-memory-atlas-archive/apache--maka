@@ -26,8 +26,8 @@ built-in business plugins by default. The existing server entry point has not
 yet migrated to this adapter.
 
 The owner task publishes an entire validated export batch. JavaScript services
-retain actual receiver/functions through `Captured`, in bridge-disabled
-`Vm::pure` realms. Native activation supplies an independent `NativeOwner` whose
+retain actual receiver/functions through `Captured`, in `Vm::scoped` realms
+without ambient Host routing or Deno globals. Native activation supplies an independent `NativeOwner` whose
 real close completion covers its resources. Initialization is fenced before any
 asynchronous work starts. Rejected or late exports still close under that original
 owner; failed close retains the actual native owner and lifecycle fence.
@@ -39,11 +39,20 @@ then accepts work through the core without waiting between those checks. Forward
 child Scopes retain the original private evidence. A package name, source identity
 in JSON, or binding is not effect authorization.
 
-Native queries accept `maka_plugins::call::Attachments`: actual immutable
+Queries accept `maka_plugins::call::Attachments`: actual immutable
 `ReadResource` payloads, shared with UI capture adapters. Metadata and JSON slot
 names cannot construct these values. Forwarders pass actual payloads explicitly;
 text resources enforce their own UTF-8 ranges and chunk limits. Native descriptor
 panics before admission reject that request while preserving existing work.
+JavaScript query callbacks receive `(input, observation, context)`. The frozen
+context exposes request-private `invoke` operations: `metadata` with a slot, and
+`read` with a slot and byte `start`/`end`. Reads return bytes, limited to 64 KiB;
+slots resolve only within this request's actual attachments. Revocation blocks
+new reads. Saved contexts expire before callback completion is reported, without
+retaining snapshots. Native read/metadata panics record Scope cleanup failure,
+even if JavaScript catches the rejection; unrelated modules remain runnable.
+This low-level bridge does not yet provide import binding calls or the public SDK.
+
 Policy receives a borrowed `Invocation` with named consumer, provider, Scope,
 contract, method, input and attachment fields; this observation is not a new grant.
 
@@ -59,9 +68,9 @@ its actual registrations and consumers, leaving unrelated domains independent.
 Calls have a 1 MiB JSON limit, with 128-call and 32 MiB in-flight input budgets.
 Attachments allow 16 exact slots and 64 MiB across queued and accepted requests;
 unconfirmed cleanup retains their payloads and capacity. This adapter currently
-executes queries. Mutation, subscription and JavaScript methods with attachments
-are rejected before activation until their durable, stream and bridge executors
-are implemented. Host transport, persistent composition
+executes native and JavaScript queries, including attached resources. Mutation
+and subscription are rejected before activation until their durable and stream
+executors are implemented. Host transport, persistent composition
 commit/reconciliation, operation recovery, the JavaScript binding bridge and SDK,
 and server/TUI/UI integration remain required work. This foundation is not a
 completed Host migration or a compatibility facade for the previous catalog.

@@ -24,6 +24,7 @@ use std::time::Duration;
 mod captured;
 mod inventory;
 mod registration;
+mod request;
 
 struct Relay(Module);
 impl Bridge for Relay {

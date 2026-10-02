@@ -21,12 +21,19 @@
 
 模型 Code Mode 与插件使用独立 V8 runtime。插件 `Vm` 在后台 worker 运行预构建 ESM
 bundle；`Foreground` 在 UI owner 线程运行有界同步组件回调。两者均不安装环境文件、
-网络或进程能力；后台系统操作通过该模块显式选择的 `Bridge`，模块名或 JSON 身份不授予权限。
+网络或进程能力；旧后台系统操作通过该模块显式选择的 `Bridge`，模块名或 JSON 身份不授予权限。
 
 
 `Vm::pure` 提供不含 Host op、环境 Deno 或旧 SDK 的后台执行域，拒绝任何带 bridge/SDK 的
-load。Host 应用服务适配器用此执行域运行纯 JavaScript query，不共享旧 bridged VM。
-普通 VM 中单个模块没有 Bridge，并不等于这种隔离边界。
+load 及请求 context。普通 VM 中单个模块没有 Bridge，并不等于这种隔离边界。
+
+`Vm::scoped` 只安装请求私有 op。受信任 factory 在 guest code 前捕获 op 与 intrinsic，
+随后删除 Deno globals，并拒绝旧 Bridge/SDK load。`Captured::call_with_context` 追加
+冻结的 context，以原生 cppgc 类型与 Weak 请求 owner 持有能力，不通过 ID router。
+实际完成及 VM 终止均在报告完成前释放 accepted/queued contexts；保存的 closure 或
+pending op 观察者不保活该 owner。请求 op 输入/输出各限 1 MiB，共用 128-op / 32 MiB
+输入预算。受信任 `RequestBridge` adapter 独立于 JS 观察者持有实际工作与清理事实，
+guest catch rejection 不能确认原生失败已清理。Host 用此执行域运行带附件的 JS query。
 
 发布实际服务注册前调用 `Module::capture(namespace, methods)`。不透明 `Captured` 保留
 实际 receiver/functions，`Captured::call` 支持 Promise，不重新查找 namespace；之后替换

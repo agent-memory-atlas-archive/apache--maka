@@ -41,6 +41,7 @@ struct Request {
     reply: oneshot::Sender<Result<serde_json::Value>>,
     _slot: Option<OwnedSemaphorePermit>,
     _bytes: OwnedSemaphorePermit,
+    context: Option<Arc<super::request::Owner>>,
 }
 type Pending = FuturesUnordered<LocalBoxFuture<'static, (u64, Result<v8::Global<v8::Value>>)>>;
 
@@ -48,17 +49,17 @@ pub(super) async fn run(
     mut commands: mpsc::UnboundedReceiver<Command>,
     health: Arc<Health>,
     limits: Limits,
-    host_bridge: bool,
+    realm: super::Realm,
 ) -> Result<()> {
     let mut states: BTreeMap<u64, watch::Sender<State>> = BTreeMap::new();
     let mut requests = BTreeMap::<u64, Request>::new();
     let result = async {
         // Trusted runtime setup precedes the user-script clock. Keep its errors
         // in this result so queued loads still receive the common cleanup below.
-        let mut runtime = if host_bridge {
-            engine::runtime(&health, &limits)?
-        } else {
-            engine::pure_runtime(&health, &limits)?
+        let mut runtime = match realm {
+            super::Realm::Legacy => engine::runtime(&health, &limits)?,
+            super::Realm::Pure => engine::pure_runtime(&health, &limits)?,
+            super::Realm::Scoped => engine::scoped_runtime(&health, &limits)?,
         };
         health.initializing.store(false, Ordering::SeqCst);
         let serving = async {
@@ -124,6 +125,7 @@ pub(super) async fn run(
                             module,
                             target,
                             args,
+                            context,
                             reply,
                             slot,
                             bytes,
@@ -131,6 +133,7 @@ pub(super) async fn run(
                             let Some(loaded) =
                                 modules.get_mut(&module.0.id).filter(|loaded| !loaded.closing)
                             else {
+                                drop(context);
                                 let _ = reply.send(Err(failed("module is retired")));
                                 continue;
                             };
@@ -143,7 +146,7 @@ pub(super) async fn run(
                                     .get(&callback)
                                     .ok_or_else(|| failed("callback registration released"))
                                     .and_then(|callbacks| {
-                                        engine::call_bound(&mut runtime, callbacks, &method, &args)
+                                        engine::call_bound(&mut runtime, callbacks, &method, &args, context.as_ref())
                                     }),
                             };
                             match call {
@@ -160,11 +163,13 @@ pub(super) async fn run(
                                             reply,
                                             _slot: slot,
                                             _bytes: bytes,
+                                            context,
                                         },
                                     );
                                     pending.push(Box::pin(async move { (id, call.await) }));
                                 }
                                 Err(error) => {
+                                    drop(context);
                                     let _ = reply.send(Err(error));
                                 }
                             }
@@ -249,8 +254,10 @@ pub(super) async fn run(
                         }
                     },
                     Ready::Complete(id, result) => {
-                        let request = requests.remove(&id).expect("pending call has an owner");
+                        let mut request = requests.remove(&id).expect("pending call has an owner");
                         let result = result.and_then(|value| engine::value(&mut runtime, value));
+                        // Context capabilities expire before completion becomes observable.
+                        drop(request.context.take());
                         let _ = request.reply.send(result);
                         if let Some(module) = modules.get_mut(&request.module.0.id) {
                             module.calls -= 1;
@@ -283,17 +290,34 @@ pub(super) async fn run(
         health.fail(error.clone());
     }
     let failure = result.as_ref().err().cloned();
+    // Revoke accepted and queued contexts before any close acknowledgement.
+    for request in requests.values_mut() {
+        drop(request.context.take());
+    }
+    commands.close();
+    let mut queued_replies = Vec::new();
+    let mut queued_states = Vec::new();
+    while let Some(command) = commands.recv().await {
+        match command {
+            Command::Call { context, reply, .. } => {
+                drop(context);
+                queued_replies.push(reply);
+            }
+            Command::Load { state, .. } => queued_states.push(state),
+            _ => {}
+        }
+    }
     for (_, state) in states {
         state.send_replace(State::Closed(failure.clone()));
+    }
+    for state in queued_states {
+        state.send_replace(State::Closed(Some(health.error())));
     }
     for (_, request) in requests {
         let _ = request.reply.send(Err(health.error()));
     }
-    commands.close();
-    while let Some(command) = commands.recv().await {
-        if let Command::Load { state, .. } = command {
-            state.send_replace(State::Closed(Some(health.error())));
-        }
+    for reply in queued_replies {
+        let _ = reply.send(Err(health.error()));
     }
     result
 }

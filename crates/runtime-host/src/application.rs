@@ -118,11 +118,10 @@ impl Service {
             .map(|(name, method)| {
                 if method.mode != MethodMode::Query
                     || method.resources.len() > 16
-                    || (!method.resources.is_empty()
-                        && matches!(implementation, ImplementationValue::JavaScript(_)))
+
                 {
                     return Err(
-                        "mutation, subscription and JavaScript attachments require their executors; maximum 16 resource slots"
+                        "mutation and subscription require their executors; maximum 16 resource slots"
                             .into(),
                     );
                 }
@@ -265,16 +264,11 @@ impl Application {
                     let Interface::Service { methods } = &export.contract.interface else {
                         return Err("Host service executor requires service exports".into());
                     };
-                    if methods.values().any(|m| {
-                        m.mode != MethodMode::Query
-                            || m.resources.len() > 16
-                            || (!m.resources.is_empty()
-                                && matches!(
-                                    entry.implementation,
-                                    Implementation::JavaScript { .. }
-                                ))
-                    }) {
-                        return Err("mutation, subscription and JavaScript attachments require their executors; maximum 16 resource slots".into());
+                    if methods
+                        .values()
+                        .any(|m| m.mode != MethodMode::Query || m.resources.len() > 16)
+                    {
+                        return Err("mutation and subscription require their executors; maximum 16 resource slots".into());
                     }
                 }
                 if let Implementation::Native { implementation } = &entry.implementation

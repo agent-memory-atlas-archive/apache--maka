@@ -190,7 +190,7 @@ async fn permit(semaphore: &Semaphore) {
 }
 
 #[tokio::test]
-async fn javascript_exports_use_shared_core_exact_binding_and_pure_realms() {
+async fn javascript_exports_use_shared_core_exact_binding_and_private_realms() {
     tokio::time::timeout(Duration::from_secs(20), async {
         for realm in [Realm::Shared, Realm::Dedicated] {
             let source = format!(r#"
@@ -746,17 +746,47 @@ async fn undeclared_exports_fail_startup_and_unsupported_modes_never_activate() 
                 .contains("missing required export")
         );
         app.shutdown().await.unwrap();
-        let (_, consumer) = attached_packages();
+        let mut too_many = attached_entry(
+            true,
+            Implementation::JavaScript {
+                module: "host.mjs".into(),
+                realm: Realm::Shared,
+            },
+        );
+        let Interface::Service { methods } =
+            &mut too_many.exports.get_mut("echo").unwrap().contract.interface
+        else {
+            unreachable!()
+        };
+        methods.get_mut("echo").unwrap().resources = (0..17)
+            .map(|i| {
+                (
+                    format!("slot{i}"),
+                    ResourceType {
+                        name: "example.Bytes".into(),
+                        version: 1,
+                    },
+                )
+            })
+            .collect();
+        let mut consumer_entry = attached_entry(
+            false,
+            Implementation::JavaScript {
+                module: "host.mjs".into(),
+                realm: Realm::Shared,
+            },
+        );
+        consumer_entry.imports.get_mut("echo").unwrap().contract =
+            too_many.exports["echo"].contract.clone();
+        let consumer = package(
+            "consumer.too-many-attachments",
+            consumer_entry,
+            Some("export function activate() { return {}; }".into()),
+        );
         let provider = package(
-            "unsupported.attached-js",
-            attached_entry(
-                true,
-                Implementation::JavaScript {
-                    module: "host.mjs".into(),
-                    realm: Realm::Shared,
-                },
-            ),
-            Some("throw Error('must not activate without an attachment bridge');".into()),
+            "unsupported.too-many-attachments",
+            too_many,
+            Some("throw Error('must not activate invalid resource declaration');".into()),
         );
         let issuer = Issuer::default();
         assert!(
@@ -766,11 +796,11 @@ async fn undeclared_exports_fail_startup_and_unsupported_modes_never_activate() 
                 NativeRegistry::default(),
                 issuer.clone(),
                 Arc::new(Grant(issuer)),
-                Limits::default(),
+                Limits::default()
             )
             .err()
             .unwrap()
-            .contains("JavaScript attachments require their executors")
+            .contains("maximum 16 resource slots")
         );
         for mode in [MethodMode::Mutation, MethodMode::Subscription] {
             let provider = package(
@@ -1854,6 +1884,292 @@ async fn failed_cleanup_retains_actual_attachments_and_the_shared_64_mib_capacit
         }
         assert!(large.upgrade().is_none());
         assert!(retained.upgrade().is_some());
+    })
+    .await
+    .unwrap();
+}
+
+fn attached_script() -> Package {
+    let source = format!(
+        r#"
+        let saved;
+        export const service = {{ async echo(input, observation, context) {{
+            if (typeof Deno!=='undefined' || typeof fetch!=='undefined') throw Error('ambient Host access');
+            if (input==='stale') {{
+                try {{ await saved.invoke({{operation:'read',slot:'text',start:0,end:5}}); return 'unexpected stale read'; }}
+                catch(e) {{ return e.message.includes('expired')?'expired':e.message; }}
+            }}
+            saved=context;
+            if (input==='invalid') {{
+                for (const request of [
+                    {{operation:'read',slot:'other',start:0,end:1}},
+                    {{operation:'read',slot:'text',start:5,end:1}},
+                    {{operation:'read',slot:'text',start:0,end:65537}},
+                    {{operation:'read',slot:'text',start:0,end:6}},
+                    {{operation:'read',slot:'text',start:0,end:1,extra:true}},
+                    {{operation:'call',binding:'echo',input:'forged'}},
+                ]) {{
+                    try {{ await context.invoke(request); return 'unexpected acceptance'; }} catch {{}}
+                }}
+                return 'rejected';
+            }}
+            if (input==='panic') {{
+                try {{ await context.invoke({{operation:'read',slot:'text',start:0,end:5}}); return 'unexpected read'; }}
+                catch {{ return 'caught'; }}
+            }}
+            const metadata = await context.invoke({{operation:'metadata',slot:'text'}});
+            if (metadata.type.name!=='example.Bytes' || metadata.type.version!==1) throw Error('incorrect type');
+            const bytes = await context.invoke({{operation:'read',slot:'text',start:0,end:5}});
+            return new TextDecoder().decode(new Uint8Array(bytes));
+        }} }};
+        export function activate() {{ return {{echo:{{contract:{},service:['service']}}}}; }}
+    "#,
+        serde_json::to_string(&attached_contract()).unwrap()
+    );
+    package(
+        "script.attached",
+        attached_entry(
+            true,
+            Implementation::JavaScript {
+                module: "host.mjs".into(),
+                realm: Realm::Shared,
+            },
+        ),
+        Some(source),
+    )
+}
+#[tokio::test]
+async fn javascript_resource_contexts_use_actual_slots_and_release_saved_snapshots() {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let provider = attached_script();
+        let (_, consumer) = attached_packages();
+        let issuer = Issuer::default();
+        let app = Application::start(
+            input(&provider, &consumer),
+            vec![provider, consumer],
+            NativeRegistry::default(),
+            issuer.clone(),
+            Arc::new(Grant(issuer.clone())),
+            Limits::default(),
+        )
+        .unwrap();
+        app.ready().await.unwrap();
+        let client = app.client();
+        let binding = client
+            .bind(client.activation(&id(2)).unwrap(), "echo".into())
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        let (first, first_weak) = bytes(5);
+        let second = Arc::new(Bytes {
+            data: vec![b'y'; 5],
+            version: 1,
+        });
+        let second_weak = Arc::downgrade(&second);
+        let one = client
+            .start(
+                binding.clone(),
+                "echo".into(),
+                json!("read"),
+                scope(&issuer, true),
+                first,
+            )
+            .await
+            .unwrap();
+        let two = client
+            .start(
+                binding.clone(),
+                "echo".into(),
+                json!("read"),
+                scope(&issuer, true),
+                BTreeMap::from([("text".into(), second as Arc<dyn ReadResource>)]),
+            )
+            .await
+            .unwrap();
+        let (one, two) = tokio::join!(one.result(), two.result());
+        assert_eq!(one.unwrap(), json!("xxxxx"));
+        assert_eq!(two.unwrap(), json!("yyyyy"));
+        // An owner command acknowledges the preceding completion turn.
+        client
+            .bind(client.activation(&id(2)).unwrap(), "echo".into())
+            .await
+            .unwrap();
+        assert!(first_weak.upgrade().is_none());
+        assert!(
+            second_weak.upgrade().is_none(),
+            "saved context cannot hold the immutable snapshot"
+        );
+        for (mode, expected) in [("stale", "expired"), ("invalid", "rejected")] {
+            let (attachments, weak) = bytes(5);
+            assert_eq!(
+                client
+                    .start(
+                        binding.clone(),
+                        "echo".into(),
+                        json!(mode),
+                        scope(&issuer, true),
+                        attachments
+                    )
+                    .await
+                    .unwrap()
+                    .result()
+                    .await
+                    .unwrap(),
+                json!(expected)
+            );
+            client
+                .bind(client.activation(&id(2)).unwrap(), "echo".into())
+                .await
+                .unwrap();
+            assert!(weak.upgrade().is_none());
+        }
+        app.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+struct PanicRead(Vec<u8>);
+impl ReadResource for PanicRead {
+    fn resource_type(&self) -> ResourceType {
+        ResourceType {
+            name: "example.Bytes".into(),
+            version: 1,
+        }
+    }
+    fn bytes(&self) -> usize {
+        self.0.len()
+    }
+    fn metadata(&self) -> Value {
+        Value::Null
+    }
+    fn read(&self, _: std::ops::Range<usize>) -> Result<Vec<u8>> {
+        panic!("native read lost its actual executor");
+    }
+}
+#[tokio::test]
+async fn javascript_cannot_catch_away_native_resource_cleanup_failure_or_release_capacity() {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let provider = attached_script();
+        let (_, consumer) = attached_packages();
+        let mut composition = input(&provider, &consumer);
+        composition
+            .instances
+            .insert("healthy".into(), node(&provider, 4, true));
+        composition.instances.get_mut("b").unwrap().bindings.insert(
+            "echo".into(),
+            vec![Target::Instance {
+                path: vec!["healthy".into()],
+                export: "echo".into(),
+            }],
+        );
+        let issuer = Issuer::default();
+        let app = Application::start(
+            composition,
+            vec![provider, consumer],
+            NativeRegistry::default(),
+            issuer.clone(),
+            Arc::new(Grant(issuer.clone())),
+            Limits::default(),
+        )
+        .unwrap();
+        app.ready().await.unwrap();
+        let client = app.client();
+        let failing = client
+            .bind(client.activation(&id(2)).unwrap(), "echo".into())
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        let healthy = client
+            .bind(client.activation(&id(3)).unwrap(), "echo".into())
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        let payload = Arc::new(PanicRead(vec![0; 1024 * 1024]));
+        let weak = Arc::downgrade(&payload);
+        let result = client
+            .start(
+                failing,
+                "echo".into(),
+                json!("panic"),
+                scope(&issuer, true),
+                BTreeMap::from([("text".into(), payload as Arc<dyn ReadResource>)]),
+            )
+            .await
+            .unwrap()
+            .result()
+            .await
+            .unwrap();
+        assert_eq!(
+            result,
+            json!("caught"),
+            "JS may catch the business observation"
+        );
+        client
+            .bind(client.activation(&id(3)).unwrap(), "echo".into())
+            .await
+            .unwrap();
+        assert!(
+            weak.upgrade().is_some(),
+            "actual cleanup failure stays fenced"
+        );
+        assert!(
+            client
+                .snapshot()
+                .cleanup_error
+                .as_deref()
+                .unwrap()
+                .contains("cleanup unconfirmed")
+        );
+        let (full, full_weak) = bytes(64 * 1024 * 1024);
+        assert!(
+            client
+                .start(
+                    healthy.clone(),
+                    "echo".into(),
+                    json!("read"),
+                    scope(&issuer, true),
+                    full
+                )
+                .await
+                .err()
+                .unwrap()
+                .contains("attachment budget")
+        );
+        assert!(full_weak.upgrade().is_none());
+        let (small, small_weak) = bytes(5);
+        assert_eq!(
+            client
+                .start(
+                    healthy,
+                    "echo".into(),
+                    json!("read"),
+                    scope(&issuer, true),
+                    small
+                )
+                .await
+                .unwrap()
+                .result()
+                .await
+                .unwrap(),
+            json!("xxxxx")
+        );
+        client
+            .bind(client.activation(&id(3)).unwrap(), "echo".into())
+            .await
+            .unwrap();
+        assert!(
+            small_weak.upgrade().is_none(),
+            "unrelated module in shared worker stays healthy"
+        );
+        assert!(app.shutdown().await.is_err());
+        drop(client);
+        assert!(
+            weak.upgrade().is_some(),
+            "dropping root and observers cannot acknowledge failed work"
+        );
     })
     .await
     .unwrap();

@@ -22,14 +22,25 @@
 Model Code Mode and plugin execution use separate V8 runtimes. Plugin `Vm` runs
 prebuilt ESM bundles on a background worker; `Foreground` runs bounded synchronous
 component callbacks on the UI owner thread. Neither installs ambient filesystem,
-network or process capabilities. Background system work uses the selected module's
-explicit `Bridge`; a module name or JSON identity does not confer authority.
+network or process capabilities. Legacy background system work uses the selected module's
+explicit `Bridge`; request-scoped work uses the native context below. A module
+name or JSON identity does not confer authority.
 
 
 `Vm::pure` provides a background realm without Host ops, ambient Deno or legacy
-SDKs. It rejects any bridge-bearing or SDK load. The Host application service
-adapter uses this realm for pure JavaScript queries; it does not share a legacy
-bridged VM. An absent Bridge on a normal VM alone is not this isolation boundary.
+SDKs. It rejects any bridge-bearing or SDK load, including request contexts.
+An absent Bridge on a normal VM alone is not this isolation boundary.
+
+`Vm::scoped` installs only the private request op. Its trusted factory captures
+the op and intrinsics before loading guest code, then removes Deno globals. It
+rejects legacy Bridge/SDK loads. `Captured::call_with_context` appends a frozen
+context backed by a native cppgc type and a Weak request owner, without an ID
+router. Completion and VM termination release accepted/queued contexts before
+reporting completion. Saved closures or pending op observers cannot keep that
+request owner alive. Request ops have 1 MiB JSON input/output limits and shared
+128-op / 32 MiB input budgets. Trusted `RequestBridge` adapters own real work and
+cleanup independently of JS observers; native failure cannot be acknowledged by
+a guest catching rejection. Host uses this realm for attached JavaScript queries.
 
 Before publishing an actual service registration, call `Module::capture(namespace,
 methods)`. Its opaque `Captured` handle retains the actual receiver and functions;

@@ -431,7 +431,7 @@ impl Owner {
         Ok(())
     }
     fn new_vm(&mut self) -> Result<usize> {
-        let vm = Vm::pure(self.limits.clone()).map_err(|e| e.to_string())?;
+        let vm = Vm::scoped(self.limits.clone()).map_err(|e| e.to_string())?;
         let index = self.vms.len();
         let observed = vm.clone();
         self.terminals.push(Box::pin(async move {
@@ -574,12 +574,16 @@ impl Owner {
                                             .await
                                     }
                                     ImplementationValue::JavaScript(callbacks) => callbacks
-                                        .call(
+                                        .call_with_context(
                                             &method,
                                             vec![
                                                 input,
                                                 serde_json::json!({"source":scope.identity}),
                                             ],
+                                            Arc::new(script::Request {
+                                                scope: scope.clone(),
+                                                attachments: attachments.clone(),
+                                            }),
                                         )
                                         .await
                                         .map_err(|e| e.to_string()),

@@ -24,12 +24,14 @@ mod engine;
 mod foreground;
 mod json;
 mod pool;
+mod request;
 mod worker;
 
 pub use bridge::Bridge;
 pub use captured::Captured;
 pub use foreground::{Foreground, ForegroundCallbacks, ForegroundModule};
 pub use pool::Pool;
+pub use request::RequestBridge;
 
 use deno_core::v8;
 use serde_json::Value;
@@ -68,10 +70,17 @@ enum State {
     Closed(Option<Error>),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Realm {
+    Legacy,
+    Pure,
+    Scoped,
+}
+
 #[derive(Clone)]
 pub struct Vm(Arc<Inner>);
 struct Inner {
-    host_bridge: bool,
+    realm: Realm,
     commands: mpsc::UnboundedSender<Command>,
     health: Arc<Health>,
     calls: Arc<Semaphore>,
@@ -133,6 +142,7 @@ enum Command {
         module: Module,
         target: captured::Target,
         args: Vec<Value>,
+        context: Option<Arc<request::Owner>>,
         reply: oneshot::Sender<Result<Value>>,
         slot: Option<OwnedSemaphorePermit>,
         bytes: OwnedSemaphorePermit,
@@ -214,16 +224,22 @@ impl Health {
 
 impl Vm {
     pub fn new(limits: Limits) -> Result<Self> {
-        Self::create(limits, true)
+        Self::create(limits, Realm::Legacy)
     }
 
     /// A background realm without Host ops, legacy SDKs or ambient Deno access.
     /// Bridge-bearing loads are rejected even if a caller retains this VM.
     pub fn pure(limits: Limits) -> Result<Self> {
-        Self::create(limits, false)
+        Self::create(limits, Realm::Pure)
     }
 
-    fn create(limits: Limits, host_bridge: bool) -> Result<Self> {
+    /// A background realm with only native request-private capabilities.
+    /// No ambient Host router, Deno globals or legacy SDK can be installed.
+    pub fn scoped(limits: Limits) -> Result<Self> {
+        Self::create(limits, Realm::Scoped)
+    }
+
+    fn create(limits: Limits, realm: Realm) -> Result<Self> {
         if limits.heap_bytes < 16 * 1024 * 1024 || limits.synchronous_slice.is_zero() {
             return Err(failed("invalid VM limits"));
         }
@@ -252,7 +268,7 @@ impl Vm {
                         .enable_all()
                         .build()
                         .map_err(failed)?
-                        .block_on(worker::run(receiver, owner.clone(), limits, host_bridge))
+                        .block_on(worker::run(receiver, owner.clone(), limits, realm))
                 }));
                 match result {
                     Ok(Ok(())) => {}
@@ -267,7 +283,7 @@ impl Vm {
             return Err(health.error());
         }
         Ok(Self(Arc::new(Inner {
-            host_bridge,
+            realm,
             commands,
             health,
             calls: Arc::new(Semaphore::new(128)),
@@ -318,8 +334,8 @@ impl Vm {
         bridge: Option<Arc<dyn Bridge>>,
         bootstrap: Bootstrap,
     ) -> Result<Module> {
-        if !self.0.host_bridge && (bridge.is_some() || bootstrap != Bootstrap::Plain) {
-            return Err(failed("pure VM cannot install a Host bridge or SDK"));
+        if self.0.realm != Realm::Legacy && (bridge.is_some() || bootstrap != Bootstrap::Plain) {
+            return Err(failed("this VM cannot install a legacy Host bridge or SDK"));
         }
         if name.len() > 1024
             || source.len() > 8 * 1024 * 1024
@@ -569,6 +585,7 @@ impl Module {
                 module: self.clone(),
                 target: captured::Target::Path(path),
                 args,
+                context: None,
                 reply,
                 slot,
                 bytes,

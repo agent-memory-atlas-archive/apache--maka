@@ -72,3 +72,77 @@ pub(super) async fn activate(
     }
     Ok(batch)
 }
+
+#[derive(Deserialize)]
+#[serde(tag = "operation", rename_all = "camelCase", deny_unknown_fields)]
+enum ResourceOperation {
+    Metadata {
+        slot: String,
+    },
+    Read {
+        slot: String,
+        start: usize,
+        end: usize,
+    },
+}
+
+pub(super) struct Request {
+    pub scope: Scope,
+    pub attachments: Attachments,
+}
+impl maka_js_runtime::plugin::RequestBridge for Request {
+    fn invoke(
+        &self,
+        input: Value,
+    ) -> BoxFuture<'static, std::result::Result<Value, maka_js_runtime::plugin::Error>> {
+        let result = self.read(input).map_err(maka_js_runtime::plugin::Error);
+        // Native snapshot access already finished. No observer retains this map.
+        Box::pin(async move { result })
+    }
+}
+impl Request {
+    fn read(&self, input: Value) -> Result<Value> {
+        if self.scope.cancellation.is_cancelled() {
+            return Err("Host request was revoked".into());
+        }
+        let operation: ResourceOperation =
+            serde_json::from_value(input).map_err(|e| e.to_string())?;
+        let slot = match &operation {
+            ResourceOperation::Metadata { slot } | ResourceOperation::Read { slot, .. } => slot,
+        };
+        let resource = self
+            .attachments
+            .get(slot)
+            .ok_or("unknown request resource slot")?;
+        let mut ticket = self.scope.resources.reserve().map_err(|e| e.to_string())?;
+        ticket.start();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match operation {
+            ResourceOperation::Metadata { .. } => {
+                let value = serde_json::json!({"type":resource.resource_type(),"bytes":resource.bytes(),"metadata":resource.metadata()});
+                check_json(&value)?;
+                Ok(value)
+            }
+            ResourceOperation::Read { start, end, .. } => {
+                if end < start || end - start > 64 * 1024 || end > resource.bytes() {
+                    return Err("invalid request resource byte range".into());
+                }
+                let bytes = resource.read(start..end)?;
+                if bytes.len() != end - start {
+                    return Err("request resource returned a different byte count".into());
+                }
+                Ok(serde_json::json!(bytes))
+            }
+        }));
+        match result {
+            Ok(result) => {
+                ticket.complete(Ok(()));
+                result
+            }
+            Err(_) => {
+                let error = "native request resource panicked; cleanup unconfirmed".to_string();
+                ticket.complete(Err(error.clone()));
+                Err(error)
+            }
+        }
+    }
+}

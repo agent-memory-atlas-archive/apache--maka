@@ -54,6 +54,34 @@ impl Captured {
     /// Calls may return a Promise. Dropping the waiting future does not cancel
     /// admitted work; the worker retains capacity until the actual call finishes.
     pub async fn call(&self, method: &str, args: Vec<Value>) -> Result<Value> {
+        self.invoke(method, args, None).await
+    }
+
+    /// Appends an unforgeable request context as the final argument. Its native
+    /// bridge expires when the actual callback finishes, even if JS saves it.
+    pub async fn call_with_context(
+        &self,
+        method: &str,
+        args: Vec<Value>,
+        bridge: Arc<dyn super::RequestBridge>,
+    ) -> Result<Value> {
+        if self.0.module.0.vm.0.realm != super::Realm::Scoped {
+            return Err(failed("request contexts require a scoped VM"));
+        }
+        self.invoke(
+            method,
+            args,
+            Some(Arc::new(super::request::Owner::new(bridge))),
+        )
+        .await
+    }
+
+    async fn invoke(
+        &self,
+        method: &str,
+        args: Vec<Value>,
+        context: Option<Arc<super::request::Owner>>,
+    ) -> Result<Value> {
         if !self.0.methods.contains(method) {
             return Err(failed("method was not captured"));
         }
@@ -89,6 +117,7 @@ impl Captured {
                     method: method.into(),
                 },
                 args,
+                context,
                 reply,
                 slot: Some(slot),
                 bytes,

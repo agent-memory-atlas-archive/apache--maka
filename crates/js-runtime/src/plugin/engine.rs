@@ -34,7 +34,7 @@ struct Sdk {
 }
 pub(super) type Call = LocalBoxFuture<'static, Result<v8::Global<v8::Value>>>;
 
-fn runtime_base(health: &Arc<Health>, limits: &Limits, system_bridge: bool) -> Result<JsRuntime> {
+fn runtime_base(health: &Arc<Health>, limits: &Limits, realm: super::Realm) -> Result<JsRuntime> {
     let mut extensions = vec![
         deno_webidl::deno_webidl::init(),
         deno_web::deno_web::init(
@@ -44,8 +44,11 @@ fn runtime_base(health: &Arc<Health>, limits: &Limits, system_bridge: bool) -> R
             Default::default(),
         ),
     ];
-    if system_bridge {
+    if realm == super::Realm::Legacy {
         extensions.push(super::bridge::maka_plugins::init());
+    }
+    if realm == super::Realm::Scoped {
+        extensions.push(super::request::maka_requests::init());
     }
     let mut runtime = JsRuntime::try_new(RuntimeOptions {
         extensions,
@@ -53,7 +56,7 @@ fn runtime_base(health: &Arc<Health>, limits: &Limits, system_bridge: bool) -> R
         ..Default::default()
     })
     .map_err(failed)?;
-    if system_bridge {
+    if realm == super::Realm::Legacy {
         runtime
             .op_state()
             .borrow_mut()
@@ -87,7 +90,7 @@ fn runtime_base(health: &Arc<Health>, limits: &Limits, system_bridge: bool) -> R
 }
 
 pub(super) fn pure_runtime(health: &Arc<Health>, limits: &Limits) -> Result<JsRuntime> {
-    let mut runtime = runtime_base(health, limits, false)?;
+    let mut runtime = runtime_base(health, limits, super::Realm::Pure)?;
     runtime
         .execute_script(
             "maka-pure-globals",
@@ -97,15 +100,27 @@ pub(super) fn pure_runtime(health: &Arc<Health>, limits: &Limits) -> Result<JsRu
     Ok(runtime)
 }
 
+pub(super) fn scoped_runtime(health: &Arc<Health>, limits: &Limits) -> Result<JsRuntime> {
+    let mut runtime = runtime_base(health, limits, super::Realm::Scoped)?;
+    super::request::initialize(&mut runtime)?;
+    runtime
+        .execute_script(
+            "maka-scoped-globals",
+            "delete globalThis.Deno; delete globalThis.__bootstrap; delete globalThis.console;",
+        )
+        .map_err(failed)?;
+    Ok(runtime)
+}
+
 pub(super) fn foreground_runtime(health: &Arc<Health>, limits: &Limits) -> Result<JsRuntime> {
-    let mut runtime = runtime_base(health, limits, false)?;
+    let mut runtime = runtime_base(health, limits, super::Realm::Pure)?;
     runtime.execute_script("maka-foreground-globals", "delete globalThis.Deno; delete globalThis.__bootstrap; delete globalThis.console; delete globalThis.queueMicrotask;")
         .map_err(failed)?;
     Ok(runtime)
 }
 
 pub(super) fn runtime(health: &Arc<Health>, limits: &Limits) -> Result<JsRuntime> {
-    let mut runtime = runtime_base(health, limits, true)?;
+    let mut runtime = runtime_base(health, limits, super::Realm::Legacy)?;
     let terminal = runtime
         .execute_script(
             "maka-terminal-builders",
@@ -367,7 +382,7 @@ pub(super) fn call_bound_synchronous(
     method: &str,
     args: &[Value],
 ) -> Result<Value> {
-    let result = invoke_bound(runtime, callbacks, method, args)?;
+    let result = invoke_bound(runtime, callbacks, method, args, None)?;
     value(runtime, result)
 }
 
@@ -376,8 +391,9 @@ pub(super) fn call_bound(
     callbacks: &Callbacks,
     method: &str,
     args: &[Value],
+    context: Option<&Arc<super::request::Owner>>,
 ) -> Result<Call> {
-    let value = invoke_bound(runtime, callbacks, method, args)?;
+    let value = invoke_bound(runtime, callbacks, method, args, context)?;
     let resolving = runtime.resolve(value);
     Ok(Box::pin(async move { resolving.await.map_err(failed) }))
 }
@@ -387,7 +403,16 @@ fn invoke_bound(
     callbacks: &Callbacks,
     method: &str,
     args: &[Value],
+    context: Option<&Arc<super::request::Owner>>,
 ) -> Result<v8::Global<v8::Value>> {
+    let factory = context.map(|_| {
+        runtime
+            .op_state()
+            .borrow()
+            .borrow::<super::request::Factory>()
+            .0
+            .clone()
+    });
     let value = {
         deno_core::scope!(scope, runtime);
         v8::tc_scope!(scope, scope);
@@ -397,10 +422,20 @@ fn invoke_bound(
             .ok_or_else(|| failed("callback was not captured"))?;
         let function = v8::Local::new(scope, function);
         let receiver = v8::Local::new(scope, &callbacks.receiver);
-        let args = args
+        let mut args = args
             .iter()
             .map(|value| super::json::to_v8(scope, value).map_err(failed))
             .collect::<Result<Vec<_>>>()?;
+        if let Some(context) = context {
+            let native =
+                deno_core::cppgc::make_cppgc_object(scope, super::request::Handle::new(context));
+            let factory = v8::Local::new(scope, factory.as_ref().expect("scoped factory"));
+            let undefined = v8::undefined(scope).into();
+            let context = factory
+                .call(scope, undefined, &[native.into()])
+                .ok_or_else(|| failed("request context construction failed"))?;
+            args.push(context);
+        }
         let value = function
             .call(scope, receiver.into(), &args)
             .ok_or_else(|| {
