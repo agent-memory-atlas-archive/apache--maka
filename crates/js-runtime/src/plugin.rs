@@ -20,10 +20,12 @@
 //! A VM multiplexes modules and promises; module handles own code retention.
 mod bridge;
 mod engine;
+mod foreground;
 mod pool;
 mod worker;
 
 pub use bridge::Bridge;
+pub use foreground::{Foreground, ForegroundModule};
 pub use pool::Pool;
 
 use deno_core::v8;

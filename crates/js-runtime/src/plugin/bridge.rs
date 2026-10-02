@@ -134,7 +134,10 @@ async fn op_maka_plugin(
 }
 
 // Count encoded bytes without allocating a second copy of a large Host result.
-fn encoded_size(value: &Value, limit: usize) -> serde_json::Result<usize> {
+pub(super) fn encoded_size<T: serde::Serialize + ?Sized>(
+    value: &T,
+    limit: usize,
+) -> serde_json::Result<usize> {
     struct Counter {
         size: usize,
         limit: usize,

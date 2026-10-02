@@ -30,26 +30,31 @@ struct Sdk {
 }
 pub(super) type Call = LocalBoxFuture<'static, Result<v8::Global<v8::Value>>>;
 
-pub(super) fn runtime(health: &Arc<Health>, limits: &Limits) -> Result<JsRuntime> {
+fn runtime_base(health: &Arc<Health>, limits: &Limits, system_bridge: bool) -> Result<JsRuntime> {
+    let mut extensions = vec![
+        deno_webidl::deno_webidl::init(),
+        deno_web::deno_web::init(
+            Arc::new(deno_web::BlobStore::default()),
+            None,
+            false,
+            Default::default(),
+        ),
+    ];
+    if system_bridge {
+        extensions.push(super::bridge::maka_plugins::init());
+    }
     let mut runtime = JsRuntime::try_new(RuntimeOptions {
-        extensions: vec![
-            deno_webidl::deno_webidl::init(),
-            deno_web::deno_web::init(
-                Arc::new(deno_web::BlobStore::default()),
-                None,
-                false,
-                Default::default(),
-            ),
-            super::bridge::maka_plugins::init(),
-        ],
+        extensions,
         create_params: Some(v8::CreateParams::default().heap_limits(0, limits.heap_bytes)),
         ..Default::default()
     })
     .map_err(failed)?;
-    runtime
-        .op_state()
-        .borrow_mut()
-        .put(super::bridge::Bindings::default());
+    if system_bridge {
+        runtime
+            .op_state()
+            .borrow_mut()
+            .put(super::bridge::Bindings::default());
+    }
     let _ = health
         .isolate
         .set(runtime.v8_isolate().thread_safe_handle());
@@ -74,6 +79,18 @@ pub(super) fn runtime(health: &Arc<Health>, limits: &Limits) -> Result<JsRuntime
             }"#,
         )
         .map_err(failed)?;
+    Ok(runtime)
+}
+
+pub(super) fn foreground_runtime(health: &Arc<Health>, limits: &Limits) -> Result<JsRuntime> {
+    let mut runtime = runtime_base(health, limits, false)?;
+    runtime.execute_script("maka-foreground-globals", "delete globalThis.Deno; delete globalThis.__bootstrap; delete globalThis.console; delete globalThis.queueMicrotask;")
+        .map_err(failed)?;
+    Ok(runtime)
+}
+
+pub(super) fn runtime(health: &Arc<Health>, limits: &Limits) -> Result<JsRuntime> {
+    let mut runtime = runtime_base(health, limits, true)?;
     let terminal = runtime
         .execute_script(
             "maka-terminal-builders",
@@ -119,14 +136,17 @@ pub(super) fn load(
     bootstrap: Bootstrap,
     id: u64,
 ) -> Result<Module> {
-    let sdk = {
-        let state = runtime.op_state();
-        let state = state.borrow();
-        let sdk = state.borrow::<Sdk>();
-        match bootstrap {
-            Bootstrap::Plain => None,
-            Bootstrap::Plugin => Some((sdk.plugin.clone(), sdk.terminal.clone())),
-            Bootstrap::Presenter => Some((sdk.presenter.clone(), sdk.terminal.clone())),
+    let sdk = match bootstrap {
+        Bootstrap::Plain => None,
+        Bootstrap::Plugin | Bootstrap::Presenter => {
+            let state = runtime.op_state();
+            let state = state.borrow();
+            let sdk = state.borrow::<Sdk>();
+            match bootstrap {
+                Bootstrap::Plain => unreachable!(),
+                Bootstrap::Plugin => Some((sdk.plugin.clone(), sdk.terminal.clone())),
+                Bootstrap::Presenter => Some((sdk.presenter.clone(), sdk.terminal.clone())),
+            }
         }
     };
     deno_core::scope!(scope, runtime);
@@ -230,6 +250,17 @@ pub(super) fn call(
     path: &[String],
     args: &[Value],
 ) -> Result<Call> {
+    let value = invoke(runtime, module, path, args)?;
+    let resolving = runtime.resolve(value);
+    Ok(Box::pin(async move { resolving.await.map_err(failed) }))
+}
+
+fn invoke(
+    runtime: &mut JsRuntime,
+    module: &Module,
+    path: &[String],
+    args: &[Value],
+) -> Result<v8::Global<v8::Value>> {
     let value = {
         deno_core::scope!(scope, runtime);
         v8::tc_scope!(scope, scope);
@@ -263,8 +294,51 @@ pub(super) fn call(
         };
         v8::Global::new(scope, value)
     };
-    let resolving = runtime.resolve(value);
-    Ok(Box::pin(async move { resolving.await.map_err(failed) }))
+    Ok(value)
+}
+
+/// No promise polling or I/O. Serialize under the same script budget: getters
+/// and toJSON can execute user code, and bytes must be bounded before copying.
+pub(super) fn call_synchronous(
+    runtime: &mut JsRuntime,
+    module: &Module,
+    path: &[String],
+    args: &[Value],
+) -> Result<Value> {
+    let value = invoke(runtime, module, path, args)?;
+    deno_core::scope!(scope, runtime);
+    v8::tc_scope!(scope, scope);
+    let value = v8::Local::new(scope, value);
+    if value.is_promise() {
+        return Err(failed("foreground callbacks must return synchronously"));
+    }
+    let value = if value.is_undefined() {
+        v8::null(scope).into()
+    } else {
+        value
+    };
+    let encoded = v8::json::stringify(scope, value).ok_or_else(|| {
+        failed(
+            scope
+                .exception()
+                .map(|value| value.to_rust_string_lossy(scope))
+                .unwrap_or_else(|| "foreground result is not JSON".into()),
+        )
+    })?;
+    if encoded.utf8_length(scope) > 1024 * 1024 {
+        return Err(failed("foreground result exceeds 1 MiB"));
+    }
+    serde_json::from_str(&encoded.to_rust_string_lossy(scope)).map_err(failed)
+}
+
+/// Drain ready native V8 tasks and local JavaScript jobs, without waiting on
+/// promises, timers or operations. Foreground domains expose no system ops.
+pub(super) fn poll_ready_jobs(runtime: &mut JsRuntime) -> Result<()> {
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    match runtime.poll_event_loop(&mut context, Default::default()) {
+        std::task::Poll::Ready(Err(error)) => Err(failed(error)),
+        _ => Ok(()),
+    }
 }
 
 pub(super) fn value(runtime: &mut JsRuntime, value: v8::Global<v8::Value>) -> Result<Value> {
