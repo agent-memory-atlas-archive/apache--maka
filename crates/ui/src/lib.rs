@@ -464,9 +464,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 "one explicit surface binding required".into(),
             ));
         }
-        let execution = self.runtime.admit(&handles[0])?;
-        let valid = matches!(execution.value(), Export::Surface(target) if *target == self.target);
-        self.runtime.settle(&execution, Ok(()))?;
+        let valid = matches!(self.runtime.inspect(&handles[0])?, Export::Surface(target) if *target == self.target);
         if !valid {
             return Err(Error::Invalid("surface target mismatch".into()));
         }

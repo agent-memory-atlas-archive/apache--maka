@@ -8368,6 +8368,7 @@ dependencies = [
  "maka-js-runtime",
  "maka-model",
  "maka-network",
+ "maka-plugin-core",
  "maka-plugins",
  "maka-presentation",
  "maka-process",

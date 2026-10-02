@@ -33,6 +33,7 @@ jsonschema.workspace = true
 maka-client-capability.workspace = true
 maka-runtime.workspace = true
 maka-plugins.workspace = true
+maka-plugin-core.workspace = true
 maka-graph.workspace = true
 maka-scheduler.workspace = true
 jiff = "0.2.37"

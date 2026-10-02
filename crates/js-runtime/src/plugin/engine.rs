@@ -86,6 +86,17 @@ fn runtime_base(health: &Arc<Health>, limits: &Limits, system_bridge: bool) -> R
     Ok(runtime)
 }
 
+pub(super) fn pure_runtime(health: &Arc<Health>, limits: &Limits) -> Result<JsRuntime> {
+    let mut runtime = runtime_base(health, limits, false)?;
+    runtime
+        .execute_script(
+            "maka-pure-globals",
+            "delete globalThis.Deno; delete globalThis.__bootstrap; delete globalThis.console;",
+        )
+        .map_err(failed)?;
+    Ok(runtime)
+}
+
 pub(super) fn foreground_runtime(health: &Arc<Health>, limits: &Limits) -> Result<JsRuntime> {
     let mut runtime = runtime_base(health, limits, false)?;
     runtime.execute_script("maka-foreground-globals", "delete globalThis.Deno; delete globalThis.__bootstrap; delete globalThis.console; delete globalThis.queueMicrotask;")

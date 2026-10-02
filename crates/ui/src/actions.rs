@@ -204,8 +204,7 @@ impl<V: ?Sized + 'static> Application<V> {
             .get(action.member as usize)
             .ok_or_else(|| Error::Invalid("action binding member unavailable".into()))?
             .clone();
-        let execution = self.runtime.admit(&capability)?;
-        let declaration = match execution.value() {
+        let declaration = match self.runtime.inspect(&capability)? {
             Export::Service { methods, .. } => methods.get(&action.method).map(|m| {
                 (
                     m.resources.clone(),
@@ -216,7 +215,6 @@ impl<V: ?Sized + 'static> Application<V> {
             }),
             _ => None,
         };
-        self.runtime.settle(&execution, Ok(()))?;
         let (resources, valid) =
             declaration.ok_or_else(|| Error::Invalid("undeclared action method".into()))?;
         valid?;

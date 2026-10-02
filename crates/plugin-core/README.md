@@ -45,6 +45,11 @@ fences replacement. Failure settlement returns newly retired owners so the adapt
 can deliver stop signals. Structural template imports route dependencies without
 turning them into dependencies of the whole product.
 
+`Runtime::inspect` borrows the exact live registration without accepting work.
+`Capability::consumer` exposes the original consumer for policy and execution-domain
+checks. Neither inspection nor identity grants authorization; the adapter still
+performs final policy checks and `admit` before executing a call.
+
 Authorization and durable business-operation admission remain embedding obligations.
 This lifecycle kernel currently resolves local actual registrations; configured
 remote bindings remain unready until a transport registration adapter is implemented.

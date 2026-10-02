@@ -243,8 +243,11 @@ fn consumer_retirement_closes_queued_admission_but_keeps_accepted_native_work() 
     let b = fixture.activate(&mut runtime, "b", BTreeMap::new());
     let from_a = runtime.bind(&a, "action").unwrap().pop().unwrap();
     let from_b = runtime.bind(&b, "action").unwrap().pop().unwrap();
+    assert!(runtime.inspect(&from_a).is_ok());
+    assert_eq!(runtime.status(&provider).unwrap().calls, 0);
     let accepted = runtime.admit(&from_a).unwrap();
     assert_eq!(runtime.retire(&a).unwrap(), vec![a.clone()]);
+    assert!(matches!(runtime.inspect(&from_a), Err(Error::Retired)));
     assert!(matches!(runtime.admit(&from_a), Err(Error::Retired)));
     runtime.finish_cleanup(&a).unwrap();
     accepted.value().invoke();

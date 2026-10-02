@@ -48,13 +48,18 @@ pub(super) async fn run(
     mut commands: mpsc::UnboundedReceiver<Command>,
     health: Arc<Health>,
     limits: Limits,
+    host_bridge: bool,
 ) -> Result<()> {
     let mut states: BTreeMap<u64, watch::Sender<State>> = BTreeMap::new();
     let mut requests = BTreeMap::<u64, Request>::new();
     let result = async {
         // Trusted runtime setup precedes the user-script clock. Keep its errors
         // in this result so queued loads still receive the common cleanup below.
-        let mut runtime = engine::runtime(&health, &limits)?;
+        let mut runtime = if host_bridge {
+            engine::runtime(&health, &limits)?
+        } else {
+            engine::pure_runtime(&health, &limits)?
+        };
         health.initializing.store(false, Ordering::SeqCst);
         let serving = async {
             let mut modules = BTreeMap::<u64, Loaded>::new();
@@ -299,11 +304,13 @@ fn close(
     states: &mut BTreeMap<u64, watch::Sender<State>>,
     id: u64,
 ) {
-    runtime
+    if let Some(bindings) = runtime
         .op_state()
         .borrow_mut()
-        .borrow_mut::<super::bridge::Bindings>()
-        .remove(id);
+        .try_borrow_mut::<super::bridge::Bindings>()
+    {
+        bindings.remove(id);
+    }
     modules.remove(&id);
     if let Some(state) = states.remove(&id) {
         state.send_replace(State::Closed(None));

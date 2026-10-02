@@ -162,6 +162,8 @@ accepted work is limited to 64, captured resource bytes to 64 MiB in aggregate,
 and UTF-8 reads to 64 KiB with valid byte boundaries. Complete capture arguments
 are limited to 1 MiB before cloning or callbacks, and share the transaction's
 callback, deadline and cumulative work limits. The Reader is available only
-through explicit package composition. Host transfer/durable admission, JavaScript
-worker services, TUI integration and product recovery UI remain pending. The
+through explicit package composition. Host transfer/durable admission, the
+JavaScript binding bridge and UI integration, TUI integration and product recovery
+UI remain pending. The standalone Host query executor is described in
+[Host application services](../runtime-host/README.md). The
 resource fixture proves this native asynchronous path, not a finished product.

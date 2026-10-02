@@ -96,6 +96,9 @@ impl<T> Clone for Capability<T> {
 }
 
 impl<T> Capability<T> {
+    pub fn consumer(&self) -> &Activation {
+        &self.consumer
+    }
     pub fn provider(&self) -> &Activation {
         &self.provider
     }
@@ -373,22 +376,30 @@ impl<T> Runtime<T> {
         }))
     }
 
-    /// The embedding performs domain authorization/durable admission in its own
-    /// critical section. Invoke this final lifetime check there, after any waits,
-    /// before dispatch; a queued capability is not itself accepted work.
-    pub fn admit(&mut self, capability: &Capability<T>) -> Result<Execution<T>, Error> {
+    /// Inspect the current exact registration without accepting work. The
+    /// borrowed value cannot outlive this runtime borrow; final admission is
+    /// still required after authorization and any asynchronous preparation.
+    pub fn inspect(&self, capability: &Capability<T>) -> Result<&T, Error> {
         if self.owner(&capability.consumer)?.phase == Phase::Retiring {
             return Err(Error::Retired);
         }
         let provider = self.owner(&capability.provider)?;
-        if provider.phase != Phase::Active
-            || !provider
-                .exports
-                .get(&capability.export)
-                .is_some_and(|export| export.epoch == capability.epoch)
-        {
+        if provider.phase != Phase::Active {
             return Err(Error::Retired);
         }
+        provider
+            .exports
+            .get(&capability.export)
+            .filter(|export| export.epoch == capability.epoch)
+            .map(|export| export.value.as_ref())
+            .ok_or(Error::Retired)
+    }
+
+    /// The embedding performs domain authorization/durable admission in its own
+    /// critical section. Invoke this final lifetime check there, after any waits,
+    /// before dispatch; a queued capability is not itself accepted work.
+    pub fn admit(&mut self, capability: &Capability<T>) -> Result<Execution<T>, Error> {
+        self.inspect(capability)?;
         let id = Uuid::new_v4();
         self.live
             .get_mut(&capability.provider.instance)

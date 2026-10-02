@@ -1,6 +1,6 @@
 {
   "inputs": {
-    "Cargo.lock": "b81cf87ef5144d639a089ba9aa7962683b48c476fa971e44190b2603880442eb",
+    "Cargo.lock": "9b56a8d004025b8a9a03927fde14c852b249f6e9e791261a698e68bfb711d012",
     "Cargo.toml": "81218acbdbe3b04f21e2073bd9ed4f93b673faf2a4140f44805a8f0f5c902313",
     "crates/acp/Cargo.toml": "836cf57acda320dc984f4648e5893580e79063e95ced700f33cfbaa75994b8f8",
     "crates/agent/Cargo.toml": "241d363907d6e5491ba6645de5c114877165e4abd6844b2c581a35fd19c0f4f4",
@@ -40,7 +40,7 @@
     "crates/protocol/Cargo.toml": "5e876dd35ea562eafc0dbaab6ef001de337528d7c8e6a51d2c3b746ffe9aaefe",
     "crates/providers/Cargo.toml": "e3407cbbc80b58c97d2b6cd6ef48b08f60eff9f361432baf5988867aa79d29d7",
     "crates/responses/Cargo.toml": "15ccb9272961edd905ca56d831f172da8fd1263e5714432d79f96af3041c192c",
-    "crates/runtime-host/Cargo.toml": "52c89d6a0ec742a0c2ce2d719b9daa33809818c6b9bf8c5cb1f28b33d69c5c7b",
+    "crates/runtime-host/Cargo.toml": "e73af720c21beb66df9ca54770242bc1d53aa9b133512097a23987db771187c2",
     "crates/runtime/Cargo.toml": "19e309d3197ece6aeb2d7d8544ad15c221e2295cba612b647f4ee463ac0466e2",
     "crates/sandbox/Cargo.toml": "9f564d3ab6fa2e98f9cc4052409ab1f49cbe3897069297a0fcb15747e92a155f",
     "crates/scheduler/Cargo.toml": "045cecb58cc48d75462375b5d675496349b861eb4d48116ec2ff1ee4232ccfd7",

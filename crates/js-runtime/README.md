@@ -25,6 +25,12 @@ component callbacks on the UI owner thread. Neither installs ambient filesystem,
 network or process capabilities. Background system work uses the selected module's
 explicit `Bridge`; a module name or JSON identity does not confer authority.
 
+
+`Vm::pure` provides a background realm without Host ops, ambient Deno or legacy
+SDKs. It rejects any bridge-bearing or SDK load. The Host application service
+adapter uses this realm for pure JavaScript queries; it does not share a legacy
+bridged VM. An absent Bridge on a normal VM alone is not this isolation boundary.
+
 Before publishing an actual service registration, call `Module::capture(namespace,
 methods)`. Its opaque `Captured` handle retains the actual receiver and functions;
 `Captured::call` supports Promise results without looking up the namespace again.

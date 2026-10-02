@@ -357,3 +357,17 @@ async fn native_bridge_checks_vm_json_input_before_copy_and_before_dispatch() {
         vm.shutdown().await;
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn pure_worker_cannot_install_host_ops_or_bridge_bearing_modules() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let vm = Vm::pure(Limits::default()).unwrap();
+        let module = vm.load("pure.mjs".into(), "export const service = { async read() { await Promise.resolve(); return [typeof Deno, typeof fetch, typeof console]; } };".into()).unwrap();
+        let captured = module.capture(vec!["service".into()], vec!["read".into()]).await.unwrap();
+        assert_eq!(captured.call("read", vec![]).await.unwrap(), json!(["undefined","undefined","undefined"]));
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        assert!(vm.load_with_bridge("bridge.mjs".into(), "export function read() {}".into(), Some(Arc::new(CountInput(calls)))).is_err());
+        module.close().await.unwrap();
+        vm.shutdown().await;
+    }).await.unwrap();
+}

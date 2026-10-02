@@ -23,6 +23,11 @@
 bundle；`Foreground` 在 UI owner 线程运行有界同步组件回调。两者均不安装环境文件、
 网络或进程能力；后台系统操作通过该模块显式选择的 `Bridge`，模块名或 JSON 身份不授予权限。
 
+
+`Vm::pure` 提供不含 Host op、环境 Deno 或旧 SDK 的后台执行域，拒绝任何带 bridge/SDK 的
+load。Host 应用服务适配器用此执行域运行纯 JavaScript query，不共享旧 bridged VM。
+普通 VM 中单个模块没有 Bridge，并不等于这种隔离边界。
+
 发布实际服务注册前调用 `Module::capture(namespace, methods)`。不透明 `Captured` 保留
 实际 receiver/functions，`Captured::call` 支持 Promise，不重新查找 namespace；之后替换
 函数或 namespace 不能重定向旧能力。名称最多 128 bytes，路径 32 层，64 个不重复方法，

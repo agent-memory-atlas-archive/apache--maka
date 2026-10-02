@@ -106,5 +106,6 @@ executor 先结算再投递结果，已退出 consumer 不再接收；结果 han
 每次输出最多 16 个 action，每请求 16 个资源槽；排队加已接受请求最多 64 个，已捕获资源
 累计最多 64 MiB，UTF-8 chunk 最多 64 KiB 且检查字节边界。完整 capture 参数在 clone/
 callback 前受 1 MiB 限额，也共用事务的 callback/deadline/累计工作预算。Reader 必须由包组合
-显式导入。Host transfer/持久准入、JavaScript worker service、TUI 接线与产品恢复界面尚未
-实现；resource 示例证明这条原生异步路径，不代表产品已完成。
+显式导入。Host transfer/持久准入、JavaScript binding bridge 与 UI 集成、TUI 接线及产品
+恢复界面尚未实现。独立 Host query executor 见[Host 应用服务](../runtime-host/README.zh-CN.md)；
+resource 示例证明这条原生异步路径，不代表产品已完成。

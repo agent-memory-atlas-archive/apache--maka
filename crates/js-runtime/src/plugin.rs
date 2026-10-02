@@ -71,6 +71,7 @@ enum State {
 #[derive(Clone)]
 pub struct Vm(Arc<Inner>);
 struct Inner {
+    host_bridge: bool,
     commands: mpsc::UnboundedSender<Command>,
     health: Arc<Health>,
     calls: Arc<Semaphore>,
@@ -213,6 +214,16 @@ impl Health {
 
 impl Vm {
     pub fn new(limits: Limits) -> Result<Self> {
+        Self::create(limits, true)
+    }
+
+    /// A background realm without Host ops, legacy SDKs or ambient Deno access.
+    /// Bridge-bearing loads are rejected even if a caller retains this VM.
+    pub fn pure(limits: Limits) -> Result<Self> {
+        Self::create(limits, false)
+    }
+
+    fn create(limits: Limits, host_bridge: bool) -> Result<Self> {
         if limits.heap_bytes < 16 * 1024 * 1024 || limits.synchronous_slice.is_zero() {
             return Err(failed("invalid VM limits"));
         }
@@ -241,7 +252,7 @@ impl Vm {
                         .enable_all()
                         .build()
                         .map_err(failed)?
-                        .block_on(worker::run(receiver, owner.clone(), limits))
+                        .block_on(worker::run(receiver, owner.clone(), limits, host_bridge))
                 }));
                 match result {
                     Ok(Ok(())) => {}
@@ -256,6 +267,7 @@ impl Vm {
             return Err(health.error());
         }
         Ok(Self(Arc::new(Inner {
+            host_bridge,
             commands,
             health,
             calls: Arc::new(Semaphore::new(128)),
@@ -306,6 +318,9 @@ impl Vm {
         bridge: Option<Arc<dyn Bridge>>,
         bootstrap: Bootstrap,
     ) -> Result<Module> {
+        if !self.0.host_bridge && (bridge.is_some() || bootstrap != Bootstrap::Plain) {
+            return Err(failed("pure VM cannot install a Host bridge or SDK"));
+        }
         if name.len() > 1024
             || source.len() > 8 * 1024 * 1024
             || self.0.health.stopped.is_cancelled()

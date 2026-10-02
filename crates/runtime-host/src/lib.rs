@@ -18,6 +18,7 @@
  */
 
 pub mod access_delivery;
+pub mod application;
 mod controllers;
 mod execution;
 pub mod oauth;
