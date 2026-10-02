@@ -44,6 +44,11 @@ action import、组件对外事件与恢复界面尚未实现。
 `retire` 只停止新输入；`close` 必须收到实际原生清理确认；`shutdown` 不丢弃
 尚未确认的 mount、work 或 resource。
 
+Desktop 的窗口清理 owner 独立于视觉 Surface。逻辑移除撤销输入并释放 renderer owner；
+根挂载还等待平台销毁回执、所有真实资源 lease 和子挂载清理。已知失败保留 failed fence。
+有限的 [GPUI 源码补丁](../../third-party/gpui-fast/SOURCE.zh-CN.md) 提供各后端回执，
+不把逻辑关闭或排队的 destroy request 当作资源释放，也不承诺 GPU driver 已回收物理内存。
+
 生成示例时在输出目录后加 `composed`，再向 desktop 传入额外的
 `dynamic.counter.maka-plugin`，即可使用独立包提供的计数器组件。改用 `native` 并传入
 `native.label.maka-plugin` 可显式导入编译的 Label；它直接使用 GPUI 样式，布局位置与

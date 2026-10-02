@@ -101,6 +101,9 @@ pub(super) struct NativeResources {
     // The root also owns a platform window. Renderer-resource release alone
     // cannot confirm its cleanup; retain that fence pending a platform receipt.
     surface: Mount,
+    removed: bool,
+    platform_confirmed: bool,
+    pub surface_closed: bool,
     scopes: BTreeMap<String, Rc<Scope>>,
     wake: UnboundedSender<()>,
 }
@@ -108,6 +111,9 @@ impl NativeResources {
     pub fn new(surface: Mount, wake: UnboundedSender<()>) -> Self {
         Self {
             surface,
+            removed: false,
+            platform_confirmed: false,
+            surface_closed: false,
             owners: BTreeMap::new(),
             scopes: BTreeMap::new(),
             wake,
@@ -129,23 +135,61 @@ impl NativeResources {
         self.scope(mount).acquire()
     }
 
+    pub fn is_removed(&self) -> bool {
+        self.removed
+    }
+
+    /// Logical removal revokes all inputs and seals resource scopes. It is not
+    /// an OS cleanup acknowledgement; the independent window owner waits for it.
+    pub fn window_removed<V: ?Sized + 'static>(
+        &mut self,
+        application: &mut Application<V>,
+    ) -> Result<(), Error> {
+        let result = application.retire(&self.surface);
+        self.removed = true;
+        self.owners.clear();
+        for scope in self.scopes.values() {
+            scope.detach();
+        }
+        let _ = self.wake.send(());
+        result
+    }
+    pub fn confirm_platform_cleanup(&mut self) {
+        self.platform_confirmed = true;
+    }
+    pub fn fail_platform_cleanup<V: ?Sized + 'static>(
+        &mut self,
+        application: &mut Application<V>,
+        error: String,
+    ) {
+        // Persist the failed fence, without removing its component/frame.
+        let _ = application.close(&self.surface, Err(error));
+    }
+
     /// Only scopes absent from the committed display tree can detach. A faulted
     /// but still displayed component retains its renderer resources and frame.
     pub fn collect<V: ?Sized + 'static>(
         &mut self,
         application: &mut Application<V>,
     ) -> Result<usize, Error> {
-        let visible: BTreeSet<_> = application
-            .mounted_subtree(&self.surface)?
-            .into_iter()
-            .map(|mount| mount.id().to_string())
-            .collect();
+        if self.surface_closed {
+            return Ok(0);
+        }
+        let visible: BTreeSet<_> = if self.removed {
+            BTreeSet::new()
+        } else {
+            application
+                .mounted_subtree(&self.surface)?
+                .into_iter()
+                .map(|mount| mount.id().to_string())
+                .collect()
+        };
         let retired = application.retiring_mounts();
         let mut closed = 0;
         // The common adapter orders leaves before parents. Parents with still
         // outstanding children remain fenced even if their own leases released.
         for mount in retired {
-            if mount == self.surface
+            if (mount == self.surface && !(self.removed && self.platform_confirmed))
                 || visible.contains(&mount.id().to_string())
                 || application.mount_root(&mount)? != self.surface
             {
@@ -162,6 +206,9 @@ impl NativeResources {
             match application.close(&mount, Ok(())) {
                 Ok(()) => {
                     self.scopes.remove(&mount.id().to_string());
+                    if mount == self.surface {
+                        self.surface_closed = true;
+                    }
                     closed += 1;
                 }
                 Err(Error::Core(CoreError::CleanupPending)) => {}

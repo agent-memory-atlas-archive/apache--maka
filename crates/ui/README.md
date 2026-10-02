@@ -55,6 +55,14 @@ and recovery surfaces are still pending. `close` requires an actual
 native cleanup acknowledgement; `retire` only stops new input. `shutdown` retains
 owners while mounts/work/resources remain unconfirmed.
 
+Desktop owns each window's cleanup separately from its visual Surface. Logical
+removal revokes inputs and drops renderer owners; root completion also waits for
+the platform destruction receipt, every real resource lease and child cleanup.
+Known failures retain a failed fence. The bounded [GPUI source patch](../../third-party/gpui-fast/SOURCE.md)
+provides backend receipts without equating logical close or a queued destroy
+request with resource release. This does not promise driver-internal GPU memory
+reclamation.
+
 Generate a package-backed desktop example (the output directory must be new):
 
 ```sh

@@ -329,3 +329,12 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 Native Computer Use dependency notices are recorded in
 crates/computer-use/THIRD_PARTY_NOTICES.
+
+GPUI Fast platform source (adapted, Apache License 2.0)
+
+third-party/gpui-fast contains four crates from
+https://github.com/longbridge/gpui-fast at revision
+e4aabe752665baabe330464892cfe6882ed3283b.
+Copyright 2022 - 2025 Zed Industries, Inc.
+Original license texts, finite file provenance and modifications are recorded in
+third-party/gpui-fast/{LICENSE,LICENSE-APACHE,upstream.json,SOURCE.md}.

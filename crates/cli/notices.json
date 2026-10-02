@@ -1,7 +1,7 @@
 {
   "inputs": {
-    "Cargo.lock": "d03601ef6ca084223f4438245a7aee7cf7541bf119d8b2ae9d855ca230366018",
-    "Cargo.toml": "6031091fae905265917ed0466a35c4cc8d92317b7dad51bb1c2193bfd22e5075",
+    "Cargo.lock": "df8f19c3c935604e0179dea517e1bd5e666317d482b56ba9f7a949d71951c7c6",
+    "Cargo.toml": "81218acbdbe3b04f21e2073bd9ed4f93b673faf2a4140f44805a8f0f5c902313",
     "crates/acp/Cargo.toml": "836cf57acda320dc984f4648e5893580e79063e95ced700f33cfbaa75994b8f8",
     "crates/agent/Cargo.toml": "241d363907d6e5491ba6645de5c114877165e4abd6844b2c581a35fd19c0f4f4",
     "crates/apply-patch/Cargo.toml": "049167f87e46959c056e9c3ec990d2243ea6366f883afc6cf5ff5f1364c94e51",

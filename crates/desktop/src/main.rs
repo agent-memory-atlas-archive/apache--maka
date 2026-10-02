@@ -21,14 +21,15 @@ extern crate gpui_kit as gpui;
 mod owned;
 mod resources;
 mod widgets;
+mod window_owner;
 use clap::Parser;
 use gpui_kit::{
-    AnyElement, App, AppContext, Bounds, Context, InteractiveElement, IntoElement, ParentElement,
-    Render, SharedString, Styled, Task, TitlebarOptions, WindowBounds, WindowOptions,
+    AnyElement, AppContext, Bounds, Context, InteractiveElement, IntoElement, ParentElement,
+    Render, SharedString, Styled, TitlebarOptions, WindowBounds, WindowOptions,
     component::button::Button, div, px, rgb, size,
 };
 #[cfg(test)]
-use gpui_kit::{TestAppContext, point};
+use gpui_kit::{App, TestAppContext, point};
 use maka_plugin_core::{
     composition::{Input, PresentationTarget},
     runtime::Mount,
@@ -46,7 +47,6 @@ struct Args {
 }
 
 struct Surface {
-    _cleanup: Task<()>,
     application: Rc<RefCell<DesktopApplication>>,
     resources: Rc<RefCell<resources::NativeResources>>,
     mount: Mount,
@@ -90,6 +90,9 @@ impl Surface {
         window: &mut gpui_kit::Window,
         cx: &mut Context<Self>,
     ) -> maka_ui::Result<()> {
+        if self.resources.borrow().is_removed() {
+            return Ok(());
+        }
         let application = self.application.borrow();
         for mount in application.mounted_subtree(&self.mount)? {
             let frame = application.frame(&mount)?;
@@ -224,6 +227,9 @@ impl Render for Surface {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         // Render recipes and committed Rust state only; no JavaScript here.
+        if self.resources.borrow().is_removed() {
+            return div().size_full();
+        }
         let application = self.application.borrow();
         div()
             .size_full()
@@ -273,61 +279,80 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let application = Rc::new(RefCell::new(application));
     let startup_error = Rc::new(RefCell::new(None));
     let startup_result = startup_error.clone();
-    gpui_kit::application().run(move |cx| {
-        gpui_kit::init(cx);
-        let (wake, receipts) = tokio::sync::mpsc::unbounded_channel();
-        let resources = Rc::new(RefCell::new(resources::NativeResources::new(
-            mount.clone(),
-            wake,
-        )));
-        let cleanup_task = start_cleanup(cx, &resources, &application, receipts);
-        let bounds = Bounds::centered(None, dimensions, cx);
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions {
-                title: Some(title.into()),
+    gpui_kit::application()
+        .with_quit_mode(gpui_kit::QuitMode::Explicit)
+        .run(move |cx| {
+            gpui_kit::init(cx);
+            let (wake, receipts) = tokio::sync::mpsc::unbounded_channel();
+            let resources = Rc::new(RefCell::new(resources::NativeResources::new(
+                mount.clone(),
+                wake,
+            )));
+            let bounds = Bounds::centered(None, dimensions, cx);
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some(title.into()),
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let cleanup = application.clone();
-        let retiring = mount.clone();
-        cx.on_window_closed(move |cx, _| {
-            if cx.windows().is_empty() {
-                // GPUI reports logical removal before the platform window is
-                // destroyed. Revoke now; do not forge a native close receipt.
-                // This process exits, with the cleanup fence retained until
-                // teardown. Reusable in-process surfaces need a platform ack.
-                if let Err(error) = cleanup.borrow_mut().retire(&retiring) {
-                    eprintln!("component retirement failed: {error}");
+            };
+            let content = application.clone();
+            let content_mount = mount.clone();
+            let content_error = startup_error.clone();
+            if let Err(error) = gpui_kit::open_window(options, cx, move |window, cx| {
+                let result = content_error.clone();
+                match window_owner::start(
+                    window,
+                    cx,
+                    resources.clone(),
+                    content.clone(),
+                    receipts,
+                    move |outcome, cx| {
+                        if let Err(error) = outcome {
+                            eprintln!("native cleanup unconfirmed: {error}");
+                            *result.borrow_mut() =
+                                Some(format!("native cleanup unconfirmed: {error}"));
+                        }
+                        if cx.windows().is_empty() {
+                            cx.quit();
+                        }
+                    },
+                ) {
+                    Ok(task) => task.detach(),
+                    Err(error) => {
+                        eprintln!("native window cleanup unavailable: {error}");
+                        let _ = resources
+                            .borrow_mut()
+                            .window_removed(&mut content.borrow_mut());
+                        let _ = content
+                            .borrow_mut()
+                            .close(&content_mount, Err(error.clone()));
+                        *content_error.borrow_mut() = Some(error);
+                        window.remove_window();
+                        cx.quit();
+                    }
                 }
-                cx.quit();
-            }
-        })
-        .detach();
-        let content = application.clone();
-        let content_mount = mount.clone();
-        if let Err(error) = gpui_kit::open_window(options, cx, move |window, cx| {
-            let surface = cx.new(|_| Surface {
-                _cleanup: cleanup_task,
-                application: content,
-                resources,
-                mount: content_mount,
-            });
-            surface.update(cx, |surface, cx| {
+                let surface = cx.new(|_| Surface {
+                    application: content,
+                    resources,
+                    mount: content_mount,
+                });
+                surface.update(cx, |surface, cx| {
+                    surface
+                        .sync_native(window, cx)
+                        .expect("committed native mounts")
+                });
                 surface
-                    .sync_native(window, cx)
-                    .expect("committed native mounts")
-            });
-            surface
-        }) {
-            let _ = application.borrow_mut().retire(&mount);
-            *startup_error.borrow_mut() = Some(format!("native window creation failed: {error}"));
-            cx.quit();
-        } else {
-            cx.activate(true);
-        }
-    });
+            }) {
+                let _ = application.borrow_mut().retire(&mount);
+                *startup_error.borrow_mut() =
+                    Some(format!("native window creation failed: {error}"));
+                cx.quit();
+            } else {
+                cx.activate(true);
+            }
+        });
     if let Some(error) = startup_result.borrow_mut().take() {
         return Err(error.into());
     }
@@ -347,32 +372,6 @@ impl log::Log for NativeLog {
         }
     }
     fn flush(&self) {}
-}
-
-fn start_cleanup(
-    cx: &App,
-    resources: &Rc<RefCell<resources::NativeResources>>,
-    application: &Rc<RefCell<DesktopApplication>>,
-    mut receipts: tokio::sync::mpsc::UnboundedReceiver<()>,
-) -> Task<()> {
-    let resources = Rc::downgrade(resources);
-    let application = Rc::downgrade(application);
-    cx.spawn(async move |cx| {
-        while receipts.recv().await.is_some() {
-            let (Some(resources), Some(application)) = (resources.upgrade(), application.upgrade())
-            else {
-                break;
-            };
-            cx.update(|_| {
-                if let Err(error) = resources
-                    .borrow_mut()
-                    .collect(&mut application.borrow_mut())
-                {
-                    eprintln!("native component cleanup unconfirmed: {error}");
-                }
-            });
-        }
-    })
 }
 
 fn maka_js_limits() -> maka_js_runtime::plugin::Limits {
@@ -432,6 +431,206 @@ mod tests {
     }
 
     #[gpui::test]
+    fn unavailable_platform_receipt_does_not_create_resources_during_initial_window_draw(
+        cx: &mut TestAppContext,
+    ) {
+        let timer = timer();
+        let mut application = application(&timer);
+        let root = application.mount_launch(serde_json::json!({})).unwrap();
+        let app = Rc::new(RefCell::new(application));
+        let (wake, wakes) = tokio::sync::mpsc::unbounded_channel();
+        let resources = Rc::new(RefCell::new(resources::NativeResources::new(
+            root.clone(),
+            wake,
+        )));
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                // A real failed claim exercises the startup path. GPUI still
+                // draws the returned content once, even after remove_window.
+                let _claimed = window.take_cleanup_receiver().unwrap();
+                let error = window_owner::start(
+                    window,
+                    cx,
+                    resources.clone(),
+                    app.clone(),
+                    wakes,
+                    |_, _| panic!("no closing owner was created"),
+                )
+                .expect_err("receiver can only be claimed once");
+                resources
+                    .borrow_mut()
+                    .window_removed(&mut app.borrow_mut())
+                    .unwrap();
+                app.borrow_mut().close(&root, Err(error)).unwrap_err();
+                window.remove_window();
+                let surface = cx.new(|_| Surface {
+                    application: app.clone(),
+                    resources: resources.clone(),
+                    mount: root.clone(),
+                });
+                surface.update(cx, |s, cx| s.sync_native(window, cx).unwrap());
+                surface
+            })
+            .unwrap();
+        });
+        cx.run_until_parked();
+        assert!(resources.borrow().is_removed());
+        assert!(resources.borrow().owners.is_empty());
+        assert!(app.borrow().is_retiring(&root));
+        assert!(app.borrow().frame(&root).is_ok());
+    }
+
+    #[gpui::test]
+    fn closing_one_window_does_not_retire_or_collect_another_surface(cx: &mut TestAppContext) {
+        let timer = timer();
+        let mut application = application(&timer);
+        let first = application.mount_launch(serde_json::json!({})).unwrap();
+        let second = application.mount_launch(serde_json::json!({})).unwrap();
+        let app = Rc::new(RefCell::new(application));
+        let finished = Rc::new(std::cell::Cell::new(0));
+        let open = |mount: &Mount| {
+            let (wake, wakes) = tokio::sync::mpsc::unbounded_channel();
+            let resources = Rc::new(RefCell::new(resources::NativeResources::new(
+                mount.clone(),
+                wake,
+            )));
+            let (handle, surface) = cx.update(|cx| {
+                gpui_kit::init(cx);
+                gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                    let finished = finished.clone();
+                    window_owner::start(
+                        window,
+                        cx,
+                        resources.clone(),
+                        app.clone(),
+                        wakes,
+                        move |outcome, _| {
+                            outcome.unwrap();
+                            finished.set(finished.get() + 1);
+                        },
+                    )
+                    .unwrap()
+                    .detach();
+                    let surface = cx.new(|_| Surface {
+                        application: app.clone(),
+                        resources: resources.clone(),
+                        mount: mount.clone(),
+                    });
+                    surface.update(cx, |s, cx| s.sync_native(window, cx).unwrap());
+                    surface
+                })
+                .unwrap()
+            });
+            (handle, surface, resources)
+        };
+        let (first_window, first_surface, first_resources) = open(&first);
+        let (second_window, second_surface, second_resources) = open(&second);
+        let held = first_resources.borrow_mut().acquire(&first);
+        cx.update_window(first_window, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.update(|_| drop(first_surface));
+        cx.run_until_parked();
+        assert!(app.borrow().is_retiring(&first));
+        assert!(!app.borrow().is_retiring(&second));
+        assert_eq!(finished.get(), 0);
+        app.borrow_mut()
+            .dispatch(&second, 0, "parent", serde_json::Value::Null)
+            .unwrap();
+        cx.update_window(second_window, |_, window, cx| {
+            second_surface.update(cx, |s, cx| s.sync_native(window, cx).unwrap());
+            window.refresh();
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        drop(held);
+        cx.run_until_parked();
+        assert_eq!(finished.get(), 1);
+        assert!(first_resources.borrow().surface_closed);
+        assert!(!second_resources.borrow().surface_closed);
+        assert!(app.borrow().frame(&first).is_err());
+        assert_eq!(app.borrow().frame(&second).unwrap().revision, 1);
+        cx.update_window(second_window, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.update(|_| drop(second_surface));
+        cx.run_until_parked();
+        assert_eq!(finished.get(), 2);
+        assert!(app.borrow().frame(&second).is_err());
+    }
+
+    #[gpui::test]
+    fn window_closing_owner_survives_surface_drop_and_waits_for_real_leases(
+        cx: &mut TestAppContext,
+    ) {
+        let timer = timer();
+        let mut application = application(&timer);
+        let root = application.mount_launch(serde_json::json!({})).unwrap();
+        let child = application.child_mount(&root, "right").unwrap().clone();
+        let application = Rc::new(RefCell::new(application));
+        let (wake, wakes) = tokio::sync::mpsc::unbounded_channel();
+        let resources = Rc::new(RefCell::new(resources::NativeResources::new(
+            root.clone(),
+            wake,
+        )));
+        let held_root = resources.borrow_mut().acquire(&root);
+        let held_child = resources.borrow_mut().acquire(&child);
+        let finished = Rc::new(RefCell::new(None));
+        let (handle, surface) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                let finished = finished.clone();
+                window_owner::start(
+                    window,
+                    cx,
+                    resources.clone(),
+                    application.clone(),
+                    wakes,
+                    move |outcome, _| *finished.borrow_mut() = Some(outcome),
+                )
+                .unwrap()
+                .detach();
+                let surface = cx.new(|_| Surface {
+                    application: application.clone(),
+                    resources: resources.clone(),
+                    mount: root.clone(),
+                });
+                surface.update(cx, |s, cx| s.sync_native(window, cx).unwrap());
+                surface
+            })
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.update(|_| drop(surface));
+        cx.run_until_parked();
+        assert!(resources.borrow().owners.is_empty());
+        assert!(application.borrow().is_retiring(&root));
+        assert!(application.borrow().frame(&root).is_ok());
+        assert!(
+            finished.borrow().is_none(),
+            "platform receipt alone cannot close the surface"
+        );
+        drop(held_root);
+        cx.run_until_parked();
+        assert!(
+            application.borrow().frame(&root).is_ok(),
+            "root waits for its child lease"
+        );
+        let weak = Rc::downgrade(&application);
+        drop(held_child);
+        cx.run_until_parked();
+        assert_eq!(*finished.borrow(), Some(Ok(())));
+        assert!(resources.borrow().surface_closed);
+        assert!(application.borrow().retiring_mounts().is_empty());
+        assert!(application.borrow().frame(&root).is_err());
+        drop(application);
+        assert!(
+            weak.upgrade().is_none(),
+            "completed task and close subscription must not self-retain"
+        );
+    }
+
+    #[gpui::test]
     fn native_state_and_callback_release_drive_cleanup_without_mount_churn_leaks(
         cx: &mut TestAppContext,
     ) {
@@ -455,7 +654,6 @@ mod tests {
             let application = app.clone();
             let resources = resources.clone();
             let mount = root.clone();
-            let cleanup_task = start_cleanup(cx, &resources, &application, receipts);
             gpui_kit::open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(Bounds::new(
@@ -466,11 +664,20 @@ mod tests {
                 },
                 cx,
                 |window, cx| {
+                    window_owner::start(
+                        window,
+                        cx,
+                        resources.clone(),
+                        application.clone(),
+                        receipts,
+                        |outcome, _| outcome.unwrap(),
+                    )
+                    .unwrap()
+                    .detach();
                     let surface = cx.new(|_| Surface {
                         application,
                         resources,
                         mount,
-                        _cleanup: cleanup_task,
                     });
                     surface.update(cx, |surface, cx| surface.sync_native(window, cx).unwrap());
                     surface

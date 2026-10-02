@@ -68,7 +68,6 @@ impl Scene {
         )));
         let (window, surface) = cx.update(|cx| {
             gpui_kit::init(cx);
-            let task = start_cleanup(cx, &resources, &app, receipts);
             gpui_kit::open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(Bounds::new(
@@ -79,8 +78,17 @@ impl Scene {
                 },
                 cx,
                 |window, cx| {
+                    window_owner::start(
+                        window,
+                        cx,
+                        resources.clone(),
+                        app.clone(),
+                        receipts,
+                        |outcome, _| outcome.unwrap(),
+                    )
+                    .unwrap()
+                    .detach();
                     let surface = cx.new(|_| Surface {
-                        _cleanup: task,
                         application: app.clone(),
                         resources: resources.clone(),
                         mount: root.clone(),

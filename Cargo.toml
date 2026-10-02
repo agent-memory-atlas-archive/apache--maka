@@ -16,6 +16,7 @@
 # under the License.
 
 [workspace]
+exclude = ["third-party/gpui-fast"]
 default-members = ["crates/cli"]
 members = [
     "crates/acp",
@@ -159,3 +160,9 @@ gpui-pre-platform = { git = "https://github.com/longbridge/gpui-fast", rev = "e4
 gpui-pre-web = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }
 gpui-pre-macros = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }
 gpui-pre-sum-tree = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }
+
+[patch."https://github.com/longbridge/gpui-fast"]
+gpui = { path = "third-party/gpui-fast/crates/gpui" }
+gpui_macos = { path = "third-party/gpui-fast/crates/gpui_macos" }
+gpui_windows = { path = "third-party/gpui-fast/crates/gpui_windows" }
+gpui_linux = { path = "third-party/gpui-fast/crates/gpui_linux" }

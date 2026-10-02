@@ -158,6 +158,15 @@ const isUnder =
   (path) =>
     startsWith(prefix)(path) && hasExtension(...extensions)(path);
 
+// Finite reviewed upstream files, not a blanket third-party directory exemption.
+// New Maka-only files (including platform/cleanup.rs) still require ASF headers.
+const gpuiUpstreamFiles = new Set(
+  Object.keys(
+    JSON.parse(readFileSync(join(defaultRepoRoot, 'third-party/gpui-fast/upstream.json'), 'utf8'))
+      .files,
+  ).map((path) => `third-party/gpui-fast/${path}`),
+);
+
 /**
  * The reviewed exclusion list. Order matters only for reporting: a file is
  * attributed to the first rule that matches it.
@@ -218,7 +227,9 @@ export const exclusionRules = [
         // Verbatim Deno MIT sources; exact revision and license in LICENSE.
         'crates/js-runtime/third-party/deno-telemetry/telemetry.ts',
         'crates/js-runtime/third-party/deno-telemetry/util.ts',
-      )(path) || isUnder('patches', '.patch')(path),
+      )(path) ||
+      gpuiUpstreamFiles.has(path) ||
+      isUnder('patches', '.patch')(path),
   },
   {
     id: 'generated-files',
