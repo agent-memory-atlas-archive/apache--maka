@@ -25,7 +25,7 @@ mod pool;
 mod worker;
 
 pub use bridge::Bridge;
-pub use foreground::{Foreground, ForegroundModule};
+pub use foreground::{Foreground, ForegroundCallbacks, ForegroundModule};
 pub use pool::Pool;
 
 use deno_core::v8;

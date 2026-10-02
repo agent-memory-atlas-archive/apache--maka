@@ -23,6 +23,10 @@ use serde_json::Value;
 use std::sync::Arc;
 
 pub(super) struct Module(pub v8::Global<v8::Object>);
+pub(super) struct Callbacks {
+    receiver: v8::Global<v8::Object>,
+    functions: std::collections::BTreeMap<String, v8::Global<v8::Function>>,
+}
 struct Sdk {
     plugin: v8::Global<v8::Function>,
     presenter: v8::Global<v8::Function>,
@@ -306,6 +310,81 @@ pub(super) fn call_synchronous(
     args: &[Value],
 ) -> Result<Value> {
     let value = invoke(runtime, module, path, args)?;
+    synchronous_value(runtime, value)
+}
+
+/// Capture an actual receiver and all required functions before publishing a
+/// component. Property getters/proxies execute here under the caller's budget;
+/// later mutation of the namespace never redirects an existing registration.
+pub(super) fn capture_callbacks(
+    runtime: &mut JsRuntime,
+    module: &Module,
+    namespace: &[String],
+    methods: &[&str],
+) -> Result<Callbacks> {
+    deno_core::scope!(scope, runtime);
+    v8::tc_scope!(scope, scope);
+    let mut receiver = v8::Local::new(scope, &module.0);
+    for part in namespace {
+        let key =
+            v8::String::new(scope, part).ok_or_else(|| failed("export name allocation failed"))?;
+        let value = receiver
+            .get(scope, key.into())
+            .ok_or_else(|| failed("component lookup failed"))?;
+        receiver = v8::Local::<v8::Object>::try_from(value).map_err(failed)?;
+    }
+    let mut functions = std::collections::BTreeMap::new();
+    for method in methods {
+        let key = v8::String::new(scope, method)
+            .ok_or_else(|| failed("export name allocation failed"))?;
+        let value = receiver
+            .get(scope, key.into())
+            .ok_or_else(|| failed("component callback lookup failed"))?;
+        let function = v8::Local::<v8::Function>::try_from(value)
+            .map_err(|_| failed(format!("component callback is not callable: {method}")))?;
+        functions.insert((*method).into(), v8::Global::new(scope, function));
+    }
+    Ok(Callbacks {
+        receiver: v8::Global::new(scope, receiver),
+        functions,
+    })
+}
+
+pub(super) fn call_bound_synchronous(
+    runtime: &mut JsRuntime,
+    callbacks: &Callbacks,
+    method: &str,
+    args: &[Value],
+) -> Result<Value> {
+    let value = {
+        deno_core::scope!(scope, runtime);
+        v8::tc_scope!(scope, scope);
+        let function = callbacks
+            .functions
+            .get(method)
+            .ok_or_else(|| failed("callback was not captured"))?;
+        let function = v8::Local::new(scope, function);
+        let receiver = v8::Local::new(scope, &callbacks.receiver);
+        let args = args
+            .iter()
+            .map(|value| deno_core::serde_v8::to_v8(scope, value).map_err(failed))
+            .collect::<Result<Vec<_>>>()?;
+        let value = function
+            .call(scope, receiver.into(), &args)
+            .ok_or_else(|| {
+                failed(
+                    scope
+                        .exception()
+                        .map(|value| value.to_rust_string_lossy(scope))
+                        .unwrap_or_else(|| "plugin call terminated".into()),
+                )
+            })?;
+        v8::Global::new(scope, value)
+    };
+    synchronous_value(runtime, value)
+}
+
+fn synchronous_value(runtime: &mut JsRuntime, value: v8::Global<v8::Value>) -> Result<Value> {
     deno_core::scope!(scope, runtime);
     v8::tc_scope!(scope, scope);
     let value = v8::Local::new(scope, value);

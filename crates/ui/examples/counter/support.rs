@@ -93,7 +93,7 @@ pub fn fixture(handler: &str) -> (Input, Vec<Package>) {
         const contract = {};
         export function activate(configuration) {{ return {{App:{{contract,component:['app']}}}}; }}
         function frame(state) {{ return {{revision:state.revision,state,window:{{surface:'surface',title:'Dynamic product',width:640,height:400}},view:{{kind:'stack',key:'root',direction:'column',padding:16,gap:8,background:1513239,children:[{{kind:'text',key:'count',text:String(state.count),color:16777215}},{{kind:'button',key:'inc',label:'Increment'}}]}}}}; }}
-        export const app = {{mount(props){{ return frame({{count:props.count??0,revision:0}}); }},event(state,event){{ {} }} }};
+        export const app = {{mount(props){{ return frame({{count:props.count??0,revision:0}}); }},event(state,event){{ {} }},update(state,props){{ return frame({{...state,revision:state.revision+1}}); }} }};
     "#,
         serde_json::to_string(&component).unwrap(),
         handler
@@ -155,3 +155,96 @@ pub fn fixture(handler: &str) -> (Input, Vec<Package>) {
         vec![provider, app],
     )
 }
+
+pub(crate) fn composed_fixture(child_update: &str, parent_event: &str) -> (Input, Vec<Package>) {
+    let (mut input, mut packages) = fixture("");
+    let root = packages.pop().unwrap();
+    let mut declaration = root.manifest().application.clone().unwrap();
+    let root_contract = declaration.entries[&EntryTarget::Desktop].exports["App"]
+        .contract
+        .clone();
+    let counter_contract = Contract {
+        name: "example.Counter".into(),
+        version: 1,
+        transport: Transport::Local,
+        interface: Interface::Component {
+            props: json!({"type":"object","properties":{"label":{"type":"string"},"initial":{"type":"integer"}},"required":["label","initial"],"additionalProperties":false}),
+            events: BTreeMap::new(),
+        },
+    };
+    declaration
+        .entries
+        .get_mut(&EntryTarget::Desktop)
+        .unwrap()
+        .imports
+        .insert(
+            "counter".into(),
+            Import {
+                contract: counter_contract.clone(),
+                cardinality: Cardinality::One,
+            },
+        );
+    let source = format!(
+        r#"
+        export function activate(){{return {{App:{{contract:{},component:['app']}}}};}}
+        function frame(state){{
+            const children=[{{kind:'component',key:'left',binding:'counter',member:0,props:{{label:'Left '+state.version,initial:10}}}}];
+            if(state.right)children.push({{kind:'component',key:'right',binding:'counter',member:0,props:{{label:'Right '+state.version,initial:20}}}});
+            return {{state,revision:state.revision,window:{{surface:'surface',title:'Composed product',width:640,height:400}},view:{{kind:'stack',key:'root',direction:'column',gap:8,padding:16,background:1513239,children:[{{kind:'stack',key:'counters',direction:'row',gap:16,padding:0,background:1513239,children}},{{kind:'button',key:'parent',label:'Change labels'}},{{kind:'button',key:'toggle',label:'Toggle right counter'}}]}}}};
+        }}
+        export const app={{mount(){{return frame({{revision:0,version:0,right:true}});}},event(state,event){{{}}},update(state,props){{return frame({{...state,revision:state.revision+1}});}}}};
+    "#,
+        serde_json::to_string(&root_contract).unwrap(),
+        parent_event
+    );
+    let root = package("dynamic.app", declaration, Some(source));
+    let source = format!(
+        r#"
+        export function activate(){{return {{Counter:{{contract:{},component:['counter']}}}};}}
+        function frame(state){{return {{state,revision:state.revision,window:null,view:{{kind:'stack',key:'counter',direction:'column',gap:8,padding:8,background:1513239,children:[{{kind:'text',key:'label',text:state.label,color:16777215}},{{kind:'text',key:'count',text:String(state.count),color:16777215}},{{kind:'button',key:'inc',label:'Increment '+state.label}}]}}}};}}
+        export const counter={{mount(props){{return frame({{count:props.initial,label:props.label,revision:0}});}},event(state,event){{return frame({{...state,count:state.count+1,revision:state.revision+1}});}},update(state,props){{{}}}}};
+    "#,
+        serde_json::to_string(&counter_contract).unwrap(),
+        child_update
+    );
+    let counter = package(
+        "dynamic.counter",
+        Declaration {
+            entries: BTreeMap::from([(
+                EntryTarget::Desktop,
+                EntryDeclaration {
+                    implementation: Implementation::JavaScript {
+                        module: "index.mjs".into(),
+                        realm: Realm::Dedicated,
+                    },
+                    configuration: json!({"type":"object"}),
+                    imports: BTreeMap::new(),
+                    exports: BTreeMap::from([(
+                        "Counter".into(),
+                        Export {
+                            contract: counter_contract,
+                            availability: Availability::Required,
+                        },
+                    )]),
+                },
+            )]),
+            composition: None,
+        },
+        Some(source),
+    );
+    input.instances.get_mut("app").unwrap().package = root.application_ref().into();
+    input.instances.get_mut("app").unwrap().bindings.insert(
+        "counter".into(),
+        vec![Target::Instance {
+            path: vec!["counter".into()],
+            export: "Counter".into(),
+        }],
+    );
+    input.instances.insert("counter".into(), node(&counter, 3));
+    packages.extend([root, counter]);
+    (input, packages)
+}
+
+pub(crate) const CHILD_UPDATE: &str =
+    "return frame({...state,label:props.label,revision:state.revision+1});";
+pub(crate) const PARENT_EVENT: &str = "const next={...state,revision:state.revision+1};if(event.key==='toggle')next.right=!state.right;else next.version++;return frame(next);";

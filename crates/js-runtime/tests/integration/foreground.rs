@@ -339,3 +339,65 @@ fn ready_jobs_fail_or_stall_before_the_current_callback_batch_can_commit() {
         assert!(realm.failure().is_some());
     }
 }
+
+#[test]
+fn captured_callbacks_keep_receiver_and_function_identity_until_module_close() {
+    let mut realm = realm();
+    let module=realm.load("callbacks.mjs",r#"
+        export let panel = { count:4, read(){return this.count;} };
+        export function mutate(){ panel.read=()=>999; panel={count:100,read(){return this.count;}}; return null; }
+    "#).unwrap();
+    let bound = realm
+        .capture(&module, &["panel".into()], &["read"])
+        .unwrap();
+    assert_eq!(realm.call_bound(&bound, "read", &[]).unwrap(), 4);
+    call(&mut realm, &module, "mutate", &[]).unwrap();
+    assert_eq!(realm.call_bound(&bound, "read", &[]).unwrap(), 4);
+    assert_eq!(
+        realm
+            .call(&module, &["panel".into(), "read".into()], &[])
+            .unwrap(),
+        100
+    );
+    let mut other = Foreground::new(Default::default(), scheduler()).unwrap();
+    assert!(other.call_bound(&bound, "read", &[]).is_err());
+    realm.close(&module).unwrap();
+    assert!(realm.call_bound(&bound, "read", &[]).is_err());
+    drop(realm);
+    assert!(other.call_bound(&bound, "read", &[]).is_err());
+}
+
+#[test]
+fn callback_capture_is_atomic_and_getters_obey_the_foreground_budget() {
+    let mut missing = realm();
+    let module = missing
+        .load("missing.mjs", "export const panel={mount(){return null;}};")
+        .unwrap();
+    assert!(
+        missing
+            .capture(&module, &["panel".into()], &["mount", "event"])
+            .is_err()
+    );
+    assert!(missing.failure().is_some());
+    for source in [
+        "export const panel={get mount(){while(true){}},event(){}};",
+        "export const panel={mount(){},get event(){while(true){}}};",
+    ] {
+        let mut realm = Foreground::new(
+            Limits {
+                synchronous_slice: Duration::from_millis(50),
+                ..Default::default()
+            },
+            scheduler(),
+        )
+        .unwrap();
+        let module = realm.load("getter.mjs", source).unwrap();
+        assert!(
+            realm
+                .capture(&module, &["panel".into()], &["mount", "event"])
+                .is_err()
+        );
+        assert!(realm.failure().is_some());
+        realm.close(&module).unwrap();
+    }
+}

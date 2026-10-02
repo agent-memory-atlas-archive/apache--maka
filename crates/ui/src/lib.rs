@@ -20,9 +20,10 @@
 //! Local component execution. Renderers only read committed frames; JavaScript
 //! executes on initialization or input, never during layout/paint.
 mod frame;
+mod tree;
 pub use frame::{Direction, Frame, Node, Window};
 
-use maka_js_runtime::plugin::{Foreground, ForegroundModule, Limits};
+use maka_js_runtime::plugin::{Foreground, ForegroundCallbacks, ForegroundModule, Limits};
 use maka_plugin_core::{
     composition::{ExecutionLocation, Input, InstanceId, PresentationTarget},
     contract::{Contract, Interface, Transport},
@@ -51,8 +52,8 @@ type ExecutionRealm = Rc<RefCell<Foreground>>;
 enum Export {
     Component {
         realm: ExecutionRealm,
-        module: ForegroundModule,
-        path: Vec<String>,
+        callbacks: ForegroundCallbacks,
+        props: jsonschema::Validator,
     },
     Surface(PresentationTarget),
 }
@@ -72,7 +73,8 @@ pub struct Application {
     runtime: Runtime<Export>,
     activations: BTreeMap<InstanceId, Activation>,
     modules: BTreeMap<InstanceId, Loaded>,
-    frames: BTreeMap<Uuid, Frame>,
+    views: BTreeMap<Uuid, tree::Mounted>,
+    slice: std::time::Duration,
     target: PresentationTarget,
 }
 
@@ -112,7 +114,8 @@ impl Application {
             runtime: Runtime::new(plan),
             activations: BTreeMap::new(),
             modules: BTreeMap::new(),
-            frames: BTreeMap::new(),
+            views: BTreeMap::new(),
+            slice: limits.synchronous_slice,
             target,
         };
         let mut shared: Option<ExecutionRealm> = None;
@@ -202,14 +205,24 @@ impl Application {
                                         "local JS export must declare a component".into(),
                                     ));
                                 }
+                                let Interface::Component { props, .. } = &actual.contract.interface
+                                else {
+                                    unreachable!()
+                                };
+                                let props = jsonschema::validator_for(props)
+                                    .map_err(|error| Error::Invalid(error.to_string()))?;
                                 batch.insert(
                                     name,
                                     Published {
                                         contract: actual.contract,
                                         value: Export::Component {
                                             realm: realm.clone(),
-                                            module: loaded.clone(),
-                                            path: actual.component,
+                                            props,
+                                            callbacks: realm.borrow_mut().capture(
+                                                &loaded,
+                                                &actual.component,
+                                                &["mount", "event", "update"],
+                                            )?,
                                         },
                                     },
                                 );
@@ -239,87 +252,24 @@ impl Application {
         Ok(app)
     }
 
-    pub fn mount_launch(&mut self, props: Value) -> Result<Mount> {
-        let mount = self.runtime.mount_launch()?;
-        let outcome = self.initialize(&mount, props);
-        if let Err(error) = outcome {
-            self.runtime.retire_mount(&mount)?;
-            self.runtime.complete_mount(&mount, Ok(()))?;
-            return Err(error);
-        }
-        self.runtime.publish_mount(&mount)?;
-        Ok(mount)
-    }
-
-    fn initialize(&mut self, mount: &Mount, props: Value) -> Result<()> {
-        let Interface::Component { props: schema, .. } =
-            &self.runtime.mount_contract(mount)?.interface
-        else {
-            unreachable!()
-        };
-        jsonschema::validator_for(schema)
-            .map_err(|e| Error::Invalid(e.to_string()))?
-            .validate(&props)
-            .map_err(|e| Error::Invalid(e.to_string()))?;
-        let frame = self.invoke(mount, "mount", &[props])?;
-        if frame.revision != 0 {
-            return Err(Error::Invalid("initial UI revision must be zero".into()));
-        }
-        self.validate_surface(mount, &frame)?;
-        self.frames.insert(mount.id(), frame);
-        Ok(())
-    }
-
-    /// Only currently committed handlers can receive input. Stale view events
-    /// carry the old revision and fail before JavaScript executes.
-    pub fn dispatch(
+    fn invoke(
         &mut self,
         mount: &Mount,
-        revision: u64,
-        key: &str,
-        event: Value,
-    ) -> Result<()> {
-        let frame = self.frame(mount)?;
-        if frame.revision != revision || !frame.view.has_action(key) {
-            return Err(Error::Invalid("stale or undeclared UI event".into()));
-        }
-        let window = frame.window.clone();
-        let next = self.invoke(
-            mount,
-            "event",
-            &[frame.state.clone(), json!({"key":key,"event":event})],
-        )?;
-        if next.revision
-            != revision
-                .checked_add(1)
-                .ok_or_else(|| Error::Invalid("UI revision exhausted".into()))?
-        {
-            return Err(Error::Invalid("UI revision must advance once".into()));
-        }
-        if next.window != window {
-            return Err(Error::Invalid(
-                "window configuration is fixed for this mount".into(),
-            ));
-        }
-        self.validate_surface(mount, &next)?;
-        self.frames.insert(mount.id(), next);
-        Ok(())
-    }
-
-    fn invoke(&mut self, mount: &Mount, method: &str, args: &[Value]) -> Result<Frame> {
+        method: &str,
+        args: &[Value],
+        deadline: std::time::Instant,
+    ) -> Result<Frame> {
         let execution = self.runtime.admit_mount(mount)?;
         let Export::Component {
-            realm,
-            module,
-            path,
+            realm, callbacks, ..
         } = execution.value()
         else {
             unreachable!()
         };
         let realm = realm.clone();
-        let mut path = path.clone();
-        path.push(method.into());
-        let result = realm.borrow_mut().call(module, &path, args);
+        let result = realm
+            .borrow_mut()
+            .call_bound_until(callbacks, method, args, deadline);
         self.runtime.settle(&execution, Ok(()))?; // No native effect has dispatched.
         let result = result.and_then(|value| {
             serde_json::from_value(value)
@@ -350,7 +300,11 @@ impl Application {
             .find(|status| status.mount == *mount)
             .ok_or(maka_plugin_core::Error::Retired)?
             .provider;
-        let handles = self.runtime.bind(&provider, &frame.window.surface)?;
+        let window = frame
+            .window
+            .as_ref()
+            .ok_or_else(|| Error::Invalid("launch component must request a surface".into()))?;
+        let handles = self.runtime.bind(&provider, &window.surface)?;
         if handles.len() != 1 {
             return Err(Error::Invalid(
                 "one explicit surface binding required".into(),
@@ -366,8 +320,9 @@ impl Application {
     }
 
     pub fn frame(&self, mount: &Mount) -> Result<&Frame> {
-        self.frames
+        self.views
             .get(&mount.id())
+            .map(|view| &view.frame)
             .ok_or_else(|| Error::Invalid("mount has no committed frame".into()))
     }
     pub fn close(
@@ -377,7 +332,7 @@ impl Application {
     ) -> Result<()> {
         self.runtime.retire_mount(mount)?;
         self.runtime.complete_mount(mount, native_cleanup)?;
-        self.frames.remove(&mount.id());
+        self.views.remove(&mount.id());
         Ok(())
     }
     /// Stops callbacks without asserting that the renderer/platform has closed

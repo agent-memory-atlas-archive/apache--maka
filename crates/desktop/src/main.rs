@@ -40,7 +40,14 @@ struct Surface {
     mount: Mount,
 }
 impl Surface {
-    fn node(&self, node: &Node, revision: u64, cx: &mut Context<Self>) -> AnyElement {
+    fn node(
+        &self,
+        application: &Application,
+        mount: &Mount,
+        node: &Node,
+        revision: u64,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         match node {
             Node::Text { key, text, color } => div()
                 .id(SharedString::from(key.clone()))
@@ -49,11 +56,12 @@ impl Surface {
                 .into_any_element(),
             Node::Button { key, label } => {
                 let key = key.clone();
+                let mount = mount.clone();
                 Button::new(SharedString::from(key.clone()))
                     .label(SharedString::from(label.clone()))
                     .on_click(cx.listener(move |view, _, _, cx| {
                         let result = view.application.borrow_mut().dispatch(
-                            &view.mount,
+                            &mount,
                             revision,
                             &key,
                             serde_json::json!({"kind":"click"}),
@@ -65,6 +73,18 @@ impl Surface {
                         }
                     }))
                     .into_any_element()
+            }
+            Node::Component { key, .. } => {
+                match application
+                    .child_mount(mount, key)
+                    .and_then(|child| application.frame(child).map(|frame| (child, frame)))
+                {
+                    Ok((child, frame)) => div()
+                        .id(SharedString::from(child.id().to_string()))
+                        .child(self.node(application, child, &frame.view, frame.revision, cx))
+                        .into_any_element(),
+                    Err(_) => div().into_any_element(),
+                }
             }
             Node::Stack {
                 key,
@@ -85,7 +105,11 @@ impl Surface {
                     Direction::Column => element.flex_col(),
                 };
                 element
-                    .children(children.iter().map(|child| self.node(child, revision, cx)))
+                    .children(
+                        children
+                            .iter()
+                            .map(|child| self.node(application, mount, child, revision, cx)),
+                    )
                     .into_any_element()
             }
         }
@@ -96,9 +120,13 @@ impl Render for Surface {
         // Only committed Rust state is read here. Input callbacks run JS later.
         let application = self.application.borrow();
         match application.frame(&self.mount) {
-            Ok(frame) => div()
-                .size_full()
-                .child(self.node(&frame.view, frame.revision, cx)),
+            Ok(frame) => div().size_full().child(self.node(
+                &application,
+                &self.mount,
+                &frame.view,
+                frame.revision,
+                cx,
+            )),
             Err(_) => div().size_full(),
         }
     }
@@ -130,11 +158,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Application::new(&input, packages, timer.handle().clone(), maka_js_limits())?;
     let mount = application.mount_launch(serde_json::json!({}))?;
     let frame = application.frame(&mount)?;
-    let dimensions = size(
-        px(frame.window.width as f32),
-        px(frame.window.height as f32),
-    );
-    let title = frame.window.title.clone();
+    let window = frame
+        .window
+        .as_ref()
+        .ok_or("launch component has no window")?;
+    let dimensions = size(px(window.width as f32), px(window.height as f32));
+    let title = window.title.clone();
     let application = Rc::new(RefCell::new(application));
     let startup_error = Rc::new(RefCell::new(None));
     let startup_result = startup_error.clone();

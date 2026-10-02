@@ -27,7 +27,7 @@ use std::collections::BTreeSet;
 pub struct Frame {
     pub revision: u64,
     pub state: Value,
-    pub window: Window,
+    pub window: Option<Window>,
     pub view: Node,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -64,15 +64,23 @@ pub enum Node {
         key: String,
         label: String,
     },
+    Component {
+        key: String,
+        binding: String,
+        member: u32,
+        props: Value,
+    },
 }
 impl Frame {
     pub fn validate(&self) -> Result<(), String> {
-        if self.window.title.len() > 512
-            || self.window.surface.is_empty()
-            || self.window.surface.len() > 128
-            || !(64..=16000).contains(&self.window.width)
-            || !(64..=16000).contains(&self.window.height)
-            || self.revision > 9_007_199_254_740_991
+        if self.revision > 9_007_199_254_740_991
+            || self.window.as_ref().is_some_and(|window| {
+                window.title.len() > 512
+                    || window.surface.is_empty()
+                    || window.surface.len() > 128
+                    || !(64..=16000).contains(&window.width)
+                    || !(64..=16000).contains(&window.height)
+            })
         {
             return Err("invalid window/revision".into());
         }
@@ -83,7 +91,10 @@ impl Frame {
 impl Node {
     fn validate(&self, depth: usize, keys: &mut BTreeSet<String>) -> Result<(), String> {
         let key = match self {
-            Self::Stack { key, .. } | Self::Text { key, .. } | Self::Button { key, .. } => key,
+            Self::Stack { key, .. }
+            | Self::Text { key, .. }
+            | Self::Button { key, .. }
+            | Self::Component { key, .. } => key,
         };
         if depth > 32
             || keys.len() >= 4096
@@ -118,6 +129,11 @@ impl Node {
                     return Err("invalid button label".into());
                 }
             }
+            Self::Component { binding, .. } => {
+                if binding.is_empty() || binding.len() > 128 {
+                    return Err("invalid component binding".into());
+                }
+            }
         }
         Ok(())
     }
@@ -126,6 +142,23 @@ impl Node {
             Self::Button { key: actual, .. } => actual == key,
             Self::Stack { children, .. } => children.iter().any(|child| child.has_action(key)),
             _ => false,
+        }
+    }
+
+    pub(crate) fn components<'a>(&'a self, output: &mut Vec<(&'a str, &'a str, u32, &'a Value)>) {
+        match self {
+            Self::Component {
+                key,
+                binding,
+                member,
+                props,
+            } => output.push((key, binding, *member, props)),
+            Self::Stack { children, .. } => {
+                for child in children {
+                    child.components(output);
+                }
+            }
+            _ => {}
         }
     }
 }

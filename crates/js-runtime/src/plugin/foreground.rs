@@ -42,6 +42,15 @@ pub struct ForegroundModule {
     id: u64,
 }
 
+/// Inert handle to a captured receiver and its required callback functions.
+/// Globals stay in the originating realm and are released on module close.
+#[derive(Clone)]
+pub struct ForegroundCallbacks {
+    domain: Rc<()>,
+    module: u64,
+    id: u64,
+}
+
 /// Create and use on the UI owner thread. The watchdog only interrupts V8; it
 /// never executes callbacks or owns native UI objects. The embedding supplies a
 /// background Tokio timer handle for Deno's native V8 scheduling and keeps that
@@ -50,9 +59,11 @@ pub struct ForegroundModule {
 /// budget violation closes the domain before any returned intent can commit.
 pub struct Foreground {
     // Module globals must be destroyed before their isolate.
+    callbacks: BTreeMap<u64, (u64, engine::Callbacks)>,
     modules: BTreeMap<u64, engine::Module>,
     domain: Rc<()>,
     next_module: u64,
+    next_callbacks: u64,
     budget: Budget,
     scheduler: tokio::runtime::Handle,
     runtime: JsRuntime,
@@ -78,9 +89,11 @@ impl Foreground {
         };
         let budget = Budget::new(health, limits.synchronous_slice)?;
         let mut foreground = Self {
+            callbacks: BTreeMap::new(),
             modules: BTreeMap::new(),
             domain: Rc::new(()),
             next_module: 0,
+            next_callbacks: 0,
             budget,
             scheduler,
             runtime,
@@ -105,12 +118,13 @@ impl Foreground {
         self.budget.enter();
         let _entered = self.scheduler.enter();
         let outcome = entered(&mut self.runtime, |runtime| {
-            engine::load(runtime, name, source, Bootstrap::Plain, id).and_then(|module| {
-                engine::poll_ready_jobs(runtime)?;
-                Ok(module)
-            })
-        });
-        let outcome = self.budget.finish(outcome)?;
+            let outcome =
+                engine::load(runtime, name, source, Bootstrap::Plain, id).and_then(|module| {
+                    engine::poll_ready_jobs(runtime)?;
+                    Ok(module)
+                });
+            self.budget.finish(outcome)
+        })?;
         self.next_module = id;
         self.modules.insert(id, outcome);
         Ok(ForegroundModule {
@@ -153,6 +167,105 @@ impl Foreground {
         self.budget.finish(outcome)
     }
 
+    pub fn capture(
+        &mut self,
+        module: &ForegroundModule,
+        namespace: &[String],
+        methods: &[&str],
+    ) -> Result<ForegroundCallbacks> {
+        self.ready()?;
+        if !Rc::ptr_eq(&module.domain, &self.domain) || !self.modules.contains_key(&module.id) {
+            return Err(failed("foreground module is retired or from another realm"));
+        }
+        if namespace.len() > 32
+            || namespace
+                .iter()
+                .any(|part| part.is_empty() || part.len() > 128)
+            || methods.is_empty()
+            || methods.len() > 64
+            || methods
+                .iter()
+                .any(|part| part.is_empty() || part.len() > 128)
+            || methods
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                != methods.len()
+            || self.callbacks.len() >= 1024
+        {
+            return Err(failed(
+                "invalid or excessive foreground callback registration",
+            ));
+        }
+        let id = self
+            .next_callbacks
+            .checked_add(1)
+            .ok_or_else(|| failed("callback identity exhausted"))?;
+        self.budget.enter();
+        let _entered = self.scheduler.enter();
+        let captured = entered(&mut self.runtime, |runtime| {
+            let outcome =
+                engine::capture_callbacks(runtime, &self.modules[&module.id], namespace, methods)
+                    .and_then(|callbacks| {
+                        engine::poll_ready_jobs(runtime)?;
+                        Ok(callbacks)
+                    });
+            // Failed capture must drop its globals while this isolate is entered.
+            self.budget.finish(outcome)
+        })?;
+        self.next_callbacks = id;
+        self.callbacks.insert(id, (module.id, captured));
+        Ok(ForegroundCallbacks {
+            domain: self.domain.clone(),
+            module: module.id,
+            id,
+        })
+    }
+
+    pub fn call_bound(
+        &mut self,
+        callbacks: &ForegroundCallbacks,
+        method: &str,
+        args: &[Value],
+    ) -> Result<Value> {
+        self.call_bound_until(callbacks, method, args, Instant::now() + self.budget.slice)
+    }
+
+    /// The embedding can bound a whole composed update by one deadline. This
+    /// cannot extend the realm's configured per-call slice.
+    pub fn call_bound_until(
+        &mut self,
+        callbacks: &ForegroundCallbacks,
+        method: &str,
+        args: &[Value],
+        deadline: Instant,
+    ) -> Result<Value> {
+        self.ready()?;
+        if !Rc::ptr_eq(&callbacks.domain, &self.domain)
+            || !self.modules.contains_key(&callbacks.module)
+            || !self
+                .callbacks
+                .get(&callbacks.id)
+                .is_some_and(|(module, _)| *module == callbacks.module)
+        {
+            return Err(failed(
+                "foreground callbacks are retired or from another realm",
+            ));
+        }
+        bridge::encoded_size(args, 1024 * 1024).map_err(failed)?;
+        self.budget.enter_until(deadline);
+        let _entered = self.scheduler.enter();
+        let outcome = entered(&mut self.runtime, |runtime| {
+            engine::call_bound_synchronous(runtime, &self.callbacks[&callbacks.id].1, method, args)
+                .and_then(|value| {
+                    engine::poll_ready_jobs(runtime)?;
+                    Ok(value)
+                })
+        });
+        self.budget.finish(outcome)
+    }
+
     /// Revocation is synchronous and does not dispatch dispose code. Cleanup of
     /// resources created by a committed batch belongs to the embedding owner.
     pub fn close(&mut self, module: &ForegroundModule) -> Result<()> {
@@ -160,6 +273,7 @@ impl Foreground {
             return Err(failed("foreground module is retired or from another realm"));
         }
         entered(&mut self.runtime, |_| {
+            self.callbacks.retain(|_, (owner, _)| *owner != module.id);
             self.modules.remove(&module.id);
         });
         Ok(())
@@ -208,7 +322,7 @@ fn entered<T>(runtime: &mut JsRuntime, action: impl FnOnce(&mut JsRuntime) -> T)
 }
 
 struct Clock {
-    started: Option<Instant>,
+    deadline: Option<Instant>,
     closed: bool,
 }
 struct Budget {
@@ -222,7 +336,7 @@ impl Budget {
     fn new(health: Arc<Health>, slice: Duration) -> Result<Self> {
         let clock = Arc::new((
             Mutex::new(Clock {
-                started: None,
+                deadline: None,
                 closed: false,
             }),
             Condvar::new(),
@@ -238,15 +352,16 @@ impl Budget {
                     if clock.closed {
                         break;
                     }
-                    match clock.started {
+                    match clock.deadline {
                         None => clock = changed.wait(clock).unwrap(),
-                        Some(started) => {
-                            if let Some(remaining) = slice.checked_sub(started.elapsed()) {
+                        Some(deadline) => {
+                            if let Some(remaining) = deadline.checked_duration_since(Instant::now())
+                            {
                                 clock = changed.wait_timeout(clock, remaining).unwrap().0;
                             } else {
                                 observed_health
                                     .fail(failed("foreground synchronous budget exceeded"));
-                                clock.started = None;
+                                clock.deadline = None;
                             }
                         }
                     }
@@ -262,15 +377,19 @@ impl Budget {
     }
 
     fn enter(&self) {
-        self.clock.0.lock().unwrap().started = Some(Instant::now());
+        self.enter_until(Instant::now() + self.slice);
+    }
+
+    fn enter_until(&self, deadline: Instant) {
+        self.clock.0.lock().unwrap().deadline = Some(deadline.min(Instant::now() + self.slice));
         self.clock.1.notify_one();
     }
 
     fn finish<T>(&self, outcome: Result<T>) -> Result<T> {
-        let started = self.clock.0.lock().unwrap().started.take();
+        let deadline = self.clock.0.lock().unwrap().deadline.take();
         self.clock.1.notify_one();
         // Even a delayed watchdog cannot let an over-budget callback commit.
-        if started.is_some_and(|started| started.elapsed() >= self.slice) {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             self.health
                 .fail(failed("foreground synchronous budget exceeded"));
         }

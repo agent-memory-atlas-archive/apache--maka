@@ -182,7 +182,250 @@ fn unimplemented_window_mutation_is_rejected_without_scene_commit() {
     let mount = app.mount_launch(json!({})).unwrap();
     assert!(app.dispatch(&mount, 0, "inc", Value::Null).is_err());
     assert_eq!(app.frame(&mount).unwrap().revision, 0);
-    assert_eq!(app.frame(&mount).unwrap().window.width, 640);
+    assert_eq!(
+        app.frame(&mount).unwrap().window.as_ref().unwrap().width,
+        640
+    );
     app.close(&mount, Ok(())).unwrap();
     app.shutdown().unwrap();
+}
+
+fn composed(
+    child_update: &str,
+    parent_event: &str,
+    timer: &tokio::runtime::Runtime,
+) -> Application {
+    let (input, packages) = support::composed_fixture(child_update, parent_event);
+    Application::new(
+        &input,
+        packages,
+        timer.handle().clone(),
+        maka_js_runtime::plugin::Limits {
+            synchronous_slice: Duration::from_millis(200),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+}
+fn close_all(app: &mut Application, root: &maka_plugin_core::runtime::Mount) {
+    app.retire(root).unwrap();
+    for mount in app.retiring_mounts() {
+        app.close(&mount, Ok(())).unwrap();
+    }
+    app.shutdown().unwrap();
+}
+
+#[test]
+fn imported_children_preserve_local_state_across_parent_props_updates_and_remount() {
+    let timer = timer();
+    let mut app = composed(support::CHILD_UPDATE, support::PARENT_EVENT, &timer);
+    let root = app.mount_launch(json!({})).unwrap();
+    let left = app.child_mount(&root, "left").unwrap().clone();
+    let right = app.child_mount(&root, "right").unwrap().clone();
+    assert_ne!(left, right);
+    app.dispatch(&left, 0, "inc", Value::Null).unwrap();
+    assert_eq!(app.frame(&left).unwrap().state["count"], 11);
+    assert_eq!(app.frame(&right).unwrap().state["count"], 20);
+    app.dispatch(&root, 0, "parent", Value::Null).unwrap();
+    assert_eq!(*app.child_mount(&root, "left").unwrap(), left);
+    assert_eq!(app.frame(&left).unwrap().state["count"], 11);
+    assert_eq!(app.frame(&left).unwrap().state["label"], "Left 1");
+    assert_eq!(app.frame(&left).unwrap().revision, 2);
+    assert!(app.dispatch(&left, 1, "inc", Value::Null).is_err());
+    app.dispatch(&root, 1, "toggle", Value::Null).unwrap();
+    assert!(app.child_mount(&root, "right").is_err());
+    assert!(app.is_retiring(&right));
+    assert!(app.frame(&right).is_ok());
+    assert!(
+        app.close(&right, Err("native close unknown".into()))
+            .is_err()
+    );
+    app.dispatch(&root, 2, "toggle", Value::Null).unwrap();
+    let replacement = app.child_mount(&root, "right").unwrap().clone();
+    assert_ne!(replacement, right);
+    assert_eq!(app.frame(&replacement).unwrap().state["count"], 20);
+    assert!(app.dispatch(&right, 1, "inc", Value::Null).is_err());
+    app.close(&right, Ok(())).unwrap();
+    close_all(&mut app, &root);
+}
+
+#[test]
+fn child_failure_rolls_back_the_entire_parent_update_and_all_sibling_frames() {
+    let timer = timer();
+    let mut app = composed(
+        "if(props.label.startsWith('Right'))throw new Error('right update failed');return frame({...state,label:props.label,revision:state.revision+1});",
+        support::PARENT_EVENT,
+        &timer,
+    );
+    let root = app.mount_launch(json!({})).unwrap();
+    let left = app.child_mount(&root, "left").unwrap().clone();
+    let right = app.child_mount(&root, "right").unwrap().clone();
+    assert!(app.dispatch(&root, 0, "parent", Value::Null).is_err());
+    assert_eq!(app.frame(&root).unwrap().revision, 0);
+    assert_eq!(app.frame(&left).unwrap().revision, 0);
+    assert_eq!(app.frame(&left).unwrap().state["label"], "Left 0");
+    assert_eq!(app.frame(&right).unwrap().revision, 0);
+    assert!(app.is_retiring(&root));
+    assert!(app.is_retiring(&left));
+    close_all(&mut app, &root);
+}
+
+#[test]
+fn invalid_child_props_do_not_publish_parent_or_prior_sibling_updates() {
+    let timer = timer();
+    let mut app = composed(
+        support::CHILD_UPDATE,
+        "const next=frame({...state,version:state.version+1,revision:state.revision+1});next.view.children[0].children[1].props.label=42;return next;",
+        &timer,
+    );
+    let root = app.mount_launch(json!({})).unwrap();
+    let left = app.child_mount(&root, "left").unwrap().clone();
+    assert!(app.dispatch(&root, 0, "parent", Value::Null).is_err());
+    assert_eq!(app.frame(&root).unwrap().revision, 0);
+    assert_eq!(app.frame(&left).unwrap().revision, 0);
+    assert!(!app.is_retiring(&root));
+    assert!(app.retiring_mounts().is_empty());
+    close_all(&mut app, &root);
+}
+
+#[test]
+fn sibling_callbacks_share_one_deadline_and_cannot_each_buy_a_new_slice() {
+    let timer = timer();
+    let mut app = composed(
+        "const end=Date.now()+125;while(Date.now()<end){}return frame({...state,label:props.label,revision:state.revision+1});",
+        support::PARENT_EVENT,
+        &timer,
+    );
+    let root = app.mount_launch(json!({})).unwrap();
+    let left = app.child_mount(&root, "left").unwrap().clone();
+    let right = app.child_mount(&root, "right").unwrap().clone();
+    assert!(app.dispatch(&root, 0, "parent", Value::Null).is_err());
+    for mount in [&root, &left, &right] {
+        assert_eq!(app.frame(mount).unwrap().revision, 0);
+    }
+    assert!(app.is_retiring(&right));
+    close_all(&mut app, &root);
+}
+
+#[test]
+fn invalid_child_initialization_rolls_back_all_private_mounts_without_native_ack() {
+    let (mut input, mut packages) =
+        support::composed_fixture(support::CHILD_UPDATE, support::PARENT_EVENT);
+    let counter = packages.pop().unwrap();
+    let mut files = counter.files().clone();
+    let source = String::from_utf8(files.remove("index.mjs").unwrap()).unwrap();
+    // The left mount initializes successfully before the right fails validation.
+    files.insert(
+        "index.mjs".into(),
+        source
+            .replace(
+                "window:null",
+                "window:state.label.startsWith('Right')?{surface:'surface',title:'Invalid child window',width:640,height:400}:null",
+            )
+            .into_bytes(),
+    );
+    let counter = maka_plugins::package::Package::new(files).unwrap();
+    input.instances.get_mut("counter").unwrap().package = counter.application_ref().into();
+    packages.push(counter);
+    let timer = timer();
+    let mut app =
+        Application::new(&input, packages, timer.handle().clone(), Default::default()).unwrap();
+    assert!(app.mount_launch(json!({})).is_err());
+    assert!(app.retiring_mounts().is_empty());
+    // No mount escaped to a renderer; shutdown needs no invented native receipt.
+    app.shutdown().unwrap();
+}
+
+#[test]
+fn a_component_without_a_real_required_callback_cannot_publish() {
+    let (mut input, mut packages) = fixture("");
+    let root = packages.pop().unwrap();
+    let mut files = root.files().clone();
+    files
+        .get_mut("index.mjs")
+        .unwrap()
+        .extend_from_slice(b"\napp.update = null;\n");
+    let root = maka_plugins::package::Package::new(files).unwrap();
+    input.instances.get_mut("app").unwrap().package = root.application_ref().into();
+    packages.push(root);
+    let timer = timer();
+    assert!(
+        Application::new(&input, packages, timer.handle().clone(), Default::default()).is_err()
+    );
+}
+
+#[test]
+fn dispatch_at_a_deep_mount_cannot_restart_the_whole_tree_depth_budget() {
+    use maka_plugin_core::package::{EntryTarget, Realm};
+    let (mut input, mut packages) =
+        support::composed_fixture(support::CHILD_UPDATE, support::PARENT_EVENT);
+    let terminal = packages.pop().unwrap();
+    let root = packages.pop().unwrap();
+    let source = std::str::from_utf8(root.file("index.mjs").unwrap())
+        .unwrap()
+        .replace("initial:10", "initial:31")
+        .replace("right:true", "right:false");
+    let root = package(
+        "dynamic.app",
+        root.manifest().application.clone().unwrap(),
+        Some(source),
+    );
+    input.instances.get_mut("app").unwrap().package = root.application_ref().into();
+
+    let mut declaration = terminal.manifest().application.clone().unwrap();
+    let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
+    if let maka_plugin_core::package::Implementation::JavaScript { realm, .. } =
+        &mut entry.implementation
+    {
+        *realm = Realm::Shared;
+    }
+    entry.imports.insert(
+        "counter".into(),
+        Import {
+            contract: entry.exports["Counter"].contract.clone(),
+            cardinality: Cardinality::One,
+        },
+    );
+    let source = std::str::from_utf8(terminal.file("index.mjs").unwrap())
+        .unwrap()
+        .replace(
+            "children:[",
+            "children:[...(state.count>0?[{kind:'component',key:'nested',binding:'counter',member:0,props:{label:state.label,initial:state.count-1}}]:[]),",
+        );
+    let branch = package("dynamic.branch", declaration, Some(source));
+    // Acyclic providers: each component imports the next instance. Initially
+    // 32 mounts are visible; the deepest event attempts to add mount 33.
+    for level in 1..=33 {
+        let name = if level == 1 {
+            "counter".to_owned()
+        } else {
+            format!("counter{level}")
+        };
+        let mut instance = node(if level == 33 { &terminal } else { &branch }, level + 2);
+        if level < 33 {
+            instance.bindings.insert(
+                "counter".into(),
+                vec![Target::Instance {
+                    path: vec![format!("counter{}", level + 1)],
+                    export: "Counter".into(),
+                }],
+            );
+        }
+        input.instances.insert(name, instance);
+    }
+    packages.extend([root, branch, terminal]);
+    let timer = timer();
+    let mut app =
+        Application::new(&input, packages, timer.handle().clone(), Default::default()).unwrap();
+    let root = app.mount_launch(json!({})).unwrap();
+    let mut deepest = app.child_mount(&root, "left").unwrap().clone();
+    for _ in 1..32 {
+        deepest = app.child_mount(&deepest, "nested").unwrap().clone();
+    }
+    assert_eq!(app.frame(&deepest).unwrap().state["count"], 0);
+    assert!(app.dispatch(&deepest, 0, "inc", Value::Null).is_err());
+    assert_eq!(app.frame(&deepest).unwrap().revision, 0);
+    assert!(app.child_mount(&deepest, "nested").is_err());
+    assert!(app.retiring_mounts().is_empty());
+    close_all(&mut app, &root);
 }

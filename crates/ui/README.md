@@ -21,14 +21,23 @@
 
 `maka-ui` activates checked UI entries from immutable packages and publishes actual
 component registrations through `maka-plugin-core`. Foreground JavaScript executes
-only during activation, mount initialization and input. Renderers read committed
+only during activation, mount initialization, props updates and input. Required
+`mount`, `event` and `update` functions and their receiver are captured before
+publication; later namespace mutation cannot replace a registered handler.
+Renderers read committed
 `Frame` values; successful, bounded, validated batches replace a frame atomically.
 Each mount has independent state and a revision, so old view events cannot invoke
 new handlers. A realm failure retires every registration and mount in that realm.
 
-This first renderer protocol contains stacks, text and buttons. Window configuration
-is fixed for a mount. Native editor/IME commands, child component presentation,
-action imports and recovery surfaces are still pending. `close` requires an actual
+The renderer protocol contains stacks, text, buttons and imported components.
+A component reference names an explicit binding and its selected member; stable
+keys retain child mounts and their local state across parent props updates.
+All changed parents and children share one deadline and commit together. A failed
+child leaves every prior frame unchanged. Removed mounts retire until real native
+cleanup is confirmed; uncommitted mounts have no native resources to acknowledge.
+Window configuration is fixed for a root mount; embedded components cannot create
+windows. Native editor/IME commands, action imports, outward component events
+and recovery surfaces are still pending. `close` requires an actual
 native cleanup acknowledgement; `retire` only stops new input. `shutdown` retains
 owners while mounts/work/resources remain unconfirmed.
 
@@ -40,6 +49,10 @@ cargo run --locked -p maka-desktop -- --input /tmp/maka-counter/input.json \
   --package /tmp/maka-counter/native.surface.maka-plugin \
   --package /tmp/maka-counter/dynamic.app.maka-plugin
 ```
+
+Add `composed` after the output directory when generating the example to include
+a separately packaged counter component, then pass its
+`dynamic.counter.maka-plugin` as another `--package` to desktop.
 
 The example's component contract uses the same Rust declaration types as runtime
 validation. It does not depend on the previous plugin SDK or global service catalog.
