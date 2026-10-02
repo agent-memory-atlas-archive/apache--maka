@@ -155,12 +155,28 @@ Cross-process resource transfer still requires a transport executor.
 
 `Application::new` takes explicit `RemoteServices`: static declarations are separate
 from actual `RemoteService` endpoint registrations. Both local and remote services
-currently support Query methods; Mutation and Subscription are rejected until their
-durable caller and stream protocols exist. `NativeService::call` receives a
+support Query and resource-free Mutation methods. Subscription and resource
+mutations still require their own executors. `NativeService::call` receives a
 `ServiceRequest` with checked input, actual attachments and a private `ServiceSource`
-constructed at admission. Consumer, mount and execution observations grant no Host
+constructed by the kernel. Consumer, mount and request observations grant no Host
 access. A transport callback captures `remote_activation` and passes that exact token
 to `retire_remote`; a late disconnect cannot retire a replacement kernel.
+
+Persisted UI mutations construct an inert `NativeMutation` owner, prepare the
+original native request and confirm the caller intent in the UI's own Root before
+accepting Work. `Application::finish_task` returns dispatch or close successors
+after rechecking the exact original mount/registration. Presenters must execute
+every successor even when the window or terminal is gone. Preparation is fenced
+by a provider-owned Core resource, then accepted Work takes over its protection.
+Unsaved previews reject mutations. Native authorization remains independent.
+
+Mutation feedback is `{ status: "operation", reply: OperationReply }`, preserving
+the actual original target reference. Receipt knowledge and actual executor cleanup
+are independent. Undeliverable results become `unavailable` with that same reference;
+the original journal is unchanged. No uncertain operation is replayed. Failed or
+interrupted preparation remains owned and appears in `failed_action_ids`;
+`complete_action_cleanup` requires the embedding's actual cleanup confirmation,
+not merely cancellation or an observer disappearing.
 
 Final admission rechecks the exact consumer mount and service registration.
 Native service futures run on the background executor, independently of the
@@ -171,13 +187,14 @@ it waiting. Business outcome and cleanup confirmation are separate: failed or
 unknown cleanup retains accepted work and its snapshots until a real successful
 confirmation. The application lifetime owner survives all windows and worker tasks.
 
-Each output allows 16 actions and each request 16 resource slots; queued plus
-accepted work is limited to 64, captured resource bytes to 64 MiB in aggregate,
+Each output allows 16 actions and each request 16 resource slots; queued requests,
+preparations, accepted work and pending feedback total at most 64 entries,
+captured resource bytes are limited to 64 MiB in aggregate,
 and UTF-8 reads to 64 KiB with valid byte boundaries. Complete capture arguments
 are limited to 1 MiB before cloning or callbacks, and share the transaction's
 callback, deadline and cumulative work limits. The Reader is available only
 through explicit package composition. Authenticated cross-process transport,
-durable UI caller admission, subscriptions
+subscriptions
 and product recovery UI remain pending. Direct remote registration to an actual
 Host query is exercised with native Kit snapshots across the two kernels.
 The standalone Host query executor is described in

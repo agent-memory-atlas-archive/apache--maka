@@ -69,6 +69,7 @@ struct CaptureDefinition {
     resource: maka_plugin_core::contract::ResourceType,
 }
 struct ServiceMethod {
+    mode: maka_plugin_core::contract::MethodMode,
     input: jsonschema::Validator,
     output: jsonschema::Validator,
     resources: BTreeMap<String, maka_plugin_core::contract::ResourceType>,
@@ -680,14 +681,18 @@ fn service_export<V: ?Sized>(
     };
     let mut compiled = BTreeMap::new();
     for (name, method) in methods {
-        if method.mode != maka_plugin_core::contract::MethodMode::Query {
+        if method.mode == maka_plugin_core::contract::MethodMode::Subscription
+            || (method.mode == maka_plugin_core::contract::MethodMode::Mutation
+                && !method.resources.is_empty())
+        {
             return Err(Error::Invalid(
-                "UI mutation and subscription require durable caller or stream execution".into(),
+                "UI resource mutation and subscription require their own executors".into(),
             ));
         }
         compiled.insert(
             name.clone(),
             ServiceMethod {
+                mode: method.mode,
                 input: jsonschema::validator_for(&method.input)
                     .map_err(|e| Error::Invalid(e.to_string()))?,
                 output: jsonschema::validator_for(&method.output)

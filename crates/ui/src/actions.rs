@@ -18,9 +18,12 @@
  */
 
 //! Request-local resources and accepted asynchronous service calls.
+mod mutations;
 use super::*;
+use maka_event_log::applications::intents::RecordedIntent;
 use maka_plugin_core::{
-    contract::ResourceType,
+    contract::{MethodMode, ResourceType},
+    operation::{OperationReply, RecoveryRef},
     runtime::{Capability, Execution},
 };
 use maka_plugins::call::{Attachments, ReadResource};
@@ -53,20 +56,48 @@ pub enum CapturePlan {
     Native,
 }
 pub type ServiceFuture = Pin<Box<dyn Future<Output = ServiceCompletion> + Send + 'static>>;
-/// Construct a background future only. Polling performs the operation after
-/// final admission; the executor retains it independently of any UI waiter.
+/// Native query execution and effect-free mutation ownership. Implementations
+/// receive checked requests, never guest-created authorization evidence.
 pub trait NativeService: Send + Sync + 'static {
+    /// Construct a background future only. Polling performs the query after
+    /// final admission; the executor retains it independently of any UI waiter.
     fn call(&self, request: ServiceRequest) -> ServiceFuture;
+    /// Construct an inert owner before polling preparation. A returned error
+    /// must leave no cleanup resource; panics are unconfirmed cleanup.
+    fn mutation(
+        &self,
+        _request: ServiceRequest,
+    ) -> std::result::Result<Arc<dyn NativeMutation>, String> {
+        Err("service has no mutation executor".into())
+    }
 }
 
-/// Immutable facts from final local admission. They do not grant Host access.
+pub type ReferenceFuture =
+    Pin<Box<dyn Future<Output = std::result::Result<RecoveryRef, String>> + Send>>;
+pub type MutationFuture = Pin<Box<dyn Future<Output = MutationCompletion> + Send>>;
+pub type CleanupFuture = Pin<Box<dyn Future<Output = std::result::Result<(), String>> + Send>>;
+/// One actual native operation owner. Preparation has no business effects.
+/// Dispatch rechecks native authority; close acknowledges actual cleanup, not
+/// cancellation. The kernel retains this owner across every asynchronous stage.
+pub trait NativeMutation: Send + Sync + 'static {
+    fn prepare(self: Arc<Self>) -> ReferenceFuture;
+    fn dispatch(self: Arc<Self>, recorded: RecordedIntent) -> MutationFuture;
+    fn close(self: Arc<Self>) -> CleanupFuture;
+}
+pub struct MutationCompletion {
+    pub reply: OperationReply,
+    pub cleanup: std::result::Result<(), String>,
+}
+
+/// Immutable facts from the checked request. Final admission remains required.
+/// These observations do not grant Host access.
 /// Guest JSON cannot supply or replace this source.
 #[derive(Clone, Debug)]
 pub struct ServiceSource {
     deployment: Option<maka_plugin_core::deployment::DeploymentRef>,
     consumer: maka_plugin_core::runtime::Activation,
     mount: Mount,
-    execution: Uuid,
+    request: Uuid,
 }
 impl ServiceSource {
     pub fn deployment(&self) -> Option<&maka_plugin_core::deployment::DeploymentRef> {
@@ -78,8 +109,8 @@ impl ServiceSource {
     pub fn mount(&self) -> &Mount {
         &self.mount
     }
-    pub fn execution_id(&self) -> Uuid {
-        self.execution
+    pub fn request_id(&self) -> Uuid {
+        self.request
     }
 }
 pub struct ServiceRequest {
@@ -112,6 +143,7 @@ pub enum ActionOutcome {
     NotAccepted { reason: String },
     Succeeded { value: Value },
     Failed { reason: String },
+    Operation { reply: Box<OperationReply> },
 }
 /// A presenter can resolve only this exact already-checked native leaf.
 /// Construction is private: plugin JSON cannot supply a Mount or resource grant.
@@ -142,9 +174,19 @@ pub struct CaptureCall<'a> {
     pub method: &'a str,
     pub input: &'a Value,
 }
-pub struct AcceptedAction {
+pub type TaskFuture = Pin<Box<dyn Future<Output = TaskCompletion> + Send>>;
+/// Execute independently of presentation lifetime, then return to the original
+/// foreground owner. Completion can produce another task, including close.
+pub struct ActionTask {
     pub id: Uuid,
-    pub future: ServiceFuture,
+    pub future: TaskFuture,
+}
+pub enum TaskCompletion {
+    Query(ServiceCompletion),
+    Prepared(std::result::Result<RecordedIntent, String>),
+    Mutation(MutationCompletion),
+    Closed(std::result::Result<(), String>),
+    Interrupted(String),
 }
 #[derive(Clone)]
 pub(super) struct Edge {
@@ -153,6 +195,7 @@ pub(super) struct Edge {
     pub slot: String,
 }
 pub(super) struct Prepared<V: ?Sized> {
+    id: Uuid,
     pub consumer: Mount,
     pub key: String,
     pub method: String,
@@ -169,6 +212,7 @@ struct Running<V: ?Sized> {
     completed: bool,
     execution: Execution<Export<V>>,
     resources: Attachments,
+    mutation: Option<mutations::Session>,
 }
 pub(super) struct Outcome {
     pub consumer: Mount,
@@ -178,6 +222,7 @@ pub(super) struct Outcome {
 pub(super) struct Actions<V: ?Sized> {
     pub queue: VecDeque<Prepared<V>>,
     running: BTreeMap<Uuid, Running<V>>,
+    preparing: BTreeMap<Uuid, mutations::Preparing<V>>,
     pub outcomes: VecDeque<Outcome>,
 }
 impl<V: ?Sized> Default for Actions<V> {
@@ -185,16 +230,17 @@ impl<V: ?Sized> Default for Actions<V> {
         Self {
             queue: VecDeque::new(),
             running: BTreeMap::new(),
+            preparing: BTreeMap::new(),
             outcomes: VecDeque::new(),
         }
     }
 }
 impl<V: ?Sized> Actions<V> {
     pub fn accepted_count(&self) -> usize {
-        self.running.len()
+        self.running.len() + self.preparing.len()
     }
     pub fn len(&self) -> usize {
-        self.queue.len() + self.running.len() + self.outcomes.len()
+        self.queue.len() + self.running.len() + self.preparing.len() + self.outcomes.len()
     }
     fn bytes(&self) -> usize {
         self.queue
@@ -242,6 +288,7 @@ impl<V: ?Sized + 'static> Application<V> {
         let declaration = match self.runtime.inspect(&capability)? {
             Export::Service { methods, .. } => methods.get(&action.method).map(|m| {
                 (
+                    m.mode,
                     m.resources.clone(),
                     m.input
                         .validate(&action.input)
@@ -250,9 +297,14 @@ impl<V: ?Sized + 'static> Application<V> {
             }),
             _ => None,
         };
-        let (resources, valid) =
+        let (mode, resources, valid) =
             declaration.ok_or_else(|| Error::Invalid("undeclared action method".into()))?;
         valid?;
+        if mode == MethodMode::Mutation && self.source.is_none() {
+            return Err(Error::Invalid(
+                "mutation requires a persisted UI source".into(),
+            ));
+        }
         if resources.keys().ne(action.resources.keys()) {
             return Err(Error::Invalid("action resource slots mismatch".into()));
         }
@@ -264,6 +316,7 @@ impl<V: ?Sized + 'static> Application<V> {
             );
         }
         Ok(Prepared {
+            id: Uuid::new_v4(),
             consumer: consumer.clone(),
             key: action.key,
             method: action.method,
@@ -457,7 +510,7 @@ impl<V: ?Sized + 'static> Application<V> {
         Ok(captured)
     }
     /// Final Mount and captured registration check. A queue is not accepted Work.
-    pub fn start_action(&mut self, root: &Mount) -> Result<Option<AcceptedAction>> {
+    pub fn start_task(&mut self, root: &Mount) -> Result<Option<ActionTask>> {
         loop {
             let Some(index) = self.actions.queue.iter().position(|a| {
                 a.resources.is_some()
@@ -477,6 +530,20 @@ impl<V: ?Sized + 'static> Application<V> {
                 self.reject_action(action, "consumer retired before admission".into());
                 continue;
             }
+            let mode = match self.runtime.inspect(&action.capability) {
+                Ok(Export::Service { methods, .. }) => methods[&action.method].mode,
+                Ok(_) => unreachable!(),
+                Err(error) => {
+                    self.reject_action(action, error.to_string());
+                    continue;
+                }
+            };
+            if mode == MethodMode::Mutation {
+                if let Some(task) = self.start_mutation(action)? {
+                    return Ok(Some(task));
+                }
+                continue;
+            }
             let execution = match self.runtime.admit(&action.capability) {
                 Ok(execution) => execution,
                 Err(error) => {
@@ -487,20 +554,21 @@ impl<V: ?Sized + 'static> Application<V> {
             let Export::Service { implementation, .. } = execution.value() else {
                 unreachable!()
             };
+            let implementation = implementation.clone();
             let resources = action.resources.expect("captured");
             let method = action.method;
-            let id = execution.id();
-            let future = implementation.call(ServiceRequest {
+            let id = action.id;
+            let request = ServiceRequest {
                 source: ServiceSource {
                     deployment: self.source.clone(),
                     consumer: action.capability.consumer().clone(),
                     mount: action.consumer.clone(),
-                    execution: id,
+                    request: id,
                 },
                 method: method.clone(),
                 input: action.input,
                 resources: resources.clone(),
-            });
+            };
             self.actions.running.insert(
                 id,
                 Running {
@@ -510,14 +578,20 @@ impl<V: ?Sized + 'static> Application<V> {
                     completed: false,
                     execution,
                     resources,
+                    mutation: None,
                 },
             );
-            return Ok(Some(AcceptedAction { id, future }));
+            return Ok(Some(ActionTask {
+                id,
+                future: Box::pin(async move {
+                    TaskCompletion::Query(implementation.call(request).await)
+                }),
+            }));
         }
     }
     /// Executor completion is independent of result delivery. Failed/unknown
     /// cleanup preserves Work and resource ownership; it is never an implicit Ok.
-    pub fn finish_action(&mut self, id: Uuid, completion: ServiceCompletion) -> Result<()> {
+    fn finish_query(&mut self, id: Uuid, completion: ServiceCompletion) -> Result<()> {
         let running = self
             .actions
             .running
@@ -525,6 +599,11 @@ impl<V: ?Sized + 'static> Application<V> {
             .ok_or_else(|| Error::Invalid("unknown accepted action".into()))?;
         if running.completed {
             return Err(Error::Invalid("action outcome already completed".into()));
+        }
+        if running.mutation.is_some() {
+            return Err(Error::Invalid(
+                "mutation requires its original receipt".into(),
+            ));
         }
         let output = match completion.result {
             Ok(value) => {
@@ -583,6 +662,9 @@ impl<V: ?Sized + 'static> Application<V> {
         id: Uuid,
         cleanup: std::result::Result<(), String>,
     ) -> Result<()> {
+        if self.actions.preparing.contains_key(&id) {
+            return self.confirm_preparation_cleanup(id, cleanup);
+        }
         let running = self
             .actions
             .running
@@ -611,6 +693,13 @@ impl<V: ?Sized + 'static> Application<V> {
             .iter()
             .filter(|(_, r)| r.completed)
             .map(|(id, _)| *id)
+            .chain(
+                self.actions
+                    .preparing
+                    .iter()
+                    .filter(|(_, p)| p.failed())
+                    .map(|(id, _)| *id),
+            )
             .collect()
     }
 
@@ -635,10 +724,12 @@ impl<V: ?Sized + 'static> Application<V> {
                 self.actions.outcomes.push_back(outcome);
                 continue;
             }
+            let feedback =
+                self.operation_feedback(&outcome.consumer, &outcome.key, outcome.outcome);
             match self.dispatch_action_result(
                 &outcome.consumer,
                 &outcome.key,
-                serde_json::to_value(outcome.outcome).expect("typed outcome"),
+                serde_json::to_value(feedback).expect("typed outcome"),
             ) {
                 Ok(()) => count += 1,
                 Err(error) => {

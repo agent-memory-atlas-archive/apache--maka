@@ -7964,6 +7964,7 @@ dependencies = [
  "maka-plugins",
  "maka-runtime-host",
  "maka-ui",
+ "rusqlite",
  "schemars 1.2.2",
  "serde_json",
  "tempfile",

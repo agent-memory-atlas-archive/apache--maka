@@ -29,7 +29,10 @@ use maka_plugin_core::{
     runtime::Mount,
 };
 use maka_plugins::package::Package;
-use maka_ui::{Application, Error, NativeRegistry, actions::ServiceCompletion};
+use maka_ui::{
+    Application, Error, NativeRegistry,
+    actions::{ActionTask, TaskCompletion},
+};
 pub use native::registry;
 pub use paint::{PaintedScene, sanitize};
 use ratatui::{buffer::Buffer, layout::Rect};
@@ -44,7 +47,7 @@ pub trait Widget: 'static {
     fn measure(&self, width: u16) -> (u16, u16);
     fn paint(&self, area: Rect, buffer: &mut Buffer);
 }
-type Job = Pin<Box<dyn Future<Output = (Uuid, ServiceCompletion)> + Send>>;
+type Job = Pin<Box<dyn Future<Output = (Uuid, TaskCompletion)> + Send>>;
 pub struct Presenter {
     application: Application<dyn Widget>,
     root: Mount,
@@ -161,7 +164,9 @@ impl Presenter {
     pub fn pump(&mut self) -> maka_ui::Result<()> {
         // Each join observer stays with the actual owner, independently of UI.
         while let Some(Some((id, completion))) = self.jobs.next().now_or_never() {
-            self.application.finish_action(id, completion)?;
+            if let Some(task) = self.application.finish_task(id, completion)? {
+                self.execute(task);
+            }
         }
         if !self.closing && !self.application.is_retiring(&self.root) {
             self.application.capture_actions(&self.root, |_| {
@@ -169,16 +174,8 @@ impl Presenter {
                     "terminal widget has no capture owner".into(),
                 ))
             })?;
-            while let Some(action) = self.application.start_action(&self.root)? {
-                let id = action.id;
-                let task = self.application.scheduler().spawn(action.future);
-                self.jobs.push(Box::pin(async move {
-                    let completion = task.await.unwrap_or_else(|error| ServiceCompletion {
-                        result: Err(error.to_string()),
-                        cleanup: Err("service task ended without cleanup acknowledgement".into()),
-                    });
-                    (id, completion)
-                }));
+            while let Some(action) = self.application.start_task(&self.root)? {
+                self.execute(action);
             }
             self.application.deliver_action_results(&self.root)?;
         }
@@ -209,6 +206,16 @@ impl Presenter {
         self.scene.clear();
         self.focus = None;
         self.application.retire(&self.root)
+    }
+    fn execute(&mut self, action: ActionTask) {
+        let id = action.id;
+        let task = self.application.scheduler().spawn(action.future);
+        self.jobs.push(Box::pin(async move {
+            let completion = task
+                .await
+                .unwrap_or_else(|error| TaskCompletion::Interrupted(error.to_string()));
+            (id, completion)
+        }));
     }
     /// Actual terminal restoration acknowledgement, not logical retirement.
     /// 接收实际终端恢复回执，不以逻辑退休冒充恢复完成。

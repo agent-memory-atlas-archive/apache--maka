@@ -20,7 +20,7 @@
 //! Accepted work survives its originating Surface and window.
 use super::{DesktopApplication, Surface};
 use gpui_kit::{App, Context, WeakEntity, Window};
-use maka_ui::actions::{AcceptedAction, ServiceCompletion};
+use maka_ui::actions::{ActionTask, TaskCompletion};
 use std::{cell::RefCell, rc::Rc};
 /// One application lifetime owner, not a second runtime or state copy. It keeps
 /// failed cleanup and its recovery entry alive after every window/task exits.
@@ -50,7 +50,7 @@ pub(super) fn pump(
     cx: &mut Context<Surface>,
 ) -> maka_ui::Result<()> {
     loop {
-        let Some(action) = ({ application.borrow_mut().start_action(&root)? }) else {
+        let Some(action) = ({ application.borrow_mut().start_task(&root)? }) else {
             break;
         };
         execute(
@@ -89,41 +89,45 @@ fn execute(
     surface: WeakEntity<Surface>,
     root: maka_plugin_core::runtime::Mount,
     window: gpui_kit::AnyWindowHandle,
-    action: AcceptedAction,
+    mut action: ActionTask,
     cx: &mut App,
 ) {
-    let worker = application.borrow().scheduler().spawn(action.future);
     // Detached from Surface: the owner retains Application until actual worker
     // completion, including when the window and its native owners have closed.
     cx.spawn(async move |cx| {
-        let completion = match worker.await {
-            Ok(completion) => completion,
-            Err(error) => ServiceCompletion {
-                result: Err(format!("service executor interrupted: {error}")),
-                cleanup: Err(format!("executor cleanup unknown: {error}")),
-            },
-        };
-        cx.update(|cx| {
-            if let Err(error) = application
-                .borrow_mut()
-                .finish_action(action.id, completion)
-            {
-                eprintln!("service cleanup unconfirmed: {error}");
-            }
-            if let Err(error) = application.borrow_mut().deliver_action_results(&root) {
-                eprintln!("action result rejected: {error}");
-            }
-            let _ = surface.update(cx, |_, cx| cx.notify());
-            let _ = window.update(cx, |_, window, cx| {
-                let _ = surface.update(cx, |surface, cx| {
-                    if let Err(error) = surface.sync_native(window, cx) {
-                        eprintln!("native action completion failed: {error}");
+        loop {
+            let worker = application.borrow().scheduler().spawn(action.future);
+            let completion = worker
+                .await
+                .unwrap_or_else(|error| TaskCompletion::Interrupted(error.to_string()));
+            let next = cx.update(|cx| {
+                let next = match application.borrow_mut().finish_task(action.id, completion) {
+                    Ok(next) => next,
+                    Err(error) => {
+                        eprintln!("service cleanup unconfirmed: {error}");
+                        None
                     }
-                    cx.notify();
+                };
+                if let Err(error) = application.borrow_mut().deliver_action_results(&root) {
+                    eprintln!("action result rejected: {error}");
+                }
+                let _ = surface.update(cx, |_, cx| cx.notify());
+                let _ = window.update(cx, |_, window, cx| {
+                    let _ = surface.update(cx, |surface, cx| {
+                        if let Err(error) = surface.sync_native(window, cx) {
+                            eprintln!("native action completion failed: {error}");
+                        }
+                        cx.notify();
+                    });
                 });
+                quit_when_drained(&application, cx);
+                next
             });
-            quit_when_drained(&application, cx);
-        });
+            let Some(next) = next else {
+                break;
+            };
+            action = next;
+        }
     })
     .detach();
 }

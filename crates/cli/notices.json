@@ -1,6 +1,6 @@
 {
   "inputs": {
-    "Cargo.lock": "82dbe6faebc49ebabb0573fd3c0078dc7f6539e85b600bec373578903e176501",
+    "Cargo.lock": "8dfdf06c4a828e42d8975ad704cb4ba5475eae7332dccf9b1f5caa4a6ba6c7ce",
     "Cargo.toml": "81218acbdbe3b04f21e2073bd9ed4f93b673faf2a4140f44805a8f0f5c902313",
     "crates/acp/Cargo.toml": "836cf57acda320dc984f4648e5893580e79063e95ced700f33cfbaa75994b8f8",
     "crates/agent/Cargo.toml": "241d363907d6e5491ba6645de5c114877165e4abd6844b2c581a35fd19c0f4f4",
@@ -13,7 +13,7 @@
     "crates/computer-use/Cargo.toml": "47ea75f205bcc481ca51c31a9ac09b0ef2585b15a5ca345c9b42d9d61020a260",
     "crates/computer-use/THIRD_PARTY_NOTICES": "709951ed2ee5c4b9ed933f375a37c5b15ec0efa2dea340dc0f289906d72a7bde",
     "crates/config/Cargo.toml": "58be3b2b9a37611bfaff2949a4a272bf0a4b29adb7afeddf5c463256c97882ae",
-    "crates/desktop/Cargo.toml": "da5ca478b481abf3e07835a953dd54633d17202c529d9fc89477055b02016605",
+    "crates/desktop/Cargo.toml": "a6450a70430291854466e4cd085c5a832538757dc2bdd9c20daf9f14b9df0b28",
     "crates/event-log/Cargo.toml": "6e2813bf135bf85621db7868c708babfd41ead46c1c2dc0b2b7cae0ade5f901b",
     "crates/external-agent/Cargo.toml": "06d45673b6329d1b882af8ca7399fe9aa52098944307f9848a56180ca9dbfc38",
     "crates/fs-tools/Cargo.toml": "cd04bc0d9bc65326a4bf414ecda48554c1de49d8c811dcff6348ae4ea87070d9",

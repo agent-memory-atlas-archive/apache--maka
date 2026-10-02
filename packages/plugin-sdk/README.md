@@ -48,6 +48,11 @@ and `cleanup`. `recover` takes that exact reference, independently of current im
 and requires a separate recovery grant. `not_recorded` means an authorized lookup
 found no original row; `unavailable` makes no journal claim. Neither triggers replay.
 Keep the original reference for recovery; a new operation identity can execute a new effect.
+Persisted UI components submit resource-free mutations through their ordinary
+`actions`. The kernel generates the operation identity and records the original
+caller intent before dispatch. Feedback uses `ActionOutcome` with
+`status: 'operation'` and the original `OperationReply`; components must handle
+unknown/unavailable receipts without automatically repeating the action.
 Subscriptions, effectful resource snapshots and business migration remain unfinished.
 
 Deployment sources can be stored in an owned State Root with

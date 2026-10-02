@@ -930,7 +930,7 @@ impl maka_runtime_host::application::Policy for HostGrant {
                 grant.approved
                     && invocation.scope.identity
                         == maka_plugins::call::Identity::Remote {
-                            request_id: grant.source.execution_id(),
+                            request_id: grant.source.request_id(),
                         }
             })
         {
@@ -973,7 +973,7 @@ impl maka_ui::actions::NativeService for ForwardHostRead {
             let scope = issuer
                 .issue_with(
                     maka_plugins::call::Identity::Remote {
-                        request_id: source.execution_id(),
+                        request_id: source.request_id(),
                     },
                     UiReadGrant {
                         source,
@@ -1001,10 +1001,11 @@ impl maka_ui::actions::NativeService for ForwardHostRead {
         })
     }
 }
-async fn host_read_fixture(
+async fn host_service_fixture(
     query: std::sync::Arc<dyn maka_runtime_host::application::Handler>,
     issuer: maka_plugins::call::Issuer,
     store: std::sync::Arc<maka_event_log::EventLog>,
+    contract: maka_plugin_core::contract::Contract,
 ) -> maka_runtime_host::application::Application {
     use maka_plugin_core::{
         composition::{
@@ -1015,8 +1016,6 @@ async fn host_read_fixture(
         runtime::Published,
     };
     use maka_runtime_host::application::{Application, NativeActivation, NativeRegistry};
-    let mut contract = maka_ui::text::reader_contract();
-    contract.transport = maka_plugin_core::contract::Transport::Remote;
     let provider = support::package(
         "host.reader",
         Declaration {
@@ -1054,7 +1053,7 @@ async fn host_read_fixture(
                     imports: BTreeMap::from([(
                         "reader".into(),
                         Import {
-                            contract,
+                            contract: contract.clone(),
                             cardinality: Cardinality::One,
                         },
                     )]),
@@ -1110,17 +1109,13 @@ async fn host_read_fixture(
             "test.host-reader".into(),
             std::sync::Arc::new(move |_| {
                 let query = query.clone();
+                let contract = contract.clone();
                 Box::pin(async move {
                     NativeActivation {
                         exports: Ok(BTreeMap::from([(
                             "Reader".into(),
                             Published {
-                                contract: {
-                                    let mut contract = maka_ui::text::reader_contract();
-                                    contract.transport =
-                                        maka_plugin_core::contract::Transport::Remote;
-                                    contract
-                                },
+                                contract,
                                 value: query,
                             },
                         )])),
@@ -1202,7 +1197,7 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
     let issuer = maka_plugins::call::Issuer::default();
     let (host_dir, host_ns, host_store) = stored_root(&timer);
     let host_root = host_dir.path().join("root");
-    let host = timer.block_on(host_read_fixture(
+    let host = timer.block_on(host_service_fixture(
         std::sync::Arc::new(HostRead {
             fail_cleanup,
             started: started.clone(),
@@ -1211,6 +1206,11 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
         }),
         issuer.clone(),
         host_store,
+        {
+            let mut contract = maka_ui::text::reader_contract();
+            contract.transport = maka_plugin_core::contract::Transport::Remote;
+            contract
+        },
     ));
     timer.block_on(host.ready()).unwrap();
     let client = host.client();
@@ -1360,18 +1360,15 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
         });
     })
     .unwrap();
-    timer.block_on(async {
-        tokio::time::timeout(std::time::Duration::from_secs(3), async {
-            started.acquire().await.unwrap().forget();
-        })
-        .await
-        .unwrap();
-    });
+    // Native construction now happens inside the tracked worker. Drive the
+    // real foreground task that starts it instead of blocking that executor.
+    await_action(cx, &scene.app, |_| started.available_permits() == 1);
+    started.try_acquire().unwrap().forget();
     let source = observed.lock().unwrap().clone().unwrap();
     assert_eq!(source.deployment(), Some(&ui_source));
     assert_eq!(source.consumer().instance(), &consumer_id);
     assert_eq!(source.mount(), &scene.root);
-    assert!(!source.execution_id().is_nil());
+    assert!(!source.request_id().is_nil());
     let weak = snapshot.lock().unwrap().clone().unwrap();
     assert!(weak.upgrade().is_some());
     cx.update_window(scene.window, |_, window, cx| {
@@ -1474,3 +1471,6 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
         assert!(maka_event_log::root::RootOwner::open(&host_root, &host_ns).is_err());
     }
 }
+
+#[path = "editor_tests/mutations.rs"]
+mod mutations;

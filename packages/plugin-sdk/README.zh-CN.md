@@ -45,6 +45,10 @@ Host 应用服务支持 query 和不含资源附件的持久 mutation。
 `recover` 使用原引用，不依赖当前 import，并需要独立的恢复授权。
 `not_recorded` 表示经过授权的精确读取没有找到原记录；`unavailable` 不断言记录内容，
 两者均不会自动重做。保留原引用用于恢复；新的 operation identity 可能再次执行效果。
+持久 UI component 通过普通 `actions` 提交无资源附件的 mutation；内核生成 operation
+identity，先记录原 caller intent 再派发。feedback 的 `ActionOutcome` 使用
+`status: 'operation'` 和原 `OperationReply`；组件应处理 unknown/unavailable 回执，
+不能自动重复 action。
 Subscription、副作用资源快照和旧业务迁移仍待实现。
 
 可以通过 `maka application commit --root ROOT --deployment UUID --expected-revision 0 --input input.json --package bundle.maka-plugin`

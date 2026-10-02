@@ -18,12 +18,26 @@
  */
 
 import type {
+  ActionOutcome,
   Component,
   ComponentInput,
   HostRequest,
   RequestContext,
   Surface,
 } from '@maka-agent/plugin-sdk';
+
+function originalUiReceipt(outcome: ActionOutcome) {
+  if (outcome.status !== 'operation') return;
+  const original = outcome.reply.reference;
+  // @ts-expect-error Unavailable/not-recorded receipts do not describe an outcome.
+  const premature = outcome.reply.receipt.outcome;
+  if (outcome.reply.receipt.kind === 'recorded') {
+    const known = outcome.reply.receipt.outcome;
+    void known;
+  }
+  void [original, premature];
+}
+void originalUiReceipt;
 
 const terminal = { kind: 'terminal', binding: 'surface' } satisfies Surface;
 // @ts-expect-error Terminal surfaces have no pixel width.

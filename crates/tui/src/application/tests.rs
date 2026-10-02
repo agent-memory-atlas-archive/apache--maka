@@ -20,6 +20,7 @@
 use super::*;
 use crossterm::event::{KeyEvent, MouseEvent};
 use maka_ui::Surface;
+use maka_ui::actions::ServiceCompletion;
 #[allow(dead_code)]
 #[path = "../../../ui/examples/counter/support.rs"]
 mod support;
@@ -158,14 +159,7 @@ fn unicode_geometry_clips_and_every_untrusted_text_sink_removes_controls() {
 
 #[test]
 fn accepted_worker_survives_surface_close_and_cleanup_failure_keeps_actual_capacity() {
-    use maka_plugin_core::{
-        composition::Target,
-        contract::{
-            Availability, Cardinality, Contract, Export, Import, Interface, Method, MethodMode,
-            Transport,
-        },
-        package::{Declaration, EntryDeclaration, EntryTarget, Implementation},
-    };
+    use maka_plugin_core::contract::{Contract, Interface, Method, MethodMode, Transport};
     use maka_ui::{
         NativeCapability, NativeExport,
         actions::{NativeService, ServiceFuture},
@@ -203,9 +197,6 @@ fn accepted_worker_survives_surface_close_and_cleanup_failure_keeps_actual_capac
         }
     }
     for cleanup_failed in [false, true] {
-        let (runtime, mut input, mut packages) = fixture(
-            "const out=frame({count:state.count+1,revision:state.revision+1});if(event.kind==='raw')out.actions.push({key:'finished',binding:'service',member:0,method:'run',input:{},resources:{}});return out;",
-        );
         let contract = Contract {
             name: "test.Service".into(),
             version: 1,
@@ -223,75 +214,10 @@ fn accepted_worker_survives_surface_close_and_cleanup_failure_keeps_actual_capac
                 )]),
             },
         };
-        let service = support::package(
-            "native.service",
-            Declaration {
-                entries: BTreeMap::from([(
-                    EntryTarget::Tui,
-                    EntryDeclaration {
-                        implementation: Implementation::Native {
-                            implementation: "test.service".into(),
-                        },
-                        configuration: json!({"type":"object"}),
-                        imports: BTreeMap::new(),
-                        exports: BTreeMap::from([(
-                            "Service".into(),
-                            Export {
-                                contract: contract.clone(),
-                                availability: Availability::Required,
-                            },
-                        )]),
-                    },
-                )]),
-                composition: None,
-            },
-            None,
+        let (runtime, input, packages) = service_fixture(
+            "const out=frame({count:state.count+1,revision:state.revision+1});if(event.kind==='raw')out.actions.push({key:'finished',binding:'service',member:0,method:'run',input:{},resources:{}});return out;",
+            &contract,
         );
-        input
-            .instances
-            .insert("service".into(), support::node(&service, 99));
-        packages.push(service);
-        let original = packages.remove(1);
-        let mut declaration = original.manifest().application.clone().unwrap();
-        declaration
-            .entries
-            .get_mut(&EntryTarget::Tui)
-            .unwrap()
-            .imports
-            .insert(
-                "service".into(),
-                Import {
-                    contract: contract.clone(),
-                    cardinality: Cardinality::One,
-                },
-            );
-        let app = Package::new(BTreeMap::from([
-            (
-                maka_plugins::package::MANIFEST_FILE.into(),
-                serde_json::to_vec(
-                    &json!({"schemaVersion":2,"id":"dynamic.app","application":declaration}),
-                )
-                .unwrap(),
-            ),
-            (
-                "index.mjs".into(),
-                original.file("index.mjs").unwrap().to_vec(),
-            ),
-            (
-                "terminal.mjs".into(),
-                original.file("terminal.mjs").unwrap().to_vec(),
-            ),
-        ]))
-        .unwrap();
-        input.instances.get_mut("app").unwrap().package = app.application_ref().into();
-        input.instances.get_mut("app").unwrap().bindings.insert(
-            "service".into(),
-            vec![Target::Instance {
-                path: vec!["service".into()],
-                export: "Service".into(),
-            }],
-        );
-        packages.push(app);
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
         let (tx, rx) = std::sync::mpsc::channel();
         let service = Arc::new(Gate {
@@ -582,3 +508,89 @@ fn narrow_row_uses_the_same_remaining_width_for_measure_and_unicode_paint() {
     tui.surface_closed(Ok(())).unwrap();
     tui.shutdown().unwrap();
 }
+
+fn service_fixture(
+    handler: &str,
+    contract: &maka_plugin_core::contract::Contract,
+) -> (tokio::runtime::Runtime, Input, Vec<Package>) {
+    use maka_plugin_core::{
+        composition::Target,
+        contract::{Availability, Cardinality, Export, Import},
+        package::{Declaration, EntryDeclaration, EntryTarget, Implementation},
+    };
+    use std::collections::BTreeMap;
+    let (runtime, mut input, mut packages) = fixture(handler);
+    let service = support::package(
+        "native.service",
+        Declaration {
+            entries: BTreeMap::from([(
+                EntryTarget::Tui,
+                EntryDeclaration {
+                    implementation: Implementation::Native {
+                        implementation: "test.service".into(),
+                    },
+                    configuration: json!({"type":"object"}),
+                    imports: BTreeMap::new(),
+                    exports: BTreeMap::from([(
+                        "Service".into(),
+                        Export {
+                            contract: contract.clone(),
+                            availability: Availability::Required,
+                        },
+                    )]),
+                },
+            )]),
+            composition: None,
+        },
+        None,
+    );
+    input
+        .instances
+        .insert("service".into(), support::node(&service, 99));
+    packages.push(service);
+    let original = packages.remove(1);
+    let mut declaration = original.manifest().application.clone().unwrap();
+    declaration
+        .entries
+        .get_mut(&EntryTarget::Tui)
+        .unwrap()
+        .imports
+        .insert(
+            "service".into(),
+            Import {
+                contract: contract.clone(),
+                cardinality: Cardinality::One,
+            },
+        );
+    let app = Package::new(BTreeMap::from([
+        (
+            maka_plugins::package::MANIFEST_FILE.into(),
+            serde_json::to_vec(
+                &json!({"schemaVersion":2,"id":"dynamic.app","application":declaration}),
+            )
+            .unwrap(),
+        ),
+        (
+            "index.mjs".into(),
+            original.file("index.mjs").unwrap().to_vec(),
+        ),
+        (
+            "terminal.mjs".into(),
+            original.file("terminal.mjs").unwrap().to_vec(),
+        ),
+    ]))
+    .unwrap();
+    input.instances.get_mut("app").unwrap().package = app.application_ref().into();
+    input.instances.get_mut("app").unwrap().bindings.insert(
+        "service".into(),
+        vec![Target::Instance {
+            path: vec!["service".into()],
+            export: "Service".into(),
+        }],
+    );
+    packages.push(app);
+    (runtime, input, packages)
+}
+
+#[path = "mutations.rs"]
+mod mutations;

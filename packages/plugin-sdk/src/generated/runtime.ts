@@ -216,6 +216,54 @@ export type ActionOutcome =
   | {
       reason: string;
       status: 'failed';
+    }
+  | {
+      reply: OperationReply;
+      status: 'operation';
+    };
+export type RecoveryProtocol = 'journal_v1';
+/**
+ * A caller's receipt observation, never an execution grant. Unavailable makes
+ * no claim about the journal's contents or physical cleanup.
+ */
+export type Receipt =
+  | {
+      kind: 'not_recorded';
+    }
+  | {
+      outcome: OperationOutcome;
+      cleanup: OperationCleanup;
+      kind: 'recorded';
+    }
+  | {
+      diagnostic: string;
+      kind: 'unavailable';
+    };
+/**
+ * Unresolved means no durable result is known, including after process loss.
+ */
+export type OperationOutcome =
+  | {
+      kind: 'unresolved';
+    }
+  | {
+      value: unknown;
+      kind: 'returned';
+    }
+  | {
+      diagnostic: string;
+      kind: 'unknown';
+    };
+export type OperationCleanup =
+  | {
+      kind: 'unconfirmed';
+    }
+  | {
+      kind: 'confirmed';
+    }
+  | {
+      diagnostic: string;
+      kind: 'failed';
     };
 export type EditorEdit =
   | {
@@ -279,7 +327,6 @@ export type HostRequest =
       end: number;
       operation: 'read';
     };
-export type RecoveryProtocol = 'journal_v1';
 export type Identity =
   | {
       invocation: Invocation;
@@ -302,49 +349,6 @@ export type Identity =
  * an unrevoked Host record and the issuing principal's current authorization.
  */
 export type Id = string;
-/**
- * Unresolved means no durable result is known, including after process loss.
- */
-export type OperationOutcome =
-  | {
-      kind: 'unresolved';
-    }
-  | {
-      value: unknown;
-      kind: 'returned';
-    }
-  | {
-      diagnostic: string;
-      kind: 'unknown';
-    };
-export type OperationCleanup =
-  | {
-      kind: 'unconfirmed';
-    }
-  | {
-      kind: 'confirmed';
-    }
-  | {
-      diagnostic: string;
-      kind: 'failed';
-    };
-/**
- * A caller's receipt observation, never an execution grant. Unavailable makes
- * no claim about the journal's contents or physical cleanup.
- */
-export type Receipt =
-  | {
-      kind: 'not_recorded';
-    }
-  | {
-      outcome: OperationOutcome;
-      cleanup: OperationCleanup;
-      kind: 'recorded';
-    }
-  | {
-      diagnostic: string;
-      kind: 'unavailable';
-    };
 
 /**
  * Durable deployment input. Plans are derived and never persisted as overrides.
@@ -552,6 +556,20 @@ export interface CaptureSource {
   method: string;
   input: unknown;
 }
+export interface OperationReply {
+  reference: RecoveryRef;
+  receipt: Receipt;
+}
+export interface RecoveryRef {
+  source: DeploymentRef;
+  namespace: InstanceId;
+  export: string;
+  method: string;
+  operation: string;
+  fingerprint: string;
+  contract: Contract;
+  recovery: RecoveryProtocol;
+}
 export interface LabelProps {
   text: string;
   emphasis?: boolean;
@@ -607,16 +625,6 @@ export interface HostActivation {
   contract: Contract;
   service: string[];
 }
-export interface RecoveryRef {
-  source: DeploymentRef;
-  namespace: InstanceId;
-  export: string;
-  method: string;
-  operation: string;
-  fingerprint: string;
-  contract: Contract;
-  recovery: RecoveryProtocol;
-}
 /**
  * Actual callback observation. Neither the source nor receipt is a grant.
  */
@@ -635,10 +643,6 @@ export interface OperationObservation {
   reference: RecoveryRef;
   outcome: OperationOutcome;
   cleanup: OperationCleanup;
-}
-export interface OperationReply {
-  reference: RecoveryRef;
-  receipt: Receipt;
 }
 export interface ResourceMetadata {
   type: ResourceType;

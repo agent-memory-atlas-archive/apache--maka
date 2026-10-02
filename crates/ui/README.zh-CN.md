@@ -104,11 +104,23 @@ UI capture 拥有自己的快照和容量；本地 Host query 接收实际 paylo
 跨进程资源传输仍须 transport executor。
 
 `Application::new` 显式接收 `RemoteServices`：静态契约观察与 `RemoteService` 实际 endpoint
-注册分开。本地及远端服务目前只执行 Query；Mutation / Subscription 在持久 caller 与 stream
-协议完成前拒绝。`NativeService::call` 接收 `ServiceRequest`，包含已检查输入、实际附件及
-准入时由内核创建的私有 `ServiceSource`。consumer、mount 与 execution 观察不授予 Host 权限。
+注册分开。本地及远端服务支持 Query 和无资源附件的 Mutation；资源 mutation 与 Subscription
+仍须各自 executor。`NativeService::call` 接收 `ServiceRequest`，包含已检查输入、实际附件及
+由内核创建的私有 `ServiceSource`。consumer、mount 与 request 观察不授予 Host 权限。
 transport callback 捕获 `remote_activation` 的准确 token，只把该 token 交给 `retire_remote`，
 延迟断连不能撤销 replacement kernel。
+
+持久 UI mutation 先构造无 effect 的 `NativeMutation` owner，准备原 native 请求、在 UI 自己
+Root 中确认 caller intent，再接受 Work。`Application::finish_task` 回同一前台 owner 重查
+原 Mount/registration 后返回 dispatch 或 close 后继。窗口或终端退出后，呈现器仍必须执行
+全部后继。准备由 provider 的 Core Resource 保护，准入后 Work 接手；未保存预览拒绝
+mutation。native 授权仍独立检查。
+
+mutation feedback 为 `{ status: "operation", reply: OperationReply }`，保留实际原目标 Ref。
+回执事实与本次实际 executor cleanup 分别结算；无法交付的结果降为同 Ref `unavailable`，
+不改原 journal、不自动重放。清理失败或中断的准备仍受 owner 保有，也会列入
+`failed_action_ids`；`complete_action_cleanup` 必须接收 embedding 的实际清理确认，
+不能以取消或观察者消失冒充成功。
 
 最终准入再次核对原 consumer Mount 与 service registration。原生服务 future 在后台运行，
 独立于窗口；结果事件为 `{ kind: "action", key, event }`，原始输入无法伪造该来源。
@@ -116,10 +128,11 @@ executor 先结算再投递结果，已退出 consumer 不再接收；结果 han
 不会静默遗留 pending。业务结果与清理确认是独立事实；清理失败或未知保留 Work/快照，
 直到实际成功确认。应用 lifetime owner 在全部窗口和 worker task 退出后仍持有这些记录。
 
-每次输出最多 16 个 action，每请求 16 个资源槽；排队加已接受请求最多 64 个，已捕获资源
+每次输出最多 16 个 action，每请求 16 个资源槽；排队、准备、已接受请求及待交付反馈
+合计最多 64 个，已捕获资源
 累计最多 64 MiB，UTF-8 chunk 最多 64 KiB 且检查字节边界。完整 capture 参数在 clone/
 callback 前受 1 MiB 限额，也共用事务的 callback/deadline/累计工作预算。Reader 必须由包组合
-显式导入。可信跨进程 transport、UI 持久 caller 准入、subscription 与产品恢复界面仍待实现。
+显式导入。可信跨进程 transport、subscription 与产品恢复界面仍待实现。
 直接 remote 注册调用实际 Host query 已用 Kit 快照跨两个内核验证。独立 Host query executor 见[Host 应用服务](../runtime-host/README.zh-CN.md)；
 resource 示例证明这条原生异步路径，不代表产品已完成。
 

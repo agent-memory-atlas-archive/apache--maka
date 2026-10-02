@@ -38,6 +38,7 @@ maka-js-runtime.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+rusqlite.workspace = true
 maka-runtime-host.workspace = true
 tokio-util.workspace = true
 schemars.workspace = true
