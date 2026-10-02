@@ -1,0 +1,78 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::*;
+
+/// Actual request capabilities shared by native and JavaScript services.
+/// Imports are captured from the consumer activation, never resolved by a
+/// guest-supplied global name. Calls preserve the original private Scope evidence.
+pub struct Context {
+    pub(super) scope: Scope,
+    pub(super) attachments: Attachments,
+    pub(super) imports: Arc<BTreeMap<String, Vec<Binding>>>,
+    pub(super) dispatch: Weak<Dispatch>,
+}
+impl Context {
+    pub fn scope(&self) -> &Scope {
+        &self.scope
+    }
+    pub fn attachments(&self) -> &Attachments {
+        &self.attachments
+    }
+    /// Enqueues work before returning its observer. Dropping that observer cannot
+    /// acknowledge cleanup or cancel an accepted child. The parent waits for the
+    /// actual executor's cleanup, independently of its business result.
+    pub fn call(
+        &self,
+        import: &str,
+        provider: usize,
+        method: String,
+        input: Value,
+        attachments: Attachments,
+    ) -> Result<BoxFuture<'static, Result<Value>>> {
+        if self.scope.cancellation.is_cancelled() {
+            return Err("Host request was revoked".into());
+        }
+        let binding = self
+            .imports
+            .get(import)
+            .and_then(|providers| providers.get(provider))
+            .ok_or("unknown request import provider")?
+            .clone();
+        let dispatch = self.dispatch.upgrade().ok_or("Host deployment is closed")?;
+        // Reserve before the first descriptor trait call. A native preparation
+        // panic belongs to this already accepted parent's cleanup facts.
+        let ticket = self.scope.resources.reserve().map_err(|e| e.to_string())?;
+        let result = dispatch.enqueue(
+            binding,
+            method,
+            input,
+            self.scope.clone(),
+            attachments,
+            Some(ticket),
+        )?;
+        Ok(Box::pin(async move {
+            result
+                .await
+                .map_err(|_| "Host deployment is closed".to_string())??
+                .result()
+                .await
+        }))
+    }
+}

@@ -38,6 +38,7 @@ struct Failed {
     _resources: OwnedSemaphorePermit,
 }
 struct Owned {
+    imports: Arc<BTreeMap<String, Vec<Binding>>>,
     resource: Resource,
     close: Option<Close>,
     initializing: bool,
@@ -53,6 +54,7 @@ enum Done {
         native_owner: Option<Arc<dyn NativeOwner>>,
     },
     Called {
+        parent: Option<Ticket>,
         execution: Execution<Service>,
         result: Result<Value>,
         scope: Box<Scope>,
@@ -71,6 +73,7 @@ enum Done {
 }
 
 pub(super) struct Owner {
+    dispatch: Weak<Dispatch>,
     runtime: Runtime<Service>,
     // The source input remains the only composition authority; the plan is derived.
     _input: Input,
@@ -108,8 +111,10 @@ impl Owner {
         policy: Arc<dyn Policy>,
         limits: Limits,
         updates: watch::Sender<Snapshot>,
+        dispatch: Weak<Dispatch>,
     ) -> Self {
         Self {
+            dispatch,
             pending: plan
                 .instances()
                 .values()
@@ -302,6 +307,16 @@ impl Owner {
                 .publish(&activation, BTreeMap::new())
                 .map_err(|e| e.error.to_string());
         };
+        let imports = entry
+            .imports
+            .keys()
+            .map(|name| {
+                self.runtime
+                    .bind(&activation, name)
+                    .map(|bindings| (name.clone(), bindings.into_iter().map(Binding).collect()))
+                    .map_err(|e| e.to_string())
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?;
         // This fence precedes every asynchronous initialization step, including
         // module readiness. Retire cannot release an initializer's owner early.
         let resource = self
@@ -311,6 +326,7 @@ impl Owner {
         self.owned.insert(
             instance.identity.clone(),
             Owned {
+                imports: Arc::new(imports),
                 resource,
                 close: None,
                 initializing: true,
@@ -480,6 +496,7 @@ impl Owner {
             }
             Command::Call(call) => {
                 let Call {
+                    mut parent,
                     binding,
                     method,
                     input,
@@ -490,7 +507,7 @@ impl Owner {
                     resources,
                     reply,
                 } = *call;
-                if reply.is_closed() {
+                if reply.is_closed() && parent.is_none() {
                     return;
                 }
                 let admission = (|| {
@@ -513,7 +530,7 @@ impl Owner {
                         .input
                         .validate(&input)
                         .map_err(|e| e.to_string())?;
-                    std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    match std::panic::catch_unwind(AssertUnwindSafe(|| {
                         let Interface::Service { methods } = &service.contract.interface else {
                             unreachable!()
                         };
@@ -541,10 +558,17 @@ impl Owner {
                             input: &input,
                             attachments: &attachments,
                         })
-                    }))
-                    .unwrap_or_else(|_| {
-                        Err("Host admission policy or attachment descriptor panicked".into())
-                    })?;
+                    })) {
+                        Ok(result) => result?,
+                        Err(_) => {
+                            let error = "Host admission policy or attachment descriptor panicked"
+                                .to_string();
+                            if let Some(ticket) = parent.take() {
+                                ticket.complete(Err(error.clone()));
+                            }
+                            return Err(error);
+                        }
+                    };
                     if scope.cancellation.is_cancelled() {
                         return Err("Host invocation was revoked".into());
                     }
@@ -557,6 +581,15 @@ impl Owner {
                         let _ = reply.send(Err(error));
                     }
                     Ok((execution, scope)) => {
+                        if let Some(ticket) = &mut parent {
+                            ticket.start();
+                        }
+                        let context = Context {
+                            scope: scope.clone(),
+                            attachments: attachments.clone(),
+                            imports: self.owned[execution.provider().instance()].imports.clone(),
+                            dispatch: self.dispatch.clone(),
+                        };
                         let (output, result) = oneshot::channel();
                         let id = execution.id();
                         self.jobs.push(Box::pin(async move {
@@ -564,14 +597,7 @@ impl Owner {
                                 let service = execution.value();
                                 let value = match &service.implementation {
                                     ImplementationValue::Native(provider) => {
-                                        provider
-                                            .call(
-                                                method.clone(),
-                                                input,
-                                                scope.clone(),
-                                                attachments.clone(),
-                                            )
-                                            .await
+                                        provider.call(method.clone(), input, context).await
                                     }
                                     ImplementationValue::JavaScript(callbacks) => callbacks
                                         .call_with_context(
@@ -580,10 +606,7 @@ impl Owner {
                                                 input,
                                                 serde_json::json!({"source":scope.identity}),
                                             ],
-                                            Arc::new(script::Request {
-                                                scope: scope.clone(),
-                                                attachments: attachments.clone(),
-                                            }),
+                                            Arc::new(context),
                                         )
                                         .await
                                         .map_err(|e| e.to_string()),
@@ -605,6 +628,7 @@ impl Owner {
                                 ),
                             };
                             Done::Called {
+                                parent,
                                 execution,
                                 result,
                                 scope: Box::new(scope),
@@ -663,6 +687,7 @@ impl Owner {
                 }
             }
             Done::Called {
+                parent,
                 execution,
                 result,
                 scope,
@@ -677,8 +702,11 @@ impl Owner {
                 let failed = cleanup.is_err();
                 let cleanup_error = cleanup.as_ref().err().cloned();
                 self.runtime
-                    .settle(&execution, cleanup)
+                    .settle(&execution, cleanup.clone())
                     .expect("accepted execution belongs to owner");
+                if let Some(ticket) = parent {
+                    ticket.complete(cleanup);
+                }
                 if failed {
                     self.cleanup_error
                         .get_or_insert_with(|| cleanup_error.unwrap());

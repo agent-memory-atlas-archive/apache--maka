@@ -867,11 +867,11 @@ impl maka_runtime_host::application::Query for HostRead {
         &self,
         _: String,
         input: serde_json::Value,
-        _: maka_plugins::call::Scope,
-        attachments: maka_plugins::call::Attachments,
+        context: maka_runtime_host::application::Context,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send + 'static>,
     > {
+        let attachments = context.attachments().clone();
         *self.snapshot.lock().unwrap() = Some(std::sync::Arc::downgrade(&attachments["text"]));
         let started = self.started.clone();
         let release = self.release.clone();

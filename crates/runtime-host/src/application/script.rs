@@ -75,7 +75,14 @@ pub(super) async fn activate(
 
 #[derive(Deserialize)]
 #[serde(tag = "operation", rename_all = "camelCase", deny_unknown_fields)]
-enum ResourceOperation {
+enum Operation {
+    Call {
+        import: String,
+        provider: usize,
+        method: String,
+        input: Value,
+        attachments: BTreeMap<String, String>,
+    },
     Metadata {
         slot: String,
     },
@@ -86,29 +93,54 @@ enum ResourceOperation {
     },
 }
 
-pub(super) struct Request {
-    pub scope: Scope,
-    pub attachments: Attachments,
-}
-impl maka_js_runtime::plugin::RequestBridge for Request {
+impl maka_js_runtime::plugin::RequestBridge for Context {
     fn invoke(
         &self,
         input: Value,
     ) -> BoxFuture<'static, std::result::Result<Value, maka_js_runtime::plugin::Error>> {
-        let result = self.read(input).map_err(maka_js_runtime::plugin::Error);
-        // Native snapshot access already finished. No observer retains this map.
-        Box::pin(async move { result })
+        let operation = serde_json::from_value::<Operation>(input).map_err(|e| e.to_string());
+        let result = operation.and_then(|operation| match operation {
+            Operation::Call {
+                import,
+                provider,
+                method,
+                input,
+                attachments,
+            } => {
+                let attachments = attachments
+                    .into_iter()
+                    .map(|(target, source)| {
+                        self.attachments
+                            .get(&source)
+                            .cloned()
+                            .map(|resource| (target, resource))
+                            .ok_or_else(|| "unknown request resource slot".to_string())
+                    })
+                    .collect::<Result<Attachments>>()?;
+                self.call(&import, provider, method, input, attachments)
+            }
+            operation => {
+                let result = self.read(operation);
+                Ok(Box::pin(async move { result }) as BoxFuture<'static, Result<Value>>)
+            }
+        });
+        Box::pin(async move {
+            match result {
+                Ok(observer) => observer.await,
+                Err(error) => Err(error),
+            }
+            .map_err(maka_js_runtime::plugin::Error)
+        })
     }
 }
-impl Request {
-    fn read(&self, input: Value) -> Result<Value> {
+impl Context {
+    fn read(&self, operation: Operation) -> Result<Value> {
         if self.scope.cancellation.is_cancelled() {
             return Err("Host request was revoked".into());
         }
-        let operation: ResourceOperation =
-            serde_json::from_value(input).map_err(|e| e.to_string())?;
         let slot = match &operation {
-            ResourceOperation::Metadata { slot } | ResourceOperation::Read { slot, .. } => slot,
+            Operation::Metadata { slot } | Operation::Read { slot, .. } => slot,
+            Operation::Call { .. } => unreachable!(),
         };
         let resource = self
             .attachments
@@ -117,12 +149,12 @@ impl Request {
         let mut ticket = self.scope.resources.reserve().map_err(|e| e.to_string())?;
         ticket.start();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match operation {
-            ResourceOperation::Metadata { .. } => {
+            Operation::Metadata { .. } => {
                 let value = serde_json::json!({"type":resource.resource_type(),"bytes":resource.bytes(),"metadata":resource.metadata()});
                 check_json(&value)?;
                 Ok(value)
             }
-            ResourceOperation::Read { start, end, .. } => {
+            Operation::Read { start, end, .. } => {
                 if end < start || end - start > 64 * 1024 || end > resource.bytes() {
                     return Err("invalid request resource byte range".into());
                 }
@@ -132,6 +164,7 @@ impl Request {
                 }
                 Ok(serde_json::json!(bytes))
             }
+            Operation::Call { .. } => unreachable!(),
         }));
         match result {
             Ok(result) => {

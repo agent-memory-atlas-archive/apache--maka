@@ -35,13 +35,7 @@ impl Policy for Allowed {
 }
 struct Count(Arc<AtomicUsize>);
 impl Query for Count {
-    fn call(
-        &self,
-        _: String,
-        input: Value,
-        _: Scope,
-        _: Attachments,
-    ) -> BoxFuture<'static, Result<Value>> {
+    fn call(&self, _: String, input: Value, _: Context) -> BoxFuture<'static, Result<Value>> {
         let count = self.0.clone();
         Box::pin(async move {
             count.fetch_add(1, Ordering::SeqCst);
@@ -164,6 +158,7 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
             Arc::new(Allowed),
             Limits::default(),
             watch::channel(Snapshot::default()).0,
+            Weak::new(),
         );
         owner.pending.clear();
         owner.starting = false;
@@ -215,6 +210,7 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
         owner.owned.insert(
             consumer.instance().clone(),
             Owned {
+                imports: Arc::new(BTreeMap::new()),
                 resource,
                 close: Some(Box::pin(async move {
                     module.close().await.map_err(|e| e.to_string())
@@ -249,6 +245,7 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
             .unwrap();
         let (reply, result) = oneshot::channel();
         owner.command(Command::Call(Box::new(Call {
+            parent: None,
             binding,
             method: "echo".into(),
             input: Value::Null,

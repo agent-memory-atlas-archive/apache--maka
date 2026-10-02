@@ -39,22 +39,41 @@ then accepts work through the core without waiting between those checks. Forward
 child Scopes retain the original private evidence. A package name, source identity
 in JSON, or binding is not effect authorization.
 
+Native `Query::call` receives method, input and a request `Context`. Its Scope,
+attachments and declared import bindings are actual capabilities; the owner captures
+imports before asynchronous activation. Native and JavaScript calls use this same
+Context and final admission path. `Context::call` enqueues synchronously and returns
+only a result observer, preserving the original private evidence.
+
 Queries accept `maka_plugins::call::Attachments`: actual immutable
 `ReadResource` payloads, shared with UI capture adapters. Metadata and JSON slot
 names cannot construct these values. Forwarders pass actual payloads explicitly;
 text resources enforce their own UTF-8 ranges and chunk limits. Native descriptor
-panics before admission reject that request while preserving existing work.
+panics before admission reject that request while preserving existing work. During
+an accepted parent's forwarding preparation, a panic records that parent's cleanup
+failure; catching the business error cannot release its work.
 JavaScript query callbacks receive `(input, observation, context)`. The frozen
-context exposes request-private `invoke` operations: `metadata` with a slot, and
-`read` with a slot and byte `start`/`end`. Reads return bytes, limited to 64 KiB;
+context exposes request-private `invoke` operations: `metadata` with a slot,
+`read` with a slot and byte `start`/`end`, and `call` with `import`, zero-based
+`provider`, `method`, `input`, and an `attachments` map from target slots to current
+request source slots. Calls select only the captured imports and actual payloads.
+Reads return bytes, limited to 64 KiB;
 slots resolve only within this request's actual attachments. Revocation blocks
 new reads. Saved contexts expire before callback completion is reported, without
 retaining snapshots. Native read/metadata panics record Scope cleanup failure,
 even if JavaScript catches the rejection; unrelated modules remain runnable.
-This low-level bridge does not yet provide import binding calls or the public SDK.
+The public SDK and initialization grants are not yet implemented.
 
 Policy receives a borrowed `Invocation` with named consumer, provider, Scope,
 contract, method, input and attachment fields; this observation is not a new grant.
+
+A child request carries a parent resource Ticket through its queue, executor and
+actual cleanup settlement. Child cleanup completes the Ticket before publishing its
+business result. Ordinary child rejection or business failure does not mark cleanup
+failure; unconfirmed child cleanup retains both child and parent work and capacity,
+even when JavaScript catches the error or returns without awaiting the child.
+Context and owner hold only weak dispatch endpoints; observer futures retain no
+attachment map or endpoint.
 
 An `Accepted` result is only an observer. The owner retains execution, Scope,
 actual attachments and capacity until the query and its resources settle. Ordinary business
@@ -71,6 +90,6 @@ unconfirmed cleanup retains their payloads and capacity. This adapter currently
 executes native and JavaScript queries, including attached resources. Mutation
 and subscription are rejected before activation until their durable and stream
 executors are implemented. Host transport, persistent composition
-commit/reconciliation, operation recovery, the JavaScript binding bridge and SDK,
+commit/reconciliation, operation recovery, the public SDK,
 and server/TUI/UI integration remain required work. This foundation is not a
 completed Host migration or a compatibility facade for the previous catalog.

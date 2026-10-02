@@ -18,7 +18,9 @@
  */
 
 //! Host service execution over the shared plugin lifecycle kernel.
+mod context;
 mod owner;
+pub use context::Context;
 mod script;
 
 use futures_util::future::BoxFuture;
@@ -31,11 +33,15 @@ use maka_plugin_core::{
     runtime::{Activation, Capability, Published, Status},
 };
 use maka_plugins::{
-    call::{Attachments, Issuer, Scope},
+    call::{Attachments, Issuer, Scope, Ticket},
     package::Package,
 };
 use serde_json::Value;
-use std::{collections::BTreeMap, io::Write, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    io::Write,
+    sync::{Arc, Weak},
+};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -49,8 +55,7 @@ pub trait Query: Send + Sync + 'static {
         &self,
         method: String,
         input: Value,
-        scope: Scope,
-        attachments: Attachments,
+        context: Context,
     ) -> BoxFuture<'static, Result<Value>>;
 }
 
@@ -196,9 +201,13 @@ impl Drop for Application {
 }
 #[derive(Clone)]
 pub struct Client {
-    commands: mpsc::Sender<Command>,
+    dispatch: Arc<Dispatch>,
     control: mpsc::Sender<Control>,
     updates: watch::Receiver<Snapshot>,
+}
+
+struct Dispatch {
+    commands: mpsc::Sender<Command>,
     slots: Arc<Semaphore>,
     bytes: Arc<Semaphore>,
     resources: Arc<Semaphore>,
@@ -213,6 +222,7 @@ pub(super) enum Command {
     Call(Box<Call>),
 }
 pub(super) struct Call {
+    parent: Option<Ticket>,
     binding: Binding,
     method: String,
     input: Value,
@@ -288,17 +298,28 @@ impl Application {
             ..Default::default()
         });
         let stop = CancellationToken::new();
-        let client = Client {
+        let dispatch = Arc::new(Dispatch {
             commands,
-            control,
-            updates: observations,
             slots: Arc::new(Semaphore::new(128)),
             bytes: Arc::new(Semaphore::new(32 * 1024 * 1024)),
             resources: Arc::new(Semaphore::new(64 * 1024 * 1024)),
+        });
+        let client = Client {
+            dispatch: dispatch.clone(),
+            control,
+            updates: observations,
         };
         scheduler.spawn(
             owner::Owner::new(
-                plan, input, sources, native, issuer, policy, limits, updates,
+                plan,
+                input,
+                sources,
+                native,
+                issuer,
+                policy,
+                limits,
+                updates,
+                Arc::downgrade(&dispatch),
             )
             .run(receiver, controls, stop.clone()),
         );
@@ -353,7 +374,8 @@ impl Client {
     }
     pub async fn bind(&self, consumer: Activation, import: String) -> Result<Vec<Binding>> {
         let (reply, result) = oneshot::channel();
-        self.commands
+        self.dispatch
+            .commands
             .try_send(Command::Bind {
                 consumer,
                 import,
@@ -372,44 +394,8 @@ impl Client {
         scope: Scope,
         attachments: Attachments,
     ) -> Result<Accepted> {
-        let size = check_json(&input)?;
-        let resource_bytes = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            check_attachments(&attachments)
-        }))
-        .unwrap_or_else(|_| Err("Host attachment descriptor panicked".into()))?;
-        if method.is_empty() || method.len() > 128 {
-            return Err("invalid service method".into());
-        }
-        let slot = self
-            .slots
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| "Host call capacity exhausted")?;
-        let bytes = self
-            .bytes
-            .clone()
-            .try_acquire_many_owned(size.max(1) as u32)
-            .map_err(|_| "Host input budget exhausted")?;
-        let resources = self
-            .resources
-            .clone()
-            .try_acquire_many_owned(resource_bytes as u32)
-            .map_err(|_| "Host attachment budget exhausted")?;
-        let (reply, result) = oneshot::channel();
-        self.commands
-            .try_send(Command::Call(Box::new(Call {
-                binding,
-                method,
-                input,
-                scope,
-                attachments,
-                slot,
-                bytes,
-                resources,
-                reply,
-            })))
-            .map_err(|e| e.to_string())?;
-        result
+        self.dispatch
+            .enqueue(binding, method, input, scope, attachments, None)?
             .await
             .map_err(|_| "Host deployment is closed".to_string())?
     }
@@ -468,4 +454,64 @@ fn check_json(value: &Value) -> Result<usize> {
     let mut count = Count(0);
     serde_json::to_writer(&mut count, value).map_err(|e| e.to_string())?;
     Ok(count.0)
+}
+
+impl Dispatch {
+    fn enqueue(
+        &self,
+        binding: Binding,
+        method: String,
+        input: Value,
+        scope: Scope,
+        attachments: Attachments,
+        mut parent: Option<Ticket>,
+    ) -> Result<oneshot::Receiver<Result<Accepted>>> {
+        let size = check_json(&input)?;
+        let resource_bytes = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            check_attachments(&attachments)
+        })) {
+            Ok(result) => result?,
+            Err(_) => {
+                let error = "Host attachment descriptor panicked".to_string();
+                if let Some(ticket) = parent.take() {
+                    ticket.complete(Err(error.clone()));
+                }
+                return Err(error);
+            }
+        };
+        if method.is_empty() || method.len() > 128 {
+            return Err("invalid service method".into());
+        }
+        let slot = self
+            .slots
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| "Host call capacity exhausted")?;
+        let bytes = self
+            .bytes
+            .clone()
+            .try_acquire_many_owned(size.max(1) as u32)
+            .map_err(|_| "Host input budget exhausted")?;
+        let resources = self
+            .resources
+            .clone()
+            .try_acquire_many_owned(resource_bytes as u32)
+            .map_err(|_| "Host attachment budget exhausted")?;
+        let (reply, result) = oneshot::channel();
+        self.commands
+            .try_send(Command::Call(Box::new(Call {
+                parent,
+                binding,
+                method,
+                input,
+                scope,
+                attachments,
+                slot,
+                bytes,
+                resources,
+                reply,
+            })))
+            .map_err(|e| e.to_string())?;
+        Ok(result)
+    }
 }

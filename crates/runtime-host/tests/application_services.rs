@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use futures_util::future::BoxFuture;
+use futures_util::{FutureExt, future::BoxFuture};
 use maka_js_runtime::plugin::Limits;
 use maka_plugin_core::{
     composition::{
@@ -35,7 +35,8 @@ use maka_plugins::{
     package::{MANIFEST_FILE, Package},
 };
 use maka_runtime_host::application::{
-    Application, Invocation, NativeActivation, NativeOwner, NativeRegistry, Policy, Query, Result,
+    Application, Context, Invocation, NativeActivation, NativeOwner, NativeRegistry, Policy, Query,
+    Result,
 };
 use serde_json::{Value, json};
 use std::{
@@ -234,13 +235,8 @@ struct Echo {
     calls: Arc<AtomicUsize>,
 }
 impl Query for Echo {
-    fn call(
-        &self,
-        _: String,
-        input: Value,
-        scope: Scope,
-        _: Attachments,
-    ) -> BoxFuture<'static, Result<Value>> {
+    fn call(&self, _: String, input: Value, context: Context) -> BoxFuture<'static, Result<Value>> {
+        let scope = context.scope().clone();
         let calls = self.calls.clone();
         Box::pin(async move {
             calls.fetch_add(1, Ordering::SeqCst);
@@ -439,13 +435,8 @@ struct Held {
     resource_release: Arc<Semaphore>,
 }
 impl Query for Held {
-    fn call(
-        &self,
-        _: String,
-        input: Value,
-        scope: Scope,
-        _: Attachments,
-    ) -> BoxFuture<'static, Result<Value>> {
+    fn call(&self, _: String, input: Value, context: Context) -> BoxFuture<'static, Result<Value>> {
+        let scope = context.scope().clone();
         let started = self.started.clone();
         let release = self.release.clone();
         let resource_started = self.resource_started.clone();
@@ -1078,34 +1069,16 @@ async fn shared_vm_failure_revokes_its_actual_registrations_but_preserves_unrela
     .unwrap();
 }
 
-struct Forward(
-    std::sync::OnceLock<(
-        maka_runtime_host::application::Client,
-        maka_runtime_host::application::Binding,
-    )>,
-);
+struct Forward;
 impl Query for Forward {
     fn call(
         &self,
         method: String,
         input: Value,
-        scope: Scope,
-        attachments: Attachments,
+        context: Context,
     ) -> BoxFuture<'static, Result<Value>> {
-        let (client, binding) = self.0.get().unwrap().clone();
-        Box::pin(async move {
-            client
-                .start(
-                    binding,
-                    method,
-                    input,
-                    scope.child().map_err(|e| e.to_string())?,
-                    attachments,
-                )
-                .await?
-                .result()
-                .await
-        })
+        let result = context.call("echo", 0, method, input, context.attachments().clone());
+        Box::pin(async move { result?.await })
     }
 }
 struct ForwardPolicy(Issuer);
@@ -1161,7 +1134,7 @@ async fn forwarding_preserves_private_evidence_and_never_substitutes_wrapper_aut
             }),
             attached_contract(),
         );
-        let forward = Arc::new(Forward(std::sync::OnceLock::new()));
+        let forward = Arc::new(Forward);
         let implementation = forward.clone();
         native
             .insert(
@@ -1195,12 +1168,6 @@ async fn forwarding_preserves_private_evidence_and_never_substitutes_wrapper_aut
         .unwrap();
         app.ready().await.unwrap();
         let client = app.client();
-        let upstream = client
-            .bind(client.activation(&id(4)).unwrap(), "echo".into())
-            .await
-            .unwrap()
-            .remove(0);
-        assert!(forward.0.set((client.clone(), upstream)).is_ok());
         let binding = client
             .bind(client.activation(&id(2)).unwrap(), "echo".into())
             .await
@@ -1245,13 +1212,8 @@ async fn forwarding_preserves_private_evidence_and_never_substitutes_wrapper_aut
 }
 struct InputResource(Arc<Semaphore>);
 impl Query for InputResource {
-    fn call(
-        &self,
-        _: String,
-        input: Value,
-        scope: Scope,
-        _: Attachments,
-    ) -> BoxFuture<'static, Result<Value>> {
+    fn call(&self, _: String, input: Value, context: Context) -> BoxFuture<'static, Result<Value>> {
+        let scope = context.scope().clone();
         let release = self.0.clone();
         Box::pin(async move {
             let mut ticket = scope.resources.reserve().unwrap();
@@ -1270,13 +1232,7 @@ struct LargeHeld {
     release: Arc<Semaphore>,
 }
 impl Query for LargeHeld {
-    fn call(
-        &self,
-        _: String,
-        input: Value,
-        _: Scope,
-        _: Attachments,
-    ) -> BoxFuture<'static, Result<Value>> {
+    fn call(&self, _: String, input: Value, _: Context) -> BoxFuture<'static, Result<Value>> {
         let started = self.started.clone();
         let release = self.release.clone();
         Box::pin(async move {
@@ -1530,13 +1486,9 @@ struct ReadAttachment {
     release: Arc<Semaphore>,
 }
 impl Query for ReadAttachment {
-    fn call(
-        &self,
-        _: String,
-        input: Value,
-        scope: Scope,
-        attachments: Attachments,
-    ) -> BoxFuture<'static, Result<Value>> {
+    fn call(&self, _: String, input: Value, context: Context) -> BoxFuture<'static, Result<Value>> {
+        let scope = context.scope().clone();
+        let attachments = context.attachments().clone();
         let calls = self.calls.clone();
         let started = self.started.clone();
         let release = self.release.clone();
@@ -1546,10 +1498,13 @@ impl Query for ReadAttachment {
                 started.add_permits(1);
                 permit(&release).await;
             }
-            if input == "fail-cleanup" {
+            if input == "fail-cleanup" || input == "fail-cleanup-error" {
                 let mut ticket = scope.resources.reserve().unwrap();
                 ticket.start();
                 ticket.complete(Err("attachment cleanup unconfirmed".into()));
+            }
+            if input == "business-fail" || input == "fail-cleanup-error" {
+                return Err("ordinary leaf business error".into());
             }
             Ok(json!(
                 String::from_utf8(attachments["text"].read(0..5)?).unwrap()
@@ -2170,6 +2125,563 @@ async fn javascript_cannot_catch_away_native_resource_cleanup_failure_or_release
             weak.upgrade().is_some(),
             "dropping root and observers cannot acknowledge failed work"
         );
+    })
+    .await
+    .unwrap();
+}
+
+fn wrapper_entry(implementation: Implementation) -> EntryDeclaration {
+    let mut entry = attached_entry(true, implementation.clone());
+    entry.imports = attached_entry(false, implementation).imports;
+    entry
+}
+fn wrapper_input(provider: &Package, consumer: &Package, wrapper: &Package) -> Input {
+    let mut composition = input(provider, consumer);
+    composition
+        .instances
+        .insert("wrapper".into(), node(wrapper, 4, false));
+    composition
+        .instances
+        .get_mut("a")
+        .unwrap()
+        .bindings
+        .get_mut("echo")
+        .unwrap()[0] = Target::Instance {
+        path: vec!["wrapper".into()],
+        export: "echo".into(),
+    };
+    composition
+}
+fn script_forwarder(realm: Realm) -> Package {
+    let source = format!(
+        r#"
+        export const service = {{ async echo(input, observation, context) {{
+            const call = value => context.invoke({{operation:'call', import:'echo', provider:0,
+                method:'echo', input:value, attachments:{{text:'text'}}}});
+            if (input==='invalid') {{
+                const request = {{operation:'call',import:'echo',provider:0,method:'echo',input:'healthy',attachments:{{text:'text'}}}};
+                for (const change of [{{import:'undeclared'}}, {{provider:1}}, {{provider:-1}},
+                    {{method:'undeclared'}}, {{scope:{{identity:'forged'}}}},
+                    {{attachments:{{text:'unknown'}}}}, {{attachments:{{text:{{bytes:[120]}}}}}},
+                    {{attachments:{{extra:'text'}}}}, {{input:false}}]) {{
+                    try {{ await context.invoke({{...request,...change}}); return 'unexpected acceptance'; }} catch {{}}
+                }}
+                return 'rejected';
+            }}
+            if (input==='ignore' || input==='terminate') {{
+                call('held').catch(()=>{{}});
+                // This actual second admission occurs after the first queued child;
+                // its receipt lets the parent return with real child work pending.
+                await call('healthy');
+                if (input==='terminate') while(true){{}};
+                return 'returned';
+            }}
+            if (input==='twice') return await call('one') + ':' + await call('two');
+            try {{ return await call(input); }} catch(e) {{ return 'caught:'+e.message; }}
+        }} }};
+        export function activate() {{ return {{echo:{{contract:{},service:['service']}}}}; }}
+    "#,
+        serde_json::to_string(&attached_contract()).unwrap()
+    );
+    package(
+        "script.forwarder",
+        wrapper_entry(Implementation::JavaScript {
+            module: "host.mjs".into(),
+            realm,
+        }),
+        Some(source),
+    )
+}
+struct RecordedForwardPolicy {
+    issuer: Issuer,
+    calls: Arc<std::sync::Mutex<Vec<(InstanceId, InstanceId, Identity)>>>,
+}
+impl Policy for RecordedForwardPolicy {
+    fn admit(&self, invocation: Invocation<'_>) -> Result<()> {
+        self.calls.lock().unwrap().push((
+            invocation.consumer.instance().clone(),
+            invocation.provider.instance().clone(),
+            invocation.scope.identity.clone(),
+        ));
+        ForwardPolicy(self.issuer.clone()).admit(invocation)
+    }
+}
+#[tokio::test]
+async fn javascript_forwarding_uses_exact_local_imports_original_evidence_and_actual_slots() {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        // Cover both native and JavaScript leaf execution, including a dedicated
+        // wrapper calling a shared leaf through the same root authority.
+        for (javascript_leaf, realm) in [
+            (false, Realm::Dedicated),
+            (true, Realm::Dedicated),
+            (true, Realm::Shared),
+        ] {
+            let (native_provider, consumer) = attached_packages();
+            let provider = if javascript_leaf {
+                attached_script()
+            } else {
+                native_provider
+            };
+            let wrapper = script_forwarder(realm);
+            let calls = Arc::new(AtomicUsize::new(0));
+            let native = if javascript_leaf {
+                NativeRegistry::default()
+            } else {
+                registry_contract(
+                    Arc::new(ReadAttachment {
+                        calls: calls.clone(),
+                        started: Arc::new(Semaphore::new(0)),
+                        release: Arc::new(Semaphore::new(0)),
+                    }),
+                    attached_contract(),
+                )
+            };
+            let issuer = Issuer::default();
+            let admitted = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let app = Application::start(
+                wrapper_input(&provider, &consumer, &wrapper),
+                vec![provider, consumer, wrapper],
+                native,
+                issuer.clone(),
+                Arc::new(RecordedForwardPolicy {
+                    issuer: issuer.clone(),
+                    calls: admitted.clone(),
+                }),
+                Limits::default(),
+            )
+            .unwrap();
+            app.ready().await.unwrap();
+            let client = app.client();
+            let binding = client
+                .bind(client.activation(&id(2)).unwrap(), "echo".into())
+                .await
+                .unwrap()
+                .pop()
+                .unwrap();
+            let narrow = scope(&issuer, false);
+            let identity = narrow.identity.clone();
+            let (attachments, weak) = bytes(5);
+            let result = client
+                .start(
+                    binding.clone(),
+                    "echo".into(),
+                    json!("narrow"),
+                    narrow,
+                    attachments,
+                )
+                .await
+                .unwrap()
+                .result()
+                .await
+                .unwrap();
+            assert!(
+                result
+                    .as_str()
+                    .unwrap()
+                    .contains("leaf effect grant denied")
+            );
+            assert!(weak.upgrade().is_none());
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+            assert_eq!(
+                admitted.lock().unwrap().as_slice(),
+                &[(id(2), id(4), identity.clone()), (id(4), id(1), identity),]
+            );
+            for (mode, expected) in [("twice", "xxxxx:xxxxx"), ("invalid", "rejected")] {
+                let (attachments, weak) = bytes(5);
+                assert_eq!(
+                    client
+                        .start(
+                            binding.clone(),
+                            "echo".into(),
+                            json!(mode),
+                            scope(&issuer, true),
+                            attachments
+                        )
+                        .await
+                        .unwrap()
+                        .result()
+                        .await
+                        .unwrap(),
+                    json!(expected)
+                );
+                assert!(weak.upgrade().is_none());
+                assert!(client.snapshot().cleanup_error.is_none());
+            }
+            if !javascript_leaf {
+                let (attachments, weak) = bytes(5);
+                assert_eq!(
+                    client
+                        .start(
+                            binding,
+                            "echo".into(),
+                            json!("business-fail"),
+                            scope(&issuer, true),
+                            attachments
+                        )
+                        .await
+                        .unwrap()
+                        .result()
+                        .await
+                        .unwrap(),
+                    json!("caught:plugin VM: ordinary leaf business error")
+                );
+                assert!(weak.upgrade().is_none());
+                assert!(client.snapshot().cleanup_error.is_none());
+                assert_eq!(calls.load(Ordering::SeqCst), 3);
+            }
+            app.shutdown().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+}
+#[tokio::test]
+async fn javascript_catch_cannot_acknowledge_child_cleanup_or_release_parent_and_child_capacity() {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let (provider, consumer) = attached_packages();
+        let wrapper = script_forwarder(Realm::Dedicated);
+        let issuer = Issuer::default();
+        let app = Application::start(
+            wrapper_input(&provider, &consumer, &wrapper),
+            vec![provider, consumer, wrapper],
+            registry_contract(
+                Arc::new(ReadAttachment {
+                    calls: Arc::new(AtomicUsize::new(0)),
+                    started: Arc::new(Semaphore::new(0)),
+                    release: Arc::new(Semaphore::new(0)),
+                }),
+                attached_contract(),
+            ),
+            issuer.clone(),
+            Arc::new(ForwardPolicy(issuer.clone())),
+            Limits::default(),
+        )
+        .unwrap();
+        app.ready().await.unwrap();
+        let client = app.client();
+        let binding = client
+            .bind(client.activation(&id(2)).unwrap(), "echo".into())
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        let sibling = client
+            .bind(client.activation(&id(3)).unwrap(), "echo".into())
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        let (attachments, weak) = bytes(32 * 1024 * 1024);
+        assert_eq!(
+            client
+                .start(
+                    binding,
+                    "echo".into(),
+                    json!("fail-cleanup-error"),
+                    scope(&issuer, true),
+                    attachments
+                )
+                .await
+                .unwrap()
+                .result()
+                .await
+                .unwrap(),
+            json!("caught:plugin VM: ordinary leaf business error")
+        );
+        assert!(weak.upgrade().is_some());
+        let snapshot = client.snapshot();
+        assert!(snapshot.cleanup_error.unwrap().contains("unconfirmed"));
+        for instance in [id(1), id(4)] {
+            let state = snapshot
+                .instances
+                .iter()
+                .find(|s| s.activation.instance() == &instance)
+                .unwrap();
+            assert_eq!(
+                state.calls, 1,
+                "both actual child and parent keep their core work"
+            );
+            assert_eq!(state.phase, Phase::Retiring);
+        }
+        // Use a real binding captured before retirement: input preparation runs
+        // before final admission, so this proves both actual 32 MiB charges remain.
+        let (attachments, rejected) = bytes(5);
+        assert!(
+            client
+                .start(
+                    sibling,
+                    "echo".into(),
+                    json!("healthy"),
+                    scope(&issuer, true),
+                    attachments
+                )
+                .await
+                .err()
+                .unwrap()
+                .contains("attachment budget")
+        );
+        assert!(rejected.upgrade().is_none());
+        drop(app);
+        drop(client);
+        assert!(weak.upgrade().is_some());
+    })
+    .await
+    .unwrap();
+}
+struct HeldChild {
+    started: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<CancellationToken>>>,
+    release: Arc<Semaphore>,
+    calls: Arc<AtomicUsize>,
+}
+impl Query for HeldChild {
+    fn call(&self, _: String, input: Value, context: Context) -> BoxFuture<'static, Result<Value>> {
+        let started = if input == "held" {
+            self.started.lock().unwrap().take()
+        } else {
+            None
+        };
+        let release = self.release.clone();
+        let calls = self.calls.clone();
+        Box::pin(async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(started) = started {
+                let _ = started.send(context.scope().cancellation.clone());
+                permit(&release).await;
+            }
+            Ok(json!(
+                String::from_utf8(context.attachments()["text"].read(0..5)?).unwrap()
+            ))
+        })
+    }
+}
+#[tokio::test]
+async fn unobserved_accepted_child_keeps_parent_work_until_actual_cleanup_after_root_exit() {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        for mode in ["ignore", "terminate"] {
+            let (provider, consumer) = attached_packages();
+            let wrapper = script_forwarder(Realm::Dedicated);
+            let issuer = Issuer::default();
+            let (started, observed) = tokio::sync::oneshot::channel();
+            let release = Arc::new(Semaphore::new(0));
+            let calls = Arc::new(AtomicUsize::new(0));
+            let app = Application::start(
+                wrapper_input(&provider, &consumer, &wrapper),
+                vec![provider, consumer, wrapper],
+                registry_contract(
+                    Arc::new(HeldChild {
+                        calls: calls.clone(),
+                        started: std::sync::Mutex::new(Some(started)),
+                        release: release.clone(),
+                    }),
+                    attached_contract(),
+                ),
+                issuer.clone(),
+                Arc::new(ForwardPolicy(issuer.clone())),
+                Limits {
+                    synchronous_slice: if mode == "terminate" {
+                        Duration::from_millis(250)
+                    } else {
+                        Duration::from_secs(5)
+                    },
+                    ..Limits::default()
+                },
+            )
+            .unwrap();
+            app.ready().await.unwrap();
+            let client = app.client();
+            let binding = client
+                .bind(client.activation(&id(2)).unwrap(), "echo".into())
+                .await
+                .unwrap()
+                .pop()
+                .unwrap();
+            let (attachments, weak) = bytes(5);
+            let accepted = client
+                .start(
+                    binding.clone(),
+                    "echo".into(),
+                    json!(mode),
+                    scope(&issuer, true),
+                    attachments,
+                )
+                .await
+                .unwrap();
+            let child_cancellation = observed.await.unwrap();
+            // The child remains held. Its inherited revocation therefore proves the
+            // JS parent returned or actually hit the VM watchdog and entered cleanup,
+            // before the deployment exits.
+            child_cancellation.cancelled().await;
+            if mode == "terminate" {
+                // Distinguish actual domain termination from an ordinary guest
+                // throw: use this exact old binding at final owner admission.
+                let error = client
+                    .start(
+                        binding,
+                        "echo".into(),
+                        json!("late"),
+                        scope(&issuer, true),
+                        bytes(5).0,
+                    )
+                    .await
+                    .err()
+                    .unwrap();
+                assert!(error.contains("execution domain terminated"), "{error}");
+            }
+            let mut result = Box::pin(accepted.result());
+            assert!(result.as_mut().now_or_never().is_none());
+            assert!(weak.upgrade().is_some());
+            drop(result);
+            drop(app);
+            drop(client);
+            assert!(
+                weak.upgrade().is_some(),
+                "root and Promise observers do not own cleanup"
+            );
+            release.add_permits(1);
+            while weak.upgrade().is_some() {
+                tokio::task::yield_now().await;
+            }
+            assert_eq!(calls.load(Ordering::SeqCst), 2);
+        }
+    })
+    .await
+    .unwrap();
+}
+struct DescriptorForward;
+impl Query for DescriptorForward {
+    fn call(&self, _: String, input: Value, context: Context) -> BoxFuture<'static, Result<Value>> {
+        let attachments = if input == "ordinary-reject" {
+            Attachments::new()
+        } else {
+            Attachments::from([(
+                "text".into(),
+                Arc::new(BadDescriptor(input == "enqueue-panic")) as Arc<dyn ReadResource>,
+            )])
+        };
+        let result = context.call("echo", 0, "echo".into(), json!("healthy"), attachments);
+        Box::pin(async move {
+            if let Ok(observer) = result {
+                assert!(observer.await.is_err());
+            }
+            Ok(json!("caught"))
+        })
+    }
+}
+#[tokio::test]
+async fn accepted_parent_descriptor_panics_are_cleanup_failure_but_ordinary_child_rejection_is_clean()
+ {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        for mode in ["ordinary-reject", "enqueue-panic", "admission-panic"] {
+            let (provider, consumer) = attached_packages();
+            let wrapper = package(
+                "native.descriptor",
+                wrapper_entry(Implementation::Native {
+                    implementation: "native.descriptor".into(),
+                }),
+                None,
+            );
+            let calls = Arc::new(AtomicUsize::new(0));
+            let mut native = registry_contract(
+                Arc::new(ReadAttachment {
+                    calls: calls.clone(),
+                    started: Arc::new(Semaphore::new(0)),
+                    release: Arc::new(Semaphore::new(0)),
+                }),
+                attached_contract(),
+            );
+            native
+                .insert(
+                    "native.descriptor".into(),
+                    Arc::new(|_| {
+                        Box::pin(async {
+                            NativeActivation {
+                                exports: Ok(BTreeMap::from([(
+                                    "echo".into(),
+                                    Published {
+                                        contract: attached_contract(),
+                                        value: Arc::new(DescriptorForward) as Arc<dyn Query>,
+                                    },
+                                )])),
+                                owner: native_owner(|| Box::pin(async { Ok(()) })),
+                            }
+                        })
+                    }),
+                )
+                .unwrap();
+            let issuer = Issuer::default();
+            let app = Application::start(
+                wrapper_input(&provider, &consumer, &wrapper),
+                vec![provider, consumer, wrapper],
+                native,
+                issuer.clone(),
+                Arc::new(ForwardPolicy(issuer.clone())),
+                Limits::default(),
+            )
+            .unwrap();
+            app.ready().await.unwrap();
+            let client = app.client();
+            let binding = client
+                .bind(client.activation(&id(2)).unwrap(), "echo".into())
+                .await
+                .unwrap()
+                .pop()
+                .unwrap();
+            let (attachments, weak) = bytes(5);
+            assert_eq!(
+                client
+                    .start(
+                        binding,
+                        "echo".into(),
+                        json!(mode),
+                        scope(&issuer, true),
+                        attachments
+                    )
+                    .await
+                    .unwrap()
+                    .result()
+                    .await
+                    .unwrap(),
+                json!("caught")
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+            if mode == "ordinary-reject" {
+                assert!(weak.upgrade().is_none());
+                assert!(client.snapshot().cleanup_error.is_none());
+                app.shutdown().await.unwrap();
+            } else {
+                assert!(weak.upgrade().is_some());
+                assert!(
+                    client
+                        .snapshot()
+                        .cleanup_error
+                        .unwrap()
+                        .contains("panicked")
+                );
+                assert_eq!(
+                    client
+                        .snapshot()
+                        .instances
+                        .iter()
+                        .find(|s| s.activation.instance() == &id(4))
+                        .unwrap()
+                        .calls,
+                    1
+                );
+                assert_eq!(
+                    client
+                        .snapshot()
+                        .instances
+                        .iter()
+                        .find(|s| s.activation.instance() == &id(1))
+                        .unwrap()
+                        .calls,
+                    0
+                );
+                drop(app);
+                drop(client);
+                assert!(weak.upgrade().is_some());
+            }
+        }
     })
     .await
     .unwrap();
