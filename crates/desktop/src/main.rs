@@ -20,6 +20,7 @@
 extern crate gpui_kit as gpui;
 mod owned;
 mod resources;
+mod widgets;
 use clap::Parser;
 use gpui_kit::{
     AnyElement, App, AppContext, Bounds, Context, InteractiveElement, IntoElement, ParentElement,
@@ -32,7 +33,8 @@ use maka_plugin_core::{
     composition::{Input, PresentationTarget},
     runtime::Mount,
 };
-use maka_ui::{Application, Direction, Node};
+use maka_ui::{Application, Direction, Node, Presentation};
+type DesktopApplication = Application<dyn widgets::Widget>;
 use std::{cell::RefCell, io::Read, path::PathBuf, rc::Rc};
 
 #[derive(Parser)]
@@ -45,18 +47,73 @@ struct Args {
 
 struct Surface {
     _cleanup: Task<()>,
-    application: Rc<RefCell<Application>>,
+    application: Rc<RefCell<DesktopApplication>>,
     resources: Rc<RefCell<resources::NativeResources>>,
     mount: Mount,
 }
+struct RenderScope<'a> {
+    application: &'a DesktopApplication,
+    mount: &'a Mount,
+    input: widgets::Input,
+}
 impl Surface {
+    fn input(&self, lease: &resources::Lease, revision: u64, cx: &Context<Self>) -> widgets::Input {
+        let lease = lease.clone();
+        let view = cx.weak_entity();
+        widgets::Input(Rc::new(move |key, event, cx| {
+            let result = view.update(cx, |view, cx| {
+                view.application
+                    .borrow_mut()
+                    .dispatch(lease.mount(), revision, key, event)?;
+                if let Err(error) = view
+                    .resources
+                    .borrow_mut()
+                    .collect(&mut view.application.borrow_mut())
+                {
+                    eprintln!("native component cleanup unconfirmed: {error}");
+                }
+                cx.notify();
+                maka_ui::Result::Ok(())
+            });
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => eprintln!("component input rejected: {error}"),
+                Err(error) => eprintln!("component input owner unavailable: {error}"),
+            }
+        }))
+    }
+    fn presentation(
+        &self,
+        application: &DesktopApplication,
+        mount: &Mount,
+        window: &mut gpui_kit::Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Ok(frame) = application.frame(mount) else {
+            return div().into_any_element();
+        };
+        let lease = self.resources.borrow_mut().acquire(mount);
+        let input = self.input(&lease, frame.revision, cx);
+        let content = match &frame.view {
+            Presentation::Tree(node) => self.node(
+                &RenderScope {
+                    application,
+                    mount,
+                    input,
+                },
+                node,
+                window,
+                cx,
+            ),
+            Presentation::Native(native) => native.view.render(input, window, cx),
+        };
+        owned::Owned { content, lease }.into_any_element()
+    }
     fn node(
         &self,
-        application: &Application,
-        mount: &Mount,
+        scope: &RenderScope<'_>,
         node: &Node,
-        revision: u64,
-        lease: &resources::Lease,
+        window: &mut gpui_kit::Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match node {
@@ -65,56 +122,18 @@ impl Surface {
                 .text_color(rgb(*color))
                 .child(SharedString::from(text.clone()))
                 .into_any_element(),
-            Node::Button { key, label } => {
-                let key = key.clone();
-                let lease = lease.clone();
-                Button::new(SharedString::from(key.clone()))
-                    .label(SharedString::from(label.clone()))
-                    .on_click(cx.listener(move |view, _, _, cx| {
-                        let result = view.application.borrow_mut().dispatch(
-                            lease.mount(),
-                            revision,
-                            &key,
-                            serde_json::json!({"kind":"click"}),
-                        );
-                        if let Err(error) = result {
-                            eprintln!("component event rejected: {error}");
-                        } else {
-                            if let Err(error) = view
-                                .resources
-                                .borrow_mut()
-                                .collect(&mut view.application.borrow_mut())
-                            {
-                                eprintln!("native component cleanup unconfirmed: {error}");
-                            }
-                            cx.notify();
-                        }
-                    }))
-                    .into_any_element()
-            }
-            Node::Component { key, .. } => {
-                match application
-                    .child_mount(mount, key)
-                    .and_then(|child| application.frame(child).map(|frame| (child, frame)))
-                {
-                    Ok((child, frame)) => {
-                        let lease = self.resources.borrow_mut().acquire(child);
-                        owned::Owned {
-                            content: self.node(
-                                application,
-                                child,
-                                &frame.view,
-                                frame.revision,
-                                &lease,
-                                cx,
-                            ),
-                            lease,
-                        }
-                        .into_any_element()
-                    }
-                    Err(_) => div().into_any_element(),
-                }
-            }
+            Node::Button { key, label } => Button::new(SharedString::from(key.clone()))
+                .label(SharedString::from(label.clone()))
+                .on_click(
+                    scope
+                        .input
+                        .bind(key.clone(), |_| serde_json::json!({"kind":"click"})),
+                )
+                .into_any_element(),
+            Node::Component { key, .. } => match scope.application.child_mount(scope.mount, key) {
+                Ok(child) => self.presentation(scope.application, child, window, cx),
+                Err(_) => div().into_any_element(),
+            },
             Node::Stack {
                 key,
                 direction,
@@ -137,34 +156,25 @@ impl Surface {
                     .children(
                         children
                             .iter()
-                            .map(|child| self.node(application, mount, child, revision, lease, cx)),
+                            .map(|child| self.node(scope, child, window, cx)),
                     )
                     .into_any_element()
             }
         }
     }
 }
+
 impl Render for Surface {
-    fn render(&mut self, _: &mut gpui_kit::Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Only committed Rust state is read here. Input callbacks run JS later.
+    fn render(
+        &mut self,
+        window: &mut gpui_kit::Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        // Render recipes and committed Rust state only; no JavaScript here.
         let application = self.application.borrow();
-        match application.frame(&self.mount) {
-            Ok(frame) => {
-                let lease = self.resources.borrow_mut().acquire(&self.mount);
-                div().size_full().child(owned::Owned {
-                    content: self.node(
-                        &application,
-                        &self.mount,
-                        &frame.view,
-                        frame.revision,
-                        &lease,
-                        cx,
-                    ),
-                    lease,
-                })
-            }
-            Err(_) => div().size_full(),
-        }
+        div()
+            .size_full()
+            .child(self.presentation(&application, &self.mount, window, cx))
     }
 }
 
@@ -190,8 +200,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .worker_threads(1)
         .enable_time()
         .build()?;
-    let mut application =
-        Application::new(&input, packages, timer.handle().clone(), maka_js_limits())?;
+    let mut application = Application::new(
+        &input,
+        packages,
+        timer.handle().clone(),
+        maka_js_limits(),
+        widgets::registry(),
+    )?;
     let mount = application.mount_launch(serde_json::json!({}))?;
     let frame = application.frame(&mount)?;
     let window = frame
@@ -261,7 +276,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn start_cleanup(
     cx: &App,
     resources: &Rc<RefCell<resources::NativeResources>>,
-    application: &Rc<RefCell<Application>>,
+    application: &Rc<RefCell<DesktopApplication>>,
     mut receipts: tokio::sync::mpsc::UnboundedReceiver<()>,
 ) -> Task<()> {
     let resources = Rc::downgrade(resources);
@@ -305,10 +320,16 @@ mod tests {
             .build()
             .unwrap()
     }
-    fn application(timer: &tokio::runtime::Runtime) -> Application {
-        let (input, packages) =
-            support::composed_fixture(support::CHILD_UPDATE, support::PARENT_EVENT);
-        Application::new(&input, packages, timer.handle().clone(), Default::default()).unwrap()
+    fn application(timer: &tokio::runtime::Runtime) -> DesktopApplication {
+        let (input, packages) = support::native_fixture();
+        Application::new(
+            &input,
+            packages,
+            timer.handle().clone(),
+            Default::default(),
+            widgets::registry(),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -324,7 +345,7 @@ mod tests {
         let mut resources = resources::NativeResources::new(root.clone(), wake);
         app.dispatch(&root, 0, "toggle", serde_json::Value::Null)
             .unwrap();
-        assert_eq!(resources.collect(&mut app).unwrap(), 1);
+        assert_eq!(resources.collect(&mut app).unwrap(), 2);
         assert!(app.frame(&right).is_err());
         assert!(app.frame(&other_root).is_ok());
         assert!(app.frame(&other_child).is_ok());
@@ -342,6 +363,11 @@ mod tests {
         let mut app = application(&timer);
         let root = app.mount_launch(serde_json::json!({})).unwrap();
         let right = app.child_mount(&root, "right").unwrap().clone();
+        let native = app.child_mount(&root, "nativeLabel").unwrap().clone();
+        assert!(matches!(
+            app.frame(&native).unwrap().view,
+            maka_ui::Presentation::Native(_)
+        ));
         let app = Rc::new(RefCell::new(app));
         let (wake, receipts) = tokio::sync::mpsc::unbounded_channel();
         let resources = Rc::new(RefCell::new(resources::NativeResources::new(
@@ -395,14 +421,22 @@ mod tests {
             0
         );
         assert!(app.borrow().is_retiring(&right));
+        assert!(app.borrow().is_retiring(&native));
+        assert!(app.borrow().frame(&native).is_ok());
         draw(cx);
         cx.run_until_parked();
         assert!(app.borrow().frame(&right).is_err());
+        assert!(app.borrow().frame(&native).is_err());
         app.borrow_mut()
             .dispatch(&root, 1, "toggle", serde_json::Value::Null)
             .unwrap();
         draw(cx);
         let right = app.borrow().child_mount(&root, "right").unwrap().clone();
+        let native = app
+            .borrow()
+            .child_mount(&root, "nativeLabel")
+            .unwrap()
+            .clone();
         let held_resource = resources.borrow_mut().acquire(&right);
         let delayed_callback = held_resource.clone();
         app.borrow_mut()
@@ -418,13 +452,15 @@ mod tests {
         assert!(app.borrow().is_retiring(&right));
         draw(cx);
         drop(held_resource);
+        // The native label has no externally held lease and closes independently.
         assert_eq!(
             resources
                 .borrow_mut()
                 .collect(&mut app.borrow_mut())
                 .unwrap(),
-            0
+            1
         );
+        assert!(app.borrow().frame(&native).is_err());
         assert!(app.borrow().frame(&right).is_ok());
         drop(delayed_callback);
         cx.run_until_parked();

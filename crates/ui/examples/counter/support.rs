@@ -248,3 +248,67 @@ pub(crate) fn composed_fixture(child_update: &str, parent_event: &str) -> (Input
 pub(crate) const CHILD_UPDATE: &str =
     "return frame({...state,label:props.label,revision:state.revision+1});";
 pub(crate) const PARENT_EVENT: &str = "const next={...state,revision:state.revision+1};if(event.key==='toggle')next.right=!state.right;else next.version++;return frame(next);";
+
+/// Mixed JS/native composition. The package selects a compiled implementation;
+/// placing, updating and removing it remains ordinary product component code.
+pub(crate) fn native_fixture() -> (Input, Vec<Package>) {
+    let (mut input, mut packages) = composed_fixture(CHILD_UPDATE, PARENT_EVENT);
+    let index = packages
+        .iter()
+        .position(|package| package.manifest().id == "dynamic.app")
+        .unwrap();
+    let root = packages.remove(index);
+    let mut declaration = root.manifest().application.clone().unwrap();
+    let contract = maka_ui::label_contract();
+    declaration
+        .entries
+        .get_mut(&EntryTarget::Desktop)
+        .unwrap()
+        .imports
+        .insert(
+            "label".into(),
+            Import {
+                contract: contract.clone(),
+                cardinality: Cardinality::One,
+            },
+        );
+    let source = std::str::from_utf8(root.file("index.mjs").unwrap()).unwrap();
+    let source = source.replace("children:[{kind:'stack',key:'counters'", "children:[...(state.right?[{kind:'component',key:'nativeLabel',binding:'label',member:0,props:{text:'Native '+state.version,emphasis:true}}]:[]),{kind:'stack',key:'counters'");
+    let root = package("dynamic.app", declaration, Some(source));
+    let label = package(
+        "native.label",
+        Declaration {
+            entries: BTreeMap::from([(
+                EntryTarget::Desktop,
+                EntryDeclaration {
+                    implementation: Implementation::Native {
+                        implementation: "maka.ui.label".into(),
+                    },
+                    configuration: json!({"type":"object"}),
+                    imports: BTreeMap::new(),
+                    exports: BTreeMap::from([(
+                        "Label".into(),
+                        Export {
+                            contract,
+                            availability: Availability::Required,
+                        },
+                    )]),
+                },
+            )]),
+            composition: None,
+        },
+        None,
+    );
+    let app = input.instances.get_mut("app").unwrap();
+    app.package = root.application_ref().into();
+    app.bindings.insert(
+        "label".into(),
+        vec![Target::Instance {
+            path: vec!["label".into()],
+            export: "Label".into(),
+        }],
+    );
+    input.instances.insert("label".into(), node(&label, 4));
+    packages.extend([root, label]);
+    (input, packages)
+}

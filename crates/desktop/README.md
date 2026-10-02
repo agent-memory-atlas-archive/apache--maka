@@ -23,7 +23,14 @@
 GPUI Kit. It selects only Desktop deployments, reads immutable package bytes and
 runs the shared component adapter on the UI owner thread. Layout/paint read Rust
 frames; button callbacks dispatch revision-bound input before notifying GPUI.
-No business shell or default product is embedded in this binary.
+No business shell or default product is embedded in this binary. Compiled native
+components are selected through `NativeRegistry<dyn Widget>` and the ordinary
+package binding path. Widget recipes render native GPUI elements; common input
+bindings retain the exact mount lease/revision and dispatch outside paint.
+Recipes contain immutable presentation data. Entities and subscriptions belong
+to GPUI retained state/arena and must never be cached in the recipe, which may
+remain alive while cleanup is pending. The included Label proves opaque native
+rendering and mixed composition; it does not prove editor/entity teardown.
 
 Each component's element arena, retained GPUI state and input callbacks hold a
 native resource lease. A detached, retired child closes only after its last lease

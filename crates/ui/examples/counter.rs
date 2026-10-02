@@ -27,7 +27,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or("output directory required")?,
     ))?;
     std::fs::create_dir(&output)?;
-    let (input, packages) = if std::env::args().nth(2).as_deref() == Some("composed") {
+    let (input, packages) = if std::env::args().nth(2).as_deref() == Some("native") {
+        support::native_fixture()
+    } else if std::env::args().nth(2).as_deref() == Some("composed") {
         support::composed_fixture(support::CHILD_UPDATE, support::PARENT_EVENT)
     } else {
         support::fixture("return frame({count:state.count+1,revision:state.revision+1});")

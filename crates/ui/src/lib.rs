@@ -20,8 +20,13 @@
 //! Local component execution. Renderers only read committed frames; JavaScript
 //! executes on initialization or input, never during layout/paint.
 mod frame;
+mod native;
 mod tree;
 pub use frame::{Direction, Frame, Node, Window};
+pub use native::{
+    ComponentCall, LabelProps, NativeCapability, NativeComponent, NativeExport, NativeRegistry,
+    NativeView, Presentation, label_contract,
+};
 
 use maka_js_runtime::plugin::{Foreground, ForegroundCallbacks, ForegroundModule, Limits};
 use maka_plugin_core::{
@@ -46,13 +51,19 @@ pub enum Error {
     #[error("invalid UI activation or batch: {0}")]
     Invalid(String),
 }
-type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = std::result::Result<T, Error>;
 type ExecutionRealm = Rc<RefCell<Foreground>>;
 
-enum Export {
-    Component {
+enum Component<V: ?Sized> {
+    JavaScript {
         realm: ExecutionRealm,
         callbacks: ForegroundCallbacks,
+    },
+    Native(Rc<dyn NativeComponent<V>>),
+}
+enum Export<V: ?Sized> {
+    Component {
+        implementation: Component<V>,
         props: jsonschema::Validator,
     },
     Surface(PresentationTarget),
@@ -69,21 +80,22 @@ struct Actual {
     component: Vec<String>,
 }
 
-pub struct Application {
-    runtime: Runtime<Export>,
+pub struct Application<V: ?Sized = ()> {
+    runtime: Runtime<Export<V>>,
     activations: BTreeMap<InstanceId, Activation>,
     modules: BTreeMap<InstanceId, Loaded>,
-    views: BTreeMap<Uuid, tree::Mounted>,
+    views: BTreeMap<Uuid, tree::Mounted<V>>,
     slice: std::time::Duration,
     target: PresentationTarget,
 }
 
-impl Application {
+impl<V: ?Sized + 'static> Application<V> {
     pub fn new(
         input: &Input,
         bytes: Vec<Package>,
         timer: tokio::runtime::Handle,
         limits: Limits,
+        native: NativeRegistry<V>,
     ) -> Result<Self> {
         if input.environment.location != ExecutionLocation::Ui {
             return Err(Error::Invalid("UI deployment required".into()));
@@ -144,22 +156,33 @@ impl Application {
                 if let Some(entry) = &instance.entry {
                     match &entry.implementation {
                         Implementation::Native { implementation } => {
-                            let expected = match target {
-                                PresentationTarget::Desktop => "maka.ui.surface.desktop",
-                                PresentationTarget::Tui => "maka.ui.surface.tui",
-                            };
-                            if implementation != expected {
-                                return Err(Error::Invalid(format!(
-                                    "native implementation not provided: {implementation}"
-                                )));
+                            for (name, actual) in
+                                native.activate(implementation, &instance.configuration)?
+                            {
+                                let value = match actual.value {
+                                    NativeCapability::Surface(target) => Export::Surface(target),
+                                    NativeCapability::Component(component) => {
+                                        let Interface::Component { props, .. } =
+                                            &actual.contract.interface
+                                        else {
+                                            unreachable!()
+                                        };
+                                        Export::Component {
+                                            implementation: Component::Native(component),
+                                            props: jsonschema::validator_for(props).map_err(
+                                                |error| Error::Invalid(error.to_string()),
+                                            )?,
+                                        }
+                                    }
+                                };
+                                batch.insert(
+                                    name,
+                                    Published {
+                                        contract: actual.contract,
+                                        value,
+                                    },
+                                );
                             }
-                            batch.insert(
-                                "Surface".into(),
-                                Published {
-                                    contract: surface_contract(target),
-                                    value: Export::Surface(target),
-                                },
-                            );
                         }
                         Implementation::JavaScript { module, realm } => {
                             let realm = match realm {
@@ -216,13 +239,15 @@ impl Application {
                                     Published {
                                         contract: actual.contract,
                                         value: Export::Component {
-                                            realm: realm.clone(),
                                             props,
-                                            callbacks: realm.borrow_mut().capture(
-                                                &loaded,
-                                                &actual.component,
-                                                &["mount", "event", "update"],
-                                            )?,
+                                            implementation: Component::JavaScript {
+                                                realm: realm.clone(),
+                                                callbacks: realm.borrow_mut().capture(
+                                                    &loaded,
+                                                    &actual.component,
+                                                    &["mount", "event", "update"],
+                                                )?,
+                                            },
                                         },
                                     },
                                 );
@@ -258,41 +283,61 @@ impl Application {
         method: &str,
         args: &[Value],
         deadline: std::time::Instant,
-    ) -> Result<Frame> {
+    ) -> Result<Frame<Presentation<V>>> {
+        tree::check_call_bytes(&args)?;
         let execution = self.runtime.admit_mount(mount)?;
-        let Export::Component {
-            realm, callbacks, ..
-        } = execution.value()
-        else {
+        let Export::Component { implementation, .. } = execution.value() else {
             unreachable!()
         };
-        let realm = realm.clone();
-        let result = realm
-            .borrow_mut()
-            .call_bound_until(callbacks, method, args, deadline);
-        self.runtime.settle(&execution, Ok(()))?; // No native effect has dispatched.
-        let result = result.and_then(|value| {
-            serde_json::from_value(value)
-                .map_err(|error| maka_js_runtime::plugin::Error(error.to_string()))
-        });
-        match result {
-            Ok(frame) => {
-                let frame: Frame = frame;
-                frame.validate().map_err(Error::Invalid)?;
-                Ok(frame)
-            }
-            Err(error) => {
-                for (id, loaded) in &self.modules {
-                    if Rc::ptr_eq(&loaded.realm, &realm) {
-                        self.runtime.retire(&self.activations[id])?;
-                    }
+        let mut failed_realm = None;
+        let result = match implementation {
+            Component::JavaScript { realm, callbacks } => {
+                let result = realm
+                    .borrow_mut()
+                    .call_bound_until(callbacks, method, args, deadline)
+                    .and_then(|value| {
+                        serde_json::from_value::<Frame>(value)
+                            .map_err(|error| maka_js_runtime::plugin::Error(error.to_string()))
+                    });
+                if result.is_err() {
+                    failed_realm = Some(realm.clone());
                 }
-                Err(error.into())
+                result
+                    .map(|frame| frame.map_view(Presentation::Tree))
+                    .map_err(Error::from)
+            }
+            Component::Native(component) => {
+                let call = match method {
+                    "mount" => ComponentCall::Mount { props: &args[0] },
+                    "update" => ComponentCall::Update {
+                        state: &args[0],
+                        props: &args[1],
+                    },
+                    "event" => ComponentCall::Event {
+                        state: &args[0],
+                        key: args[1]["key"].as_str().expect("typed UI input key"),
+                        input: &args[1]["event"],
+                    },
+                    _ => unreachable!(),
+                };
+                component.call(call)
+            }
+        };
+        self.runtime.settle(&execution, Ok(()))?; // Only declarative scene preparation.
+        if let Some(realm) = failed_realm {
+            for (id, loaded) in &self.modules {
+                if Rc::ptr_eq(&loaded.realm, &realm) {
+                    self.runtime.retire(&self.activations[id])?;
+                }
             }
         }
+        let frame = result?;
+        frame.validate_metadata().map_err(Error::Invalid)?;
+        frame.view.validate().map_err(Error::Invalid)?;
+        Ok(frame)
     }
 
-    fn validate_surface(&mut self, mount: &Mount, frame: &Frame) -> Result<()> {
+    fn validate_surface(&mut self, mount: &Mount, frame: &Frame<Presentation<V>>) -> Result<()> {
         let provider = self
             .runtime
             .mount_statuses()
@@ -319,7 +364,7 @@ impl Application {
         Ok(())
     }
 
-    pub fn frame(&self, mount: &Mount) -> Result<&Frame> {
+    pub fn frame(&self, mount: &Mount) -> Result<&Frame<Presentation<V>>> {
         self.views
             .get(&mount.id())
             .map(|view| &view.frame)

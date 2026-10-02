@@ -22,6 +22,11 @@
 `maka-desktop` 用长桥 GPUI Fast 与 GPUI Kit 呈现包中的组件，只接受 Desktop
 部署输入。共用执行适配器由 UI owner 线程持有；layout/paint 只读 Rust 已提交帧，
 按钮回调携带 revision 派发输入后再通知重绘。二进制没有内置业务壳或默认产品。
+随构建提供的组件由 `NativeRegistry<dyn Widget>` 和普通包绑定选择，Widget 直接呈现
+原生 GPUI 元素；共用输入绑定持有准确 mount/revision 和资源凭证，paint 不派发输入。
+呈现描述只包含不可变数据；entity/订阅属于 GPUI 保留状态或 arena，不能缓存到可能
+在清理期间保活的描述中。当前 Label 验证 opaque 原生呈现和混合组合，不代表已经验证
+编辑器或 entity 的销毁。
 
 组件的元素 arena、GPUI 保留状态和输入闭包持有原生资源凭证。子组件从显示树移除并
 退休后，最后一份凭证真实释放才结算；UI owner 的回执任务无需等下一次输入。

@@ -17,6 +17,8 @@
  * under the License.
  */
 
+#[path = "runtime/native.rs"]
+mod native;
 #[path = "../examples/counter/support.rs"]
 mod support;
 use maka_plugin_core::{
@@ -24,7 +26,7 @@ use maka_plugin_core::{
     contract::{Cardinality, Import},
     package::Declaration,
 };
-use maka_ui::{Application, surface_contract};
+use maka_ui::{Application, NativeRegistry, surface_contract};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, time::Duration};
 use support::{fixture, node, package};
@@ -39,6 +41,7 @@ fn app(handler: &str, timer: &tokio::runtime::Runtime) -> Application {
             synchronous_slice: Duration::from_millis(100),
             ..Default::default()
         },
+        NativeRegistry::<()>::with_surface(PresentationTarget::Desktop),
     )
     .unwrap()
 }
@@ -160,8 +163,14 @@ fn structural_imports_route_to_owned_providers_without_startup_deadlock() {
     });
     packages.push(product);
     let timer = timer();
-    let mut app =
-        Application::new(&input, packages, timer.handle().clone(), Default::default()).unwrap();
+    let mut app = Application::new(
+        &input,
+        packages,
+        timer.handle().clone(),
+        Default::default(),
+        NativeRegistry::<()>::with_surface(PresentationTarget::Desktop),
+    )
+    .unwrap();
     let mount = app.mount_launch(json!({})).unwrap();
     app.dispatch(&mount, 0, "inc", Value::Null).unwrap();
     assert_eq!(app.frame(&mount).unwrap().state["count"], 1);
@@ -204,6 +213,7 @@ fn composed(
             synchronous_slice: Duration::from_millis(200),
             ..Default::default()
         },
+        NativeRegistry::<()>::with_surface(PresentationTarget::Desktop),
     )
     .unwrap()
 }
@@ -328,8 +338,14 @@ fn invalid_child_initialization_rolls_back_all_private_mounts_without_native_ack
     input.instances.get_mut("counter").unwrap().package = counter.application_ref().into();
     packages.push(counter);
     let timer = timer();
-    let mut app =
-        Application::new(&input, packages, timer.handle().clone(), Default::default()).unwrap();
+    let mut app = Application::new(
+        &input,
+        packages,
+        timer.handle().clone(),
+        Default::default(),
+        NativeRegistry::<()>::with_surface(PresentationTarget::Desktop),
+    )
+    .unwrap();
     assert!(app.mount_launch(json!({})).is_err());
     assert!(app.retiring_mounts().is_empty());
     // No mount escaped to a renderer; shutdown needs no invented native receipt.
@@ -350,7 +366,14 @@ fn a_component_without_a_real_required_callback_cannot_publish() {
     packages.push(root);
     let timer = timer();
     assert!(
-        Application::new(&input, packages, timer.handle().clone(), Default::default()).is_err()
+        Application::new(
+            &input,
+            packages,
+            timer.handle().clone(),
+            Default::default(),
+            NativeRegistry::<()>::with_surface(PresentationTarget::Desktop)
+        )
+        .is_err()
     );
 }
 
@@ -415,8 +438,14 @@ fn dispatch_at_a_deep_mount_cannot_restart_the_whole_tree_depth_budget() {
     }
     packages.extend([root, branch, terminal]);
     let timer = timer();
-    let mut app =
-        Application::new(&input, packages, timer.handle().clone(), Default::default()).unwrap();
+    let mut app = Application::new(
+        &input,
+        packages,
+        timer.handle().clone(),
+        Default::default(),
+        NativeRegistry::<()>::with_surface(PresentationTarget::Desktop),
+    )
+    .unwrap();
     let root = app.mount_launch(json!({})).unwrap();
     let mut deepest = app.child_mount(&root, "left").unwrap().clone();
     for _ in 1..32 {

@@ -20,6 +20,25 @@
 use super::*;
 use std::{io::Write, time::Instant};
 
+/// Count JSON without allocating a serialized copy. Both adapters have the
+/// same call boundary; reject oversized input before schema evaluation/cloning.
+pub(super) fn check_call_bytes(value: &impl serde::Serialize) -> Result<()> {
+    struct Limit(usize);
+    impl Write for Limit {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len();
+            if self.0 > 1024 * 1024 {
+                return Err(std::io::Error::other("UI call exceeds 1 MiB"));
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    serde_json::to_writer(Limit(0), value).map_err(|error| Error::Invalid(error.to_string()))
+}
+
 #[derive(Clone)]
 struct Child {
     binding: String,
@@ -27,9 +46,9 @@ struct Child {
     mount: Mount,
 }
 
-pub(super) struct Mounted {
+pub(super) struct Mounted<V: ?Sized> {
     mount: Mount,
-    pub frame: Frame,
+    pub frame: Frame<Presentation<V>>,
     props: Value,
     children: BTreeMap<String, Child>,
     bytes: usize,
@@ -37,15 +56,15 @@ pub(super) struct Mounted {
 
 /// A composed input is one transaction, not a sequence of published child
 /// frames. Newly created mounts cannot be observed by a renderer until commit.
-struct Update {
-    changed: BTreeMap<Uuid, Mounted>,
+struct Update<V: ?Sized> {
+    changed: BTreeMap<Uuid, Mounted<V>>,
     created: Vec<Mount>,
     removed: Vec<Mount>,
     deadline: Instant,
     bytes: usize,
     touched: usize,
 }
-impl Update {
+impl<V: ?Sized> Update<V> {
     fn new(slice: std::time::Duration) -> Self {
         Self {
             changed: BTreeMap::new(),
@@ -56,7 +75,12 @@ impl Update {
             touched: 0,
         }
     }
-    fn charge(&mut self, frame: &Frame, props: &Value, depth: usize) -> Result<usize> {
+    fn charge(
+        &mut self,
+        frame: &Frame<Presentation<V>>,
+        props: &Value,
+        depth: usize,
+    ) -> Result<usize> {
         self.touched += 1;
         if depth > 32 || self.touched > 64 {
             return Err(Error::Invalid(
@@ -77,15 +101,23 @@ impl Update {
             }
         }
         let mut counter = Counter(self.bytes);
-        serde_json::to_writer(&mut counter, &(frame, props))
-            .map_err(|error| Error::Invalid(error.to_string()))?;
+        serde_json::to_writer(
+            &mut counter,
+            &(&frame.state, &frame.window, frame.revision, props),
+        )
+        .map_err(|error| Error::Invalid(error.to_string()))?;
+        match &frame.view {
+            Presentation::Tree(node) => serde_json::to_writer(&mut counter, node),
+            Presentation::Native(view) => serde_json::to_writer(&mut counter, view.schemas()),
+        }
+        .map_err(|error| Error::Invalid(error.to_string()))?;
         let bytes = counter.0 - self.bytes;
         self.bytes = counter.0;
         Ok(bytes)
     }
 }
 
-impl Application {
+impl<V: ?Sized + 'static> Application<V> {
     pub fn mount_launch(&mut self, props: Value) -> Result<Mount> {
         let mount = self.runtime.mount_launch()?;
         let mut update = Update::new(self.slice);
@@ -124,9 +156,11 @@ impl Application {
             .views
             .get(&mount.id())
             .ok_or_else(|| Error::Invalid("mount has no committed frame".into()))?;
-        if current.frame.revision != revision || !current.frame.view.has_action(key) {
+        if current.frame.revision != revision {
             return Err(Error::Invalid("stale or undeclared UI event".into()));
         }
+        check_call_bytes(&(&current.frame.state, key, &event))?;
+        current.frame.view.validate_input(key, &event)?;
         let args = [
             current.frame.state.clone(),
             json!({"key":key,"event":event}),
@@ -147,13 +181,17 @@ impl Application {
         Ok(())
     }
 
-    fn check_initial(frame: &Frame) -> Result<()> {
+    fn check_initial(frame: &Frame<Presentation<V>>) -> Result<()> {
         if frame.revision != 0 {
             return Err(Error::Invalid("initial UI revision must be zero".into()));
         }
         Ok(())
     }
-    fn check_next(revision: u64, window: &Option<Window>, frame: &Frame) -> Result<()> {
+    fn check_next(
+        revision: u64,
+        window: &Option<Window>,
+        frame: &Frame<Presentation<V>>,
+    ) -> Result<()> {
         if revision.checked_add(1) != Some(frame.revision) {
             return Err(Error::Invalid("UI revision must advance once".into()));
         }
@@ -165,6 +203,7 @@ impl Application {
         Ok(())
     }
     fn check_props(&mut self, mount: &Mount, value: &Value) -> Result<()> {
+        check_call_bytes(value)?;
         let execution = self.runtime.admit_mount(mount)?;
         let Export::Component { props, .. } = execution.value() else {
             unreachable!()
@@ -218,9 +257,9 @@ impl Application {
         &mut self,
         mount: &Mount,
         props: Value,
-        frame: Frame,
+        frame: Frame<Presentation<V>>,
         depth: usize,
-        update: &mut Update,
+        update: &mut Update<V>,
     ) -> Result<()> {
         let bytes = update.charge(&frame, &props, depth)?;
         let mut previous = self
@@ -301,7 +340,7 @@ impl Application {
         );
         Ok(())
     }
-    fn commit(&mut self, update: &mut Update) -> Result<()> {
+    fn commit(&mut self, update: &mut Update<V>) -> Result<()> {
         if Instant::now() >= update.deadline {
             return Err(Error::Invalid(
                 "composed UI update deadline exceeded".into(),
@@ -341,7 +380,7 @@ impl Application {
         self.views.append(&mut update.changed);
         Ok(())
     }
-    fn rollback(&mut self, update: &Update) -> Result<()> {
+    fn rollback(&mut self, update: &Update<V>) -> Result<()> {
         for mount in update.created.iter().rev() {
             self.runtime.retire_mount(mount)?;
             // These never entered committed UI state, dispatched native effects,

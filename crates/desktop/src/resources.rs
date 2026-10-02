@@ -115,7 +115,10 @@ impl NativeResources {
 
     /// Only scopes absent from the committed display tree can detach. A faulted
     /// but still displayed component retains its renderer resources and frame.
-    pub fn collect(&mut self, application: &mut Application) -> Result<usize, Error> {
+    pub fn collect<V: ?Sized + 'static>(
+        &mut self,
+        application: &mut Application<V>,
+    ) -> Result<usize, Error> {
         let visible: BTreeSet<_> = application
             .mounted_subtree(&self.surface)?
             .into_iter()

@@ -24,11 +24,11 @@ use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Frame {
+pub struct Frame<V = Node> {
     pub revision: u64,
     pub state: Value,
     pub window: Option<Window>,
-    pub view: Node,
+    pub view: V,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -71,8 +71,8 @@ pub enum Node {
         props: Value,
     },
 }
-impl Frame {
-    pub fn validate(&self) -> Result<(), String> {
+impl<V> Frame<V> {
+    pub fn validate_metadata(&self) -> Result<(), String> {
         if self.revision > 9_007_199_254_740_991
             || self.window.as_ref().is_some_and(|window| {
                 window.title.len() > 512
@@ -84,11 +84,27 @@ impl Frame {
         {
             return Err("invalid window/revision".into());
         }
-        let mut keys = BTreeSet::new();
-        self.view.validate(0, &mut keys)
+        Ok(())
+    }
+    pub fn map_view<T>(self, map: impl FnOnce(V) -> T) -> Frame<T> {
+        Frame {
+            revision: self.revision,
+            state: self.state,
+            window: self.window,
+            view: map(self.view),
+        }
+    }
+}
+impl Frame {
+    pub fn validate(&self) -> Result<(), String> {
+        self.validate_metadata()?;
+        self.view.validate_root()
     }
 }
 impl Node {
+    pub(crate) fn validate_root(&self) -> Result<(), String> {
+        self.validate(0, &mut BTreeSet::new())
+    }
     fn validate(&self, depth: usize, keys: &mut BTreeSet<String>) -> Result<(), String> {
         let key = match self {
             Self::Stack { key, .. }

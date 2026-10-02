@@ -29,7 +29,21 @@ Renderers read committed
 Each mount has independent state and a revision, so old view events cannot invoke
 new handlers. A realm failure retires every registration and mount in that realm.
 
-The renderer protocol contains stacks, text, buttons and imported components.
+`NativeRegistry<V>` supplies compiled implementation factories; only selected
+composition entries activate them and publish their actual contracts through the
+same runtime. Native components share props/state/revision and the transaction
+with JavaScript. `Presentation<V>` contains either the bounded tree or an opaque,
+typed, immutable native recipe; the kernel has no GPUI dependency. Native raw
+inputs have scene-specific schemas. Calls are bounded to 1 MiB before dispatch.
+Rust extensions are trusted synchronous code, not watchdog-isolated JavaScript;
+the common commit deadline can reject their late result but cannot interrupt them.
+The 4 MiB update and 32 MiB retained limits cover serialized metadata/tree/input
+schemas, not native renderer allocations, which the native owner must bound.
+Recipes must not retain entities, input bindings, subscriptions or pending native
+work. Those belong to renderer retained state and retain mount resource leases
+until actual destruction, independently of the retired frame's recipe.
+
+The tree protocol contains stacks, text, buttons and imported components.
 A component reference names an explicit binding and its selected member; stable
 keys retain child mounts and their local state across parent props updates.
 All changed parents and children share one deadline and commit together. A failed
@@ -52,7 +66,12 @@ cargo run --locked -p maka-desktop -- --input /tmp/maka-counter/input.json \
 
 Add `composed` after the output directory when generating the example to include
 a separately packaged counter component, then pass its
-`dynamic.counter.maka-plugin` as another `--package` to desktop.
+`dynamic.counter.maka-plugin` as another `--package` to desktop. Use `native`
+instead of `composed` to include an explicitly imported compiled Label, and also
+pass `native.label.maka-plugin`. The label's styling is rendered directly by GPUI,
+outside the tree primitive set; its placement and props belong to the product.
+Opaque native child slots and synchronous event consume/default decisions remain
+pending, alongside editor/IME.
 
 The example's component contract uses the same Rust declaration types as runtime
 validation. It does not depend on the previous plugin SDK or global service catalog.
