@@ -17,7 +17,10 @@
  * under the License.
  */
 
-use super::{Result, failed};
+use super::{
+    Result, failed,
+    json::{Json, JsonInput},
+};
 use deno_core::{OpState, op2};
 use deno_error::JsErrorBox;
 use futures_util::future::BoxFuture;
@@ -79,13 +82,13 @@ impl Bindings {
 }
 
 #[op2]
-#[serde]
 async fn op_maka_plugin(
     state: Rc<RefCell<OpState>>,
     #[string] id: String,
     #[string] method: String,
-    #[serde] input: serde_json::Value,
-) -> std::result::Result<serde_json::Value, JsErrorBox> {
+    #[scoped] input: JsonInput,
+) -> std::result::Result<Json, JsErrorBox> {
+    let input = input.0;
     let (bridge, closing, _call, _bytes) = {
         let state = state.borrow();
         let bindings = state.borrow::<Bindings>();
@@ -130,7 +133,7 @@ async fn op_maka_plugin(
     // Even an immediately ready Host operation must return control to the VM
     // owner. Otherwise an async JS loop can starve queued revocations/cleanup.
     tokio::task::yield_now().await;
-    Ok(output)
+    Json::encode(&output)
 }
 
 // Count encoded bytes without allocating a second copy of a large Host result.

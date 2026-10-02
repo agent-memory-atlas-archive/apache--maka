@@ -21,6 +21,7 @@ use maka_js_runtime::plugin::{Bridge, Error, Limits, Module, Pool, Vm};
 use serde_json::{Value, json};
 use std::time::Duration;
 
+mod captured;
 mod inventory;
 mod registration;
 
@@ -44,7 +45,9 @@ async fn cross_vm_host_calls_preserve_values_and_retirement_does_not_retarget_or
         let dedicated = pool.dedicated("service-generation").unwrap();
         let service = dedicated.load("service.mjs".into(), r#"
             let release;
-            export function echo(value) { return value; }
+            let calls = 0;
+            export function echo(value) { calls++; return value; }
+            export function count() { return calls; }
             export function wait(value) { return new Promise(resolve => { release = () => resolve(value); }); }
             export function finish() { release(); }
         "#.into()).unwrap();
@@ -58,9 +61,18 @@ async fn cross_vm_host_calls_preserve_values_and_retirement_does_not_retarget_or
         let payload = json!({"nested":[1, null, {"text":"跨 VM",
             "timestamp":1_790_320_333_732_i64,
             "safe":[9_007_199_254_740_991_i64,-9_007_199_254_740_991_i64],
-            "fraction":1.25,"outsideSafeRange":9_007_199_254_740_992.0
+            "fraction":1.25,"outsideSafeRange":9_007_199_254_740_992.0,
+            "largeExact":1_000_000_000_000_000_128_u64,
+            "negativeExact":-1_000_000_000_000_000_128_i64
         }]});
-        assert_eq!(caller.call(vec!["invoke".into()], vec![json!(key), json!("echo"), payload.clone()]).await.unwrap(), payload);
+        // JSON.stringify preserves the numeric value, not Rust's integer/float enum variant.
+        let mut expected = payload.clone();
+        expected["nested"][2]["outsideSafeRange"] = json!(9_007_199_254_740_992_u64);
+        expected["nested"][2]["largeExact"] = json!(1_000_000_000_000_000_128_u64 as f64);
+        expected["nested"][2]["negativeExact"] = json!(-1_000_000_000_000_000_128_i64 as f64);
+        assert_eq!(service.call(vec!["echo".into()], vec![payload.clone()]).await.unwrap(), expected);
+        assert_eq!(caller.call(vec!["invoke".into()], vec![json!(key), json!("echo"), payload.clone()]).await.unwrap(), expected);
+        assert_eq!(call(&service, "count").await, json!(2));
         let running = tokio::spawn({
             let caller = caller.clone();
             let payload = payload.clone();
@@ -71,7 +83,7 @@ async fn cross_vm_host_calls_preserve_values_and_retirement_does_not_retarget_or
         while caller.ready().await.is_ok() { tokio::task::yield_now().await; }
         assert!(!closing.is_finished());
         service.call(vec!["finish".into()], vec![]).await.unwrap();
-        assert_eq!(running.await.unwrap(), payload);
+        assert_eq!(running.await.unwrap(), expected);
         closing.await.unwrap();
         let inspector = shared.load("inspector.mjs".into(), r#"
             export async function inspect() {

@@ -16,7 +16,10 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-use super::{Command, Health, Limits, PollClock, Result, State, Statistics, engine, failed};
+use super::{
+    Captured, Command, Health, Limits, Module, PollClock, Result, State, Statistics,
+    captured::Target, engine, failed,
+};
 use deno_core::v8;
 use futures_util::{StreamExt, future::LocalBoxFuture, stream::FuturesUnordered};
 use std::{
@@ -31,9 +34,10 @@ struct Loaded {
     code: engine::Module,
     calls: usize,
     closing: bool,
+    callbacks: BTreeMap<u64, engine::Callbacks>,
 }
 struct Request {
-    module: u64,
+    module: Module,
     reply: oneshot::Sender<Result<serde_json::Value>>,
     _slot: Option<OwnedSemaphorePermit>,
     _bytes: OwnedSemaphorePermit,
@@ -56,6 +60,7 @@ pub(super) async fn run(
             let mut modules = BTreeMap::<u64, Loaded>::new();
             let mut pending = Pending::new();
             let mut next_call = 0_u64;
+            let mut next_callback = 0_u64;
             loop {
                 enum Ready {
                     Command(Option<Command>),
@@ -98,6 +103,7 @@ pub(super) async fn run(
                                             code,
                                             calls: 0,
                                             closing: false,
+                                            callbacks: BTreeMap::new(),
                                         },
                                     );
                                     state.send_replace(State::Ready);
@@ -111,19 +117,31 @@ pub(super) async fn run(
                         }
                         Command::Call {
                             module,
-                            path,
+                            target,
                             args,
                             reply,
                             slot,
                             bytes,
                         } => {
                             let Some(loaded) =
-                                modules.get_mut(&module).filter(|loaded| !loaded.closing)
+                                modules.get_mut(&module.0.id).filter(|loaded| !loaded.closing)
                             else {
                                 let _ = reply.send(Err(failed("module is retired")));
                                 continue;
                             };
-                            match engine::call(&mut runtime, &loaded.code, &path, &args) {
+                            let call = match target {
+                                Target::Path(path) => {
+                                    engine::call(&mut runtime, &loaded.code, &path, &args)
+                                }
+                                Target::Captured { callback, method } => loaded
+                                    .callbacks
+                                    .get(&callback)
+                                    .ok_or_else(|| failed("callback registration released"))
+                                    .and_then(|callbacks| {
+                                        engine::call_bound(&mut runtime, callbacks, &method, &args)
+                                    }),
+                            };
+                            match call {
                                 Ok(call) => {
                                     next_call = next_call
                                         .checked_add(1)
@@ -144,6 +162,47 @@ pub(super) async fn run(
                                 Err(error) => {
                                     let _ = reply.send(Err(error));
                                 }
+                            }
+                        }
+                        Command::Capture {
+                            module, namespace, methods, reply, slot: _slot, bytes: _bytes,
+                        } => {
+                            if reply.is_closed() {
+                                continue;
+                            }
+                            if modules.values().map(|m| m.callbacks.len()).sum::<usize>() >= 1024 {
+                                let _ = reply.send(Err(failed("worker callback registration limit")));
+                                continue;
+                            }
+                            let Some(loaded) = modules
+                                .get_mut(&module.0.id)
+                                .filter(|m| !m.closing)
+                            else {
+                                let _ = reply.send(Err(failed("module is retired")));
+                                continue;
+                            };
+                            let names = methods.iter().map(String::as_str).collect::<Vec<_>>();
+                            match engine::capture_callbacks(
+                                &mut runtime, &loaded.code, &namespace, &names,
+                            ) {
+                                Ok(callbacks) => {
+                                    next_callback = next_callback
+                                        .checked_add(1)
+                                        .ok_or_else(|| failed("callback identity exhausted"))?;
+                                    let id = next_callback;
+                                    loaded.callbacks.insert(id, callbacks);
+                                    // The payload owns its release obligation even if send succeeds
+                                    // but the awaiting future is dropped before receiving it.
+                                    let _ = reply.send(Ok(Captured::new(module, id, methods)));
+                                }
+                                Err(error) => {
+                                    let _ = reply.send(Err(error));
+                                }
+                            }
+                        }
+                        Command::ReleaseCaptured { module, callback } => {
+                            if let Some(loaded) = modules.get_mut(&module) {
+                                loaded.callbacks.remove(&callback);
                             }
                         }
                         Command::Close(id) => {
@@ -176,6 +235,7 @@ pub(super) async fn run(
                             let _ = reply.send(Statistics {
                                 modules: modules.len(),
                                 pending_calls: requests.len(),
+                                captured_callbacks: modules.values().map(|m| m.callbacks.len()).sum(),
                                 used_heap_bytes: runtime
                                     .v8_isolate()
                                     .get_heap_statistics()
@@ -187,10 +247,10 @@ pub(super) async fn run(
                         let request = requests.remove(&id).expect("pending call has an owner");
                         let result = result.and_then(|value| engine::value(&mut runtime, value));
                         let _ = request.reply.send(result);
-                        if let Some(module) = modules.get_mut(&request.module) {
+                        if let Some(module) = modules.get_mut(&request.module.0.id) {
                             module.calls -= 1;
                             if module.closing && module.calls == 0 {
-                                close(&mut runtime, &mut modules, &mut states, request.module);
+                                close(&mut runtime, &mut modules, &mut states, request.module.0.id);
                             }
                         }
                     }

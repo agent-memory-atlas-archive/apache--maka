@@ -286,7 +286,7 @@ fn invoke(
             .map_err(|_| failed("export is not callable"))?;
         let args = args
             .iter()
-            .map(|value| deno_core::serde_v8::to_v8(scope, value).map_err(failed))
+            .map(|value| super::json::to_v8(scope, value).map_err(failed))
             .collect::<Result<Vec<_>>>()?;
         let Some(value) = function.call(scope, object.into(), &args) else {
             return Err(failed(
@@ -309,12 +309,12 @@ pub(super) fn call_synchronous(
     path: &[String],
     args: &[Value],
 ) -> Result<Value> {
-    let value = invoke(runtime, module, path, args)?;
-    synchronous_value(runtime, value)
+    let result = invoke(runtime, module, path, args)?;
+    value(runtime, result)
 }
 
 /// Capture an actual receiver and all required functions before publishing a
-/// component. Property getters/proxies execute here under the caller's budget;
+/// registration. Property getters/proxies execute here under the caller's budget;
 /// later mutation of the namespace never redirects an existing registration.
 pub(super) fn capture_callbacks(
     runtime: &mut JsRuntime,
@@ -356,6 +356,27 @@ pub(super) fn call_bound_synchronous(
     method: &str,
     args: &[Value],
 ) -> Result<Value> {
+    let result = invoke_bound(runtime, callbacks, method, args)?;
+    value(runtime, result)
+}
+
+pub(super) fn call_bound(
+    runtime: &mut JsRuntime,
+    callbacks: &Callbacks,
+    method: &str,
+    args: &[Value],
+) -> Result<Call> {
+    let value = invoke_bound(runtime, callbacks, method, args)?;
+    let resolving = runtime.resolve(value);
+    Ok(Box::pin(async move { resolving.await.map_err(failed) }))
+}
+
+fn invoke_bound(
+    runtime: &mut JsRuntime,
+    callbacks: &Callbacks,
+    method: &str,
+    args: &[Value],
+) -> Result<v8::Global<v8::Value>> {
     let value = {
         deno_core::scope!(scope, runtime);
         v8::tc_scope!(scope, scope);
@@ -367,7 +388,7 @@ pub(super) fn call_bound_synchronous(
         let receiver = v8::Local::new(scope, &callbacks.receiver);
         let args = args
             .iter()
-            .map(|value| deno_core::serde_v8::to_v8(scope, value).map_err(failed))
+            .map(|value| super::json::to_v8(scope, value).map_err(failed))
             .collect::<Result<Vec<_>>>()?;
         let value = function
             .call(scope, receiver.into(), &args)
@@ -381,33 +402,17 @@ pub(super) fn call_bound_synchronous(
             })?;
         v8::Global::new(scope, value)
     };
-    synchronous_value(runtime, value)
+    Ok(value)
 }
 
-fn synchronous_value(runtime: &mut JsRuntime, value: v8::Global<v8::Value>) -> Result<Value> {
+pub(super) fn value(runtime: &mut JsRuntime, value: v8::Global<v8::Value>) -> Result<Value> {
     deno_core::scope!(scope, runtime);
     v8::tc_scope!(scope, scope);
     let value = v8::Local::new(scope, value);
     if value.is_promise() {
         return Err(failed("foreground callbacks must return synchronously"));
     }
-    let value = if value.is_undefined() {
-        v8::null(scope).into()
-    } else {
-        value
-    };
-    let encoded = v8::json::stringify(scope, value).ok_or_else(|| {
-        failed(
-            scope
-                .exception()
-                .map(|value| value.to_rust_string_lossy(scope))
-                .unwrap_or_else(|| "foreground result is not JSON".into()),
-        )
-    })?;
-    if encoded.utf8_length(scope) > 1024 * 1024 {
-        return Err(failed("foreground result exceeds 1 MiB"));
-    }
-    serde_json::from_str(&encoded.to_rust_string_lossy(scope)).map_err(failed)
+    super::json::decode(scope, value, 1024 * 1024).map_err(failed)
 }
 
 /// Drain ready native V8 tasks and local JavaScript jobs, without waiting on
@@ -417,38 +422,5 @@ pub(super) fn poll_ready_jobs(runtime: &mut JsRuntime) -> Result<()> {
     match runtime.poll_event_loop(&mut context, Default::default()) {
         std::task::Poll::Ready(Err(error)) => Err(failed(error)),
         _ => Ok(()),
-    }
-}
-
-pub(super) fn value(runtime: &mut JsRuntime, value: v8::Global<v8::Value>) -> Result<Value> {
-    deno_core::scope!(scope, runtime);
-    let value = v8::Local::new(scope, value);
-    let mut value: Value = if value.is_undefined() {
-        Value::Null
-    } else {
-        deno_core::serde_v8::from_v8(scope, value).map_err(failed)?
-    };
-    json_integers(&mut value);
-    if serde_json::to_vec(&value).map_err(failed)?.len() > 1024 * 1024 {
-        return Err(failed("plugin result exceeds 1 MiB"));
-    }
-    Ok(value)
-}
-
-/// JavaScript has one Number type. serde_v8 represents larger integers as
-/// f64, while typed Remote results expect JSON integers (timestamps, counts).
-/// Match Number.isSafeInteger without rounding fractional or imprecise values.
-fn json_integers(value: &mut Value) {
-    match value {
-        Value::Number(number) if number.is_f64() => {
-            if let Some(integer) = number.as_f64().filter(|value| {
-                value.is_finite() && value.abs() <= 9_007_199_254_740_991.0 && value.fract() == 0.0
-            }) {
-                *number = serde_json::Number::from(integer as i64);
-            }
-        }
-        Value::Array(items) => items.iter_mut().for_each(json_integers),
-        Value::Object(items) => items.values_mut().for_each(json_integers),
-        _ => {}
     }
 }

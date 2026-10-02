@@ -69,7 +69,7 @@ export default async function activate(ctx) {
 }
 "#.into(), Arc::new(NoCalls)).unwrap();
         let error = large.call(vec!["activate".into()], vec![json!({}), Value::Null]).await.unwrap_err();
-        assert!(error.to_string().contains("result exceeds 1 MiB"),"{error}");
+        assert!(error.to_string().contains("JSON value exceeds 1 MiB"),"{error}");
         large.lifecycle(Lifecycle::Retire).await.unwrap();
         large.lifecycle(Lifecycle::Dispose).await.unwrap();
         large.close().await.unwrap();

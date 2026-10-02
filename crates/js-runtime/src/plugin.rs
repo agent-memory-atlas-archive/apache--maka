@@ -19,12 +19,15 @@
 //! Trusted plugin VMs, separate from the model runtime.
 //! A VM multiplexes modules and promises; module handles own code retention.
 mod bridge;
+mod captured;
 mod engine;
 mod foreground;
+mod json;
 mod pool;
 mod worker;
 
 pub use bridge::Bridge;
+pub use captured::Captured;
 pub use foreground::{Foreground, ForegroundCallbacks, ForegroundModule};
 pub use pool::Pool;
 
@@ -111,6 +114,7 @@ impl Drop for ModuleOwner {
 pub struct Statistics {
     pub modules: usize,
     pub pending_calls: usize,
+    pub captured_callbacks: usize,
     pub used_heap_bytes: usize,
 }
 
@@ -125,12 +129,24 @@ enum Command {
         bytes: OwnedSemaphorePermit,
     },
     Call {
-        module: u64,
-        path: Vec<String>,
+        module: Module,
+        target: captured::Target,
         args: Vec<Value>,
         reply: oneshot::Sender<Result<Value>>,
         slot: Option<OwnedSemaphorePermit>,
         bytes: OwnedSemaphorePermit,
+    },
+    Capture {
+        module: Module,
+        namespace: Vec<String>,
+        methods: Vec<String>,
+        reply: oneshot::Sender<Result<Captured>>,
+        slot: OwnedSemaphorePermit,
+        bytes: OwnedSemaphorePermit,
+    },
+    ReleaseCaptured {
+        module: u64,
+        callback: u64,
     },
     Close(u64),
     ReleaseCallback {
@@ -535,8 +551,8 @@ impl Module {
             .0
             .commands
             .send(Command::Call {
-                module: self.0.id,
-                path,
+                module: self.clone(),
+                target: captured::Target::Path(path),
                 args,
                 reply,
                 slot,
