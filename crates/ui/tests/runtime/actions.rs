@@ -43,7 +43,7 @@ impl NativeComponent<()> for Leaf {
                 state["revision"].as_u64().unwrap() + 1
             }
         };
-        Ok(Frame {revision,state:json!({"revision":revision,"blob":if self.large {"x".repeat(1_048_570)} else {String::new()}}),window:None,view:Presentation::Native(NativeView::new(Rc::new(()),BTreeMap::new())?) }.output(vec![]))
+        Ok(Frame {revision,state:json!({"revision":revision,"blob":if self.large {"x".repeat(1_048_570)} else {String::new()}}),surface:None,view:Presentation::Native(NativeView::new(Rc::new(()),BTreeMap::new())?) }.output(vec![]))
     }
     fn capture(&self, _: CaptureCall<'_>) -> maka_ui::Result<CapturePlan> {
         self.captures.set(self.captures.get() + 1);

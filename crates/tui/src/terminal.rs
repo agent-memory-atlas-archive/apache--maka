@@ -89,13 +89,19 @@ pub fn draw(screen: &mut Screen, render: impl FnOnce(&mut ratatui::Frame<'_>)) -
 }
 
 /// Installed before the first terminal mutation, including partial setup errors.
-pub struct Guard;
+pub struct Guard {
+    active: bool,
+}
 impl Guard {
-    pub fn enter(i18n: &crate::i18n::I18n) -> io::Result<(Self, Screen)> {
+    pub fn new() -> Self {
+        Self { active: false }
+    }
+    /// The caller owns the guard even if setup fails after a partial mutation.
+    pub fn setup(&mut self, required: &str) -> io::Result<Screen> {
         if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-            return Err(io::Error::other(i18n.text("terminal-required")));
+            return Err(io::Error::other(required.to_owned()));
         }
-        let guard = Self;
+        self.active = true;
         enable_raw_mode()?;
         execute!(
             io::stdout(),
@@ -107,46 +113,96 @@ impl Guard {
         #[cfg(unix)]
         execute!(
             io::stdout(),
-            // XTSHIFTESCAPE: ask supporting terminals to forward Shift+mouse
-            // instead of selecting across the terminal's entire screen.
             crossterm::style::Print("\x1b[>1s"),
             PushKeyboardEnhancementFlags(
                 KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
                     | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
             )
         )?;
-        let screen = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+        Terminal::new(CrosstermBackend::new(io::stdout()))
+    }
+    pub fn enter(i18n: &crate::i18n::I18n) -> io::Result<(Self, Screen)> {
+        let mut guard = Self::new();
+        let screen = guard.setup(&i18n.text("terminal-required"))?;
         Ok((guard, screen))
+    }
+    /// Restore every independent native effect, even if a prior write failed.
+    /// Only complete success acknowledges actual terminal cleanup.
+    pub fn finish(&mut self) -> io::Result<()> {
+        if !self.active {
+            return Ok(());
+        }
+        restore_checked(&mut io::stdout(), disable_raw_mode)?;
+        self.active = false;
+        Ok(())
     }
 }
 impl Drop for Guard {
     fn drop(&mut self) {
-        restore();
+        let _ = self.finish();
+    }
+}
+fn restore_checked(
+    writer: &mut impl io::Write,
+    raw: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()> {
+    let mut failures = Vec::new();
+    macro_rules! restore_command {
+        ($command:expr) => {
+            if let Err(error) = execute!(writer, $command) {
+                failures.push(error.to_string());
+            }
+        };
+    }
+    #[cfg(unix)]
+    {
+        restore_command!(crossterm::style::Print("\x1b[>0s"));
+        restore_command!(PopKeyboardEnhancementFlags);
+    }
+    restore_command!(EndSynchronizedUpdate);
+    restore_command!(DisableBracketedPaste);
+    restore_command!(DisableFocusChange);
+    restore_command!(DisableMouseCapture);
+    restore_command!(LeaveAlternateScreen);
+    restore_command!(Show);
+    if let Err(error) = writer.flush() {
+        failures.push(error.to_string());
+    }
+    if let Err(error) = raw() {
+        failures.push(error.to_string());
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(io::Error::other(failures.join("; ")))
     }
 }
 pub fn restore() {
-    #[cfg(unix)]
-    let _ = execute!(
-        io::stdout(),
-        // Release the request on normal exit, failed setup and panic cleanup.
-        crossterm::style::Print("\x1b[>0s"),
-        PopKeyboardEnhancementFlags
-    );
-    let _ = execute!(
-        io::stdout(),
-        EndSynchronizedUpdate,
-        DisableBracketedPaste,
-        DisableFocusChange,
-        DisableMouseCapture,
-        LeaveAlternateScreen,
-        Show
-    );
-    let _ = disable_raw_mode();
+    let _ = restore_checked(&mut io::stdout(), disable_raw_mode);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn restoration_attempts_raw_cleanup_after_writer_failure_and_checks_both_receipts() {
+        let mut raw_attempted = false;
+        let mut failing = &mut [0u8; 0][..];
+        assert!(
+            restore_checked(&mut failing, || {
+                raw_attempted = true;
+                Ok(())
+            })
+            .is_err()
+        );
+        assert!(raw_attempted);
+        let mut output = Vec::new();
+        assert!(
+            restore_checked(&mut output, || Err(io::Error::other("raw cleanup failure"))).is_err()
+        );
+        assert!(output.ends_with(b"\x1b[?25h"));
+        assert!(restore_checked(&mut Vec::new(), || Ok(())).is_ok());
+    }
     #[test]
     fn clipboard_only_writes_bounded_encoded_payloads_and_propagates_writer_failure() {
         let input = "中文 e\u{301} 👩‍💻\n\x1b]52;c;hostile\x07";

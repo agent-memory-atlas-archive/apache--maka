@@ -37,6 +37,8 @@ use serde::{Deserialize, Serialize};
 pub(super) enum Command {
     /// Check exact package revisions, template overrides, variants and capability bindings.
     Check(Check),
+    /// Run a plugin composition with native terminal presentation.
+    Run(Run),
 }
 
 #[derive(Args)]
@@ -50,6 +52,14 @@ pub(super) struct Check {
     /// Observed remote declarations in JSON; compatibility evidence, never authorization.
     #[arg(long, value_name = "FILE")]
     remote_exports: Option<PathBuf>,
+}
+
+#[derive(Args)]
+pub(super) struct Run {
+    #[arg(long, value_name = "FILE")]
+    input: PathBuf,
+    #[arg(long = "package", value_name = "PATH", required = true)]
+    packages: Vec<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -68,9 +78,36 @@ struct Report<'a> {
 
 impl Command {
     pub(super) async fn run(self) -> Result<(), HostError> {
-        let Self::Check(args) = self;
-        let report = tokio::task::spawn_blocking(move || args.check()).await??;
-        println!("{report}");
+        match self {
+            Self::Check(args) => {
+                let report = tokio::task::spawn_blocking(move || args.check()).await??;
+                println!("{report}");
+            }
+            Self::Run(args) => {
+                // Keep the foreground VM on one dedicated blocking owner, with
+                // no deeply nested CLI async stack under V8 initialization.
+                let scheduler = tokio::runtime::Handle::current();
+                let result = tokio::task::spawn_blocking(move || -> Result<(), HostError> {
+                    let input: Input = read_json(&args.input)?;
+                    let packages = args
+                        .packages
+                        .into_iter()
+                        .map(|source| -> Result<_, HostError> {
+                            Ok(Package::read_from(&std::path::absolute(source)?)?)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    maka_tui::application::run(&input, packages, scheduler).map_err(Into::into)
+                })
+                .await
+                .map_err(|error| -> HostError {
+                    maka_tui::application::sanitize(&error.to_string()).into()
+                })?;
+                // All errors from this terminal-facing command are untrusted.
+                result.map_err(|error| -> HostError {
+                    maka_tui::application::sanitize(&error.to_string()).into()
+                })?;
+            }
+        }
         Ok(())
     }
 }

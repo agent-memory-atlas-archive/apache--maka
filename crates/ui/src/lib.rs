@@ -25,7 +25,7 @@ mod frame;
 mod native;
 pub mod text;
 mod tree;
-pub use frame::{ComponentOutput, Direction, Emission, Frame, Node, Window};
+pub use frame::{ComponentOutput, Direction, Emission, Frame, Node, Surface};
 pub use native::{
     ComponentCall, EventOrigin, LabelProps, NativeCapability, NativeComponent, NativeExport,
     NativeRegistry, NativeView, Presentation, label_contract,
@@ -454,11 +454,14 @@ impl<V: ?Sized + 'static> Application<V> {
             .find(|status| status.mount == *mount)
             .ok_or(maka_plugin_core::Error::Retired)?
             .provider;
-        let window = frame
-            .window
+        let surface = frame
+            .surface
             .as_ref()
             .ok_or_else(|| Error::Invalid("launch component must request a surface".into()))?;
-        let handles = self.runtime.bind(&provider, &window.surface)?;
+        if surface.target() != self.target {
+            return Err(Error::Invalid("surface variant mismatch".into()));
+        }
+        let handles = self.runtime.bind(&provider, surface.binding())?;
         if handles.len() != 1 {
             return Err(Error::Invalid(
                 "one explicit surface binding required".into(),

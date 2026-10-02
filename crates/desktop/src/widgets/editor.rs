@@ -603,7 +603,7 @@ impl EditorComponent {
         Ok(Frame {
             revision,
             state: json!({"revision":revision,"request":request,"pending":pending,"observation":observation}),
-            window: None,
+            surface: None,
             view: Presentation::Native(NativeView::<dyn Widget>::new(
                 Rc::new(EditorRecipe { props: typed }),
                 BTreeMap::from([("observe".into(), maka_ui::editor::observation_schema())]),

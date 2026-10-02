@@ -93,7 +93,7 @@ pub fn fixture(handler: &str) -> (Input, Vec<Package>) {
         r#"
         const contract = {};
         export function activate(configuration) {{ return {{App:{{contract,component:['app']}}}}; }}
-        function frame(state) {{ return {{actions:[],events:[],frame:{{revision:state.revision,state,window:{{surface:'surface',title:'Dynamic product',width:640,height:400}},view:{{kind:'stack',key:'root',direction:'column',padding:16,gap:8,background:1513239,children:[{{kind:'text',key:'count',text:String(state.count),color:16777215}},{{kind:'button',key:'inc',label:'Increment'}}]}}}}}}; }}
+        function frame(state) {{ return {{actions:[],events:[],frame:{{revision:state.revision,state,surface:{{kind:'window',binding:'surface',title:'Dynamic product',width:640,height:400}},view:{{kind:'stack',key:'root',direction:'column',padding:16,gap:8,background:1513239,children:[{{kind:'text',key:'count',text:String(state.count),color:16777215}},{{kind:'button',key:'inc',label:'Increment'}}]}}}}}}; }}
         export const app = {{mount(props){{ return frame({{count:props.count??0,revision:0}}); }},event(state,event){{ {} }},update(state,props){{ return frame({{...state,revision:state.revision+1}}); }} }};
     "#,
         serde_json::to_string(&component).unwrap(),
@@ -192,7 +192,7 @@ pub(crate) fn composed_fixture(child_update: &str, parent_event: &str) -> (Input
         function frame(state){{
             const children=[{{kind:'component',key:'left',binding:'counter',member:0,on:{{}},props:{{label:'Left '+state.version,initial:10}}}}];
             if(state.right)children.push({{kind:'component',key:'right',binding:'counter',member:0,on:{{}},props:{{label:'Right '+state.version,initial:20}}}});
-            return {{actions:[],events:[],frame:{{state,revision:state.revision,window:{{surface:'surface',title:'Composed product',width:640,height:400}},view:{{kind:'stack',key:'root',direction:'column',gap:8,padding:16,background:1513239,children:[{{kind:'stack',key:'counters',direction:'row',gap:16,padding:0,background:1513239,children}},{{kind:'button',key:'parent',label:'Change labels'}},{{kind:'button',key:'toggle',label:'Toggle right counter'}}]}}}}}};
+            return {{actions:[],events:[],frame:{{state,revision:state.revision,surface:{{kind:'window',binding:'surface',title:'Composed product',width:640,height:400}},view:{{kind:'stack',key:'root',direction:'column',gap:8,padding:16,background:1513239,children:[{{kind:'stack',key:'counters',direction:'row',gap:16,padding:0,background:1513239,children}},{{kind:'button',key:'parent',label:'Change labels'}},{{kind:'button',key:'toggle',label:'Toggle right counter'}}]}}}}}};
         }}
         export const app={{mount(){{return frame({{revision:0,version:0,right:true}});}},event(state,event){{{}}},update(state,props){{return frame({{...state,revision:state.revision+1}});}}}};
     "#,
@@ -203,7 +203,7 @@ pub(crate) fn composed_fixture(child_update: &str, parent_event: &str) -> (Input
     let source = format!(
         r#"
         export function activate(){{return {{Counter:{{contract:{},component:['counter']}}}};}}
-        function frame(state){{return {{actions:[],events:[],frame:{{state,revision:state.revision,window:null,view:{{kind:'stack',key:'counter',direction:'column',gap:8,padding:8,background:1513239,children:[{{kind:'text',key:'label',text:state.label,color:16777215}},{{kind:'text',key:'count',text:String(state.count),color:16777215}},{{kind:'button',key:'inc',label:'Increment '+state.label}}]}}}}}};}}
+        function frame(state){{return {{actions:[],events:[],frame:{{state,revision:state.revision,surface:null,view:{{kind:'stack',key:'counter',direction:'column',gap:8,padding:8,background:1513239,children:[{{kind:'text',key:'label',text:state.label,color:16777215}},{{kind:'text',key:'count',text:String(state.count),color:16777215}},{{kind:'button',key:'inc',label:'Increment '+state.label}}]}}}}}};}}
         export const counter={{mount(props){{return frame({{count:props.initial,label:props.label,revision:0}});}},event(state,event){{return frame({{...state,count:state.count+1,revision:state.revision+1}});}},update(state,props){{{}}}}};
     "#,
         serde_json::to_string(&counter_contract).unwrap(),
@@ -432,7 +432,7 @@ pub(crate) fn resource_fixture() -> (Input, Vec<Package>) {
         r#"
     const contract={};
     export function activate(){{return {{App:{{contract,component:['app']}}}};}}
-    function frame(state){{return {{actions:[],events:[],frame:{{revision:state.revision,state,window:{{surface:'surface',title:'Immutable draft',width:640,height:480}},view:{{kind:'stack',key:'root',direction:'column',padding:16,gap:12,background:1513239,children:[{{kind:'text',key:'status',text:'Captured: '+(state.outcome?.value?.text??state.outcome?.status??'—'),color:16777215}},...(state.show?[{{kind:'component',key:'editor',binding:'editor',member:0,on:{{changed:'changed'}},props:{{initialText:'Start',placeholder:'Write here',command:state.command??null}}}}]:[]),{{kind:'button',key:'read',label:'Capture draft'}},{{kind:'button',key:'remove',label:'Remove composer'}}]}}}}}};}}
+    function frame(state){{return {{actions:[],events:[],frame:{{revision:state.revision,state,surface:{{kind:'window',binding:'surface',title:'Immutable draft',width:640,height:480}},view:{{kind:'stack',key:'root',direction:'column',padding:16,gap:12,background:1513239,children:[{{kind:'text',key:'status',text:'Captured: '+(state.outcome?.value?.text??state.outcome?.status??'—'),color:16777215}},...(state.show?[{{kind:'component',key:'editor',binding:'editor',member:0,on:{{changed:'changed'}},props:{{initialText:'Start',placeholder:'Write here',command:state.command??null}}}}]:[]),{{kind:'button',key:'read',label:'Capture draft'}},{{kind:'button',key:'remove',label:'Remove composer'}}]}}}}}};}}
     export const app={{mount(){{return frame({{revision:0,show:true}});}},update(state){{return frame({{...state,revision:state.revision+1}});}},event(state,event){{
         const next={{...state,revision:state.revision+1}};
         if(event.kind==='action')next.outcome=event.event;
@@ -478,7 +478,7 @@ pub(crate) fn resource_fixture() -> (Input, Vec<Package>) {
         Some(format!(
             r#"
         const contract={};export function activate(){{return {{Editor:{{contract,component:['composer']}}}};}}
-        function frame(state,props,events=[]){{return {{actions:[],events,frame:{{revision:state.revision,state,window:null,view:{{kind:'component',key:'draft',binding:'editor',member:0,props,on:{{changed:'changed'}}}}}}}};}}
+        function frame(state,props,events=[]){{return {{actions:[],events,frame:{{revision:state.revision,state,surface:null,view:{{kind:'component',key:'draft',binding:'editor',member:0,props,on:{{changed:'changed'}}}}}}}};}}
         export const composer={{mount(props){{return frame({{revision:0}},props);}},update(state,props){{return frame({{...state,revision:state.revision+1}},props);}},event(state,event,props){{return frame({{revision:state.revision+1}},props,[{{name:'changed',value:event.event}}]);}},capture(state,props,method,input){{return {{kind:'forward',source:{{child:'draft',method,input}}}};}}}};
     "#,
             serde_json::to_string(&editor).unwrap()
@@ -541,4 +541,49 @@ pub(crate) fn resource_fixture() -> (Input, Vec<Package>) {
     packages.retain(|p| !matches!(p.manifest().id.as_str(), "dynamic.counter" | "native.label"));
     packages.extend([root, composer, reader]);
     (input, packages)
+}
+
+/// One immutable package revision provides distinct desktop and terminal entries.
+// Shared fixture modules intentionally select different subsets in each binary.
+#[allow(dead_code)]
+pub fn dual_fixture(handler: &str) -> (Input, Vec<Package>) {
+    let (mut input, packages) = fixture(handler);
+    let mut dual = Vec::new();
+    for original in packages {
+        let mut declaration = original.manifest().application.clone().unwrap();
+        let mut terminal = declaration.entries[&EntryTarget::Desktop].clone();
+        let mut files = BTreeMap::new();
+        match &mut terminal.implementation {
+            Implementation::Native { implementation } => {
+                *implementation = "maka.ui.surface.tui".into();
+                terminal.exports.get_mut("Surface").unwrap().contract =
+                    surface_contract(PresentationTarget::Tui);
+            }
+            Implementation::JavaScript { module, .. } => {
+                *module = "terminal.mjs".into();
+                terminal.imports.get_mut("surface").unwrap().contract =
+                    surface_contract(PresentationTarget::Tui);
+                let source = std::str::from_utf8(original.file("index.mjs").unwrap()).unwrap();
+                files.insert("index.mjs".into(), source.as_bytes().to_vec());
+                files.insert("terminal.mjs".into(), source
+                    .replace("{kind:'window',binding:'surface',title:'Dynamic product',width:640,height:400}", "{kind:'terminal',binding:'surface'}")
+                    .replace("padding:16,gap:8", "padding:1,gap:1").into_bytes());
+            }
+        }
+        declaration.entries.insert(EntryTarget::Tui, terminal);
+        files.insert(
+            MANIFEST_FILE.into(),
+            serde_json::to_vec(
+                &json!({"schemaVersion":2,"id":original.manifest().id,"application":declaration}),
+            )
+            .unwrap(),
+        );
+        dual.push(Package::new(files).unwrap());
+    }
+    input.instances.insert("surface".into(), node(&dual[0], 1));
+    let bindings = input.instances["app"].bindings.clone();
+    let mut root = node(&dual[1], 2);
+    root.bindings = bindings;
+    input.instances.insert("app".into(), root);
+    (input, dual)
 }

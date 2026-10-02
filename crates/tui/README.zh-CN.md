@@ -66,3 +66,11 @@ Chat 与插件 Transcript 共用 Markdown、选区、搜索和流式呈现。新
 - 提供商设置使用公开的描述、配置与认证契约。
 - 本地状态保存草稿和恢复身份，不保存认证输入。写入结果不确定时查询事实，不自动重放。
 - Fluent 文案覆盖英文、简体中文和繁体中文。
+
+新的应用呈现器由 `maka application run --input FILE --package PATH` 启动（可重复传包），
+直接消费共用 `maka-ui` 内核；[同包双 entry 示例](../ui/README.zh-CN.md) 分别选择 Desktop/TUI。
+Tab/Shift+Tab 切换焦点，Enter/Space 或左键激活按钮，Ctrl+C 退休界面。
+实际服务 worker 在终端恢复后仍由 owner 持有直到真实清理完成；失败保留应用 fence，
+不靠丢弃 owner 返回。现支持 Stack/Text/Button/导入组件及编译的 Label recipe；
+原生编辑、滚动、选区和交互恢复尚待实现。上文 `maka tui` 业务客户端仍待迁移删除，
+不是新架构的兼容承诺。

@@ -35,7 +35,7 @@ use maka_plugin_core::{
     composition::{Input, PresentationTarget},
     runtime::Mount,
 };
-use maka_ui::{Application, Direction, Node, Presentation};
+use maka_ui::{Application, Direction, Node, Presentation, Surface as SurfaceDeclaration};
 type DesktopApplication = Application<dyn widgets::Widget>;
 use std::{cell::RefCell, io::Read, path::PathBuf, rc::Rc};
 
@@ -313,12 +313,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let mount = application.mount_launch(serde_json::json!({}))?;
     let frame = application.frame(&mount)?;
-    let window = frame
-        .window
-        .as_ref()
-        .ok_or("launch component has no window")?;
-    let dimensions = size(px(window.width as f32), px(window.height as f32));
-    let title = window.title.clone();
+    let Some(SurfaceDeclaration::Window {
+        title,
+        width,
+        height,
+        ..
+    }) = &frame.surface
+    else {
+        return Err("desktop launch component must request a window".into());
+    };
+    let dimensions = size(px(*width as f32), px(*height as f32));
+    let title = title.clone();
     let application = Rc::new(RefCell::new(application));
     let startup_error = Rc::new(RefCell::new(None));
     let startup_result = startup_error.clone();

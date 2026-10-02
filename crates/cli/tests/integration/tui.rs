@@ -19,6 +19,7 @@
 
 #![cfg(unix)]
 
+mod application;
 mod attachments;
 mod board;
 mod branch;

@@ -27,7 +27,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or("output directory required")?,
     ))?;
     std::fs::create_dir(&output)?;
-    let (input, packages) = if std::env::args().nth(2).as_deref() == Some("resource") {
+    let (input, packages) = if std::env::args().nth(2).as_deref() == Some("dual") {
+        support::dual_fixture("return frame({count:state.count+1,revision:state.revision+1});")
+    } else if std::env::args().nth(2).as_deref() == Some("resource") {
         support::resource_fixture()
     } else if std::env::args().nth(2).as_deref() == Some("events") {
         support::editor_events_fixture()
@@ -47,6 +49,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         output.join("input.json"),
         serde_json::to_vec_pretty(&input)?,
     )?;
+    if std::env::args().nth(2).as_deref() == Some("dual") {
+        let mut terminal = input.clone();
+        terminal.environment.presentation =
+            Some(maka_plugin_core::composition::PresentationTarget::Tui);
+        std::fs::write(
+            output.join("input.tui.json"),
+            serde_json::to_vec_pretty(&terminal)?,
+        )?;
+    }
     println!("{}", output.display());
     Ok(())
 }

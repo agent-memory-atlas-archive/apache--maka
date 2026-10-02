@@ -19,6 +19,7 @@
 
 //! Native terminal client. Host business logic remains outside this crate.
 mod app;
+pub mod application;
 mod apps;
 mod chrome;
 mod editor;

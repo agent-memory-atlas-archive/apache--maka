@@ -51,8 +51,10 @@ keys retain child mounts and their local state across parent props updates.
 All changed parents and children share one deadline and commit together. A failed
 child leaves every prior frame unchanged. Removed mounts retire until real native
 cleanup is confirmed; uncommitted mounts have no native resources to acknowledge.
-Window configuration is fixed for a root mount; embedded components cannot create
-windows. Recovery surfaces remain pending. `close` requires an actual
+`Frame.surface` is a closed declaration: `Window { binding, title, width, height }`
+for Desktop, `Terminal { binding }` for TUI. Its variant and exact surface capability
+must match the deployment. Surface configuration is fixed for a root mount;
+embedded components cannot create surfaces. Recovery surfaces remain pending. `close` requires an actual
 native cleanup acknowledgement; `retire` only stops new input. `shutdown` retains
 owners while mounts/work/resources remain unconfirmed.
 
@@ -172,3 +174,19 @@ JavaScript binding bridge and UI integration, TUI integration and product recove
 UI remain pending. The standalone Host query executor is described in
 [Host application services](../runtime-host/README.md). The
 resource fixture proves this native asynchronous path, not a finished product.
+
+Generate with `dual` to package both presentation entries in the same immutable
+revision. The desktop input remains `input.json`; the terminal input is
+`input.tui.json`, with cell spacing and no pixel dimensions:
+
+```sh
+cargo run --locked -p maka-ui --example counter -- /tmp/maka-dual dual
+cargo run --locked -p maka-cli -- application run --input /tmp/maka-dual/input.tui.json \
+  --package /tmp/maka-dual/native.surface.maka-plugin \
+  --package /tmp/maka-dual/dynamic.app.maka-plugin
+```
+
+The terminal presenter reads committed scenes and uses exact mount/revision input.
+It publishes hit geometry only after drawing and flushing successfully. Raw terminal
+mouse coordinates have no screen epoch; they resolve against the last flushed scene
+at delivery. This counter verifies the runtime path, not finished product UX.

@@ -189,15 +189,20 @@ fn structural_imports_route_to_owned_providers_without_startup_deadlock() {
 fn unimplemented_window_mutation_is_rejected_without_scene_commit() {
     let timer = timer();
     let mut app = app(
-        "const next=frame({count:state.count+1,revision:state.revision+1});next.frame.window.width=900;return next;",
+        "const next=frame({count:state.count+1,revision:state.revision+1});next.frame.surface.width=900;return next;",
         &timer,
     );
     let mount = app.mount_launch(json!({})).unwrap();
     assert!(app.dispatch(&mount, 0, "inc", Value::Null).is_err());
     assert_eq!(app.frame(&mount).unwrap().revision, 0);
     assert_eq!(
-        app.frame(&mount).unwrap().window.as_ref().unwrap().width,
-        640
+        app.frame(&mount).unwrap().surface,
+        Some(maka_ui::Surface::Window {
+            binding: "surface".into(),
+            title: "Dynamic product".into(),
+            width: 640,
+            height: 400
+        })
     );
     app.close(&mount, Ok(())).unwrap();
     app.shutdown().unwrap();
@@ -333,8 +338,8 @@ fn invalid_child_initialization_rolls_back_all_private_mounts_without_native_ack
         "index.mjs".into(),
         source
             .replace(
-                "window:null",
-                "window:state.label.startsWith('Right')?{surface:'surface',title:'Invalid child window',width:640,height:400}:null",
+                "surface:null",
+                "surface:state.label.startsWith('Right')?{kind:'window',binding:'surface',title:'Invalid child window',width:640,height:400}:null",
             )
             .into_bytes(),
     );
@@ -461,4 +466,31 @@ fn dispatch_at_a_deep_mount_cannot_restart_the_whole_tree_depth_budget() {
     assert!(app.child_mount(&deepest, "nested").is_err());
     assert!(app.retiring_mounts().is_empty());
     close_all(&mut app, &root);
+}
+
+#[test]
+fn one_immutable_revision_selects_both_presentation_variants() {
+    let timer = timer();
+    let (mut input, packages) =
+        support::dual_fixture("return frame({count:state.count+1,revision:state.revision+1});");
+    for target in [PresentationTarget::Desktop, PresentationTarget::Tui] {
+        input.environment.presentation = Some(target);
+        let mut app = Application::new(
+            &input,
+            packages.clone(),
+            timer.handle().clone(),
+            Default::default(),
+            NativeRegistry::<()>::with_surface(target),
+        )
+        .unwrap();
+        let root = app.mount_launch(json!({})).unwrap();
+        assert_eq!(
+            app.frame(&root).unwrap().surface.as_ref().unwrap().target(),
+            target
+        );
+        app.dispatch(&root, 0, "inc", json!({})).unwrap();
+        assert_eq!(app.frame(&root).unwrap().state["count"], 1);
+        app.close(&root, Ok(())).unwrap();
+        app.shutdown().unwrap();
+    }
 }

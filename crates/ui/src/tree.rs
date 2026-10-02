@@ -144,7 +144,7 @@ impl<V: ?Sized> Update<V> {
         let mut counter = Counter(self.bytes);
         serde_json::to_writer(
             &mut counter,
-            &(&frame.state, &frame.window, frame.revision, props),
+            &(&frame.state, &frame.surface, frame.revision, props),
         )
         .map_err(|error| Error::Invalid(error.to_string()))?;
         match &frame.view {
@@ -252,13 +252,13 @@ impl<V: ?Sized + 'static> Application<V> {
         let args = [current.frame.state.clone(), event, current.props.clone()];
         let props = current.props.clone();
         let revision = current.frame.revision;
-        let window = current.frame.window.clone();
+        let surface = current.frame.surface.clone();
         let depth = self.mount_depth(mount)?;
         let subscription = self.subscription(mount, &update)?;
         let result = (|| {
             update.step(depth)?;
             let next = self.invoke(mount, "event", &args, update.deadline)?;
-            Self::check_next(revision, &window, &next.frame)?;
+            Self::check_next(revision, &surface, &next.frame)?;
             self.stage(mount, props, next, subscription, depth, &mut update)?;
             self.deliver(&mut update)?;
             self.commit(&mut update)
@@ -278,15 +278,15 @@ impl<V: ?Sized + 'static> Application<V> {
     }
     fn check_next(
         revision: u64,
-        window: &Option<Window>,
+        surface: &Option<Surface>,
         frame: &Frame<Presentation<V>>,
     ) -> Result<()> {
         if revision.checked_add(1) != Some(frame.revision) {
             return Err(Error::Invalid("UI revision must advance once".into()));
         }
-        if &frame.window != window {
+        if &frame.surface != surface {
             return Err(Error::Invalid(
-                "window configuration is fixed for this mount".into(),
+                "surface configuration is fixed for this mount".into(),
             ));
         }
         Ok(())
@@ -465,12 +465,12 @@ impl<V: ?Sized + 'static> Application<V> {
                 let child = self.current(&old.mount, update)?;
                 if child.props != *reference.props {
                     let revision = child.frame.revision;
-                    let window = child.frame.window.clone();
+                    let surface = child.frame.surface.clone();
                     let args = [child.frame.state.clone(), reference.props.clone()];
                     self.check_props(&old.mount, reference.props)?;
                     update.step(depth + 1)?;
                     let next = self.invoke(&old.mount, "update", &args, update.deadline)?;
-                    Self::check_next(revision, &window, &next.frame)?;
+                    Self::check_next(revision, &surface, &next.frame)?;
                     self.stage(
                         &old.mount,
                         reference.props.clone(),
@@ -502,9 +502,9 @@ impl<V: ?Sized + 'static> Application<V> {
                     update.deadline,
                 )?;
                 Self::check_initial(&next.frame)?;
-                if next.frame.window.is_some() {
+                if next.frame.surface.is_some() {
                     return Err(Error::Invalid(
-                        "embedded component cannot create a window".into(),
+                        "embedded component cannot create a surface".into(),
                     ));
                 }
                 self.stage(
@@ -588,12 +588,12 @@ impl<V: ?Sized + 'static> Application<V> {
             ];
             let revision = current.frame.revision;
             let props = current.props.clone();
-            let window = current.frame.window.clone();
+            let surface = current.frame.surface.clone();
             let depth = self.mount_depth(&route.parent)?;
             let subscription = self.subscription(&route.parent, update)?;
             update.step(depth)?;
             let output = self.invoke(&route.parent, "event", &args, update.deadline)?;
-            Self::check_next(revision, &window, &output.frame)?;
+            Self::check_next(revision, &surface, &output.frame)?;
             self.stage(&route.parent, props, output, subscription, depth, update)?;
         }
         Ok(())

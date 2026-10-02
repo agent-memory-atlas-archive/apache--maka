@@ -75,3 +75,16 @@ A session's **Skill library** imports local Markdown, installs sources, reviews 
 - Provider setup consumes public descriptors, configuration and authentication contracts.
 - Local state stores drafts and recovery identities, never authentication input. Uncertain writes require observation, not automatic replay.
 - Fluent catalogs cover English, Simplified Chinese and Traditional Chinese.
+
+The new application presenter runs `maka application run --input FILE --package PATH`
+(repeat packages). It consumes the shared `maka-ui` component kernel directly;
+[the dual-entry example](../ui/README.md) demonstrates the same package revision on
+Desktop and TUI. Tab/Shift+Tab moves focus; Enter/Space or a left click activates a
+button; Ctrl+C retires the surface. Accepted service workers remain owned until
+actual cleanup completes, including after the terminal is restored. Failed cleanup
+keeps the application fenced; it does not return by discarding the owner.
+
+This presenter currently supports Stack/Text/Button/imported Component and compiled
+Label recipes. Native editing, scrolling, selection and interactive recovery are
+pending. The `maka tui` business client described above still awaits migration and
+deletion; it is not a compatibility contract for the new application architecture.

@@ -347,7 +347,7 @@ impl NativeComponent<()> for NativeEmitter {
         Ok(Frame {
             revision: state["revision"].as_u64().unwrap(),
             state,
-            window: None,
+            surface: None,
             view: Presentation::Tree(Node::Button {
                 key: "inc".into(),
                 label: "Native".into(),
@@ -467,7 +467,7 @@ impl NativeComponent<()> for PaddedEmitter {
         Ok(Frame {
             revision: state["revision"].as_u64().unwrap(),
             state,
-            window: None,
+            surface: None,
             view: Presentation::Tree(Node::Button {
                 key: "inc".into(),
                 label: "Native".into(),

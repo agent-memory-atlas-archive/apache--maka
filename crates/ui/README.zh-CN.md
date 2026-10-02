@@ -40,7 +40,9 @@ schema，不计原生内存；原生 owner 负责其实际分配限额。
 树协议包含 stack、text、button 和导入组件。子组件引用显式 binding 与 member，
 稳定 key 在父组件 props 更新时保留子挂载和局部状态。父子组件共用一次 deadline，
 整批提交；任一子组件失败，原有 frame 全部保留。移除后挂载只进入退休，等待真实原生
-清理确认；未提交的挂载尚无原生资源。根挂载窗口配置固定，嵌入组件不能创建窗口。
+清理确认；未提交的挂载尚无原生资源。`Frame.surface` 是封闭声明：Desktop 使用 `Window { binding, title, width, height }`，
+TUI 使用 `Terminal { binding }`，variant 与实际 surface 能力都必须匹配 deployment。
+根挂载 surface 配置固定，嵌入组件不能创建 surface。
 恢复界面尚未实现。
 `retire` 只停止新输入；`close` 必须收到实际原生清理确认；`shutdown` 不丢弃
 尚未确认的 mount、work 或 resource。
@@ -113,3 +115,9 @@ callback 前受 1 MiB 限额，也共用事务的 callback/deadline/累计工作
 显式导入。Host transfer/持久准入、JavaScript binding bridge 与 UI 集成、TUI 接线及产品
 恢复界面尚未实现。独立 Host query executor 见[Host 应用服务](../runtime-host/README.zh-CN.md)；
 resource 示例证明这条原生异步路径，不代表产品已完成。
+
+使用 `dual` 生成同一不可变包修订的两端 entry；`input.json` 选择 Desktop，
+`input.tui.json` 选择以单元格布局的 TUI。运行命令见 English README。
+终端呈现器只读已提交场景，实际 draw/flush 成功后才发布命中几何。
+原始鼠标坐标没有 screen epoch，送达时按最后成功输出的场景立即解析，
+保留准确 mount/revision。counter 是运行时验收，不是成品 UI/UX。

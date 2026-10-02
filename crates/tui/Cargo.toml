@@ -23,6 +23,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+maka-ui.workspace = true
+maka-plugin-core.workspace = true
 maka-presentation.workspace = true
 apply-patch.workspace = true
 base64 = "0.22.1"

@@ -25,7 +25,7 @@ use maka_plugin_core::{
 };
 use maka_ui::{
     Application, ComponentCall, ComponentOutput, Frame, NativeCapability, NativeComponent,
-    NativeExport, NativeRegistry, NativeView, Node, Presentation, Window,
+    NativeExport, NativeRegistry, NativeView, Node, Presentation, Surface,
 };
 use serde_json::{Value, json};
 use std::{cell::Cell, collections::BTreeMap, rc::Rc};
@@ -55,7 +55,7 @@ impl NativeComponent<String> for Counter {
         };
         Ok(Frame {
             revision: state["revision"].as_u64().unwrap(),
-            window: None,
+            surface: None,
             view: Presentation::Native(NativeView::new(
                 Rc::new(format!(
                     "{}={}",
@@ -259,8 +259,8 @@ impl NativeComponent<String> for Root {
         Ok(Frame {
             revision: 0,
             state: json!({}),
-            window: Some(Window {
-                surface: "surface".into(),
+            surface: Some(Surface::Window {
+                binding: "surface".into(),
                 title: "Native root".into(),
                 width: 640,
                 height: 400,
@@ -317,8 +317,13 @@ fn native_root_uses_explicit_surface_and_can_compose_an_imported_component() {
     let root = app.mount_launch(json!({})).unwrap();
     let child = app.child_mount(&root, "child").unwrap().clone();
     assert_eq!(
-        app.frame(&root).unwrap().window.as_ref().unwrap().title,
-        "Native root"
+        app.frame(&root).unwrap().surface,
+        Some(Surface::Window {
+            binding: "surface".into(),
+            title: "Native root".into(),
+            width: 640,
+            height: 400
+        })
     );
     app.dispatch(&child, 0, "inc", json!({"delta":3})).unwrap();
     assert_eq!(app.frame(&child).unwrap().state["count"], 7);

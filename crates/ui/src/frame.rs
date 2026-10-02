@@ -52,16 +52,52 @@ impl<V> ComponentOutput<V> {
 pub struct Frame<V = Node> {
     pub revision: u64,
     pub state: Value,
-    pub window: Option<Window>,
+    pub surface: Option<Surface>,
     pub view: V,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Window {
-    pub surface: String,
-    pub title: String,
-    pub width: u32,
-    pub height: u32,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Surface {
+    Window {
+        binding: String,
+        title: String,
+        width: u32,
+        height: u32,
+    },
+    Terminal {
+        binding: String,
+    },
+}
+impl Surface {
+    pub fn binding(&self) -> &str {
+        match self {
+            Self::Window { binding, .. } | Self::Terminal { binding } => binding,
+        }
+    }
+    pub fn target(&self) -> maka_plugin_core::composition::PresentationTarget {
+        use maka_plugin_core::composition::PresentationTarget;
+        match self {
+            Self::Window { .. } => PresentationTarget::Desktop,
+            Self::Terminal { .. } => PresentationTarget::Tui,
+        }
+    }
+    fn validate(&self) -> bool {
+        if self.binding().is_empty() || self.binding().len() > 128 {
+            return false;
+        }
+        match self {
+            Self::Terminal { .. } => true,
+            Self::Window {
+                title,
+                width,
+                height,
+                ..
+            } => {
+                title.len() <= 512 && (64..=16000).contains(width) && (64..=16000).contains(height)
+            }
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -107,15 +143,12 @@ impl<V> Frame<V> {
     }
     pub fn validate_metadata(&self) -> Result<(), String> {
         if self.revision > 9_007_199_254_740_991
-            || self.window.as_ref().is_some_and(|window| {
-                window.title.len() > 512
-                    || window.surface.is_empty()
-                    || window.surface.len() > 128
-                    || !(64..=16000).contains(&window.width)
-                    || !(64..=16000).contains(&window.height)
-            })
+            || self
+                .surface
+                .as_ref()
+                .is_some_and(|surface| !surface.validate())
         {
-            return Err("invalid window/revision".into());
+            return Err("invalid surface/revision".into());
         }
         Ok(())
     }
@@ -123,7 +156,7 @@ impl<V> Frame<V> {
         Frame {
             revision: self.revision,
             state: self.state,
-            window: self.window,
+            surface: self.surface,
             view: map(self.view),
         }
     }

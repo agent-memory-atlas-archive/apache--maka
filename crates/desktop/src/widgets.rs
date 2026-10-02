@@ -118,7 +118,7 @@ impl NativeComponent<dyn Widget> for LabelComponent {
         Ok(Frame {
             revision,
             state: json!({"revision":revision}),
-            window: None,
+            surface: None,
             view: Presentation::Native(NativeView::<dyn Widget>::new(
                 Rc::new(Label {
                     text: props.text,
