@@ -920,12 +920,18 @@ mod tests {
         assert_eq!(first_reflow_y, initial_y);
 
         cx.executor().advance_clock(Duration::from_millis(200));
+        cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+        });
         cx.update(|window, cx| window.draw(cx).clear(cx));
         let middle_y = cx.debug_bounds("first-toast").unwrap().origin.y;
         assert!(middle_y > initial_y);
         assert!(middle_y < initial_y + px(14.));
 
         cx.executor().advance_clock(Duration::from_millis(200));
+        cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+        });
         cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(
             cx.debug_bounds("first-toast").unwrap().origin.y,
@@ -980,6 +986,9 @@ mod tests {
         // Both the baseline and the final reading are taken settled, so neither
         // carries the fraction of a pixel that separates them mid-flight.
         cx.executor().advance_clock(Duration::from_secs(1));
+        cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+        });
         cx.update(|window, cx| window.draw(cx).clear(cx));
         let initial_y = cx.debug_bounds("bottom-first-toast").unwrap().origin.y;
 
@@ -994,6 +1003,9 @@ mod tests {
         );
 
         cx.executor().advance_clock(Duration::from_millis(200));
+        cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+        });
         cx.update(|window, cx| window.draw(cx).clear(cx));
         let middle_y = cx.debug_bounds("bottom-first-toast").unwrap().origin.y;
         assert!(middle_y < initial_y);
@@ -1003,6 +1015,9 @@ mod tests {
         );
 
         cx.executor().advance_clock(Duration::from_secs(1));
+        cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+        });
         cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(
             cx.debug_bounds("bottom-first-toast").unwrap().origin.y,

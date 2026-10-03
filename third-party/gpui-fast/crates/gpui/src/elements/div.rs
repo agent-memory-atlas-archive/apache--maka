@@ -4331,6 +4331,16 @@ impl ScrollHandle {
         Self(Rc::default())
     }
 
+    /// Invalidate retained layouts that depend on this scroll handle.
+    ///
+    /// Custom scroll adapters use this when changing a deferred request that
+    /// their prepaint will consume. This changes neither the offset nor the
+    /// target item, and does not schedule a platform frame; the caller still
+    /// notifies its view or requests a draw as with other scroll mutations.
+    pub fn invalidate(&self) {
+        crate::fast::dependencies::StateVersion::bump(&self.0.borrow().version);
+    }
+
     /// Get the current scroll offset.
     pub fn offset(&self) -> Point<Pixels> {
         crate::fast::layers::invalidate::note_offset_read(&self.0.borrow().version);

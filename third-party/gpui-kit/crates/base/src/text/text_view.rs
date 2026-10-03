@@ -1584,6 +1584,7 @@ mod tests {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             div()
                 .w(px(160.))
+                .child(crate::TextSelectionLayer)
                 .child(
                     div()
                         .h(px(24.))

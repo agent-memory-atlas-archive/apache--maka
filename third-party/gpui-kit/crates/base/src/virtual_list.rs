@@ -117,6 +117,7 @@ impl VirtualListScrollHandle {
             offset,
             scroll_strict: false,
         });
+        self.base_handle.invalidate();
     }
 
     /// Scrolls to the bottom of the list.
@@ -824,7 +825,15 @@ mod tests {
         assert_eq!(initial_range.start, 0);
         assert!(initial_range.end < item_sizes.len());
 
+        let initial_renders = visible_ranges.borrow().len();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(visible_ranges.borrow().len(), initial_renders);
+
+        let original_offset = scroll_handle.offset();
         scroll_handle.scroll_to_item(12, ScrollStrategy::Top);
+        // Admission invalidates the original mechanical owner; movement only
+        // occurs when its actual prepaint consumes that deferred request.
+        assert_eq!(scroll_handle.offset(), original_offset);
         cx.update(|window, cx| window.draw(cx).clear(cx));
         let scrolled_range = visible_ranges.borrow().last().cloned().unwrap();
         assert!(scrolled_range.contains(&12));
@@ -832,6 +841,15 @@ mod tests {
             Axis::Horizontal => assert!(scroll_handle.offset().x < px(0.)),
             Axis::Vertical => assert!(scroll_handle.offset().y < px(0.)),
         }
+
+        // Settle the dependency version changed by the resulting offset, then
+        // prove that no new request leaves normal retained drawing reusable.
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let settled_renders = visible_ranges.borrow().len();
+        for _ in 0..10 {
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        }
+        assert_eq!(visible_ranges.borrow().len(), settled_renders);
     }
 
     fn layout(sizes: &[f32]) -> (Vec<Pixels>, Vec<Pixels>) {

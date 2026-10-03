@@ -284,7 +284,13 @@ mod tests {
                 content_hovered,
             }
         });
+        window.update(|window, cx| {
+            window.simulate_next_frame(cx);
+        });
         window.update(|window, cx| window.draw(cx).clear(cx));
+        window.update(|window, cx| {
+            window.simulate_next_frame(cx);
+        });
         window.update(|window, cx| window.draw(cx).clear(cx));
 
         window.simulate_mouse_move(
@@ -310,7 +316,13 @@ mod tests {
     #[gpui::test]
     fn trigger_capture_enables_deferred_content_on_the_next_frame(cx: &mut gpui::TestAppContext) {
         let (_, window) = cx.add_window_view(|_, _| Harness);
+        window.update(|window, cx| {
+            window.simulate_next_frame(cx);
+        });
         window.update(|window, cx| window.draw(cx).clear(cx));
+        window.update(|window, cx| {
+            window.simulate_next_frame(cx);
+        });
         window.update(|window, cx| window.draw(cx).clear(cx));
 
         assert_eq!(

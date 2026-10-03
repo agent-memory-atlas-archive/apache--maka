@@ -485,7 +485,13 @@ mod tests {
             changes: Rc::new(RefCell::new(Vec::new())),
             default_open: true,
         });
+        cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+        });
         cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+        });
         cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(cx.debug_bounds("base-popover-content").is_some());
     }

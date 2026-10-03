@@ -3136,6 +3136,9 @@ mod tests {
             reveal(&state, "w3990", cx);
             assert!(is_pending(&state, cx));
             for _ in 0..10 {
+                cx.update(|window, cx| {
+                    window.simulate_next_frame(cx);
+                });
                 draw(cx);
             }
             assert!(!is_pending(&state, cx));
