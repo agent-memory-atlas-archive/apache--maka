@@ -117,3 +117,14 @@ node --test packages/plugin-sdk/tests/*.test.mjs
 Package runtime/UI entries are self-contained ESM with no unresolved imports or
 top-level await. Use type-only SDK imports during development and the issued Host
 capabilities for runtime effects. See the guide for manifests, lifecycle and activation.
+
+
+UI activation returns `UiExport` entries tagged `component` or `value`. The latter
+publishes immutable, schema-checked JSON through a normal Value contract. Every
+component callback and `activate(configuration, values)` receives its captured
+Value imports as the final argument. `ComponentValues` makes the map and member
+lists read-only in authoring types; the runtime provides detached snapshots, not
+provider mutation or routing authority. Optional imports contain an empty list;
+undeclared imports are absent. Multiple imports to the same data each count toward
+the complete 1 MiB input before copying. Values and frames share the 32 MiB retained
+budget. No old untagged activation shape is accepted.

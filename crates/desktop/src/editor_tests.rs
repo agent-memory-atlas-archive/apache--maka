@@ -786,7 +786,7 @@ fn application_owner_preserves_failed_and_panicked_work_after_real_window_cleanu
         });
         let mut native = widgets::registry();
         native
-            .register("test.held-reader", move |_| {
+            .register("test.held-reader", move |_, _values| {
                 Ok(BTreeMap::from([(
                     "Reader".into(),
                     maka_ui::NativeExport {

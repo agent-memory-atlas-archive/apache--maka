@@ -24,6 +24,9 @@ import type {
   CallerIntent,
   Component,
   ComponentInput,
+  ComponentValues,
+  UiExport,
+  Contract,
   HostRequest,
   RequestContext,
   RecoveryRef,
@@ -190,3 +193,19 @@ const incompleteRecovery = { operation: 'recover' } as const;
 // @ts-expect-error Recovery requires the original reference, not a current provider alias.
 const missingReference: HostRequest = incompleteRecovery;
 void [durableReceipt, missingReference];
+
+function immutableValueExports(contract: Contract, values: ComponentValues) {
+  const value = { kind: 'value', contract, value: { tone: 'sage' } } satisfies UiExport;
+  // @ts-expect-error All exports use the explicit tagged ABI.
+  const old = { contract, component: ['app'] } satisfies UiExport;
+  // @ts-expect-error Value exports carry data rather than a callback path.
+  const wrong = { kind: 'value', contract, component: ['app'] } satisfies UiExport;
+  // @ts-expect-error Captured import members cannot be reassigned.
+  values.brand = [];
+  if (values.brand) {
+    // @ts-expect-error The supplied member list is read-only.
+    values.brand.push('replacement');
+  }
+  void [value, old, wrong];
+}
+void immutableValueExports;

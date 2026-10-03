@@ -27,6 +27,7 @@ mod native;
 pub mod operations;
 pub mod text;
 mod tree;
+mod values;
 pub use frame::{ComponentOutput, ComponentSlot, Direction, Emission, Frame, Node, Surface};
 pub use native::{
     ComponentCall, EventOrigin, LabelProps, NativeCapability, NativeComponent, NativeExport,
@@ -83,6 +84,7 @@ enum Export<V: ?Sized> {
         captures: BTreeMap<String, CaptureDefinition>,
     },
     Surface(PresentationTarget),
+    Value(Value),
     Service {
         implementation: std::sync::Arc<dyn actions::NativeService>,
         methods: BTreeMap<String, ServiceMethod>,
@@ -98,6 +100,8 @@ pub struct Application<V: ?Sized = ()> {
     runtime: Runtime<Export<V>>,
     activations: BTreeMap<InstanceId, Activation>,
     modules: BTreeMap<InstanceId, Loaded>,
+    values: BTreeMap<Uuid, values::Imports<V>>,
+    value_bytes: BTreeMap<Uuid, usize>,
     views: BTreeMap<Uuid, tree::Mounted<V>>,
     actions: actions::Actions<V>,
     slice: std::time::Duration,
@@ -233,6 +237,8 @@ impl<V: ?Sized + 'static> Application<V> {
             runtime: Runtime::new(plan),
             activations: BTreeMap::new(),
             modules: BTreeMap::new(),
+            values: BTreeMap::new(),
+            value_bytes: BTreeMap::new(),
             views: BTreeMap::new(),
             actions: actions::Actions::default(),
             slice: limits.synchronous_slice,
@@ -276,15 +282,23 @@ impl<V: ?Sized + 'static> Application<V> {
                     continue;
                 }
                 let activation = app.runtime.begin(&instance.identity)?;
+                if let Some(entry) = &instance.entry {
+                    app.capture_values(&activation, &entry.imports)?;
+                }
                 let mut batch = BTreeMap::new();
                 if let Some(entry) = &instance.entry {
                     match &entry.implementation {
                         Implementation::Native { implementation } => {
+                            let values =
+                                app.values_snapshot(&activation, &instance.configuration)?;
                             for (name, actual) in
-                                native.activate(implementation, &instance.configuration)?
+                                native.activate(implementation, &instance.configuration, &values)?
                             {
                                 let value = match actual.value {
                                     NativeCapability::Surface(target) => Export::Surface(target),
+                                    NativeCapability::Value(value) => {
+                                        values::export(value, &actual.contract)?
+                                    }
                                     NativeCapability::Service(implementation) => {
                                         service_export(implementation, &actual.contract)?
                                     }
@@ -345,17 +359,39 @@ impl<V: ?Sized + 'static> Application<V> {
                             )
                             .map_err(|error| Error::Invalid(error.to_string()))?;
                             let loaded = realm.borrow_mut().load(module, source)?;
-                            let value = realm.borrow_mut().call(
-                                &loaded,
-                                &["activate".into()],
-                                std::slice::from_ref(&instance.configuration),
+                            let values =
+                                app.values_snapshot(&activation, &instance.configuration)?;
+                            let args = vec![
+                                instance.configuration.clone(),
+                                serde_json::to_value(values)
+                                    .map_err(|e| Error::Invalid(e.to_string()))?,
+                            ];
+                            maka_js_runtime::plugin::check_json_delivery(
+                                &Value::Array(args.clone()),
+                                1024 * 1024,
                             )?;
-                            let actual: BTreeMap<String, abi::ComponentActivation> =
+                            let value =
+                                realm
+                                    .borrow_mut()
+                                    .call(&loaded, &["activate".into()], &args)?;
+                            tree::check_call_bytes(&value)?;
+                            let actual: BTreeMap<String, abi::UiExport> =
                                 serde_json::from_value(value)
                                     .map_err(|error| Error::Invalid(error.to_string()))?;
                             for (name, actual) in actual {
-                                if !matches!(actual.contract.interface, Interface::Component { .. })
-                                    || actual.component.is_empty()
+                                let (contract, component) = match actual {
+                                    abi::UiExport::Value { contract, value } => {
+                                        let value = values::export(value, &contract)?;
+                                        batch.insert(name, Published { contract, value });
+                                        continue;
+                                    }
+                                    abi::UiExport::Component {
+                                        contract,
+                                        component,
+                                    } => (contract, component),
+                                };
+                                if !matches!(contract.interface, Interface::Component { .. })
+                                    || component.is_empty()
                                 {
                                     return Err(Error::Invalid(
                                         "local JS export must declare a component".into(),
@@ -365,7 +401,7 @@ impl<V: ?Sized + 'static> Application<V> {
                                     props,
                                     events,
                                     captures,
-                                } = &actual.contract.interface
+                                } = &contract.interface
                                 else {
                                     unreachable!()
                                 };
@@ -381,7 +417,7 @@ impl<V: ?Sized + 'static> Application<V> {
                                 batch.insert(
                                     name,
                                     Published {
-                                        contract: actual.contract,
+                                        contract,
                                         value: Export::Component {
                                             props,
                                             events,
@@ -390,7 +426,7 @@ impl<V: ?Sized + 'static> Application<V> {
                                                 realm: realm.clone(),
                                                 callbacks: realm.borrow_mut().capture(
                                                     &loaded,
-                                                    &actual.component,
+                                                    &component,
                                                     &callback_methods,
                                                 )?,
                                             },
@@ -411,6 +447,7 @@ impl<V: ?Sized + 'static> Application<V> {
                         }
                     }
                 }
+                app.charge_values(&activation, &batch)?;
                 app.runtime
                     .publish(&activation, batch)
                     .map_err(|rejected| Error::Core(rejected.error))?;
@@ -430,7 +467,7 @@ impl<V: ?Sized + 'static> Application<V> {
         args: &[Value],
         deadline: std::time::Instant,
     ) -> Result<ComponentOutput<Presentation<V>>> {
-        tree::check_call_bytes(&args)?;
+        let values = self.mount_values(mount, &args)?;
         let execution = self.runtime.admit_mount(mount)?;
         let Export::Component {
             implementation,
@@ -443,6 +480,10 @@ impl<V: ?Sized + 'static> Application<V> {
         let mut failed_realm = None;
         let result = match implementation {
             Component::JavaScript { realm, callbacks } => {
+                let mut args = args.to_vec();
+                args.push(
+                    serde_json::to_value(&values).map_err(|e| Error::Invalid(e.to_string()))?,
+                );
                 maka_js_runtime::plugin::check_json_delivery(
                     &Value::Array(args.to_vec()),
                     1024 * 1024,
@@ -451,7 +492,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 .and_then(|_| {
                     let result = realm
                         .borrow_mut()
-                        .call_bound_until(callbacks, method, args, deadline)
+                        .call_bound_until(callbacks, method, &args, deadline)
                         .and_then(|value| {
                             serde_json::from_value::<ComponentOutput>(value)
                                 .map_err(|error| maka_js_runtime::plugin::Error(error.to_string()))
@@ -504,7 +545,7 @@ impl<V: ?Sized + 'static> Application<V> {
                     }
                     _ => unreachable!(),
                 };
-                component.call(call)
+                component.call(call, &values)
             })(),
         };
         let result = result.and_then(|output| {
@@ -675,6 +716,8 @@ impl<V: ?Sized + 'static> Application<V> {
                     Ok(()) => {
                         if activation.remote_target().is_none() {
                             self.activations.remove(activation.instance());
+                            self.values.remove(&activation.epoch());
+                            self.value_bytes.remove(&activation.epoch());
                         }
                     }
                     Err(maka_plugin_core::Error::CleanupPending) => {}

@@ -27,7 +27,8 @@ export type RuntimeProtocol =
   | Contract
   | Import
   | Export
-  | ComponentActivation
+  | UiExport
+  | ValueBindings
   | ComponentInput
   | ComponentOutput
   | CapturePlan
@@ -132,6 +133,21 @@ export type Cardinality =
       min: number;
       max: number;
       kind: 'many';
+    };
+/**
+ * Actual exports from a local JavaScript entry. Values are immutable for this
+ * activation; component paths are captured before publication.
+ */
+export type UiExport =
+  | {
+      contract: Contract;
+      component: string[];
+      kind: 'component';
+    }
+  | {
+      contract: Contract;
+      value: unknown;
+      kind: 'value';
     };
 /**
  * Input origin is assigned by the application, never by plugin event payloads.
@@ -517,9 +533,12 @@ export interface Parameter {
   schema: unknown;
   default?: unknown;
 }
-export interface ComponentActivation {
-  contract: Contract;
-  component: string[];
+/**
+ * Read-only data copied from this activation's captured value imports.
+ * The keys and member order come from its checked plan, never guest routing.
+ */
+export interface ValueBindings {
+  [k: string]: unknown[] | undefined;
 }
 /**
  * One callback's result. Events are finite transaction intents, never retained

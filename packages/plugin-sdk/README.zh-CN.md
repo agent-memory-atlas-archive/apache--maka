@@ -105,3 +105,12 @@ node --test packages/plugin-sdk/tests/*.test.mjs
 Runtime/UI 入口必须是无未解析 import、无顶层 await 的独立 ESM。
 开发时使用 SDK 类型导入，运行时通过实际调用上下文的 Host 能力执行操作。
 Manifest、生命周期和实例激活方法见统一指南。
+
+
+UI activate 返回带 component 或 value kind 的 `UiExport`。value 通过普通 Value 契约
+发布按 schema 校验的不可变 JSON。所有组件回调及 activate(configuration, values)
+的最后参数提供本 activation 捕获的 Value imports。`ComponentValues` 在编写类型中
+将 map 与成员数组设为只读；实际运行提供独立副本，不提供修改供应者或重新路由的
+权限。optional import 保留空数组，未声明 import 不出现。重复绑定的数据每次均计入
+复制前的完整 1 MiB 输入；注册值与 frame 共用 32 MiB 保留额度。不接受旧的无 kind
+激活格式。

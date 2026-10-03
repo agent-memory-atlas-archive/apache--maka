@@ -165,18 +165,24 @@ pub trait NativeComponent<V: ?Sized>: 'static {
     fn capture(&self, _: super::actions::CaptureCall<'_>) -> Result<super::actions::CapturePlan> {
         Err(Error::Invalid("native capture method unavailable".into()))
     }
-    fn call(&self, call: ComponentCall<'_>) -> Result<ComponentOutput<Presentation<V>>>;
+    fn call(
+        &self,
+        call: ComponentCall<'_>,
+        _values: &super::abi::ValueBindings,
+    ) -> Result<ComponentOutput<Presentation<V>>>;
 }
 pub enum NativeCapability<V: ?Sized> {
     Component(Rc<dyn NativeComponent<V>>),
     Surface(PresentationTarget),
     Service(std::sync::Arc<dyn super::actions::NativeService>),
+    Value(Value),
 }
 pub struct NativeExport<V: ?Sized> {
     pub contract: Contract,
     pub value: NativeCapability<V>,
 }
-type Factory<V> = dyn Fn(&Value) -> Result<BTreeMap<String, NativeExport<V>>>;
+type Factory<V> =
+    dyn Fn(&Value, &super::abi::ValueBindings) -> Result<BTreeMap<String, NativeExport<V>>>;
 
 /// Build-time implementation availability. The composition selects instances;
 /// this map does not register capabilities or automatically activate products.
@@ -194,7 +200,11 @@ impl<V: ?Sized + 'static> NativeRegistry<V> {
     pub fn register(
         &mut self,
         implementation: &str,
-        factory: impl Fn(&Value) -> Result<BTreeMap<String, NativeExport<V>>> + 'static,
+        factory: impl Fn(
+            &Value,
+            &super::abi::ValueBindings,
+        ) -> Result<BTreeMap<String, NativeExport<V>>>
+        + 'static,
     ) -> Result<()> {
         if implementation.is_empty()
             || implementation.len() > 128
@@ -215,7 +225,7 @@ impl<V: ?Sized + 'static> NativeRegistry<V> {
             PresentationTarget::Tui => "maka.ui.surface.tui",
         };
         registry
-            .register(name, move |_| {
+            .register(name, move |_, _values| {
                 Ok(BTreeMap::from([(
                     "Surface".into(),
                     NativeExport {
@@ -226,7 +236,7 @@ impl<V: ?Sized + 'static> NativeRegistry<V> {
             })
             .expect("unique built-in surface");
         registry
-            .register("maka.text.reader", |_| {
+            .register("maka.text.reader", |_, _values| {
                 Ok(BTreeMap::from([(
                     "Reader".into(),
                     NativeExport {
@@ -250,17 +260,19 @@ impl<V: ?Sized + 'static> NativeRegistry<V> {
         &self,
         implementation: &str,
         configuration: &Value,
+        values: &super::abi::ValueBindings,
     ) -> Result<BTreeMap<String, NativeExport<V>>> {
         let actual = self.factories.get(implementation).ok_or_else(|| {
             Error::Invalid(format!(
                 "native implementation not provided: {implementation}"
             ))
-        })?(configuration)?;
+        })?(configuration, values)?;
         for export in actual.values() {
             export.contract.validate()?;
             match (&export.contract.interface, &export.value) {
                 (Interface::Component { .. }, NativeCapability::Component(_)) => {}
                 (Interface::Service { .. }, NativeCapability::Service(_)) => {}
+                (Interface::Value { .. }, NativeCapability::Value(_)) => {}
                 (_, NativeCapability::Surface(target))
                     if export.contract == surface_contract(*target) => {}
                 _ => {

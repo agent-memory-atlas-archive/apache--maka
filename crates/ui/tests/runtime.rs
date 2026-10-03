@@ -31,6 +31,8 @@ mod persistence;
 mod sdk;
 #[path = "../examples/counter/support.rs"]
 mod support;
+#[path = "runtime/values.rs"]
+mod values;
 use maka_plugin_core::{
     composition::{PackageUse, PresentationTarget, Target},
     contract::{Cardinality, Import},

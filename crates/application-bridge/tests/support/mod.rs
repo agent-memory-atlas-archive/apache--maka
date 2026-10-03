@@ -194,7 +194,7 @@ pub fn ui(target: PresentationTarget) -> (Input, Vec<Package>, Vec<RemoteObserva
             "{kind:'terminal',binding:'surface'}"
         };
         files.insert(module.into(),format!(r#"
-            const contract={}; export function activate(){{return {{App:{{contract,component:['app']}}}};}}
+            const contract={}; export function activate(){{return {{App:{{contract,kind:'component',component:['app']}}}};}}
             function frame(state,actions=[]){{return {{actions,events:[],frame:{{revision:state.revision,state,surface:{surface},view:{{kind:'stack',key:'root',direction:'column',padding:1,gap:1,background:1513239,children:[{{kind:'text',key:'value',text:state.outcome?.value?.receipt?'Original receipt '+state.outcome.value.receipt.kind:JSON.stringify(state.outcome?.reply?.receipt??state.outcome??'Ready'),color:16777215}},{{kind:'button',key:'read',label:'Read Host'}},{{kind:'button',key:'write',label:'Write Host'}},{{kind:'button',key:'recover',label:'Read original receipt'}}]}}}}}};}}
             export const app={{mount(){{return frame({{revision:0,outcome:null,reference:null}});}},event(state,input){{
                 if(input.kind==='action'){{ const outcome=input.event;return frame({{...state,revision:state.revision+1,outcome,reference:outcome.status==='operation'?outcome.reply.reference:state.reference}}); }}

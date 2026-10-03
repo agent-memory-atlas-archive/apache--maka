@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import type { Component, ComponentActivation, Contract, Output, Surface } from '../../src/index.js';
+import type { Component, UiExport, Contract, Output, Surface } from '../../src/index.js';
 
 export const contract = {
   name: 'example.App',
@@ -31,8 +31,8 @@ export const contract = {
   },
 } satisfies Contract;
 
-export function activate(): Record<string, ComponentActivation> {
-  return { App: { contract, component: ['app'] } };
+export function activate(): Record<string, UiExport> {
+  return { App: { contract, kind: 'component', component: ['app'] } };
 }
 
 export interface CounterState {

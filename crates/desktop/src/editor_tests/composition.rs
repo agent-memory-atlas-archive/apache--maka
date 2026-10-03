@@ -162,6 +162,7 @@ impl NativeComponent<dyn widgets::Widget> for Parent {
     fn call(
         &self,
         call: ComponentCall<'_>,
+        _values: &maka_ui::abi::ValueBindings,
     ) -> maka_ui::Result<ComponentOutput<Presentation<dyn widgets::Widget>>> {
         let mut state = match call {
             ComponentCall::Mount { .. } => {
@@ -270,7 +271,7 @@ fn scene(
     packages.push(root);
     let mut native = widgets::registry();
     native
-        .register("test.layout", move |_| {
+        .register("test.layout", move |_, _values| {
             Ok(BTreeMap::from([(
                 "App".into(),
                 NativeExport {

@@ -246,3 +246,25 @@ explicitly composed plugins.
 All consumers share the byte budget; JavaScript integer and codec restrictions
 apply at the actual JavaScript callback boundary. Native callbacks preserve exact
 Rust JSON integers, including when they return a portable tree.
+
+
+Immutable values are ordinary `Interface::Value` exports. JavaScript activation
+returns tagged `UiExport` entries (`kind: "component"` with a captured path, or
+`kind: "value"` with schema-validated data); native factories return
+`NativeCapability::Value`. Factories receive `(configuration, values)`. JavaScript
+`activate`, `mount`, `update`, `event`, and `capture` receive `ValueBindings` as
+their final argument; native `call` receives the equivalent second argument and
+`CaptureCall.values` supplies it during capture. Keys come only from the consumer's
+explicit Value imports, members preserve checked order, and empty optional imports
+remain empty. These detached JSON snapshots carry no service grants. Guest changes
+to a snapshot cannot modify its provider.
+
+Imports capture actual capabilities during loading. Each callback inspects those
+original registrations instead of rebinding names. The complete borrowed input,
+including repeated values, is counted before payload copying against 1 MiB; JS
+precision checks precede guest entry. Native consumers preserve exact integers.
+Registered values and committed frames share the application's 32 MiB serialized
+retained budget; retiring a provider does not reclaim its quota before real
+registration cleanup. Values are immutable for an activation. Live reconcile and
+window/local theme projection are separate work; this path alone does not implement
+live theme switching or a finished product.

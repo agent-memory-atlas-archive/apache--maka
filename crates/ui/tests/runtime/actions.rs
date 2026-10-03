@@ -36,7 +36,11 @@ struct Leaf {
     large: bool,
 }
 impl NativeComponent<()> for Leaf {
-    fn call(&self, call: ComponentCall<'_>) -> maka_ui::Result<ComponentOutput<Presentation<()>>> {
+    fn call(
+        &self,
+        call: ComponentCall<'_>,
+        _values: &maka_ui::abi::ValueBindings,
+    ) -> maka_ui::Result<ComponentOutput<Presentation<()>>> {
         let revision = match call {
             ComponentCall::Mount { .. } => 0,
             ComponentCall::Update { state, .. } | ComponentCall::Event { state, .. } => {
@@ -81,7 +85,7 @@ fn fixture(
     let observed = calls.clone();
     let mut native = NativeRegistry::with_surface(PresentationTarget::Desktop);
     native
-        .register("maka.ui.editor", move |_| {
+        .register("maka.ui.editor", move |_, _values| {
             Ok(BTreeMap::from([(
                 "Editor".into(),
                 NativeExport {
@@ -444,7 +448,7 @@ fn service_fixture(
         packages.push(package);
     }
     native
-        .register("test.service", move |_| {
+        .register("test.service", move |_, _values| {
             Ok(BTreeMap::from([(
                 "Reader".into(),
                 NativeExport {
@@ -531,7 +535,11 @@ fn oversized_feedback_envelope_delivers_failure_after_independent_settlement() {
 
 struct ExactFeedback;
 impl NativeComponent<()> for ExactFeedback {
-    fn call(&self, call: ComponentCall<'_>) -> maka_ui::Result<ComponentOutput<Presentation<()>>> {
+    fn call(
+        &self,
+        call: ComponentCall<'_>,
+        _values: &maka_ui::abi::ValueBindings,
+    ) -> maka_ui::Result<ComponentOutput<Presentation<()>>> {
         let (state, initial) = match call {
             ComponentCall::Mount { props } => {
                 (json!({"revision":0,"marker":props["marker"]}), true)
@@ -636,7 +644,7 @@ fn actual_native_query_preserves_exact_integer_while_javascript_fails_without_re
             r#"
             const contract = {};
             const frame = state => ({{frame:{{revision:state.revision,state,surface:{{kind:'window',binding:'surface',title:'Codec reader',width:640,height:400}},view:{{kind:'text',key:'result',text:'Result',color:0}}}},events:[],actions:[]}});
-            export function activate() {{ return {{App:{{contract,component:['app']}}}}; }}
+            export function activate() {{ return {{App:{{contract,kind:'component',component:['app']}}}}; }}
             export const app = {{
               mount() {{ const out=frame({{revision:0}});out.actions=[{{key:'read',binding:'reader',member:0,method:'read',input:null,resources:{{}}}}];return out; }},
               update(state) {{return frame({{...state,revision:state.revision+1}});}},
@@ -678,7 +686,7 @@ fn actual_native_query_preserves_exact_integer_while_javascript_fails_without_re
         packages.extend([root, reader]);
         let mut native = NativeRegistry::with_surface(PresentationTarget::Desktop);
         native
-            .register("test.exact-feedback", move |_| {
+            .register("test.exact-feedback", move |_, _values| {
                 Ok(BTreeMap::from([(
                     "App".into(),
                     NativeExport {
@@ -689,7 +697,7 @@ fn actual_native_query_preserves_exact_integer_while_javascript_fails_without_re
             })
             .unwrap();
         native
-            .register("test.exact-query", move |_| {
+            .register("test.exact-query", move |_, _values| {
                 Ok(BTreeMap::from([(
                     "Reader".into(),
                     NativeExport {

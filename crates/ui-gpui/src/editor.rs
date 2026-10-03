@@ -519,6 +519,7 @@ impl NativeComponent<dyn Widget> for EditorComponent {
     fn call(
         &self,
         call: ComponentCall<'_>,
+        _values: &maka_ui::abi::ValueBindings,
     ) -> maka_ui::Result<ComponentOutput<Presentation<dyn Widget>>> {
         let (props, revision, observation, mut request, mut pending) = match call {
             ComponentCall::Mount { props } => {
@@ -612,7 +613,7 @@ impl EditorComponent {
 }
 pub(super) fn register(registry: &mut NativeRegistry<dyn Widget>) {
     registry
-        .register("maka.ui.editor", |_| {
+        .register("maka.ui.editor", |_, _values| {
             Ok(BTreeMap::from([(
                 "Editor".into(),
                 NativeExport {

@@ -155,7 +155,7 @@ fn terminal_restoration_during_preparation_runs_close_successor_before_root_rele
     });
     let mut native = registry();
     native
-        .register("test.service", move |_| {
+        .register("test.service", move |_, _values| {
             Ok(BTreeMap::from([(
                 "Service".into(),
                 NativeExport {

@@ -169,6 +169,7 @@ impl CaptureTarget {
     }
 }
 pub struct CaptureCall<'a> {
+    pub values: &'a abi::ValueBindings,
     pub state: &'a Value,
     pub props: &'a Value,
     pub method: &'a str,
@@ -302,10 +303,10 @@ impl<V: ?Sized + 'static> Application<V> {
             .map_err(|e| Error::Invalid(e.to_string()))?;
             if let Some(view) = self.views.get(&mount.id()) {
                 let args = (&view.frame.state, &view.props, &event);
-                tree::check_call_bytes(&args)?;
+                let values = self.mount_values(mount, &args)?;
                 if javascript {
-                    let args =
-                        serde_json::to_value(args).map_err(|e| Error::Invalid(e.to_string()))?;
+                    let args = serde_json::to_value((args, values))
+                        .map_err(|e| Error::Invalid(e.to_string()))?;
                     maka_js_runtime::plugin::check_json_delivery(&args, 1024 * 1024)?;
                 }
             } else if javascript {
@@ -415,12 +416,15 @@ impl<V: ?Sized + 'static> Application<V> {
             .mount
             .clone();
         let view = self.current(&child, update)?;
-        tree::check_call_bytes(&(
-            &view.frame.state,
-            &view.props,
-            &source.method,
-            &source.input,
-        ))?;
+        let values = self.mount_values(
+            &child,
+            &(
+                &view.frame.state,
+                &view.props,
+                &source.method,
+                &source.input,
+            ),
+        )?;
         let state = view.frame.state.clone();
         let props = view.props.clone();
         edges.push(Edge {
@@ -451,15 +455,30 @@ impl<V: ?Sized + 'static> Application<V> {
                 .map_err(|e| Error::Invalid(e.to_string()))?;
             match implementation {
                 Component::JavaScript { realm, callbacks } => {
+                    let args = vec![
+                        state,
+                        props,
+                        json!(source.method),
+                        source.input.clone(),
+                        serde_json::to_value(&values).map_err(|e| Error::Invalid(e.to_string()))?,
+                    ];
+                    // Codec rejection is an input failure, not a realm failure.
+                    let json_args = Value::Array(args.clone());
+                    if let Err(e) =
+                        maka_js_runtime::plugin::check_json_delivery(&json_args, 1024 * 1024)
+                    {
+                        return Err(Error::Invalid(e.to_string()));
+                    }
                     let value = realm.borrow_mut().call_bound_until(
                         callbacks,
                         "capture",
-                        &[state, props, json!(source.method), source.input.clone()],
+                        &args,
                         update.deadline,
                     )?;
                     serde_json::from_value(value).map_err(|e| Error::Invalid(e.to_string()))
                 }
                 Component::Native(component) => component.capture(CaptureCall {
+                    values: &values,
                     state: &state,
                     props: &props,
                     method: &source.method,

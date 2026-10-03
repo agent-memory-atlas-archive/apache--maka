@@ -227,7 +227,7 @@ fn accepted_worker_survives_surface_close_and_cleanup_failure_keeps_actual_capac
         });
         let mut native = registry();
         native
-            .register("test.service", move |_| {
+            .register("test.service", move |_, _values| {
                 Ok(BTreeMap::from([(
                     "Service".into(),
                     NativeExport {
@@ -464,7 +464,7 @@ fn narrow_row_uses_the_same_remaining_width_for_measure_and_unicode_paint() {
             {"kind":"text","key":"wrapped","text":"中文abcd","color":16777215}]},
         {"kind":"text","key":"after","text":"after","color":16777215}]});
     let source = format!(
-        "export function activate(){{return {{App:{{contract:{},component:['app']}}}};}} export const app={{mount(){{return {{actions:[],events:[],frame:{{revision:0,state:{{}},surface:{{kind:'terminal',binding:'surface'}},view:{}}}}};}},update(){{throw Error('unexpected update');}},event(){{throw Error('unexpected event');}}}};",
+        "export function activate(){{return {{App:{{contract:{},kind:'component',component:['app']}}}};}} export const app={{mount(){{return {{actions:[],events:[],frame:{{revision:0,state:{{}},surface:{{kind:'terminal',binding:'surface'}},view:{}}}}};}},update(){{throw Error('unexpected update');}},event(){{throw Error('unexpected event');}}}};",
         serde_json::to_string(
             &original.manifest().application.as_ref().unwrap().entries
                 [&maka_plugin_core::package::EntryTarget::Tui]
@@ -631,6 +631,7 @@ impl maka_ui::NativeComponent<dyn Widget> for SlotRoot {
     fn call(
         &self,
         call: maka_ui::ComponentCall<'_>,
+        _values: &maka_ui::abi::ValueBindings,
     ) -> maka_ui::Result<maka_ui::ComponentOutput<maka_ui::Presentation<dyn Widget>>> {
         let revision = match call {
             maka_ui::ComponentCall::Mount { .. } => 0,
@@ -710,7 +711,7 @@ fn native_slots_fixture(runtime: &tokio::runtime::Runtime, duplicate: bool) -> P
     let contract = root_contract.unwrap();
     let mut native = registry();
     native
-        .register("test.terminal-slots", move |_| {
+        .register("test.terminal-slots", move |_, _values| {
             Ok(std::collections::BTreeMap::from([(
                 "App".into(),
                 maka_ui::NativeExport {

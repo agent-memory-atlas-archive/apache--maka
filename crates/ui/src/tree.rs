@@ -23,10 +23,17 @@ use std::{collections::VecDeque, io::Write, time::Instant};
 /// Count JSON without allocating a serialized copy. Both adapters have the
 /// same call boundary; reject oversized input before schema evaluation/cloning.
 pub(super) fn check_call_bytes(value: &impl serde::Serialize) -> Result<()> {
+    call_bytes(value).map(|_| ())
+}
+
+pub(super) fn call_bytes(value: &impl serde::Serialize) -> Result<usize> {
     struct Limit(usize);
     impl Write for Limit {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0 += bytes.len();
+            self.0 = self
+                .0
+                .checked_add(bytes.len())
+                .ok_or_else(|| std::io::Error::other("UI byte overflow"))?;
             if self.0 > 1024 * 1024 {
                 return Err(std::io::Error::other("UI call exceeds 1 MiB"));
             }
@@ -36,7 +43,9 @@ pub(super) fn check_call_bytes(value: &impl serde::Serialize) -> Result<()> {
             Ok(())
         }
     }
-    serde_json::to_writer(Limit(0), value).map_err(|error| Error::Invalid(error.to_string()))
+    let mut limit = Limit(0);
+    serde_json::to_writer(&mut limit, value).map_err(|error| Error::Invalid(error.to_string()))?;
+    Ok(limit.0)
 }
 
 #[derive(Clone)]
@@ -69,7 +78,7 @@ pub(super) struct Mounted<V: ?Sized> {
     pub frame: Frame<Presentation<V>>,
     pub props: Value,
     pub children: BTreeMap<String, Child>,
-    bytes: usize,
+    pub(super) bytes: usize,
 }
 
 /// A composed input is one transaction, not a sequence of published child
@@ -649,7 +658,9 @@ impl<V: ?Sized + 'static> Application<V> {
             (count + 1, bytes + view.bytes)
         });
         let changed_bytes: usize = update.changed.values().map(|view| view.bytes).sum();
-        if count + update.changed.len() > 512 || bytes + changed_bytes > 32 * 1024 * 1024 {
+        if count + update.changed.len() > 512
+            || bytes + changed_bytes + self.value_bytes.values().sum::<usize>() > 32 * 1024 * 1024
+        {
             return Err(Error::Invalid(
                 "UI state limit reached; confirm retired mount cleanup".into(),
             ));

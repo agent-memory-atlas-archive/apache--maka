@@ -92,7 +92,7 @@ pub fn fixture(handler: &str) -> (Input, Vec<Package>) {
     let source = format!(
         r#"
         const contract = {};
-        export function activate(configuration) {{ return {{App:{{contract,component:['app']}}}}; }}
+        export function activate(configuration) {{ return {{App:{{contract,kind:'component',component:['app']}}}}; }}
         function frame(state) {{ return {{actions:[],events:[],frame:{{revision:state.revision,state,surface:{{kind:'window',binding:'surface',title:'Dynamic product',width:640,height:400}},view:{{kind:'stack',key:'root',direction:'column',padding:16,gap:8,background:1513239,children:[{{kind:'text',key:'count',text:String(state.count),color:16777215}},{{kind:'button',key:'inc',label:'Increment'}}]}}}}}}; }}
         export const app = {{mount(props){{ return frame({{count:props.count??0,revision:0}}); }},event(state,event){{ {} }},update(state,props){{ return frame({{...state,revision:state.revision+1}}); }} }};
     "#,
@@ -188,7 +188,7 @@ pub(crate) fn composed_fixture(child_update: &str, parent_event: &str) -> (Input
         );
     let source = format!(
         r#"
-        export function activate(){{return {{App:{{contract:{},component:['app']}}}};}}
+        export function activate(){{return {{App:{{contract:{},kind:'component',component:['app']}}}};}}
         function frame(state){{
             const children=[{{kind:'component',key:'left',binding:'counter',member:0,on:{{}},props:{{label:'Left '+state.version,initial:10}}}}];
             if(state.right)children.push({{kind:'component',key:'right',binding:'counter',member:0,on:{{}},props:{{label:'Right '+state.version,initial:20}}}});
@@ -202,7 +202,7 @@ pub(crate) fn composed_fixture(child_update: &str, parent_event: &str) -> (Input
     let root = package("dynamic.app", declaration, Some(source));
     let source = format!(
         r#"
-        export function activate(){{return {{Counter:{{contract:{},component:['counter']}}}};}}
+        export function activate(){{return {{Counter:{{contract:{},kind:'component',component:['counter']}}}};}}
         function frame(state){{return {{actions:[],events:[],frame:{{state,revision:state.revision,surface:null,view:{{kind:'stack',key:'counter',direction:'column',gap:8,padding:8,background:1513239,children:[{{kind:'text',key:'label',text:state.label,color:16777215}},{{kind:'text',key:'count',text:String(state.count),color:16777215}},{{kind:'button',key:'inc',label:'Increment '+state.label}}]}}}}}};}}
         export const counter={{mount(props){{return frame({{count:props.initial,label:props.label,revision:0}});}},event(state,event){{return frame({{...state,count:state.count+1,revision:state.revision+1}});}},update(state,props){{{}}}}};
     "#,
@@ -431,7 +431,7 @@ pub(crate) fn resource_fixture() -> (Input, Vec<Package>) {
     let root_source = format!(
         r#"
     const contract={};
-    export function activate(){{return {{App:{{contract,component:['app']}}}};}}
+    export function activate(){{return {{App:{{contract,kind:'component',component:['app']}}}};}}
     function frame(state){{return {{actions:[],events:[],frame:{{revision:state.revision,state,surface:{{kind:'window',binding:'surface',title:'Immutable draft',width:640,height:480}},view:{{kind:'stack',key:'root',direction:'column',padding:16,gap:12,background:1513239,children:[{{kind:'text',key:'status',text:'Captured: '+(state.outcome?.value?.text??state.outcome?.status??'—'),color:16777215}},...(state.show?[{{kind:'component',key:'editor',binding:'editor',member:0,on:{{changed:'changed'}},props:{{initialText:'Start',placeholder:'Write here',command:state.command??null}}}}]:[]),{{kind:'button',key:'read',label:'Capture draft'}},{{kind:'button',key:'remove',label:'Remove composer'}}]}}}}}};}}
     export const app={{mount(){{return frame({{revision:0,show:true}});}},update(state){{return frame({{...state,revision:state.revision+1}});}},event(state,event){{
         const next={{...state,revision:state.revision+1}};
@@ -477,7 +477,7 @@ pub(crate) fn resource_fixture() -> (Input, Vec<Package>) {
         },
         Some(format!(
             r#"
-        const contract={};export function activate(){{return {{Editor:{{contract,component:['composer']}}}};}}
+        const contract={};export function activate(){{return {{Editor:{{contract,kind:'component',component:['composer']}}}};}}
         function frame(state,props,events=[]){{return {{actions:[],events,frame:{{revision:state.revision,state,surface:null,view:{{kind:'component',key:'draft',binding:'editor',member:0,props,on:{{changed:'changed'}}}}}}}};}}
         export const composer={{mount(props){{return frame({{revision:0}},props);}},update(state,props){{return frame({{...state,revision:state.revision+1}},props);}},event(state,event,props){{return frame({{revision:state.revision+1}},props,[{{name:'changed',value:event.event}}]);}},capture(state,props,method,input){{return {{kind:'forward',source:{{child:'draft',method,input}}}};}}}};
     "#,

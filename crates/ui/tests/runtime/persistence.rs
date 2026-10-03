@@ -174,7 +174,7 @@ fn missing_or_wrong_selected_presentation_never_activates_native_code() {
         let observed = calls.clone();
         let mut native = NativeRegistry::<()>::default();
         native
-            .register("maka.ui.surface.desktop", move |_| {
+            .register("maka.ui.surface.desktop", move |_, _values| {
                 observed.set(observed.get() + 1);
                 Ok(BTreeMap::from([(
                     "Surface".into(),
@@ -244,7 +244,7 @@ fn unavailable_native_implementation_is_rejected_before_an_earlier_factory_execu
     let observed = calls.clone();
     let mut native = NativeRegistry::<()>::default();
     native
-        .register("maka.ui.surface.desktop", move |_| {
+        .register("maka.ui.surface.desktop", move |_, _values| {
             observed.set(observed.get() + 1);
             Ok(BTreeMap::from([(
                 "Surface".into(),

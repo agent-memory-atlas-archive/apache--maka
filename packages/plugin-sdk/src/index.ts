@@ -21,7 +21,12 @@
 export type * from './generated/runtime.js';
 export { contracts } from './contracts.js';
 
-import type { ComponentInput, ComponentOutput, CapturePlan } from './generated/runtime.js';
+import type {
+  ComponentInput,
+  ComponentOutput,
+  CapturePlan,
+  ValueBindings,
+} from './generated/runtime.js';
 import type {
   HostRequest,
   HostObservation,
@@ -34,12 +39,21 @@ export type Output<State = unknown> = Omit<ComponentOutput, 'frame'> & {
   frame: Omit<ComponentOutput['frame'], 'state'> & { state: State };
 };
 
+/** Detached snapshots of this activation's captured immutable value imports. */
+export type ComponentValues = { readonly [K in keyof ValueBindings]: Readonly<ValueBindings[K]> };
+
 /** Synchronous declarative callbacks; no promises or native ownership in a frame. */
 export interface Component<State = unknown, Props = unknown> {
-  mount(props: Props): Output<State>;
-  update(state: State, props: Props): Output<State>;
-  event(state: State, input: ComponentInput, props: Props): Output<State>;
-  capture?(state: State, props: Props, method: string, input: unknown): CapturePlan;
+  mount(props: Props, values: ComponentValues): Output<State>;
+  update(state: State, props: Props, values: ComponentValues): Output<State>;
+  event(state: State, input: ComponentInput, props: Props, values: ComponentValues): Output<State>;
+  capture?(
+    state: State,
+    props: Props,
+    method: string,
+    input: unknown,
+    values: ComponentValues,
+  ): CapturePlan;
 }
 
 /** Provided by the actual invocation. Retaining it does not retain request resources. */

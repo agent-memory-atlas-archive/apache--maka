@@ -115,7 +115,7 @@ pub(crate) fn provide<V: ?Sized + 'static>(
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Configuration {}
-    native.register(CALLER_HISTORY, move |configuration: &Value| {
+    native.register(CALLER_HISTORY, move |configuration: &Value, _values| {
         serde_json::from_value::<Configuration>(configuration.clone())
             .map_err(|error| crate::Error::Invalid(error.to_string()))?;
         Ok(BTreeMap::from([(

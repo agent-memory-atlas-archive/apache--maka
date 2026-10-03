@@ -327,7 +327,11 @@ fn mount_emission_can_remove_a_whole_private_subtree_without_renderer_ack() {
 
 struct NativeEmitter;
 impl NativeComponent<()> for NativeEmitter {
-    fn call(&self, call: ComponentCall<'_>) -> maka_ui::Result<ComponentOutput<Presentation<()>>> {
+    fn call(
+        &self,
+        call: ComponentCall<'_>,
+        _values: &maka_ui::abi::ValueBindings,
+    ) -> maka_ui::Result<ComponentOutput<Presentation<()>>> {
         let (state, events) = match call {
             ComponentCall::Mount { props } => (
                 json!({"revision":0,"count":props["initial"],"label":props["label"]}),
@@ -418,7 +422,7 @@ fn native_application(
     packages.extend([root, native]);
     let mut registry = NativeRegistry::with_surface(PresentationTarget::Desktop);
     registry
-        .register("test.events", move |_| {
+        .register("test.events", move |_, _values| {
             Ok(BTreeMap::from([(
                 "Counter".into(),
                 NativeExport {
@@ -440,7 +444,11 @@ fn native_application(
 }
 struct PaddedEmitter;
 impl NativeComponent<()> for PaddedEmitter {
-    fn call(&self, call: ComponentCall<'_>) -> maka_ui::Result<ComponentOutput<Presentation<()>>> {
+    fn call(
+        &self,
+        call: ComponentCall<'_>,
+        _values: &maka_ui::abi::ValueBindings,
+    ) -> maka_ui::Result<ComponentOutput<Presentation<()>>> {
         let (state, events) = match call {
             ComponentCall::Mount { props } => (
                 json!({"revision":0,"count":props["initial"],"label":props["label"],"padding":"x".repeat(930_000)}),

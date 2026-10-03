@@ -51,6 +51,7 @@ impl NativeComponent<dyn Widget> for LabelComponent {
     fn call(
         &self,
         call: ComponentCall<'_>,
+        _values: &maka_ui::abi::ValueBindings,
     ) -> maka_ui::Result<ComponentOutput<Presentation<dyn Widget>>> {
         let (props, revision) = match call {
             ComponentCall::Mount { props } => (props, 0),
@@ -83,7 +84,7 @@ pub fn registry() -> NativeRegistry<dyn Widget> {
     let mut registry =
         NativeRegistry::with_surface(maka_plugin_core::composition::PresentationTarget::Tui);
     registry
-        .register("maka.ui.label", |_| {
+        .register("maka.ui.label", |_, _values| {
             Ok(BTreeMap::from([(
                 "Label".into(),
                 NativeExport {

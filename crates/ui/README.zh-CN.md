@@ -170,3 +170,19 @@ action 包装；成功 query 的完整交付超限时返回 `failed`，保留健
 页大小后重试查询，不会重新执行 mutation。恢复界面和回执读取仍由显式组合的插件提供。
 所有 consumer 共用字节预算；JS 整数与编码限制只在实际 JS 回调边界检查。
 原生回调精确保留 Rust JSON 整数，即使它返回可移植的树呈现。
+
+
+不可变值使用普通 `Interface::Value` 导出。JS 激活返回有显式 kind 的 `UiExport`：
+component 携带捕获的回调路径，value 携带按 schema 校验的数据；原生工厂返回
+`NativeCapability::Value`。工厂接收 `(configuration, values)`；JS 的 activate、mount、
+update、event、capture 的最后一个参数都是 `ValueBindings`；原生 call 使用第二参数，
+capture 从 `CaptureCall.values` 读取。只包含当前消费者显式 Value imports，保留成员
+顺序及 optional 空列表。这些是复制的纯 JSON 观察值，不授予服务权限；guest 修改
+副本不能修改提供者。
+
+loading 时捕获实际 capability，后续 inspect 原 registration，不重新按名字绑定。
+完整 borrowed 入参在值复制前受 1 MiB 限额；重复 import 的每次出现都计量，JS 精度
+检查在 guest 进入前完成，原生消费者保留精确整数。注册值与已提交 frame 共用应用
+32 MiB 序列化保留额度，退休不等于回收，真实 registration 清理后才释放。值在本次
+activation 内不可变；live reconcile 与窗口/局部主题投影仍需继续实现，不能据此宣称
+完整主题切换或产品已交付。

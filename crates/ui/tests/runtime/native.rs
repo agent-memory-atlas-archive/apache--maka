@@ -37,6 +37,7 @@ impl NativeComponent<String> for Counter {
     fn call(
         &self,
         call: ComponentCall<'_>,
+        _values: &maka_ui::abi::ValueBindings,
     ) -> maka_ui::Result<ComponentOutput<Presentation<String>>> {
         self.calls.set(self.calls.get() + 1);
         let state = match call {
@@ -73,7 +74,7 @@ impl NativeComponent<String> for Counter {
 fn registered(contract: Contract, calls: Rc<Cell<usize>>) -> NativeRegistry<String> {
     let mut registry = NativeRegistry::with_surface(PresentationTarget::Desktop);
     registry
-        .register("test.counter", move |_| {
+        .register("test.counter", move |_, _values| {
             Ok(BTreeMap::from([(
                 "Counter".into(),
                 NativeExport {
@@ -196,7 +197,7 @@ fn native_availability_is_not_activation_and_actual_contract_or_value_mismatches
                 contract.version += 1;
             }
             registry
-                .register("test.counter", move |_| {
+                .register("test.counter", move |_, _values| {
                     Ok(BTreeMap::from([(
                         "Counter".into(),
                         NativeExport {
@@ -215,7 +216,9 @@ fn native_availability_is_not_activation_and_actual_contract_or_value_mismatches
             if failure == 3 {
                 // Extra implementation availability must remain inert.
                 registry
-                    .register("unused", |_| panic!("unselected native factory activated"))
+                    .register("unused", |_, _values| {
+                        panic!("unselected native factory activated")
+                    })
                     .unwrap();
             }
         }
@@ -256,6 +259,7 @@ impl NativeComponent<String> for Root {
     fn call(
         &self,
         call: ComponentCall<'_>,
+        _values: &maka_ui::abi::ValueBindings,
     ) -> maka_ui::Result<ComponentOutput<Presentation<String>>> {
         assert!(matches!(call, ComponentCall::Mount { .. }));
         Ok(Frame {
@@ -298,7 +302,7 @@ fn native_root_uses_explicit_surface_and_can_compose_an_imported_component() {
     packages.push(root);
     let mut registry = registered(contract, Rc::new(Cell::new(0)));
     registry
-        .register("test.root", move |_| {
+        .register("test.root", move |_, _values| {
             Ok(BTreeMap::from([(
                 "App".into(),
                 NativeExport {
@@ -338,6 +342,7 @@ impl NativeComponent<String> for SlotParent {
     fn call(
         &self,
         call: ComponentCall<'_>,
+        _values: &maka_ui::abi::ValueBindings,
     ) -> maka_ui::Result<ComponentOutput<Presentation<String>>> {
         let mut next = match call {
             ComponentCall::Mount { .. } => {
@@ -484,7 +489,7 @@ fn native_parent_slots_share_js_child_events_rollback_identity_and_retirement() 
     packages.push(parent);
     let mut native = NativeRegistry::with_surface(PresentationTarget::Desktop);
     native
-        .register("test.slot-parent", move |_| {
+        .register("test.slot-parent", move |_, _values| {
             Ok(BTreeMap::from([(
                 "App".into(),
                 NativeExport {

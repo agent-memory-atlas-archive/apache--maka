@@ -23,11 +23,30 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Actual exports from a local JavaScript entry. Values are immutable for this
+/// activation; component paths are captured before publication.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ComponentActivation {
-    pub contract: Contract,
-    pub component: Vec<String>,
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum UiExport {
+    Component {
+        contract: Contract,
+        component: Vec<String>,
+    },
+    Value {
+        contract: Contract,
+        value: Value,
+    },
+}
+
+/// Read-only data copied from this activation's captured value imports.
+/// The keys and member order come from its checked plan, never guest routing.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(transparent)]
+pub struct ValueBindings(pub std::collections::BTreeMap<String, Vec<Value>>);
+impl ValueBindings {
+    pub fn get(&self, import: &str) -> Option<&[Value]> {
+        self.0.get(import).map(Vec::as_slice)
+    }
 }
 
 /// Input origin is assigned by the application, never by plugin event payloads.

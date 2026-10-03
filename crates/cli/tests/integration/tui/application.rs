@@ -31,7 +31,7 @@ fn packages(directory: &std::path::Path, poisoned: bool) -> Vec<String> {
         let source = std::str::from_utf8(original.file("terminal.mjs").unwrap())
             .unwrap()
             .replace(
-                "return {App:{contract,component:['app']}};",
+                "return {App:{contract,kind:'component',component:['app']}};",
                 r"throw new Error('\u001b]52;c;hostile\u0007');",
             );
         let package = Package::new(BTreeMap::from([
