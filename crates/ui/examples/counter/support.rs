@@ -767,3 +767,24 @@ frame=(state)=>{
     packages.push(root);
     (input, packages)
 }
+
+/// A plain dynamically loaded component defines a new visual control and its
+/// business rules through the production desktop scene compiler.
+#[allow(dead_code)] // Shared by examples and desktop tests, not every support.rs consumer.
+pub(crate) fn canvas_fixture() -> (Input, Vec<Package>) {
+    let (mut input, mut packages) = fixture("");
+    let old = packages.pop().unwrap();
+    let declaration = old.manifest().application.clone().unwrap();
+    let contract = &declaration.entries[&EntryTarget::Desktop].exports["App"].contract;
+    let source = include_str!("canvas.mjs").replace(
+        "const contract = null;",
+        &format!(
+            "const contract = {};",
+            serde_json::to_string(contract).unwrap()
+        ),
+    );
+    let app = package("dynamic.canvas", declaration, Some(source));
+    input.instances.get_mut("app").unwrap().package = app.application_ref().into();
+    packages.push(app);
+    (input, packages)
+}

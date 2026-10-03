@@ -39,6 +39,19 @@ across layout changes; removing or changing their kind closes old input admissio
 The compiler validates bounded shapes, styles and numeric values against the
 original JSON before narrowing to native floats, within the callback deadline.
 
+
+`Canvas` adds bounded Rect/Line/Text commands and explicit button-like regions
+under `contents`. Plugins supply drawing and synchronous pointer/key/drop rules;
+native owners supply focus, accessibility activation and optional drag outlines.
+Paint performs no plugin work. Down/AX use the original painted input; continuing
+gestures and early KeyDown interception use the same owner's latest dispatcher.
+Unsubscribed moves stay native. Changing a region's admission or interaction route,
+removing it, losing focus or deactivating its window cancels the original gesture.
+Coordinates use f64 bounds before native conversion; pointer positions follow the
+last painted canvas and drag deltas remain in window coordinates. Rectangles are
+RGBA; line widths and single-line text are bounded. Try the ordinary dynamic
+[workflow example](../ui/examples/counter/canvas.mjs) with the `canvas` export mode.
+
 `Input` dispatch returns a committed `InputDecision`. `bind` applies default prevention and propagation only during its current native listener; rejected batches prevent defaults and stop propagation. It cannot reverse earlier native actions or mouse-down focus. Owner observations call the dispatcher without applying those flags to an already completed event. Desktop synchronizes native effects after kernel commit; a native synchronization failure retains the committed decision and is diagnosed separately.
 
 `Widget::create` returns renderer-owned resource state; `capture` takes bounded
@@ -49,7 +62,7 @@ finish destruction. `render` reads that owner, receives its exact committed chil
 must not keep Entity, Input, Slots, subscriptions or resource leases. Retained
 Elements and virtual-list callbacks may clone `Slots`, holding real custody for
 only the original subtree and window. Removed or recreated owners reject old
-handles. Multiple layout measurements are valid; one successful display may place
+handles. Captured recipes and Slots cannot render against a replaced frame revision. Multiple layout measurements are valid; one successful display may place
 one mount once. Native invariant violations are trusted-code failures, without a
 sandbox or fake cleanup receipt.
 

@@ -82,7 +82,9 @@ Desktop 的窗口清理 owner 独立于视觉 Surface。逻辑移除撤销输入
 
 生成示例时在输出目录后加 `composed`，即可使用独立包提供的计数器组件；
 生成器将全部选中包保存在 Root。改用 `native` 可显式导入编译的 Label；它直接使用 GPUI 样式，布局位置与
-props 由产品决定。同步 consume/default 决策仍未实现。
+props 由产品决定。平台在实际原生监听阶段应用同步输入决定。
+
+使用 `canvas` 导出动态工作流面板：插件定义吸附、放置与键盘规则，原生层负责绘制、焦点与拖拽追踪。
 
 使用 `editor` 可在存储组合中导入 Kit Textarea。Rust 契约表达
 初始文本、基于原生 revision 的 replace/reset 命令、元数据观察与命令回执；原生 buffer

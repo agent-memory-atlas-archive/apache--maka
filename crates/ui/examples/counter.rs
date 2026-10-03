@@ -29,6 +29,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir(&output)?;
     let (input, packages) = if std::env::args().nth(2).as_deref() == Some("dual") {
         support::dual_fixture("return frame({count:state.count+1,revision:state.revision+1});")
+    } else if std::env::args().nth(2).as_deref() == Some("canvas") {
+        support::canvas_fixture()
     } else if std::env::args().nth(2).as_deref() == Some("workspace") {
         support::workspace_fixture()
     } else if std::env::args().nth(2).as_deref() == Some("resource") {

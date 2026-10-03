@@ -66,10 +66,27 @@ impl Surface {
                 return Err(maka_ui::Error::Invalid("window owner mismatch".into()));
             }
             let result = view.update(cx, |view, cx| {
-                let decision =
+                let result =
                     view.application
                         .borrow_mut()
-                        .dispatch(lease.mount(), revision, key, event)?;
+                        .dispatch(lease.mount(), revision, key, event);
+                let decision = match result {
+                    Ok(decision) => decision,
+                    Err(error) => {
+                        // Faulted realms can retain their last display pending
+                        // recovery. Revoke their native input without replaying
+                        // commands from that already committed frame.
+                        if let Err(cleanup) = view.resources.borrow_mut().deactivate_unmounted(
+                            &view.application.borrow(),
+                            window,
+                            cx,
+                        ) {
+                            eprintln!("component input deactivation failed: {cleanup}");
+                        }
+                        cx.notify();
+                        return Err(error);
+                    }
+                };
                 // The plugin transaction has committed. Native effects have
                 // their own receipts; failure cannot undo its input decision.
                 if let Err(error) = view.sync_native(window, cx) {
@@ -97,6 +114,9 @@ impl Surface {
             .deactivate_unmounted(&application, window, cx)?;
         for mount in application.mounted_subtree(&self.mount)? {
             self.resources.borrow_mut().prepare_scope(&mount);
+            if application.is_retiring(&mount) {
+                continue;
+            }
             let frame = application.frame(&mount)?;
             let id = mount.id().to_string();
             let native = &frame.view;
@@ -159,6 +179,9 @@ impl Surface {
             })?;
         let application = self.application.borrow();
         for mount in application.mounted_subtree(&self.mount)? {
+            if application.is_retiring(&mount) {
+                continue;
+            }
             let frame = application.frame(&mount)?;
             let native = &frame.view;
             let mut resources = self.resources.borrow_mut();
@@ -281,6 +304,11 @@ impl RenderScene {
                     .is_some_and(|token| Rc::ptr_eq(token, &owner.identity))
             })
             .ok_or_else(|| maka_ui::Error::Invalid("captured native owner replaced".into()))?;
+        if owner.revision != Some(entry.frame.revision) {
+            return Err(maka_ui::Error::Invalid(
+                "captured scene revision replaced".into(),
+            ));
+        }
         let slots = self.slots();
         let content = entry
             .frame
@@ -322,7 +350,9 @@ impl RenderScene {
                     .borrow()
                     .owners
                     .get(&parent)
-                    .is_some_and(|o| Rc::ptr_eq(token, &o.identity))
+                    .is_some_and(|o| {
+                        Rc::ptr_eq(token, &o.identity) && o.revision == Some(entry.frame.revision)
+                    })
             {
                 return Err(maka_ui::Error::Invalid("slot parent owner replaced".into()));
             }
@@ -1165,3 +1195,6 @@ fn javascript_scene_style_overflow_rejects_batch_and_preserves_original_frame() 
         app.shutdown().unwrap();
     }
 }
+
+#[cfg(test)]
+mod canvas_tests;

@@ -34,6 +34,16 @@ slots；局部 key 在布局改变时保留同一机械焦点/滚动 owner，删
 准入。编译器在回调 deadline 内检查形状、样式和数值限额；原 JSON 先验证，再缩窄为
 原生浮点数。
 
+
+`Canvas` 在 `contents` 中提供有界 Rect/Line/Text 绘制命令与显式按钮型区域。
+插件定义绘制、鼠标、键盘与放置的同步规则；原生 Owner 提供焦点、辅助功能激活和
+可选拖拽轮廓。绘制不执行插件。Down/AX 保留原实际绘制的输入；持续手势与提前的
+KeyDown 拦截读取同一 Owner 的最新 dispatcher。未订阅的 move 完全在原生层完成。
+区域删除、准入或交互路由改变、失焦或窗口失活都会取消原手势。
+几何先以有界 f64 验证，再转原生数值；指针位置使用最后实际绘制的 Canvas 坐标，
+拖拽差量始终使用窗口坐标。颜色为 RGBA，线宽与单行文本均有界。
+可用 `canvas` 导出模式运行普通动态[工作流示例](../ui/examples/counter/canvas.mjs)。
+
 `Input` 派发返回已提交的 `InputDecision`。`bind` 仅在当前原生监听器内阻止默认行为或传播；批次失败时拒绝默认行为并停止传播。它不能撤销更早的原生 action 或 mouse-down 焦点。Owner 观察直接调用 dispatcher，不把标志应用到已完成输入。Desktop 在内核提交后同步原生副作用；同步失败单独诊断，仍保留已提交决定。
 
 `Widget::create` 返回呈现器拥有的资源状态；`capture` 捕获有界请求私有快照，
@@ -42,7 +52,7 @@ slots；局部 key 在布局改变时保留同一机械焦点/滚动 owner，删
 交给 presenter。
 recipe 不能持有 Entity、Input、Slots、订阅或资源凭证。保留的 Element 和虚拟列表
 回调可以 clone Slots，只保有原子树与窗口的真实清理职责。移除或重建 owner 后，
-旧 handle 明确拒绝。布局测量可以重复，一次成功显示每个 mount 只可放置一次。
+旧 handle 明确拒绝；缓存的 recipe 与 Slots 不能在已替换的 frame revision 上重新渲染。布局测量可以重复，一次成功显示每个 mount 只可放置一次。
 原生不变量错误属于受信代码故障，不提供沙箱隔离或假的清理回执。
 
 参见[桌面所有权](../desktop/README.zh-CN.md)与[共用内核](../ui/README.zh-CN.md)。

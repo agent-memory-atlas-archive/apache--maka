@@ -17,6 +17,8 @@
  * under the License.
  */
 
+pub mod canvas;
+
 use maka_ui::{ComponentSlot, NativeView};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -69,6 +71,12 @@ pub enum Node {
         #[serde(default)]
         tab_index: i16,
     },
+    Canvas {
+        key: String,
+        contents: canvas::Contents,
+        #[serde(default)]
+        style: Style,
+    },
     Component(ComponentSlot),
 }
 impl Node {
@@ -85,7 +93,10 @@ impl Node {
             return Err("scene compilation deadline".into());
         }
         let key = match self {
-            Self::Stack { key, .. } | Self::Text { key, .. } | Self::Button { key, .. } => key,
+            Self::Stack { key, .. }
+            | Self::Text { key, .. }
+            | Self::Button { key, .. }
+            | Self::Canvas { key, .. } => key,
             Self::Component(slot) => &slot.key,
         };
         if depth > 32
@@ -97,7 +108,9 @@ impl Node {
             return Err("invalid or duplicate UI node identity".into());
         }
         match self {
-            Self::Stack { style, .. } | Self::Text { style, .. } => style.validate()?,
+            Self::Stack { style, .. } | Self::Text { style, .. } | Self::Canvas { style, .. } => {
+                style.validate()?
+            }
             Self::Button {
                 style,
                 hover,
@@ -140,6 +153,7 @@ impl Node {
                     return Err("invalid button label".into());
                 }
             }
+            Self::Canvas { contents, .. } => contents.validate(deadline)?,
             Self::Component(slot) => {
                 if slot.binding.is_empty() || slot.binding.len() > 128 {
                     return Err("invalid slot binding".into());
@@ -169,6 +183,16 @@ impl Node {
                     return Err("scene input limit".into());
                 }
                 inputs.insert(key.clone(), json!(true));
+            }
+            Self::Canvas { key, .. } => {
+                if inputs.len() >= 64 {
+                    return Err("scene input limit".into());
+                }
+                inputs.insert(
+                    key.clone(),
+                    serde_json::to_value(schemars::schema_for!(canvas::CanvasInput))
+                        .expect("canvas input schema"),
+                );
             }
             Self::Stack { children, .. } => {
                 for child in children {
@@ -208,6 +232,12 @@ pub fn compile(
                 return Err(maka_ui::Error::Invalid("scene compilation deadline".into()));
             }
         }
+        if source.get("kind").and_then(Value::as_str) == Some("canvas")
+            && let Some(contents) = source.get("contents")
+        {
+            canvas::Contents::preflight(contents, count, deadline)
+                .map_err(maka_ui::Error::Invalid)?;
+        }
         if let Some(children) = source.get("children").and_then(Value::as_array) {
             for child in children {
                 scan(child, depth + 1, count, deadline)?;
@@ -216,8 +246,7 @@ pub fn compile(
         Ok(())
     }
     scan(source, 0, &mut 0, deadline)?;
-    let node: Node = serde_json::from_value(source.clone())
-        .map_err(|e| maka_ui::Error::Invalid(e.to_string()))?;
+    let node = Node::deserialize(source).map_err(|e| maka_ui::Error::Invalid(e.to_string()))?;
     node.validate_root(deadline)
         .map_err(maka_ui::Error::Invalid)?;
     let mut slots = vec![];
@@ -242,16 +271,19 @@ struct SceneState {
     input: super::LiveInput,
     buttons: BTreeMap<String, ButtonState>,
     scrolls: BTreeMap<String, gpui_kit::ScrollHandle>,
+    canvases: BTreeMap<String, canvas::State>,
 }
 impl SceneState {
     fn reconcile(&mut self, root: &Node, window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
         let mut buttons = std::mem::take(&mut self.buttons);
         let mut scrolls = std::mem::take(&mut self.scrolls);
+        let mut canvases = std::mem::take(&mut self.canvases);
         fn visit(
             node: &Node,
             current: &mut SceneState,
             buttons: &mut BTreeMap<String, ButtonState>,
             scrolls: &mut BTreeMap<String, gpui_kit::ScrollHandle>,
+            canvases: &mut BTreeMap<String, canvas::State>,
             window: &mut gpui_kit::Window,
             cx: &mut gpui_kit::App,
         ) {
@@ -277,6 +309,13 @@ impl SceneState {
                     }
                     current.buttons.insert(key.clone(), button);
                 }
+                Node::Canvas { key, contents, .. } => {
+                    let mut canvas = canvases.remove(key).unwrap_or_else(|| {
+                        canvas::State::new(key.clone(), contents, current.input.clone(), window, cx)
+                    });
+                    canvas.reconcile(contents, window, cx);
+                    current.canvases.insert(key.clone(), canvas);
+                }
                 Node::Stack {
                     key,
                     scroll,
@@ -289,13 +328,24 @@ impl SceneState {
                             .insert(key.clone(), scrolls.remove(key).unwrap_or_default());
                     }
                     for child in children {
-                        visit(child, current, buttons, scrolls, window, cx);
+                        visit(child, current, buttons, scrolls, canvases, window, cx);
                     }
                 }
                 _ => {}
             }
         }
-        visit(root, self, &mut buttons, &mut scrolls, window, cx);
+        visit(
+            root,
+            self,
+            &mut buttons,
+            &mut scrolls,
+            &mut canvases,
+            window,
+            cx,
+        );
+        for canvas in canvases.values_mut() {
+            canvas.deactivate(window, cx);
+        }
         for button in buttons.values() {
             if button.focus.is_focused(window) {
                 window.blur(cx);
@@ -314,6 +364,7 @@ impl super::Widget for Node {
             input,
             buttons: BTreeMap::new(),
             scrolls: BTreeMap::new(),
+            canvases: BTreeMap::new(),
         };
         state.reconcile(self, window, cx);
         Box::new(state)
@@ -336,6 +387,9 @@ impl super::Widget for Node {
         cx: &mut gpui_kit::App,
     ) {
         let state = state.downcast_mut::<SceneState>().expect("scene owner");
+        for canvas in state.canvases.values_mut() {
+            canvas.deactivate(window, cx);
+        }
         for button in state.buttons.values_mut() {
             button.admitted.set(false);
             button.focus = button.focus.clone().tab_stop(false).tab_index(-1);
@@ -462,6 +516,17 @@ impl Node {
                     .child(SharedString::from(label.clone()))
                     .on_click(slots.input.bind(key.clone(), |_| json!({"kind":"click"})))
                     .into_any_element()
+            }
+            Self::Canvas {
+                key,
+                contents,
+                style,
+            } => {
+                let canvas = state
+                    .canvases
+                    .get(key)
+                    .ok_or_else(|| maka_ui::Error::Invalid("scene canvas owner replaced".into()))?;
+                canvas.render(contents, style, slots.input.clone())
             }
             Self::Component(slot) => slots.render(&slot.key, window, cx)?,
             Self::Stack {

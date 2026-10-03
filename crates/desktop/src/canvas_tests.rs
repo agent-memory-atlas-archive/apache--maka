@@ -1,0 +1,329 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::*;
+use gpui_kit::{
+    AnyWindowHandle, Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    PlatformInput,
+};
+use serde_json::{Value, json};
+struct Scene {
+    window: AnyWindowHandle,
+    surface: Entity<Surface>,
+    app: Rc<RefCell<DesktopApplication>>,
+    resources: Rc<RefCell<resources::NativeResources>>,
+    root: Mount,
+}
+impl Scene {
+    fn new(cx: &mut TestAppContext, timer: &tokio::runtime::Runtime, mode: &str) -> Self {
+        let (input, packages) = support::canvas_fixture();
+        let mut application = Application::new(
+            &input,
+            packages,
+            timer.handle().clone(),
+            Default::default(),
+            widgets::registry(),
+            Default::default(),
+        )
+        .unwrap();
+        let root = application.mount_launch(json!({"mode":mode})).unwrap();
+        let app = Rc::new(RefCell::new(application));
+        let (wake, receipts) = tokio::sync::mpsc::unbounded_channel();
+        let resources = Rc::new(RefCell::new(resources::NativeResources::new(
+            root.clone(),
+            wake,
+        )));
+        let (window, surface) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        point(px(0.), px(0.)),
+                        size(px(640.), px(420.)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    window_owner::start(
+                        window,
+                        cx,
+                        resources.clone(),
+                        app.clone(),
+                        receipts,
+                        |outcome, _| outcome.unwrap(),
+                    )
+                    .unwrap()
+                    .detach();
+                    let surface = cx.new(|_| Surface {
+                        application: app.clone(),
+                        resources: resources.clone(),
+                        mount: root.clone(),
+                    });
+                    surface.update(cx, |s, cx| s.sync_native(window, cx).unwrap());
+                    surface
+                },
+            )
+            .unwrap()
+        });
+        let scene = Self {
+            window,
+            surface,
+            app,
+            resources,
+            root,
+        };
+        scene.draw(cx);
+        scene
+    }
+    fn draw(&self, cx: &mut TestAppContext) {
+        cx.update_window(self.window, |_, w, cx| {
+            self.surface
+                .update(cx, |s, cx| s.sync_native(w, cx).unwrap());
+            w.refresh();
+            w.draw(cx).clear(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+    fn state(&self) -> Value {
+        self.app.borrow().frame(&self.root).unwrap().state.clone()
+    }
+    fn down(&self, cx: &mut TestAppContext, x: f32, y: f32) {
+        cx.update_window(self.window, |_, w, cx| {
+            w.dispatch_event(
+                PlatformInput::MouseDown(MouseDownEvent {
+                    button: MouseButton::Left,
+                    position: point(px(x), px(y)),
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }),
+                cx,
+            );
+        })
+        .unwrap();
+    }
+    fn move_to(&self, cx: &mut TestAppContext, x: f32, y: f32) {
+        cx.update_window(self.window, |_, w, cx| {
+            w.dispatch_event(
+                PlatformInput::MouseMove(MouseMoveEvent {
+                    position: point(px(x), px(y)),
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Modifiers::default(),
+                }),
+                cx,
+            );
+        })
+        .unwrap();
+    }
+    fn up(&self, cx: &mut TestAppContext, x: f32, y: f32) {
+        cx.update_window(self.window, |_, w, cx| {
+            w.dispatch_event(
+                PlatformInput::MouseUp(MouseUpEvent {
+                    button: MouseButton::Left,
+                    position: point(px(x), px(y)),
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                }),
+                cx,
+            );
+        })
+        .unwrap();
+    }
+    fn close(self, cx: &mut TestAppContext) {
+        cx.update_window(self.window, |_, w, _| w.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+    }
+}
+fn timer() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_time()
+        .build()
+        .unwrap()
+}
+#[gpui::test]
+fn ordinary_dynamic_canvas_rules_commit_real_native_drag_keyboard_and_accessibility(
+    cx: &mut TestAppContext,
+) {
+    let timer = timer();
+    let scene = Scene::new(cx, &timer, "ok");
+    let original = cx
+        .update_window(scene.window, |_, w, cx| {
+            scene.surface.update(cx, |s, cx| s.scene(w, cx))
+        })
+        .unwrap();
+    // Capture uses the real presenter custody before any component updates.
+    let original = original.unwrap();
+    scene.down(cx, 60., 180.);
+    assert_eq!(scene.state()["calls"], 1);
+    cx.update_window(scene.window, |_, w, cx| assert!(w.focused(cx).is_some()))
+        .unwrap();
+    scene.draw(cx);
+    scene.move_to(cx, 380., 200.);
+    scene.draw(cx);
+    assert_eq!(
+        scene.state()["calls"],
+        1,
+        "native high frequency dragging executes no guest move rule"
+    );
+    scene.up(cx, 380., 200.);
+    assert_eq!(scene.state()["calls"], 2);
+    assert_eq!(scene.state()["x"], 360);
+    assert_eq!(scene.state()["y"], 180);
+    assert_eq!(scene.state()["placed"], true);
+    cx.update_window(scene.window, |_, w, cx| {
+        assert!(
+            original.render(w, cx).is_err(),
+            "retained old recipe cannot resolve new region state"
+        )
+    })
+    .unwrap();
+    scene.draw(cx);
+    cx.simulate_keystrokes(scene.window, "left");
+    assert_eq!(scene.state()["x"], 340);
+    scene.draw(cx);
+    scene.down(cx, 350., 200.);
+    scene.draw(cx);
+    scene.move_to(cx, 50., 200.);
+    scene.up(cx, 50., 200.);
+    assert_eq!(
+        scene.state()["x"],
+        340,
+        "invalid drop leaves business geometry committed at its prior location"
+    );
+    scene.draw(cx);
+    cx.activate_accessibility(scene.window);
+    scene.draw(cx);
+    let target = cx
+        .accessibility_update(scene.window)
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|(_, n)| {
+            n.label() == Some("Refine the experience") && n.role() == gpui_kit::Role::Button
+        })
+        .unwrap()
+        .0;
+    cx.simulate_accessibility_action(
+        scene.window,
+        gpui_kit::accesskit::ActionRequest {
+            action: gpui_kit::AccessibleAction::Click,
+            target_tree: gpui_kit::accesskit::TreeId::ROOT,
+            target_node: target,
+            data: None,
+        },
+    );
+    assert_eq!(scene.state()["last"]["kind"], "activate");
+    drop(original);
+    scene.close(cx);
+}
+#[gpui::test]
+fn canvas_callback_can_reconcile_original_owner_and_revoke_pending_defaults(
+    cx: &mut TestAppContext,
+) {
+    let timer = timer();
+    for mode in ["disable", "remove"] {
+        let scene = Scene::new(cx, &timer, mode);
+        scene.down(cx, 60., 180.);
+        assert_eq!(
+            scene.state()["calls"],
+            1,
+            "rule commits while original native callback is active"
+        );
+        cx.update_window(scene.window, |_, w, cx| {
+            assert!(
+                w.focused(cx).is_none(),
+                "postcommit revocation prevents pending native focus"
+            )
+        })
+        .unwrap();
+        scene.move_to(cx, 380., 200.);
+        scene.up(cx, 380., 200.);
+        assert_eq!(
+            scene.state()["calls"],
+            1,
+            "pending gesture was never admitted"
+        );
+        scene.close(cx);
+    }
+}
+#[gpui::test]
+fn canvas_failure_preserves_paint_and_only_retirement_closes_native_admission(
+    cx: &mut TestAppContext,
+) {
+    let timer = timer();
+    for mode in ["invalid", "throw"] {
+        let scene = Scene::new(cx, &timer, mode);
+        let before = cx
+            .update_window(scene.window, |_, w, _| {
+                w.painted_quads()
+                    .into_iter()
+                    .filter(|q| q.bounds.size.width > gpui_kit::ScaledPixels(200.))
+                    .map(|q| (q.bounds, q.background))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap();
+        scene.down(cx, 60., 180.);
+        assert_eq!(scene.state()["revision"], 0);
+        assert_eq!(scene.state()["calls"], 0);
+        let retiring = mode == "throw";
+        assert_eq!(scene.app.borrow().is_retiring(&scene.root), retiring);
+        assert_eq!(
+            scene.resources.borrow().owners[&scene.root.id().to_string()]
+                .input
+                .0
+                .borrow()
+                .is_none(),
+            retiring
+        );
+        cx.update_window(scene.window, |_, w, cx| assert!(w.focused(cx).is_none()))
+            .unwrap();
+        scene.draw(cx);
+        let after = cx
+            .update_window(scene.window, |_, w, _| {
+                w.painted_quads()
+                    .into_iter()
+                    .filter(|q| q.bounds.size.width > gpui_kit::ScaledPixels(200.))
+                    .map(|q| (q.bounds, q.background))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap();
+        assert!(!before.is_empty());
+        assert_eq!(
+            after, before,
+            "last committed commands remain actually painted after rejected rule"
+        );
+        assert_eq!(
+            scene.resources.borrow().owners[&scene.root.id().to_string()]
+                .input
+                .0
+                .borrow()
+                .is_none(),
+            retiring,
+            "later synchronization cannot reactivate a retiring owner"
+        );
+        scene.move_to(cx, 380., 200.);
+        scene.up(cx, 380., 200.);
+        assert_eq!(scene.state()["revision"], 0);
+        scene.close(cx);
+    }
+}

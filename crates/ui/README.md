@@ -120,7 +120,10 @@ Add `composed` after the output directory for a separately packaged counter, or
 `native` for an explicitly imported compiled Label; the generator persists all
 selected packages. The label's styling is rendered directly by GPUI,
 outside the tree primitive set; its placement and props belong to the product.
-Synchronous event consume/default decisions remain pending.
+The platform applies synchronous input decisions at the native listener phase.
+
+Use `canvas` for a dynamically packaged workflow board with plugin-defined
+snapping/drop/key rules and native drawing, focus and drag tracking.
 
 Use `editor` instead of `native` to persist a composition importing the native Kit
 Textarea. Its Rust contract describes initial text, explicit

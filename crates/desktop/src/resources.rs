@@ -166,8 +166,13 @@ impl NativeResources {
             .into_iter()
             .map(|mount| mount.id().to_string())
             .collect();
+        let retiring: BTreeSet<_> = application
+            .retiring_mounts()
+            .into_iter()
+            .map(|mount| mount.id().to_string())
+            .collect();
         for (id, owner) in &mut self.owners {
-            if !visible.contains(id) {
+            if !visible.contains(id) || retiring.contains(id) {
                 owner.deactivate(window, cx);
             }
         }
