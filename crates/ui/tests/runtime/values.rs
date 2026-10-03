@@ -125,7 +125,7 @@ fn fixture(
         .instances
         .insert("brand".into(), support::node(&provider, 99));
     packages.extend([provider, app]);
-    let mut native = NativeRegistry::with_surface(PresentationTarget::Desktop);
+    let mut native = crate::support::scene::registry(PresentationTarget::Desktop);
     native
         .register("test.palette", move |_, _| {
             Ok(BTreeMap::from([(
@@ -248,7 +248,7 @@ fn values_and_committed_frames_share_one_retained_budget() {
         .instances
         .insert("large".into(), support::node(&provider, 200));
     packages.push(provider);
-    let mut native = NativeRegistry::with_surface(PresentationTarget::Desktop);
+    let mut native = crate::support::scene::registry(PresentationTarget::Desktop);
     native
         .register("test.large-values", |_, _| {
             Ok((0..33)
@@ -281,7 +281,7 @@ impl maka_ui::NativeComponent<()> for Exact {
         &self,
         call: maka_ui::ComponentCall<'_>,
         values: &maka_ui::abi::ValueBindings,
-    ) -> maka_ui::Result<maka_ui::ComponentOutput<maka_ui::Presentation<()>>> {
+    ) -> maka_ui::Result<maka_ui::ComponentOutput<maka_ui::NativeView<()>>> {
         assert!(matches!(call, maka_ui::ComponentCall::Mount { .. }));
         Ok(maka_ui::Frame {
             revision: 0,
@@ -292,11 +292,11 @@ impl maka_ui::NativeComponent<()> for Exact {
                 width: 640,
                 height: 400,
             }),
-            view: maka_ui::Presentation::Tree(maka_ui::Node::Text {
+            view: crate::support::scene::view(crate::support::scene::Node::Text {
                 key: "value".into(),
                 text: "Exact".into(),
                 color: 0,
-            }),
+            })?,
         }
         .output(vec![]))
     }

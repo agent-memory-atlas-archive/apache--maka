@@ -55,7 +55,7 @@ fn same_package_has_native_surfaces_and_distinct_layouts_and_paint_never_calls_g
         packages.clone(),
         runtime.handle().clone(),
         Default::default(),
-        maka_ui::NativeRegistry::with_surface(PresentationTarget::Desktop),
+        support::scene::registry(PresentationTarget::Desktop),
         Default::default(),
     )
     .unwrap();
@@ -632,7 +632,7 @@ impl maka_ui::NativeComponent<dyn Widget> for SlotRoot {
         &self,
         call: maka_ui::ComponentCall<'_>,
         _values: &maka_ui::abi::ValueBindings,
-    ) -> maka_ui::Result<maka_ui::ComponentOutput<maka_ui::Presentation<dyn Widget>>> {
+    ) -> maka_ui::Result<maka_ui::ComponentOutput<maka_ui::NativeView<dyn Widget>>> {
         let revision = match call {
             maka_ui::ComponentCall::Mount { .. } => 0,
             maka_ui::ComponentCall::Update { state, .. }
@@ -656,13 +656,13 @@ impl maka_ui::NativeComponent<dyn Widget> for SlotRoot {
             surface: Some(Surface::Terminal {
                 binding: "surface".into(),
             }),
-            view: maka_ui::Presentation::Native(maka_ui::NativeView::new(
+            view: maka_ui::NativeView::new(
                 std::rc::Rc::new(SlotRow {
                     duplicate: self.duplicate,
                 }) as std::rc::Rc<dyn Widget>,
                 [("parent".into(), json!(true))].into(),
                 slots,
-            )?),
+            )?,
         }
         .output(vec![]))
     }

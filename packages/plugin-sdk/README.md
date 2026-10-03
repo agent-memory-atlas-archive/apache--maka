@@ -28,6 +28,15 @@ uses actual invocation-local slots and returns `unknown` for service results.
 Validate those results against the service contract; a TypeScript generic is not
 validation. Numeric bounds, JSON limits and authority are checked by Rust.
 
+`Component<State, Props, View>` lets an entrypoint type its platform's scene
+language. The kernel treats `View` as opaque JSON and delegates interpretation to
+the selected platform's pure scene compiler; there is no shared kernel layout
+language. `ComponentSlot` remains the common child declaration: its binding is
+resolved from the original parent's imports, never from renderer state. Desktop
+and TUI entries can therefore present the same plugin differently. A platform
+must install its compiler before activating JavaScript components. Original scene
+JSON counts toward callback, transaction and retained-frame budgets.
+
 ```sh
 npm run schema:generate -w @maka-agent/plugin-sdk
 npm run schema:check -w @maka-agent/plugin-sdk

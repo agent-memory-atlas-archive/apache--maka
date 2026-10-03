@@ -20,13 +20,13 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// One callback's result. Events are finite transaction intents, never retained
 /// in a committed Frame or replayed during rendering.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct ComponentOutput<V = Node> {
+pub struct ComponentOutput<V = Value> {
     pub frame: Frame<V>,
     pub events: Vec<Emission>,
     pub actions: Vec<super::actions::Action>,
@@ -49,7 +49,7 @@ impl<V> ComponentOutput<V> {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Frame<V = Node> {
+pub struct Frame<V = Value> {
     pub revision: u64,
     pub state: Value,
     pub surface: Option<Surface>,
@@ -99,36 +99,7 @@ impl Surface {
         }
     }
 }
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Direction {
-    Row,
-    Column,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-#[schemars(rename = "UiNode")]
-pub enum Node {
-    Stack {
-        key: String,
-        direction: Direction,
-        gap: u16,
-        padding: u16,
-        background: u32,
-        children: Vec<Node>,
-    },
-    Text {
-        key: String,
-        text: String,
-        color: u32,
-    },
-    Button {
-        key: String,
-        label: String,
-    },
-    Component(ComponentSlot),
-}
-/// One child of a committed component, shared by tree and native presentations.
+/// One child of a committed component, owned by a committed native presentation.
 /// Binding resolution belongs to the parent activation and the common mount kernel.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -192,79 +163,6 @@ impl<V> Frame<V> {
         }
     }
 }
-impl Frame {
-    pub fn validate(&self) -> Result<(), String> {
-        self.validate_metadata()?;
-        self.view.validate_root()
-    }
-}
-impl Node {
-    pub(crate) fn validate_root(&self) -> Result<(), String> {
-        self.validate(0, &mut BTreeSet::new())
-    }
-    fn validate(&self, depth: usize, keys: &mut BTreeSet<String>) -> Result<(), String> {
-        let key = match self {
-            Self::Stack { key, .. } | Self::Text { key, .. } | Self::Button { key, .. } => key,
-            Self::Component(slot) => &slot.key,
-        };
-        if depth > 32
-            || keys.len() >= 4096
-            || key.is_empty()
-            || key.len() > 128
-            || !keys.insert(key.clone())
-        {
-            return Err("invalid or duplicate UI node identity".into());
-        }
-        match self {
-            Self::Stack {
-                gap,
-                padding,
-                background,
-                children,
-                ..
-            } => {
-                if *gap > 1024 || *padding > 1024 || *background > 0xffffff {
-                    return Err("invalid UI style".into());
-                }
-                for child in children {
-                    child.validate(depth + 1, keys)?;
-                }
-            }
-            Self::Text { text, color, .. } => {
-                if text.len() > 64 * 1024 || *color > 0xffffff {
-                    return Err("invalid text".into());
-                }
-            }
-            Self::Button { label, .. } => {
-                if label.len() > 4096 {
-                    return Err("invalid button label".into());
-                }
-            }
-            Self::Component(slot) => slot.validate()?,
-        }
-        Ok(())
-    }
-    pub fn has_action(&self, key: &str) -> bool {
-        match self {
-            Self::Button { key: actual, .. } => actual == key,
-            Self::Stack { children, .. } => children.iter().any(|child| child.has_action(key)),
-            _ => false,
-        }
-    }
-
-    pub(crate) fn components<'a>(&'a self, output: &mut Vec<ComponentRef<'a>>) {
-        match self {
-            Self::Component(slot) => output.push(slot.reference()),
-            Self::Stack { children, .. } => {
-                for child in children {
-                    child.components(output);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
 pub(crate) struct ComponentRef<'a> {
     pub key: &'a str,
     pub binding: &'a str,

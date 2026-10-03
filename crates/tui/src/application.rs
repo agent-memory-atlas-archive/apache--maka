@@ -22,6 +22,7 @@
 mod native;
 mod paint;
 mod run;
+mod scene;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
 use maka_plugin_core::{

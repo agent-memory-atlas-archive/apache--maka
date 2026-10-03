@@ -44,6 +44,7 @@ pub(super) fn catalog() -> Value {
         root::<abi::ValueBindings>(&mut g),
         root::<abi::ComponentInput>(&mut g),
         root::<maka_ui::ComponentOutput>(&mut g),
+        root::<maka_ui::ComponentSlot>(&mut g),
         root::<actions::CapturePlan>(&mut g),
         root::<actions::ActionOutcome>(&mut g),
         root::<maka_ui::operations::CallerHistoryPage>(&mut g),

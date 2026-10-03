@@ -95,6 +95,13 @@ pub(super) struct NativeInstance {
     pub state: Box<dyn Any>,
     pub input: LiveInput,
 }
+impl NativeInstance {
+    pub fn deactivate(&mut self, window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
+        if self.input.0.borrow_mut().take().is_some() {
+            self.recipe.deactivate(self.state.as_mut(), window, cx);
+        }
+    }
+}
 impl Drop for NativeInstance {
     fn drop(&mut self) {
         self.input.0.borrow_mut().take();
@@ -146,6 +153,26 @@ impl NativeResources {
             .acquire()
     }
 
+    /// Logical tree removal closes native mechanical input immediately, before
+    /// old scene leases and resources finish their independent destruction.
+    pub fn deactivate_unmounted<V: ?Sized + 'static>(
+        &mut self,
+        application: &Application<V>,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) -> Result<(), Error> {
+        let visible: BTreeSet<_> = application
+            .mounted_subtree(&self.surface)?
+            .into_iter()
+            .map(|mount| mount.id().to_string())
+            .collect();
+        for (id, owner) in &mut self.owners {
+            if !visible.contains(id) {
+                owner.deactivate(window, cx);
+            }
+        }
+        Ok(())
+    }
     pub fn is_removed(&self) -> bool {
         self.removed
     }

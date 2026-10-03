@@ -27,7 +27,7 @@ use maka_plugins::call::ReadResource;
 use maka_ui::actions::*;
 use maka_ui::{
     Application, ComponentCall, ComponentOutput, Frame, NativeCapability, NativeComponent,
-    NativeExport, NativeRegistry, NativeView, Presentation,
+    NativeExport, NativeRegistry, NativeView,
 };
 use serde_json::{Value, json};
 use std::{cell::Cell, collections::BTreeMap, rc::Rc, sync::Arc};
@@ -40,14 +40,14 @@ impl NativeComponent<()> for Leaf {
         &self,
         call: ComponentCall<'_>,
         _values: &maka_ui::abi::ValueBindings,
-    ) -> maka_ui::Result<ComponentOutput<Presentation<()>>> {
+    ) -> maka_ui::Result<ComponentOutput<NativeView<()>>> {
         let revision = match call {
             ComponentCall::Mount { .. } => 0,
             ComponentCall::Update { state, .. } | ComponentCall::Event { state, .. } => {
                 state["revision"].as_u64().unwrap() + 1
             }
         };
-        Ok(Frame {revision,state:json!({"revision":revision,"blob":if self.large {"x".repeat(1_048_430)} else {String::new()}}),surface:None,view:Presentation::Native(NativeView::new(Rc::new(()),BTreeMap::new(), vec![])?) }.output(vec![]))
+        Ok(Frame {revision,state:json!({"revision":revision,"blob":if self.large {"x".repeat(1_048_430)} else {String::new()}}),surface:None,view:NativeView::new(Rc::new(()),BTreeMap::new(), vec![])? }.output(vec![]))
     }
     fn capture(&self, _: CaptureCall<'_>) -> maka_ui::Result<CapturePlan> {
         self.captures.set(self.captures.get() + 1);
@@ -83,7 +83,7 @@ fn fixture(
     let (input, packages) = support::resource_fixture();
     let calls = Rc::new(Cell::new(0));
     let observed = calls.clone();
-    let mut native = NativeRegistry::with_surface(PresentationTarget::Desktop);
+    let mut native = crate::support::scene::registry(PresentationTarget::Desktop);
     native
         .register("maka.ui.textarea", move |_, _values| {
             Ok(BTreeMap::from([(
@@ -539,7 +539,7 @@ impl NativeComponent<()> for ExactFeedback {
         &self,
         call: ComponentCall<'_>,
         _values: &maka_ui::abi::ValueBindings,
-    ) -> maka_ui::Result<ComponentOutput<Presentation<()>>> {
+    ) -> maka_ui::Result<ComponentOutput<NativeView<()>>> {
         let (state, initial) = match call {
             ComponentCall::Mount { props } => {
                 (json!({"revision":0,"marker":props["marker"]}), true)
@@ -573,11 +573,11 @@ impl NativeComponent<()> for ExactFeedback {
                 width: 640,
                 height: 400,
             }),
-            view: Presentation::Tree(maka_ui::Node::Text {
+            view: crate::support::scene::view(crate::support::scene::Node::Text {
                 key: "result".into(),
                 text: "Result".into(),
                 color: 0,
-            }),
+            })?,
         }
         .output(vec![]);
         if initial {
@@ -684,7 +684,7 @@ fn actual_native_query_preserves_exact_integer_while_javascript_fails_without_re
             .instances
             .insert("reader".into(), support::node(&reader, 3));
         packages.extend([root, reader]);
-        let mut native = NativeRegistry::with_surface(PresentationTarget::Desktop);
+        let mut native = crate::support::scene::registry(PresentationTarget::Desktop);
         native
             .register("test.exact-feedback", move |_, _values| {
                 Ok(BTreeMap::from([(

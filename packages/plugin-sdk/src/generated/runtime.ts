@@ -31,6 +31,7 @@ export type RuntimeProtocol =
   | ValueBindings
   | ComponentInput
   | ComponentOutput
+  | ComponentSlot
   | CapturePlan
   | ActionOutcome
   | CallerHistoryPage
@@ -182,38 +183,6 @@ export type Surface =
       binding: string;
       kind: 'terminal';
     };
-export type UiNode =
-  | {
-      key: string;
-      direction: Direction;
-      gap: number;
-      padding: number;
-      background: number;
-      children: UiNode[];
-      kind: 'stack';
-    }
-  | {
-      key: string;
-      text: string;
-      color: number;
-      kind: 'text';
-    }
-  | {
-      key: string;
-      label: string;
-      kind: 'button';
-    }
-  | {
-      key: string;
-      binding: string;
-      member: number;
-      props: unknown;
-      on: {
-        [k: string]: string | undefined;
-      };
-      kind: 'component';
-    };
-export type Direction = 'row' | 'column';
 export type CapturePlan =
   | {
       source: CaptureSource;
@@ -560,7 +529,7 @@ export interface Frame {
   revision: number;
   state: unknown;
   surface?: Surface | null;
-  view: UiNode;
+  view: unknown;
 }
 export interface Emission {
   name: string;
@@ -583,6 +552,19 @@ export interface CaptureSource {
   child: string;
   method: string;
   input: unknown;
+}
+/**
+ * One child of a committed component, owned by a committed native presentation.
+ * Binding resolution belongs to the parent activation and the common mount kernel.
+ */
+export interface ComponentSlot {
+  key: string;
+  binding: string;
+  member: number;
+  props: unknown;
+  on: {
+    [k: string]: string | undefined;
+  };
 }
 export interface OperationReply {
   reference: RecoveryRef;

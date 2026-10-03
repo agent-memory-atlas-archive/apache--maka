@@ -35,7 +35,7 @@ use maka_plugin_core::{
 };
 use maka_plugins::package::{MANIFEST_FILE, Package};
 use maka_ui::{
-    Application, NativeRegistry,
+    Application,
     operations::{CALLER_HISTORY, caller_history_contract},
     surface_contract,
 };
@@ -231,7 +231,7 @@ fn start(
                 synchronous_slice: Duration::from_millis(100),
                 ..Default::default()
             },
-            NativeRegistry::with_surface(target),
+            crate::support::scene::registry(target),
             vec![],
         ))
         .unwrap();
@@ -440,7 +440,7 @@ fn history_requires_persisted_source_and_rejects_configuration_selecting_another
     let timer = timer();
     let (mut input, packages) = fixture();
     assert!(
-        matches!(Application::<()>::new(&input,packages.clone(),timer.handle().clone(),Default::default(),NativeRegistry::with_surface(PresentationTarget::Desktop),Default::default()),Err(maka_ui::Error::Invalid(reason)) if reason.contains(CALLER_HISTORY))
+        matches!(Application::<()>::new(&input,packages.clone(),timer.handle().clone(),Default::default(),crate::support::scene::registry(PresentationTarget::Desktop),Default::default()),Err(maka_ui::Error::Invalid(reason)) if reason.contains(CALLER_HISTORY))
     );
     // Even if a package declaration permits these keys, the actual factory
     // rejects attempts to turn caller observations into another namespace.
@@ -471,7 +471,7 @@ fn history_requires_persisted_source_and_rejects_configuration_selecting_another
         .block_on(store.commit_application(deployment, 0, input, vec![], packages))
         .unwrap();
     assert!(
-        matches!(timer.block_on(Application::<()>::start_from_store(store.clone(),source,PresentationTarget::Desktop,timer.handle().clone(),Default::default(),NativeRegistry::with_surface(PresentationTarget::Desktop),vec![])),Err(maka_ui::Error::Invalid(reason)) if reason.contains("unknown field"))
+        matches!(timer.block_on(Application::<()>::start_from_store(store.clone(),source,PresentationTarget::Desktop,timer.handle().clone(),Default::default(),crate::support::scene::registry(PresentationTarget::Desktop),vec![])),Err(maka_ui::Error::Invalid(reason)) if reason.contains("unknown field"))
     );
     timer.block_on(store.shutdown()).unwrap();
 }

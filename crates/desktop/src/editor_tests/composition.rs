@@ -44,24 +44,26 @@ impl widgets::Widget for Layout {
         slots: &widgets::Slots,
         window: &mut Window,
         cx: &mut App,
-    ) -> AnyElement {
+    ) -> maka_ui::Result<AnyElement> {
         let count = state.downcast_ref::<Rc<Cell<usize>>>().unwrap().clone();
         let keys = slots.keys().to_vec();
         if self.list {
             let slots = slots.clone();
-            return uniform_list("plugin-children", keys.len(), move |range, window, cx| {
-                range
-                    .map(|i| {
-                        count.set(count.get() + 1);
-                        div()
-                            .h(px(128.))
-                            .child(slots.render(&keys[i], window, cx).unwrap())
-                            .into_any_element()
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .size_full()
-            .into_any_element();
+            return Ok(
+                uniform_list("plugin-children", keys.len(), move |range, window, cx| {
+                    range
+                        .map(|i| {
+                            count.set(count.get() + 1);
+                            div()
+                                .h(px(128.))
+                                .child(slots.render(&keys[i], window, cx).unwrap())
+                                .into_any_element()
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .size_full()
+                .into_any_element(),
+            );
         }
         let mut content = Vec::new();
         for key in &keys {
@@ -71,7 +73,7 @@ impl widgets::Widget for Layout {
             content.push(slots.render(&keys[0], window, cx).unwrap());
         }
         let content = div().flex().flex_col().children(content).into_any_element();
-        if self.retry {
+        Ok(if self.retry {
             Retry {
                 attempt: div()
                     .flex()
@@ -86,7 +88,7 @@ impl widgets::Widget for Layout {
             .into_any_element()
         } else {
             content
-        }
+        })
     }
 }
 // Actual GPUI autoscroll-style retry: child prepaint is rolled back, then the
@@ -163,7 +165,7 @@ impl NativeComponent<dyn widgets::Widget> for Parent {
         &self,
         call: ComponentCall<'_>,
         values: &maka_ui::abi::ValueBindings,
-    ) -> maka_ui::Result<ComponentOutput<Presentation<dyn widgets::Widget>>> {
+    ) -> maka_ui::Result<ComponentOutput<NativeView<dyn widgets::Widget>>> {
         let mut state = match call {
             ComponentCall::Mount { .. } => {
                 json!({"revision":0,"version":0,"show":true,"native":true})
@@ -204,7 +206,7 @@ impl NativeComponent<dyn widgets::Widget> for Parent {
             on: BTreeMap::new(),
         });
         let view = if state["native"] == true {
-            Presentation::Native(NativeView::new(
+            NativeView::new(
                 Rc::new(Layout {
                     list: self.list,
                     retry: self.retry,
@@ -215,23 +217,18 @@ impl NativeComponent<dyn widgets::Widget> for Parent {
                     .map(|k| (k.into(), json!(true)))
                     .collect(),
                 slots,
-            )?)
+            )?
         } else {
-            Presentation::Tree(Node::Stack {
-                key: "layout".into(),
-                direction: Direction::Column,
-                gap: 0,
-                padding: 0,
-                background: 0,
-                children: slots
-                    .into_iter()
-                    .map(Node::Component)
-                    .chain(std::iter::once(Node::Button {
-                        key: "tree".into(),
-                        label: "Native".into(),
-                    }))
-                    .collect(),
-            })
+            widgets::scene::compile(
+                &json!({
+                    "kind":"stack", "key":"layout", "direction":"column", "gap":0, "padding":0, "background":0,
+                    "children": slots.into_iter().map(|slot| {
+                        let mut value = serde_json::to_value(slot).unwrap();
+                        value["kind"] = json!("component"); value
+                    }).chain(std::iter::once(json!({"kind":"button","key":"tree","label":"Native"}))).collect::<Vec<_>>()
+                }),
+                std::time::Instant::now() + std::time::Duration::from_secs(1),
+            )?
         };
         Ok(Frame {
             revision: state["revision"].as_u64().unwrap(),
@@ -555,6 +552,70 @@ fn retained_slots_and_input_reject_a_different_platform_window(cx: &mut TestAppC
     assert_eq!(scene.app.borrow().frame(&scene.root).unwrap().revision, 0);
     drop(input);
     drop(slots);
+    drop(snapshot);
+    scene.close(cx);
+}
+
+#[gpui::test]
+fn native_recipe_replacement_clears_focus_before_old_scene_listeners_release(
+    cx: &mut TestAppContext,
+) {
+    use gpui_kit::{AccessibleAction, Role, accesskit};
+    let timer = timer();
+    let scene = scene(cx, &timer, false, false, false);
+    dispatch(&scene, cx, "tree");
+    cx.activate_accessibility(scene.window);
+    scene.draw(cx);
+    let snapshot = capture(&scene, cx);
+    let target = cx
+        .accessibility_update(scene.window)
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|(_, n)| n.role() == Role::Button && n.label() == Some("Native"))
+        .unwrap()
+        .0;
+    cx.simulate_accessibility_action(
+        scene.window,
+        accesskit::ActionRequest {
+            action: AccessibleAction::Focus,
+            target_tree: accesskit::TreeId::ROOT,
+            target_node: target,
+            data: None,
+        },
+    );
+    cx.update_window(scene.window, |_, w, cx| assert!(w.focused(cx).is_some()))
+        .unwrap();
+    cx.with_paused_automatic_drawing(|cx| {
+        let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
+        scene
+            .app
+            .borrow_mut()
+            .dispatch(&scene.root, revision, "tree", Value::Null)
+            .unwrap();
+        cx.update_window(scene.window, |_, w, cx| {
+            scene
+                .surface
+                .update(cx, |s, cx| s.sync_native(w, cx).unwrap())
+        })
+        .unwrap();
+        cx.update_window(scene.window, |_, w, cx| {
+            assert!(w.focused(cx).is_none());
+            assert!(snapshot.render(w, cx).is_err());
+        })
+        .unwrap();
+        cx.simulate_accessibility_action(
+            scene.window,
+            accesskit::ActionRequest {
+                action: AccessibleAction::Focus,
+                target_tree: accesskit::TreeId::ROOT,
+                target_node: target,
+                data: None,
+            },
+        );
+        cx.update_window(scene.window, |_, w, cx| assert!(w.focused(cx).is_none()))
+            .unwrap();
+    });
     drop(snapshot);
     scene.close(cx);
 }

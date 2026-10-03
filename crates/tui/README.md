@@ -85,7 +85,9 @@ actual cleanup completes, including after the terminal is restored. Failed clean
 keeps the application fenced; it does not return by discarding the owner.
 
 This presenter currently supports Stack/Text/Button/imported Component and compiled
-Label recipes. Native editing, scrolling, selection and interactive recovery are
+Label recipes through its own pure scene compiler and the shared `NativeView` path.
+Its scene language owns terminal geometry and does not inherit Desktop layout.
+Native editing, scrolling, selection and interactive recovery are
 pending. The `maka tui` business client described above still awaits migration and
 deletion; it is not a compatibility contract for the new application architecture.
 

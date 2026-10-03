@@ -29,10 +29,10 @@ pub mod text;
 pub mod textarea;
 mod tree;
 mod values;
-pub use frame::{ComponentOutput, ComponentSlot, Direction, Emission, Frame, Node, Surface};
+pub use frame::{ComponentOutput, ComponentSlot, Emission, Frame, Surface};
 pub use native::{
     ComponentCall, EventOrigin, LabelProps, NativeCapability, NativeComponent, NativeExport,
-    NativeRegistry, NativeView, Presentation, label_contract,
+    NativeRegistry, NativeView, label_contract,
 };
 
 use maka_js_runtime::plugin::{Foreground, ForegroundCallbacks, ForegroundModule, Limits};
@@ -108,6 +108,7 @@ pub struct Application<V: ?Sized = ()> {
     slice: std::time::Duration,
     pub(crate) scheduler: tokio::runtime::Handle,
     target: PresentationTarget,
+    scene_compiler: Option<Rc<native::SceneCompiler<V>>>,
     source: Option<maka_plugin_core::deployment::DeploymentRef>,
     store: Option<std::sync::Arc<maka_event_log::EventLog>>,
 }
@@ -220,6 +221,13 @@ impl<V: ?Sized + 'static> Application<V> {
                         native.validate_implementation(implementation)?
                     }
                     Implementation::JavaScript { module, .. } => {
+                        if native.scene_compiler.is_none()
+                            && entry.exports.values().any(|export| {
+                                matches!(export.contract.interface, Interface::Component { .. })
+                            })
+                        {
+                            return Err(Error::Invalid("presenter scene compiler required".into()));
+                        }
                         std::str::from_utf8(
                             sources[&instance.package]
                                 .file(module)
@@ -244,6 +252,7 @@ impl<V: ?Sized + 'static> Application<V> {
             actions: actions::Actions::default(),
             slice: limits.synchronous_slice,
             target,
+            scene_compiler: native.scene_compiler.clone(),
             scheduler: timer.clone(),
             source,
             store,
@@ -467,7 +476,7 @@ impl<V: ?Sized + 'static> Application<V> {
         method: &str,
         args: &[Value],
         deadline: std::time::Instant,
-    ) -> Result<ComponentOutput<Presentation<V>>> {
+    ) -> Result<ComponentOutput<NativeView<V>>> {
         let values = self.mount_values(mount, &args)?;
         let execution = self.runtime.admit_mount(mount)?;
         let Export::Component {
@@ -501,9 +510,24 @@ impl<V: ?Sized + 'static> Application<V> {
                     if result.is_err() {
                         failed_realm = Some(realm.clone());
                     }
-                    result
-                        .map(|frame| frame.map_view(Presentation::Tree))
-                        .map_err(Error::from)
+                    result.map_err(Error::from).and_then(|output| {
+                        // Charge the complete guest result before any translation.
+                        tree::check_call_bytes(&output)?;
+                        if std::time::Instant::now() >= deadline {
+                            return Err(Error::Invalid("UI scene compilation deadline".into()));
+                        }
+                        let view = (self.scene_compiler.as_ref().expect("preflight compiler"))(
+                            &output.frame.view,
+                            deadline,
+                        )?;
+                        if std::time::Instant::now() >= deadline {
+                            return Err(Error::Invalid("UI scene compilation deadline".into()));
+                        }
+                        // The kernel, not the compiler, retains untrusted source
+                        // for callback, transaction and mounted-frame accounting.
+                        let view = view.with_declaration(output.frame.view.clone())?;
+                        Ok(output.map_view(|_| view))
+                    })
                 })
             }
             Component::Native(component) => (|| {
@@ -550,9 +574,8 @@ impl<V: ?Sized + 'static> Application<V> {
             })(),
         };
         let result = result.and_then(|output| {
-            // Every callback charges its complete declarative output, including
-            // native callbacks that choose Tree. Only opaque Rust recipe memory
-            // is trusted and excluded from this common 1 MiB admission budget.
+            // All declarative data is charged, including the original guest
+            // scene. Only trusted opaque Rust recipe memory is excluded.
             let metadata = (
                 output.frame.revision,
                 &output.frame.state,
@@ -560,10 +583,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 &output.events,
                 &output.actions,
             );
-            match &output.frame.view {
-                Presentation::Tree(node) => tree::check_call_bytes(&(metadata, node))?,
-                Presentation::Native(view) => tree::check_call_bytes(&(metadata, view.metadata()))?,
-            }
+            tree::check_call_bytes(&(metadata, output.frame.view.metadata()))?;
             if output.events.len() > 64 {
                 return Err(Error::Invalid("component emission limit".into()));
             }
@@ -580,7 +600,6 @@ impl<V: ?Sized + 'static> Application<V> {
                     .map_err(|error| Error::Invalid(error.to_string()))?;
             }
             output.frame.validate_metadata().map_err(Error::Invalid)?;
-            output.frame.view.validate().map_err(Error::Invalid)?;
             Ok(output)
         });
         self.runtime.settle(&execution, Ok(()))?; // Only declarative scene preparation.
@@ -594,7 +613,7 @@ impl<V: ?Sized + 'static> Application<V> {
         result
     }
 
-    fn validate_surface(&mut self, mount: &Mount, frame: &Frame<Presentation<V>>) -> Result<()> {
+    fn validate_surface(&mut self, mount: &Mount, frame: &Frame<NativeView<V>>) -> Result<()> {
         let provider = self
             .runtime
             .mount_statuses()
@@ -630,7 +649,7 @@ impl<V: ?Sized + 'static> Application<V> {
         &self.scheduler
     }
 
-    pub fn frame(&self, mount: &Mount) -> Result<&Frame<Presentation<V>>> {
+    pub fn frame(&self, mount: &Mount) -> Result<&Frame<NativeView<V>>> {
         self.views
             .get(&mount.id())
             .map(|view| &view.frame)

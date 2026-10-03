@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use super::{ComponentOutput, ComponentSlot, Error, Node, Result, surface_contract};
+use super::{ComponentOutput, ComponentSlot, Error, Result, surface_contract};
 use maka_plugin_core::{
     composition::PresentationTarget,
     contract::{Contract, Interface},
@@ -36,6 +36,7 @@ pub struct NativeView<V: ?Sized> {
     schemas: Rc<BTreeMap<String, Value>>,
     slots: Rc<Vec<ComponentSlot>>,
     inputs: Rc<BTreeMap<String, jsonschema::Validator>>,
+    declaration: Option<Rc<Value>>,
 }
 impl<V: ?Sized> NativeView<V> {
     pub fn new(
@@ -73,15 +74,26 @@ impl<V: ?Sized> NativeView<V> {
             schemas: Rc::new(schemas),
             slots: Rc::new(slots),
             inputs: Rc::new(inputs),
+            declaration: None,
         })
+    }
+    /// A Rust adapter may also retain declarative data. It receives the same
+    /// quotas as guest scenes, rather than the opaque native recipe exemption.
+    pub fn with_declaration(mut self, source: Value) -> Result<Self> {
+        self.declaration = Some(Rc::new(source));
+        super::tree::check_call_bytes(&self.metadata())?;
+        Ok(self)
+    }
+    pub(crate) fn components<'a>(&'a self, output: &mut Vec<super::frame::ComponentRef<'a>>) {
+        output.extend(self.slots.iter().map(ComponentSlot::reference));
     }
     pub fn slots(&self) -> &[ComponentSlot] {
         &self.slots
     }
     pub(crate) fn metadata(&self) -> impl serde::Serialize + '_ {
-        (&*self.schemas, &*self.slots)
+        (&*self.schemas, &*self.slots, self.declaration.as_deref())
     }
-    fn validate_input(&self, key: &str, input: &Value) -> Result<()> {
+    pub(crate) fn validate_input(&self, key: &str, input: &Value) -> Result<()> {
         self.inputs
             .get(key)
             .ok_or_else(|| Error::Invalid("undeclared native input".into()))?
@@ -97,45 +109,10 @@ impl<V: ?Sized> Clone for NativeView<V> {
             schemas: self.schemas.clone(),
             slots: self.slots.clone(),
             inputs: self.inputs.clone(),
+            declaration: self.declaration.clone(),
         }
     }
 }
-/// A committed tree or an opaque, typed native render recipe. Both belong to
-/// the same mount, retain the same identity and use the same publication path.
-pub enum Presentation<V: ?Sized> {
-    Tree(Node),
-    Native(NativeView<V>),
-}
-impl<V: ?Sized> Clone for Presentation<V> {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Tree(node) => Self::Tree(node.clone()),
-            Self::Native(view) => Self::Native(view.clone()),
-        }
-    }
-}
-impl<V: ?Sized> Presentation<V> {
-    pub(crate) fn validate(&self) -> std::result::Result<(), String> {
-        match self {
-            Self::Tree(node) => node.validate_root(),
-            Self::Native(_) => Ok(()),
-        }
-    }
-    pub(crate) fn validate_input(&self, key: &str, input: &Value) -> Result<()> {
-        match self {
-            Self::Tree(node) if node.has_action(key) => Ok(()),
-            Self::Native(view) => view.validate_input(key, input),
-            _ => Err(Error::Invalid("undeclared UI event".into())),
-        }
-    }
-    pub(crate) fn components<'a>(&'a self, output: &mut Vec<super::frame::ComponentRef<'a>>) {
-        match self {
-            Self::Tree(node) => node.components(output),
-            Self::Native(view) => output.extend(view.slots.iter().map(ComponentSlot::reference)),
-        }
-    }
-}
-
 /// Native callbacks prepare an immutable scene. They do not receive a GPUI
 /// context/editor handle: observable native effects execute after scene commit.
 pub enum ComponentCall<'a> {
@@ -169,7 +146,7 @@ pub trait NativeComponent<V: ?Sized>: 'static {
         &self,
         call: ComponentCall<'_>,
         _values: &super::abi::ValueBindings,
-    ) -> Result<ComponentOutput<Presentation<V>>>;
+    ) -> Result<ComponentOutput<NativeView<V>>>;
 }
 pub enum NativeCapability<V: ?Sized> {
     Component(Rc<dyn NativeComponent<V>>),
@@ -184,19 +161,36 @@ pub struct NativeExport<V: ?Sized> {
 type Factory<V> =
     dyn Fn(&Value, &super::abi::ValueBindings) -> Result<BTreeMap<String, NativeExport<V>>>;
 
+/// Presenter-owned, pure translation. No runtime or native owner is available
+/// at this precommit boundary. Implementations bound expansion and honor the
+/// caller's shared deadline; painting never executes a compiler.
+pub(crate) type SceneCompiler<V> = dyn Fn(&Value, std::time::Instant) -> Result<NativeView<V>>;
+
 /// Build-time implementation availability. The composition selects instances;
 /// this map does not register capabilities or automatically activate products.
 pub struct NativeRegistry<V: ?Sized> {
     factories: BTreeMap<String, Box<Factory<V>>>,
+    pub(crate) scene_compiler: Option<Rc<SceneCompiler<V>>>,
 }
 impl<V: ?Sized + 'static> Default for NativeRegistry<V> {
     fn default() -> Self {
         Self {
             factories: BTreeMap::new(),
+            scene_compiler: None,
         }
     }
 }
 impl<V: ?Sized + 'static> NativeRegistry<V> {
+    /// Select this embedding's scene ABI. Native factories still use their own
+    /// typed recipes. JavaScript components require an explicit compiler; there
+    /// is no kernel vocabulary or implicit fallback.
+    pub fn with_scene_compiler(
+        mut self,
+        compiler: impl Fn(&Value, std::time::Instant) -> Result<NativeView<V>> + 'static,
+    ) -> Self {
+        self.scene_compiler = Some(Rc::new(compiler));
+        self
+    }
     pub fn register(
         &mut self,
         implementation: &str,

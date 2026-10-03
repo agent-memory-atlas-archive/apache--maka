@@ -35,18 +35,23 @@ import type {
 } from './generated/runtime.js';
 
 /** State is private to this component; external props and events still need their contract. */
-export type Output<State = unknown> = Omit<ComponentOutput, 'frame'> & {
-  frame: Omit<ComponentOutput['frame'], 'state'> & { state: State };
+export type Output<State = unknown, View = unknown> = Omit<ComponentOutput, 'frame'> & {
+  frame: Omit<ComponentOutput['frame'], 'state' | 'view'> & { state: State; view: View };
 };
 
 /** Detached snapshots of this activation's captured immutable value imports. */
 export type ComponentValues = { readonly [K in keyof ValueBindings]: Readonly<ValueBindings[K]> };
 
 /** Synchronous declarative callbacks; no promises or native ownership in a frame. */
-export interface Component<State = unknown, Props = unknown> {
-  mount(props: Props, values: ComponentValues): Output<State>;
-  update(state: State, props: Props, values: ComponentValues): Output<State>;
-  event(state: State, input: ComponentInput, props: Props, values: ComponentValues): Output<State>;
+export interface Component<State = unknown, Props = unknown, View = unknown> {
+  mount(props: Props, values: ComponentValues): Output<State, View>;
+  update(state: State, props: Props, values: ComponentValues): Output<State, View>;
+  event(
+    state: State,
+    input: ComponentInput,
+    props: Props,
+    values: ComponentValues,
+  ): Output<State, View>;
   capture?(
     state: State,
     props: Props,

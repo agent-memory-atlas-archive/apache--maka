@@ -27,6 +27,12 @@ Wire 类型和内置契约由 Host/UI 实际执行所用的 Rust 类型生成。
 `unknown`，作者需要按服务契约检查结果。TypeScript 泛型不能代替验证；
 数值范围、JSON 限制和权限由 Rust 检查。
 
+`Component<State, Props, View>` 可以为入口指定平台场景语言的类型。内核将
+`View` 视为不透明 JSON，由选定平台的纯场景编译器解释，不提供统一布局语言。
+`ComponentSlot` 仍是公共的子组件声明：绑定从原父组件的 import 解析，绘制状态
+不能提供权限。因此同一插件的 Desktop/TUI 入口可以分别设计呈现方式。平台必须
+在激活 JavaScript component 前安装编译器；原场景 JSON 参与回调、事务及驻留预算。
+
 ```sh
 npm run schema:generate -w @maka-agent/plugin-sdk
 npm run schema:check -w @maka-agent/plugin-sdk

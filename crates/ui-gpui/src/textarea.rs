@@ -24,7 +24,7 @@ use gpui_kit::*;
 use maka_ui::textarea::*;
 use maka_ui::{
     ComponentCall, ComponentOutput, Emission, Frame, NativeCapability, NativeComponent,
-    NativeExport, NativeRegistry, NativeView, Presentation,
+    NativeExport, NativeRegistry, NativeView,
 };
 use serde_json::json;
 use std::{any::Any, collections::BTreeMap, ops::Range, rc::Rc};
@@ -697,12 +697,37 @@ impl Widget for TextareaRecipe {
             .expect("editor native owner")
             .update(cx, |owner, cx| owner.apply(&self.props, window, cx));
     }
-    fn render(&self, state: &dyn Any, _: &Slots, _: &mut Window, _: &mut App) -> AnyElement {
-        state
+    fn deactivate(&self, state: &mut dyn Any, window: &mut Window, cx: &mut App) {
+        let owner = state
+            .downcast_ref::<Entity<TextareaOwner>>()
+            .expect("editor owner");
+        owner.update(cx, |owner, cx| {
+            // The original LiveInput has already been revoked. Closing the
+            // menu clears its own focus without restoring the retired editor.
+            owner.close_menu(true, window, cx);
+            if owner
+                .state
+                .read(cx)
+                .presentation()
+                .focus_handle()
+                .is_focused(window)
+            {
+                window.blur(cx);
+            }
+        });
+    }
+    fn render(
+        &self,
+        state: &dyn Any,
+        _: &Slots,
+        _: &mut Window,
+        _: &mut App,
+    ) -> maka_ui::Result<AnyElement> {
+        Ok(state
             .downcast_ref::<Entity<TextareaOwner>>()
             .expect("editor native owner")
             .clone()
-            .into_any_element()
+            .into_any_element())
     }
 }
 struct TextareaComponent;
@@ -718,7 +743,7 @@ impl NativeComponent<dyn Widget> for TextareaComponent {
         &self,
         call: ComponentCall<'_>,
         _values: &maka_ui::abi::ValueBindings,
-    ) -> maka_ui::Result<ComponentOutput<Presentation<dyn Widget>>> {
+    ) -> maka_ui::Result<ComponentOutput<NativeView<dyn Widget>>> {
         let (props, revision, observation, mut request, mut pending) = match call {
             ComponentCall::Mount { props } => {
                 (props.clone(), 0, serde_json::Value::Null, None, false)
@@ -793,7 +818,7 @@ impl TextareaComponent {
         observation: serde_json::Value,
         request: Option<TextareaCommand>,
         pending: bool,
-    ) -> maka_ui::Result<ComponentOutput<Presentation<dyn Widget>>> {
+    ) -> maka_ui::Result<ComponentOutput<NativeView<dyn Widget>>> {
         let mut typed: TextareaProps =
             serde_json::from_value(props).map_err(|e| maka_ui::Error::Invalid(e.to_string()))?;
         // Props propose new commands; the accepted request remains authoritative
@@ -803,9 +828,9 @@ impl TextareaComponent {
             revision,
             state: json!({"revision":revision,"request":request,"pending":pending,"observation":observation}),
             surface: None,
-            view: Presentation::Native(NativeView::<dyn Widget>::new(
+            view: NativeView::<dyn Widget>::new(
                 Rc::new(TextareaRecipe { props: typed }),
-                BTreeMap::from([("observe".into(), maka_ui::textarea::observation_schema())]), vec![])?),
+                BTreeMap::from([("observe".into(), maka_ui::textarea::observation_schema())]), vec![])?,
         }.output(Vec::new()))
     }
 }

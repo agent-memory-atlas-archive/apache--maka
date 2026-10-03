@@ -17,6 +17,9 @@
  * under the License.
  */
 
+#[allow(dead_code)]
+pub(crate) mod scene;
+
 use maka_plugin_core::{
     composition::{
         Configuration, Environment, ExecutionLocation, Input, Node, PackageUse, PresentationTarget,
@@ -682,4 +685,85 @@ pub fn dual_fixture(handler: &str) -> (Input, Vec<Package>) {
     root.bindings = bindings;
     input.instances.insert("app".into(), root);
     (input, dual)
+}
+
+/// A layout/appearance fixture, not a completed agent product. All native
+/// children remain ordinary bindings of the original JavaScript parent.
+#[allow(dead_code)] // Shared support is also compiled by non-Desktop tests.
+pub(crate) fn workspace_fixture() -> (Input, Vec<Package>) {
+    let (mut input, mut packages) = editor_fixture();
+    let index = packages
+        .iter()
+        .position(|p| p.manifest().id == "dynamic.app")
+        .unwrap();
+    let original = packages.remove(index);
+    let mut source = std::str::from_utf8(original.file("index.mjs").unwrap())
+        .unwrap()
+        .to_owned();
+    source.push_str(r#"
+const previousFrame=frame;
+const fill={unit:'fraction',value:1}, pixels=(value)=>({unit:'pixels',value});
+const text=(key,label,size=15,weight=400,foreground=0x242724ff)=>({kind:'text',key,text:label,color:0x242724,style:{text:{font:{family:'.SystemUIFont',fallbacks:[],size,lineHeight:1.55,weight},foreground}}});
+const box=(key,children,style={},direction='column',gap=12,padding=0)=>({kind:'stack',key,direction,gap,padding,background:0xfaf9f6,style,children});
+const control=(key,label)=>({kind:'button',key,label,style:{text:{font:{family:'.SystemUIFont',fallbacks:[],size:13,lineHeight:1.4,weight:500},foreground:0x416653ff},padding:{top:8,right:12,bottom:8,left:12},radius:8,border:0xd8ddd5ff,borderWidth:1},hover:{background:0xe8ede5ff},focus:{border:0x416653ff,borderWidth:2},active:{background:0xd8e3d4ff}});
+frame=(state)=>{
+    const output=previousFrame(state);
+    const components={};
+    const visit=(node)=>{if(node.kind==='component')components[node.key]=node;for(const child of node.children??[])visit(child);};
+    visit(output.frame.view);
+    const editor=components.editor??{kind:'component',key:'editor',binding:'editor',member:0,on:{},props:{appearance:state.brand.textarea,menu:state.brand.menu,readOnly:false,disabled:false,softWrap:true,tabIndex:0,command:state.command??null}};
+    editor.props={...editor.props,initialText:'',placeholder:'Describe what you would like to work on…',accessibilityLabel:'Compose a draft'};
+    const context=[components.nativeLabel,components.left,components.right].filter(Boolean);
+    for(const item of context){if(item.key==='nativeLabel')item.props.text='Native view · bound component';}
+    output.frame.surface={...output.frame.surface,title:'Maka · Plugin workspace',width:1100,height:780};
+    output.frame.view=box('workspace',[
+        box('navigation',[
+            text('wordmark','maka',24,650),
+            text('workspace-label','PLUGIN WORKSPACE',11,600,0x656a63ff),
+            text('active-context','A place to think',15,500),
+            text('navigation-note','Your tools. Your workflow.\nYour own composition.',13,400,0x656a63ff),
+            box('navigation-space',[],{grow:1,background:0}),
+            text('runtime-label','Local presentation',12,400,0x656a63ff)
+        ],{width:pixels(220),height:fill,shrink:0,background:0xf2f3eeff,padding:{top:28,right:24,bottom:24,left:24}},'column',24),
+        box('main',[
+            box('header',[text('breadcrumb','Workspace  /  Draft',13,400,0x656a63ff),control('toggle','Toggle context')],{width:fill,justify:'between',align:'center'},'row',16),
+            box('conversation',[
+                text('welcome-title','Make room for the next idea.',30,600),
+                text('welcome-copy','A calm workspace, composed by plugins.\nLayout, appearance and native editing can change independently.',16,400,0x656a63ff),
+                box('details',[text('details-heading','Built around your work',15,550),text('details-copy','The composer keeps its draft, focus and selection while the surrounding layout changes.',14,400,0x656a63ff)],{width:fill,background:0xf2f3eeff,radius:12,padding:{top:20,right:24,bottom:20,left:24}})
+            ],{width:fill,maxWidth:720,grow:1,justify:'center'},'column',20),
+            ...(editor?[box('composer',[editor],{width:fill,height:pixels(180),shrink:0})]:[]),
+            box('composer-footer',[text('draft-note','Draft stays on this device',12,400,0x656a63ff),control('parent','Update context')],{width:fill,justify:'between',align:'center'},'row',16)
+        ],{grow:1,shrink:1,height:fill,minWidth:360,padding:{top:28,right:40,bottom:28,left:40}},'column',24),
+        ...(state.right?[box('inspector',[text('inspector-title','Context',15,600),text('inspector-description','Independent component bindings',12,400,0x656a63ff),...context],{width:pixels(220),height:fill,shrink:0,background:0xf2f3eeff,padding:{top:28,right:20,bottom:24,left:20}},'column',16)]:[])
+    ],{width:fill,height:fill,text:state.brand.label},'row',0);
+    return output;
+};
+"#);
+    // The counter fixture also authors its own appearance; it is deliberately
+    // transformed in its package, rather than overwritten by the renderer.
+    let counter_index = packages
+        .iter()
+        .position(|p| p.manifest().id == "dynamic.counter")
+        .unwrap();
+    let counter = packages.remove(counter_index);
+    let code = std::str::from_utf8(counter.file("index.mjs").unwrap())
+        .unwrap()
+        .replace("background:1513239", "background:0xf2f3ee")
+        .replace("color:16777215", "color:0x242724");
+    let counter = package(
+        "dynamic.counter",
+        counter.manifest().application.clone().unwrap(),
+        Some(code),
+    );
+    input.instances.get_mut("counter").unwrap().package = counter.application_ref().into();
+    packages.push(counter);
+    let root = package(
+        "dynamic.app",
+        original.manifest().application.clone().unwrap(),
+        Some(source),
+    );
+    input.instances.get_mut("app").unwrap().package = root.application_ref().into();
+    packages.push(root);
+    (input, packages)
 }

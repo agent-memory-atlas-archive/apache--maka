@@ -1590,3 +1590,41 @@ mod composition;
 mod accessibility;
 mod appearance;
 mod menu;
+
+#[gpui::test]
+fn dynamic_workspace_layout_changes_preserve_original_editor_draft_focus_and_marked_input(
+    cx: &mut TestAppContext,
+) {
+    let timer = timer();
+    let scene = Scene::from_packages(cx, &timer, false, support::workspace_fixture());
+    scene.draw(cx);
+    let owner = scene.owner();
+    let original = owner.entity_id();
+    cx.update_window(scene.window, |_, window, cx| {
+        owner.read(cx).state.clone().update(cx, |state, cx| {
+            state.focus(window, cx);
+            state.replace_and_mark_text_in_range(None, "中文草稿", Some(0..4), window, cx);
+        })
+    })
+    .unwrap();
+    for key in ["parent", "toggle", "parent", "toggle"] {
+        let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
+        scene
+            .app
+            .borrow_mut()
+            .dispatch(&scene.root, revision, key, serde_json::Value::Null)
+            .unwrap();
+        scene.draw(cx);
+        assert_eq!(scene.owner().entity_id(), original);
+        cx.update_window(scene.window, |_, window, cx| {
+            owner.read(cx).state.clone().update(cx, |state, cx| {
+                assert_eq!(state.value().as_ref(), "中文草稿");
+                assert!(state.presentation().focus_handle().is_focused(window));
+                assert!(state.marked_text_range(window, cx).is_some());
+            })
+        })
+        .unwrap();
+    }
+    drop(owner);
+    scene.close(cx);
+}

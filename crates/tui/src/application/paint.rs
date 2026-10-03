@@ -18,8 +18,8 @@
  */
 
 use super::Presenter;
+use super::scene::{Direction, Node};
 use maka_plugin_core::runtime::Mount;
-use maka_ui::{Direction, Node, Presentation};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -110,10 +110,10 @@ pub struct PaintedScene {
 /// Synchronous terminal geometry over one parent's committed component slots.
 /// Measuring is read-only; painting publishes hit geometry only after flush.
 pub struct Slots<'a> {
-    presenter: &'a Presenter,
-    parent: &'a Mount,
+    pub(super) presenter: &'a Presenter,
+    pub(super) parent: &'a Mount,
     declarations: &'a [maka_ui::ComponentSlot],
-    scene: Option<&'a mut PaintedScene>,
+    pub(super) scene: Option<&'a mut PaintedScene>,
 }
 impl Slots<'_> {
     pub fn keys(&self) -> impl Iterator<Item = &str> {
@@ -168,20 +168,23 @@ impl Presenter {
         self.scene = scene.targets;
     }
     fn measure_mount(&self, mount: &Mount, width: u16) -> maka_ui::Result<(u16, u16)> {
-        match &self.application.frame(mount)?.view {
-            Presentation::Tree(node) => self.measure(mount, node, width),
-            Presentation::Native(native) => native.view.measure(
-                &Slots {
-                    presenter: self,
-                    parent: mount,
-                    declarations: native.slots(),
-                    scene: None,
-                },
-                width,
-            ),
-        }
+        let native = &self.application.frame(mount)?.view;
+        native.view.measure(
+            &Slots {
+                presenter: self,
+                parent: mount,
+                declarations: native.slots(),
+                scene: None,
+            },
+            width,
+        )
     }
-    fn measure(&self, mount: &Mount, node: &Node, width: u16) -> maka_ui::Result<(u16, u16)> {
+    pub(super) fn measure(
+        &self,
+        mount: &Mount,
+        node: &Node,
+        width: u16,
+    ) -> maka_ui::Result<(u16, u16)> {
         Ok(match node {
             Node::Text { text, .. } => text_size(text, width),
             Node::Button { label, .. } => (
@@ -250,21 +253,19 @@ impl Presenter {
                 "component placed twice in terminal scene".into(),
             ));
         }
-        match &self.application.frame(mount)?.view {
-            Presentation::Tree(node) => self.paint_node(mount, node, area, buffer, scene),
-            Presentation::Native(native) => native.view.paint(
-                &mut Slots {
-                    presenter: self,
-                    parent: mount,
-                    declarations: native.slots(),
-                    scene: Some(scene),
-                },
-                area,
-                buffer,
-            ),
-        }
+        let native = &self.application.frame(mount)?.view;
+        native.view.paint(
+            &mut Slots {
+                presenter: self,
+                parent: mount,
+                declarations: native.slots(),
+                scene: Some(scene),
+            },
+            area,
+            buffer,
+        )
     }
-    fn paint_node(
+    pub(super) fn paint_node(
         &self,
         mount: &Mount,
         node: &Node,

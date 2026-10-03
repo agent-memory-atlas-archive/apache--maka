@@ -34,28 +34,35 @@ new handlers. A realm failure retires every registration and mount in that realm
 `NativeRegistry<V>` supplies compiled implementation factories; only selected
 composition entries activate them and publish their actual contracts through the
 same runtime. Native components share props/state/revision and the transaction
-with JavaScript. `Presentation<V>` contains either the bounded tree or an opaque,
-typed, immutable native recipe; the kernel has no GPUI dependency. Native raw
+with JavaScript. Every committed frame contains a `NativeView<V>`: an opaque,
+typed, immutable native recipe; the kernel has no layout vocabulary or GPUI dependency. Native raw
 inputs have scene-specific schemas. Calls are bounded to 1 MiB before dispatch.
 Rust extensions are trusted synchronous code, not watchdog-isolated JavaScript;
 the common commit deadline can reject their late result but cannot interrupt them.
-The 4 MiB update and 32 MiB retained limits cover serialized metadata/tree/input
+The 4 MiB update and 32 MiB retained limits cover serialized metadata/source/input
 schemas, not native renderer allocations, which the native owner must bound.
 Recipes must not retain entities, input bindings, subscriptions or pending native
 work. Those belong to renderer resource owners and retain mount resource leases
 until actual destruction, independently of the retired frame's recipe.
 
 
-`ComponentSlot { key, binding, member, props, on }` is shared by `Node::Component`
-and `NativeView::new(recipe, input_schemas, slots)`. Native slots are ordered,
+JavaScript returns platform-owned JSON scenes. The embedding installs a pure
+`NativeRegistry::with_scene_compiler` before activating JavaScript components;
+missing compilers reject startup before factories or guests run. The compiler
+receives only JSON and the current deadline, and returns a `NativeView`. The kernel
+retains the original scene JSON for accounting, independently of the compiler's
+metadata. Compilation failure rolls back the batch while leaving the realm healthy.
+TUI and Desktop can define different scene languages for the same plugin.
+
+`ComponentSlot { key, binding, member, props, on }` belongs to
+`NativeView::new(recipe, input_schemas, slots)`. Slots are ordered,
 limited to 64 and resolved against the parent's own imports. They use the same
-child mounts, props transactions, event routes and cleanup as tree references.
-Hidden slots keep their state. Complete callback metadata, including slots, state,
-events and actions, shares the 1 MiB budget for both presentation variants.
+child mounts, props transactions, event routes and cleanup. Hidden slots keep their
+state. Complete callback metadata, including original scene JSON, slots, state,
+events and actions, shares the 1 MiB budget.
 Arguments that cannot be projected exactly into JavaScript are rejected before
 calling that consumer, without retiring its healthy realm; Rust retains exact integers.
 
-The tree protocol contains stacks, text, buttons and imported components.
 A component reference names an explicit binding and its selected member; stable
 keys retain child mounts and their local state across parent props updates.
 All changed parents and children share one deadline and commit together. A failed

@@ -28,8 +28,16 @@ Label/Editor 编译实现。不持有 application、window、Host、产品导航
 组合选中后才激活编译实现。`registry()` 提供内建 Label/Editor availability，可信
 launcher 接收前可添加其他实现。
 
+`registry()` 也安装平台自己的纯 `scene::compile`。动态 JSON 场景提供原生 flex 布局、
+作用域内字体与颜色、鼠标和键盘按钮、焦点样式及纵向滚动。导入组件仍归原父组件的
+slots；局部 key 在布局改变时保留同一机械焦点/滚动 owner，删除或换类型即关闭旧输入
+准入。编译器在回调 deadline 内检查形状、样式和数值限额；原 JSON 先验证，再缩窄为
+原生浮点数。
+
 `Widget::create` 返回呈现器拥有的资源状态；`capture` 捕获有界请求私有快照，
-`commit` 在绘制前消费已提交命令。`render` 读取 owner，并获得准确的子组件 `Slots`。
+`commit` 在绘制前消费已提交命令。`deactivate` 在逻辑退休时释放原生焦点/输入，不等待
+旧绘制资源销毁。`render` 读取 owner、获得准确的子组件 `Slots`，返回 Result 将放置失败
+交给 presenter。
 recipe 不能持有 Entity、Input、Slots、订阅或资源凭证。保留的 Element 和虚拟列表
 回调可以 clone Slots，只保有原子树与窗口的真实清理职责。移除或重建 owner 后，
 旧 handle 明确拒绝。布局测量可以重复，一次成功显示每个 mount 只可放置一次。

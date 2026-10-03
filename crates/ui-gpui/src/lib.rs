@@ -17,7 +17,11 @@
  * under the License.
  */
 
+#[cfg(test)]
+extern crate gpui_kit as gpui;
+
 mod appearance;
+pub mod scene;
 pub mod textarea;
 
 use gpui_kit::{
@@ -25,7 +29,7 @@ use gpui_kit::{
 };
 use maka_ui::{
     ComponentCall, ComponentOutput, Frame, LabelProps, NativeCapability, NativeComponent,
-    NativeExport, NativeRegistry, NativeView, Presentation, label_contract,
+    NativeExport, NativeRegistry, NativeView, label_contract,
 };
 use serde_json::{Value, json};
 use std::{any::Any, cell::RefCell, collections::BTreeMap, rc::Rc};
@@ -50,13 +54,16 @@ pub trait Widget: Any {
         Err(maka_ui::Error::Invalid("widget capture unavailable".into()))
     }
     fn commit(&self, _: &mut dyn Any, _: &mut Window, _: &mut App) {}
+    /// Close mechanical input/focus on the original window before resource
+    /// release. Cached listeners may still retain the old owner during cleanup.
+    fn deactivate(&self, _: &mut dyn Any, _: &mut Window, _: &mut App) {}
     fn render(
         &self,
         state: &dyn Any,
         slots: &Slots,
         window: &mut Window,
         cx: &mut App,
-    ) -> AnyElement;
+    ) -> maka_ui::Result<AnyElement>;
 }
 /// Owner-originated observations resolve the current dispatcher at delivery;
 /// they are not button events against a retained old scene. Removal clears it
@@ -86,16 +93,19 @@ impl Input {
 pub struct Slots {
     keys: Rc<Vec<String>>,
     render: Rc<SlotRenderer>,
+    pub(crate) input: Input,
 }
 type SlotRenderer = dyn Fn(&str, &mut Window, &mut App) -> maka_ui::Result<AnyElement>;
 impl Slots {
     /// Constructed by the trusted surface adapter, with exact mount custody.
     pub fn new(
         keys: Vec<String>,
+        input: Input,
         render: impl Fn(&str, &mut Window, &mut App) -> maka_ui::Result<AnyElement> + 'static,
     ) -> Self {
         Self {
             keys: Rc::new(keys),
+            input,
             render: Rc::new(render),
         }
     }
@@ -117,16 +127,22 @@ struct Label {
     appearance: maka_ui::appearance::TextAppearance,
 }
 impl Widget for Label {
-    fn render(&self, _: &dyn Any, _: &Slots, _: &mut Window, _: &mut App) -> AnyElement {
+    fn render(
+        &self,
+        _: &dyn Any,
+        _: &Slots,
+        _: &mut Window,
+        _: &mut App,
+    ) -> maka_ui::Result<AnyElement> {
         // Opaque native payload: GPUI styling is not constrained to the JSON
         // Node primitives. Product placement remains in the importing component.
-        div()
+        Ok(div()
             .font(appearance::font(&self.appearance.font))
             .text_color(appearance::color(self.appearance.foreground))
             .text_size(px(self.appearance.font.size))
             .line_height(gpui_kit::relative(self.appearance.font.line_height))
             .child(SharedString::from(self.text.clone()))
-            .into_any_element()
+            .into_any_element())
     }
 }
 struct LabelComponent;
@@ -135,7 +151,7 @@ impl NativeComponent<dyn Widget> for LabelComponent {
         &self,
         call: ComponentCall<'_>,
         _values: &maka_ui::abi::ValueBindings,
-    ) -> maka_ui::Result<ComponentOutput<Presentation<dyn Widget>>> {
+    ) -> maka_ui::Result<ComponentOutput<NativeView<dyn Widget>>> {
         let (props, revision) = match call {
             ComponentCall::Mount { props } => (props, 0),
             ComponentCall::Update { state, props } => (
@@ -152,21 +168,22 @@ impl NativeComponent<dyn Widget> for LabelComponent {
             revision,
             state: json!({"revision":revision}),
             surface: None,
-            view: Presentation::Native(NativeView::<dyn Widget>::new(
+            view: NativeView::<dyn Widget>::new(
                 Rc::new(Label {
                     text: props.text,
                     appearance: props.appearance,
                 }),
                 BTreeMap::new(),
                 vec![],
-            )?),
+            )?,
         }
         .output(Vec::new()))
     }
 }
 pub fn registry() -> NativeRegistry<dyn Widget> {
     let mut registry =
-        NativeRegistry::with_surface(maka_plugin_core::composition::PresentationTarget::Desktop);
+        NativeRegistry::with_surface(maka_plugin_core::composition::PresentationTarget::Desktop)
+            .with_scene_compiler(scene::compile);
     registry
         .register("maka.ui.label", |_, _values| {
             Ok(BTreeMap::from([(

@@ -28,7 +28,7 @@ use maka_plugin_core::{
     deployment::DeploymentRef,
     operation::{OperationReply, Receipt},
 };
-use maka_ui::{Application, NativeRegistry};
+use maka_ui::Application;
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -131,7 +131,7 @@ impl Fixture {
                 PresentationTarget::Desktop,
                 self.timer.handle().clone(),
                 Default::default(),
-                NativeRegistry::with_surface(PresentationTarget::Desktop),
+                crate::support::counter::scene::registry(PresentationTarget::Desktop),
                 connections.take_registrations(),
             ))
             .unwrap()

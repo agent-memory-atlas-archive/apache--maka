@@ -27,6 +27,8 @@ mod history;
 mod native;
 #[path = "runtime/persistence.rs"]
 mod persistence;
+#[path = "runtime/scenes.rs"]
+mod scenes;
 #[path = "runtime/sdk.rs"]
 mod sdk;
 #[path = "../examples/counter/support.rs"]
@@ -38,7 +40,7 @@ use maka_plugin_core::{
     contract::{Cardinality, Import},
     package::Declaration,
 };
-use maka_ui::{Application, NativeRegistry, surface_contract};
+use maka_ui::{Application, surface_contract};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, time::Duration};
 use support::{fixture, node, package};
@@ -53,7 +55,7 @@ fn app(handler: &str, timer: &tokio::runtime::Runtime) -> Application {
             synchronous_slice: Duration::from_millis(100),
             ..Default::default()
         },
-        NativeRegistry::<()>::with_surface(PresentationTarget::Desktop),
+        crate::support::scene::registry::<()>(PresentationTarget::Desktop),
         Default::default(),
     )
     .unwrap()
@@ -181,7 +183,7 @@ fn structural_imports_route_to_owned_providers_without_startup_deadlock() {
         packages,
         timer.handle().clone(),
         Default::default(),
-        NativeRegistry::<()>::with_surface(PresentationTarget::Desktop),
+        crate::support::scene::registry::<()>(PresentationTarget::Desktop),
         Default::default(),
     )
     .unwrap();
@@ -232,7 +234,7 @@ fn composed(
             synchronous_slice: Duration::from_millis(200),
             ..Default::default()
         },
-        NativeRegistry::<()>::with_surface(PresentationTarget::Desktop),
+        crate::support::scene::registry::<()>(PresentationTarget::Desktop),
         Default::default(),
     )
     .unwrap()
@@ -363,7 +365,7 @@ fn invalid_child_initialization_rolls_back_all_private_mounts_without_native_ack
         packages,
         timer.handle().clone(),
         Default::default(),
-        NativeRegistry::<()>::with_surface(PresentationTarget::Desktop),
+        crate::support::scene::registry::<()>(PresentationTarget::Desktop),
         Default::default(),
     )
     .unwrap();
@@ -392,7 +394,7 @@ fn a_component_without_a_real_required_callback_cannot_publish() {
             packages,
             timer.handle().clone(),
             Default::default(),
-            NativeRegistry::<()>::with_surface(PresentationTarget::Desktop),
+            crate::support::scene::registry::<()>(PresentationTarget::Desktop),
             Default::default()
         )
         .is_err()
@@ -465,7 +467,7 @@ fn dispatch_at_a_deep_mount_cannot_restart_the_whole_tree_depth_budget() {
         packages,
         timer.handle().clone(),
         Default::default(),
-        NativeRegistry::<()>::with_surface(PresentationTarget::Desktop),
+        crate::support::scene::registry::<()>(PresentationTarget::Desktop),
         Default::default(),
     )
     .unwrap();
@@ -494,7 +496,7 @@ fn one_immutable_revision_selects_both_presentation_variants() {
             packages.clone(),
             timer.handle().clone(),
             Default::default(),
-            NativeRegistry::<()>::with_surface(target),
+            crate::support::scene::registry::<()>(target),
             Default::default(),
         )
         .unwrap();

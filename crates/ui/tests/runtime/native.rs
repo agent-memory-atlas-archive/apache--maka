@@ -18,6 +18,7 @@
  */
 
 use super::{support, timer};
+use crate::support::scene::Node;
 use maka_plugin_core::{
     composition::PresentationTarget,
     contract::Contract,
@@ -25,7 +26,7 @@ use maka_plugin_core::{
 };
 use maka_ui::{
     Application, ComponentCall, ComponentOutput, Frame, NativeCapability, NativeComponent,
-    NativeExport, NativeRegistry, NativeView, Node, Presentation, Surface,
+    NativeExport, NativeRegistry, NativeView, Surface,
 };
 use serde_json::{Value, json};
 use std::{cell::Cell, collections::BTreeMap, rc::Rc};
@@ -38,7 +39,7 @@ impl NativeComponent<String> for Counter {
         &self,
         call: ComponentCall<'_>,
         _values: &maka_ui::abi::ValueBindings,
-    ) -> maka_ui::Result<ComponentOutput<Presentation<String>>> {
+    ) -> maka_ui::Result<ComponentOutput<NativeView<String>>> {
         self.calls.set(self.calls.get() + 1);
         let state = match call {
             ComponentCall::Mount { props } => {
@@ -57,7 +58,7 @@ impl NativeComponent<String> for Counter {
         Ok(Frame {
             revision: state["revision"].as_u64().unwrap(),
             surface: None,
-            view: Presentation::Native(NativeView::new(
+            view: NativeView::new(
                 Rc::new(format!(
                     "{}={}",
                     state["label"].as_str().unwrap(),
@@ -66,13 +67,13 @@ impl NativeComponent<String> for Counter {
                 BTreeMap::from([(
                     "inc".into(),
                     json!({"type":"object","properties":{"delta":{"type":"integer","minimum":-10,"maximum":10},"large":{"type":"string"}},"required":["delta"],"additionalProperties":false}),
-                )]), vec![])?),
+                )]), vec![])?,
             state,
         }.output(Vec::new()))
     }
 }
 fn registered(contract: Contract, calls: Rc<Cell<usize>>) -> NativeRegistry<String> {
-    let mut registry = NativeRegistry::with_surface(PresentationTarget::Desktop);
+    let mut registry = crate::support::scene::registry(PresentationTarget::Desktop);
     registry
         .register("test.counter", move |_, _values| {
             Ok(BTreeMap::from([(
@@ -156,9 +157,7 @@ fn opaque_native_children_share_transaction_identity_and_input_admission_with_js
         "invalid raw inputs cannot enter the native callback"
     );
     app.dispatch(&left, 0, "inc", json!({"delta":2})).unwrap();
-    let Presentation::Native(view) = &app.frame(&left).unwrap().view else {
-        panic!("opaque native view")
-    };
+    let view = &app.frame(&left).unwrap().view;
     assert_eq!(view.view.as_str(), "Left 0=12");
     assert_eq!(app.frame(&right).unwrap().state["count"], 20);
     assert!(app.dispatch(&left, 0, "inc", json!({"delta":1})).is_err());
@@ -191,7 +190,7 @@ fn native_availability_is_not_activation_and_actual_contract_or_value_mismatches
     let timer = timer();
     for failure in 0..4 {
         let (input, packages, mut contract) = fixture();
-        let mut registry = NativeRegistry::<String>::with_surface(PresentationTarget::Desktop);
+        let mut registry = crate::support::scene::registry::<String>(PresentationTarget::Desktop);
         if failure != 0 {
             if failure == 1 {
                 contract.version += 1;
@@ -247,7 +246,7 @@ fn native_availability_is_not_activation_and_actual_contract_or_value_mismatches
             packages,
             timer.handle().clone(),
             Default::default(),
-            NativeRegistry::<String>::with_surface(PresentationTarget::Desktop),
+            crate::support::scene::registry::<String>(PresentationTarget::Desktop),
             Default::default()
         )
         .is_err()
@@ -260,7 +259,7 @@ impl NativeComponent<String> for Root {
         &self,
         call: ComponentCall<'_>,
         _values: &maka_ui::abi::ValueBindings,
-    ) -> maka_ui::Result<ComponentOutput<Presentation<String>>> {
+    ) -> maka_ui::Result<ComponentOutput<NativeView<String>>> {
         assert!(matches!(call, ComponentCall::Mount { .. }));
         Ok(Frame {
             revision: 0,
@@ -271,13 +270,13 @@ impl NativeComponent<String> for Root {
                 width: 640,
                 height: 400,
             }),
-            view: Presentation::Tree(Node::Component(maka_ui::ComponentSlot {
+            view: crate::support::scene::view(Node::Component(maka_ui::ComponentSlot {
                 key: "child".into(),
                 binding: "counter".into(),
                 member: 0,
                 props: json!({"label":"Native","initial":4}),
                 on: BTreeMap::new(),
-            })),
+            }))?,
         }
         .output(Vec::new()))
     }
@@ -343,7 +342,7 @@ impl NativeComponent<String> for SlotParent {
         &self,
         call: ComponentCall<'_>,
         _values: &maka_ui::abi::ValueBindings,
-    ) -> maka_ui::Result<ComponentOutput<Presentation<String>>> {
+    ) -> maka_ui::Result<ComponentOutput<NativeView<String>>> {
         let mut next = match call {
             ComponentCall::Mount { .. } => {
                 json!({"revision":0,"version":0,"right":true,"native":true,"seen":[]})
@@ -403,7 +402,7 @@ impl NativeComponent<String> for SlotParent {
             _ => {}
         }
         let view = if next["native"] == true {
-            Presentation::Native(NativeView::new(
+            NativeView::new(
                 Rc::new("Native parent".into()),
                 [
                     "parent",
@@ -421,11 +420,11 @@ impl NativeComponent<String> for SlotParent {
                 .map(|k| (k.into(), json!(true)))
                 .collect(),
                 slots,
-            )?)
+            )?
         } else {
-            Presentation::Tree(Node::Stack {
+            crate::support::scene::view(Node::Stack {
                 key: "root".into(),
-                direction: maka_ui::Direction::Column,
+                direction: crate::support::scene::Direction::Column,
                 gap: 0,
                 padding: 0,
                 background: 0,
@@ -447,7 +446,7 @@ impl NativeComponent<String> for SlotParent {
                         },
                     ])
                     .collect(),
-            })
+            })?
         };
         Ok(Frame {
             revision: next["revision"].as_u64().unwrap(),
@@ -487,7 +486,7 @@ fn native_parent_slots_share_js_child_events_rollback_identity_and_retirement() 
     let parent = support::package("native.slot-parent", declaration, None);
     input.instances.get_mut("app").unwrap().package = parent.application_ref().into();
     packages.push(parent);
-    let mut native = NativeRegistry::with_surface(PresentationTarget::Desktop);
+    let mut native = crate::support::scene::registry(PresentationTarget::Desktop);
     native
         .register("test.slot-parent", move |_, _values| {
             Ok(BTreeMap::from([(
@@ -511,10 +510,10 @@ fn native_parent_slots_share_js_child_events_rollback_identity_and_retirement() 
     let root = app.mount_launch(json!({})).unwrap();
     let left = app.child_mount(&root, "left").unwrap().clone();
     let right = app.child_mount(&root, "right").unwrap().clone();
-    assert!(matches!(
-        app.frame(&root).unwrap().view,
-        Presentation::Native(_)
-    ));
+    assert_eq!(
+        app.frame(&root).unwrap().view.view.as_str(),
+        "Native parent"
+    );
     app.dispatch(&left, 0, "inc", Value::Null).unwrap();
     assert_eq!(
         app.frame(&root).unwrap().state["seen"],
@@ -548,23 +547,20 @@ fn native_parent_slots_share_js_child_events_rollback_identity_and_retirement() 
         "inexact props never executed JS callback or retired shared realm"
     );
     app.dispatch(&root, 3, "tree", Value::Null).unwrap();
-    assert!(matches!(
-        app.frame(&root).unwrap().view,
-        Presentation::Tree(_)
-    ));
+    assert_eq!(app.frame(&root).unwrap().view.view.as_str(), "");
     assert_eq!(app.child_mount(&root, "left").unwrap(), &left);
     assert!(
         app.dispatch(&root, 4, "oversized", Value::Null).is_err(),
-        "Tree output of native callback has same complete budget"
+        "Declarative output of native callback has same complete budget"
     );
     assert_eq!(app.frame(&root).unwrap().revision, 4);
     assert!(app.dispatch(&root, 4, "aggregate", Value::Null).is_err());
     assert_eq!(app.frame(&root).unwrap().revision, 4);
     app.dispatch(&root, 4, "tree", Value::Null).unwrap();
-    assert!(matches!(
-        app.frame(&root).unwrap().view,
-        Presentation::Native(_)
-    ));
+    assert_eq!(
+        app.frame(&root).unwrap().view.view.as_str(),
+        "Native parent"
+    );
     assert_eq!(app.child_mount(&root, "left").unwrap(), &left);
     // Restore the removed slot at the non-rejecting version 2; it is a new mount.
     app.dispatch(&root, 5, "parent", Value::Null).unwrap();

@@ -52,7 +52,7 @@ fn start(timer: &tokio::runtime::Runtime, store: Arc<EventLog>, id: Uuid) -> App
             PresentationTarget::Desktop,
             timer.handle().clone(),
             Default::default(),
-            NativeRegistry::with_surface(PresentationTarget::Desktop),
+            crate::support::scene::registry(PresentationTarget::Desktop),
             vec![],
         ))
         .unwrap()
@@ -172,7 +172,8 @@ fn missing_or_wrong_selected_presentation_never_activates_native_code() {
         (id, PresentationTarget::Tui),
     ] {
         let observed = calls.clone();
-        let mut native = NativeRegistry::<()>::default();
+        let mut native =
+            NativeRegistry::<()>::default().with_scene_compiler(support::scene::compile::<()>);
         native
             .register("maka.ui.surface.desktop", move |_, _values| {
                 observed.set(observed.get() + 1);
@@ -242,7 +243,8 @@ fn unavailable_native_implementation_is_rejected_before_an_earlier_factory_execu
         .unwrap();
     let calls = Rc::new(Cell::new(0));
     let observed = calls.clone();
-    let mut native = NativeRegistry::<()>::default();
+    let mut native =
+        NativeRegistry::<()>::default().with_scene_compiler(support::scene::compile::<()>);
     native
         .register("maka.ui.surface.desktop", move |_, _values| {
             observed.set(observed.get() + 1);

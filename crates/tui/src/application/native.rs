@@ -20,7 +20,7 @@
 use super::{Slots, Widget, paint};
 use maka_ui::{
     ComponentCall, ComponentOutput, Frame, LabelProps, NativeCapability, NativeComponent,
-    NativeExport, NativeRegistry, NativeView, Presentation, label_contract,
+    NativeExport, NativeRegistry, NativeView, label_contract,
 };
 use ratatui::{
     buffer::Buffer,
@@ -56,7 +56,7 @@ impl NativeComponent<dyn Widget> for LabelComponent {
         &self,
         call: ComponentCall<'_>,
         _values: &maka_ui::abi::ValueBindings,
-    ) -> maka_ui::Result<ComponentOutput<Presentation<dyn Widget>>> {
+    ) -> maka_ui::Result<ComponentOutput<NativeView<dyn Widget>>> {
         let (props, revision) = match call {
             ComponentCall::Mount { props } => (props, 0),
             ComponentCall::Update { state, props } => (
@@ -73,11 +73,7 @@ impl NativeComponent<dyn Widget> for LabelComponent {
             revision,
             state: json!({"revision":revision}),
             surface: None,
-            view: Presentation::Native(NativeView::<dyn Widget>::new(
-                Rc::new(Label { props }),
-                BTreeMap::new(),
-                vec![],
-            )?),
+            view: NativeView::<dyn Widget>::new(Rc::new(Label { props }), BTreeMap::new(), vec![])?,
         }
         .output(Vec::new()))
     }
@@ -86,7 +82,8 @@ impl NativeComponent<dyn Widget> for LabelComponent {
 /// 编译时提供实现，实例及绑定仍由产品 composition 决定。
 pub fn registry() -> NativeRegistry<dyn Widget> {
     let mut registry =
-        NativeRegistry::with_surface(maka_plugin_core::composition::PresentationTarget::Tui);
+        NativeRegistry::with_surface(maka_plugin_core::composition::PresentationTarget::Tui)
+            .with_scene_compiler(super::scene::compile);
     registry
         .register("maka.ui.label", |_, _values| {
             Ok(BTreeMap::from([(

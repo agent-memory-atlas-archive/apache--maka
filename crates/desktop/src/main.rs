@@ -25,14 +25,13 @@ use maka_ui_gpui as widgets;
 mod window_owner;
 use clap::Parser;
 use gpui_kit::{
-    AnyElement, AppContext, Bounds, Context, InteractiveElement, IntoElement, ParentElement,
-    Render, SharedString, Styled, TitlebarOptions, WindowBounds, WindowOptions,
-    component::button::Button, div, px, rgb, size,
+    AnyElement, AppContext, Bounds, Context, IntoElement, ParentElement, Render, Styled,
+    TitlebarOptions, WindowBounds, WindowOptions, div, px, size,
 };
 #[cfg(test)]
-use gpui_kit::{App, TestAppContext, point};
+use gpui_kit::{App, InteractiveElement, TestAppContext, point};
 use maka_plugin_core::{composition::PresentationTarget, runtime::Mount};
-use maka_ui::{Application, Direction, Node, Presentation, Surface as SurfaceDeclaration};
+use maka_ui::{Application, NativeView, Surface as SurfaceDeclaration};
 type DesktopApplication = Application<dyn widgets::Widget>;
 use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc};
 
@@ -93,14 +92,14 @@ impl Surface {
             return Ok(());
         }
         let application = self.application.borrow();
+        self.resources
+            .borrow_mut()
+            .deactivate_unmounted(&application, window, cx)?;
         for mount in application.mounted_subtree(&self.mount)? {
             self.resources.borrow_mut().prepare_scope(&mount);
             let frame = application.frame(&mount)?;
             let id = mount.id().to_string();
-            let Presentation::Native(native) = &frame.view else {
-                self.resources.borrow_mut().owners.remove(&id);
-                continue;
-            };
+            let native = &frame.view;
             let lease = self.resources.borrow().acquire(&mount);
             let input = self.input(
                 &lease,
@@ -115,6 +114,9 @@ impl Surface {
                 .get(&id)
                 .is_some_and(|owner| owner.kind != kind)
             {
+                if let Some(owner) = resources.owners.get_mut(&id) {
+                    owner.deactivate(window, cx);
+                }
                 resources.owners.remove(&id);
             }
             let owner = resources.owners.entry(id).or_insert_with(|| {
@@ -158,9 +160,7 @@ impl Surface {
         let application = self.application.borrow();
         for mount in application.mounted_subtree(&self.mount)? {
             let frame = application.frame(&mount)?;
-            let Presentation::Native(native) = &frame.view else {
-                continue;
-            };
+            let native = &frame.view;
             let mut resources = self.resources.borrow_mut();
             let owner = resources
                 .owners
@@ -212,13 +212,8 @@ impl Surface {
                 children.insert(slot.key.clone(), child);
                 Ok(())
             };
-            match &frame.view {
-                Presentation::Native(view) => {
-                    for slot in view.slots() {
-                        add(slot)?;
-                    }
-                }
-                Presentation::Tree(node) => collect_slots(node, &mut add)?,
+            for slot in frame.view.slots() {
+                add(slot)?;
             }
             let identity = resources
                 .owners
@@ -253,26 +248,11 @@ struct RenderScene {
     entry: RenderEntry,
 }
 struct RenderEntry {
-    frame: maka_ui::Frame<Presentation<dyn widgets::Widget>>,
+    frame: maka_ui::Frame<NativeView<dyn widgets::Widget>>,
     lease: resources::Lease,
     input: widgets::Input,
     children: std::collections::BTreeMap<String, Rc<RenderScene>>,
     identity: Option<Rc<()>>,
-}
-fn collect_slots(
-    node: &Node,
-    add: &mut impl FnMut(&maka_ui::ComponentSlot) -> maka_ui::Result<()>,
-) -> maka_ui::Result<()> {
-    match node {
-        Node::Component(slot) => add(slot)?,
-        Node::Stack { children, .. } => {
-            for node in children {
-                collect_slots(node, add)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(())
 }
 impl RenderScene {
     fn render(
@@ -290,26 +270,23 @@ impl RenderScene {
         if !entry.lease.is_attached() {
             return Err(maka_ui::Error::Invalid("captured mount detached".into()));
         }
-        let content = match &entry.frame.view {
-            Presentation::Tree(node) => self.node(entry, node, window, cx)?,
-            Presentation::Native(native) => {
-                let resources = self.resources.borrow();
-                let owner = resources
-                    .owners
-                    .get(&id)
-                    .filter(|owner| {
-                        entry
-                            .identity
-                            .as_ref()
-                            .is_some_and(|token| Rc::ptr_eq(token, &owner.identity))
-                    })
-                    .ok_or_else(|| {
-                        maka_ui::Error::Invalid("captured native owner replaced".into())
-                    })?;
-                let slots = self.slots();
-                native.view.render(owner.state.as_ref(), &slots, window, cx)
-            }
-        };
+        let resources = self.resources.borrow();
+        let owner = resources
+            .owners
+            .get(&id)
+            .filter(|owner| {
+                entry
+                    .identity
+                    .as_ref()
+                    .is_some_and(|token| Rc::ptr_eq(token, &owner.identity))
+            })
+            .ok_or_else(|| maka_ui::Error::Invalid("captured native owner replaced".into()))?;
+        let slots = self.slots();
+        let content = entry
+            .frame
+            .view
+            .view
+            .render(owner.state.as_ref(), &slots, window, cx)?;
         Ok(owned::Owned {
             window_id: self.window_id,
             content,
@@ -319,12 +296,15 @@ impl RenderScene {
     }
     fn slots(self: &Rc<Self>) -> widgets::Slots {
         let entry = &self.entry;
-        let keys = match &entry.frame.view {
-            Presentation::Native(view) => view.slots().iter().map(|s| s.key.clone()).collect(),
-            Presentation::Tree(_) => entry.children.keys().cloned().collect(),
-        };
+        let keys = entry
+            .frame
+            .view
+            .slots()
+            .iter()
+            .map(|s| s.key.clone())
+            .collect();
         let scene = self.clone();
-        widgets::Slots::new(keys, move |key, window, cx| {
+        widgets::Slots::new(keys, entry.input.clone(), move |key, window, cx| {
             if window.window_handle().window_id() != scene.window_id {
                 return Err(maka_ui::Error::Invalid(
                     "captured slots belong to another window".into(),
@@ -335,7 +315,7 @@ impl RenderScene {
             if !entry.lease.is_attached() {
                 return Err(maka_ui::Error::Invalid("slot parent detached".into()));
             }
-            // Native→Tree→Native can keep the core Mount but replace its owner.
+            // Changing the widget kind can keep the core Mount but replace its owner.
             if let Some(token) = &entry.identity
                 && !scene
                     .resources
@@ -351,54 +331,6 @@ impl RenderScene {
                 .get(key)
                 .ok_or_else(|| maka_ui::Error::Invalid("unknown component slot".into()))?;
             child.render(window, cx)
-        })
-    }
-    fn node(
-        self: &Rc<Self>,
-        scope: &RenderEntry,
-        node: &Node,
-        window: &mut gpui_kit::Window,
-        cx: &mut gpui_kit::App,
-    ) -> maka_ui::Result<AnyElement> {
-        Ok(match node {
-            Node::Text { key, text, color } => div()
-                .id(SharedString::from(key.clone()))
-                .text_color(rgb(*color))
-                .child(SharedString::from(text.clone()))
-                .into_any_element(),
-            Node::Button { key, label } => Button::new(SharedString::from(key.clone()))
-                .label(SharedString::from(label.clone()))
-                .on_click(
-                    scope
-                        .input
-                        .bind(key.clone(), |_| serde_json::json!({"kind":"click"})),
-                )
-                .into_any_element(),
-            Node::Component(slot) => scope.children[&slot.key].render(window, cx)?,
-            Node::Stack {
-                key,
-                direction,
-                gap,
-                padding,
-                background,
-                children,
-            } => {
-                let element = div()
-                    .id(SharedString::from(key.clone()))
-                    .flex()
-                    .gap(px(*gap as f32))
-                    .p(px(*padding as f32))
-                    .bg(rgb(*background));
-                let element = match direction {
-                    Direction::Row => element.flex_row(),
-                    Direction::Column => element.flex_col(),
-                };
-                let elements = children
-                    .iter()
-                    .map(|child| self.node(scope, child, window, cx))
-                    .collect::<maka_ui::Result<Vec<_>>>()?;
-                element.children(elements).into_any_element()
-            }
         })
     }
 }
@@ -1051,10 +983,7 @@ mod tests {
         let root = app.mount_launch(serde_json::json!({})).unwrap();
         let right = app.child_mount(&root, "right").unwrap().clone();
         let native = app.child_mount(&root, "nativeLabel").unwrap().clone();
-        assert!(matches!(
-            app.frame(&native).unwrap().view,
-            maka_ui::Presentation::Native(_)
-        ));
+        assert!(app.frame(&native).unwrap().view.slots().is_empty());
         let app = Rc::new(RefCell::new(app));
         let (wake, receipts) = tokio::sync::mpsc::unbounded_channel();
         let resources = Rc::new(RefCell::new(resources::NativeResources::new(
@@ -1202,3 +1131,37 @@ mod tests {
 
 #[cfg(test)]
 mod editor_tests;
+
+#[cfg(test)]
+#[test]
+fn javascript_scene_style_overflow_rejects_batch_and_preserves_original_frame() {
+    let timer = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_time()
+        .build()
+        .unwrap();
+    for value in ["1e300", "-1e300"] {
+        let (input, packages) = support::fixture(&format!(
+            "const next=frame({{count:state.count+1,revision:state.revision+1}});next.frame.view.style={{minWidth:{value}}};return next;"
+        ));
+        let mut app = Application::new(
+            &input,
+            packages,
+            timer.handle().clone(),
+            Default::default(),
+            widgets::registry(),
+            Default::default(),
+        )
+        .unwrap();
+        let mount = app.mount_launch(serde_json::json!({"count":4})).unwrap();
+        assert!(
+            app.dispatch(&mount, 0, "inc", serde_json::Value::Null)
+                .is_err()
+        );
+        assert_eq!(app.frame(&mount).unwrap().revision, 0);
+        assert_eq!(app.frame(&mount).unwrap().state["count"], 4);
+        assert!(!app.is_retiring(&mount));
+        app.close(&mount, Ok(())).unwrap();
+        app.shutdown().unwrap();
+    }
+}

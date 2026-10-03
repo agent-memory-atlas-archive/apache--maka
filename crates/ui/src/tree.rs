@@ -75,7 +75,7 @@ struct Notification {
 
 pub(super) struct Mounted<V: ?Sized> {
     mount: Mount,
-    pub frame: Frame<Presentation<V>>,
+    pub frame: Frame<NativeView<V>>,
     pub props: Value,
     pub children: BTreeMap<String, Child>,
     pub(super) bytes: usize,
@@ -133,7 +133,7 @@ impl<V: ?Sized> Update<V> {
     }
     fn charge(
         &mut self,
-        frame: &Frame<Presentation<V>>,
+        frame: &Frame<NativeView<V>>,
         props: &Value,
         events: &[Emission],
     ) -> Result<usize> {
@@ -156,11 +156,8 @@ impl<V: ?Sized> Update<V> {
             &(&frame.state, &frame.surface, frame.revision, props),
         )
         .map_err(|error| Error::Invalid(error.to_string()))?;
-        match &frame.view {
-            Presentation::Tree(node) => serde_json::to_writer(&mut counter, node),
-            Presentation::Native(view) => serde_json::to_writer(&mut counter, &view.metadata()),
-        }
-        .map_err(|error| Error::Invalid(error.to_string()))?;
+        serde_json::to_writer(&mut counter, &frame.view.metadata())
+            .map_err(|error| Error::Invalid(error.to_string()))?;
         let bytes = counter.0 - self.bytes;
         serde_json::to_writer(&mut counter, events)
             .map_err(|error| Error::Invalid(error.to_string()))?;
@@ -293,7 +290,7 @@ impl<V: ?Sized + 'static> Application<V> {
         Ok(())
     }
 
-    fn check_initial(frame: &Frame<Presentation<V>>) -> Result<()> {
+    fn check_initial(frame: &Frame<NativeView<V>>) -> Result<()> {
         if frame.revision != 0 {
             return Err(Error::Invalid("initial UI revision must be zero".into()));
         }
@@ -302,7 +299,7 @@ impl<V: ?Sized + 'static> Application<V> {
     fn check_next(
         revision: u64,
         surface: &Option<Surface>,
-        frame: &Frame<Presentation<V>>,
+        frame: &Frame<NativeView<V>>,
     ) -> Result<()> {
         if revision.checked_add(1) != Some(frame.revision) {
             return Err(Error::Invalid("UI revision must advance once".into()));
@@ -451,7 +448,7 @@ impl<V: ?Sized + 'static> Application<V> {
         &mut self,
         mount: &Mount,
         props: Value,
-        output: ComponentOutput<Presentation<V>>,
+        output: ComponentOutput<NativeView<V>>,
         subscription: Option<Subscription>,
         depth: usize,
         update: &mut Update<V>,

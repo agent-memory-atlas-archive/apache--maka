@@ -18,7 +18,7 @@
  */
 
 use super::{DesktopApplication, resources::NativeResources};
-use gpui_kit::{App, Task, Window};
+use gpui_kit::{App, AppContext, Task, Window};
 use std::{cell::RefCell, rc::Rc};
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -34,7 +34,8 @@ pub(super) fn start(
     finished: impl FnOnce(Result<(), String>, &mut App) + 'static,
 ) -> Result<Task<()>, String> {
     let mut platform = window.take_cleanup_receiver().map_err(|e| e.to_string())?;
-    let id = window.window_handle().window_id();
+    let handle = window.window_handle();
+    let id = handle.window_id();
     let closing_resources = resources.clone();
     let closing_application = application.clone();
     let removal_error = Rc::new(RefCell::new(None));
@@ -83,7 +84,16 @@ pub(super) fn start(
                 cx.update(|cx| finished(Err(error), cx));
                 return;
             }
-            let result = cx.update(|_| resources.borrow_mut().collect(&mut application.borrow_mut()));
+            let result = cx.update(|cx| {
+                if !resources.borrow().is_removed() {
+                    // A live window can clear its retired controls' focus. Once
+                    // removed, focus belongs to the destroyed platform window.
+                    cx.update_window(handle, |_, window, cx| {
+                        resources.borrow_mut().deactivate_unmounted(&application.borrow(), window, cx)
+                    }).map_err(|error| maka_ui::Error::Invalid(error.to_string()))??;
+                }
+                resources.borrow_mut().collect(&mut application.borrow_mut())
+            });
             if let Err(error) = result {
                 cx.update(|cx| finished(Err(error.to_string()), cx));
                 return;

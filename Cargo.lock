@@ -8105,6 +8105,7 @@ dependencies = [
  "objc2 0.6.4",
  "rusqlite",
  "schemars 1.2.2",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -8776,9 +8777,12 @@ name = "maka-ui-gpui"
 version = "0.2.0"
 dependencies = [
  "gpui-kit",
+ "jsonschema 0.56.0",
  "maka-plugin-core",
  "maka-plugins",
  "maka-ui",
+ "schemars 1.2.2",
+ "serde",
  "serde_json",
 ]
 

@@ -609,6 +609,10 @@ fn retired_textarea_menu_rejects_old_painted_paste_callback_before_next_paint(
                 .child_mount(&scene.root, "editor")
                 .is_err()
         );
+        assert!(
+            window.focused(cx).is_none(),
+            "retirement must release the menu's original focus before any input or paint"
+        );
         // Keep the original native owner alive, then deliver against its old
         // painted row before the effect cycle can flush a replacement frame.
         window.dispatch_event(
@@ -636,5 +640,85 @@ fn retired_textarea_menu_rejects_old_painted_paste_callback_before_next_paint(
         });
     })
     .unwrap();
+    scene.close(cx);
+}
+
+#[gpui::test]
+fn retired_textarea_menu_does_not_blur_focus_that_has_moved_to_another_editor(
+    cx: &mut TestAppContext,
+) {
+    let timer = timer();
+    let (mut input, mut packages) = appearance::scoped_fixture();
+    let index = packages
+        .iter()
+        .position(|package| package.manifest().id == "dynamic.app")
+        .unwrap();
+    let original = packages.remove(index);
+    // Keep the second real editor independently of the first editor's toggle.
+    let source = format!(
+        r#"{}
+        const originalFrame=frame;
+        frame=(state)=>{{
+            const output=originalFrame(state);
+            if(!state.right)output.frame.view.children.unshift({{kind:'component',key:'second',binding:'editor',member:0,on:{{}},props:{{initialText:'Second',placeholder:'Other draft',appearance:state.otherBrand.textarea,accessibilityLabel:'Other draft',readOnly:false,disabled:false,softWrap:true,tabIndex:0}}}});
+            return output;
+        }};
+        "#,
+        std::str::from_utf8(original.file("index.mjs").unwrap()).unwrap()
+    );
+    let root = support::package(
+        "dynamic.app",
+        original.manifest().application.clone().unwrap(),
+        Some(source),
+    );
+    input.instances.get_mut("app").unwrap().package = root.application_ref().into();
+    packages.push(root);
+    let scene = Scene::from_packages(cx, &timer, false, (input, packages));
+    focus(&scene, cx);
+    let owner = scene.owner();
+    let second_mount = scene
+        .app
+        .borrow()
+        .child_mount(&scene.root, "second")
+        .unwrap()
+        .clone();
+    let second = scene.resources.borrow().owners[&second_mount.id().to_string()]
+        .state
+        .downcast_ref::<Entity<TextareaOwner>>()
+        .unwrap()
+        .clone();
+    cx.simulate_keystrokes(scene.window, "shift-f10");
+    scene.draw(cx);
+    cx.update_window(scene.window, |_, window, cx| {
+        let external = second
+            .read(cx)
+            .state
+            .read(cx)
+            .presentation()
+            .focus_handle()
+            .clone();
+        external.focus(window, cx);
+        let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
+        scene
+            .app
+            .borrow_mut()
+            .dispatch(&scene.root, revision, "toggle", serde_json::Value::Null)
+            .unwrap();
+        scene
+            .surface
+            .update(cx, |surface, cx| surface.sync_native(window, cx).unwrap());
+        assert!(external.is_focused(window));
+        owner.update(cx, |owner, cx| {
+            assert!(!owner.accepts_text_input(window, cx));
+        });
+    })
+    .unwrap();
+    scene.draw(cx);
+    cx.simulate_input(scene.window, "!");
+    scene.draw(cx);
+    cx.update(|cx| {
+        assert_eq!(second.read(cx).state.read(cx).value().as_ref(), "!Second");
+        assert_eq!(owner.read(cx).state.read(cx).value().as_ref(), "Start");
+    });
     scene.close(cx);
 }

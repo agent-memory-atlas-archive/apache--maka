@@ -29,23 +29,29 @@
 
 `NativeRegistry<V>` 提供随构建编译的工厂；只有组合选中的 entry 才会激活，实际导出
 仍由同一个 runtime 校验并发布。原生组件与 JavaScript 共用 props/state/revision 和
-整批事务。`Presentation<V>` 可以是有界树或不序列化的类型化不可变原生呈现描述，
-内核不依赖 GPUI。原生输入按当前 scene 的 schema 校验；调用在派发前受 1 MiB 限额。
+整批事务。已提交 frame 只包含 `NativeView<V>`，即类型化的不可变原生呈现描述；
+内核不提供布局词汇，也不依赖 GPUI。原生输入按当前 scene 的 schema 校验；调用在派发前受 1 MiB 限额。
 Rust 扩展是受信任同步代码，没有 JavaScript watchdog 隔离；统一提交 deadline 能拒绝
-迟到结果，不能中断 Rust。4 MiB 更新及 32 MiB 保留限额计量序列化元数据、树和输入
+迟到结果，不能中断 Rust。4 MiB 更新及 32 MiB 保留限额计量序列化元数据、场景来源和输入
 schema，不计原生内存；原生 owner 负责其实际分配限额。
 呈现描述不能持有 entity、输入绑定、订阅或原生 work；它们归呈现器资源 owner 所有，
 通过资源凭证等待真实销毁，不依赖退休 frame 的描述被释放。
 
 
-`ComponentSlot { key, binding, member, props, on }` 由 `Node::Component` 和
-`NativeView::new(recipe, input_schemas, slots)` 共用。原生 slots 有序、最多 64 个，
-按父组件自己的 imports 解析；继续使用同一套子挂载、props 事务、事件路由与清理。
-未展示的 slot 保留状态。两种呈现的完整回调元数据（slots/state/events/actions）
+JavaScript 返回平台自己的 JSON 场景。embedding 必须在激活 JavaScript component
+之前通过 `NativeRegistry::with_scene_compiler` 安装纯编译器；缺少编译器时，在工厂或
+guest 执行前拒绝启动。编译器只收到 JSON 与当前 deadline，返回 `NativeView`。
+内核独立保留原场景 JSON 计费，编译器的元数据不能消除这份来源。编译失败回滚整批，
+不退休健康 realm。同一插件的 TUI 与 Desktop 入口可以使用不同场景语言。
+
+`ComponentSlot { key, binding, member, props, on }` 属于
+`NativeView::new(recipe, input_schemas, slots)`。slots 有序、最多 64 个，
+按父组件自己的 imports 解析，共用子挂载、props 事务、事件路由与清理。
+未展示的 slot 保留状态。完整回调元数据（原场景 JSON、slots/state/events/actions）
 共用 1 MiB 限额。不能精确投影为 JavaScript 的参数在调用该 consumer 前拒绝，
 不退休健康执行域；原生 Rust consumer 仍保留精确整数。
 
-树协议包含 stack、text、button 和导入组件。子组件引用显式 binding 与 member，
+子组件引用显式 binding 与 member，
 稳定 key 在父组件 props 更新时保留子挂载和局部状态。父子组件共用一次 deadline，
 整批提交；任一子组件失败，原有 frame 全部保留。移除后挂载只进入退休，等待真实原生
 清理确认；未提交的挂载尚无原生资源。`Frame.surface` 是封闭声明：Desktop 使用 `Window { binding, title, width, height }`，

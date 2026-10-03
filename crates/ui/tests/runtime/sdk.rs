@@ -82,7 +82,7 @@ fn sdk_typescript_bundles_execute_the_same_package_in_both_presentations() {
                 synchronous_slice: Duration::from_millis(100),
                 ..Default::default()
             },
-            NativeRegistry::<()>::with_surface(target),
+            crate::support::scene::registry::<()>(target),
             Default::default(),
         )
         .unwrap();

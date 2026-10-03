@@ -18,6 +18,7 @@
  */
 
 use super::{close_all, support, timer};
+use crate::support::scene::Node;
 use maka_plugin_core::{
     composition::{Input, PresentationTarget, Target},
     contract::{Cardinality, Contract, Import, Interface},
@@ -26,7 +27,7 @@ use maka_plugin_core::{
 use maka_plugins::package::Package;
 use maka_ui::{
     Application, ComponentCall, ComponentOutput, Emission, Frame, NativeCapability,
-    NativeComponent, NativeExport, NativeRegistry, Node, Presentation,
+    NativeComponent, NativeExport, NativeView,
 };
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, rc::Rc};
@@ -98,7 +99,7 @@ fn application(
         packages,
         timer.handle().clone(),
         Default::default(),
-        NativeRegistry::with_surface(PresentationTarget::Desktop),
+        crate::support::scene::registry(PresentationTarget::Desktop),
         Default::default(),
     )
     .unwrap()
@@ -331,7 +332,7 @@ impl NativeComponent<()> for NativeEmitter {
         &self,
         call: ComponentCall<'_>,
         _values: &maka_ui::abi::ValueBindings,
-    ) -> maka_ui::Result<ComponentOutput<Presentation<()>>> {
+    ) -> maka_ui::Result<ComponentOutput<NativeView<()>>> {
         let (state, events) = match call {
             ComponentCall::Mount { props } => (
                 json!({"revision":0,"count":props["initial"],"label":props["label"]}),
@@ -353,10 +354,10 @@ impl NativeComponent<()> for NativeEmitter {
             revision: state["revision"].as_u64().unwrap(),
             state,
             surface: None,
-            view: Presentation::Tree(Node::Button {
+            view: crate::support::scene::view(Node::Button {
                 key: "inc".into(),
                 label: "Native".into(),
-            }),
+            })?,
         }
         .output(events))
     }
@@ -420,7 +421,7 @@ fn native_application(
     );
     input.instances.get_mut("app").unwrap().package = root.application_ref().into();
     packages.extend([root, native]);
-    let mut registry = NativeRegistry::with_surface(PresentationTarget::Desktop);
+    let mut registry = crate::support::scene::registry(PresentationTarget::Desktop);
     registry
         .register("test.events", move |_, _values| {
             Ok(BTreeMap::from([(
@@ -448,7 +449,7 @@ impl NativeComponent<()> for PaddedEmitter {
         &self,
         call: ComponentCall<'_>,
         _values: &maka_ui::abi::ValueBindings,
-    ) -> maka_ui::Result<ComponentOutput<Presentation<()>>> {
+    ) -> maka_ui::Result<ComponentOutput<NativeView<()>>> {
         let (state, events) = match call {
             ComponentCall::Mount { props } => (
                 json!({"revision":0,"count":props["initial"],"label":props["label"],"padding":"x".repeat(930_000)}),
@@ -478,10 +479,10 @@ impl NativeComponent<()> for PaddedEmitter {
             revision: state["revision"].as_u64().unwrap(),
             state,
             surface: None,
-            view: Presentation::Tree(Node::Button {
+            view: crate::support::scene::view(Node::Button {
                 key: "inc".into(),
                 label: "Native".into(),
-            }),
+            })?,
         }
         .output(events))
     }

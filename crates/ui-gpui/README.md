@@ -31,9 +31,19 @@ The product package declares imports; only its selected composition activates th
 compiled implementation. `registry()` makes the built-in Label/Editor available
 and may be extended before the trusted launcher receives it.
 
+`registry()` also installs this platform's pure `scene::compile`. Dynamic JSON
+scenes provide native flex layout, scoped typography/colors, pointer and keyboard
+buttons, focus styling and vertical scrolling. Imported components remain slots
+of the original parent. Local keys retain the same mechanical focus/scroll owners
+across layout changes; removing or changing their kind closes old input admission.
+The compiler validates bounded shapes, styles and numeric values against the
+original JSON before narrowing to native floats, within the callback deadline.
+
 `Widget::create` returns renderer-owned resource state; `capture` takes bounded
 request-local snapshots and `commit` applies committed commands before rendering.
-`render` reads that owner and receives its exact committed child `Slots`. Recipes
+`deactivate` releases native focus/input on logical retirement, before old paints
+finish destruction. `render` reads that owner, receives its exact committed child
+`Slots` and returns a result so placement failures reach the presenter. Recipes
 must not keep Entity, Input, Slots, subscriptions or resource leases. Retained
 Elements and virtual-list callbacks may clone `Slots`, holding real custody for
 only the original subtree and window. Removed or recreated owners reject old
