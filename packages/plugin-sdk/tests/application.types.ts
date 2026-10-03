@@ -209,3 +209,15 @@ function immutableValueExports(contract: Contract, values: ComponentValues) {
   void [value, old, wrong];
 }
 void immutableValueExports;
+
+async function publishSubscriptionItem(context: RequestContext) {
+  const published: null = await context.invoke({ operation: 'emit', value: { delta: 'hello' } });
+  const forged = {
+    operation: 'emit',
+    value: 'hello',
+    // @ts-expect-error Publishing is request-local, not selected by another request ID.
+    subscriptionId: 'other',
+  } satisfies HostRequest;
+  void [published, forged];
+}
+void publishSubscriptionItem;

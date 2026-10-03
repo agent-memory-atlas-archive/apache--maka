@@ -583,9 +583,13 @@ impl Owner {
                     let declared_method = &methods[&method];
                     if operation.is_some_and(|id| id.is_nil())
                         || match declared_method.mode {
-                            MethodMode::Query => operation.is_some(),
+                            MethodMode::Query => {
+                                operation.is_some() || matches!(kind, CallKind::Subscription { .. })
+                            }
                             MethodMode::Mutation => operation.is_none(),
-                            MethodMode::Subscription => true,
+                            MethodMode::Subscription => {
+                                !matches!(kind, CallKind::Subscription { .. })
+                            }
                         }
                     {
                         return Err("service method mode or operation identity mismatch".into());
@@ -746,7 +750,14 @@ impl Owner {
                         if let Some(ticket) = &mut parent {
                             ticket.start();
                         }
+                        let (output, stream) = kind.accept(
+                            execution.id(),
+                            reference.clone(),
+                            execution.value().methods[&method].output.clone(),
+                            scope.cancellation.clone(),
+                        );
                         let context = Context {
+                            stream: stream.clone(),
                             scope: scope.clone(),
                             consumer: execution.provider().clone(),
                             operation: reference.clone(),
@@ -754,7 +765,6 @@ impl Owner {
                             imports: self.owned[execution.provider().instance()].imports.clone(),
                             dispatch: self.dispatch.clone(),
                         };
-                        let output = kind.accept(execution.id(), reference);
                         let is_mutation = operation.is_some();
                         self.jobs.push(Box::pin(async move {
                             let mut historical = None;
@@ -787,6 +797,7 @@ impl Owner {
                                 Ok(value)
                             };
                             let result = AssertUnwindSafe(invocation).catch_unwind().await;
+                            if let Some(stream) = stream { stream.close(); }
                             let cleanup = scope.finish().await.map_err(|e| e.to_string());
                             let (result, cleanup) = match result {
                                 Ok(result) => (result, cleanup),

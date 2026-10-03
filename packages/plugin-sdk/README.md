@@ -56,7 +56,12 @@ Their bundled modules execute in the real application integration tests. Build t
 workspace before importing its package exports. Bundles must contain no unresolved
 imports or top-level await; they do not embed native extensions or confer authority.
 
-Host application services support queries and durable, resource-free mutations.
+Host application services support queries, subscriptions and durable, resource-free mutations.
+Subscription handlers publish with `await context.invoke({operation: 'emit', value})`;
+items and the final return value use the declared output schema. Each stream allows
+16 queued items, 16 pending emits and 64 KiB JSON per item. Await each publish to
+respect reader backpressure. The native Host client owns stream cancellation and
+observes real cleanup separately; UI subscription actions are not yet implemented.
 `context.invoke({ operation: 'mutate', ..., operationId })` returns an `OperationReply`
 with the original `reference` even when the result is unknown or cannot be delivered.
 Only `receipt.kind === 'recorded'` describes journal facts; inspect both `outcome`
@@ -91,7 +96,7 @@ may still be unknown or unavailable. Transport/query failures use `failed`;
 keep the original reference. Large or inexact journal values produce the same
 reference with `unavailable` for this portable contract, while raw native recovery
 preserves them. Query cleanup does not describe the original operation's cleanup.
-Subscriptions, effectful resource snapshots and business migration remain unfinished.
+UI subscription actions, effectful resource snapshots and business migration remain unfinished.
 
 Deployment sources can be stored in an owned State Root with
 `maka application commit --root ROOT --deployment UUID --expected-revision 0 --input input.json --package bundle.maka-plugin`.

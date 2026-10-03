@@ -87,11 +87,25 @@ client handles do not keep the root alive or cancel accepted work. Shutdown succ
 requires native/module cleanup and actual VM shutdown. Shared VM failure retires
 its actual registrations and consumers, leaving unrelated domains independent.
 
+Subscription methods use the same handler, binding, policy and execution owner.
+`Client::subscribe` creates an independently cancellable reader; native handlers
+publish through `Context::emit`, and JavaScript uses
+`await context.invoke({operation:'emit', value})`. Each item and the final return
+value must satisfy the method's output schema. A stream has 16 queued items and
+16 pending emits, with a 64 KiB JSON limit per item; the Host admits at most 16
+stream buffers, including completed streams with unread data. Producers wait for
+capacity. Producer return, error or panic closes publication even if a native
+handler retains a Context or send future; readers can drain accepted items to EOF.
+`Subscription::cancel` and Drop request stop only. `completion` closes demand
+before awaiting the original owner's separate business and cleanup results.
+Cancellation never propagates to the caller's parent Scope or sibling streams;
+failed cleanup still retains the original execution and its resources.
+
 Calls have a 1 MiB JSON limit, with 128-call and 32 MiB in-flight input budgets.
 Attachments allow 16 exact slots and 64 MiB across queued and accepted requests;
 unconfirmed cleanup retains their payloads and capacity. This adapter currently
-executes native and JavaScript queries with attached resources and resource-free
-durable mutations. Mutation resource snapshots and subscription executors,
+executes native and JavaScript queries and subscriptions with attached resources,
+and resource-free durable mutations. Mutation resource snapshots,
 trusted Host transport, live composition reconciliation, business recovery hooks,
 and server/TUI/UI integration remain required work. This foundation is not a
 completed Host migration or a compatibility facade for the previous catalog.
@@ -108,7 +122,7 @@ the original Host caller source. Native and JavaScript mutations share execution
 with queries. JavaScript uses
 `context.invoke({operation:'mutate', import, provider, method, input, operationId})`;
 the callback's actual `HostObservation.operation` contains its original receipt
-reference. Mutation resource attachments and subscriptions still need executors.
+reference. Mutation resource attachments still need an executor.
 
 Caller history retains the first source and original reference for each stable
 consumer and operation, across source revisions and target changes. A different

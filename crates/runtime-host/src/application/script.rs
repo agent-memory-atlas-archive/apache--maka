@@ -75,6 +75,13 @@ impl maka_js_runtime::plugin::RequestBridge for Context {
     ) -> BoxFuture<'static, std::result::Result<Value, maka_js_runtime::plugin::Error>> {
         let operation = serde_json::from_value::<HostRequest>(input).map_err(|e| e.to_string());
         let result = operation.and_then(|operation| match operation {
+            HostRequest::Emit { value } => {
+                let emitted = self.emit(value);
+                Ok(Box::pin(async move {
+                    emitted.await?;
+                    Ok(Value::Null)
+                }) as BoxFuture<'static, Result<Value>>)
+            }
             HostRequest::Call {
                 import,
                 provider,
@@ -133,7 +140,10 @@ impl Context {
         }
         let slot = match &operation {
             HostRequest::Metadata { slot } | HostRequest::Read { slot, .. } => slot,
-            HostRequest::Call { .. } | HostRequest::Mutate { .. } | HostRequest::Recover { .. } => {
+            HostRequest::Emit { .. }
+            | HostRequest::Call { .. }
+            | HostRequest::Mutate { .. }
+            | HostRequest::Recover { .. } => {
                 unreachable!()
             }
         };
@@ -164,7 +174,10 @@ impl Context {
                 }
                 Ok(serde_json::json!(bytes))
             }
-            HostRequest::Call { .. } | HostRequest::Mutate { .. } | HostRequest::Recover { .. } => {
+            HostRequest::Emit { .. }
+            | HostRequest::Call { .. }
+            | HostRequest::Mutate { .. }
+            | HostRequest::Recover { .. } => {
                 unreachable!()
             }
         }));

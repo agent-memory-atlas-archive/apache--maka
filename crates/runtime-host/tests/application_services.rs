@@ -21,6 +21,8 @@
 mod operations;
 #[path = "application_services/persistence.rs"]
 mod persistence;
+#[path = "application_services/subscriptions.rs"]
+mod subscriptions;
 
 use futures_util::{FutureExt, future::BoxFuture};
 use maka_js_runtime::plugin::Limits;
@@ -800,7 +802,8 @@ async fn undeclared_exports_fail_startup_and_unsupported_modes_never_activate() 
             .unwrap()
             .contains("maximum 16 resource slots")
         );
-        for mode in [MethodMode::Mutation, MethodMode::Subscription] {
+        {
+            let mode = MethodMode::Mutation;
             let provider = package(
                 "unsupported",
                 entry(

@@ -290,6 +290,10 @@ export type TextareaCapture =
  */
 export type HostRequest =
   | {
+      value: unknown;
+      operation: 'emit';
+    }
+  | {
       import: string;
       provider: number;
       method: string;

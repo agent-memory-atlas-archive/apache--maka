@@ -43,6 +43,9 @@ pub struct HostObservation {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "operation", rename_all = "camelCase", deny_unknown_fields)]
 pub enum HostRequest {
+    Emit {
+        value: Value,
+    },
     Call {
         import: String,
         provider: usize,

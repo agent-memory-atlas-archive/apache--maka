@@ -62,9 +62,19 @@ panic 保留 work、Scope 与容量，并退休相关注册。应用 root Drop �
 不能保活 root 或取消已接受工作。关停成功须 native/module 清理及 VM 真实关闭；共享 VM 失败
 撤销该执行域的实际注册与消费者，不影响其它执行域。
 
+Subscription 方法复用原 handler、Binding、Policy 与执行 owner。`Client::subscribe`
+创建可独立取消的 reader；原生通过 `Context::emit` 发布，JavaScript 使用
+`await context.invoke({operation:'emit', value})`。每个数据项与最终返回值均验证 method.output。
+每流最多 16 个队列项、16 个 pending emit，每项完整 JSON 最多 64 KiB；Host 最多持有
+16 个 stream buffer，生产已结束但还有未读数据的流仍占额度。生产者等待容量；返回、
+错误或 panic 均封闭发布入口，保存旧 Context 或 send future 也不能继续发布或阻止 EOF。
+reader 可以排空已接受数据。`Subscription::cancel` 和 Drop 仅请求停止；`completion`
+先关闭需求，再等待原 owner 分别报告业务结果和真实清理。取消不回传父 Scope 或兄弟订阅；
+清理失败仍保留原 execution、资源与 fence。
+
 调用 JSON 最多 1 MiB，共用 128-call / 32 MiB in-flight 输入预算；附件最多 16 个准确槽位，
 queued 与 accepted 请求共用 64 MiB，清理未确认时保留实际 payload 和容量。当前适配器执行
-原生及 JavaScript query（支持附件）和无附件的持久 mutation；mutation 资源快照、subscription 执行器、
+原生及 JavaScript query / subscription（支持附件）和无附件的持久 mutation；mutation 资源快照、
 可信 Host transport、live 组合收敛、业务恢复 hook 及 server/TUI/UI 接线仍须实现。这是执行基础，不是完整 Host 迁移或旧 catalog 兼容 facade。
 
 持久 mutation 要求 `Application::start_from_store`、声明 mutation 方法和显式非 nil 操作 UUID。

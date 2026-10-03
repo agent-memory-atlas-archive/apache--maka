@@ -50,7 +50,11 @@ node packages/plugin-sdk/scripts/bundle.mjs packages/plugin-sdk/examples/counter
 打包后的模块在实际应用集成测试中执行。使用包导出前先构建 workspace。
 Bundle 必须没有未解析 import 和顶层 await；它不包含原生扩展，也不授予权限。
 
-Host 应用服务支持 query 和不含资源附件的持久 mutation。
+Host 应用服务支持 query、subscription 和不含资源附件的持久 mutation。
+Subscription handler 使用 `await context.invoke({operation: 'emit', value})` 发布；
+数据项与最终返回值均使用声明的 output schema。每流允许 16 个队列项、16 个 pending emit，
+每项完整 JSON 最多 64 KiB。等待每次发布以遵守读取端背压；原生 Host 客户端负责取消，
+真实 cleanup 单独观察。UI subscription actions 尚未实现。
 `context.invoke({ operation: 'mutate', ..., operationId })` 返回 `OperationReply`，
 即使结果未知或无法交付，也保留原 `reference`。只有 `receipt.kind === 'recorded'`
 描述 journal 中的事实；应分别检查 `outcome` 与 `cleanup`。
@@ -67,7 +71,7 @@ identity，先记录原 caller intent 再派发。feedback 的 `ActionOutcome` �
 使用最后实际返回的 cursor 继续；count 只是上界，完整数组最多 1 MiB。如果完整回调包装
 超过交付预算，query 返回 `failed`，健康组件可以减小页大小后重试。原引用跨来源替换和
 Root 重开保留；这些观察不授予 Host 权限，也不能代替 confirmed caller 执行 token。
-Subscription、副作用资源快照和旧业务迁移仍待实现。
+UI subscription actions、副作用资源快照和旧业务迁移仍待实现。
 
 持久 Host 组合可选择 `maka.operations.receipts`，通过 `Receipts` 导出提供
 `contracts.receiptReader`。普通 `read` Query 接收原 `RecoveryRef`，返回

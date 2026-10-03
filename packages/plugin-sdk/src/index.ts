@@ -63,6 +63,7 @@ export interface Component<State = unknown, Props = unknown, View = unknown> {
 
 /** Provided by the actual invocation. Retaining it does not retain request resources. */
 export interface RequestContext {
+  invoke(request: Extract<HostRequest, { operation: 'emit' }>): Promise<null>;
   invoke(request: Extract<HostRequest, { operation: 'mutate' }>): Promise<OperationReply>;
   invoke(request: Extract<HostRequest, { operation: 'recover' }>): Promise<OperationReply>;
   invoke(request: Extract<HostRequest, { operation: 'metadata' }>): Promise<ResourceMetadata>;

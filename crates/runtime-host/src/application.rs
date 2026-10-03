@@ -24,6 +24,8 @@ pub mod operations;
 mod owner;
 pub use context::Context;
 mod script;
+mod subscriptions;
+pub use subscriptions::Subscription;
 
 use futures_util::future::BoxFuture;
 use maka_js_runtime::plugin::Limits;
@@ -120,7 +122,7 @@ impl NativeRegistry {
 
 pub(super) struct Method {
     input: jsonschema::Validator,
-    output: jsonschema::Validator,
+    output: Arc<jsonschema::Validator>,
 }
 pub(super) enum ImplementationValue {
     JavaScript(maka_js_runtime::plugin::Captured),
@@ -139,13 +141,11 @@ impl Service {
         let compiled = methods
             .iter()
             .map(|(name, method)| {
-                if method.mode == MethodMode::Subscription
-                    || method.mode == MethodMode::Mutation && !method.resources.is_empty()
+                if method.mode == MethodMode::Mutation && !method.resources.is_empty()
                     || method.resources.len() > 16
-
                 {
                     return Err(
-                        "subscriptions and mutation resource snapshots require their executors; maximum 16 resource slots"
+                        "mutation resource snapshots require their executor; maximum 16 resource slots"
                             .into(),
                     );
                 }
@@ -154,8 +154,10 @@ impl Service {
                     Method {
                         input: jsonschema::validator_for(&method.input)
                             .map_err(|e| e.to_string())?,
-                        output: jsonschema::validator_for(&method.output)
-                            .map_err(|e| e.to_string())?,
+                        output: Arc::new(
+                            jsonschema::validator_for(&method.output)
+                                .map_err(|e| e.to_string())?,
+                        ),
                     },
                 ))
             })
@@ -304,6 +306,7 @@ struct Dispatch {
     slots: Arc<Semaphore>,
     bytes: Arc<Semaphore>,
     resources: Arc<Semaphore>,
+    stream_buffers: Arc<Semaphore>,
 }
 
 pub(super) enum Command {
@@ -341,6 +344,10 @@ pub(super) enum CallKind {
         reply: oneshot::Sender<Result<PreparedMutation>>,
     },
     Query(oneshot::Sender<Result<Accepted>>),
+    Subscription {
+        reply: oneshot::Sender<Result<Subscription>>,
+        buffer: OwnedSemaphorePermit,
+    },
     Mutation {
         operation: Uuid,
         recorded: Option<Box<maka_event_log::applications::intents::RecordedIntent>>,
@@ -350,7 +357,7 @@ pub(super) enum CallKind {
 impl CallKind {
     fn operation(&self) -> Option<Uuid> {
         match self {
-            Self::Query(_) => None,
+            Self::Query(_) | Self::Subscription { .. } => None,
             Self::Mutation { operation, .. } | Self::PrepareMutation { operation, .. } => {
                 Some(*operation)
             }
@@ -359,6 +366,7 @@ impl CallKind {
     fn closed(&self) -> bool {
         match self {
             Self::Query(reply) => reply.is_closed(),
+            Self::Subscription { reply, .. } => reply.is_closed(),
             Self::Mutation { reply, .. } => reply.is_closed(),
             Self::PrepareMutation { reply, .. } => reply.is_closed(),
         }
@@ -366,6 +374,9 @@ impl CallKind {
     fn reject(self, error: String) {
         match self {
             Self::Query(reply) => {
+                let _ = reply.send(Err(error));
+            }
+            Self::Subscription { reply, .. } => {
                 let _ = reply.send(Err(error));
             }
             Self::Mutation { reply, .. } => {
@@ -393,13 +404,26 @@ impl CallKind {
             _ => None,
         }
     }
-    fn accept(self, id: Uuid, reference: Option<RecoveryRef>) -> Reply {
+    fn accept(
+        self,
+        id: Uuid,
+        reference: Option<RecoveryRef>,
+        validator: Arc<jsonschema::Validator>,
+        stop: CancellationToken,
+    ) -> (Reply, Option<subscriptions::Emitter>) {
         match self {
             Self::PrepareMutation { .. } => unreachable!("preparation cannot accept execution"),
             Self::Query(reply) => {
                 let (output, result) = oneshot::channel();
                 let _ = reply.send(Ok(Accepted { id, result }));
-                Reply::Query(output)
+                (Reply::Query(output), None)
+            }
+            Self::Subscription { reply, buffer } => {
+                let (output, result) = oneshot::channel();
+                let (subscriber, emitter) =
+                    subscriptions::channel(Accepted { id, result }, validator, stop, buffer);
+                let _ = reply.send(Ok(subscriber));
+                (Reply::Query(output), Some(emitter))
             }
             Self::Mutation { reply, .. } => {
                 let reference = reference.expect("admitted mutation reference");
@@ -409,10 +433,13 @@ impl CallKind {
                     reference: reference.clone(),
                     result,
                 }));
-                Reply::Mutation {
-                    reference: Box::new(reference),
-                    reply: output,
-                }
+                (
+                    Reply::Mutation {
+                        reference: Box::new(reference),
+                        reply: output,
+                    },
+                    None,
+                )
             }
         }
     }
@@ -551,12 +578,11 @@ impl Application {
                         return Err("Host service executor requires service exports".into());
                     };
                     if methods.values().any(|m| {
-                        m.mode == MethodMode::Subscription
-                            || m.mode == MethodMode::Mutation
-                                && (persisted.is_none() || !m.resources.is_empty())
+                        m.mode == MethodMode::Mutation
+                            && (persisted.is_none() || !m.resources.is_empty())
                             || m.resources.len() > 16
                     }) {
-                        return Err("subscriptions and mutation resource snapshots require their executors; maximum 16 resource slots".into());
+                        return Err("mutation resource snapshots require their executor; maximum 16 resource slots".into());
                     }
                 }
                 if let Implementation::Native { implementation } = &entry.implementation
@@ -581,6 +607,7 @@ impl Application {
             slots: Arc::new(Semaphore::new(128)),
             bytes: Arc::new(Semaphore::new(32 * 1024 * 1024)),
             resources: Arc::new(Semaphore::new(64 * 1024 * 1024)),
+            stream_buffers: Arc::new(Semaphore::new(16)),
         });
         let client = Client {
             dispatch: dispatch.clone(),
@@ -691,6 +718,40 @@ impl Client {
         result
             .await
             .map_err(|_| "Host deployment is closed".to_string())?
+    }
+    /// Starts an independently cancellable stream. Dropping the subscriber (or
+    /// this admission future) requests cancellation, never confirms cleanup.
+    pub async fn subscribe(
+        &self,
+        binding: Binding,
+        method: String,
+        input: Value,
+        scope: Scope,
+        attachments: Attachments,
+    ) -> Result<Subscription> {
+        let scope = scope.child().map_err(|e| e.to_string())?;
+        let guard = scope.cancellation.clone().drop_guard();
+        let buffer = self
+            .dispatch
+            .stream_buffers
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| "Host subscription buffer capacity exhausted".to_string())?;
+        let (reply, result) = oneshot::channel();
+        self.dispatch.enqueue(
+            binding,
+            method,
+            input,
+            scope,
+            attachments,
+            None,
+            CallKind::Subscription { reply, buffer },
+        )?;
+        let subscriber = result
+            .await
+            .map_err(|_| "Host deployment is closed".to_string())??;
+        guard.disarm();
+        Ok(subscriber)
     }
     /// Checks and captures the original invocation without dispatching an effect.
     pub async fn prepare_mutation(

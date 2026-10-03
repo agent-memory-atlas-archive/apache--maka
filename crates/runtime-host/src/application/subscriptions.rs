@@ -1,0 +1,163 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::*;
+use std::sync::Mutex;
+use tokio_util::sync::DropGuard;
+
+const ITEMS: usize = 16;
+const ITEM_BYTES: usize = 64 * 1024;
+
+/// A request-local reader. Demand cancellation and executor cleanup are distinct.
+/// Read through EOF to drain successful output; completion cancels undrained work.
+pub struct Subscription {
+    receiver: mpsc::Receiver<Value>,
+    accepted: Accepted,
+    shared: Arc<Shared>,
+    _cancel_on_drop: DropGuard,
+}
+impl Subscription {
+    pub fn id(&self) -> Uuid {
+        self.accepted.id
+    }
+
+    /// Receive ordered items. Producer completion permits draining already
+    /// accepted items even if a native handler retained an old Context/future.
+    pub async fn recv(&mut self) -> Option<Value> {
+        if let Ok(value) = self.receiver.try_recv() {
+            return Some(value);
+        }
+        if self.shared.closed.is_cancelled() {
+            return None;
+        }
+        tokio::select! {
+            biased;
+            value = self.receiver.recv() => value,
+            () = self.shared.closed.cancelled() => self.receiver.try_recv().ok(),
+        }
+    }
+
+    /// Requests stop and closes demand. It does not acknowledge executor cleanup.
+    pub fn cancel(&mut self) {
+        self.shared.stop.cancel();
+        self.receiver.close();
+    }
+
+    /// Close demand before awaiting the original owner's independent business
+    /// and cleanup observations, so undrained backpressure cannot deadlock it.
+    pub async fn completion(mut self) -> QueryCompletion {
+        self.cancel();
+        while self.receiver.try_recv().is_ok() {}
+        self.accepted.completion().await
+    }
+}
+
+struct Shared {
+    // Only producer close and synchronous queue insertion take this gate.
+    sender: Mutex<Option<mpsc::Sender<Value>>>,
+    closed: CancellationToken,
+    stop: CancellationToken,
+    pending: Arc<Semaphore>,
+    output: Arc<jsonschema::Validator>,
+    // Buffer custody outlives execution when the reader retains unread items.
+    _buffer: OwnedSemaphorePermit,
+}
+#[derive(Clone)]
+pub(super) struct Emitter(Arc<Shared>);
+impl Emitter {
+    pub(super) fn close(&self) {
+        let mut sender = self.0.sender.lock().expect("subscription gate poisoned");
+        self.0.closed.cancel();
+        sender.take();
+    }
+
+    pub(super) fn emit(&self, value: Value) -> BoxFuture<'static, Result<()>> {
+        // Reserve before serialization/validation, including unpolled futures.
+        let reserved = self
+            .0
+            .pending
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| "Host subscription pending emit capacity exhausted".to_string())
+            .and_then(|permit| {
+                if self.0.closed.is_cancelled() || self.0.stop.is_cancelled() {
+                    return Err("Host subscription is closed".into());
+                }
+                check_json_limit(&value, ITEM_BYTES)?;
+                self.0.output.validate(&value).map_err(|e| e.to_string())?;
+                Ok(permit)
+            });
+        let pending = match reserved {
+            Ok(permit) => permit,
+            Err(error) => return Box::pin(async move { Err(error) }),
+        };
+        let shared = self.0.clone();
+        Box::pin(async move {
+            let _pending = pending;
+            // Do not give an unpolled future a sender that could keep EOF open.
+            let sender = shared
+                .sender
+                .lock()
+                .expect("subscription gate poisoned")
+                .as_ref()
+                .cloned()
+                .ok_or("Host subscription is closed")?;
+            let capacity = tokio::select! {
+                biased;
+                () = shared.stop.cancelled() => return Err("Host subscription was cancelled".into()),
+                () = shared.closed.cancelled() => return Err("Host subscription is closed".into()),
+                capacity = sender.reserve_owned() => capacity.map_err(|_| "Host subscription reader is closed".to_string())?,
+            };
+            let gate = shared.sender.lock().expect("subscription gate poisoned");
+            if gate.is_none() || shared.stop.is_cancelled() {
+                return Err("Host subscription is closed".into());
+            }
+            // Linearize insertion with producer close; no item can follow EOF.
+            capacity.send(value);
+            Ok(())
+        })
+    }
+}
+
+pub(super) fn channel(
+    accepted: Accepted,
+    output: Arc<jsonschema::Validator>,
+    stop: CancellationToken,
+    buffer: OwnedSemaphorePermit,
+) -> (Subscription, Emitter) {
+    let (sender, receiver) = mpsc::channel(ITEMS);
+    let guard = stop.clone().drop_guard();
+    let shared = Arc::new(Shared {
+        sender: Mutex::new(Some(sender)),
+        closed: CancellationToken::new(),
+        stop,
+        pending: Arc::new(Semaphore::new(ITEMS)),
+        output,
+        _buffer: buffer,
+    });
+    (
+        Subscription {
+            receiver,
+            accepted,
+            shared: shared.clone(),
+            _cancel_on_drop: guard,
+        },
+        Emitter(shared),
+    )
+}

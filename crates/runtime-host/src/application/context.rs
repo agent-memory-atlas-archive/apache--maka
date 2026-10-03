@@ -23,6 +23,7 @@ use super::*;
 /// Imports are captured from the consumer activation, never resolved by a
 /// guest-supplied global name. Calls preserve the original private Scope evidence.
 pub struct Context {
+    pub(super) stream: Option<subscriptions::Emitter>,
     pub(super) scope: Scope,
     pub(super) consumer: Activation,
     pub(super) operation: Option<RecoveryRef>,
@@ -31,6 +32,14 @@ pub struct Context {
     pub(super) dispatch: Weak<Dispatch>,
 }
 impl Context {
+    /// Publish one bounded, schema-checked subscription item. Backpressure waits
+    /// for the reader; producer completion or cancellation rejects further emits.
+    pub fn emit(&self, value: Value) -> BoxFuture<'static, Result<()>> {
+        match &self.stream {
+            Some(stream) => stream.emit(value),
+            None => Box::pin(async { Err("request is not a subscription".into()) }),
+        }
+    }
     pub fn operation(&self) -> Option<&RecoveryRef> {
         self.operation.as_ref()
     }
