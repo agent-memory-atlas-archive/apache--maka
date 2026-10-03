@@ -100,6 +100,7 @@ fn fixture() -> (
     let mut declaration = old.manifest().application.clone().unwrap();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
     let contract = entry.exports["Counter"].contract.clone();
+    entry.scene = None;
     entry.implementation = Implementation::Native {
         implementation: "test.counter".into(),
     };
@@ -292,6 +293,7 @@ fn native_root_uses_explicit_surface_and_can_compose_an_imported_component() {
     let old = packages.remove(index);
     let mut declaration = old.manifest().application.clone().unwrap();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
+    entry.scene = None;
     entry.implementation = Implementation::Native {
         implementation: "test.root".into(),
     };
@@ -479,6 +481,7 @@ fn native_parent_slots_share_js_child_events_rollback_identity_and_retirement() 
     let old = packages.remove(i);
     let mut declaration = old.manifest().application.clone().unwrap();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
+    entry.scene = None;
     entry.implementation = Implementation::Native {
         implementation: "test.slot-parent".into(),
     };

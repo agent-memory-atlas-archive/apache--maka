@@ -221,12 +221,16 @@ impl<V: ?Sized + 'static> Application<V> {
                         native.validate_implementation(implementation)?
                     }
                     Implementation::JavaScript { module, .. } => {
-                        if native.scene_compiler.is_none()
-                            && entry.exports.values().any(|export| {
-                                matches!(export.contract.interface, Interface::Component { .. })
-                            })
-                        {
-                            return Err(Error::Invalid("presenter scene compiler required".into()));
+                        if let Some(language) = &entry.scene {
+                            let compiler = native.scene_compiler.as_ref().ok_or_else(|| {
+                                Error::Invalid("presenter scene compiler required".into())
+                            })?;
+                            if compiler.language != *language {
+                                return Err(Error::Invalid(format!(
+                                    "unsupported scene language: {} v{}",
+                                    language.name, language.version
+                                )));
+                            }
                         }
                         std::str::from_utf8(
                             sources[&instance.package]
@@ -524,10 +528,12 @@ impl<V: ?Sized + 'static> Application<V> {
                         if std::time::Instant::now() >= deadline {
                             return Err(Error::Invalid("UI scene compilation deadline".into()));
                         }
-                        let view = (self.scene_compiler.as_ref().expect("preflight compiler"))(
-                            &output.frame.view,
-                            deadline,
-                        )?;
+                        let view =
+                            (self
+                                .scene_compiler
+                                .as_ref()
+                                .expect("preflight compiler")
+                                .compile)(&output.frame.view, deadline)?;
                         if std::time::Instant::now() >= deadline {
                             return Err(Error::Invalid("UI scene compilation deadline".into()));
                         }

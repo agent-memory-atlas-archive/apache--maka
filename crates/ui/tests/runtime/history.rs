@@ -77,6 +77,7 @@ fn fixture() -> (Input, Vec<Package>) {
                     },
                 );
             }
+            terminal.scene = Some(support::scene::language(PresentationTarget::Tui));
             terminal.implementation = Implementation::JavaScript {
                 module: "terminal.mjs".into(),
                 realm: maka_plugin_core::package::Realm::Dedicated,
@@ -126,6 +127,7 @@ fn fixture() -> (Input, Vec<Package>) {
                     (
                         target,
                         EntryDeclaration {
+                            scene: None,
                             implementation: Implementation::Native {
                                 implementation: CALLER_HISTORY.into(),
                             },

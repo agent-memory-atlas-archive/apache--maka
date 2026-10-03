@@ -165,6 +165,7 @@ fn package(marker: &str) -> Package {
         entries: BTreeMap::from([(
             EntryTarget::Host,
             EntryDeclaration {
+                scene: None,
                 implementation: Implementation::JavaScript {
                     module: "host.mjs".into(),
                     realm: Realm::Shared,

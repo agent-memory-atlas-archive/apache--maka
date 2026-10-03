@@ -34,7 +34,12 @@ the selected platform's pure scene compiler; there is no shared kernel layout
 language. `ComponentSlot` remains the common child declaration: its binding is
 resolved from the original parent's imports, never from renderer state. Desktop
 and TUI entries can therefore present the same plugin differently. A platform
-must install its compiler before activating JavaScript components. Original scene
+must install its compiler with a nominal language identity before activating
+JavaScript components. Component entries declare `scene: { name, version }`;
+all enabled entries must exactly match before any guest or factory runs.
+For example, Desktop declares `{ name: "maka.desktop.scene", version: 1 }` and
+TUI declares `{ name: "maka.tui.scene", version: 1 }`. This requirement is separate
+from public props/events/captures. Pure Value/Service and native entries omit it. Original scene
 JSON counts toward callback, transaction and retained-frame budgets.
 
 A `raw` event may return `decision: { preventDefault: true, stopPropagation: true }`. Omitted flags default to false. The decision becomes visible only after the whole causal transaction commits and is never stored in a frame. Other event origins and lifecycle callbacks cannot return it. It affects the actual platform listener phase, so it cannot undo earlier native behavior.

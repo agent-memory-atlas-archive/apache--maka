@@ -201,7 +201,8 @@ impl NativeComponent<dyn Widget> for LabelComponent {
 pub fn registry() -> NativeRegistry<dyn Widget> {
     let mut registry =
         NativeRegistry::with_surface(maka_plugin_core::composition::PresentationTarget::Desktop)
-            .with_scene_compiler(scene::compile);
+            .with_scene_compiler(scene::language(), scene::compile)
+            .expect("valid desktop scene language");
     registry
         .register("maka.ui.label", |_, _values| {
             Ok(BTreeMap::from([(

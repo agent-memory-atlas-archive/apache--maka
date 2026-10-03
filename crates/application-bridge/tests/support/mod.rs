@@ -94,6 +94,7 @@ pub fn host() -> (Input, Vec<Package>) {
     let service = host_package(
         "local.business",
         EntryDeclaration {
+            scene: None,
             implementation: Implementation::JavaScript {
                 module: "index.mjs".into(),
                 realm: Realm::Dedicated,
@@ -110,6 +111,7 @@ pub fn host() -> (Input, Vec<Package>) {
     let reader = host_package(
         "local.receipts",
         EntryDeclaration {
+            scene: None,
             implementation: Implementation::Native {
                 implementation: maka_runtime_host::application::operations::RECEIPT_READER.into(),
             },
@@ -122,6 +124,7 @@ pub fn host() -> (Input, Vec<Package>) {
     let gateway = host_package(
         "local.gateway",
         EntryDeclaration {
+            scene: None,
             implementation: Implementation::Native {
                 implementation: maka_application_bridge::GATEWAY.into(),
             },

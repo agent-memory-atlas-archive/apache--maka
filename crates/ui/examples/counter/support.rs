@@ -64,6 +64,7 @@ pub fn fixture(handler: &str) -> (Input, Vec<Package>) {
             entries: BTreeMap::from([(
                 EntryTarget::Desktop,
                 EntryDeclaration {
+                    scene: None,
                     implementation: Implementation::Native {
                         implementation: "maka.ui.surface.desktop".into(),
                     },
@@ -108,6 +109,7 @@ pub fn fixture(handler: &str) -> (Input, Vec<Package>) {
             entries: BTreeMap::from([(
                 EntryTarget::Desktop,
                 EntryDeclaration {
+                    scene: Some(scene::language(PresentationTarget::Desktop)),
                     implementation: Implementation::JavaScript {
                         module: "index.mjs".into(),
                         realm: Realm::Dedicated,
@@ -218,6 +220,7 @@ pub(crate) fn composed_fixture(child_update: &str, parent_event: &str) -> (Input
             entries: BTreeMap::from([(
                 EntryTarget::Desktop,
                 EntryDeclaration {
+                    scene: Some(scene::language(PresentationTarget::Desktop)),
                     implementation: Implementation::JavaScript {
                         module: "index.mjs".into(),
                         realm: Realm::Dedicated,
@@ -299,6 +302,7 @@ fn bind_brand(input: &mut Input, packages: &mut Vec<Package>, declaration: &mut 
             entries: BTreeMap::from([(
                 EntryTarget::Desktop,
                 EntryDeclaration {
+                    scene: None,
                     implementation: Implementation::JavaScript {
                         module: "index.mjs".into(),
                         realm: Realm::Shared,
@@ -382,6 +386,7 @@ pub(crate) fn native_fixture() -> (Input, Vec<Package>) {
             entries: BTreeMap::from([(
                 EntryTarget::Desktop,
                 EntryDeclaration {
+                    scene: None,
                     implementation: Implementation::Native {
                         implementation: "maka.ui.label".into(),
                     },
@@ -449,6 +454,7 @@ pub(crate) fn editor_fixture() -> (Input, Vec<Package>) {
             entries: BTreeMap::from([(
                 EntryTarget::Desktop,
                 EntryDeclaration {
+                    scene: None,
                     implementation: Implementation::Native {
                         implementation: "maka.ui.textarea".into(),
                     },
@@ -552,6 +558,7 @@ pub(crate) fn resource_fixture() -> (Input, Vec<Package>) {
             entries: BTreeMap::from([(
                 EntryTarget::Desktop,
                 EntryDeclaration {
+                    scene: Some(scene::language(PresentationTarget::Desktop)),
                     implementation: Implementation::JavaScript {
                         module: "index.mjs".into(),
                         realm: Realm::Shared,
@@ -590,6 +597,7 @@ pub(crate) fn resource_fixture() -> (Input, Vec<Package>) {
             entries: BTreeMap::from([(
                 EntryTarget::Desktop,
                 EntryDeclaration {
+                    scene: None,
                     implementation: Implementation::Native {
                         implementation: "maka.text.reader".into(),
                     },
@@ -660,6 +668,7 @@ pub fn dual_fixture(handler: &str) -> (Input, Vec<Package>) {
             }
             Implementation::JavaScript { module, .. } => {
                 *module = "terminal.mjs".into();
+                terminal.scene = Some(scene::language(PresentationTarget::Tui));
                 terminal.imports.get_mut("surface").unwrap().contract =
                     surface_contract(PresentationTarget::Tui);
                 let source = std::str::from_utf8(original.file("index.mjs").unwrap()).unwrap();

@@ -77,6 +77,7 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
                         entries: BTreeMap::from([(
                             EntryTarget::Host,
                             EntryDeclaration {
+                                scene: None,
                                 implementation: if provider {
                                     Implementation::Native {
                                         implementation: "native".into(),

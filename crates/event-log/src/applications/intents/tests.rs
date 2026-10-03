@@ -61,7 +61,7 @@ fn reference() -> RecoveryRef {
     }
 }
 async fn source(store: &EventLog, deployment: Uuid, expected: u64) -> DeploymentRef {
-    let package = Package::new(BTreeMap::from([(MANIFEST_FILE.into(),serde_json::to_vec(&json!({"schemaVersion":2,"id":"caller","application":Declaration {entries:BTreeMap::from([(EntryTarget::Host,EntryDeclaration {implementation:Implementation::Native {implementation:"test.caller".into()},configuration:json!({"type":"object"}),imports:BTreeMap::new(),exports:BTreeMap::new()})]),composition:None}})).unwrap())])).unwrap();
+    let package = Package::new(BTreeMap::from([(MANIFEST_FILE.into(),serde_json::to_vec(&json!({"schemaVersion":2,"id":"caller","application":Declaration {entries:BTreeMap::from([(EntryTarget::Host,EntryDeclaration {scene:None,implementation:Implementation::Native {implementation:"test.caller".into()},configuration:json!({"type":"object"}),imports:BTreeMap::new(),exports:BTreeMap::new()})]),composition:None}})).unwrap())])).unwrap();
     store
         .commit_application(
             deployment,

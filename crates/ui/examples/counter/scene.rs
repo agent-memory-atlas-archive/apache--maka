@@ -190,5 +190,22 @@ pub(crate) fn view<V: Default + 'static>(node: Node) -> maka_ui::Result<NativeVi
 pub(crate) fn registry<V: Default + 'static>(
     target: maka_plugin_core::composition::PresentationTarget,
 ) -> maka_ui::NativeRegistry<V> {
-    maka_ui::NativeRegistry::with_surface(target).with_scene_compiler(compile::<V>)
+    maka_ui::NativeRegistry::with_surface(target)
+        .with_scene_compiler(language(target), compile::<V>)
+        .expect("valid fixture scene language")
+}
+
+// This fixture compiles the common subset used by the two platform languages.
+// It is a test adapter, not a kernel language or production fallback.
+pub(crate) fn language(
+    target: maka_plugin_core::composition::PresentationTarget,
+) -> maka_plugin_core::package::SceneLanguage {
+    maka_plugin_core::package::SceneLanguage {
+        name: match target {
+            maka_plugin_core::composition::PresentationTarget::Desktop => "maka.desktop.scene",
+            maka_plugin_core::composition::PresentationTarget::Tui => "maka.tui.scene",
+        }
+        .into(),
+        version: 1,
+    }
 }

@@ -33,6 +33,11 @@ Contract declarations derive their JSON schemas through `schemars`. Entry export
 batches must pass `EntryDeclaration::check_exports` before publication. Current
 compatibility is conservative: nominal name, version and full shape must match.
 Remote declarations prove compatibility only, never readiness or authority.
+JavaScript component entries also declare a nominal `scene: { name, version }`.
+The execution adapter checks this against its presenter before activation; the
+core validates metadata without interpreting the language. This local requirement
+is separate from the public component contract and may differ across variants.
+Native, pure Value/Service and Host entries cannot declare a scene language.
 
 `runtime::Runtime<T>` owns activation and registration epochs, atomically checks
 actual export batches, revokes consumers and tracks accepted execution and resource

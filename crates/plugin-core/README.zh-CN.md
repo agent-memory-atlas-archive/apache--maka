@@ -31,6 +31,10 @@ Host、TUI 与 Desktop 共用的声明、组合解析与生命周期权威，不
 `EntryDeclaration::check_exports`。目前采用保守兼容规则：名义名称、版本和完整
 公开结构一致。远端声明只能证明兼容，不能证明就绪或授予权限。
 
+JavaScript 组件 entry 另声明名义 `scene: { name, version }`，由执行适配器在激活前
+检查本地 presenter 是否支持；内核只校验元数据，不解释语言。该本地要求与公开组件
+契约分离，TUI/Desktop variant 可以不同。原生、纯 Value/Service 与 Host entry 不声明 scene。
+
 `runtime::Runtime<T>` 管理激活和注册 epoch、原子检查实际导出批次、撤销消费者，
 并跟踪已接受执行及资源清理。执行适配器负责运行、取消和关闭确认；核心没有执行器，
 不要求原生值实现 `Send`/`Sync`。初始化中的消费者可以调用就绪依赖，然后才发布自身导出。

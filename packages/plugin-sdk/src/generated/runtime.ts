@@ -479,6 +479,11 @@ export interface PackageDeclaration {
 }
 export interface EntryDeclaration {
   implementation: Implementation;
+  /**
+   * Nominal ABI of this JavaScript entry's component scenes. Native recipes
+   * are checked through their compiled implementation availability instead.
+   */
+  scene?: SceneLanguage | null;
   configuration: unknown;
   imports?: {
     [k: string]: Import | undefined;
@@ -486,6 +491,13 @@ export interface EntryDeclaration {
   exports?: {
     [k: string]: Export | undefined;
   };
+}
+/**
+ * Presenter-owned language identity. The kernel does not interpret its syntax.
+ */
+export interface SceneLanguage {
+  name: string;
+  version: number;
 }
 export interface Import {
   contract: Contract;

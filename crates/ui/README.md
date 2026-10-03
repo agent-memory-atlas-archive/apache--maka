@@ -49,8 +49,12 @@ until actual destruction, independently of the retired frame's recipe.
 
 
 JavaScript returns platform-owned JSON scenes. The embedding installs a pure
-`NativeRegistry::with_scene_compiler` before activating JavaScript components;
-missing compilers reject startup before factories or guests run. The compiler
+`NativeRegistry::with_scene_compiler(language, compiler)` before activating
+JavaScript components. Their entries declare `scene: { name, version }`; every
+enabled entry must exactly match the installed language before any factory or
+guest runs. Pure Value/Service entries and native implementations do not declare
+scenes. The language and compiler share one availability object, with no routing
+or fallback. The compiler
 receives only JSON and the current deadline, and returns a `NativeView`. The kernel
 retains the original scene JSON for accounting, independently of the compiler's
 metadata. Compilation failure rolls back the batch while leaving the realm healthy.

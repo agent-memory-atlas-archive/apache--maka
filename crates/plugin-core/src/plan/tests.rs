@@ -48,6 +48,10 @@ fn contract() -> Contract {
 
 fn entry() -> EntryDeclaration {
     EntryDeclaration {
+        scene: Some(crate::package::SceneLanguage {
+            name: "test.scene".into(),
+            version: 1,
+        }),
         implementation: Implementation::JavaScript {
             module: "index.mjs".into(),
             realm: Realm::Dedicated,
@@ -366,6 +370,16 @@ fn variant_and_actual_export_checks_use_the_full_public_contract() {
     };
     declaration
         .entries
+        .get_mut(&EntryTarget::Tui)
+        .unwrap()
+        .scene = Some(crate::package::SceneLanguage {
+        name: "different.terminal.scene".into(),
+        version: 2,
+    });
+    // A variant's local syntax does not change its public component semantics.
+    declaration.validate().unwrap();
+    declaration
+        .entries
         .get_mut(&EntryTarget::Desktop)
         .unwrap()
         .exports
@@ -388,6 +402,74 @@ fn variant_and_actual_export_checks_use_the_full_public_contract() {
     assert!(entry.check_exports(&actual).is_err());
     actual.insert("undeclared".into(), contract());
     assert!(entry.check_exports(&actual).is_err());
+}
+
+#[test]
+fn scene_declarations_are_required_only_for_javascript_component_entries() {
+    let valid = entry();
+    valid.validate().unwrap();
+    let mut optional = valid.clone();
+    optional.exports.get_mut("Content").unwrap().availability = Availability::Optional;
+    optional.validate().unwrap();
+    optional.scene = None;
+    assert!(
+        optional
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("require a scene language")
+    );
+    for language in [
+        crate::package::SceneLanguage {
+            name: String::new(),
+            version: 1,
+        },
+        crate::package::SceneLanguage {
+            name: "bad/name".into(),
+            version: 1,
+        },
+        crate::package::SceneLanguage {
+            name: "x".repeat(129),
+            version: 1,
+        },
+        crate::package::SceneLanguage {
+            name: "valid.scene".into(),
+            version: 0,
+        },
+    ] {
+        let mut invalid = valid.clone();
+        invalid.scene = Some(language);
+        assert!(invalid.validate().is_err());
+    }
+    let host = Declaration {
+        entries: BTreeMap::from([(EntryTarget::Host, valid.clone())]),
+        composition: None,
+    };
+    assert!(
+        host.validate()
+            .unwrap_err()
+            .to_string()
+            .contains("Host entry")
+    );
+    let mut native = valid.clone();
+    native.implementation = Implementation::Native {
+        implementation: "compiled.component".into(),
+    };
+    assert!(native.validate().is_err());
+    native.scene = None;
+    native.validate().unwrap();
+    let mut value = valid.clone();
+    value.exports.get_mut("Content").unwrap().contract.interface = Interface::Value {
+        schema: json!(true),
+    };
+    assert!(value.validate().is_err());
+    value.scene = None;
+    value.validate().unwrap();
+    let mut empty = valid;
+    empty.exports.clear();
+    assert!(empty.validate().is_err());
+    empty.scene = None;
+    empty.validate().unwrap();
 }
 
 #[test]
@@ -563,6 +645,7 @@ fn nested_override_precedence_preserves_unrelated_template_defaults() {
     let root = input.instances.get_mut("a").unwrap();
     root.package = package("outer", 1).into();
     let mut replacement = self::entry();
+    replacement.scene = None;
     replacement.implementation = Implementation::Native {
         implementation: "replacement.Content".into(),
     };

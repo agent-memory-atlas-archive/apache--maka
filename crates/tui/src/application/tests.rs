@@ -343,6 +343,9 @@ fn terminal_packages(mut input: Input, packages: Vec<Package>) -> (Input, Vec<Pa
         if let Some(surface) = entry.imports.get_mut("surface") {
             surface.contract = maka_ui::surface_contract(PresentationTarget::Tui);
         }
+        if entry.scene.is_some() {
+            entry.scene = Some(super::scene::language());
+        }
         declaration.entries.insert(EntryTarget::Tui, entry);
         let mut files = BTreeMap::from([(
             maka_plugins::package::MANIFEST_FILE.into(),
@@ -526,6 +529,7 @@ fn service_fixture(
             entries: BTreeMap::from([(
                 EntryTarget::Tui,
                 EntryDeclaration {
+                    scene: None,
                     implementation: Implementation::Native {
                         implementation: "test.service".into(),
                     },
@@ -679,6 +683,7 @@ fn native_slots_fixture(runtime: &tokio::runtime::Runtime, duplicate: bool) -> P
         let mut entry = declaration.entries.remove(&EntryTarget::Desktop).unwrap();
         let is_root = old.manifest().id == "dynamic.app";
         if is_root {
+            entry.scene = None;
             entry.implementation = Implementation::Native {
                 implementation: "test.terminal-slots".into(),
             };
@@ -692,6 +697,9 @@ fn native_slots_fixture(runtime: &tokio::runtime::Runtime, duplicate: bool) -> P
             };
             entry.exports.get_mut("Surface").unwrap().contract =
                 maka_ui::surface_contract(PresentationTarget::Tui);
+        }
+        if entry.scene.is_some() {
+            entry.scene = Some(super::scene::language());
         }
         declaration.entries.insert(EntryTarget::Tui, entry);
         let source = if is_root {

@@ -31,7 +31,11 @@ Wire 类型和内置契约由 Host/UI 实际执行所用的 Rust 类型生成。
 `View` 视为不透明 JSON，由选定平台的纯场景编译器解释，不提供统一布局语言。
 `ComponentSlot` 仍是公共的子组件声明：绑定从原父组件的 import 解析，绘制状态
 不能提供权限。因此同一插件的 Desktop/TUI 入口可以分别设计呈现方式。平台必须
-在激活 JavaScript component 前安装编译器；原场景 JSON 参与回调、事务及驻留预算。
+在激活 JavaScript component 前以名义语言身份安装编译器。组件 entry 声明
+`scene: { name, version }`；全部 enabled entry 必须在任何工厂或 guest 执行前精确匹配。
+Desktop 为 `{ name: "maka.desktop.scene", version: 1 }`，TUI 为
+`{ name: "maka.tui.scene", version: 1 }`。该本地要求不改变公开 props/events/captures；
+纯 Value/Service 与原生 entry 省略 scene。原场景 JSON 参与回调、事务及驻留预算。
 
 `raw` 事件可返回 `decision: { preventDefault: true, stopPropagation: true }`，省略的标志为 false。决定仅在整个因果事务提交后可见，不保留在 frame。其他事件来源和生命周期回调不能返回决定。它作用于平台实际监听阶段，不能撤销更早的原生行为。
 

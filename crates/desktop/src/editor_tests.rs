@@ -1031,6 +1031,7 @@ async fn host_service_fixture(
             entries: BTreeMap::from([(
                 EntryTarget::Host,
                 EntryDeclaration {
+                    scene: None,
                     implementation: Implementation::Native {
                         implementation: "test.host-reader".into(),
                     },
@@ -1055,6 +1056,7 @@ async fn host_service_fixture(
             entries: BTreeMap::from([(
                 EntryTarget::Host,
                 EntryDeclaration {
+                    scene: None,
                     implementation: Implementation::Native {
                         implementation: "test.host-consumer".into(),
                     },

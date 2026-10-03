@@ -87,11 +87,34 @@ pub struct Declaration {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EntryDeclaration {
     pub implementation: Implementation,
+    /// Nominal ABI of this JavaScript entry's component scenes. Native recipes
+    /// are checked through their compiled implementation availability instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scene: Option<SceneLanguage>,
     pub configuration: Value,
     #[serde(default)]
     pub imports: BTreeMap<String, Import>,
     #[serde(default)]
     pub exports: BTreeMap<String, Export>,
+}
+
+/// Presenter-owned language identity. The kernel does not interpret its syntax.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SceneLanguage {
+    pub name: String,
+    pub version: u32,
+}
+impl SceneLanguage {
+    pub fn validate(&self) -> Result<(), Error> {
+        crate::name(&self.name)?;
+        if self.version == 0 {
+            return Err(Error::Declaration(
+                "scene language version must be nonzero".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -122,6 +145,25 @@ impl EntryDeclaration {
             }
             Implementation::Native { implementation } => crate::name(implementation)?,
             _ => {}
+        }
+        let needs_scene = matches!(self.implementation, Implementation::JavaScript { .. })
+            && self
+                .exports
+                .values()
+                .any(|export| matches!(export.contract.interface, Interface::Component { .. }));
+        match (&self.scene, needs_scene) {
+            (Some(language), true) => language.validate()?,
+            (None, true) => {
+                return Err(Error::Declaration(
+                    "JavaScript components require a scene language".into(),
+                ));
+            }
+            (Some(_), false) => {
+                return Err(Error::Declaration(
+                    "scene language requires JavaScript component exports".into(),
+                ));
+            }
+            (None, false) => {}
         }
         crate::schema(&self.configuration)?;
         validate_imports(&self.imports)?;
@@ -170,8 +212,13 @@ impl Declaration {
                 "package has no entries or composition".into(),
             ));
         }
-        for entry in self.entries.values() {
+        for (target, entry) in &self.entries {
             entry.validate()?;
+            if *target == EntryTarget::Host && entry.scene.is_some() {
+                return Err(Error::Declaration(
+                    "Host entry cannot require a scene language".into(),
+                ));
+            }
         }
         if let Some(template) = &self.composition {
             template.validate()?;

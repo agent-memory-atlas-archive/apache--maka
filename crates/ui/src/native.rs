@@ -164,7 +164,11 @@ type Factory<V> =
 /// Presenter-owned, pure translation. No runtime or native owner is available
 /// at this precommit boundary. Implementations bound expansion and honor the
 /// caller's shared deadline; painting never executes a compiler.
-pub(crate) type SceneCompiler<V> = dyn Fn(&Value, std::time::Instant) -> Result<NativeView<V>>;
+type CompileScene<V> = dyn Fn(&Value, std::time::Instant) -> Result<NativeView<V>>;
+pub(crate) struct SceneCompiler<V: ?Sized> {
+    pub language: maka_plugin_core::package::SceneLanguage,
+    pub compile: Box<CompileScene<V>>,
+}
 
 /// Build-time implementation availability. The composition selects instances;
 /// this map does not register capabilities or automatically activate products.
@@ -186,10 +190,15 @@ impl<V: ?Sized + 'static> NativeRegistry<V> {
     /// is no kernel vocabulary or implicit fallback.
     pub fn with_scene_compiler(
         mut self,
+        language: maka_plugin_core::package::SceneLanguage,
         compiler: impl Fn(&Value, std::time::Instant) -> Result<NativeView<V>> + 'static,
-    ) -> Self {
-        self.scene_compiler = Some(Rc::new(compiler));
-        self
+    ) -> Result<Self> {
+        language.validate()?;
+        self.scene_compiler = Some(Rc::new(SceneCompiler {
+            language,
+            compile: Box::new(compiler),
+        }));
+        Ok(self)
     }
     pub fn register(
         &mut self,

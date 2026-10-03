@@ -28,7 +28,8 @@ Label/Editor 编译实现。不持有 application、window、Host、产品导航
 组合选中后才激活编译实现。`registry()` 提供内建 Label/Editor availability，可信
 launcher 接收前可添加其他实现。
 
-`registry()` 也安装平台自己的纯 `scene::compile`。动态 JSON 场景提供原生 flex 布局、
+`registry()` 也以 `scene::language()`（`maka.desktop.scene`、version 1）安装平台自己的
+纯 `scene::compile`；动态组件 entry 必须声明精确匹配的场景语言。动态 JSON 场景提供原生 flex 布局、
 作用域内字体与颜色、鼠标和键盘按钮、焦点样式及纵向滚动。导入组件仍归原父组件的
 slots；局部 key 在布局改变时保留同一机械焦点/滚动 owner，删除或换类型即关闭旧输入
 准入。编译器在回调 deadline 内检查形状、样式和数值限额；原 JSON 先验证，再缩窄为

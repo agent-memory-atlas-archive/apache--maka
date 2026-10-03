@@ -44,6 +44,7 @@ fn contract() -> Contract {
 
 fn entry(provider: bool) -> EntryDeclaration {
     EntryDeclaration {
+        scene: None,
         implementation: Implementation::Native {
             implementation: "example.native".into(),
         },

@@ -24,6 +24,14 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::{rc::Rc, time::Instant};
 
+/// The nominal ABI supplied by this presenter's pure scene compiler.
+pub fn language() -> maka_plugin_core::package::SceneLanguage {
+    maka_plugin_core::package::SceneLanguage {
+        name: "maka.tui.scene".into(),
+        version: 1,
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Direction {

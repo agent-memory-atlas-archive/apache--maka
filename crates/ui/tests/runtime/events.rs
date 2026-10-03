@@ -407,6 +407,7 @@ fn native_application(
     let old = packages.pop().unwrap();
     let mut declaration = old.manifest().application.clone().unwrap();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
+    entry.scene = None;
     entry.implementation = Implementation::Native {
         implementation: "test.events".into(),
     };

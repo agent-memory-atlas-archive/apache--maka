@@ -641,6 +641,7 @@ fn actual_native_query_preserves_exact_integer_while_javascript_fails_without_re
             },
         );
         if is_native {
+            entry.scene = None;
             entry.implementation = Implementation::Native {
                 implementation: "test.exact-feedback".into(),
             };
@@ -673,6 +674,7 @@ fn actual_native_query_preserves_exact_integer_while_javascript_fails_without_re
             }],
         );
         let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
+        entry.scene = None;
         entry.implementation = Implementation::Native {
             implementation: "test.exact-query".into(),
         };

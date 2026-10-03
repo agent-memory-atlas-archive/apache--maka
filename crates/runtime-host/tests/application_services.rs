@@ -76,6 +76,7 @@ fn contract(mode: MethodMode) -> Contract {
 }
 fn entry(provider: bool, implementation: Implementation, mode: MethodMode) -> EntryDeclaration {
     EntryDeclaration {
+        scene: None,
         implementation,
         configuration: json!({"type":"object"}),
         imports: if provider {

@@ -1720,6 +1720,7 @@ async fn ui_caller_source(
         entries: BTreeMap::from([(
             EntryTarget::Desktop,
             EntryDeclaration {
+                scene: None,
                 implementation: Implementation::Native {
                     implementation: "test.caller".into(),
                 },

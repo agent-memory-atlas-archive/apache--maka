@@ -41,8 +41,10 @@ schema，不计原生内存；原生 owner 负责其实际分配限额。
 
 
 JavaScript 返回平台自己的 JSON 场景。embedding 必须在激活 JavaScript component
-之前通过 `NativeRegistry::with_scene_compiler` 安装纯编译器；缺少编译器时，在工厂或
-guest 执行前拒绝启动。编译器只收到 JSON 与当前 deadline，返回 `NativeView`。
+之前通过 `NativeRegistry::with_scene_compiler(language, compiler)` 安装纯编译器。
+组件 entry 声明 `scene: { name, version }`；全部 enabled entry 的语言必须精确匹配，
+在任何工厂或 guest 执行前拒绝缺失或错配。纯 Value/Service entry 与原生实现不声明
+scene。语言和编译器由同一个可用性对象持有，无额外路由或 fallback。编译器只收到 JSON 与当前 deadline，返回 `NativeView`。
 内核独立保留原场景 JSON 计费，编译器的元数据不能消除这份来源。编译失败回滚整批，
 不退休健康 realm。同一插件的 TUI 与 Desktop 入口可以使用不同场景语言。
 

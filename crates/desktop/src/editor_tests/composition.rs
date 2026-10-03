@@ -260,6 +260,7 @@ fn scene(
     let mut declaration = old.manifest().application.clone().unwrap();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
     let contract = entry.exports["App"].contract.clone();
+    entry.scene = None;
     entry.implementation = Implementation::Native {
         implementation: "test.layout".into(),
     };

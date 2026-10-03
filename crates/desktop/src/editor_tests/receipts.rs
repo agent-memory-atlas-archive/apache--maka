@@ -231,6 +231,7 @@ async fn recovery_source(
             entries: BTreeMap::from([(
                 EntryTarget::Desktop,
                 EntryDeclaration {
+                    scene: None,
                     implementation: Implementation::Native {
                         implementation: CALLER_HISTORY.into(),
                     },

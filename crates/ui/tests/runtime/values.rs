@@ -111,6 +111,7 @@ fn fixture(
             entries: BTreeMap::from([(
                 EntryTarget::Desktop,
                 EntryDeclaration {
+                    scene: None,
                     implementation,
                     configuration: json!({"type":"object"}),
                     imports: BTreeMap::new(),
@@ -232,6 +233,7 @@ fn values_and_committed_frames_share_one_retained_budget() {
             entries: BTreeMap::from([(
                 EntryTarget::Desktop,
                 EntryDeclaration {
+                    scene: None,
                     implementation: Implementation::Native {
                         implementation: "test.large-values".into(),
                     },
@@ -309,6 +311,7 @@ fn native_activation_and_callback_preserve_exact_integers_without_a_js_roundtrip
     let old = packages.pop().unwrap();
     let mut declaration = old.manifest().application.clone().unwrap();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
+    entry.scene = None;
     entry.implementation = Implementation::Native {
         implementation: "test.exact-value".into(),
     };
