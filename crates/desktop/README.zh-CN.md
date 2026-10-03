@@ -29,6 +29,14 @@ arena 也可持有资源凭证，不能缓存到清理期间保活的描述中�
 layout/paint 之前准备资源、捕获请求私有快照，再消费已提交命令。Kit editor 的资源凭证保留到实际 entity
 释放处理；仅 drop handle 不等于实体已销毁。
 
+
+公开的 [GPUI adapter](../ui-gpui/README.zh-CN.md) 向其他 Rust crate 提供
+`Widget`、`Slots`、输入绑定与 editor availability。原生布局可在 GPUI Element 或
+虚拟列表静态回调里呈现已提交 slots。handle 捕获原子树和具体 native owner 身份，
+不能改指重建 owner、呈现 detached 子组件或跨原平台窗口。测量可以重复；prepaint
+每个 mount 只允许一次实际放置，缓存重放与 Err 重试回滚同样检查。handle 只持自身
+子树的资源凭证，不阻塞无关兄弟组件清理。
+
 组件的元素 arena、GPUI 保留状态和输入闭包持有原生资源凭证。子组件从显示树移除并
 退休后，最后一份凭证真实释放才结算；UI owner 的回执任务无需等下一次输入。
 仍显示的退役界面继续保留清理阻塞。按原挂载父链核对归属，一个 surface 不能确认

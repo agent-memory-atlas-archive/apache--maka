@@ -45,6 +45,16 @@ Recipes must not retain entities, input bindings, subscriptions or pending nativ
 work. Those belong to renderer resource owners and retain mount resource leases
 until actual destruction, independently of the retired frame's recipe.
 
+
+`ComponentSlot { key, binding, member, props, on }` is shared by `Node::Component`
+and `NativeView::new(recipe, input_schemas, slots)`. Native slots are ordered,
+limited to 64 and resolved against the parent's own imports. They use the same
+child mounts, props transactions, event routes and cleanup as tree references.
+Hidden slots keep their state. Complete callback metadata, including slots, state,
+events and actions, shares the 1 MiB budget for both presentation variants.
+Arguments that cannot be projected exactly into JavaScript are rejected before
+calling that consumer, without retiring its healthy realm; Rust retains exact integers.
+
 The tree protocol contains stacks, text, buttons and imported components.
 A component reference names an explicit binding and its selected member; stable
 keys retain child mounts and their local state across parent props updates.
@@ -101,8 +111,7 @@ Add `composed` after the output directory for a separately packaged counter, or
 `native` for an explicitly imported compiled Label; the generator persists all
 selected packages. The label's styling is rendered directly by GPUI,
 outside the tree primitive set; its placement and props belong to the product.
-Opaque native child slots and synchronous event consume/default decisions remain
-pending.
+Synchronous event consume/default decisions remain pending.
 
 Use `editor` instead of `native` to persist a composition importing the native Kit
 Editor. Its Rust contract describes initial text, explicit

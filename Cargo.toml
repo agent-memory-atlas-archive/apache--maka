@@ -61,6 +61,7 @@ members = [
     "crates/transport",
     "crates/tui",
     "crates/ui",
+    "crates/ui-gpui",
     "crates/web",
     "crates/workhub",
 ]
@@ -130,6 +131,7 @@ maka-tools = { path = "crates/tools" }
 maka-transport = { path = "crates/transport" }
 maka-tui = { path = "crates/tui" }
 maka-ui = { path = "crates/ui" }
+maka-ui-gpui = { path = "crates/ui-gpui" }
 maka-web = { path = "crates/web" }
 maka-workhub = { path = "crates/workhub" }
 pulldown-cmark = { version = "0.13.4", default-features = false }

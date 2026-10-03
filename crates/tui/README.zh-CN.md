@@ -78,3 +78,9 @@ Tab/Shift+Tab 切换焦点，Enter/Space 或左键激活按钮，Ctrl+C 退休�
 应用启动器另支持 `--connections FILE`，选择[明确授权的本地 Host 连接](../application-bridge/README.zh-CN.md)。
 终端恢复先于服务清理，进程退出还要等待 caller SQL 和 Host 的真实关闭确认。
 前台执行丢失不能被认定为终端或 module 清理成功。
+
+
+编译的终端原生布局也可使用作用域内的 `Slots`：`measure` 测量已提交子组件，
+`paint` 经同一 presenter 绘制并保留真实输入区域与挂载身份。测量可重复；重复实际
+放置会在 flush/输入区域发布前拒绝待显示场景。原生布局自行选择终端几何，
+不复制桌面像素，也不另建挂载运行时。

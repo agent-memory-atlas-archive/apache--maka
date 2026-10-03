@@ -1543,3 +1543,5 @@ fn empty_host_quit_waits_for_actual_caller_sql_close_after_accepted_writer_waite
     );
     timer.block_on(reopened.close()).unwrap();
 }
+
+mod composition;

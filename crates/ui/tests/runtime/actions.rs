@@ -43,7 +43,7 @@ impl NativeComponent<()> for Leaf {
                 state["revision"].as_u64().unwrap() + 1
             }
         };
-        Ok(Frame {revision,state:json!({"revision":revision,"blob":if self.large {"x".repeat(1_048_570)} else {String::new()}}),surface:None,view:Presentation::Native(NativeView::new(Rc::new(()),BTreeMap::new())?) }.output(vec![]))
+        Ok(Frame {revision,state:json!({"revision":revision,"blob":if self.large {"x".repeat(1_048_430)} else {String::new()}}),surface:None,view:Presentation::Native(NativeView::new(Rc::new(()),BTreeMap::new(), vec![])?) }.output(vec![]))
     }
     fn capture(&self, _: CaptureCall<'_>) -> maka_ui::Result<CapturePlan> {
         self.captures.set(self.captures.get() + 1);
@@ -309,7 +309,19 @@ fn specific_consumer_mount_is_checked_even_when_same_provider_has_another_live_r
 fn native_capture_uses_the_complete_call_limit_before_native_callback() {
     let timer = timer();
     let (mut app, root, calls) = application(true, &timer);
-    assert!(app.dispatch(&root, 0, "read", Value::Null).is_err());
+    // The native output fits its own budget; adding a valid versioned capture
+    // request makes the complete state/props/method/input envelope exceed it.
+    assert!(
+        app.dispatch(
+            &root,
+            0,
+            "read",
+            json!({"capture":{
+                "kind":"at_revision", "revision":9007199254740991u64
+            }})
+        )
+        .is_err()
+    );
     assert_eq!(calls.get(), 0);
     assert_eq!(app.frame(&root).unwrap().revision, 0);
     assert_eq!(app.pending_action_count(), 0);

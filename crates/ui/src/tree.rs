@@ -149,7 +149,7 @@ impl<V: ?Sized> Update<V> {
         .map_err(|error| Error::Invalid(error.to_string()))?;
         match &frame.view {
             Presentation::Tree(node) => serde_json::to_writer(&mut counter, node),
-            Presentation::Native(view) => serde_json::to_writer(&mut counter, view.schemas()),
+            Presentation::Native(view) => serde_json::to_writer(&mut counter, &view.metadata()),
         }
         .map_err(|error| Error::Invalid(error.to_string()))?;
         let bytes = counter.0 - self.bytes;

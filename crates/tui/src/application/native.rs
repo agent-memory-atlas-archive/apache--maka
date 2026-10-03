@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use super::{Widget, paint};
+use super::{Slots, Widget, paint};
 use maka_ui::{
     ComponentCall, ComponentOutput, Frame, LabelProps, NativeCapability, NativeComponent,
     NativeExport, NativeRegistry, NativeView, Presentation, label_contract,
@@ -33,16 +33,17 @@ struct Label {
     props: LabelProps,
 }
 impl Widget for Label {
-    fn measure(&self, width: u16) -> (u16, u16) {
-        paint::text_size(&self.props.text, width)
+    fn measure(&self, _: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u16)> {
+        Ok(paint::text_size(&self.props.text, width))
     }
-    fn paint(&self, area: Rect, buffer: &mut Buffer) {
+    fn paint(&self, _: &mut Slots<'_>, area: Rect, buffer: &mut Buffer) -> maka_ui::Result<()> {
         let style = if self.props.emphasis {
             Style::default().add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
         paint::text(&self.props.text, area, buffer, style);
+        Ok(())
     }
 }
 struct LabelComponent;
@@ -70,6 +71,7 @@ impl NativeComponent<dyn Widget> for LabelComponent {
             view: Presentation::Native(NativeView::<dyn Widget>::new(
                 Rc::new(Label { props }),
                 BTreeMap::new(),
+                vec![],
             )?),
         }
         .output(Vec::new()))

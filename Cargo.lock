@@ -7986,6 +7986,7 @@ dependencies = [
  "maka-plugins",
  "maka-runtime-host",
  "maka-ui",
+ "maka-ui-gpui",
  "objc2 0.6.4",
  "rusqlite",
  "schemars 1.2.2",
@@ -8652,6 +8653,17 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "maka-ui-gpui"
+version = "0.2.0"
+dependencies = [
+ "gpui-kit",
+ "maka-plugin-core",
+ "maka-plugins",
+ "maka-ui",
+ "serde_json",
 ]
 
 [[package]]

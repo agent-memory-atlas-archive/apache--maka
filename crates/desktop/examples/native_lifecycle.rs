@@ -195,6 +195,7 @@ mod probe {
                 connections: Some(path),
             },
             native,
+            maka_ui_gpui::registry(),
         )?;
         if sql {
             // This is the launcher's same actual EventLog, not another Root owner.

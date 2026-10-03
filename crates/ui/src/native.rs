@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use super::{ComponentOutput, Error, Node, Result, surface_contract};
+use super::{ComponentOutput, ComponentSlot, Error, Node, Result, surface_contract};
 use maka_plugin_core::{
     composition::PresentationTarget,
     contract::{Contract, Interface},
@@ -33,11 +33,27 @@ use std::{collections::BTreeMap, rc::Rc};
 /// actual destruction. Retired frames can retain this recipe during cleanup.
 pub struct NativeView<V: ?Sized> {
     pub view: Rc<V>,
-    schemas: BTreeMap<String, Value>,
-    inputs: BTreeMap<String, jsonschema::Validator>,
+    schemas: Rc<BTreeMap<String, Value>>,
+    slots: Rc<Vec<ComponentSlot>>,
+    inputs: Rc<BTreeMap<String, jsonschema::Validator>>,
 }
 impl<V: ?Sized> NativeView<V> {
-    pub fn new(view: Rc<V>, schemas: BTreeMap<String, Value>) -> Result<Self> {
+    pub fn new(
+        view: Rc<V>,
+        schemas: BTreeMap<String, Value>,
+        slots: Vec<ComponentSlot>,
+    ) -> Result<Self> {
+        if slots.len() > 64 {
+            return Err(Error::Invalid("native component slot limit".into()));
+        }
+        let mut keys = std::collections::BTreeSet::new();
+        for slot in &slots {
+            slot.validate().map_err(Error::Invalid)?;
+            if !keys.insert(&slot.key) {
+                return Err(Error::Invalid("duplicate native slot key".into()));
+            }
+        }
+        super::tree::check_call_bytes(&(&schemas, &slots))?;
         if schemas.len() > 64 {
             return Err(Error::Invalid("native component input limit".into()));
         }
@@ -54,12 +70,16 @@ impl<V: ?Sized> NativeView<V> {
         }
         Ok(Self {
             view,
-            schemas,
-            inputs,
+            schemas: Rc::new(schemas),
+            slots: Rc::new(slots),
+            inputs: Rc::new(inputs),
         })
     }
-    pub(crate) fn schemas(&self) -> &BTreeMap<String, Value> {
-        &self.schemas
+    pub fn slots(&self) -> &[ComponentSlot] {
+        &self.slots
+    }
+    pub(crate) fn metadata(&self) -> impl serde::Serialize + '_ {
+        (&*self.schemas, &*self.slots)
     }
     fn validate_input(&self, key: &str, input: &Value) -> Result<()> {
         self.inputs
@@ -70,11 +90,29 @@ impl<V: ?Sized> NativeView<V> {
     }
 }
 
+impl<V: ?Sized> Clone for NativeView<V> {
+    fn clone(&self) -> Self {
+        Self {
+            view: self.view.clone(),
+            schemas: self.schemas.clone(),
+            slots: self.slots.clone(),
+            inputs: self.inputs.clone(),
+        }
+    }
+}
 /// A committed tree or an opaque, typed native render recipe. Both belong to
 /// the same mount, retain the same identity and use the same publication path.
 pub enum Presentation<V: ?Sized> {
     Tree(Node),
     Native(NativeView<V>),
+}
+impl<V: ?Sized> Clone for Presentation<V> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Tree(node) => Self::Tree(node.clone()),
+            Self::Native(view) => Self::Native(view.clone()),
+        }
+    }
 }
 impl<V: ?Sized> Presentation<V> {
     pub(crate) fn validate(&self) -> std::result::Result<(), String> {
@@ -91,8 +129,9 @@ impl<V: ?Sized> Presentation<V> {
         }
     }
     pub(crate) fn components<'a>(&'a self, output: &mut Vec<super::frame::ComponentRef<'a>>) {
-        if let Self::Tree(node) = self {
-            node.components(output);
+        match self {
+            Self::Tree(node) => node.components(output),
+            Self::Native(view) => output.extend(view.slots.iter().map(ComponentSlot::reference)),
         }
     }
 }

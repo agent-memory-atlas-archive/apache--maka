@@ -71,6 +71,7 @@ pub(crate) fn carry_prepaint_records(
     element_states: bool,
 ) -> Range<PrepaintStateIndex> {
     let start = window.prepaint_index();
+    window.reuse_placement_claims(range);
     let next = &mut window.next_frame;
     let rendered = &mut window.rendered_frame;
     next.hitboxes
@@ -221,7 +222,9 @@ pub(crate) fn follow_prepaint(
     let inside = |range: &Range<PrepaintStateIndex>| {
         let (a, b) = (&range.start, &range.end);
         let (c, d) = (&from.start, &from.end);
-        a.hitboxes_index >= c.hitboxes_index
+        a.placement_claims_index >= c.placement_claims_index
+            && b.placement_claims_index <= d.placement_claims_index
+            && a.hitboxes_index >= c.hitboxes_index
             && b.hitboxes_index <= d.hitboxes_index
             && a.tooltips_index >= c.tooltips_index
             && b.tooltips_index <= d.tooltips_index

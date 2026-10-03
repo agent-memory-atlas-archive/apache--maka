@@ -37,6 +37,14 @@ schema，不计原生内存；原生 owner 负责其实际分配限额。
 呈现描述不能持有 entity、输入绑定、订阅或原生 work；它们归呈现器资源 owner 所有，
 通过资源凭证等待真实销毁，不依赖退休 frame 的描述被释放。
 
+
+`ComponentSlot { key, binding, member, props, on }` 由 `Node::Component` 和
+`NativeView::new(recipe, input_schemas, slots)` 共用。原生 slots 有序、最多 64 个，
+按父组件自己的 imports 解析；继续使用同一套子挂载、props 事务、事件路由与清理。
+未展示的 slot 保留状态。两种呈现的完整回调元数据（slots/state/events/actions）
+共用 1 MiB 限额。不能精确投影为 JavaScript 的参数在调用该 consumer 前拒绝，
+不退休健康执行域；原生 Rust consumer 仍保留精确整数。
+
 树协议包含 stack、text、button 和导入组件。子组件引用显式 binding 与 member，
 稳定 key 在父组件 props 更新时保留子挂载和局部状态。父子组件共用一次 deadline，
 整批提交；任一子组件失败，原有 frame 全部保留。移除后挂载只进入退休，等待真实原生
@@ -66,7 +74,7 @@ Desktop 的窗口清理 owner 独立于视觉 Surface。逻辑移除撤销输入
 
 生成示例时在输出目录后加 `composed`，即可使用独立包提供的计数器组件；
 生成器将全部选中包保存在 Root。改用 `native` 可显式导入编译的 Label；它直接使用 GPUI 样式，布局位置与
-props 由产品决定。opaque 原生子组件槽位、同步 consume/default 决策仍未实现。
+props 由产品决定。同步 consume/default 决策仍未实现。
 
 使用 `editor` 可在存储组合中导入 Kit Editor。Rust 契约表达
 初始文本、基于原生 revision 的 replace/reset 命令、元数据观察与命令回执；原生 buffer

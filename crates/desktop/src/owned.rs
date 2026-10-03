@@ -25,6 +25,7 @@ use gpui_kit::*;
 /// Actual state/callback destruction drives cleanup; merely drawing a new
 /// frame or seeing a component disappear does not produce an acknowledgement.
 pub(super) struct Owned {
+    pub window_id: WindowId,
     pub content: AnyElement,
     pub lease: Lease,
 }
@@ -50,6 +51,11 @@ impl Element for Owned {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, ()) {
+        assert_eq!(
+            window.window_handle().window_id(),
+            self.window_id,
+            "component window owner mismatch"
+        );
         (self.content.request_layout(window, cx), ())
     }
     fn prepaint(
@@ -61,6 +67,12 @@ impl Element for Owned {
         window: &mut Window,
         cx: &mut App,
     ) {
+        assert_eq!(
+            window.window_handle().window_id(),
+            self.window_id,
+            "component window owner mismatch"
+        );
+        window.claim_unique_placement(self.id().expect("owned component id"));
         window.with_element_state(
             id.expect("owned component id"),
             |previous: Option<Lease>, _| ((), previous.unwrap_or_else(|| self.lease.clone())),

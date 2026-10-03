@@ -34,7 +34,7 @@ use maka_ui::{
     actions::{ActionTask, TaskCompletion},
 };
 pub use native::registry;
-pub use paint::{PaintedScene, sanitize};
+pub use paint::{PaintedScene, Slots, sanitize};
 use ratatui::{buffer::Buffer, layout::Rect};
 pub use run::run;
 use serde_json::{Value, json};
@@ -44,8 +44,8 @@ use uuid::Uuid;
 /// Trusted, immutable paint data. No resource, input subscription or OS owner.
 /// 可信不可变绘制数据；真实资源生命周期不能藏在 recipe 中。
 pub trait Widget: 'static {
-    fn measure(&self, width: u16) -> (u16, u16);
-    fn paint(&self, area: Rect, buffer: &mut Buffer);
+    fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u16)>;
+    fn paint(&self, slots: &mut Slots<'_>, area: Rect, buffer: &mut Buffer) -> maka_ui::Result<()>;
 }
 type Job = Pin<Box<dyn Future<Output = (Uuid, TaskCompletion)> + Send>>;
 pub struct Presenter {

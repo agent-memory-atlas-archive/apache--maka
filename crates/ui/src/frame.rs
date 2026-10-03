@@ -126,13 +126,43 @@ pub enum Node {
         key: String,
         label: String,
     },
-    Component {
-        key: String,
-        binding: String,
-        member: u32,
-        props: Value,
-        on: BTreeMap<String, String>,
-    },
+    Component(ComponentSlot),
+}
+/// One child of a committed component, shared by tree and native presentations.
+/// Binding resolution belongs to the parent activation and the common mount kernel.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentSlot {
+    pub key: String,
+    pub binding: String,
+    pub member: u32,
+    pub props: Value,
+    pub on: BTreeMap<String, String>,
+}
+impl ComponentSlot {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.key.is_empty()
+            || self.key.len() > 128
+            || self.binding.is_empty()
+            || self.binding.len() > 128
+            || self.on.len() > 64
+            || self.on.iter().any(|(event, handler)| {
+                event.is_empty() || event.len() > 128 || handler.is_empty() || handler.len() > 128
+            })
+        {
+            return Err("invalid component slot identity or binding".into());
+        }
+        Ok(())
+    }
+    pub(crate) fn reference(&self) -> ComponentRef<'_> {
+        ComponentRef {
+            key: &self.key,
+            binding: &self.binding,
+            member: self.member,
+            props: &self.props,
+            on: &self.on,
+        }
+    }
 }
 impl<V> Frame<V> {
     pub fn output(self, events: Vec<Emission>) -> ComponentOutput<V> {
@@ -174,10 +204,8 @@ impl Node {
     }
     fn validate(&self, depth: usize, keys: &mut BTreeSet<String>) -> Result<(), String> {
         let key = match self {
-            Self::Stack { key, .. }
-            | Self::Text { key, .. }
-            | Self::Button { key, .. }
-            | Self::Component { key, .. } => key,
+            Self::Stack { key, .. } | Self::Text { key, .. } | Self::Button { key, .. } => key,
+            Self::Component(slot) => &slot.key,
         };
         if depth > 32
             || keys.len() >= 4096
@@ -212,20 +240,7 @@ impl Node {
                     return Err("invalid button label".into());
                 }
             }
-            Self::Component { binding, on, .. } => {
-                if binding.is_empty()
-                    || binding.len() > 128
-                    || on.len() > 64
-                    || on.iter().any(|(event, handler)| {
-                        event.is_empty()
-                            || event.len() > 128
-                            || handler.is_empty()
-                            || handler.len() > 128
-                    })
-                {
-                    return Err("invalid component binding".into());
-                }
-            }
+            Self::Component(slot) => slot.validate()?,
         }
         Ok(())
     }
@@ -239,19 +254,7 @@ impl Node {
 
     pub(crate) fn components<'a>(&'a self, output: &mut Vec<ComponentRef<'a>>) {
         match self {
-            Self::Component {
-                key,
-                binding,
-                member,
-                props,
-                on,
-            } => output.push(ComponentRef {
-                key,
-                binding,
-                member: *member,
-                props,
-                on,
-            }),
+            Self::Component(slot) => output.push(slot.reference()),
             Self::Stack { children, .. } => {
                 for child in children {
                     child.components(output);

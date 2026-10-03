@@ -594,3 +594,198 @@ fn service_fixture(
 
 #[path = "mutations.rs"]
 mod mutations;
+
+struct SlotRow {
+    duplicate: bool,
+}
+impl Widget for SlotRow {
+    fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u16)> {
+        let first = slots.measure("right", width / 2)?;
+        let second = slots.measure("left", width / 2)?;
+        // Repeated measurement is permitted and has no guest effects.
+        assert_eq!(first, slots.measure("right", width / 2)?);
+        Ok((
+            first.0.saturating_add(second.0).min(width),
+            first.1.max(second.1),
+        ))
+    }
+    fn paint(&self, slots: &mut Slots<'_>, area: Rect, buffer: &mut Buffer) -> maka_ui::Result<()> {
+        assert_eq!(slots.keys().collect::<Vec<_>>(), ["right", "left"]);
+        let half = area.width / 2;
+        slots.paint(
+            "right",
+            Rect::new(area.x, area.y, half, area.height),
+            buffer,
+        )?;
+        slots.paint(
+            if self.duplicate { "right" } else { "left" },
+            Rect::new(area.x + half, area.y, area.width - half, area.height),
+            buffer,
+        )
+    }
+}
+struct SlotRoot {
+    duplicate: bool,
+}
+impl maka_ui::NativeComponent<dyn Widget> for SlotRoot {
+    fn call(
+        &self,
+        call: maka_ui::ComponentCall<'_>,
+    ) -> maka_ui::Result<maka_ui::ComponentOutput<maka_ui::Presentation<dyn Widget>>> {
+        let revision = match call {
+            maka_ui::ComponentCall::Mount { .. } => 0,
+            maka_ui::ComponentCall::Update { state, .. }
+            | maka_ui::ComponentCall::Event { state, .. } => {
+                state["revision"].as_u64().unwrap() + 1
+            }
+        };
+        let slots = [("right", 20), ("left", 10)]
+            .into_iter()
+            .map(|(key, initial)| maka_ui::ComponentSlot {
+                key: key.into(),
+                binding: "counter".into(),
+                member: 0,
+                on: Default::default(),
+                props: json!({"label":format!("{key} {revision}"),"initial":initial}),
+            })
+            .collect();
+        Ok(maka_ui::Frame {
+            revision,
+            state: json!({"revision":revision}),
+            surface: Some(Surface::Terminal {
+                binding: "surface".into(),
+            }),
+            view: maka_ui::Presentation::Native(maka_ui::NativeView::new(
+                std::rc::Rc::new(SlotRow {
+                    duplicate: self.duplicate,
+                }) as std::rc::Rc<dyn Widget>,
+                [("parent".into(), json!(true))].into(),
+                slots,
+            )?),
+        }
+        .output(vec![]))
+    }
+}
+fn native_slots_fixture(runtime: &tokio::runtime::Runtime, duplicate: bool) -> Presenter {
+    use maka_plugin_core::package::{EntryTarget, Implementation};
+    let (mut input, packages) =
+        support::composed_fixture(support::CHILD_UPDATE, support::PARENT_EVENT);
+    input.environment.presentation = Some(PresentationTarget::Tui);
+    let mut converted = Vec::new();
+    let mut root_contract = None;
+    for old in packages {
+        let mut declaration = old.manifest().application.clone().unwrap();
+        let mut entry = declaration.entries.remove(&EntryTarget::Desktop).unwrap();
+        let is_root = old.manifest().id == "dynamic.app";
+        if is_root {
+            entry.implementation = Implementation::Native {
+                implementation: "test.terminal-slots".into(),
+            };
+            root_contract = Some(entry.exports["App"].contract.clone());
+            entry.imports.get_mut("surface").unwrap().contract =
+                maka_ui::surface_contract(PresentationTarget::Tui);
+        }
+        if old.manifest().id == "native.surface" {
+            entry.implementation = Implementation::Native {
+                implementation: "maka.ui.surface.tui".into(),
+            };
+            entry.exports.get_mut("Surface").unwrap().contract =
+                maka_ui::surface_contract(PresentationTarget::Tui);
+        }
+        declaration.entries.insert(EntryTarget::Tui, entry);
+        let source = if is_root {
+            None
+        } else {
+            old.file("index.mjs")
+                .map(|s| std::str::from_utf8(s).unwrap().to_string())
+        };
+        let package = support::package(&old.manifest().id, declaration, source);
+        for node in input.instances.values_mut() {
+            if node.package == old.application_ref().into() {
+                node.package = package.application_ref().into();
+            }
+        }
+        converted.push(package);
+    }
+    let contract = root_contract.unwrap();
+    let mut native = registry();
+    native
+        .register("test.terminal-slots", move |_| {
+            Ok(std::collections::BTreeMap::from([(
+                "App".into(),
+                maka_ui::NativeExport {
+                    contract: contract.clone(),
+                    value: maka_ui::NativeCapability::Component(std::rc::Rc::new(SlotRoot {
+                        duplicate,
+                    })),
+                },
+            )]))
+        })
+        .unwrap();
+    Presenter::new(
+        &input,
+        converted,
+        runtime.handle().clone(),
+        native,
+        json!({}),
+    )
+    .unwrap()
+}
+#[test]
+fn native_terminal_slots_measure_and_paint_js_children_with_original_input_mounts() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_time()
+        .build()
+        .unwrap();
+    let mut tui = native_slots_fixture(&runtime, false);
+    let root = tui.root.clone();
+    let left = tui.application.child_mount(&root, "left").unwrap().clone();
+    let right = tui.application.child_mount(&root, "right").unwrap().clone();
+    draw(&mut tui, 80, 40); // Publish initial keyboard focus.
+    let first = draw(&mut tui, 80, 40);
+    assert_eq!(first, draw(&mut tui, 80, 40));
+    let target = tui
+        .scene
+        .iter()
+        .find(|t| t.mount == left && t.key == "inc")
+        .unwrap()
+        .clone();
+    tui.input(Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: target.area.x,
+        row: target.area.y,
+        modifiers: KeyModifiers::NONE,
+    }))
+    .unwrap();
+    assert_eq!(tui.application.frame(&left).unwrap().state["count"], 11);
+    assert_eq!(tui.application.frame(&right).unwrap().state["count"], 20);
+    tui.application
+        .dispatch(&root, 0, "parent", Value::Null)
+        .unwrap();
+    draw(&mut tui, 80, 40);
+    assert_eq!(tui.application.child_mount(&root, "left").unwrap(), &left);
+    assert_eq!(tui.application.frame(&left).unwrap().state["count"], 11);
+    assert_eq!(
+        tui.application.frame(&left).unwrap().state["label"],
+        "left 1"
+    );
+    tui.surface_closed(Ok(())).unwrap();
+    tui.shutdown().unwrap();
+}
+#[test]
+fn duplicate_native_terminal_placement_rejects_pending_scene_before_input_publication() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_time()
+        .build()
+        .unwrap();
+    let mut tui = native_slots_fixture(&runtime, true);
+    let area = Rect::new(0, 0, 80, 40);
+    let mut buffer = Buffer::empty(area);
+    assert!(tui.paint(area, &mut buffer).is_err());
+    assert!(tui.scene.is_empty());
+    assert_eq!(tui.application.frame(&tui.root).unwrap().revision, 0);
+    tui.surface_closed(Ok(())).unwrap();
+    tui.shutdown().unwrap();
+}

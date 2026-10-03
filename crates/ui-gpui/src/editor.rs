@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use super::{LiveInput, Widget};
+use super::{LiveInput, Slots, Widget};
 use gpui_kit::component::input::{Editor as KitEditor, EditorState, Rope, RopeExt};
 use gpui_kit::*;
 use maka_ui::editor::*;
@@ -38,7 +38,7 @@ struct NativeSnapshot {
     marked: Option<TextRange>,
 }
 
-pub(crate) struct EditorOwner {
+pub struct EditorOwner {
     id: String,
     pub state: Entity<EditorState>,
     input: LiveInput,
@@ -499,7 +499,7 @@ impl Widget for EditorRecipe {
             .expect("editor native owner")
             .update(cx, |owner, cx| owner.apply(&self.props, window, cx));
     }
-    fn render(&self, state: &dyn Any, _: &mut Window, _: &mut App) -> AnyElement {
+    fn render(&self, state: &dyn Any, _: &Slots, _: &mut Window, _: &mut App) -> AnyElement {
         state
             .downcast_ref::<Entity<EditorOwner>>()
             .expect("editor native owner")
@@ -606,8 +606,7 @@ impl EditorComponent {
             surface: None,
             view: Presentation::Native(NativeView::<dyn Widget>::new(
                 Rc::new(EditorRecipe { props: typed }),
-                BTreeMap::from([("observe".into(), maka_ui::editor::observation_schema())]),
-            )?),
+                BTreeMap::from([("observe".into(), maka_ui::editor::observation_schema())]), vec![])?),
         }.output(Vec::new()))
     }
 }

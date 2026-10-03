@@ -79,6 +79,9 @@ impl Drop for Resource {
 #[derive(Clone)]
 pub(super) struct Lease(Rc<Resource>);
 impl Lease {
+    pub fn is_attached(&self) -> bool {
+        !self.0.0.detached.get()
+    }
     pub fn mount(&self) -> &Mount {
         &self.0.0.mount
     }
@@ -87,6 +90,7 @@ impl Lease {
 pub(super) struct NativeInstance {
     pub recipe: Rc<dyn super::widgets::Widget>,
     pub kind: TypeId,
+    pub identity: Rc<()>,
     pub revision: Option<u64>,
     pub state: Box<dyn Any>,
     pub input: LiveInput,
@@ -132,8 +136,14 @@ impl NativeResources {
                 })
             })
     }
-    pub fn acquire(&mut self, mount: &Mount) -> Lease {
-        self.scope(mount).acquire()
+    pub fn prepare_scope(&mut self, mount: &Mount) {
+        self.scope(mount);
+    }
+    pub fn acquire(&self, mount: &Mount) -> Lease {
+        self.scopes
+            .get(&mount.id().to_string())
+            .expect("scope prepared before render")
+            .acquire()
     }
 
     pub fn is_removed(&self) -> bool {

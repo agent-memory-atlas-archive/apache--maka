@@ -27,6 +27,7 @@ maka-application-bridge.workspace = true
 maka-runtime-host.workspace = true
 gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "f89c5cc9576d823d253b4563806e5f842e9d69f9" }
 maka-ui.workspace = true
+maka-ui-gpui.workspace = true
 maka-plugins.workspace = true
 maka-plugin-core.workspace = true
 maka-event-log.workspace = true

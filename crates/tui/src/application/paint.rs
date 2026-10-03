@@ -104,6 +104,34 @@ impl Target {
 /// 绘制成功并完成实际 flush 后，才发布对应的命中区域。
 pub struct PaintedScene {
     pub(super) targets: Vec<Target>,
+    placed: std::collections::BTreeSet<uuid::Uuid>,
+}
+
+/// Synchronous terminal geometry over one parent's committed component slots.
+/// Measuring is read-only; painting publishes hit geometry only after flush.
+pub struct Slots<'a> {
+    presenter: &'a Presenter,
+    parent: &'a Mount,
+    declarations: &'a [maka_ui::ComponentSlot],
+    scene: Option<&'a mut PaintedScene>,
+}
+impl Slots<'_> {
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.declarations.iter().map(|slot| slot.key.as_str())
+    }
+    pub fn measure(&self, key: &str, width: u16) -> maka_ui::Result<(u16, u16)> {
+        let child = self.presenter.application.child_mount(self.parent, key)?;
+        self.presenter.measure_mount(child, width)
+    }
+    pub fn paint(&mut self, key: &str, area: Rect, buffer: &mut Buffer) -> maka_ui::Result<()> {
+        let child = self.presenter.application.child_mount(self.parent, key)?;
+        let scene = self
+            .scene
+            .as_deref_mut()
+            .ok_or_else(|| maka_ui::Error::Invalid("cannot paint during measurement".into()))?;
+        self.presenter
+            .paint_mount(child, area.intersection(buffer.area), buffer, scene)
+    }
 }
 
 fn color(rgb: u32) -> Color {
@@ -123,6 +151,7 @@ impl Presenter {
         );
         let mut scene = PaintedScene {
             targets: Vec::new(),
+            placed: Default::default(),
         };
         self.paint_mount(&self.root, area, buffer, &mut scene)?;
         Ok(scene)
@@ -141,7 +170,15 @@ impl Presenter {
     fn measure_mount(&self, mount: &Mount, width: u16) -> maka_ui::Result<(u16, u16)> {
         match &self.application.frame(mount)?.view {
             Presentation::Tree(node) => self.measure(mount, node, width),
-            Presentation::Native(native) => Ok(native.view.measure(width)),
+            Presentation::Native(native) => native.view.measure(
+                &Slots {
+                    presenter: self,
+                    parent: mount,
+                    declarations: native.slots(),
+                    scene: None,
+                },
+                width,
+            ),
         }
     }
     fn measure(&self, mount: &Mount, node: &Node, width: u16) -> maka_ui::Result<(u16, u16)> {
@@ -155,8 +192,8 @@ impl Presenter {
                     .min(usize::from(width)) as u16,
                 1,
             ),
-            Node::Component { key, .. } => {
-                return self.measure_mount(self.application.child_mount(mount, key)?, width);
+            Node::Component(slot) => {
+                return self.measure_mount(self.application.child_mount(mount, &slot.key)?, width);
             }
             Node::Stack {
                 direction,
@@ -205,12 +242,26 @@ impl Presenter {
         buffer: &mut Buffer,
         scene: &mut PaintedScene,
     ) -> maka_ui::Result<()> {
+        if area.width == 0 || area.height == 0 {
+            return Ok(());
+        }
+        if !scene.placed.insert(mount.id()) {
+            return Err(maka_ui::Error::Invalid(
+                "component placed twice in terminal scene".into(),
+            ));
+        }
         match &self.application.frame(mount)?.view {
             Presentation::Tree(node) => self.paint_node(mount, node, area, buffer, scene),
-            Presentation::Native(native) => {
-                native.view.paint(area, buffer);
-                Ok(())
-            }
+            Presentation::Native(native) => native.view.paint(
+                &mut Slots {
+                    presenter: self,
+                    parent: mount,
+                    declarations: native.slots(),
+                    scene: Some(scene),
+                },
+                area,
+                buffer,
+            ),
         }
     }
     fn paint_node(
@@ -248,8 +299,8 @@ impl Presenter {
                     .render(target.area, buffer);
                 scene.targets.push(target);
             }
-            Node::Component { key, .. } => self.paint_mount(
-                self.application.child_mount(mount, key)?,
+            Node::Component(slot) => self.paint_mount(
+                self.application.child_mount(mount, &slot.key)?,
                 area,
                 buffer,
                 scene,

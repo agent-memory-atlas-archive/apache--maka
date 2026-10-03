@@ -21,7 +21,7 @@ extern crate gpui_kit as gpui;
 mod actions;
 mod owned;
 mod resources;
-mod widgets;
+use maka_ui_gpui as widgets;
 mod window_owner;
 use clap::Parser;
 use gpui_kit::{
@@ -52,16 +52,21 @@ struct Surface {
     resources: Rc<RefCell<resources::NativeResources>>,
     mount: Mount,
 }
-struct RenderScope<'a> {
-    application: &'a DesktopApplication,
-    mount: &'a Mount,
-    input: widgets::Input,
-}
 impl Surface {
-    fn input(&self, lease: &resources::Lease, revision: u64, cx: &Context<Self>) -> widgets::Input {
+    fn input(
+        &self,
+        lease: &resources::Lease,
+        revision: u64,
+        window_id: gpui_kit::WindowId,
+        cx: &Context<Self>,
+    ) -> widgets::Input {
         let lease = lease.clone();
         let view = cx.weak_entity();
         widgets::Input(Rc::new(move |key, event, window, cx| {
+            if window.window_handle().window_id() != window_id {
+                eprintln!("component input rejected: window owner mismatch");
+                return;
+            }
             let result = view.update(cx, |view, cx| {
                 view.application
                     .borrow_mut()
@@ -89,14 +94,20 @@ impl Surface {
         }
         let application = self.application.borrow();
         for mount in application.mounted_subtree(&self.mount)? {
+            self.resources.borrow_mut().prepare_scope(&mount);
             let frame = application.frame(&mount)?;
             let id = mount.id().to_string();
             let Presentation::Native(native) = &frame.view else {
                 self.resources.borrow_mut().owners.remove(&id);
                 continue;
             };
-            let lease = self.resources.borrow_mut().acquire(&mount);
-            let input = self.input(&lease, frame.revision, cx);
+            let lease = self.resources.borrow().acquire(&mount);
+            let input = self.input(
+                &lease,
+                frame.revision,
+                window.window_handle().window_id(),
+                cx,
+            );
             let mut resources = self.resources.borrow_mut();
             let kind = native.view.as_ref().type_id();
             if resources
@@ -110,6 +121,7 @@ impl Surface {
                 let input = widgets::LiveInput(Rc::new(RefCell::new(Some(input.clone()))));
                 resources::NativeInstance {
                     kind,
+                    identity: Rc::new(()),
                     recipe: native.view.clone(),
                     revision: None,
                     state: native.view.create(input.clone(), window, cx),
@@ -174,48 +186,181 @@ impl Surface {
         )?;
         Ok(())
     }
-    fn presentation(
+    fn scene(
         &self,
-        application: &DesktopApplication,
-        mount: &Mount,
-        window: &mut gpui_kit::Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let Ok(frame) = application.frame(mount) else {
-            return div().into_any_element();
-        };
-        let lease = self.resources.borrow_mut().acquire(mount);
-        let input = self.input(&lease, frame.revision, cx);
-        let content = match &frame.view {
-            Presentation::Tree(node) => self.node(
-                &RenderScope {
-                    application,
-                    mount,
-                    input,
-                },
-                node,
-                window,
+        window: &gpui_kit::Window,
+        cx: &Context<Self>,
+    ) -> maka_ui::Result<Rc<RenderScene>> {
+        let application = self.application.borrow();
+        let resources = self.resources.borrow();
+        let mut entries = std::collections::BTreeMap::<String, Rc<RenderScene>>::new();
+        for mount in application.mounted_subtree(&self.mount)?.into_iter().rev() {
+            let frame = application.frame(&mount)?.clone();
+            let lease = resources.acquire(&mount);
+            let input = self.input(
+                &lease,
+                frame.revision,
+                window.window_handle().window_id(),
                 cx,
-            ),
+            );
+            let mut children = std::collections::BTreeMap::new();
+            let mut add = |slot: &maka_ui::ComponentSlot| -> maka_ui::Result<()> {
+                let child = application.child_mount(&mount, &slot.key)?;
+                let child = entries
+                    .remove(&child.id().to_string())
+                    .expect("captured child before parent");
+                children.insert(slot.key.clone(), child);
+                Ok(())
+            };
+            match &frame.view {
+                Presentation::Native(view) => {
+                    for slot in view.slots() {
+                        add(slot)?;
+                    }
+                }
+                Presentation::Tree(node) => collect_slots(node, &mut add)?,
+            }
+            let identity = resources
+                .owners
+                .get(&mount.id().to_string())
+                .map(|o| o.identity.clone());
+            entries.insert(
+                mount.id().to_string(),
+                Rc::new(RenderScene {
+                    resources: self.resources.clone(),
+                    window_id: window.window_handle().window_id(),
+                    entry: RenderEntry {
+                        frame,
+                        lease,
+                        input,
+                        children,
+                        identity,
+                    },
+                }),
+            );
+        }
+        Ok(entries
+            .remove(&self.mount.id().to_string())
+            .expect("captured root"))
+    }
+}
+
+/// Immutable observations of one committed tree. Callback custody retains exact
+/// mounts; the kernel remains the only mutable state and child-binding authority.
+struct RenderScene {
+    window_id: gpui_kit::WindowId,
+    resources: Rc<RefCell<resources::NativeResources>>,
+    entry: RenderEntry,
+}
+struct RenderEntry {
+    frame: maka_ui::Frame<Presentation<dyn widgets::Widget>>,
+    lease: resources::Lease,
+    input: widgets::Input,
+    children: std::collections::BTreeMap<String, Rc<RenderScene>>,
+    identity: Option<Rc<()>>,
+}
+fn collect_slots(
+    node: &Node,
+    add: &mut impl FnMut(&maka_ui::ComponentSlot) -> maka_ui::Result<()>,
+) -> maka_ui::Result<()> {
+    match node {
+        Node::Component(slot) => add(slot)?,
+        Node::Stack { children, .. } => {
+            for node in children {
+                collect_slots(node, add)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+impl RenderScene {
+    fn render(
+        self: &Rc<Self>,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) -> maka_ui::Result<AnyElement> {
+        if window.window_handle().window_id() != self.window_id {
+            return Err(maka_ui::Error::Invalid(
+                "captured component belongs to another window".into(),
+            ));
+        }
+        let entry = &self.entry;
+        let id = entry.lease.mount().id().to_string();
+        if !entry.lease.is_attached() {
+            return Err(maka_ui::Error::Invalid("captured mount detached".into()));
+        }
+        let content = match &entry.frame.view {
+            Presentation::Tree(node) => self.node(entry, node, window, cx)?,
             Presentation::Native(native) => {
                 let resources = self.resources.borrow();
                 let owner = resources
                     .owners
-                    .get(&mount.id().to_string())
-                    .expect("native owner synced before rendering");
-                native.view.render(owner.state.as_ref(), window, cx)
+                    .get(&id)
+                    .filter(|owner| {
+                        entry
+                            .identity
+                            .as_ref()
+                            .is_some_and(|token| Rc::ptr_eq(token, &owner.identity))
+                    })
+                    .ok_or_else(|| {
+                        maka_ui::Error::Invalid("captured native owner replaced".into())
+                    })?;
+                let slots = self.slots();
+                native.view.render(owner.state.as_ref(), &slots, window, cx)
             }
         };
-        owned::Owned { content, lease }.into_any_element()
+        Ok(owned::Owned {
+            window_id: self.window_id,
+            content,
+            lease: entry.lease.clone(),
+        }
+        .into_any_element())
+    }
+    fn slots(self: &Rc<Self>) -> widgets::Slots {
+        let entry = &self.entry;
+        let keys = match &entry.frame.view {
+            Presentation::Native(view) => view.slots().iter().map(|s| s.key.clone()).collect(),
+            Presentation::Tree(_) => entry.children.keys().cloned().collect(),
+        };
+        let scene = self.clone();
+        widgets::Slots::new(keys, move |key, window, cx| {
+            if window.window_handle().window_id() != scene.window_id {
+                return Err(maka_ui::Error::Invalid(
+                    "captured slots belong to another window".into(),
+                ));
+            }
+            let entry = &scene.entry;
+            let parent = entry.lease.mount().id().to_string();
+            if !entry.lease.is_attached() {
+                return Err(maka_ui::Error::Invalid("slot parent detached".into()));
+            }
+            // Native→Tree→Native can keep the core Mount but replace its owner.
+            if let Some(token) = &entry.identity
+                && !scene
+                    .resources
+                    .borrow()
+                    .owners
+                    .get(&parent)
+                    .is_some_and(|o| Rc::ptr_eq(token, &o.identity))
+            {
+                return Err(maka_ui::Error::Invalid("slot parent owner replaced".into()));
+            }
+            let child = entry
+                .children
+                .get(key)
+                .ok_or_else(|| maka_ui::Error::Invalid("unknown component slot".into()))?;
+            child.render(window, cx)
+        })
     }
     fn node(
-        &self,
-        scope: &RenderScope<'_>,
+        self: &Rc<Self>,
+        scope: &RenderEntry,
         node: &Node,
         window: &mut gpui_kit::Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        match node {
+        cx: &mut gpui_kit::App,
+    ) -> maka_ui::Result<AnyElement> {
+        Ok(match node {
             Node::Text { key, text, color } => div()
                 .id(SharedString::from(key.clone()))
                 .text_color(rgb(*color))
@@ -229,10 +374,7 @@ impl Surface {
                         .bind(key.clone(), |_| serde_json::json!({"kind":"click"})),
                 )
                 .into_any_element(),
-            Node::Component { key, .. } => match scope.application.child_mount(scope.mount, key) {
-                Ok(child) => self.presentation(scope.application, child, window, cx),
-                Err(_) => div().into_any_element(),
-            },
+            Node::Component(slot) => scope.children[&slot.key].render(window, cx)?,
             Node::Stack {
                 key,
                 direction,
@@ -251,15 +393,13 @@ impl Surface {
                     Direction::Row => element.flex_row(),
                     Direction::Column => element.flex_col(),
                 };
-                element
-                    .children(
-                        children
-                            .iter()
-                            .map(|child| self.node(scope, child, window, cx)),
-                    )
-                    .into_any_element()
+                let elements = children
+                    .iter()
+                    .map(|child| self.node(scope, child, window, cx))
+                    .collect::<maka_ui::Result<Vec<_>>>()?;
+                element.children(elements).into_any_element()
             }
-        }
+        })
     }
 }
 
@@ -273,10 +413,17 @@ impl Render for Surface {
         if self.resources.borrow().is_removed() {
             return div().size_full();
         }
-        let application = self.application.borrow();
-        div()
-            .size_full()
-            .child(self.presentation(&application, &self.mount, window, cx))
+        let content = self
+            .scene(window, cx)
+            .and_then(|scene| scene.render(window, cx));
+        let content = match content {
+            Ok(content) => content,
+            Err(error) => {
+                eprintln!("component rendering rejected: {error}");
+                div().into_any_element()
+            }
+        };
+        div().size_full().child(content)
     }
 }
 
@@ -286,6 +433,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Launcher::start(
         Args::parse(),
         maka_runtime_host::application::NativeRegistry::default(),
+        widgets::registry(),
     )?
     .run()
 }
@@ -303,6 +451,7 @@ impl Launcher {
     pub(crate) fn start(
         args: Args,
         native: maka_runtime_host::application::NativeRegistry,
+        components: maka_ui::NativeRegistry<dyn widgets::Widget>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let timer = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
@@ -341,7 +490,7 @@ impl Launcher {
             PresentationTarget::Desktop,
             timer.handle().clone(),
             maka_js_limits(),
-            widgets::registry(),
+            components,
             registrations,
         ));
         let mut application = match started {
@@ -833,7 +982,9 @@ mod tests {
             root.clone(),
             wake,
         )));
-        let held_root = resources.borrow_mut().acquire(&root);
+        resources.borrow_mut().prepare_scope(&root);
+        resources.borrow_mut().prepare_scope(&child);
+        let held_root = resources.borrow().acquire(&root);
         let held_child = resources.borrow_mut().acquire(&child);
         let finished = Rc::new(RefCell::new(None));
         let (handle, surface) = cx.update(|cx| {

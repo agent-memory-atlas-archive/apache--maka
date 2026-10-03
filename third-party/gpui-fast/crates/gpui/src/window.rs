@@ -988,6 +988,8 @@ pub(crate) struct Frame {
     pub(crate) scene: Scene,
     pub(crate) fast_composition_starts: crate::fast::composition::SurfaceStarts,
     pub(crate) hitboxes: Vec<Hitbox>,
+    placement_claims: Vec<ElementId>,
+    placed: FxHashSet<ElementId>,
     pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
@@ -1005,6 +1007,7 @@ pub(crate) struct Frame {
 
 #[derive(Clone, Default)]
 pub(crate) struct PrepaintStateIndex {
+    pub(crate) placement_claims_index: usize,
     pub(crate) hitboxes_index: usize,
     pub(crate) tooltips_index: usize,
     pub(crate) deferred_draws_index: usize,
@@ -1037,6 +1040,8 @@ impl Frame {
             scene: Scene::default(),
             fast_composition_starts: crate::fast::composition::SurfaceStarts::default(),
             hitboxes: Vec::new(),
+            placement_claims: Vec::new(),
+            placed: FxHashSet::default(),
             window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
             input_handlers: Vec::new(),
@@ -1067,6 +1072,8 @@ impl Frame {
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
         self.hitboxes.clear();
+        self.placement_claims.clear();
+        self.placed.clear();
         self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
         self.tab_stops.clear();
@@ -3732,6 +3739,7 @@ impl Window {
 
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
         PrepaintStateIndex {
+            placement_claims_index: self.next_frame.placement_claims.len(),
             hitboxes_index: self.next_frame.hitboxes.len(),
             tooltips_index: self.next_frame.tooltip_requests.len(),
             deferred_draws_index: self.next_frame.deferred_draws.len(),
@@ -3741,7 +3749,36 @@ impl Window {
         }
     }
 
+    /// Claim one semantic placement during prepaint. Layout/measurement may
+    /// construct the same element repeatedly, but a successful frame may place
+    /// this identity only once, including cached and deferred subtrees.
+    ///
+    /// Duplicate placement is a fatal trusted-element invariant violation.
+    /// Retryable prepaint must return Err through `transact`, not catch a panic.
+    pub fn claim_unique_placement(&mut self, id: ElementId) {
+        self.invalidator.debug_assert_prepaint();
+        assert!(
+            self.next_frame.placed.insert(id.clone()),
+            "element placed more than once in one frame: {id:?}"
+        );
+        self.next_frame.placement_claims.push(id);
+    }
+
+    pub(crate) fn reuse_placement_claims(&mut self, range: &Range<PrepaintStateIndex>) {
+        // Borrow separate frames; replay through the same uniqueness invariant.
+        for id in &self.rendered_frame.placement_claims
+            [range.start.placement_claims_index..range.end.placement_claims_index]
+        {
+            assert!(
+                self.next_frame.placed.insert(id.clone()),
+                "cached element placed more than once in one frame: {id:?}"
+            );
+            self.next_frame.placement_claims.push(id.clone());
+        }
+    }
+
     pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
+        self.reuse_placement_claims(&range);
         self.next_frame.hitboxes.extend(
             self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
                 .iter()
@@ -3979,6 +4016,13 @@ impl Window {
         let index = self.prepaint_index();
         let result = f(self);
         if result.is_err() {
+            for id in self
+                .next_frame
+                .placement_claims
+                .drain(index.placement_claims_index..)
+            {
+                self.next_frame.placed.remove(&id);
+            }
             self.next_frame.hitboxes.truncate(index.hitboxes_index);
             self.next_frame
                 .tooltip_requests

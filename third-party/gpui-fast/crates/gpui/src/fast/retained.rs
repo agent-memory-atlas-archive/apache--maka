@@ -256,6 +256,8 @@ impl PrepaintStateIndex {
     /// a copy of that range starting at `to`.
     pub(crate) fn shifted(&self, from: &Self, to: &Self) -> Self {
         PrepaintStateIndex {
+            placement_claims_index: self.placement_claims_index - from.placement_claims_index
+                + to.placement_claims_index,
             hitboxes_index: self.hitboxes_index - from.hitboxes_index + to.hitboxes_index,
             tooltips_index: self.tooltips_index - from.tooltips_index + to.tooltips_index,
             deferred_draws_index: self.deferred_draws_index - from.deferred_draws_index
@@ -277,6 +279,7 @@ impl PartialEq for PrepaintStateIndex {
     fn eq(&self, other: &Self) -> bool {
         // Destructured, so that a field upstream adds can't be missed here.
         let PrepaintStateIndex {
+            placement_claims_index,
             hitboxes_index,
             tooltips_index,
             deferred_draws_index,
@@ -284,7 +287,8 @@ impl PartialEq for PrepaintStateIndex {
             accessed_element_states_index,
             line_layout_index,
         } = self;
-        *hitboxes_index == other.hitboxes_index
+        *placement_claims_index == other.placement_claims_index
+            && *hitboxes_index == other.hitboxes_index
             && *tooltips_index == other.tooltips_index
             && *deferred_draws_index == other.deferred_draws_index
             && *dispatch_tree_index == other.dispatch_tree_index

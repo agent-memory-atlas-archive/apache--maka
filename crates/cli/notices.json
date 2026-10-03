@@ -1,7 +1,7 @@
 {
   "inputs": {
-    "Cargo.lock": "e1e6ea57a295243ad2d10e8f78702c6141107cf5a17c23389287c8628c0e2252",
-    "Cargo.toml": "aaf61f6435d0958ca3f1c7b4a86f52aca5d9bcfc668b975cfc03531e40822dc9",
+    "Cargo.lock": "3a897aa640117f3c17fc9ec36ecd7c2ebfc6e3e4f830ab7d4fc9b61daa828a77",
+    "Cargo.toml": "ba626ffac69a81113e2f5bc715a56c8f5a658f5bfa333383a913fd0757eba889",
     "crates/acp/Cargo.toml": "836cf57acda320dc984f4648e5893580e79063e95ced700f33cfbaa75994b8f8",
     "crates/agent/Cargo.toml": "241d363907d6e5491ba6645de5c114877165e4abd6844b2c581a35fd19c0f4f4",
     "crates/application-bridge/Cargo.toml": "e1cb1545c8caad64bf2549b1617ca15ebdf4f59f3f3274a249027802b6074a48",
@@ -14,7 +14,7 @@
     "crates/computer-use/Cargo.toml": "47ea75f205bcc481ca51c31a9ac09b0ef2585b15a5ca345c9b42d9d61020a260",
     "crates/computer-use/THIRD_PARTY_NOTICES": "709951ed2ee5c4b9ed933f375a37c5b15ec0efa2dea340dc0f289906d72a7bde",
     "crates/config/Cargo.toml": "58be3b2b9a37611bfaff2949a4a272bf0a4b29adb7afeddf5c463256c97882ae",
-    "crates/desktop/Cargo.toml": "064fbecf2fe815463738297117de36da8a3bc855501725b1bb2ee14016096cbf",
+    "crates/desktop/Cargo.toml": "5d1eecf03ec8173baa966a53f4768934db0261a70320fb78dc32b1cf2d6218d9",
     "crates/event-log/Cargo.toml": "30c0154b38bf450ab22209c771fc5b382715324d0e9a47665b4a243995315253",
     "crates/external-agent/Cargo.toml": "06d45673b6329d1b882af8ca7399fe9aa52098944307f9848a56180ca9dbfc38",
     "crates/fs-tools/Cargo.toml": "cd04bc0d9bc65326a4bf414ecda48554c1de49d8c811dcff6348ae4ea87070d9",
@@ -53,6 +53,7 @@
     "crates/tools/Cargo.toml": "be918aeeae9874d3bdcdd66f1c6fc51b4650f9abfef784e9a796ac8b997c39d8",
     "crates/transport/Cargo.toml": "3b9af9320e5d14e90fa7b9c1bcbe68cbca04ce9252179f1dc0cd4f3c0659845a",
     "crates/tui/Cargo.toml": "2973f88a6b9225e01341453d9302dfc22ca8dddd91797884d4ebf1ac0be149f0",
+    "crates/ui-gpui/Cargo.toml": "754674c0bd2eb2c8692d2740ebcb2d7489650905966d6a0103e93d1ed6edbca1",
     "crates/ui/Cargo.toml": "8bd6ff43ae05370fa00a9b81b4abcc023bce0b477939f33f30e47483214fd700",
     "crates/web/Cargo.toml": "244cf6690ca9bd8966e39ad0342512858b01483ce600aeef481f2e560bfa6065",
     "crates/workhub/Cargo.toml": "383fedb173c5596914fd704bb6207fec6ecf6fdc364f63218cd98e9a121b8b23",

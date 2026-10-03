@@ -17,7 +17,7 @@
  * under the License.
  */
 
-pub(crate) mod editor;
+pub mod editor;
 
 use gpui_kit::{
     AnyElement, App, IntoElement, ParentElement, SharedString, Styled, Window, div, px, rgb,
@@ -35,7 +35,7 @@ use std::{any::Any, cell::RefCell, collections::BTreeMap, rc::Rc};
 /// A Widget is immutable recipe data: do not cache Entity/Input/subscription
 /// handles here. Native state belongs to renderer owners and GPUI retained state;
 /// its actual destruction releases leases independently of the retired frame.
-pub(super) trait Widget: Any {
+pub trait Widget: Any {
     fn create(&self, _: LiveInput, _: &mut Window, _: &mut App) -> Box<dyn Any> {
         Box::new(())
     }
@@ -49,16 +49,22 @@ pub(super) trait Widget: Any {
         Err(maka_ui::Error::Invalid("widget capture unavailable".into()))
     }
     fn commit(&self, _: &mut dyn Any, _: &mut Window, _: &mut App) {}
-    fn render(&self, state: &dyn Any, window: &mut Window, cx: &mut App) -> AnyElement;
+    fn render(
+        &self,
+        state: &dyn Any,
+        slots: &Slots,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement;
 }
 /// Owner-originated observations resolve the current dispatcher at delivery;
 /// they are not button events against a retained old scene. Removal clears it
 /// before dropping the owner, so delayed observations cannot retarget a new one.
 #[derive(Clone)]
-pub(super) struct LiveInput(pub Rc<RefCell<Option<Input>>>);
+pub struct LiveInput(pub Rc<RefCell<Option<Input>>>);
 type Dispatch = dyn Fn(&str, Value, &mut Window, &mut App);
 #[derive(Clone)]
-pub(super) struct Input(pub Rc<Dispatch>);
+pub struct Input(pub Rc<Dispatch>);
 impl Input {
     pub fn bind<E: 'static>(
         &self,
@@ -70,12 +76,47 @@ impl Input {
     }
 }
 
+/// A read-only renderer handle for the exact committed children of one parent.
+/// This may be retained by virtual-list callbacks. Rendering does not execute
+/// plugins or resolve a new binding. Removed or recreated owners reject it.
+/// It belongs to the original platform window; another surface needs its own mount.
+/// Multiple measurements are allowed; one display may place each mount once.
+#[derive(Clone)]
+pub struct Slots {
+    keys: Rc<Vec<String>>,
+    render: Rc<SlotRenderer>,
+}
+type SlotRenderer = dyn Fn(&str, &mut Window, &mut App) -> maka_ui::Result<AnyElement>;
+impl Slots {
+    /// Constructed by the trusted surface adapter, with exact mount custody.
+    pub fn new(
+        keys: Vec<String>,
+        render: impl Fn(&str, &mut Window, &mut App) -> maka_ui::Result<AnyElement> + 'static,
+    ) -> Self {
+        Self {
+            keys: Rc::new(keys),
+            render: Rc::new(render),
+        }
+    }
+    pub fn keys(&self) -> &[String] {
+        &self.keys
+    }
+    pub fn render(
+        &self,
+        key: &str,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> maka_ui::Result<AnyElement> {
+        (self.render)(key, window, cx)
+    }
+}
+
 struct Label {
     text: String,
     emphasis: bool,
 }
 impl Widget for Label {
-    fn render(&self, _: &dyn Any, _: &mut Window, _: &mut App) -> AnyElement {
+    fn render(&self, _: &dyn Any, _: &Slots, _: &mut Window, _: &mut App) -> AnyElement {
         // Opaque native payload: GPUI styling is not constrained to the JSON
         // Node primitives. Product placement remains in the importing component.
         let label = div()
@@ -125,12 +166,13 @@ impl NativeComponent<dyn Widget> for LabelComponent {
                     emphasis: props.emphasis,
                 }),
                 BTreeMap::new(),
+                vec![],
             )?),
         }
         .output(Vec::new()))
     }
 }
-pub(super) fn registry() -> NativeRegistry<dyn Widget> {
+pub fn registry() -> NativeRegistry<dyn Widget> {
     let mut registry =
         NativeRegistry::with_surface(maka_plugin_core::composition::PresentationTarget::Desktop);
     registry

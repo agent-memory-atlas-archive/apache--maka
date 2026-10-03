@@ -33,6 +33,15 @@ Resources must never be cached in a recipe retained during cleanup. Native owner
 prepare resources, capture request-local snapshots, then consume committed intents
 before rendering, outside layout/paint.
 
+
+The public [GPUI adapter](../ui-gpui/README.md) exposes `Widget`, `Slots`, input
+bindings and compiled editor availability to other Rust crates. Native layouts may
+render their committed slots in GPUI Elements or retained virtual-list callbacks.
+Handles capture the exact subtree and native owner identity; they cannot retarget
+a recreated owner, render a detached child or cross the original platform window.
+Measurements may repeat. Prepaint permits one actual placement per mount, including
+cached replay and retry rollback. Scoped handles hold only their subtree's leases.
+
 Each component's element arena, retained GPUI state and input callbacks hold a
 native resource lease. A detached, retired child closes only after its last lease
 has actually been destroyed; the owner-thread receipt task does not wait for more

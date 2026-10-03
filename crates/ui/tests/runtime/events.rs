@@ -34,7 +34,7 @@ use std::{collections::BTreeMap, rc::Rc};
 const CHILD_EVENT: &str = "return frame({...state,count:state.count+1,revision:state.revision+1},[{name:'changed',value:state.count+1}]);";
 const RECEIVE: &str = "return frame({...state,revision:state.revision+1,seen:[...(state.seen??[]),[event.child,event.name,event.key,event.event]],total:(state.total??0)+event.event});";
 
-fn fixture(
+pub(super) fn fixture(
     mount: &str,
     event: &str,
     update: &str,
@@ -443,7 +443,7 @@ impl NativeComponent<()> for PaddedEmitter {
     fn call(&self, call: ComponentCall<'_>) -> maka_ui::Result<ComponentOutput<Presentation<()>>> {
         let (state, events) = match call {
             ComponentCall::Mount { props } => (
-                json!({"revision":0,"count":props["initial"],"label":props["label"],"padding":"x".repeat(1_039_000)}),
+                json!({"revision":0,"count":props["initial"],"label":props["label"],"padding":"x".repeat(930_000)}),
                 Vec::new(),
             ),
             ComponentCall::Update { state, props } => {
@@ -460,7 +460,7 @@ impl NativeComponent<()> for PaddedEmitter {
                     (0..3)
                         .map(|_| Emission {
                             name: "changed".into(),
-                            value: json!("e".repeat(262_144)),
+                            value: json!("e".repeat(39_000)),
                         })
                         .collect(),
                 )
@@ -496,11 +496,12 @@ fn event_payloads_and_intermediate_frames_do_not_occupy_final_retained_scene_quo
         json!({"type":"string","maxLength":262_144}),
     );
     let mut app = native_application(input, packages, contract, Rc::new(PaddedEmitter), &timer);
-    // 32 native states put the actual retained scene just below 32 MiB. A
-    // bounded event batch includes 768 KiB of transient payload and three
-    // parent transitions but must not count them as newly retained state.
+    // 36 native states put the actual retained scene just below 32 MiB.
+    // A complete callback (930 kB state + 117 kB events) still fits 1 MiB,
+    // but counting its transient events as retained would exceed 32 MiB.
+    // Three parent transitions must also replace, not accumulate, state.
     let mut roots = Vec::new();
-    for _ in 0..16 {
+    for _ in 0..18 {
         roots.push(app.mount_launch(json!({})).unwrap());
     }
     let left = app.child_mount(&roots[0], "left").unwrap().clone();

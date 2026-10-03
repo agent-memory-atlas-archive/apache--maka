@@ -65,8 +65,7 @@ impl NativeComponent<String> for Counter {
                 BTreeMap::from([(
                     "inc".into(),
                     json!({"type":"object","properties":{"delta":{"type":"integer","minimum":-10,"maximum":10},"large":{"type":"string"}},"required":["delta"],"additionalProperties":false}),
-                )]),
-            )?),
+                )]), vec![])?),
             state,
         }.output(Vec::new()))
     }
@@ -268,13 +267,13 @@ impl NativeComponent<String> for Root {
                 width: 640,
                 height: 400,
             }),
-            view: Presentation::Tree(Node::Component {
+            view: Presentation::Tree(Node::Component(maka_ui::ComponentSlot {
                 key: "child".into(),
                 binding: "counter".into(),
                 member: 0,
                 props: json!({"label":"Native","initial":4}),
                 on: BTreeMap::new(),
-            }),
+            })),
         }
         .output(Vec::new()))
     }
@@ -332,4 +331,284 @@ fn native_root_uses_explicit_surface_and_can_compose_an_imported_component() {
     app.dispatch(&child, 0, "inc", json!({"delta":3})).unwrap();
     assert_eq!(app.frame(&child).unwrap().state["count"], 7);
     close_all(&mut app, &root);
+}
+
+struct SlotParent;
+impl NativeComponent<String> for SlotParent {
+    fn call(
+        &self,
+        call: ComponentCall<'_>,
+    ) -> maka_ui::Result<ComponentOutput<Presentation<String>>> {
+        let mut next = match call {
+            ComponentCall::Mount { .. } => {
+                json!({"revision":0,"version":0,"right":true,"native":true,"seen":[]})
+            }
+            ComponentCall::Update { state, .. } | ComponentCall::Event { state, .. } => {
+                state.clone()
+            }
+        };
+        if let ComponentCall::Event {
+            key, input, origin, ..
+        } = call
+        {
+            next["revision"] = json!(next["revision"].as_u64().unwrap() + 1);
+            match key {
+                "notice" => {
+                    let maka_ui::EventOrigin::Component { child, name } = origin else {
+                        panic!("kernel child origin")
+                    };
+                    next["seen"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(json!([child, name, input]));
+                }
+                "parent" => next["version"] = json!(next["version"].as_u64().unwrap() + 1),
+                "toggle" => next["right"] = json!(!next["right"].as_bool().unwrap()),
+                "tree" => next["native"] = json!(!next["native"].as_bool().unwrap()),
+                "oversized" => next["blob"] = json!("x".repeat(1024 * 1024)),
+                "aggregate" => next["blob"] = json!("x".repeat(600_000)),
+                _ => {}
+            }
+            next["last"] = json!(key);
+        }
+        let mut slots = vec![maka_ui::ComponentSlot {
+            key: "left".into(),
+            binding: "counter".into(),
+            member: 0,
+            props: json!({"label":format!("Left {}",next["version"]),"initial":10}),
+            on: BTreeMap::from([("changed".into(), "notice".into())]),
+        }];
+        if next["right"] == true {
+            slots.push(maka_ui::ComponentSlot {
+                key: "right".into(),
+                binding: "counter".into(),
+                member: 0,
+                props: json!({"label":if next["last"]=="reject" { "Right Reject".into() } else { format!("Right {}",next["version"]) },"initial":20}),
+                on: BTreeMap::new(),
+            });
+        }
+        match next["last"].as_str() {
+            Some("inexact") => slots[0].props["initial"] = json!(9_007_199_254_740_993u64),
+            Some("aggregate") => slots[0].props["label"] = json!("x".repeat(600_000)),
+            Some("invalid") => slots[0].binding = "undeclared".into(),
+            Some("bad_event") => {
+                slots[0].on.insert("undeclared".into(), "notice".into());
+            }
+            Some("duplicate") => slots.push(slots[0].clone()),
+            _ => {}
+        }
+        let view = if next["native"] == true {
+            Presentation::Native(NativeView::new(
+                Rc::new("Native parent".into()),
+                [
+                    "parent",
+                    "toggle",
+                    "tree",
+                    "invalid",
+                    "bad_event",
+                    "duplicate",
+                    "oversized",
+                    "aggregate",
+                    "inexact",
+                    "reject",
+                ]
+                .into_iter()
+                .map(|k| (k.into(), json!(true)))
+                .collect(),
+                slots,
+            )?)
+        } else {
+            Presentation::Tree(Node::Stack {
+                key: "root".into(),
+                direction: maka_ui::Direction::Column,
+                gap: 0,
+                padding: 0,
+                background: 0,
+                children: slots
+                    .into_iter()
+                    .map(Node::Component)
+                    .chain([
+                        Node::Button {
+                            key: "tree".into(),
+                            label: "Native".into(),
+                        },
+                        Node::Button {
+                            key: "oversized".into(),
+                            label: "Oversized".into(),
+                        },
+                        Node::Button {
+                            key: "aggregate".into(),
+                            label: "Aggregate".into(),
+                        },
+                    ])
+                    .collect(),
+            })
+        };
+        Ok(Frame {
+            revision: next["revision"].as_u64().unwrap(),
+            state: next,
+            surface: Some(Surface::Window {
+                binding: "surface".into(),
+                title: "Slots".into(),
+                width: 640,
+                height: 400,
+            }),
+            view,
+        }
+        .output(vec![]))
+    }
+}
+#[test]
+fn native_parent_slots_share_js_child_events_rollback_identity_and_retirement() {
+    let timer = timer();
+    let (mut input, mut packages, _) = super::events::fixture(
+        "return frame({count:props.initial,label:props.label,revision:0,calls:0});",
+        "return frame({...state,count:state.count+1,revision:state.revision+1},[{name:'changed',value:state.count+1}]);",
+        "if(props.label==='Right Reject')throw new Error('later sibling');globalThis.updates=(globalThis.updates??0)+1;return frame({...state,label:props.label,revision:state.revision+1,calls:globalThis.updates});",
+        support::PARENT_EVENT,
+        "{}",
+    );
+    let i = packages
+        .iter()
+        .position(|p| p.manifest().id == "dynamic.app")
+        .unwrap();
+    let old = packages.remove(i);
+    let mut declaration = old.manifest().application.clone().unwrap();
+    let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
+    entry.implementation = Implementation::Native {
+        implementation: "test.slot-parent".into(),
+    };
+    let contract = entry.exports["App"].contract.clone();
+    let parent = support::package("native.slot-parent", declaration, None);
+    input.instances.get_mut("app").unwrap().package = parent.application_ref().into();
+    packages.push(parent);
+    let mut native = NativeRegistry::with_surface(PresentationTarget::Desktop);
+    native
+        .register("test.slot-parent", move |_| {
+            Ok(BTreeMap::from([(
+                "App".into(),
+                NativeExport {
+                    contract: contract.clone(),
+                    value: NativeCapability::Component(Rc::new(SlotParent)),
+                },
+            )]))
+        })
+        .unwrap();
+    let mut app = Application::new(
+        &input,
+        packages,
+        timer.handle().clone(),
+        Default::default(),
+        native,
+        Default::default(),
+    )
+    .unwrap();
+    let root = app.mount_launch(json!({})).unwrap();
+    let left = app.child_mount(&root, "left").unwrap().clone();
+    let right = app.child_mount(&root, "right").unwrap().clone();
+    assert!(matches!(
+        app.frame(&root).unwrap().view,
+        Presentation::Native(_)
+    ));
+    app.dispatch(&left, 0, "inc", Value::Null).unwrap();
+    assert_eq!(
+        app.frame(&root).unwrap().state["seen"],
+        json!([["left", "changed", 11]])
+    );
+    for key in [
+        "invalid",
+        "bad_event",
+        "duplicate",
+        "oversized",
+        "aggregate",
+        "inexact",
+    ] {
+        assert!(app.dispatch(&root, 1, key, Value::Null).is_err(), "{key}");
+        assert_eq!(app.frame(&root).unwrap().revision, 1);
+        assert_eq!(app.child_mount(&root, "left").unwrap(), &left);
+        assert_eq!(app.frame(&left).unwrap().state["label"], "Left 0");
+        assert_eq!(app.frame(&left).unwrap().state["count"], 11);
+        assert!(!app.is_retiring(&left));
+        assert!(!app.is_retiring(&right));
+    }
+    app.dispatch(&root, 1, "toggle", Value::Null).unwrap();
+    assert!(app.is_retiring(&right));
+    app.close(&right, Ok(())).unwrap();
+    app.dispatch(&root, 2, "parent", Value::Null).unwrap();
+    assert_eq!(app.child_mount(&root, "left").unwrap(), &left);
+    assert_eq!(app.frame(&left).unwrap().state["label"], "Left 1");
+    assert_eq!(
+        app.frame(&left).unwrap().state["calls"],
+        1,
+        "inexact props never executed JS callback or retired shared realm"
+    );
+    app.dispatch(&root, 3, "tree", Value::Null).unwrap();
+    assert!(matches!(
+        app.frame(&root).unwrap().view,
+        Presentation::Tree(_)
+    ));
+    assert_eq!(app.child_mount(&root, "left").unwrap(), &left);
+    assert!(
+        app.dispatch(&root, 4, "oversized", Value::Null).is_err(),
+        "Tree output of native callback has same complete budget"
+    );
+    assert_eq!(app.frame(&root).unwrap().revision, 4);
+    assert!(app.dispatch(&root, 4, "aggregate", Value::Null).is_err());
+    assert_eq!(app.frame(&root).unwrap().revision, 4);
+    app.dispatch(&root, 4, "tree", Value::Null).unwrap();
+    assert!(matches!(
+        app.frame(&root).unwrap().view,
+        Presentation::Native(_)
+    ));
+    assert_eq!(app.child_mount(&root, "left").unwrap(), &left);
+    // Restore the removed slot at the non-rejecting version 2; it is a new mount.
+    app.dispatch(&root, 5, "parent", Value::Null).unwrap();
+    app.dispatch(&root, 6, "toggle", Value::Null).unwrap();
+    assert_ne!(app.child_mount(&root, "right").unwrap(), &right);
+    assert_eq!(app.frame(&left).unwrap().state["count"], 11);
+    assert!(app.dispatch(&right, 0, "inc", Value::Null).is_err());
+    let before = app.frame(&left).unwrap().revision;
+    assert!(app.dispatch(&root, 7, "reject", Value::Null).is_err());
+    assert_eq!(app.frame(&root).unwrap().revision, 7);
+    assert_eq!(app.frame(&left).unwrap().revision, before);
+    assert_eq!(app.frame(&left).unwrap().state["label"], "Left 2");
+    // A real JS callback failure retires its realm, while the last committed
+    // scenes and exact mount identities remain intact pending actual cleanup.
+    assert!(app.is_retiring(&left));
+    assert!(
+        app.is_retiring(&root),
+        "fault retirement reaches dependent parent"
+    );
+    close_all(&mut app, &root);
+}
+
+#[test]
+fn native_slot_metadata_has_independent_count_key_and_byte_bounds() {
+    let slot = |key: String| maka_ui::ComponentSlot {
+        key,
+        binding: "child".into(),
+        member: 0,
+        props: json!({}),
+        on: BTreeMap::new(),
+    };
+    assert!(
+        NativeView::new(
+            Rc::new(()),
+            BTreeMap::new(),
+            (0..65).map(|i| slot(i.to_string())).collect()
+        )
+        .is_err()
+    );
+    assert!(
+        NativeView::new(
+            Rc::new(()),
+            BTreeMap::new(),
+            vec![slot("same".into()), slot("same".into())]
+        )
+        .is_err()
+    );
+    assert!(NativeView::new(Rc::new(()), BTreeMap::new(), vec![slot(String::new())]).is_err());
+    let mut huge = slot("large".into());
+    huge.props = json!({"text":"x".repeat(1024*1024)});
+    assert!(NativeView::new(Rc::new(()), BTreeMap::new(), vec![huge]).is_err());
 }

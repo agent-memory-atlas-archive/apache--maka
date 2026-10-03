@@ -27,7 +27,7 @@ mod native;
 pub mod operations;
 pub mod text;
 mod tree;
-pub use frame::{ComponentOutput, Direction, Emission, Frame, Node, Surface};
+pub use frame::{ComponentOutput, ComponentSlot, Direction, Emission, Frame, Node, Surface};
 pub use native::{
     ComponentCall, EventOrigin, LabelProps, NativeCapability, NativeComponent, NativeExport,
     NativeRegistry, NativeView, Presentation, label_contract,
@@ -443,19 +443,26 @@ impl<V: ?Sized + 'static> Application<V> {
         let mut failed_realm = None;
         let result = match implementation {
             Component::JavaScript { realm, callbacks } => {
-                let result = realm
-                    .borrow_mut()
-                    .call_bound_until(callbacks, method, args, deadline)
-                    .and_then(|value| {
-                        serde_json::from_value::<ComponentOutput>(value)
-                            .map_err(|error| maka_js_runtime::plugin::Error(error.to_string()))
-                    });
-                if result.is_err() {
-                    failed_realm = Some(realm.clone());
-                }
-                result
-                    .map(|frame| frame.map_view(Presentation::Tree))
-                    .map_err(Error::from)
+                maka_js_runtime::plugin::check_json_delivery(
+                    &Value::Array(args.to_vec()),
+                    1024 * 1024,
+                )
+                .map_err(Error::from)
+                .and_then(|_| {
+                    let result = realm
+                        .borrow_mut()
+                        .call_bound_until(callbacks, method, args, deadline)
+                        .and_then(|value| {
+                            serde_json::from_value::<ComponentOutput>(value)
+                                .map_err(|error| maka_js_runtime::plugin::Error(error.to_string()))
+                        });
+                    if result.is_err() {
+                        failed_realm = Some(realm.clone());
+                    }
+                    result
+                        .map(|frame| frame.map_view(Presentation::Tree))
+                        .map_err(Error::from)
+                })
             }
             Component::Native(component) => (|| {
                 let input = if method == "event" {
@@ -501,6 +508,20 @@ impl<V: ?Sized + 'static> Application<V> {
             })(),
         };
         let result = result.and_then(|output| {
+            // Every callback charges its complete declarative output, including
+            // native callbacks that choose Tree. Only opaque Rust recipe memory
+            // is trusted and excluded from this common 1 MiB admission budget.
+            let metadata = (
+                output.frame.revision,
+                &output.frame.state,
+                &output.frame.surface,
+                &output.events,
+                &output.actions,
+            );
+            match &output.frame.view {
+                Presentation::Tree(node) => tree::check_call_bytes(&(metadata, node))?,
+                Presentation::Native(view) => tree::check_call_bytes(&(metadata, view.metadata()))?,
+            }
             if output.events.len() > 64 {
                 return Err(Error::Invalid("component emission limit".into()));
             }

@@ -675,6 +675,7 @@ impl Window {
         range: Range<PrepaintStateIndex>,
         dispatch: &mut OpenDispatchCopy,
     ) {
+        self.reuse_placement_claims(&range);
         self.next_frame.hitboxes.extend(
             self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
                 .iter()

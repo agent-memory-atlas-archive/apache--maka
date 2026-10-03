@@ -94,3 +94,10 @@ The application launcher also accepts `--connections FILE` for explicit
 precedes service cleanup; process exit additionally awaits actual caller SQL and
 Host close acknowledgements. A lost foreground execution is not a successful
 terminal/module cleanup receipt.
+
+
+Compiled terminal layouts also receive scoped `Slots`: `measure` reads a committed
+child and `paint` renders it through the same presenter, preserving child input
+geometry and identity. Measurements may repeat; duplicate actual placement rejects
+the pending scene before flush/input publication. Native layouts choose terminal
+geometry independently of desktop pixels and cannot create another mount runtime.
