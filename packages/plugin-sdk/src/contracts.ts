@@ -384,6 +384,292 @@ export const contracts = {
       },
     },
   },
+  callerHistory: {
+    name: 'maka.operations.CallerHistory',
+    version: 1,
+    transport: 'local',
+    interface: {
+      kind: 'service',
+      methods: {
+        page: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'CallerHistoryPage',
+            type: 'object',
+            properties: {
+              after: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+              limit: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 1,
+                maximum: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['after', 'limit'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'Array_of_CallerIntent',
+            type: 'array',
+            items: {
+              $ref: '#/$defs/CallerIntent',
+            },
+            $defs: {
+              CallerIntent: {
+                type: 'object',
+                properties: {
+                  cursor: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  caller: {
+                    $ref: '#/$defs/DeploymentRef',
+                  },
+                  consumer: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                  reference: {
+                    $ref: '#/$defs/RecoveryRef',
+                  },
+                },
+                additionalProperties: false,
+                required: ['cursor', 'caller', 'consumer', 'reference'],
+              },
+              DeploymentRef: {
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'revision'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+              },
+              RecoveryRef: {
+                type: 'object',
+                properties: {
+                  source: {
+                    $ref: '#/$defs/DeploymentRef',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                  export: {
+                    type: 'string',
+                  },
+                  method: {
+                    type: 'string',
+                  },
+                  operation: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  fingerprint: {
+                    type: 'string',
+                  },
+                  contract: {
+                    $ref: '#/$defs/Contract',
+                  },
+                  recovery: {
+                    $ref: '#/$defs/RecoveryProtocol',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'source',
+                  'namespace',
+                  'export',
+                  'method',
+                  'operation',
+                  'fingerprint',
+                  'contract',
+                  'recovery',
+                ],
+              },
+              Contract: {
+                description:
+                  'Public contract definitions are package data, not live registration records.',
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  version: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                  transport: {
+                    $ref: '#/$defs/Transport',
+                  },
+                  interface: {
+                    $ref: '#/$defs/Interface',
+                  },
+                },
+                additionalProperties: false,
+                required: ['name', 'version', 'transport', 'interface'],
+              },
+              Transport: {
+                type: 'string',
+                enum: ['local', 'remote'],
+              },
+              Interface: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      methods: {
+                        type: 'object',
+                        additionalProperties: {
+                          $ref: '#/$defs/Method',
+                        },
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'service',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'methods'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      props: true,
+                      events: {
+                        type: 'object',
+                        additionalProperties: true,
+                      },
+                      captures: {
+                        type: 'object',
+                        additionalProperties: {
+                          $ref: '#/$defs/Capture',
+                        },
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'component',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'props', 'events', 'captures'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      schema: true,
+                      kind: {
+                        type: 'string',
+                        const: 'value',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'schema'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      resource: {
+                        type: 'string',
+                      },
+                      schema: true,
+                      kind: {
+                        type: 'string',
+                        const: 'resource',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'resource', 'schema'],
+                  },
+                ],
+              },
+              Method: {
+                type: 'object',
+                properties: {
+                  mode: {
+                    $ref: '#/$defs/MethodMode',
+                  },
+                  input: true,
+                  output: true,
+                  resources: {
+                    type: 'object',
+                    additionalProperties: {
+                      $ref: '#/$defs/ResourceType',
+                    },
+                  },
+                },
+                additionalProperties: false,
+                required: ['mode', 'input', 'output', 'resources'],
+              },
+              MethodMode: {
+                type: 'string',
+                enum: ['query', 'mutation', 'subscription'],
+              },
+              ResourceType: {
+                description:
+                  'Nominal read-only resource shape, not a resource id or authorization token.',
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  version: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['name', 'version'],
+              },
+              Capture: {
+                type: 'object',
+                properties: {
+                  input: true,
+                  resource: {
+                    $ref: '#/$defs/ResourceType',
+                  },
+                },
+                additionalProperties: false,
+                required: ['input', 'resource'],
+              },
+              RecoveryProtocol: {
+                type: 'string',
+                enum: ['journal_v1'],
+              },
+            },
+          },
+          resources: {},
+        },
+      },
+    },
+  },
   desktopSurface: {
     name: 'maka.ui.surface.desktop',
     version: 1,

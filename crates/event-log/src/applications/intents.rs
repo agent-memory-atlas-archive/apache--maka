@@ -33,7 +33,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 const MAX_REFERENCE: usize = 512 * 1024;
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+const MAX_PAGE: usize = 1024 * 1024;
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CallerIntent {
     pub cursor: u64,
@@ -161,7 +162,9 @@ impl EventLog {
             Ok(RecordedIntent {intent,_owner:owner})
         })).await
     }
-    /// Read original caller history across source revisions. Never returns an execution token.
+    /// Read original caller history across source revisions. The count limit is
+    /// an upper bound; the complete JSON array also fits 1 MiB. Continue after
+    /// the last returned cursor. Never returns an execution token.
     pub async fn application_intents(
         &self,
         deployment: Uuid,
@@ -179,9 +182,15 @@ impl EventLog {
             let operations: Vec<Option<String>> = sqlx::query_scalar("SELECT CASE WHEN length(CAST(operation AS BLOB)) = 36 THEN operation END FROM application_intents WHERE deployment=? AND consumer=? AND cursor>? ORDER BY cursor LIMIT ?")
                 .bind(deployment.to_string()).bind(encode(&consumer,4096)?).bind(after as i64).bind(limit as i64).fetch_all(&mut *tx).await?;
             let mut intents = Vec::with_capacity(operations.len());
+            let mut bytes = 2; // The complete array, including brackets and commas.
             for operation in operations {
                 let operation = operation.ok_or_else(|| invalid("invalid caller operation"))?;
-                intents.push(read(&mut tx,&domain,deployment,&consumer,Uuid::parse_str(&operation).map_err(|_| invalid("invalid caller operation"))?).await?.ok_or_else(|| invalid("caller intent disappeared"))?);
+                let intent = read(&mut tx,&domain,deployment,&consumer,Uuid::parse_str(&operation).map_err(|_| invalid("invalid caller operation"))?).await?.ok_or_else(|| invalid("caller intent disappeared"))?;
+                let encoded = encode(&intent, MAX_PAGE)?;
+                let size = encoded.len() + usize::from(!intents.is_empty());
+                if size > MAX_PAGE - bytes { break; }
+                bytes += size;
+                intents.push(intent);
             }
             tx.commit().await?;
             Ok(intents)

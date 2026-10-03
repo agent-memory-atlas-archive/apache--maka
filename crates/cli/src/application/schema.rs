@@ -45,6 +45,8 @@ pub(super) fn catalog() -> Value {
         root::<maka_ui::ComponentOutput>(&mut g),
         root::<actions::CapturePlan>(&mut g),
         root::<actions::ActionOutcome>(&mut g),
+        root::<maka_ui::operations::CallerHistoryPage>(&mut g),
+        root::<maka_event_log::applications::intents::CallerIntent>(&mut g),
         root::<maka_ui::LabelProps>(&mut g),
         root::<editor::EditorProps>(&mut g),
         root::<editor::EditorObservation>(&mut g),
@@ -68,6 +70,7 @@ pub(super) fn catalog() -> Value {
         "contracts": {
             "label": maka_ui::label_contract(), "editor": editor::editor_contract(),
             "textReader": text::reader_contract(),
+            "callerHistory": maka_ui::operations::caller_history_contract(),
             "desktopSurface": maka_ui::surface_contract(PresentationTarget::Desktop),
             "terminalSurface": maka_ui::surface_contract(PresentationTarget::Tui),
         },

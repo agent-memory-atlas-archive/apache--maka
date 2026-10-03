@@ -46,16 +46,6 @@ impl<V: ?Sized> Preparing<V> {
     }
 }
 
-fn unavailable(reference: RecoveryRef, diagnostic: String) -> ActionOutcome {
-    ActionOutcome::Operation {
-        reply: Box::new(OperationReply {
-            reference,
-            receipt: Receipt::Unavailable {
-                diagnostic: bounded_reason(diagnostic),
-            },
-        }),
-    }
-}
 impl Session {
     fn failure(&self, reason: String) -> ActionOutcome {
         match self.reference.get() {
@@ -68,48 +58,6 @@ impl Session {
 }
 
 impl<V: ?Sized + 'static> Application<V> {
-    /// Check at each actual callback: an earlier queued result can change the
-    /// same component's state after executor completion but before delivery.
-    pub(super) fn operation_feedback(
-        &self,
-        mount: &Mount,
-        key: &str,
-        outcome: ActionOutcome,
-    ) -> ActionOutcome {
-        let ActionOutcome::Operation { .. } = &outcome else {
-            return outcome;
-        };
-        let valid = tree::check_call_bytes(&outcome).and_then(|()| {
-            let value =
-                serde_json::to_value(&outcome).map_err(|e| Error::Invalid(e.to_string()))?;
-            let event = serde_json::to_value(abi::ComponentInput::Action {
-                key: key.into(),
-                event: value,
-            })
-            .map_err(|e| Error::Invalid(e.to_string()))?;
-            if let Some(view) = self.views.get(&mount.id()) {
-                let args = (&view.frame.state, &view.props, &event);
-                tree::check_call_bytes(&args)?;
-                let args = serde_json::to_value(args).map_err(|e| Error::Invalid(e.to_string()))?;
-                maka_js_runtime::plugin::check_json_delivery(&args, 1024 * 1024)?;
-            } else {
-                maka_js_runtime::plugin::check_json_delivery(&event, 1024 * 1024)?;
-            }
-            Ok(())
-        });
-        match valid {
-            Ok(()) => outcome,
-            Err(error) => {
-                let ActionOutcome::Operation { reply } = outcome else {
-                    unreachable!()
-                };
-                unavailable(
-                    reply.reference,
-                    format!("operation result delivery failed: {error}; read original receipt"),
-                )
-            }
-        }
-    }
     pub(super) fn start_mutation(&mut self, action: Prepared<V>) -> Result<Option<ActionTask>> {
         let (Some(source), Some(store)) = (self.source.clone(), self.store.clone()) else {
             self.reject_action(action, "mutation requires a persisted UI source".into());
@@ -415,7 +363,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 Ok(())
             })();
             match valid {
-                Ok(()) => self.operation_feedback(&running.consumer, &running.key, candidate),
+                Ok(()) => self.action_feedback(&running.consumer, &running.key, candidate),
                 Err(error) => session.failure(format!(
                     "operation result delivery failed: {error}; read original receipt"
                 )),

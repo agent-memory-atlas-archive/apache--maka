@@ -148,3 +148,17 @@ resource 示例证明这条原生异步路径，不代表产品已完成。
 未保存的 query-only 检查与预览，没有持久 DeploymentRef。示例生成器同时导出
 JSON/包供检查，并保存 Desktop 部署 `00000000-0000-0000-0000-000000000001`；
 `dual` 保存 TUI 部署 `00000000-0000-0000-0000-000000000002`。
+
+持久应用在激活前提供原生实现 `maka.operations.history`；产品必须显式选择 provider
+实例、`History` 导出及采用 `caller_history_contract()` 的 binding。提供实现不等于
+激活插件，未保存预览不提供它。factory configuration 是空对象。普通 `page` Query
+接收 `{ after, limit }`，只返回内核实际调用 instance/deployment 的 `CallerIntent[]`；
+guest JSON 不能选择另一个 namespace 或 Root。
+
+历史跨来源替换和 Root 重开保留原 caller 来源与 `RecoveryRef`。它们是观察数据，
+不是执行 token 或 Host 恢复授权。每页最多 128 条，完整 JSON 数组最多 1 MiB；
+以最后实际返回的 cursor 继续，count 只是上界。实际回调还包含当前 state、props 和
+action 包装；成功 query 的完整交付超限时返回 `failed`，保留健康 reader，产品可以减小
+页大小后重试查询，不会重新执行 mutation。恢复界面和回执读取仍由显式组合的插件提供。
+所有 consumer 共用字节预算；JS 整数与编码限制只在实际 JS 回调边界检查。
+原生回调精确保留 Rust JSON 整数，即使它返回可移植的树呈现。

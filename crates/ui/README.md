@@ -216,3 +216,24 @@ The terminal presenter reads committed scenes and uses exact mount/revision inpu
 It publishes hit geometry only after drawing and flushing successfully. Raw terminal
 mouse coordinates have no screen epoch; they resolve against the last flushed scene
 at delivery. This counter verifies the runtime path, not finished product UX.
+
+Persisted applications make the native implementation `maka.operations.history`
+available before activation. A product must explicitly select a provider instance,
+its `History` export and a binding with `caller_history_contract()`; availability
+does not activate a plugin. Unsaved previews do not provide it. Factory configuration
+is an empty object. Its ordinary `page` Query takes `{ after, limit }` and returns
+`CallerIntent[]` for the kernel's actual calling instance and deployment. Guest
+JSON cannot choose another namespace or Root.
+
+History preserves the original caller source and `RecoveryRef` across source
+replacement and Root reopening. These are observations, not execution tokens or
+Host recovery grants. Each page contains at most 128 entries and its complete JSON
+array fits 1 MiB; continue after the last returned cursor. The count is an upper
+bound. The actual callback also includes current state, props and the action
+envelope. An oversized successful query becomes `failed` without retiring a healthy
+reader; a product can reduce its page size and retry the query without repeating
+a mutation. This service leaves the recovery interface and receipt lookup to
+explicitly composed plugins.
+All consumers share the byte budget; JavaScript integer and codec restrictions
+apply at the actual JavaScript callback boundary. Native callbacks preserve exact
+Rust JSON integers, including when they return a portable tree.

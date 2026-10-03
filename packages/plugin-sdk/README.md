@@ -53,6 +53,15 @@ Persisted UI components submit resource-free mutations through their ordinary
 caller intent before dispatch. Feedback uses `ActionOutcome` with
 `status: 'operation'` and the original `OperationReply`; components must handle
 unknown/unavailable receipts without automatically repeating the action.
+An explicitly composed `maka.operations.history` native instance exposes the local
+`contracts.callerHistory` service (`History` export). Its `page` query accepts
+`CallerHistoryPage` (`after`, `limit`) and returns `CallerIntent[]` for the actual
+calling instance of a persisted deployment. There is no namespace input. Continue
+after the last returned cursor; the requested count is an upper bound and the
+complete array fits 1 MiB. If the full callback envelope exceeds its delivery budget,
+the query returns `failed` and a healthy component can retry with fewer entries.
+Original references survive source replacement and Root reopening; these observations
+confer no Host grant and cannot be used as a confirmed caller execution token.
 Subscriptions, effectful resource snapshots and business migration remain unfinished.
 
 Deployment sources can be stored in an owned State Root with

@@ -24,6 +24,7 @@ pub mod actions;
 pub mod editor;
 mod frame;
 mod native;
+pub mod operations;
 pub mod text;
 mod tree;
 pub use frame::{ComponentOutput, Direction, Emission, Frame, Node, Surface};
@@ -129,7 +130,7 @@ impl<V: ?Sized + 'static> Application<V> {
         target: PresentationTarget,
         timer: tokio::runtime::Handle,
         limits: Limits,
-        native: NativeRegistry<V>,
+        mut native: NativeRegistry<V>,
         registrations: Vec<actions::RemoteService>,
     ) -> Result<Self> {
         let loaded = store
@@ -142,6 +143,7 @@ impl<V: ?Sized + 'static> Application<V> {
         {
             return Err(Error::Invalid("stored presentation target mismatch".into()));
         }
+        operations::provide(&mut native, loaded.source.reference.clone(), store.clone())?;
         let remotes = actions::RemoteServices {
             declarations: loaded
                 .source

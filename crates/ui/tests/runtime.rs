@@ -21,6 +21,8 @@
 mod actions;
 #[path = "runtime/events.rs"]
 mod events;
+#[path = "runtime/history.rs"]
+mod history;
 #[path = "runtime/native.rs"]
 mod native;
 #[path = "runtime/persistence.rs"]

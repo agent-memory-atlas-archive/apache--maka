@@ -23,7 +23,7 @@ use super::*;
 use maka_event_log::applications::intents::RecordedIntent;
 use maka_plugin_core::{
     contract::{MethodMode, ResourceType},
-    operation::{OperationReply, RecoveryRef},
+    operation::{OperationReply, Receipt, RecoveryRef},
     runtime::{Capability, Execution},
 };
 use maka_plugins::call::{Attachments, ReadResource};
@@ -252,6 +252,16 @@ impl<V: ?Sized> Actions<V> {
             .sum()
     }
 }
+fn unavailable(reference: RecoveryRef, diagnostic: String) -> ActionOutcome {
+    ActionOutcome::Operation {
+        reply: Box::new(OperationReply {
+            reference,
+            receipt: Receipt::Unavailable {
+                diagnostic: bounded_reason(diagnostic),
+            },
+        }),
+    }
+}
 impl<V: ?Sized> Prepared<V> {
     pub(super) fn invalidate(&mut self, mut exists: impl FnMut(&Edge) -> bool) {
         if self
@@ -265,6 +275,58 @@ impl<V: ?Sized> Prepared<V> {
     }
 }
 impl<V: ?Sized + 'static> Application<V> {
+    /// Check at each actual callback: an earlier queued result can change the
+    /// same component's state after executor completion but before delivery.
+    pub(super) fn action_feedback(
+        &self,
+        mount: &Mount,
+        key: &str,
+        outcome: ActionOutcome,
+    ) -> ActionOutcome {
+        if !matches!(
+            &outcome,
+            ActionOutcome::Operation { .. } | ActionOutcome::Succeeded { .. }
+        ) {
+            return outcome;
+        };
+        let valid = tree::check_call_bytes(&outcome).and_then(|()| {
+            // The exact provider determines the callback language. Native
+            // components may return a portable tree and preserve Rust integers.
+            let javascript = self.modules.contains_key(self.provider(mount)?.instance());
+            let value =
+                serde_json::to_value(&outcome).map_err(|e| Error::Invalid(e.to_string()))?;
+            let event = serde_json::to_value(abi::ComponentInput::Action {
+                key: key.into(),
+                event: value,
+            })
+            .map_err(|e| Error::Invalid(e.to_string()))?;
+            if let Some(view) = self.views.get(&mount.id()) {
+                let args = (&view.frame.state, &view.props, &event);
+                tree::check_call_bytes(&args)?;
+                if javascript {
+                    let args =
+                        serde_json::to_value(args).map_err(|e| Error::Invalid(e.to_string()))?;
+                    maka_js_runtime::plugin::check_json_delivery(&args, 1024 * 1024)?;
+                }
+            } else if javascript {
+                maka_js_runtime::plugin::check_json_delivery(&event, 1024 * 1024)?;
+            }
+            Ok(())
+        });
+        match valid {
+            Ok(()) => outcome,
+            Err(error) => match outcome {
+                ActionOutcome::Operation { reply } => unavailable(
+                    reply.reference,
+                    format!("operation result delivery failed: {error}; read original receipt"),
+                ),
+                _ => ActionOutcome::Failed {
+                    reason: bounded_reason(format!("action result delivery failed: {error}")),
+                },
+            },
+        }
+    }
+
     pub(super) fn prepare_action(
         &mut self,
         consumer: &Mount,
@@ -724,8 +786,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 self.actions.outcomes.push_back(outcome);
                 continue;
             }
-            let feedback =
-                self.operation_feedback(&outcome.consumer, &outcome.key, outcome.outcome);
+            let feedback = self.action_feedback(&outcome.consumer, &outcome.key, outcome.outcome);
             match self.dispatch_action_result(
                 &outcome.consumer,
                 &outcome.key,

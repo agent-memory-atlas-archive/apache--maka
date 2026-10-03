@@ -32,6 +32,8 @@ export type RuntimeProtocol =
   | ComponentOutput
   | CapturePlan
   | ActionOutcome
+  | CallerHistoryPage
+  | CallerIntent
   | LabelProps
   | EditorProps
   | EditorObservation
@@ -569,6 +571,16 @@ export interface RecoveryRef {
   fingerprint: string;
   contract: Contract;
   recovery: RecoveryProtocol;
+}
+export interface CallerHistoryPage {
+  after: number;
+  limit: number;
+}
+export interface CallerIntent {
+  cursor: number;
+  caller: DeploymentRef;
+  consumer: InstanceId;
+  reference: RecoveryRef;
 }
 export interface LabelProps {
   text: string;

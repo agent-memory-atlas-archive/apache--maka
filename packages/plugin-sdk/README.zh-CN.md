@@ -49,6 +49,12 @@ Host 应用服务支持 query 和不含资源附件的持久 mutation。
 identity，先记录原 caller intent 再派发。feedback 的 `ActionOutcome` 使用
 `status: 'operation'` 和原 `OperationReply`；组件应处理 unknown/unavailable 回执，
 不能自动重复 action。
+显式组合的 `maka.operations.history` 原生实例通过 `History` 导出提供本地
+`contracts.callerHistory` 服务。`page` Query 接收 `CallerHistoryPage`（`after`、`limit`），
+返回实际调用的持久 deployment/instance 的 `CallerIntent[]`，没有 namespace 输入。
+使用最后实际返回的 cursor 继续；count 只是上界，完整数组最多 1 MiB。如果完整回调包装
+超过交付预算，query 返回 `failed`，健康组件可以减小页大小后重试。原引用跨来源替换和
+Root 重开保留；这些观察不授予 Host 权限，也不能代替 confirmed caller 执行 token。
 Subscription、副作用资源快照和旧业务迁移仍待实现。
 
 可以通过 `maka application commit --root ROOT --deployment UUID --expected-revision 0 --input input.json --package bundle.maka-plugin`

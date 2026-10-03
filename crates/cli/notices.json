@@ -1,6 +1,6 @@
 {
   "inputs": {
-    "Cargo.lock": "8dfdf06c4a828e42d8975ad704cb4ba5475eae7332dccf9b1f5caa4a6ba6c7ce",
+    "Cargo.lock": "06dd00b31246821d944b4d13c3f2f17b1a0d36a76b7787119157833575664673",
     "Cargo.toml": "81218acbdbe3b04f21e2073bd9ed4f93b673faf2a4140f44805a8f0f5c902313",
     "crates/acp/Cargo.toml": "836cf57acda320dc984f4648e5893580e79063e95ced700f33cfbaa75994b8f8",
     "crates/agent/Cargo.toml": "241d363907d6e5491ba6645de5c114877165e4abd6844b2c581a35fd19c0f4f4",
@@ -14,7 +14,7 @@
     "crates/computer-use/THIRD_PARTY_NOTICES": "709951ed2ee5c4b9ed933f375a37c5b15ec0efa2dea340dc0f289906d72a7bde",
     "crates/config/Cargo.toml": "58be3b2b9a37611bfaff2949a4a272bf0a4b29adb7afeddf5c463256c97882ae",
     "crates/desktop/Cargo.toml": "a6450a70430291854466e4cd085c5a832538757dc2bdd9c20daf9f14b9df0b28",
-    "crates/event-log/Cargo.toml": "6e2813bf135bf85621db7868c708babfd41ead46c1c2dc0b2b7cae0ade5f901b",
+    "crates/event-log/Cargo.toml": "30c0154b38bf450ab22209c771fc5b382715324d0e9a47665b4a243995315253",
     "crates/external-agent/Cargo.toml": "06d45673b6329d1b882af8ca7399fe9aa52098944307f9848a56180ca9dbfc38",
     "crates/fs-tools/Cargo.toml": "cd04bc0d9bc65326a4bf414ecda48554c1de49d8c811dcff6348ae4ea87070d9",
     "crates/goal/Cargo.toml": "1c639017b8102a2a9c7ee8b4962e07364b9e293137838a1a859a472e7d16c588",
@@ -52,7 +52,7 @@
     "crates/tools/Cargo.toml": "be918aeeae9874d3bdcdd66f1c6fc51b4650f9abfef784e9a796ac8b997c39d8",
     "crates/transport/Cargo.toml": "3b9af9320e5d14e90fa7b9c1bcbe68cbca04ce9252179f1dc0cd4f3c0659845a",
     "crates/tui/Cargo.toml": "2973f88a6b9225e01341453d9302dfc22ca8dddd91797884d4ebf1ac0be149f0",
-    "crates/ui/Cargo.toml": "75baaee8b3620f8e972de03e41f6cca31d0309bd7fa77bb066dfefc3c6951fe4",
+    "crates/ui/Cargo.toml": "8bd6ff43ae05370fa00a9b81b4abcc023bce0b477939f33f30e47483214fd700",
     "crates/web/Cargo.toml": "244cf6690ca9bd8966e39ad0342512858b01483ce600aeef481f2e560bfa6065",
     "crates/workhub/Cargo.toml": "383fedb173c5596914fd704bb6207fec6ecf6fdc364f63218cd98e9a121b8b23",
     "package-lock.json": "8dc3440153ab18e917726f90a87817310b97dc4236a2a4712e3380a32036d157",

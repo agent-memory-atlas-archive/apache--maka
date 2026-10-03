@@ -493,7 +493,7 @@ fn cleanup_failure_preserves_work_and_input_until_explicit_recovery_without_repl
     app.shutdown().unwrap();
 }
 #[test]
-fn oversized_feedback_envelope_retires_only_its_consumer_after_independent_settlement() {
+fn oversized_feedback_envelope_delivers_failure_after_independent_settlement() {
     let timer = timer();
     let (mut app, a) = service_fixture(&timer, json!("y".repeat(600_000)), false, 500_000);
     let b = app.mount_launch(json!({})).unwrap();
@@ -503,11 +503,233 @@ fn oversized_feedback_envelope_retires_only_its_consumer_after_independent_settl
     let done = timer.block_on(work.future);
     app.finish_task(work.id, done).unwrap();
     assert_eq!(app.accepted_action_count(), 0);
-    assert!(app.deliver_action_results(&a).is_err());
-    assert!(app.is_retiring(&a));
+    assert_eq!(app.deliver_action_results(&a).unwrap(), 1);
+    assert!(!app.is_retiring(&a));
+    assert_eq!(app.frame(&a).unwrap().state["outcome"]["status"], "failed");
+    assert!(
+        app.frame(&a).unwrap().state["outcome"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("delivery failed")
+    );
     assert!(!app.is_retiring(&b));
     assert_eq!(app.pending_action_count(), 0);
     close_all(&mut app, &[a, b]);
+}
+
+struct ExactFeedback;
+impl NativeComponent<()> for ExactFeedback {
+    fn call(&self, call: ComponentCall<'_>) -> maka_ui::Result<ComponentOutput<Presentation<()>>> {
+        let (state, initial) = match call {
+            ComponentCall::Mount { props } => {
+                (json!({"revision":0,"marker":props["marker"]}), true)
+            }
+            ComponentCall::Event {
+                state,
+                input,
+                origin,
+                ..
+            } => {
+                assert!(matches!(origin, maka_ui::EventOrigin::Action));
+                let mut next = state.clone();
+                next["revision"] = json!(state["revision"].as_u64().unwrap() + 1);
+                next["outcome"] = input.clone();
+                (next, false)
+            }
+            ComponentCall::Update { state, .. } => {
+                let mut next = state.clone();
+                next["revision"] = json!(state["revision"].as_u64().unwrap() + 1);
+                (next, false)
+            }
+        };
+        // Native callbacks can use the portable tree; presentation shape does
+        // not determine the actual consumer codec.
+        let mut output = Frame {
+            revision: state["revision"].as_u64().unwrap(),
+            state,
+            surface: Some(maka_ui::Surface::Window {
+                binding: "surface".into(),
+                title: "Codec reader".into(),
+                width: 640,
+                height: 400,
+            }),
+            view: Presentation::Tree(maka_ui::Node::Text {
+                key: "result".into(),
+                text: "Result".into(),
+                color: 0,
+            }),
+        }
+        .output(vec![]);
+        if initial {
+            output.actions.push(Action {
+                key: "read".into(),
+                binding: "reader".into(),
+                member: 0,
+                method: "read".into(),
+                input: Value::Null,
+                resources: BTreeMap::new(),
+            });
+        }
+        Ok(output)
+    }
+}
+
+#[test]
+fn actual_native_query_preserves_exact_integer_while_javascript_fails_without_retiring() {
+    use maka_plugin_core::{
+        composition::Target,
+        contract::{
+            Availability, Cardinality, Contract, Export, Import, Interface, Method, MethodMode,
+            Transport,
+        },
+        package::{EntryTarget, Implementation},
+    };
+    const WIDE: u64 = 9_007_199_254_740_993;
+    let timer = timer();
+    for is_native in [true, false] {
+        let (mut input, mut packages) = support::fixture("");
+        let old = packages.pop().unwrap();
+        let mut declaration = old.manifest().application.clone().unwrap();
+        let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
+        let component = entry.exports["App"].contract.clone();
+        let contract = Contract {
+            name: "test.ExactQuery".into(),
+            version: 1,
+            transport: Transport::Local,
+            interface: Interface::Service {
+                methods: BTreeMap::from([(
+                    "read".into(),
+                    Method {
+                        mode: MethodMode::Query,
+                        input: json!({"type":"null"}),
+                        output: json!({"type":"integer"}),
+                        resources: BTreeMap::new(),
+                    },
+                )]),
+            },
+        };
+        entry.imports.insert(
+            "reader".into(),
+            Import {
+                contract: contract.clone(),
+                cardinality: Cardinality::One,
+            },
+        );
+        if is_native {
+            entry.implementation = Implementation::Native {
+                implementation: "test.exact-feedback".into(),
+            };
+        }
+        let source = format!(
+            r#"
+            const contract = {};
+            const frame = state => ({{frame:{{revision:state.revision,state,surface:{{kind:'window',binding:'surface',title:'Codec reader',width:640,height:400}},view:{{kind:'text',key:'result',text:'Result',color:0}}}},events:[],actions:[]}});
+            export function activate() {{ return {{App:{{contract,component:['app']}}}}; }}
+            export const app = {{
+              mount() {{ const out=frame({{revision:0}});out.actions=[{{key:'read',binding:'reader',member:0,method:'read',input:null,resources:{{}}}}];return out; }},
+              update(state) {{return frame({{...state,revision:state.revision+1}});}},
+              event(state,input) {{return frame({{...state,revision:state.revision+1,outcome:input.event}});}}
+            }};
+        "#,
+            serde_json::to_string(&component).unwrap()
+        );
+        let root = support::package(
+            "dynamic.app",
+            declaration.clone(),
+            (!is_native).then_some(source),
+        );
+        let node = input.instances.get_mut("app").unwrap();
+        node.package = root.application_ref().into();
+        node.bindings.insert(
+            "reader".into(),
+            vec![Target::Instance {
+                path: vec!["reader".into()],
+                export: "Reader".into(),
+            }],
+        );
+        let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
+        entry.implementation = Implementation::Native {
+            implementation: "test.exact-query".into(),
+        };
+        entry.imports.clear();
+        entry.exports = BTreeMap::from([(
+            "Reader".into(),
+            Export {
+                contract: contract.clone(),
+                availability: Availability::Required,
+            },
+        )]);
+        let reader = support::package("native.reader", declaration, None);
+        input
+            .instances
+            .insert("reader".into(), support::node(&reader, 3));
+        packages.extend([root, reader]);
+        let mut native = NativeRegistry::with_surface(PresentationTarget::Desktop);
+        native
+            .register("test.exact-feedback", move |_| {
+                Ok(BTreeMap::from([(
+                    "App".into(),
+                    NativeExport {
+                        contract: component.clone(),
+                        value: NativeCapability::Component(Rc::new(ExactFeedback)),
+                    },
+                )]))
+            })
+            .unwrap();
+        native
+            .register("test.exact-query", move |_| {
+                Ok(BTreeMap::from([(
+                    "Reader".into(),
+                    NativeExport {
+                        contract: contract.clone(),
+                        value: NativeCapability::Service(Arc::new(CompletionService {
+                            value: json!(WIDE),
+                            cleanup_error: false,
+                        })),
+                    },
+                )]))
+            })
+            .unwrap();
+        let mut app = Application::new(
+            &input,
+            packages,
+            timer.handle().clone(),
+            Default::default(),
+            native,
+            Default::default(),
+        )
+        .unwrap();
+        let mount = app
+            .mount_launch(if is_native {
+                json!({"marker":WIDE})
+            } else {
+                json!({})
+            })
+            .unwrap();
+        app.capture_actions(&mount, |_| unreachable!("query has no resources"))
+            .unwrap();
+        let task = app.start_task(&mount).unwrap().unwrap();
+        let completion = timer.block_on(task.future);
+        assert!(app.finish_task(task.id, completion).unwrap().is_none());
+        assert_eq!(app.deliver_action_results(&mount).unwrap(), 1);
+        assert!(!app.is_retiring(&mount));
+        assert_eq!(app.accepted_action_count(), 0);
+        let state = &app.frame(&mount).unwrap().state;
+        if is_native {
+            assert_eq!(state["outcome"]["status"], "succeeded");
+            assert_eq!(state["outcome"]["value"].as_u64(), Some(WIDE));
+            assert_eq!(state["marker"].as_u64(), Some(WIDE));
+        } else {
+            assert_eq!(state["outcome"]["status"], "failed");
+            assert!(
+                state["outcome"]["reason"]
+                    .as_str()
+                    .unwrap()
+                    .contains("delivery failed")
+            );
+        }
+        close_all(&mut app, &[mount]);
+    }
 }
 #[test]
 fn actual_snapshot_byte_budget_rejects_before_business_admission() {

@@ -304,3 +304,43 @@ async fn caller_commit_error_produces_no_dispatch_token() {
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn history_pages_bound_the_complete_encoded_array_without_skipping_the_next_cursor() {
+    let (_dir, store) = store().await;
+    let deployment = Uuid::new_v4();
+    let caller = source(&store, deployment, 0).await;
+    let mut expected = Vec::new();
+    for _ in 0..5 {
+        let mut original = reference();
+        let Interface::Service { methods } = &mut original.contract.interface else {
+            unreachable!()
+        };
+        methods.get_mut("change").unwrap().input = json!({"description": "\"\\\n".repeat(70_000)});
+        let token = store
+            .record_application_intent(caller.clone(), consumer(), original)
+            .await
+            .unwrap();
+        expected.push(token.intent().clone());
+    }
+    assert!(serde_json::to_vec(&expected[..3]).unwrap().len() > MAX_PAGE);
+    let mut all = Vec::new();
+    let mut after = 0;
+    let mut lengths = Vec::new();
+    loop {
+        let page = store
+            .application_intents(deployment, consumer(), after, 128)
+            .await
+            .unwrap();
+        assert!(serde_json::to_vec(&page).unwrap().len() <= MAX_PAGE);
+        if page.is_empty() {
+            break;
+        }
+        assert!(page[0].cursor > after);
+        after = page.last().unwrap().cursor;
+        lengths.push(page.len());
+        all.extend(page);
+    }
+    assert_eq!(lengths, [2, 2, 1]);
+    assert_eq!(all, expected);
+}

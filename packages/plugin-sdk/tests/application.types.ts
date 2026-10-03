@@ -19,6 +19,8 @@
 
 import type {
   ActionOutcome,
+  CallerHistoryPage,
+  CallerIntent,
   Component,
   ComponentInput,
   HostRequest,
@@ -38,6 +40,19 @@ function originalUiReceipt(outcome: ActionOutcome) {
   void [original, premature];
 }
 void originalUiReceipt;
+
+const historyPage = { after: 0, limit: 16 } satisfies CallerHistoryPage;
+// @ts-expect-error The kernel selects the actual caller namespace.
+const forgedHistoryPage = { after: 0, limit: 16, consumer: ['other'] } satisfies CallerHistoryPage;
+function originalCallerIntent(intent: CallerIntent) {
+  const original = intent.reference;
+  // @ts-expect-error Caller history does not assert business journal facts.
+  const businessOutcome = intent.receipt;
+  // @ts-expect-error Observation data contains no dispatch authorization token.
+  const token = intent.token;
+  void [original, businessOutcome, token];
+}
+void [historyPage, forgedHistoryPage, originalCallerIntent];
 
 const terminal = { kind: 'terminal', binding: 'surface' } satisfies Surface;
 // @ts-expect-error Terminal surfaces have no pixel width.
