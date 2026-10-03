@@ -31,6 +31,8 @@ mod persistence;
 mod scenes;
 #[path = "runtime/sdk.rs"]
 mod sdk;
+#[path = "runtime/subscriptions.rs"]
+mod subscriptions;
 #[path = "../examples/counter/support.rs"]
 mod support;
 #[path = "runtime/values.rs"]

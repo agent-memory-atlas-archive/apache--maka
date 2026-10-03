@@ -24,6 +24,7 @@ use maka_plugins::call::Scope;
 use maka_runtime_host::application::{Binding, Client, PreparedMutation};
 use maka_ui::actions::*;
 use std::sync::{Arc, Mutex, OnceLock};
+use tokio_util::sync::CancellationToken;
 
 /// Trusted embedding admission. Called only on the asynchronous action path.
 /// Must only construct an inert Scope; no native resource may escape an error.
@@ -87,6 +88,44 @@ impl NativeService for LocalService {
             ServiceCompletion {
                 result: completion.result,
                 cleanup: completion.cleanup.and(own_cleanup),
+            }
+        })
+    }
+    fn subscribe(&self, request: ServiceRequest, stop: CancellationToken) -> StreamFuture {
+        let client = self.client.clone();
+        let binding = self.binding.clone();
+        let scopes = self.scopes.clone();
+        Box::pin(async move {
+            let scope = match scopes.scope(&request.source) {
+                Ok(scope) => scope,
+                Err(error) => {
+                    return StreamCompletion::Finished(ServiceCompletion {
+                        result: Err(error),
+                        cleanup: Ok(()),
+                    });
+                }
+            };
+            let admission = client.subscribe(
+                binding,
+                request.method,
+                request.input,
+                scope.clone(),
+                request.resources,
+            );
+            tokio::pin!(admission);
+            // Cancellation requests revocation but never drops the admission
+            // observer: acceptance may already have happened under the Host owner.
+            let accepted = tokio::select! {
+                biased;
+                () = stop.cancelled() => { scope.cancellation.cancel(); admission.await },
+                accepted = &mut admission => accepted,
+            };
+            match accepted {
+                Ok(stream) => pull_subscription(stream, scope, stop).await,
+                Err(error) => StreamCompletion::Finished(ServiceCompletion {
+                    result: Err(error),
+                    cleanup: scope.finish().await.map_err(|e| e.to_string()),
+                }),
             }
         })
     }
@@ -213,4 +252,30 @@ impl Session {
             None => Ok(()),
         }
     }
+}
+
+fn pull_subscription(
+    mut stream: maka_runtime_host::application::Subscription,
+    scope: Scope,
+    stop: CancellationToken,
+) -> StreamFuture {
+    Box::pin(async move {
+        let item = tokio::select! {
+            biased;
+            () = stop.cancelled() => { stream.cancel(); None },
+            item = stream.recv() => item,
+        };
+        if let Some(value) = item {
+            return StreamCompletion::Item {
+                value,
+                next: pull_subscription(stream, scope, stop),
+            };
+        }
+        let completion = stream.completion().await;
+        let own_cleanup = scope.finish().await.map_err(|e| e.to_string());
+        StreamCompletion::Finished(ServiceCompletion {
+            result: completion.result,
+            cleanup: completion.cleanup.and(own_cleanup),
+        })
+    })
 }

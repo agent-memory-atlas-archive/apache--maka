@@ -36,8 +36,8 @@ Host 组合显式选择 `maka.application.gateway` 实现的实例及其 imports
 endpoint，转发到其他 consumer 会拒绝；其他可信 embedding 可以通过 `LocalService`
 提供其独立 Host Policy 与只创建无资源 Scope 的 `Scopes` factory。
 
-Mutation 的 resource snapshots 需要其 executor 协议，目前在准备前拒绝；streams
-和认证网络 transport 尚未接入。
+Mutation 的 resource snapshots 需要其 executor 协议，目前在准备前拒绝；
+认证网络 transport 尚未接入。
 
 配置采用闭合 JSON，上限 1 MiB、16 个 Host、每 Host 128 个 import、每 import 64
 个方法。省略配置表示没有本地连接。相对 Root 路径按启动器工作目录解析。
@@ -46,3 +46,7 @@ Mutation 的 resource snapshots 需要其 executor 协议，目前在准备前�
 确认及 Host 清理；失败保留 store、Root 和 runtime。原生退出也受同一 gate 约束。
 `drain_store` 和 `Connections::drain` 保留所有权，不把 drop 当作 cleanup 回执。
 UI endpoint 只持有实际 Client/Binding/Scope 准入，不拥有 Host 部署生命周期。
+
+本地 Subscription 复用实际 Host `Client.subscribe`、原 Binding/Scopes/Policy。UI取消
+会取消实际 Host scope，仍等待原准入 observer、原执行 completion 和实际 scope cleanup；
+不能丢弃准入观察者冒充清理。认证跨进程 transport 仍待实现。

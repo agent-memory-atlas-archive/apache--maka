@@ -24,7 +24,7 @@ component registrations through `maka-plugin-core`. Foreground JavaScript execut
 only during activation, mount initialization, props updates and input. Required
 `mount`, `event` and `update` functions and their receiver are captured before
 publication; later namespace mutation cannot replace a registered handler.
-Callbacks return `ComponentOutput { frame, events, actions, decision? }`; events and actions are
+Callbacks return `ComponentOutput { frame, events, actions, subscriptions, decision? }`; events and actions are
 one-shot transaction intents, separate from retained state. A declared `capture`
 callback is also captured before publication. Renderers read committed
 `Frame` values; successful, bounded, validated batches replace a frame atomically.
@@ -65,7 +65,7 @@ TUI and Desktop can define different scene languages for the same plugin.
 limited to 64 and resolved against the parent's own imports. They use the same
 child mounts, props transactions, event routes and cleanup. Hidden slots keep their
 state. Complete callback metadata, including original scene JSON, slots, state,
-events and actions, shares the 1 MiB budget.
+events, actions and subscriptions, shares the 1 MiB budget.
 Arguments that cannot be projected exactly into JavaScript are rejected before
 calling that consumer, without retiring its healthy realm; Rust retains exact integers.
 
@@ -180,8 +180,8 @@ Cross-process resource transfer still requires a transport executor.
 
 `Application::new` takes explicit `RemoteServices`: static declarations are separate
 from actual `RemoteService` endpoint registrations. Both local and remote services
-support Query and resource-free Mutation methods. Subscription and resource
-mutations still require their own executors. `NativeService::call` receives a
+support Query, Subscription and resource-free Mutation methods. Resource mutations
+still require their own executor. `NativeService::call` receives a
 `ServiceRequest` with checked input, actual attachments and a private `ServiceSource`
 constructed by the kernel. Consumer, mount and request observations grant no Host
 access. A transport callback captures `remote_activation` and passes that exact token
@@ -212,14 +212,33 @@ it waiting. Business outcome and cleanup confirmation are separate: failed or
 unknown cleanup retains accepted work and its snapshots until a real successful
 confirmation. The application lifetime owner survives all windows and worker tasks.
 
-Each output allows 16 actions and each request 16 resource slots; queued requests,
+`ComponentOutput.subscriptions` declares the complete current `Action[]` demand;
+omission means no streams. Actions accept only Query/Mutation, subscriptions only
+Subscription. Equal key and complete request preserve the private request identity
+across commits, including natural completion; change/remove operates only at successful
+commit. Resource capture is once per request. Old feedback cannot reach a same-key
+replacement. Each stream delivers `Updated { value }` using the existing internal
+component result event and waits for its successful transaction commit before polling
+its next item. Invalid items stop demand; item JSON is limited to 64 KiB and checked
+against the method output schema. Failed result delivery also cancels the stream.
+
+`NativeService::subscribe(request, CancellationToken)` returns `StreamFuture` with
+`StreamCompletion::Item { value, next }` or `Finished(ServiceCompletion)`. The successor
+moves the original executor, and presenters must run every successor after retirement
+or surface loss. Cancellation bypasses the feedback ACK wait, then polls actual source
+cleanup; the native implementation must honor cancellation and report its real cleanup.
+Failure/panic retains the existing Core Work fence until actual confirmation. No
+separate event bus, authority registry or cleanup owner is introduced.
+
+Each output allows 16 actions and 16 subscriptions; unchanged declared streams retain
+their original captured resources. One pending update of a live stream does not count
+as a second request. Each request allows 16 resource slots; queued requests,
 preparations, accepted work and pending feedback total at most 64 entries,
 captured resource bytes are limited to 64 MiB in aggregate,
 and UTF-8 reads to 64 KiB with valid byte boundaries. Complete capture arguments
 are limited to 1 MiB before cloning or callbacks, and share the transaction's
 callback, deadline and cumulative work limits. The Reader is available only
-through explicit package composition. Authenticated cross-process transport,
-subscriptions
+through explicit package composition. Authenticated cross-process transport
 and product recovery UI remain pending. Direct remote registration to an actual
 Host query is exercised with native Kit snapshots across the two kernels.
 The standalone Host query executor is described in

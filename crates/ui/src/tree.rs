@@ -79,6 +79,7 @@ pub(super) struct Mounted<V: ?Sized> {
     pub props: Value,
     pub children: BTreeMap<String, Child>,
     pub(super) bytes: usize,
+    pub(super) subscriptions: BTreeMap<String, actions::subscriptions::Demand>,
 }
 
 /// A composed input is one transaction, not a sequence of published child
@@ -136,6 +137,7 @@ impl<V: ?Sized> Update<V> {
         frame: &Frame<NativeView<V>>,
         props: &Value,
         events: &[Emission],
+        subscriptions: &[actions::Action],
     ) -> Result<usize> {
         struct Counter(usize);
         impl Write for Counter {
@@ -157,6 +159,8 @@ impl<V: ?Sized> Update<V> {
         )
         .map_err(|error| Error::Invalid(error.to_string()))?;
         serde_json::to_writer(&mut counter, &frame.view.metadata())
+            .map_err(|error| Error::Invalid(error.to_string()))?;
+        serde_json::to_writer(&mut counter, subscriptions)
             .map_err(|error| Error::Invalid(error.to_string()))?;
         let bytes = counter.0 - self.bytes;
         serde_json::to_writer(&mut counter, events)
@@ -462,7 +466,12 @@ impl<V: ?Sized + 'static> Application<V> {
         depth: usize,
         update: &mut Update<V>,
     ) -> Result<()> {
-        let bytes = update.charge(&output.frame, &props, &output.events)?;
+        let bytes = update.charge(&output.frame, &props, &output.events, &output.subscriptions)?;
+        let previous_subscriptions = self
+            .current(mount, update)
+            .map(|v| v.subscriptions.clone())
+            .unwrap_or_default();
+        let declarations = output.subscriptions;
         update.charge_intent(&output.actions)?;
         update.charge_intent(&output.decision)?;
         let actions = output.actions;
@@ -589,15 +598,53 @@ impl<V: ?Sized + 'static> Application<V> {
                 props,
                 children,
                 bytes,
+                subscriptions: BTreeMap::new(),
             },
         );
         for action in actions {
             if self.actions.len() + update.actions.len() >= 64 {
                 return Err(Error::Invalid("pending action limit".into()));
             }
-            let prepared = self.prepare_action(mount, action, update)?;
+            let prepared = self.prepare_action(mount, action, update, false)?;
             update.actions.push(prepared);
         }
+        let mut demands = BTreeMap::new();
+        for action in declarations {
+            if demands.contains_key(&action.key) {
+                return Err(Error::Invalid("duplicate subscription key".into()));
+            }
+            let demand = match self
+                .views
+                .get(&mount.id())
+                .and_then(|view| view.subscriptions.get(&action.key))
+                .filter(|old| old.action == action)
+                .or_else(|| {
+                    previous_subscriptions
+                        .get(&action.key)
+                        .filter(|old| old.action == action)
+                }) {
+                Some(old) => old.clone(),
+                None => {
+                    if self.actions.len() + update.actions.len() >= 64 {
+                        return Err(Error::Invalid("pending action limit".into()));
+                    }
+                    let prepared = self.prepare_action(mount, action.clone(), update, true)?;
+                    let demand = actions::subscriptions::Demand {
+                        action: action.clone(),
+                        request: prepared.id,
+                    };
+                    update.actions.push(prepared);
+                    demand
+                }
+            };
+            demands.insert(action.key.clone(), demand);
+        }
+        update
+            .changed
+            .get_mut(&mount.id())
+            .expect("staged owner")
+            .subscriptions = demands;
+
         Ok(())
     }
     fn deliver(&mut self, update: &mut Update<V>) -> Result<()> {
@@ -692,7 +739,20 @@ impl<V: ?Sized + 'static> Application<V> {
             self.runtime.retire_mount(mount)?;
         }
         self.views.append(&mut update.changed);
+        update.actions.retain(|action| {
+            !action.subscription
+                || self.subscription_wanted(&action.consumer, &action.key, action.id)
+        });
+        self.actions.queue.retain(|action| {
+            !action.subscription
+                || self
+                    .views
+                    .get(&action.consumer.id())
+                    .and_then(|view| view.subscriptions.get(&action.key))
+                    .is_some_and(|demand| demand.request == action.id)
+        });
         self.actions.queue.extend(update.actions.drain(..));
+        self.sync_subscription_demand();
         Ok(())
     }
     fn rollback(&mut self, update: &Update<V>) -> Result<()> {

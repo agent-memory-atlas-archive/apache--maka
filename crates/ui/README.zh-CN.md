@@ -22,7 +22,7 @@
 `maka-ui` 从不可变包激活已检查的 UI entry，向共用核心发布实际组件。
 前台 JavaScript 只在激活、挂载初始化、props 更新和输入处理时执行。
 发布前捕获必需的 `mount`、`event`、`update` 函数及 receiver；命名空间后续变更
-不能替换已注册处理器。回调返回 `ComponentOutput { frame, events, actions, decision? }`；events/actions 是
+不能替换已注册处理器。回调返回 `ComponentOutput { frame, events, actions, subscriptions, decision? }`；events/actions 是
 本次事务的一次性意图，不属于保留状态。声明 capture 时也在发布前捕获其回调。呈现器只读取已提交
 `Frame`。有界批次完整校验后原子替换，每个挂载有独立状态与 revision，旧视图事件
 不会调用新处理器。执行域故障撤销该域全部注册与挂载。
@@ -51,7 +51,7 @@ scene。语言和编译器由同一个可用性对象持有，无额外路由或
 `ComponentSlot { key, binding, member, props, on }` 属于
 `NativeView::new(recipe, input_schemas, slots)`。slots 有序、最多 64 个，
 按父组件自己的 imports 解析，共用子挂载、props 事务、事件路由与清理。
-未展示的 slot 保留状态。完整回调元数据（原场景 JSON、slots/state/events/actions）
+未展示的 slot 保留状态。完整回调元数据（原场景 JSON、slots/state/events/actions/subscriptions）
 共用 1 MiB 限额。不能精确投影为 JavaScript 的参数在调用该 consumer 前拒绝，
 不退休健康执行域；原生 Rust consumer 仍保留精确整数。
 
@@ -124,8 +124,8 @@ UI capture 拥有自己的快照和容量；本地 Host query 接收实际 paylo
 跨进程资源传输仍须 transport executor。
 
 `Application::new` 显式接收 `RemoteServices`：静态契约观察与 `RemoteService` 实际 endpoint
-注册分开。本地及远端服务支持 Query 和无资源附件的 Mutation；资源 mutation 与 Subscription
-仍须各自 executor。`NativeService::call` 接收 `ServiceRequest`，包含已检查输入、实际附件及
+注册分开。本地及远端服务支持 Query、Subscription 和无资源附件的 Mutation；资源 mutation
+仍须自己的 executor。`NativeService::call` 接收 `ServiceRequest`，包含已检查输入、实际附件及
 由内核创建的私有 `ServiceSource`。consumer、mount 与 request 观察不授予 Host 权限。
 transport callback 捕获 `remote_activation` 的准确 token，只把该 token 交给 `retire_remote`，
 延迟断连不能撤销 replacement kernel。
@@ -152,7 +152,7 @@ executor 先结算再投递结果，已退出 consumer 不再接收；结果 han
 合计最多 64 个，已捕获资源
 累计最多 64 MiB，UTF-8 chunk 最多 64 KiB 且检查字节边界。完整 capture 参数在 clone/
 callback 前受 1 MiB 限额，也共用事务的 callback/deadline/累计工作预算。Reader 必须由包组合
-显式导入。可信跨进程 transport、subscription 与产品恢复界面仍待实现。
+显式导入。认证跨进程 transport 与产品恢复界面仍待实现。
 直接 remote 注册调用实际 Host query 已用 Kit 快照跨两个内核验证。独立 Host query executor 见[Host 应用服务](../runtime-host/README.zh-CN.md)；
 resource 示例证明这条原生异步路径，不代表产品已完成。
 
@@ -209,3 +209,16 @@ Textarea 向 AccessKit 暴露真实焦点、label、value 与可编辑状态，�
 SetValue。headless 测试经过平台回调验证请求与焦点导航；普通编辑右键菜单和 OS
 无障碍/IME 验收仍待完成。TUI Label 将颜色/字重投影到 RGB/bold；桌面字体与透明合成
 不代表终端有等效呈现。
+
+组件的 `subscriptions: Action[]` 是当前完整订阅集合，省略即空集；仅允许 Subscription，
+一次性 `actions` 仅允许 Query/Mutation。同 key、完整请求不变保留原私有执行身份和首次
+捕获的资源；自然结束不自动重放。替换/移除仅在事务提交后取消，回滚不改变原需求，旧流
+反馈不能进入同 key 的新请求。每项通过普通内部结果事件投递 `Updated { value }`，反馈
+成功提交后才消费下一项；每项 JSON 不超过 64 KiB，按方法 output schema 检查。
+
+原生 `NativeService::subscribe(request, CancellationToken)` 返回 `StreamFuture`，
+依次产生 `StreamCompletion::Item { value, next }` 或 `Finished(ServiceCompletion)`。
+后继持有原执行，Desktop/TUI 原 owner 即使界面消失仍须执行所有后继。取消唤醒 ACK
+等待后继续真实 source cleanup；原生实现必须响应取消并报告真实清理结果，不能把取消或
+EOF 当成功清理。失败/panic 保留原 Work fence。每次 output 至多16 subscriptions，
+当前声明计入完整回调与 retained UI 预算，一个流的 pending feedback 不重复计为新请求。

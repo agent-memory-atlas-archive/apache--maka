@@ -61,7 +61,7 @@ Subscription handlers publish with `await context.invoke({operation: 'emit', val
 items and the final return value use the declared output schema. Each stream allows
 16 queued items, 16 pending emits and 64 KiB JSON per item. Await each publish to
 respect reader backpressure. The native Host client owns stream cancellation and
-observes real cleanup separately; UI subscription actions are not yet implemented.
+observes real cleanup separately.
 `context.invoke({ operation: 'mutate', ..., operationId })` returns an `OperationReply`
 with the original `reference` even when the result is unknown or cannot be delivered.
 Only `receipt.kind === 'recorded'` describes journal facts; inspect both `outcome`
@@ -69,6 +69,17 @@ and `cleanup`. `recover` takes that exact reference, independently of current im
 and requires a separate recovery grant. `not_recorded` means an authorized lookup
 found no original row; `unavailable` makes no journal claim. Neither triggers replay.
 Keep the original reference for recovery; a new operation identity can execute a new effect.
+UI components return `subscriptions: Action[]` as their complete current demand,
+separately from one-shot query/mutation `actions`. Each key is local to its component.
+An unchanged key and full request retain the original stream, including after natural
+completion; change the request to start a new one. Removing it cancels demand after
+commit. Resources are captured once at start, rather than on each frame. Feedback uses
+`{ status: 'updated', value }` per item and the existing `succeeded`/`failed` terminal
+outcomes. Each item waits for its component feedback transaction to commit before
+the next is consumed. Replacement and retirement discard old feedback while the
+original executor still completes actual cleanup. This supports both Desktop and TUI;
+authenticated cross-process transport remains unfinished.
+
 Persisted UI components submit resource-free mutations through their ordinary
 `actions`. The kernel generates the operation identity and records the original
 caller intent before dispatch. Feedback uses `ActionOutcome` with
@@ -96,7 +107,7 @@ may still be unknown or unavailable. Transport/query failures use `failed`;
 keep the original reference. Large or inexact journal values produce the same
 reference with `unavailable` for this portable contract, while raw native recovery
 preserves them. Query cleanup does not describe the original operation's cleanup.
-UI subscription actions, effectful resource snapshots and business migration remain unfinished.
+Effectful resource snapshots and business migration remain unfinished.
 
 Deployment sources can be stored in an owned State Root with
 `maka application commit --root ROOT --deployment UUID --expected-revision 0 --input input.json --package bundle.maka-plugin`.

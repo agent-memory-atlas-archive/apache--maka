@@ -1630,3 +1630,6 @@ fn dynamic_workspace_layout_changes_preserve_original_editor_draft_focus_and_mar
     drop(owner);
     scene.close(cx);
 }
+
+#[path = "editor_tests/subscriptions.rs"]
+mod subscriptions;

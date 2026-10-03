@@ -842,3 +842,6 @@ fn raw_click_focus_is_a_default_after_successful_commit() {
         tui.shutdown().unwrap();
     }
 }
+
+#[path = "subscriptions.rs"]
+mod subscriptions;

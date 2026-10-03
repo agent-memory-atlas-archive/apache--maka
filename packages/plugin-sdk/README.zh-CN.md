@@ -54,13 +54,21 @@ Host 应用服务支持 query、subscription 和不含资源附件的持久 muta
 Subscription handler 使用 `await context.invoke({operation: 'emit', value})` 发布；
 数据项与最终返回值均使用声明的 output schema。每流允许 16 个队列项、16 个 pending emit，
 每项完整 JSON 最多 64 KiB。等待每次发布以遵守读取端背压；原生 Host 客户端负责取消，
-真实 cleanup 单独观察。UI subscription actions 尚未实现。
+真实 cleanup 单独观察。
 `context.invoke({ operation: 'mutate', ..., operationId })` 返回 `OperationReply`，
 即使结果未知或无法交付，也保留原 `reference`。只有 `receipt.kind === 'recorded'`
 描述 journal 中的事实；应分别检查 `outcome` 与 `cleanup`。
 `recover` 使用原引用，不依赖当前 import，并需要独立的恢复授权。
 `not_recorded` 表示经过授权的精确读取没有找到原记录；`unavailable` 不断言记录内容，
 两者均不会自动重做。保留原引用用于恢复；新的 operation identity 可能再次执行效果。
+UI component 返回 `subscriptions: Action[]` 声明当前完整订阅集合，与一次性
+Query/Mutation 的 `actions` 分开。key 在本组件内唯一；key 与完整请求不变时保留
+原流，即使已经自然结束也不自动重放，修改请求才启动新流。成功提交后移除需求会取消流。
+资源仅在首次启动时捕获，不随画面重新取样。每项 feedback 为
+`{ status: 'updated', value }`，终值沿用 `succeeded`/`failed`；反馈事务提交后才消费
+下一项。替换或退休会丢弃旧反馈，原执行仍须完成真实 cleanup。Desktop/TUI 共用这套
+机制；认证跨进程 transport 仍待实现。
+
 持久 UI component 通过普通 `actions` 提交无资源附件的 mutation；内核生成 operation
 identity，先记录原 caller intent 再派发。feedback 的 `ActionOutcome` 使用
 `status: 'operation'` 和原 `OperationReply`；组件应处理 unknown/unavailable 回执，
@@ -71,7 +79,7 @@ identity，先记录原 caller intent 再派发。feedback 的 `ActionOutcome` �
 使用最后实际返回的 cursor 继续；count 只是上界，完整数组最多 1 MiB。如果完整回调包装
 超过交付预算，query 返回 `failed`，健康组件可以减小页大小后重试。原引用跨来源替换和
 Root 重开保留；这些观察不授予 Host 权限，也不能代替 confirmed caller 执行 token。
-UI subscription actions、副作用资源快照和旧业务迁移仍待实现。
+副作用资源快照和旧业务迁移仍待实现。
 
 持久 Host 组合可选择 `maka.operations.receipts`，通过 `Receipts` 导出提供
 `contracts.receiptReader`。普通 `read` Query 接收原 `RecoveryRef`，返回

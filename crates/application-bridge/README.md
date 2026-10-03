@@ -47,8 +47,11 @@ are supplied by the trusted launcher; dynamic JavaScript comes from committed
 immutable package bytes.
 
 Mutation resource snapshots require their executor protocol and are currently
-rejected before preparation; streams and authenticated network transport remain
-pending.
+rejected before preparation; authenticated network transport remains pending.
+Local subscriptions execute the actual Host `Client.subscribe` with the original
+Binding/Scopes/Policy. UI cancellation cancels the Host execution scope and then
+awaits its original admission observer and actual completion, including scope cleanup.
+Dropping an admission observer cannot stand in for a cleanup receipt.
 
 Each method must exist in the actual captured service contract. The endpoint
 must match the selected UI deployment's observation. Startup captures that exact

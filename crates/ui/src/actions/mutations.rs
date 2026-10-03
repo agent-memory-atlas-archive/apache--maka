@@ -101,6 +101,7 @@ impl<V: ?Sized + 'static> Application<V> {
                     outcome: ActionOutcome::NotAccepted {
                         reason: reason.clone(),
                     },
+                    request: None,
                 });
                 self.actions.preparing.insert(
                     id,
@@ -113,7 +114,9 @@ impl<V: ?Sized + 'static> Application<V> {
                         outcome: None,
                     },
                 );
-                self.runtime.complete_resource(&resource, Err(reason))?;
+                let completed = self.runtime.complete_resource(&resource, Err(reason));
+                self.sync_subscription_demand();
+                completed?;
                 return Ok(None);
             }
         };
@@ -172,8 +175,19 @@ impl<V: ?Sized + 'static> Application<V> {
         id: Uuid,
         completion: TaskCompletion,
     ) -> Result<Option<ActionTask>> {
-        match completion {
+        let result = (|| match completion {
+            TaskCompletion::Subscription(completion) => self.finish_subscription(id, completion),
             TaskCompletion::Query(completion) => {
+                if self
+                    .actions
+                    .running
+                    .get(&id)
+                    .is_some_and(|r| r.stream.is_some())
+                {
+                    return Err(Error::Invalid(
+                        "subscription requires its original stream completion".into(),
+                    ));
+                }
                 self.finish_query(id, completion)?;
                 Ok(None)
             }
@@ -190,7 +204,9 @@ impl<V: ?Sized + 'static> Application<V> {
                 self.interrupt_task(id, reason)?;
                 Ok(None)
             }
-        }
+        })();
+        self.sync_subscription_demand();
+        result
     }
 
     fn finish_preparation(
@@ -241,6 +257,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 execution,
                 resources: Attachments::new(),
                 mutation: Some(session),
+                stream: None,
             },
         );
         // Accepted Work protects the provider before its preparation fence ends.
@@ -293,6 +310,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 consumer: preparing.action.consumer.clone(),
                 key: preparing.action.key.clone(),
                 outcome,
+                request: None,
             });
         }
         self.runtime
@@ -376,6 +394,7 @@ impl<V: ?Sized + 'static> Application<V> {
             consumer: running.consumer.clone(),
             key: running.key.clone(),
             outcome: output,
+            request: None,
         });
         self.actions
             .running
@@ -411,6 +430,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 consumer: preparing.action.consumer.clone(),
                 key: preparing.action.key.clone(),
                 outcome,
+                request: None,
             });
             self.runtime
                 .complete_resource(&preparing.resource, Err(reason.clone()))?;

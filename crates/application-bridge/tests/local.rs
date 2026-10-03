@@ -17,6 +17,8 @@
  * under the License.
  */
 
+#[path = "local/subscriptions.rs"]
+mod subscriptions;
 mod support;
 use maka_application_bridge::{Configuration, Connections, Grant, Host};
 use maka_event_log::{
@@ -45,6 +47,19 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        Self::from_sources(support::host(), support::ui(PresentationTarget::Desktop))
+    }
+    fn from_sources(
+        host_sources: (
+            maka_plugin_core::composition::Input,
+            Vec<maka_plugins::package::Package>,
+        ),
+        ui_sources: (
+            maka_plugin_core::composition::Input,
+            Vec<maka_plugins::package::Package>,
+            Vec<maka_plugin_core::deployment::RemoteObservation>,
+        ),
+    ) -> Self {
         let timer = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_time()
@@ -63,13 +78,13 @@ impl Fixture {
         let caller = open("caller");
         let host_store = open("host");
         let host = Uuid::new_v4();
-        let (input, packages) = support::host();
+        let (input, packages) = host_sources;
         timer
             .block_on(host_store.commit_application(host, 0, input, vec![], packages))
             .unwrap();
         timer.block_on(host_store.shutdown()).unwrap();
         drop(host_store);
-        let (input, packages, observations) = support::ui(PresentationTarget::Desktop);
+        let (input, packages, observations) = ui_sources;
         let source = timer
             .block_on(caller.commit_application(Uuid::new_v4(), 0, input, observations, packages))
             .unwrap();
@@ -124,14 +139,17 @@ impl Fixture {
             .unwrap()
     }
     fn ui(&self, connections: &mut Connections) -> Application {
+        self.ui_target(connections, PresentationTarget::Desktop)
+    }
+    fn ui_target(&self, connections: &mut Connections, target: PresentationTarget) -> Application {
         self.timer
             .block_on(Application::start_from_store(
                 self.caller.clone(),
                 connections.source().clone(),
-                PresentationTarget::Desktop,
+                target,
                 self.timer.handle().clone(),
                 Default::default(),
-                crate::support::counter::scene::registry(PresentationTarget::Desktop),
+                crate::support::counter::scene::registry(target),
                 connections.take_registrations(),
             ))
             .unwrap()

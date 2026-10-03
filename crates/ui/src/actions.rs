@@ -19,6 +19,7 @@
 
 //! Request-local resources and accepted asynchronous service calls.
 mod mutations;
+pub(super) mod subscriptions;
 use super::*;
 use maka_event_log::applications::intents::RecordedIntent;
 use maka_plugin_core::{
@@ -30,8 +31,9 @@ use maka_plugins::call::{Attachments, ReadResource};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, future::Future, pin::Pin, sync::Arc};
+use tokio_util::sync::CancellationToken;
 
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CaptureSource {
     pub child: String,
@@ -39,7 +41,7 @@ pub struct CaptureSource {
     pub input: Value,
 }
 /// An inert intent. Resource slots name capture requests, never bearer handles.
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Action {
     pub key: String,
@@ -56,12 +58,28 @@ pub enum CapturePlan {
     Native,
 }
 pub type ServiceFuture = Pin<Box<dyn Future<Output = ServiceCompletion> + Send + 'static>>;
-/// Native query execution and effect-free mutation ownership. Implementations
+pub type StreamFuture = Pin<Box<dyn Future<Output = StreamCompletion> + Send + 'static>>;
+/// Moves custody of the same executor to its next pull; an item never confirms cleanup.
+pub enum StreamCompletion {
+    Item { value: Value, next: StreamFuture },
+    Finished(ServiceCompletion),
+}
+/// Native query/stream execution and effect-free mutation ownership. Implementations
 /// receive checked requests, never guest-created authorization evidence.
 pub trait NativeService: Send + Sync + 'static {
     /// Construct a background future only. Polling performs the query after
     /// final admission; the executor retains it independently of any UI waiter.
     fn call(&self, request: ServiceRequest) -> ServiceFuture;
+    /// Construct an inert pull stream. Cancellation closes demand; Finished
+    /// must independently report the original executor's actual cleanup.
+    fn subscribe(&self, _request: ServiceRequest, _stop: CancellationToken) -> StreamFuture {
+        Box::pin(async {
+            StreamCompletion::Finished(ServiceCompletion {
+                result: Err("service has no subscription executor".into()),
+                cleanup: Ok(()),
+            })
+        })
+    }
     /// Construct an inert owner before polling preparation. A returned error
     /// must leave no cleanup resource; panics are unconfirmed cleanup.
     fn mutation(
@@ -142,6 +160,7 @@ pub struct ServiceCompletion {
 pub enum ActionOutcome {
     NotAccepted { reason: String },
     Succeeded { value: Value },
+    Updated { value: Value },
     Failed { reason: String },
     Operation { reply: Box<OperationReply> },
 }
@@ -184,6 +203,7 @@ pub struct ActionTask {
 }
 pub enum TaskCompletion {
     Query(ServiceCompletion),
+    Subscription(StreamCompletion),
     Prepared(std::result::Result<RecordedIntent, String>),
     Mutation(MutationCompletion),
     Closed(std::result::Result<(), String>),
@@ -196,7 +216,7 @@ pub(super) struct Edge {
     pub slot: String,
 }
 pub(super) struct Prepared<V: ?Sized> {
-    id: Uuid,
+    pub(super) id: Uuid,
     pub consumer: Mount,
     pub key: String,
     pub method: String,
@@ -204,6 +224,7 @@ pub(super) struct Prepared<V: ?Sized> {
     pub capability: Capability<Export<V>>,
     pub captures: BTreeMap<String, CaptureTarget>,
     pub invalidated: bool,
+    pub subscription: bool,
     resources: Option<Attachments>,
 }
 struct Running<V: ?Sized> {
@@ -214,11 +235,13 @@ struct Running<V: ?Sized> {
     execution: Execution<Export<V>>,
     resources: Attachments,
     mutation: Option<mutations::Session>,
+    stream: Option<subscriptions::Flow>,
 }
 pub(super) struct Outcome {
     pub consumer: Mount,
     pub key: String,
     pub outcome: ActionOutcome,
+    pub request: Option<Uuid>,
 }
 pub(super) struct Actions<V: ?Sized> {
     pub queue: VecDeque<Prepared<V>>,
@@ -241,7 +264,14 @@ impl<V: ?Sized> Actions<V> {
         self.running.len() + self.preparing.len()
     }
     pub fn len(&self) -> usize {
-        self.queue.len() + self.running.len() + self.preparing.len() + self.outcomes.len()
+        self.queue.len()
+            + self.running.len()
+            + self.preparing.len()
+            + self
+                .outcomes
+                .iter()
+                .filter(|o| o.request.is_none_or(|id| !self.running.contains_key(&id)))
+                .count()
     }
     fn bytes(&self) -> usize {
         self.queue
@@ -286,7 +316,9 @@ impl<V: ?Sized + 'static> Application<V> {
     ) -> ActionOutcome {
         if !matches!(
             &outcome,
-            ActionOutcome::Operation { .. } | ActionOutcome::Succeeded { .. }
+            ActionOutcome::Operation { .. }
+                | ActionOutcome::Succeeded { .. }
+                | ActionOutcome::Updated { .. }
         ) {
             return outcome;
         };
@@ -333,6 +365,7 @@ impl<V: ?Sized + 'static> Application<V> {
         consumer: &Mount,
         action: Action,
         update: &mut tree::Update<V>,
+        subscription: bool,
     ) -> Result<Prepared<V>> {
         for name in [&action.key, &action.binding, &action.method] {
             if name.is_empty() || name.len() > 128 {
@@ -363,6 +396,11 @@ impl<V: ?Sized + 'static> Application<V> {
         let (mode, resources, valid) =
             declaration.ok_or_else(|| Error::Invalid("undeclared action method".into()))?;
         valid?;
+        if (mode == MethodMode::Subscription) != subscription {
+            return Err(Error::Invalid(
+                "action and subscription method mode mismatch".into(),
+            ));
+        }
         if mode == MethodMode::Mutation && self.source.is_none() {
             return Err(Error::Invalid(
                 "mutation requires a persisted UI source".into(),
@@ -387,6 +425,7 @@ impl<V: ?Sized + 'static> Application<V> {
             capability,
             captures,
             invalidated: false,
+            subscription,
             resources: None,
         })
     }
@@ -532,6 +571,7 @@ impl<V: ?Sized + 'static> Application<V> {
             consumer: action.consumer,
             key: action.key,
             outcome: ActionOutcome::NotAccepted { reason },
+            request: action.subscription.then_some(action.id),
         });
     }
     /// Run after native owners are prepared, before native commands/cleanup.
@@ -554,6 +594,8 @@ impl<V: ?Sized + 'static> Application<V> {
                 continue;
             }
             if action.invalidated
+                || action.subscription
+                    && !self.subscription_wanted(&action.consumer, &action.key, action.id)
                 || self.is_retiring(&action.consumer)
                 || action.captures.values().any(|t| !self.target_valid(t))
             {
@@ -605,6 +647,8 @@ impl<V: ?Sized + 'static> Application<V> {
             };
             let action = self.actions.queue.remove(index).expect("queue position");
             if action.invalidated
+                || action.subscription
+                    && !self.subscription_wanted(&action.consumer, &action.key, action.id)
                 || self.is_retiring(&action.consumer)
                 || action.captures.values().any(|t| !self.target_valid(t))
             {
@@ -650,6 +694,8 @@ impl<V: ?Sized + 'static> Application<V> {
                 input: action.input,
                 resources: resources.clone(),
             };
+            let flow = action.subscription.then(subscriptions::Flow::new);
+            let stop = flow.as_ref().map(|flow| flow.stop.clone());
             self.actions.running.insert(
                 id,
                 Running {
@@ -660,12 +706,18 @@ impl<V: ?Sized + 'static> Application<V> {
                     execution,
                     resources,
                     mutation: None,
+                    stream: flow,
                 },
             );
             return Ok(Some(ActionTask {
                 id,
                 future: Box::pin(async move {
-                    TaskCompletion::Query(implementation.call(request).await)
+                    match stop {
+                        Some(stop) => TaskCompletion::Subscription(
+                            implementation.subscribe(request, stop).await,
+                        ),
+                        None => TaskCompletion::Query(implementation.call(request).await),
+                    }
                 }),
             }));
         }
@@ -714,6 +766,7 @@ impl<V: ?Sized + 'static> Application<V> {
         };
         let consumer = running.consumer.clone();
         let key = running.key.clone();
+        let request = running.stream.as_ref().map(|_| id);
         let cleanup_result = completion.cleanup.map_err(bounded_reason);
         let failure = cleanup_result.as_ref().err().cloned();
         let cleanup = self.runtime.settle(&running.execution, cleanup_result);
@@ -726,6 +779,7 @@ impl<V: ?Sized + 'static> Application<V> {
             consumer,
             key,
             outcome: output,
+            request,
         });
         cleanup?;
         if let Some(reason) = failure {
@@ -794,7 +848,11 @@ impl<V: ?Sized + 'static> Application<V> {
         let mut first_error = None;
         for _ in 0..self.actions.outcomes.len() {
             let outcome = self.actions.outcomes.pop_front().expect("bounded outcomes");
-            if self.is_retiring(&outcome.consumer) {
+            if self.is_retiring(&outcome.consumer)
+                || outcome.request.is_some_and(|id| {
+                    !self.subscription_wanted(&outcome.consumer, &outcome.key, id)
+                })
+            {
                 continue;
             }
             if self
@@ -805,17 +863,30 @@ impl<V: ?Sized + 'static> Application<V> {
                 self.actions.outcomes.push_back(outcome);
                 continue;
             }
+            let item = matches!(&outcome.outcome, ActionOutcome::Updated { .. });
             let feedback = self.action_feedback(&outcome.consumer, &outcome.key, outcome.outcome);
+            if item
+                && !matches!(&feedback, ActionOutcome::Updated { .. })
+                && let Some(id) = outcome.request
+            {
+                self.fail_subscription(id, "subscription item delivery failed".into());
+            }
             match self.dispatch_action_result(
                 &outcome.consumer,
                 &outcome.key,
                 serde_json::to_value(feedback).expect("typed outcome"),
             ) {
-                Ok(()) => count += 1,
+                Ok(()) => {
+                    count += 1;
+                    if item && let Some(id) = outcome.request {
+                        self.acknowledge_subscription(id);
+                    }
+                }
                 Err(error) => {
                     // No healthy consumer may remain waiting on an outcome
                     // its handler rejected. Work has already settled separately.
                     self.runtime.retire_mount(&outcome.consumer)?;
+                    self.sync_subscription_demand();
                     if first_error.is_none() {
                         first_error = Some(error);
                     }
@@ -844,6 +915,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 }
             }
         }
+        self.sync_subscription_demand();
         Ok(())
     }
 }

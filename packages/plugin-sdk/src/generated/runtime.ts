@@ -201,6 +201,10 @@ export type ActionOutcome =
       status: 'succeeded';
     }
   | {
+      value: unknown;
+      status: 'updated';
+    }
+  | {
       reason: string;
       status: 'failed';
     }
@@ -540,6 +544,10 @@ export interface ComponentOutput {
   frame: Frame;
   events: Emission[];
   actions: Action[];
+  /**
+   * Complete current subscription demand. Empty removes previous demand.
+   */
+  subscriptions?: Action[];
   /**
    * Applies only to the original raw input, after the entire batch commits.
    * It is never retained in a frame or replayed by a renderer.

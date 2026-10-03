@@ -23,6 +23,7 @@ import type {
   CallerHistoryPage,
   CallerIntent,
   Component,
+  ComponentOutput,
   ComponentInput,
   ComponentValues,
   UiExport,
@@ -221,3 +222,23 @@ async function publishSubscriptionItem(context: RequestContext) {
   void [published, forged];
 }
 void publishSubscriptionItem;
+
+const desiredStream = {
+  key: 'timeline',
+  binding: 'tasks',
+  member: 0,
+  method: 'watch',
+  input: { task: 'current' },
+  resources: {},
+} satisfies Action;
+function streamingOutput(output: ComponentOutput, outcome: ActionOutcome) {
+  const desired: ComponentOutput = { ...output, subscriptions: [desiredStream] };
+  if (outcome.status === 'updated') {
+    const item: unknown = outcome.value;
+    // @ts-expect-error Original stream request identity is private to the kernel.
+    const token = outcome.request;
+    void [item, token];
+  }
+  return desired;
+}
+void streamingOutput;

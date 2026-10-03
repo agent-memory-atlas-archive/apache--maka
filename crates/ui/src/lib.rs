@@ -594,6 +594,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 &output.frame.surface,
                 &output.events,
                 &output.actions,
+                &output.subscriptions,
                 &output.decision,
             );
             tree::check_call_bytes(&(metadata, output.frame.view.metadata()))?;
@@ -601,7 +602,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 return Err(Error::Invalid("component emission limit".into()));
             }
             tree::check_call_bytes(&output.events)?;
-            if output.actions.len() > 16 {
+            if output.actions.len() > 16 || output.subscriptions.len() > 16 {
                 return Err(Error::Invalid("component action limit".into()));
             }
             tree::check_call_bytes(&output.actions)?;
@@ -623,6 +624,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 }
             }
         }
+        self.sync_subscription_demand();
         result
     }
 
@@ -674,6 +676,7 @@ impl<V: ?Sized + 'static> Application<V> {
         native_cleanup: std::result::Result<(), String>,
     ) -> Result<()> {
         self.runtime.retire_mount(mount)?;
+        self.sync_subscription_demand();
         self.runtime.complete_mount(mount, native_cleanup)?;
         self.views.remove(&mount.id());
         Ok(())
@@ -682,6 +685,7 @@ impl<V: ?Sized + 'static> Application<V> {
     /// any native resources. `close` requires a separate real acknowledgement.
     pub fn retire(&mut self, mount: &Mount) -> Result<()> {
         self.runtime.retire_mount(mount)?;
+        self.sync_subscription_demand();
         Ok(())
     }
     /// Capture the exact attachment when installing a transport disconnect callback.
@@ -703,6 +707,7 @@ impl<V: ?Sized + 'static> Application<V> {
             return Err(Error::Invalid("remote attachment required".into()));
         }
         self.runtime.retire(attachment)?;
+        self.sync_subscription_demand();
         Ok(())
     }
 
@@ -721,6 +726,7 @@ impl<V: ?Sized + 'static> Application<V> {
         for activation in self.runtime.activations().cloned().collect::<Vec<_>>() {
             self.runtime.retire(&activation)?;
         }
+        self.sync_subscription_demand();
         self.actions.queue.clear();
         self.actions.outcomes.clear();
         for id in self.modules.keys().cloned().collect::<Vec<_>>() {
@@ -780,12 +786,11 @@ fn service_export<V: ?Sized>(
     };
     let mut compiled = BTreeMap::new();
     for (name, method) in methods {
-        if method.mode == maka_plugin_core::contract::MethodMode::Subscription
-            || (method.mode == maka_plugin_core::contract::MethodMode::Mutation
-                && !method.resources.is_empty())
+        if method.mode == maka_plugin_core::contract::MethodMode::Mutation
+            && !method.resources.is_empty()
         {
             return Err(Error::Invalid(
-                "UI resource mutation and subscription require their own executors".into(),
+                "UI resource mutation requires its own executor".into(),
             ));
         }
         compiled.insert(

@@ -938,7 +938,7 @@ fn remote_disconnect_retires_consumer_but_preserves_accepted_query_and_snapshot(
     app.shutdown().unwrap();
 }
 #[test]
-fn ui_rejects_resource_mutation_and_subscription_without_their_executors() {
+fn ui_rejects_resource_mutation_but_admits_subscription_contracts_and_checks_action_mode() {
     use maka_plugin_core::contract::{Cardinality, MethodMode};
     let timer = timer();
     for mode in [MethodMode::Mutation, MethodMode::Subscription] {
@@ -951,9 +951,26 @@ fn ui_rejects_resource_mutation_and_subscription_without_their_executors() {
             native,
             remotes,
         );
-        assert!(
-            matches!(result, Err(maka_ui::Error::Invalid(ref message)) if message.contains("require their own executors"))
-        );
+        if mode == MethodMode::Mutation {
+            assert!(
+                matches!(result, Err(maka_ui::Error::Invalid(ref message)) if message.contains("UI resource mutation requires its own executor"))
+            );
+        } else {
+            let mut app = result.unwrap();
+            let root = app.mount_launch(json!({})).unwrap();
+            // Ordinary actions are one-shot. Merely admitting the actual stream
+            // contract does not let this older Query-shaped callback start one.
+            assert!(
+                app.dispatch(&root, 0, "read", Value::Null)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("method mode mismatch")
+            );
+            assert_eq!(app.frame(&root).unwrap().revision, 0);
+            assert!(!app.is_retiring(&root));
+            assert_eq!(app.pending_action_count(), 0);
+            close_all(&mut app, &[root]);
+        }
     }
 }
 
