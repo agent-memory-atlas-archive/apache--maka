@@ -161,10 +161,13 @@ const isUnder =
 // Finite reviewed upstream files, not a blanket third-party directory exemption.
 // New Maka-only files (including platform/cleanup.rs) still require ASF headers.
 const gpuiUpstreamFiles = new Set(
-  Object.keys(
-    JSON.parse(readFileSync(join(defaultRepoRoot, 'third-party/gpui-fast/upstream.json'), 'utf8'))
-      .files,
-  ).map((path) => `third-party/gpui-fast/${path}`),
+  ['gpui-fast', 'gpui-kit', 'async-io'].flatMap((project) =>
+    Object.keys(
+      JSON.parse(
+        readFileSync(join(defaultRepoRoot, `third-party/${project}/upstream.json`), 'utf8'),
+      ).files,
+    ).map((path) => `third-party/${project}/${path}`),
+  ),
 );
 
 /**

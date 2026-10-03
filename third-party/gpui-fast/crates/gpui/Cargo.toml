@@ -175,3 +175,6 @@ ignored = [
     "tracing",
 ]
 ignored-paths = ["src/_ownership_and_data_flow.rs"]
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+async-io = "2"

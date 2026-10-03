@@ -17,7 +17,7 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/gpui", "crates/gpui_macos", "crates/gpui_windows", "crates/gpui_linux"]
+members = ["crates/gpui", "crates/gpui_macos", "crates/gpui_windows", "crates/gpui_linux", "crates/scheduler"]
 
 [workspace.package]
 publish = false
@@ -44,7 +44,7 @@ path = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baa
 perf = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }
 refineable = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }
 reqwest_client = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }
-scheduler = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }
+scheduler = { path = "crates/scheduler" }
 sum_tree = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }
 util = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }
 util_macros = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }

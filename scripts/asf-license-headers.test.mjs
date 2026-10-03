@@ -435,4 +435,9 @@ test('vendored GPUI provenance is finite and does not exempt Maka additions', ()
     'covered',
   );
   assert.equal(classifyPath('third-party/gpui-fast/crates/gpui/src/new.rs').status, 'covered');
+  assert.equal(
+    classifyPath('third-party/gpui-kit/crates/base/src/scrollbar.rs').status,
+    'excluded',
+  );
+  assert.equal(classifyPath('third-party/gpui-kit/crates/base/src/new.rs').status, 'covered');
 });

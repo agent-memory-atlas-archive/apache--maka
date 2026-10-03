@@ -58,6 +58,7 @@ async function inputs(root) {
       'crates/js-runtime/trusted/*.js',
       'crates/js-runtime/third-party/**/*',
       'patches/*.patch',
+      'third-party/**/*',
     ],
     { cwd: root, withFileTypes: true },
   )) {
@@ -196,7 +197,11 @@ export async function generateNotices(root = repository) {
       if (seen.has(id)) continue;
       seen.add(id);
       const pkg = catalog.get(id);
-      if (pkg.source) packages.set(id, pkg);
+      if (
+        pkg.source ||
+        relative(root, pkg.manifest_path).replaceAll('\\', '/').startsWith('third-party/')
+      )
+        packages.set(id, pkg);
       for (const dependency of nodes.get(id).deps) {
         if (dependency.dep_kinds.some((kind) => kind.kind !== 'dev')) pending.push(dependency.pkg);
       }
@@ -211,9 +216,20 @@ export async function generateNotices(root = repository) {
         `${pkg.name}@${pkg.version} (${pkg.license ?? 'MIT; see upstream notice'})` +
         (pkg.authors.length ? `; authors declared by package: ${pkg.authors.join(', ')}` : '');
       const directory = dirname(pkg.manifest_path);
-      const source = pkg.source.startsWith('registry+')
-        ? `https://crates.io/api/v1/crates/${pkg.name}/${pkg.version}/download`
-        : pkg.source;
+      let source = pkg.source;
+      if (!source) {
+        const vendored = relative(root, directory)
+          .replaceAll('\\', '/')
+          .split('/')
+          .slice(0, 2)
+          .join('/');
+        const provenance = JSON.parse(
+          await readFile(join(root, vendored, 'upstream.json'), 'utf8'),
+        );
+        source = `${provenance.repository}#${provenance.revision} (adapted; ${relative(root, directory).replaceAll('\\', '/')})`;
+      } else if (source.startsWith('registry+')) {
+        source = `https://crates.io/api/v1/crates/${pkg.name}/${pkg.version}/download`;
+      }
       let local = await licenseFiles(directory);
       if (pkg.license_file && !local.includes(pkg.license_file)) local.push(pkg.license_file);
       let references = false;
@@ -229,7 +245,7 @@ export async function generateNotices(root = repository) {
           }),
         )
       ).filter(Boolean);
-      if (pkg.source.includes('github.com/maka-agent/cua')) {
+      if (pkg.source?.includes('github.com/maka-agent/cua')) {
         add(
           component,
           source,

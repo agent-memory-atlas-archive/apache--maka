@@ -332,9 +332,25 @@ crates/computer-use/THIRD_PARTY_NOTICES.
 
 GPUI Fast platform source (adapted, Apache License 2.0)
 
-third-party/gpui-fast contains four crates from
+third-party/gpui-fast contains five crates from
 https://github.com/longbridge/gpui-fast at revision
 e4aabe752665baabe330464892cfe6882ed3283b.
 Copyright 2022 - 2025 Zed Industries, Inc.
 Original license texts, finite file provenance and modifications are recorded in
 third-party/gpui-fast/{LICENSE,LICENSE-APACHE,upstream.json,SOURCE.md}.
+
+GPUI Kit Base source (adapted, Apache License 2.0)
+
+third-party/gpui-kit contains gpui-base from
+https://github.com/longbridge/gpui-kit at revision
+f89c5cc9576d823d253b4563806e5f842e9d69f9. Upstream license texts,
+original hashes and the bounded local modifications are recorded in
+third-party/gpui-kit/{LICENSE-APACHE,LICENSE-DOCS.md,upstream.json,SOURCE.md}.
+
+async-io timer source (adapted, Apache License 2.0 OR MIT)
+
+third-party/async-io contains async-io 2.6.0 from
+https://github.com/smol-rs/async-io at revision
+576b470ca3cadefdec8b169279df23c9a0a63495. Original license texts,
+finite file provenance and the timer wake modification are recorded in
+third-party/async-io/{LICENSE-APACHE,LICENSE-MIT,upstream.json,SOURCE.md}.

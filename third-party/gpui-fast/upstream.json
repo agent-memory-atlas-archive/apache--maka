@@ -242,6 +242,12 @@
     "crates/gpui_windows/src/util.rs": "e9bdd79c80149f7d60d2a35f4e86398343762a6c2549fd67de1de4de9ab65147",
     "crates/gpui_windows/src/vsync.rs": "2223e21da45cbefb3d427e5a804ac7367815db41e56d1d47f315ab0ad9efb675",
     "crates/gpui_windows/src/window.rs": "245024ebc015b65aeeabb9f1415c4a3d1dddcb413e4f4c38d5a742d277ceef52",
-    "crates/gpui_windows/src/wrapper.rs": "a17bfb94697904d650a0db4007880262256d06bf96cb00af387e73fde7536c8b"
+    "crates/gpui_windows/src/wrapper.rs": "a17bfb94697904d650a0db4007880262256d06bf96cb00af387e73fde7536c8b",
+    "crates/scheduler/Cargo.toml": "466231bfc427ada26e65ad387bf8013df83a84a16950d9002654c7a6370b1994",
+    "crates/scheduler/src/test_scheduler.rs": "d0691d0223e0a8fba2dde7d06d15de4831e38de97896156f698eebd5cccf9b03",
+    "crates/scheduler/src/clock.rs": "80d2df56e160af015e4ac4e855996e16290627afb2b7dbd87f7eb934172f36fc",
+    "crates/scheduler/src/executor.rs": "d5c33c51ee0ee4ff44f65fdb51ac7124bc6773ac3812079b5ee6a9b904e426d9",
+    "crates/scheduler/src/scheduler.rs": "8f6581b626bfbbec4b8a951baf8e305fd98df6ff7524d8323b66d4af18e82c28",
+    "crates/scheduler/src/tests.rs": "fc268a8ecfe19e00833c060ccf7b8b246a692bdc3e04727a03b6d39ac011d5fa"
   }
 }

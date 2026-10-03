@@ -1,6 +1,7 @@
 use crate::{PlatformDispatcher, RunnableMeta};
 use async_task::Runnable;
 use chrono::{DateTime, Utc};
+#[cfg(target_family = "wasm")]
 use futures::channel::oneshot;
 use scheduler::Instant;
 use scheduler::{
@@ -125,6 +126,16 @@ impl Scheduler for PlatformScheduler {
         self.dispatcher.spawn_realtime(f);
     }
 
+    #[cfg(not(target_family = "wasm"))]
+    #[track_caller]
+    fn timer(&self, duration: Duration) -> Timer {
+        // Reuse the existing reactor's cancellation-safe reservation. Keeping
+        // it inside Timer makes Drop deregister it, including while unpolled.
+        let timer = async_io::Timer::after(duration);
+        Timer::from_future(async move { timer.await; })
+    }
+
+    #[cfg(target_family = "wasm")]
     #[track_caller]
     fn timer(&self, duration: Duration) -> Timer {
         let (tx, rx) = oneshot::channel();

@@ -404,7 +404,6 @@ https://crates.io/api/v1/crates/anyhow/1.0.104/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/async-channel/2.5.0/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/async-compat/0.2.6/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/async-executor/1.14.0/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/async-io/2.6.0/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/async-lock/3.4.2/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/async-process/2.5.0/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/async-recursion/1.1.1/download :: LICENSE-MIT
@@ -505,6 +504,7 @@ https://crates.io/api/v1/crates/zbus-lockstep-macros/0.5.2/download :: LICENSE-M
 https://crates.io/api/v1/crates/zbus-lockstep/0.5.2/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/zmij/1.0.23/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/zvariant_utils/4.2.0/download :: LICENSE
+https://github.com/smol-rs/async-io#576b470ca3cadefdec8b169279df23c9a0a63495 (adapted; third-party/async-io) :: LICENSE-MIT
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -1790,7 +1790,6 @@ https://crates.io/api/v1/crates/async-channel/2.5.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/async-compat/0.2.6/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/async-compression/0.4.46/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/async-executor/1.14.0/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/async-io/2.6.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/async-lock/3.4.2/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/async-process/2.5.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/async-recursion/1.1.1/download :: LICENSE-APACHE
@@ -2009,6 +2008,7 @@ https://crates.io/api/v1/crates/web_atoms/0.2.6/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/weezl/0.1.12/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/wl-clipboard-rs/0.9.3/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/x509-parser/0.15.1/download :: LICENSE-APACHE
+https://github.com/smol-rs/async-io#576b470ca3cadefdec8b169279df23c9a0a63495 (adapted; third-party/async-io) :: LICENSE-APACHE
 https://raw.githubusercontent.com/aclysma/profiling/8271551172eb6fa4cba47369aedd93790c623df9/LICENSE-APACHE
 https://raw.githubusercontent.com/rusticata/asn1-rs/28257314e48d1ad4e62b8159c939518e17caf826/LICENSE-APACHE
 https://raw.githubusercontent.com/rusticata/asn1-rs/78620ca0954d44ddc57d0280d0072dfbd8566de4/LICENSE-APACHE
@@ -21064,6 +21064,7 @@ windows-strings@0.3.1 (MIT OR Apache-2.0); authors declared by package: Microsof
 windows-strings@0.5.1 (MIT OR Apache-2.0)
 windows-sys@0.52.0 (MIT OR Apache-2.0); authors declared by package: Microsoft
 windows-sys@0.59.0 (MIT OR Apache-2.0); authors declared by package: Microsoft
+windows-sys@0.60.2 (MIT OR Apache-2.0); authors declared by package: Microsoft
 windows-sys@0.61.2 (MIT OR Apache-2.0)
 windows-targets@0.52.6 (MIT OR Apache-2.0); authors declared by package: Microsoft
 windows-targets@0.53.5 (MIT OR Apache-2.0)
@@ -21097,6 +21098,7 @@ https://crates.io/api/v1/crates/windows-strings/0.3.1/download :: license-mit
 https://crates.io/api/v1/crates/windows-strings/0.5.1/download :: license-mit
 https://crates.io/api/v1/crates/windows-sys/0.52.0/download :: license-mit
 https://crates.io/api/v1/crates/windows-sys/0.59.0/download :: license-mit
+https://crates.io/api/v1/crates/windows-sys/0.60.2/download :: license-mit
 https://crates.io/api/v1/crates/windows-sys/0.61.2/download :: license-mit
 https://crates.io/api/v1/crates/windows-targets/0.52.6/download :: license-mit
 https://crates.io/api/v1/crates/windows-targets/0.53.5/download :: license-mit
@@ -32809,6 +32811,7 @@ windows-strings@0.3.1 (MIT OR Apache-2.0); authors declared by package: Microsof
 windows-strings@0.5.1 (MIT OR Apache-2.0)
 windows-sys@0.52.0 (MIT OR Apache-2.0); authors declared by package: Microsoft
 windows-sys@0.59.0 (MIT OR Apache-2.0); authors declared by package: Microsoft
+windows-sys@0.60.2 (MIT OR Apache-2.0); authors declared by package: Microsoft
 windows-sys@0.61.2 (MIT OR Apache-2.0)
 windows-targets@0.52.6 (MIT OR Apache-2.0); authors declared by package: Microsoft
 windows-targets@0.53.5 (MIT OR Apache-2.0)
@@ -32841,6 +32844,7 @@ https://crates.io/api/v1/crates/windows-strings/0.3.1/download :: license-apache
 https://crates.io/api/v1/crates/windows-strings/0.5.1/download :: license-apache-2.0
 https://crates.io/api/v1/crates/windows-sys/0.52.0/download :: license-apache-2.0
 https://crates.io/api/v1/crates/windows-sys/0.59.0/download :: license-apache-2.0
+https://crates.io/api/v1/crates/windows-sys/0.60.2/download :: license-apache-2.0
 https://crates.io/api/v1/crates/windows-sys/0.61.2/download :: license-apache-2.0
 https://crates.io/api/v1/crates/windows-targets/0.52.6/download :: license-apache-2.0
 https://crates.io/api/v1/crates/windows-targets/0.53.5/download :: license-apache-2.0
