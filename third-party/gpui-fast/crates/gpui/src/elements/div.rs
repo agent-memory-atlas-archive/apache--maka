@@ -1394,6 +1394,18 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Expose disabled interaction to assistive technology.
+    fn aria_disabled(mut self, disabled: bool) -> Self {
+        self.interactivity().aria.disabled = Some(disabled);
+        self
+    }
+
+    /// Expose a readable value that users cannot edit.
+    fn aria_readonly(mut self, readonly: bool) -> Self {
+        self.interactivity().aria.readonly = Some(readonly);
+        self
+    }
+
     /// Set the expanded state for this element.
     fn aria_expanded(mut self, expanded: bool) -> Self {
         self.interactivity().aria.expanded = Some(expanded);
@@ -2125,6 +2137,8 @@ pub(crate) struct AriaProperties {
     pub(crate) description: Option<SharedString>,
     pub(crate) keyshortcuts: Option<SharedString>,
     pub(crate) selected: Option<bool>,
+    pub(crate) disabled: Option<bool>,
+    pub(crate) readonly: Option<bool>,
     pub(crate) expanded: Option<bool>,
     pub(crate) toggled: Option<accesskit::Toggled>,
     pub(crate) numeric_value: Option<f64>,
@@ -3584,6 +3598,20 @@ impl Interactivity {
         }
         if let Some(selected) = self.aria.selected {
             node.set_selected(selected);
+        }
+        if let Some(disabled) = self.aria.disabled {
+            if disabled {
+                node.set_disabled();
+            } else {
+                node.clear_disabled();
+            }
+        }
+        if let Some(readonly) = self.aria.readonly {
+            if readonly {
+                node.set_read_only();
+            } else {
+                node.clear_read_only();
+            }
         }
         if let Some(expanded) = self.aria.expanded {
             node.set_expanded(expanded);

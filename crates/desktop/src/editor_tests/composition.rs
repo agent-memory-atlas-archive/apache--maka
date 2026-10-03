@@ -162,7 +162,7 @@ impl NativeComponent<dyn widgets::Widget> for Parent {
     fn call(
         &self,
         call: ComponentCall<'_>,
-        _values: &maka_ui::abi::ValueBindings,
+        values: &maka_ui::abi::ValueBindings,
     ) -> maka_ui::Result<ComponentOutput<Presentation<dyn widgets::Widget>>> {
         let mut state = match call {
             ComponentCall::Mount { .. } => {
@@ -192,7 +192,7 @@ impl NativeComponent<dyn widgets::Widget> for Parent {
                 key: "editor".into(),
                 binding: "editor".into(),
                 member: 0,
-                props: json!({"initialText":"Start","placeholder":"Write here","command":null}),
+                props: json!({"initialText":"Start","placeholder":"Write here","command":null,"appearance":values.get("brand").unwrap()[0]["textarea"],"accessibilityLabel":"Write a draft","readOnly":false,"disabled":false,"softWrap":true,"tabIndex":0}),
                 on: BTreeMap::new(),
             });
         }

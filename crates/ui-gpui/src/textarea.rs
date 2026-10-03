@@ -18,9 +18,10 @@
  */
 
 use super::{LiveInput, Slots, Widget};
-use gpui_kit::component::input::{Editor as KitEditor, EditorState, Rope, RopeExt};
+use gpui_kit::base::input::{InputBase, Rope, RopeExt, TextareaState};
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
-use maka_ui::editor::*;
+use maka_ui::textarea::*;
 use maka_ui::{
     ComponentCall, ComponentOutput, Emission, Frame, NativeCapability, NativeComponent,
     NativeExport, NativeRegistry, NativeView, Presentation,
@@ -38,21 +39,23 @@ struct NativeSnapshot {
     marked: Option<TextRange>,
 }
 
-pub struct EditorOwner {
+pub struct TextareaOwner {
     id: String,
-    pub state: Entity<EditorState>,
+    pub state: Entity<TextareaState>,
     input: LiveInput,
     pub revision: u64,
     snapshot: NativeSnapshot,
-    last_request: Option<EditorCommand>,
+    last_request: Option<TextareaCommand>,
     sequence: u64,
-    pub receipt: Option<EditorReceipt>,
+    pub receipt: Option<TextareaReceipt>,
     pending: bool,
     _observation: Subscription,
+    projection: super::appearance::TextareaProjection,
+    label: String,
 }
-impl EditorOwner {
+impl TextareaOwner {
     fn new(
-        props: &EditorProps,
+        props: &TextareaProps,
         input: LiveInput,
         window: &mut Window,
         cx: &mut App,
@@ -63,8 +66,24 @@ impl EditorOwner {
             .as_ref()
             .expect("live editor mount")
             .clone();
+        let projection = super::appearance::TextareaProjection::new(&props.appearance);
         let state = cx.new(|cx| {
-            let mut state = EditorState::new(window, cx);
+            let mut state = TextareaState::new(window, cx);
+            projection.apply(&mut state);
+            state.set_readonly(props.read_only, cx);
+            if props.disabled && state.presentation().focus_handle().is_focused(window) {
+                window.blur(cx);
+            }
+            state.set_disabled(props.disabled, cx);
+            state.set_soft_wrap(props.soft_wrap, window, cx);
+            state.set_tab_index(
+                if props.disabled {
+                    -1
+                } else {
+                    props.tab_index.into()
+                },
+                cx,
+            );
             state.set_value(props.initial_text.clone(), window, cx);
             state.set_placeholder(props.placeholder.clone(), window, cx);
             // Entity references release before GPUI reclaims their values.
@@ -75,7 +94,10 @@ impl EditorOwner {
         cx.new(|cx: &mut Context<Self>| {
             let snapshot = Self::read_snapshot(&state, window, cx);
             let observation = cx.observe_in(&state, window, |owner, _, window, cx| {
-                owner.refresh(false, window, cx)
+                owner.refresh(false, window, cx);
+                // Native focus/editability also change the facade and AX tree,
+                // even when buffer/selection metadata is unchanged.
+                cx.notify();
             });
             Self {
                 id: cx.entity_id().to_string(),
@@ -88,11 +110,13 @@ impl EditorOwner {
                 receipt: None,
                 pending: false,
                 _observation: observation,
+                projection,
+                label: props.accessibility_label.clone(),
             }
         })
     }
     fn read_snapshot(
-        state: &Entity<EditorState>,
+        state: &Entity<TextareaState>,
         window: &mut Window,
         cx: &mut App,
     ) -> NativeSnapshot {
@@ -114,9 +138,9 @@ impl EditorOwner {
             }
         })
     }
-    fn observation_snapshot(&self) -> EditorSnapshot {
-        EditorSnapshot {
-            text: EditorTextRef {
+    fn observation_snapshot(&self) -> TextareaSnapshot {
+        TextareaSnapshot {
+            text: TextareaTextRef {
                 owner: self.id.clone(),
                 revision: self.revision,
                 bytes: self.snapshot.text.len(),
@@ -130,30 +154,30 @@ impl EditorOwner {
     /// owner. There is no global resource lookup or authority in its string id.
     pub fn read_text(
         &mut self,
-        reference: &EditorTextRef,
+        reference: &TextareaTextRef,
         range: Range<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<String, EditorReadError> {
+    ) -> Result<String, TextareaReadError> {
         if self.input.0.borrow().is_none() || reference.owner != self.id {
-            return Err(EditorReadError::Owner);
+            return Err(TextareaReadError::Owner);
         }
         self.refresh(false, window, cx);
         if reference.revision != self.revision {
-            return Err(EditorReadError::Revision);
+            return Err(TextareaReadError::Revision);
         }
         if range
             .end
             .checked_sub(range.start)
             .is_none_or(|len| len > 64 * 1024)
         {
-            return Err(EditorReadError::Range);
+            return Err(TextareaReadError::Range);
         }
         self.snapshot
             .text
             .try_slice(range)
             .map(|slice| slice.to_string())
-            .map_err(|_| EditorReadError::Range)
+            .map_err(|_| TextareaReadError::Range)
     }
     fn refresh(&mut self, force: bool, window: &mut Window, cx: &mut Context<Self>) {
         let snapshot = Self::read_snapshot(&self.state, window, cx);
@@ -175,7 +199,7 @@ impl EditorOwner {
                 owner.refresh(false, window, cx);
                 owner.pending = false;
                 let input = owner.input.0.borrow().clone()?;
-                let value = EditorObservation {
+                let value = TextareaObservation {
                     revision: owner.revision,
                     snapshot: owner.observation_snapshot(),
                     receipt: owner.receipt.clone(),
@@ -192,12 +216,39 @@ impl EditorOwner {
             );
         });
     }
-    fn apply(&mut self, props: &EditorProps, window: &mut Window, cx: &mut Context<Self>) {
+    fn apply(&mut self, props: &TextareaProps, window: &mut Window, cx: &mut Context<Self>) {
         // Notify observers may still be queued after keyboard/selection input.
         // This synchronous barrier is authoritative for command admission.
         self.refresh(false, window, cx);
+        let appearance_changed = self.projection.data != props.appearance;
+        if appearance_changed {
+            self.projection = super::appearance::TextareaProjection::new(&props.appearance);
+            cx.notify();
+        }
+        if self.label != props.accessibility_label {
+            self.label = props.accessibility_label.clone();
+            cx.notify();
+        }
         self.state.update(cx, |state, cx| {
-            state.set_placeholder(props.placeholder.clone(), window, cx)
+            if appearance_changed {
+                self.projection.apply(state);
+                cx.notify();
+            }
+            state.set_readonly(props.read_only, cx);
+            if props.disabled && state.presentation().focus_handle().is_focused(window) {
+                window.blur(cx);
+            }
+            state.set_disabled(props.disabled, cx);
+            state.set_soft_wrap(props.soft_wrap, window, cx);
+            state.set_tab_index(
+                if props.disabled {
+                    -1
+                } else {
+                    props.tab_index.into()
+                },
+                cx,
+            );
+            state.set_placeholder(props.placeholder.clone(), window, cx);
         });
         let Some(command) = &props.command else {
             return;
@@ -207,29 +258,29 @@ impl EditorOwner {
         }
         self.last_request = Some(command.clone());
         let outcome = if command.sequence <= self.sequence {
-            EditorOutcome::Conflict {
-                reason: EditorConflict::Sequence,
+            TextareaOutcome::Conflict {
+                reason: TextareaConflict::Sequence,
             }
         } else {
             self.sequence = command.sequence;
             if command.based_on != self.revision {
-                EditorOutcome::Conflict {
-                    reason: EditorConflict::Revision,
+                TextareaOutcome::Conflict {
+                    reason: TextareaConflict::Revision,
                 }
             } else if self.snapshot.marked.is_some() {
-                EditorOutcome::Conflict {
-                    reason: EditorConflict::Composition,
+                TextareaOutcome::Conflict {
+                    reason: TextareaConflict::Composition,
                 }
             } else {
                 self.state.update(cx, |state, cx| match &command.edit {
-                    EditorEdit::Replace { text } => state.replace_all(text.clone(), window, cx),
-                    EditorEdit::Reset { text } => state.set_value(text.clone(), window, cx),
+                    TextareaEdit::Replace { text } => state.replace_all(text.clone(), window, cx),
+                    TextareaEdit::Reset { text } => state.set_value(text.clone(), window, cx),
                 });
                 self.refresh(true, window, cx);
-                EditorOutcome::Applied
+                TextareaOutcome::Applied
             }
         };
-        self.receipt = Some(EditorReceipt {
+        self.receipt = Some(TextareaReceipt {
             sequence: command.sequence,
             revision: self.revision,
             outcome,
@@ -237,10 +288,81 @@ impl EditorOwner {
         self.schedule(window, cx);
     }
 }
-impl Render for EditorOwner {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl Render for TextareaOwner {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let state = self.state.read(cx);
+        let presentation = state.presentation();
+        let focused = presentation.focus_handle().is_focused(window);
+        let focus = presentation.focus_handle().clone();
+        let disabled = presentation.is_disabled();
+        let readonly = presentation.is_readonly();
+        let placeholder = presentation.placeholder().clone();
+        let value = (window.is_a11y_active() || cfg!(test)).then(|| state.text().to_string());
+        let appearance = &self.projection.data;
+        let focus_state = self.state.clone();
+        let edit_state = self.state.clone();
+        let focus_input = self.input.clone();
+        let edit_input = self.input.clone();
+        let mouse_state = self.state.clone();
+        let mouse_input = self.input.clone();
+        let content = InputBase::new(("textarea", self.state.entity_id()))
+            .size_full()
+            .flex()
+            .track_focus(&focus)
+            .focused(focused)
+            .disabled(disabled)
+            .capture_any_mouse_down(move |_, _, cx| {
+                // A commit can disable/remove this owner before the next paint.
+                // Admit against live native facts, never a prior frame's flags.
+                if mouse_input.0.borrow().is_none()
+                    || mouse_state.read(cx).presentation().is_disabled()
+                {
+                    cx.stop_propagation();
+                }
+            })
+            .role(Role::MultilineTextInput)
+            .aria_label(self.label.clone())
+            .aria_placeholder(placeholder)
+            .aria_disabled(disabled)
+            .aria_readonly(readonly)
+            .when_some(value, |this, value| this.aria_value(value))
+            .on_a11y_action(AccessibleAction::Focus, move |_, window, cx| {
+                if focus_input.0.borrow().is_some() {
+                    focus_state.update(cx, |state, cx| {
+                        if !state.presentation().is_disabled() {
+                            state.focus(window, cx);
+                        }
+                    });
+                }
+            })
+            .when(!disabled && !readonly, |this| {
+                this.on_a11y_action(AccessibleAction::SetValue, move |data, window, cx| {
+                    if edit_input.0.borrow().is_some()
+                        && let Some(accesskit::ActionData::Value(value)) = data
+                    {
+                        edit_state.update(cx, |state, cx| {
+                            if state.is_editable() {
+                                state.replace_all(value.clone(), window, cx);
+                            }
+                        });
+                    }
+                })
+            })
+            .font(self.projection.font.clone())
+            .text_size(px(appearance.text.font.size))
+            .line_height(relative(appearance.text.font.line_height))
+            .text_color(super::appearance::color(appearance.text.foreground))
+            .bg(super::appearance::color(appearance.background))
+            .border(px(appearance.border_width))
+            .border_color(super::appearance::color(if focused {
+                appearance.focused_border
+            } else {
+                appearance.border
+            }))
+            .rounded(px(appearance.radius))
+            .child(self.state.clone());
         Proxy {
-            content: KitEditor::new(&self.state).h(px(120.)).into_any_element(),
+            content: content.into_any_element(),
             owner: cx.entity(),
         }
     }
@@ -250,7 +372,7 @@ impl Render for EditorOwner {
 /// Only the proxy adds the missing mark/unmark observation boundary.
 struct Proxy {
     content: AnyElement,
-    owner: Entity<EditorOwner>,
+    owner: Entity<TextareaOwner>,
 }
 impl IntoElement for Proxy {
     type Element = Self;
@@ -306,7 +428,7 @@ impl Element for Proxy {
         );
     }
 }
-impl EntityInputHandler for EditorOwner {
+impl EntityInputHandler for TextareaOwner {
     fn text_for_range(
         &mut self,
         r: Range<usize>,
@@ -425,8 +547,8 @@ impl EntityInputHandler for EditorOwner {
     }
 }
 
-struct EditorRecipe {
-    props: EditorProps,
+struct TextareaRecipe {
+    props: TextareaProps,
 }
 struct TextSnapshot {
     text: Rope,
@@ -456,7 +578,7 @@ impl maka_plugins::call::ReadResource for TextSnapshot {
             .map_err(|_| "invalid UTF-8 range".into())
     }
 }
-impl Widget for EditorRecipe {
+impl Widget for TextareaRecipe {
     fn capture(
         &self,
         state: &mut dyn Any,
@@ -467,17 +589,17 @@ impl Widget for EditorRecipe {
         if target.method() != "snapshot" {
             return Err(maka_ui::Error::Invalid("unknown editor capture".into()));
         }
-        let input: EditorCapture = serde_json::from_value(target.input().clone())
+        let input: TextareaCapture = serde_json::from_value(target.input().clone())
             .map_err(|e| maka_ui::Error::Invalid(e.to_string()))?;
         state
-            .downcast_ref::<Entity<EditorOwner>>()
+            .downcast_ref::<Entity<TextareaOwner>>()
             .expect("editor owner")
             .update(cx, |owner, cx| {
                 if owner.input.0.borrow().is_none() {
                     return Err(maka_ui::Error::Invalid("editor closed".into()));
                 }
                 owner.refresh(false, window, cx);
-                if let EditorCapture::AtRevision { revision } = input
+                if let TextareaCapture::AtRevision { revision } = input
                     && revision != owner.revision
                 {
                     return Err(maka_ui::Error::Invalid("editor revision changed".into()));
@@ -491,24 +613,24 @@ impl Widget for EditorRecipe {
     }
 
     fn create(&self, input: LiveInput, window: &mut Window, cx: &mut App) -> Box<dyn Any> {
-        Box::new(EditorOwner::new(&self.props, input, window, cx))
+        Box::new(TextareaOwner::new(&self.props, input, window, cx))
     }
     fn commit(&self, state: &mut dyn Any, window: &mut Window, cx: &mut App) {
         state
-            .downcast_ref::<Entity<EditorOwner>>()
+            .downcast_ref::<Entity<TextareaOwner>>()
             .expect("editor native owner")
             .update(cx, |owner, cx| owner.apply(&self.props, window, cx));
     }
     fn render(&self, state: &dyn Any, _: &Slots, _: &mut Window, _: &mut App) -> AnyElement {
         state
-            .downcast_ref::<Entity<EditorOwner>>()
+            .downcast_ref::<Entity<TextareaOwner>>()
             .expect("editor native owner")
             .clone()
             .into_any_element()
     }
 }
-struct EditorComponent;
-impl NativeComponent<dyn Widget> for EditorComponent {
+struct TextareaComponent;
+impl NativeComponent<dyn Widget> for TextareaComponent {
     fn capture(
         &self,
         _: maka_ui::actions::CaptureCall<'_>,
@@ -529,7 +651,7 @@ impl NativeComponent<dyn Widget> for EditorComponent {
                 props.clone(),
                 state["revision"].as_u64().expect("editor UI revision") + 1,
                 state["observation"].clone(),
-                serde_json::from_value::<Option<EditorCommand>>(state["request"].clone())
+                serde_json::from_value::<Option<TextareaCommand>>(state["request"].clone())
                     .expect("editor requested command"),
                 state["pending"].as_bool().expect("editor pending command"),
             ),
@@ -540,9 +662,9 @@ impl NativeComponent<dyn Widget> for EditorComponent {
                 ..
             } => {
                 let request =
-                    serde_json::from_value::<Option<EditorCommand>>(state["request"].clone())
+                    serde_json::from_value::<Option<TextareaCommand>>(state["request"].clone())
                         .expect("editor requested command");
-                let observation: EditorObservation =
+                let observation: TextareaObservation =
                     serde_json::from_value(input.clone()).expect("validated editor observation");
                 let settled = request
                     .as_ref()
@@ -564,7 +686,7 @@ impl NativeComponent<dyn Widget> for EditorComponent {
                 });
             }
         };
-        let typed: EditorProps = serde_json::from_value(props.clone())
+        let typed: TextareaProps = serde_json::from_value(props.clone())
             .map_err(|e| maka_ui::Error::Invalid(e.to_string()))?;
         if let Some(command) = &typed.command
             && request.as_ref() != Some(command)
@@ -588,15 +710,15 @@ impl NativeComponent<dyn Widget> for EditorComponent {
         Self::frame(props, revision, observation, request, pending)
     }
 }
-impl EditorComponent {
+impl TextareaComponent {
     fn frame(
         props: serde_json::Value,
         revision: u64,
         observation: serde_json::Value,
-        request: Option<EditorCommand>,
+        request: Option<TextareaCommand>,
         pending: bool,
     ) -> maka_ui::Result<ComponentOutput<Presentation<dyn Widget>>> {
-        let mut typed: EditorProps =
+        let mut typed: TextareaProps =
             serde_json::from_value(props).map_err(|e| maka_ui::Error::Invalid(e.to_string()))?;
         // Props propose new commands; the accepted request remains authoritative
         // until its receipt commits. None does not cancel a staged request.
@@ -606,19 +728,19 @@ impl EditorComponent {
             state: json!({"revision":revision,"request":request,"pending":pending,"observation":observation}),
             surface: None,
             view: Presentation::Native(NativeView::<dyn Widget>::new(
-                Rc::new(EditorRecipe { props: typed }),
-                BTreeMap::from([("observe".into(), maka_ui::editor::observation_schema())]), vec![])?),
+                Rc::new(TextareaRecipe { props: typed }),
+                BTreeMap::from([("observe".into(), maka_ui::textarea::observation_schema())]), vec![])?),
         }.output(Vec::new()))
     }
 }
 pub(super) fn register(registry: &mut NativeRegistry<dyn Widget>) {
     registry
-        .register("maka.ui.editor", |_, _values| {
+        .register("maka.ui.textarea", |_, _values| {
             Ok(BTreeMap::from([(
-                "Editor".into(),
+                "Textarea".into(),
                 NativeExport {
-                    contract: editor_contract(),
-                    value: NativeCapability::Component(Rc::new(EditorComponent)),
+                    contract: textarea_contract(),
+                    value: NativeCapability::Component(Rc::new(TextareaComponent)),
                 },
             )]))
         })

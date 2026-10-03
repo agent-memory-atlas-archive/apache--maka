@@ -25,7 +25,7 @@ use maka_ui::{
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
 };
 use serde_json::json;
 use std::{collections::BTreeMap, rc::Rc};
@@ -37,11 +37,15 @@ impl Widget for Label {
         Ok(paint::text_size(&self.props.text, width))
     }
     fn paint(&self, _: &mut Slots<'_>, area: Rect, buffer: &mut Buffer) -> maka_ui::Result<()> {
-        let style = if self.props.emphasis {
-            Style::default().add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        };
+        let rgba = self.props.appearance.foreground.0;
+        let mut style = Style::default().fg(Color::Rgb(
+            (rgba >> 24) as u8,
+            (rgba >> 16) as u8,
+            (rgba >> 8) as u8,
+        ));
+        if self.props.appearance.font.weight >= 600 {
+            style = style.add_modifier(Modifier::BOLD);
+        }
         paint::text(&self.props.text, area, buffer, style);
         Ok(())
     }

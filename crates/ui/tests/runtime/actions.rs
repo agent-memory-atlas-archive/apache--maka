@@ -85,11 +85,11 @@ fn fixture(
     let observed = calls.clone();
     let mut native = NativeRegistry::with_surface(PresentationTarget::Desktop);
     native
-        .register("maka.ui.editor", move |_, _values| {
+        .register("maka.ui.textarea", move |_, _values| {
             Ok(BTreeMap::from([(
-                "Editor".into(),
+                "Textarea".into(),
                 NativeExport {
-                    contract: maka_ui::editor::editor_contract(),
+                    contract: maka_ui::textarea::textarea_contract(),
                     value: NativeCapability::Component(Rc::new(Leaf {
                         captures: observed.clone(),
                         large,

@@ -17,10 +17,11 @@
  * under the License.
  */
 
-pub mod editor;
+mod appearance;
+pub mod textarea;
 
 use gpui_kit::{
-    AnyElement, App, IntoElement, ParentElement, SharedString, Styled, Window, div, px, rgb,
+    AnyElement, App, IntoElement, ParentElement, SharedString, Styled, Window, div, px,
 };
 use maka_ui::{
     ComponentCall, ComponentOutput, Frame, LabelProps, NativeCapability, NativeComponent,
@@ -113,29 +114,19 @@ impl Slots {
 
 struct Label {
     text: String,
-    emphasis: bool,
+    appearance: maka_ui::appearance::TextAppearance,
 }
 impl Widget for Label {
     fn render(&self, _: &dyn Any, _: &Slots, _: &mut Window, _: &mut App) -> AnyElement {
         // Opaque native payload: GPUI styling is not constrained to the JSON
         // Node primitives. Product placement remains in the importing component.
-        let label = div()
-            .px_3()
-            .py_1()
-            .rounded_full()
-            .border_1()
-            .border_color(rgb(0x5d82aa))
-            .bg(rgb(0x172034))
-            .text_color(rgb(0xe2efff))
-            .text_size(px(18.))
-            .child(SharedString::from(self.text.clone()));
-        if self.emphasis {
-            label
-                .font_weight(gpui_kit::FontWeight::BOLD)
-                .into_any_element()
-        } else {
-            label.into_any_element()
-        }
+        div()
+            .font(appearance::font(&self.appearance.font))
+            .text_color(appearance::color(self.appearance.foreground))
+            .text_size(px(self.appearance.font.size))
+            .line_height(gpui_kit::relative(self.appearance.font.line_height))
+            .child(SharedString::from(self.text.clone()))
+            .into_any_element()
     }
 }
 struct LabelComponent;
@@ -164,7 +155,7 @@ impl NativeComponent<dyn Widget> for LabelComponent {
             view: Presentation::Native(NativeView::<dyn Widget>::new(
                 Rc::new(Label {
                     text: props.text,
-                    emphasis: props.emphasis,
+                    appearance: props.appearance,
                 }),
                 BTreeMap::new(),
                 vec![],
@@ -187,6 +178,6 @@ pub fn registry() -> NativeRegistry<dyn Widget> {
             )]))
         })
         .expect("unique native label implementation");
-    editor::register(&mut registry);
+    textarea::register(&mut registry);
     registry
 }

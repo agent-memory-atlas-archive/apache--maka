@@ -17,6 +17,8 @@ use std::{
 pub(crate) struct Aria(Option<Box<AriaProperties>>);
 
 static NO_ARIA: AriaProperties = AriaProperties {
+    disabled: None,
+    readonly: None,
     author_id: None,
     label: None,
     description: None,

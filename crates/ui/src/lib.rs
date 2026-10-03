@@ -21,11 +21,12 @@
 //! executes on initialization or input, never during layout/paint.
 pub mod abi;
 pub mod actions;
-pub mod editor;
+pub mod appearance;
 mod frame;
 mod native;
 pub mod operations;
 pub mod text;
+pub mod textarea;
 mod tree;
 mod values;
 pub use frame::{ComponentOutput, ComponentSlot, Direction, Emission, Frame, Node, Surface};

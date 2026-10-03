@@ -36,29 +36,113 @@ export const contracts = {
             type: 'string',
             maxLength: 4096,
           },
-          emphasis: {
-            type: 'boolean',
-            default: false,
+          appearance: {
+            $ref: '#/$defs/TextAppearance',
           },
         },
         additionalProperties: false,
-        required: ['text'],
+        required: ['text', 'appearance'],
+        $defs: {
+          TextAppearance: {
+            type: 'object',
+            properties: {
+              font: {
+                $ref: '#/$defs/FontAppearance',
+              },
+              foreground: {
+                $ref: '#/$defs/Color',
+              },
+            },
+            additionalProperties: false,
+            required: ['font', 'foreground'],
+          },
+          FontAppearance: {
+            type: 'object',
+            properties: {
+              family: {
+                $ref: '#/$defs/FontFamily',
+              },
+              fallbacks: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/FontFamily',
+                },
+                maxItems: 8,
+              },
+              size: {
+                type: 'number',
+                format: 'float',
+                minimum: 6,
+                maximum: 96,
+              },
+              lineHeight: {
+                description: 'Line height relative to this font size.',
+                type: 'number',
+                format: 'float',
+                minimum: 1,
+                maximum: 3,
+              },
+              weight: {
+                type: 'integer',
+                format: 'uint16',
+                minimum: 1,
+                maximum: 1000,
+              },
+            },
+            additionalProperties: false,
+            required: ['family', 'fallbacks', 'size', 'lineHeight', 'weight'],
+          },
+          FontFamily: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+          },
+          Color: {
+            description: 'Packed RGBA, including explicit alpha zero.',
+            type: 'integer',
+            format: 'uint32',
+            minimum: 0,
+          },
+        },
       },
       events: {},
       captures: {},
     },
   },
-  editor: {
-    name: 'maka.ui.Editor',
+  textarea: {
+    name: 'maka.ui.Textarea',
     version: 1,
     transport: 'local',
     interface: {
       kind: 'component',
       props: {
         $schema: 'https://json-schema.org/draft/2020-12/schema',
-        title: 'EditorProps',
+        title: 'TextareaProps',
         type: 'object',
         properties: {
+          appearance: {
+            $ref: '#/$defs/TextareaAppearance',
+          },
+          accessibilityLabel: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 512,
+          },
+          readOnly: {
+            type: 'boolean',
+          },
+          disabled: {
+            type: 'boolean',
+          },
+          softWrap: {
+            type: 'boolean',
+          },
+          tabIndex: {
+            type: 'integer',
+            format: 'int16',
+            minimum: -1,
+            maximum: 32767,
+          },
           initialText: {
             type: 'string',
             maxLength: 65536,
@@ -74,7 +158,7 @@ export const contracts = {
               'None issues no new command; an accepted command remains pending until\nits matching receipt commits. Clearing props is not cancellation.',
             anyOf: [
               {
-                $ref: '#/$defs/EditorCommand',
+                $ref: '#/$defs/TextareaCommand',
               },
               {
                 type: 'null',
@@ -84,8 +168,282 @@ export const contracts = {
           },
         },
         additionalProperties: false,
+        required: [
+          'appearance',
+          'accessibilityLabel',
+          'readOnly',
+          'disabled',
+          'softWrap',
+          'tabIndex',
+        ],
         $defs: {
-          EditorCommand: {
+          TextareaAppearance: {
+            type: 'object',
+            properties: {
+              text: {
+                $ref: '#/$defs/TextAppearance',
+              },
+              mutedForeground: {
+                $ref: '#/$defs/Color',
+              },
+              background: {
+                $ref: '#/$defs/Color',
+              },
+              selection: {
+                $ref: '#/$defs/Color',
+              },
+              caret: {
+                $ref: '#/$defs/Color',
+              },
+              border: {
+                $ref: '#/$defs/Color',
+              },
+              focusedBorder: {
+                $ref: '#/$defs/Color',
+              },
+              borderWidth: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 8,
+              },
+              radius: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 64,
+              },
+              padding: {
+                $ref: '#/$defs/Insets',
+              },
+              scrollbar: {
+                $ref: '#/$defs/ScrollbarAppearance',
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'text',
+              'mutedForeground',
+              'background',
+              'selection',
+              'caret',
+              'border',
+              'focusedBorder',
+              'borderWidth',
+              'radius',
+              'padding',
+              'scrollbar',
+            ],
+          },
+          TextAppearance: {
+            type: 'object',
+            properties: {
+              font: {
+                $ref: '#/$defs/FontAppearance',
+              },
+              foreground: {
+                $ref: '#/$defs/Color',
+              },
+            },
+            additionalProperties: false,
+            required: ['font', 'foreground'],
+          },
+          FontAppearance: {
+            type: 'object',
+            properties: {
+              family: {
+                $ref: '#/$defs/FontFamily',
+              },
+              fallbacks: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/FontFamily',
+                },
+                maxItems: 8,
+              },
+              size: {
+                type: 'number',
+                format: 'float',
+                minimum: 6,
+                maximum: 96,
+              },
+              lineHeight: {
+                description: 'Line height relative to this font size.',
+                type: 'number',
+                format: 'float',
+                minimum: 1,
+                maximum: 3,
+              },
+              weight: {
+                type: 'integer',
+                format: 'uint16',
+                minimum: 1,
+                maximum: 1000,
+              },
+            },
+            additionalProperties: false,
+            required: ['family', 'fallbacks', 'size', 'lineHeight', 'weight'],
+          },
+          FontFamily: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+          },
+          Color: {
+            description: 'Packed RGBA, including explicit alpha zero.',
+            type: 'integer',
+            format: 'uint32',
+            minimum: 0,
+          },
+          Insets: {
+            type: 'object',
+            properties: {
+              top: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+              right: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+              bottom: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+              left: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['top', 'right', 'bottom', 'left'],
+          },
+          ScrollbarAppearance: {
+            type: 'object',
+            properties: {
+              mode: {
+                $ref: '#/$defs/ScrollbarMode',
+              },
+              entrance: {
+                $ref: '#/$defs/ScrollbarEntrance',
+              },
+              idleMillis: {
+                type: 'integer',
+                format: 'uint32',
+                minimum: 0,
+                maximum: 60000,
+              },
+              enterMillis: {
+                type: 'integer',
+                format: 'uint32',
+                minimum: 0,
+                maximum: 1000,
+              },
+              exitMillis: {
+                type: 'integer',
+                format: 'uint32',
+                minimum: 0,
+                maximum: 1000,
+              },
+              expandMillis: {
+                type: 'integer',
+                format: 'uint32',
+                minimum: 0,
+                maximum: 1000,
+              },
+              trackWidth: {
+                type: 'number',
+                format: 'float',
+                minimum: 1,
+                maximum: 64,
+              },
+              track: {
+                $ref: '#/$defs/Color',
+              },
+              trackHover: {
+                $ref: '#/$defs/Color',
+              },
+              trackActive: {
+                $ref: '#/$defs/Color',
+              },
+              thumb: {
+                $ref: '#/$defs/ScrollbarThumb',
+              },
+              thumbHover: {
+                $ref: '#/$defs/ScrollbarThumb',
+              },
+              thumbActive: {
+                $ref: '#/$defs/ScrollbarThumb',
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'mode',
+              'entrance',
+              'idleMillis',
+              'enterMillis',
+              'exitMillis',
+              'expandMillis',
+              'trackWidth',
+              'track',
+              'trackHover',
+              'trackActive',
+              'thumb',
+              'thumbHover',
+              'thumbActive',
+            ],
+          },
+          ScrollbarMode: {
+            type: 'string',
+            enum: ['scrolling', 'hover', 'always'],
+          },
+          ScrollbarEntrance: {
+            type: 'string',
+            enum: ['fade', 'slide_and_fade'],
+          },
+          ScrollbarThumb: {
+            type: 'object',
+            properties: {
+              color: {
+                $ref: '#/$defs/Color',
+              },
+              width: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 64,
+              },
+              inset: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 64,
+              },
+              radius: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 32,
+              },
+              minLength: {
+                type: 'number',
+                format: 'float',
+                minimum: 1,
+                maximum: 4096,
+              },
+            },
+            additionalProperties: false,
+            required: ['color', 'width', 'inset', 'radius', 'minLength'],
+          },
+          TextareaCommand: {
             type: 'object',
             properties: {
               sequence: {
@@ -101,13 +459,13 @@ export const contracts = {
                 maximum: 9007199254740991,
               },
               edit: {
-                $ref: '#/$defs/EditorEdit',
+                $ref: '#/$defs/TextareaEdit',
               },
             },
             additionalProperties: false,
             required: ['sequence', 'basedOn', 'edit'],
           },
-          EditorEdit: {
+          TextareaEdit: {
             oneOf: [
               {
                 type: 'object',
@@ -146,7 +504,7 @@ export const contracts = {
       events: {
         changed: {
           $schema: 'https://json-schema.org/draft/2020-12/schema',
-          title: 'EditorObservation',
+          title: 'TextareaObservation',
           type: 'object',
           properties: {
             revision: {
@@ -155,12 +513,12 @@ export const contracts = {
               minimum: 0,
             },
             snapshot: {
-              $ref: '#/$defs/EditorSnapshot',
+              $ref: '#/$defs/TextareaSnapshot',
             },
             receipt: {
               anyOf: [
                 {
-                  $ref: '#/$defs/EditorReceipt',
+                  $ref: '#/$defs/TextareaReceipt',
                 },
                 {
                   type: 'null',
@@ -171,11 +529,11 @@ export const contracts = {
           additionalProperties: false,
           required: ['revision', 'snapshot'],
           $defs: {
-            EditorSnapshot: {
+            TextareaSnapshot: {
               type: 'object',
               properties: {
                 text: {
-                  $ref: '#/$defs/EditorTextRef',
+                  $ref: '#/$defs/TextareaTextRef',
                 },
                 selection: {
                   $ref: '#/$defs/TextRange',
@@ -197,7 +555,7 @@ export const contracts = {
               additionalProperties: false,
               required: ['text', 'selection', 'reversed'],
             },
-            EditorTextRef: {
+            TextareaTextRef: {
               type: 'object',
               properties: {
                 owner: {
@@ -234,7 +592,7 @@ export const contracts = {
               additionalProperties: false,
               required: ['start', 'end'],
             },
-            EditorReceipt: {
+            TextareaReceipt: {
               type: 'object',
               properties: {
                 sequence: {
@@ -248,13 +606,13 @@ export const contracts = {
                   minimum: 0,
                 },
                 outcome: {
-                  $ref: '#/$defs/EditorOutcome',
+                  $ref: '#/$defs/TextareaOutcome',
                 },
               },
               additionalProperties: false,
               required: ['sequence', 'revision', 'outcome'],
             },
-            EditorOutcome: {
+            TextareaOutcome: {
               oneOf: [
                 {
                   type: 'object',
@@ -271,7 +629,7 @@ export const contracts = {
                   type: 'object',
                   properties: {
                     reason: {
-                      $ref: '#/$defs/EditorConflict',
+                      $ref: '#/$defs/TextareaConflict',
                     },
                     status: {
                       type: 'string',
@@ -283,7 +641,7 @@ export const contracts = {
                 },
               ],
             },
-            EditorConflict: {
+            TextareaConflict: {
               type: 'string',
               enum: ['revision', 'composition', 'sequence'],
             },
@@ -294,7 +652,7 @@ export const contracts = {
         snapshot: {
           input: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
-            title: 'EditorCapture',
+            title: 'TextareaCapture',
             oneOf: [
               {
                 type: 'object',

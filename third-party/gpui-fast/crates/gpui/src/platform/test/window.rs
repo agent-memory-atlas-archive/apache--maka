@@ -53,6 +53,8 @@ pub(crate) struct TestWindowState {
     input_handler: Option<PlatformInputHandler>,
     text_input_configurations: Vec<TextInputConfiguration>,
     text_input_state_changes: Vec<TextInputStateChange>,
+    a11y_callbacks: Option<crate::A11yCallbacks>,
+    a11y_update: Option<accesskit::TreeUpdate>,
     is_fullscreen: bool,
     scale_factor: f32,
     appearance: WindowAppearance,
@@ -127,6 +129,8 @@ impl TestWindow {
             input_handler: None,
             text_input_configurations: Vec::new(),
             text_input_state_changes: Vec::new(),
+            a11y_callbacks: None,
+            a11y_update: None,
             is_fullscreen: false,
             // Preserve the test platform's historical 2x default.
             scale_factor: 2.0,
@@ -142,6 +146,22 @@ impl TestWindow {
             },
         })))
     }
+    pub(crate) fn activate_accessibility(&self) {
+        let state = self.0.lock();
+        if let Some(callbacks) = &state.a11y_callbacks {
+            (callbacks.activation)();
+        }
+    }
+    pub(crate) fn accessibility_update(&self) -> Option<accesskit::TreeUpdate> {
+        self.0.lock().a11y_update.clone()
+    }
+    pub(crate) fn simulate_accessibility_action(&self, request: accesskit::ActionRequest) {
+        let state = self.0.lock();
+        if let Some(callbacks) = &state.a11y_callbacks {
+            (callbacks.action)(request);
+        }
+    }
+
     pub fn simulate_scheduled_frame(&self) -> bool {
         let callback = {
             let mut state = self.0.lock();
@@ -300,6 +320,13 @@ impl TestWindow {
 }
 
 impl PlatformWindow for TestWindow {
+    fn a11y_init(&self, callbacks: crate::A11yCallbacks) {
+        self.0.lock().a11y_callbacks = Some(callbacks);
+    }
+    fn a11y_tree_update(&self, update: accesskit::TreeUpdate) {
+        self.0.lock().a11y_update = Some(update);
+    }
+
     fn take_cleanup_receiver(&mut self) -> anyhow::Result<crate::WindowCleanupReceiver> {
         self.0.lock().cleanup.take_receiver()
     }

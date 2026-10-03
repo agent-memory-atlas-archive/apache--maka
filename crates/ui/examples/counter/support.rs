@@ -251,6 +251,88 @@ pub(crate) const CHILD_UPDATE: &str =
     "return frame({...state,label:props.label,revision:state.revision+1});";
 pub(crate) const PARENT_EVENT: &str = "const next={...state,revision:state.revision+1};if(event.key==='toggle')next.right=!state.right;else next.version++;return frame(next);";
 
+// These values belong to an ordinary fixture brand package, not the renderer.
+pub(crate) fn brand_appearance() -> serde_json::Value {
+    let text = json!({"font":{"family":".SystemUIFont","fallbacks":[],"size":16,"lineHeight":1.5,"weight":400},"foreground":0x242724ffu32});
+    let thumb = json!({"color":0x92998cffu32,"width":8,"inset":3,"radius":3,"minLength":40});
+    json!({"label":text,"textarea":{
+        "text":text,"mutedForeground":0x656a63ffu32,"background":0xfaf9f6ffu32,
+        "selection":0x41665340u32,"caret":0x242724ffu32,"border":0xd8ddd5ffu32,
+        "focusedBorder":0x416653ffu32,"borderWidth":1,"radius":12,
+        "padding":{"top":12,"right":12,"bottom":12,"left":12},
+        "scrollbar":{"mode":"hover","entrance":"fade","idleMillis":2000,
+            "enterMillis":120,"exitMillis":150,"expandMillis":120,"trackWidth":14,
+            "track":0,"trackHover":0,"trackActive":0,
+            "thumb":thumb,"thumbHover":thumb,"thumbActive":thumb}
+    }})
+}
+fn bind_brand(input: &mut Input, packages: &mut Vec<Package>, declaration: &mut Declaration) {
+    let mut generator = schemars::SchemaGenerator::default();
+    let label = generator.subschema_for::<maka_ui::appearance::TextAppearance>();
+    let textarea = generator.subschema_for::<maka_ui::appearance::TextareaAppearance>();
+    let schema = json!({"type":"object","properties":{"label":label,"textarea":textarea},
+        "required":["label","textarea"],"additionalProperties":false,"$defs":generator.definitions()});
+    let contract = Contract {
+        name: "example.brand.Appearance".into(),
+        version: 1,
+        transport: Transport::Local,
+        interface: Interface::Value {
+            schema: schema.clone(),
+        },
+    };
+    let brand = package(
+        "dynamic.brand",
+        Declaration {
+            entries: BTreeMap::from([(
+                EntryTarget::Desktop,
+                EntryDeclaration {
+                    implementation: Implementation::JavaScript {
+                        module: "index.mjs".into(),
+                        realm: Realm::Shared,
+                    },
+                    configuration: schema,
+                    imports: BTreeMap::new(),
+                    exports: BTreeMap::from([(
+                        "Appearance".into(),
+                        Export {
+                            contract: contract.clone(),
+                            availability: Availability::Required,
+                        },
+                    )]),
+                },
+            )]),
+            composition: None,
+        },
+        Some(format!(
+            "const contract={};export function activate(configuration){{return {{Appearance:{{kind:'value',contract,value:configuration}}}};}}",
+            serde_json::to_string(&contract).unwrap()
+        )),
+    );
+    declaration
+        .entries
+        .get_mut(&EntryTarget::Desktop)
+        .unwrap()
+        .imports
+        .insert(
+            "brand".into(),
+            Import {
+                contract,
+                cardinality: Cardinality::One,
+            },
+        );
+    input.instances.get_mut("app").unwrap().bindings.insert(
+        "brand".into(),
+        vec![Target::Instance {
+            path: vec!["brand".into()],
+            export: "Appearance".into(),
+        }],
+    );
+    let mut instance = node(&brand, 990);
+    instance.configuration.values = serde_json::from_value(brand_appearance()).unwrap();
+    input.instances.insert("brand".into(), instance);
+    packages.push(brand);
+}
+
 /// Mixed JS/native composition. The package selects a compiled implementation;
 /// placing, updating and removing it remains ordinary product component code.
 pub(crate) fn native_fixture() -> (Input, Vec<Package>) {
@@ -261,6 +343,7 @@ pub(crate) fn native_fixture() -> (Input, Vec<Package>) {
         .unwrap();
     let root = packages.remove(index);
     let mut declaration = root.manifest().application.clone().unwrap();
+    bind_brand(&mut input, &mut packages, &mut declaration);
     let contract = maka_ui::label_contract();
     declaration
         .entries
@@ -275,7 +358,10 @@ pub(crate) fn native_fixture() -> (Input, Vec<Package>) {
             },
         );
     let source = std::str::from_utf8(root.file("index.mjs").unwrap()).unwrap();
-    let source = source.replace("children:[{kind:'stack',key:'counters'", "children:[...(state.right?[{kind:'component',key:'nativeLabel',binding:'label',member:0,on:{},props:{text:'Native '+state.version,emphasis:true}}]:[]),{kind:'stack',key:'counters'");
+    let source = source.replace("children:[{kind:'stack',key:'counters'", "children:[...(state.right?[{kind:'component',key:'nativeLabel',binding:'label',member:0,on:{},props:{text:'Native '+state.version,appearance:state.brand.label}}]:[]),{kind:'stack',key:'counters'");
+    let source = source
+        .replace("mount(){return frame({revision:0,version:0,right:true});}", "mount(props,values){return frame({revision:0,version:0,right:true,brand:values.brand[0]});}")
+        .replace("update(state,props){return frame({...state,revision:state.revision+1});}", "update(state,props,values){return frame({...state,revision:state.revision+1,brand:values.brand[0]});}");
     let root = package("dynamic.app", declaration, Some(source));
     let label = package(
         "native.label",
@@ -323,7 +409,7 @@ pub(crate) fn editor_fixture() -> (Input, Vec<Package>) {
         .unwrap();
     let root = packages.remove(index);
     let mut declaration = root.manifest().application.clone().unwrap();
-    let contract = maka_ui::editor::editor_contract();
+    let contract = maka_ui::textarea::textarea_contract();
     declaration
         .entries
         .get_mut(&EntryTarget::Desktop)
@@ -337,7 +423,7 @@ pub(crate) fn editor_fixture() -> (Input, Vec<Package>) {
             },
         );
     let source = std::str::from_utf8(root.file("index.mjs").unwrap()).unwrap();
-    let source = source.replace("...(state.right?[{kind:'component',key:'nativeLabel'", "...(state.right?[{kind:'component',key:'editor',binding:'editor',member:0,on:{},props:{initialText:'Start',placeholder:'Write here',command:state.command??null}},{kind:'component',key:'nativeLabel'");
+    let source = source.replace("...(state.right?[{kind:'component',key:'nativeLabel'", "...(state.right?[{kind:'component',key:'editor',binding:'editor',member:0,on:{},props:{initialText:'Start',placeholder:'Write here',appearance:state.brand.textarea,accessibilityLabel:'Write a draft',readOnly:false,disabled:false,softWrap:true,tabIndex:0,command:state.command??null}},{kind:'component',key:'nativeLabel'");
     let source = source.replace("const next={...state,revision:state.revision+1};", "const next={...state,revision:state.revision+1};if(event.event?.command)next.command=event.event.command;");
     let source = source.replace(
         "title:'Composed product',width:640,height:400",
@@ -351,12 +437,12 @@ pub(crate) fn editor_fixture() -> (Input, Vec<Package>) {
                 EntryTarget::Desktop,
                 EntryDeclaration {
                     implementation: Implementation::Native {
-                        implementation: "maka.ui.editor".into(),
+                        implementation: "maka.ui.textarea".into(),
                     },
                     configuration: json!({"type":"object"}),
                     imports: BTreeMap::new(),
                     exports: BTreeMap::from([(
-                        "Editor".into(),
+                        "Textarea".into(),
                         Export {
                             contract,
                             availability: Availability::Required,
@@ -374,7 +460,7 @@ pub(crate) fn editor_fixture() -> (Input, Vec<Package>) {
         "editor".into(),
         vec![Target::Instance {
             path: vec!["editor".into()],
-            export: "Editor".into(),
+            export: "Textarea".into(),
         }],
     );
     input.instances.insert("editor".into(), node(&editor, 5));
@@ -382,7 +468,7 @@ pub(crate) fn editor_fixture() -> (Input, Vec<Package>) {
     (input, packages)
 }
 
-/// A product component subscribes to the Editor's public metadata event. No
+/// A product component subscribes to the Textarea's public metadata event. No
 /// global lookup or text-resource read is granted by receiving this payload.
 #[allow(dead_code)] // Shared with tests that do not load the Desktop editor.
 pub(crate) const EDITOR_RECEIVE: &str = "if(event.kind==='component'&&event.name==='changed'){return frame({...state,revision:state.revision+1,observation:event.event});}";
@@ -432,8 +518,8 @@ pub(crate) fn resource_fixture() -> (Input, Vec<Package>) {
         r#"
     const contract={};
     export function activate(){{return {{App:{{contract,kind:'component',component:['app']}}}};}}
-    function frame(state){{return {{actions:[],events:[],frame:{{revision:state.revision,state,surface:{{kind:'window',binding:'surface',title:'Immutable draft',width:640,height:480}},view:{{kind:'stack',key:'root',direction:'column',padding:16,gap:12,background:1513239,children:[{{kind:'text',key:'status',text:'Captured: '+(state.outcome?.value?.text??state.outcome?.status??'—'),color:16777215}},...(state.show?[{{kind:'component',key:'editor',binding:'editor',member:0,on:{{changed:'changed'}},props:{{initialText:'Start',placeholder:'Write here',command:state.command??null}}}}]:[]),{{kind:'button',key:'read',label:'Capture draft'}},{{kind:'button',key:'remove',label:'Remove composer'}}]}}}}}};}}
-    export const app={{mount(){{return frame({{revision:0,show:true}});}},update(state){{return frame({{...state,revision:state.revision+1}});}},event(state,event){{
+    function frame(state){{return {{actions:[],events:[],frame:{{revision:state.revision,state,surface:{{kind:'window',binding:'surface',title:'Immutable draft',width:640,height:480}},view:{{kind:'stack',key:'root',direction:'column',padding:16,gap:12,background:1513239,children:[{{kind:'text',key:'status',text:'Captured: '+(state.outcome?.value?.text??state.outcome?.status??'—'),color:16777215}},...(state.show?[{{kind:'component',key:'editor',binding:'editor',member:0,on:{{changed:'changed'}},props:{{initialText:'Start',placeholder:'Write here',appearance:state.brand.textarea,accessibilityLabel:'Write a draft',readOnly:false,disabled:false,softWrap:true,tabIndex:0,command:state.command??null}}}}]:[]),{{kind:'button',key:'read',label:'Capture draft'}},{{kind:'button',key:'remove',label:'Remove composer'}}]}}}}}};}}
+    export const app={{mount(props,values){{return frame({{revision:0,show:true,brand:values.brand[0]}});}},update(state,props,values){{return frame({{...state,revision:state.revision+1,brand:values.brand[0]}});}},event(state,event){{
         const next={{...state,revision:state.revision+1}};
         if(event.kind==='action')next.outcome=event.event;
         else if(event.kind==='component')next.observation=event.event;
@@ -445,7 +531,7 @@ pub(crate) fn resource_fixture() -> (Input, Vec<Package>) {
         serde_json::to_string(&entry.exports["App"].contract).unwrap()
     );
     let root = package("dynamic.app", declaration, Some(root_source));
-    let editor = maka_ui::editor::editor_contract();
+    let editor = maka_ui::textarea::textarea_contract();
     let composer = package(
         "dynamic.composer",
         Declaration {
@@ -466,7 +552,7 @@ pub(crate) fn resource_fixture() -> (Input, Vec<Package>) {
                         },
                     )]),
                     exports: BTreeMap::from([(
-                        "Editor".into(),
+                        "Textarea".into(),
                         Export {
                             contract: editor.clone(),
                             availability: Availability::Required,
@@ -477,7 +563,7 @@ pub(crate) fn resource_fixture() -> (Input, Vec<Package>) {
         },
         Some(format!(
             r#"
-        const contract={};export function activate(){{return {{Editor:{{contract,kind:'component',component:['composer']}}}};}}
+        const contract={};export function activate(){{return {{Textarea:{{contract,kind:'component',component:['composer']}}}};}}
         function frame(state,props,events=[]){{return {{actions:[],events,frame:{{revision:state.revision,state,surface:null,view:{{kind:'component',key:'draft',binding:'editor',member:0,props,on:{{changed:'changed'}}}}}}}};}}
         export const composer={{mount(props){{return frame({{revision:0}},props);}},update(state,props){{return frame({{...state,revision:state.revision+1}},props);}},event(state,event,props){{return frame({{revision:state.revision+1}},props,[{{name:'changed',value:event.event}}]);}},capture(state,props,method,input){{return {{kind:'forward',source:{{child:'draft',method,input}}}};}}}};
     "#,
@@ -516,7 +602,7 @@ pub(crate) fn resource_fixture() -> (Input, Vec<Package>) {
         "editor".into(),
         vec![Target::Instance {
             path: vec!["composer".into()],
-            export: "Editor".into(),
+            export: "Textarea".into(),
         }],
     );
     root_node.bindings.insert(
@@ -531,7 +617,7 @@ pub(crate) fn resource_fixture() -> (Input, Vec<Package>) {
         "editor".into(),
         vec![Target::Instance {
             path: vec!["editor".into()],
-            export: "Editor".into(),
+            export: "Textarea".into(),
         }],
     );
     input.instances.insert("composer".into(), composer_node);

@@ -1148,6 +1148,18 @@ impl<M: InputModeKind> InputBaseState<M> {
         !self.disabled && !self.readonly
     }
 
+    /// Preserve the existing editing focus identity while projecting tab order.
+    pub fn set_tab_index(&mut self, index: isize, cx: &mut Context<Self>) {
+        if self.focus_handle.tab_index != index || self.focus_handle.tab_stop != (index >= 0) {
+            self.focus_handle = self
+                .focus_handle
+                .clone()
+                .tab_index(index)
+                .tab_stop(index >= 0);
+            cx.notify();
+        }
+    }
+
     /// Set true to clear the input by pressing Escape key.
     pub fn clean_on_escape(mut self) -> Self {
         self.clean_on_escape = true;

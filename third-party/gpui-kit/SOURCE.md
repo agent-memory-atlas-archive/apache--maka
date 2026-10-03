@@ -32,3 +32,8 @@ Idle waits are owned tasks; replacement or state release cancels the old wait, a
 Imported dock JSON fixtures are formatted to the repository's existing formatter policy. Their data, string values and numeric tokens are preserved; provenance hashes still identify their original upstream bytes.
 
 The theme snapshot is a derived presentation cache, not an application registry or a writable source of plugin configuration. Application adapters must build it from their selected declarative values without entities, resource leases or custom animation closures, project body text colour/font/size/line-height explicitly, and preserve the existing EditorState identity. This patch alone does not implement Maka's public theme contract, live reconciliation, product UI, accessibility or OS IME acceptance.
+
+
+InputBaseState can update tab index/stop metadata on its existing FocusId, notifying only when that metadata changes. This does not recreate its focus or editing identity. Maka's plain multiline adapter uses TextareaState; the source-code EditorState remains a separate upstream mode, with no extra code-editor protocol implied by this seam.
+
+Two imported dock renderer-contract tests explicitly request a fresh draw before checking the original hook-order assertions. Their helper already settles and then clears the call record; a normal retained draw can legally skip those hooks. This adjustment does not change production retention or weaken the composition assertions, and no original-HEAD baseline is claimed for that discovery.

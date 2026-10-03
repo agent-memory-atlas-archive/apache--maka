@@ -114,7 +114,7 @@ outside the tree primitive set; its placement and props belong to the product.
 Synchronous event consume/default decisions remain pending.
 
 Use `editor` instead of `native` to persist a composition importing the native Kit
-Editor. Its Rust contract describes initial text, explicit
+Textarea. Its Rust contract describes initial text, explicit
 revision-based replace/reset commands, metadata observations and command receipts.
 The native buffer remains outside serialized component state. The public `changed`
 event contains typed metadata observations and receipts;
@@ -129,11 +129,11 @@ The example's component contract uses the same Rust declaration types as runtime
 validation. It does not depend on the previous plugin SDK or global service catalog.
 
 Use `events` instead of `editor` to generate a product component that explicitly
-subscribes to Editor `changed` and displays its observed native draft revision.
+subscribes to Textarea `changed` and displays its observed native draft revision.
 The generator persists the selected packages. This exercises public delivery,
 not text-resource reads, business actions, or a finished product design.
 
-Use `resource` to compose a dynamic Composer with a private native Editor and an
+Use `resource` to compose a dynamic Composer with a private native Textarea and an
 explicitly imported native UTF-8 Reader:
 
 ```sh
@@ -265,6 +265,22 @@ including repeated values, is counted before payload copying against 1 MiB; JS
 precision checks precede guest entry. Native consumers preserve exact integers.
 Registered values and committed frames share the application's 32 MiB serialized
 retained budget; retiring a provider does not reclaim its quota before real
-registration cleanup. Values are immutable for an activation. Live reconcile and
-window/local theme projection are separate work; this path alone does not implement
-live theme switching or a finished product.
+registration cleanup. Values are immutable for an activation. Local appearance
+projection is implemented for Label and Textarea; live provider reconciliation
+and finished product interfaces remain separate work.
+
+The `maka.ui.Textarea` contract publishes the `Textarea` export, backed by Kit's
+ordinary multiline TextareaState. Props require complete `appearance` data plus
+`accessibilityLabel`, `readOnly`, `disabled`, `softWrap` and `tabIndex`. Typography,
+RGBA colours (including alpha zero), padding, borders and actual scrollbar
+geometry/motion are projected into the existing native owner. Appearance updates
+do not replace the text, selections, composition or undo history. Label also takes
+explicit text appearance. The example brand is an ordinary JavaScript Value
+provider selected by composition; native rendering reads no global brand palette.
+
+Textarea exposes its actual focus, label, value and editability to AccessKit, and
+supports Focus and editable SetValue requests. Headless platform-channel tests
+cover those requests and focus navigation. The ordinary editing context menu and
+OS accessibility/IME acceptance remain pending. The TUI Label projects colour and
+weight to RGB/bold terminal styling; desktop fonts and alpha compositing do not
+imply equivalent terminal rendering.

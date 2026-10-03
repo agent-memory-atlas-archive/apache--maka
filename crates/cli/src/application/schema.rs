@@ -21,7 +21,7 @@ use maka_plugin_core::{composition, contract, package};
 use maka_runtime_host::application::abi::{
     HostActivation, HostObservation, HostRequest, ResourceMetadata,
 };
-use maka_ui::{abi, actions, editor, text};
+use maka_ui::{abi, actions, text, textarea};
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde_json::{Value, json};
 
@@ -49,9 +49,9 @@ pub(super) fn catalog() -> Value {
         root::<maka_ui::operations::CallerHistoryPage>(&mut g),
         root::<maka_event_log::applications::intents::CallerIntent>(&mut g),
         root::<maka_ui::LabelProps>(&mut g),
-        root::<editor::EditorProps>(&mut g),
-        root::<editor::EditorObservation>(&mut g),
-        root::<editor::EditorCapture>(&mut g),
+        root::<textarea::TextareaProps>(&mut g),
+        root::<textarea::TextareaObservation>(&mut g),
+        root::<textarea::TextareaCapture>(&mut g),
         root::<text::ReadText>(&mut g),
         root::<text::TextChunk>(&mut g),
         root::<HostActivation>(&mut g),
@@ -69,7 +69,7 @@ pub(super) fn catalog() -> Value {
             "title": "RuntimeProtocol", "$defs": g.definitions(), "anyOf": roots,
         },
         "contracts": {
-            "label": maka_ui::label_contract(), "editor": editor::editor_contract(),
+            "label": maka_ui::label_contract(), "textarea": textarea::textarea_contract(),
             "textReader": text::reader_contract(),
             "callerHistory": maka_ui::operations::caller_history_contract(),
             "receiptReader": maka_plugin_core::operation::receipt_reader_contract(),

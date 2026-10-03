@@ -85,7 +85,11 @@ impl TabStopMap {
             tab_stop: focus_handle.tab_stop,
             path,
         };
-        self.by_id.insert(focus_handle.id, order.clone());
+        // Nested facades may track the same native focus owner. Keep every
+        // insertion in the replay log, but exactly one traversal entry per id.
+        if let Some(previous) = self.by_id.insert(focus_handle.id, order.clone()) {
+            self.order.remove(&previous, ());
+        }
         self.order.insert_or_replace(order, ());
     }
 
@@ -111,7 +115,7 @@ impl TabStopMap {
     pub fn next(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
         let Some(focused_id) = focused_id else {
             let first = self.order.first()?;
-            if first.tab_stop {
+            if self.is_live_tab_stop(first) {
                 return self.focus_handle_for_order(first);
             } else {
                 return self
@@ -137,7 +141,7 @@ impl TabStopMap {
         cursor.seek(&node, Bias::Left);
         cursor.next();
         while let Some(item) = cursor.item()
-            && !item.tab_stop
+            && !self.is_live_tab_stop(item)
         {
             cursor.next();
         }
@@ -148,7 +152,7 @@ impl TabStopMap {
     pub fn prev(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
         let Some(focused_id) = focused_id else {
             let last = self.order.last()?;
-            if last.tab_stop {
+            if self.is_live_tab_stop(last) {
                 return self.focus_handle_for_order(last);
             } else {
                 return self
@@ -174,7 +178,7 @@ impl TabStopMap {
         cursor.seek(&node, Bias::Left);
         cursor.prev();
         while let Some(item) = cursor.item()
-            && !item.tab_stop
+            && !self.is_live_tab_stop(item)
         {
             cursor.prev();
         }
@@ -197,7 +201,17 @@ impl TabStopMap {
     }
 
     pub(crate) fn tab_stop_count(&self) -> usize {
-        self.by_id.values().filter(|node| node.tab_stop).count()
+        self.by_id
+            .values()
+            .filter(|node| self.is_live_tab_stop(node))
+            .count()
+    }
+
+    fn is_live_tab_stop(&self, node: &TabStopNode) -> bool {
+        // Paint establishes order; the original FocusMap establishes current
+        // admission. A commit may revoke a stop before a new frame is drawn.
+        self.focus_handle_for_order(node)
+            .is_some_and(|handle| handle.tab_stop)
     }
 
     fn focus_handle_for_order(&self, order: &TabStopNode) -> Option<FocusHandle> {

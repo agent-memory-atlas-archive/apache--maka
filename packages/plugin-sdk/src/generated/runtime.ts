@@ -36,9 +36,9 @@ export type RuntimeProtocol =
   | CallerHistoryPage
   | CallerIntent
   | LabelProps
-  | EditorProps
-  | EditorObservation
-  | EditorCapture
+  | TextareaProps
+  | TextareaObservation
+  | TextareaCapture
   | ReadText
   | TextChunk
   | HostActivation
@@ -283,7 +283,14 @@ export type OperationCleanup =
       diagnostic: string;
       kind: 'failed';
     };
-export type EditorEdit =
+export type FontFamily = string;
+/**
+ * Packed RGBA, including explicit alpha zero.
+ */
+export type Color = number;
+export type ScrollbarMode = 'scrolling' | 'hover' | 'always';
+export type ScrollbarEntrance = 'fade' | 'slide_and_fade';
+export type TextareaEdit =
   | {
       text: string;
       kind: 'replace';
@@ -292,16 +299,16 @@ export type EditorEdit =
       text: string;
       kind: 'reset';
     };
-export type EditorOutcome =
+export type TextareaOutcome =
   | {
       status: 'applied';
     }
   | {
-      reason: EditorConflict;
+      reason: TextareaConflict;
       status: 'conflict';
     };
-export type EditorConflict = 'revision' | 'composition' | 'sequence';
-export type EditorCapture =
+export type TextareaConflict = 'revision' | 'composition' | 'sequence';
+export type TextareaCapture =
   | {
       kind: 'current';
     }
@@ -603,34 +610,116 @@ export interface CallerIntent {
 }
 export interface LabelProps {
   text: string;
-  emphasis?: boolean;
+  appearance: TextAppearance;
 }
-export interface EditorProps {
+export interface TextAppearance {
+  font: FontAppearance;
+  foreground: Color;
+}
+export interface FontAppearance {
+  family: FontFamily;
+  /**
+   * @maxItems 8
+   */
+  fallbacks:
+    | []
+    | [FontFamily]
+    | [FontFamily, FontFamily]
+    | [FontFamily, FontFamily, FontFamily]
+    | [FontFamily, FontFamily, FontFamily, FontFamily]
+    | [FontFamily, FontFamily, FontFamily, FontFamily, FontFamily]
+    | [FontFamily, FontFamily, FontFamily, FontFamily, FontFamily, FontFamily]
+    | [FontFamily, FontFamily, FontFamily, FontFamily, FontFamily, FontFamily, FontFamily]
+    | [
+        FontFamily,
+        FontFamily,
+        FontFamily,
+        FontFamily,
+        FontFamily,
+        FontFamily,
+        FontFamily,
+        FontFamily,
+      ];
+  size: number;
+  /**
+   * Line height relative to this font size.
+   */
+  lineHeight: number;
+  weight: number;
+}
+export interface TextareaProps {
+  appearance: TextareaAppearance;
+  accessibilityLabel: string;
+  readOnly: boolean;
+  disabled: boolean;
+  softWrap: boolean;
+  tabIndex: number;
   initialText?: string;
   placeholder?: string;
   /**
    * None issues no new command; an accepted command remains pending until
    * its matching receipt commits. Clearing props is not cancellation.
    */
-  command?: EditorCommand | null;
+  command?: TextareaCommand | null;
 }
-export interface EditorCommand {
+export interface TextareaAppearance {
+  text: TextAppearance;
+  mutedForeground: Color;
+  background: Color;
+  selection: Color;
+  caret: Color;
+  border: Color;
+  focusedBorder: Color;
+  borderWidth: number;
+  radius: number;
+  padding: Insets;
+  scrollbar: ScrollbarAppearance;
+}
+export interface Insets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+export interface ScrollbarAppearance {
+  mode: ScrollbarMode;
+  entrance: ScrollbarEntrance;
+  idleMillis: number;
+  enterMillis: number;
+  exitMillis: number;
+  expandMillis: number;
+  trackWidth: number;
+  track: Color;
+  trackHover: Color;
+  trackActive: Color;
+  thumb: ScrollbarThumb;
+  thumbHover: ScrollbarThumb;
+  thumbActive: ScrollbarThumb;
+}
+export interface ScrollbarThumb {
+  color: Color;
+  width: number;
+  inset: number;
+  radius: number;
+  minLength: number;
+}
+export interface TextareaCommand {
   sequence: number;
   basedOn: number;
-  edit: EditorEdit;
+  edit: TextareaEdit;
 }
-export interface EditorObservation {
+export interface TextareaObservation {
   revision: number;
-  snapshot: EditorSnapshot;
-  receipt?: EditorReceipt | null;
+  snapshot: TextareaSnapshot;
+  receipt?: TextareaReceipt | null;
 }
-export interface EditorSnapshot {
-  text: EditorTextRef;
+export interface TextareaSnapshot {
+  text: TextareaTextRef;
   selection: TextRange;
   reversed: boolean;
   marked?: TextRange | null;
 }
-export interface EditorTextRef {
+export interface TextareaTextRef {
   owner: string;
   revision: number;
   bytes: number;
@@ -639,10 +728,10 @@ export interface TextRange {
   start: number;
   end: number;
 }
-export interface EditorReceipt {
+export interface TextareaReceipt {
   sequence: number;
   revision: number;
-  outcome: EditorOutcome;
+  outcome: TextareaOutcome;
 }
 export interface ReadText {
   start: number;

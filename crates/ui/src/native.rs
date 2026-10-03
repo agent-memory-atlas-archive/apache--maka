@@ -291,8 +291,7 @@ impl<V: ?Sized + 'static> NativeRegistry<V> {
 pub struct LabelProps {
     #[schemars(length(max = 4096))]
     pub text: String,
-    #[serde(default)]
-    pub emphasis: bool,
+    pub appearance: crate::appearance::TextAppearance,
 }
 pub fn label_contract() -> Contract {
     Contract {

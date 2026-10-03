@@ -572,6 +572,36 @@ impl TestAppContext {
         .unwrap();
     }
 
+    /// Activate the actual platform accessibility callbacks on the test backend.
+    pub fn activate_accessibility(&mut self, window: AnyWindowHandle) {
+        self.test_window(window).activate_accessibility();
+        self.run_until_parked();
+    }
+    /// Last update sent through the actual platform adapter, not a synthetic tree.
+    pub fn accessibility_update(&self, window: AnyWindowHandle) -> Option<accesskit::TreeUpdate> {
+        self.test_window(window).accessibility_update()
+    }
+    /// Deliver an assistive-technology request through the platform action channel.
+    pub fn simulate_accessibility_action(
+        &mut self,
+        window: AnyWindowHandle,
+        request: accesskit::ActionRequest,
+    ) {
+        self.test_window(window)
+            .simulate_accessibility_action(request);
+        self.run_until_parked();
+    }
+
+    /// Replay the actual rendered focus history, as retained frames do.
+    pub fn replay_focus_history(&mut self, window: AnyWindowHandle) {
+        self.update_window(window, |_, window, _| {
+            let history = window.rendered_frame.tab_stops.insertion_history.clone();
+            window.rendered_frame.tab_stops.clear();
+            window.rendered_frame.tab_stops.replay(&history);
+        })
+        .unwrap();
+    }
+
     /// Returns the `TestWindow` backing the given handle.
     pub(crate) fn test_window(&self, window: AnyWindowHandle) -> TestWindow {
         self.app

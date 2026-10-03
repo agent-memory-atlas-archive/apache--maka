@@ -76,7 +76,7 @@ Desktop 的窗口清理 owner 独立于视觉 Surface。逻辑移除撤销输入
 生成器将全部选中包保存在 Root。改用 `native` 可显式导入编译的 Label；它直接使用 GPUI 样式，布局位置与
 props 由产品决定。同步 consume/default 决策仍未实现。
 
-使用 `editor` 可在存储组合中导入 Kit Editor。Rust 契约表达
+使用 `editor` 可在存储组合中导入 Kit Textarea。Rust 契约表达
 初始文本、基于原生 revision 的 replace/reset 命令、元数据观察与命令回执；原生 buffer
 不放进序列化组件 state。公开 `changed` 事件包含类型化元数据观察与回执；收到
 TextRef 不获得全局查找或读取权限；capture 提供请求私有的不可变文本资源。`command: null` 不提出
@@ -87,14 +87,14 @@ TextRef 不获得全局查找或读取权限；capture 提供请求私有的不�
 包驱动的桌面示例命令见 [English README](README.md)。示例与校验使用同一套 Rust
 契约类型，无旧插件 SDK 或全局 service catalog。
 
-改用 `events` 生成显式订阅 Editor `changed` 的产品组件，并显示原生草稿 revision；
+改用 `events` 生成显式订阅 Textarea `changed` 的产品组件，并显示原生草稿 revision；
 生成器把所选包与 Desktop 部署保存到 `root`；以 `--root PATH --deployment UUID` 启动。
 该示例验证公开事件送达，不代表资源读取、
 业务 action 或最终产品视觉设计已完成。
 
-改用 `resource` 生成产品 Root → 动态 Composer → 私有原生 Editor，以及显式导入的原生
+改用 `resource` 生成产品 Root → 动态 Composer → 私有原生 Textarea，以及显式导入的原生
 UTF-8 Reader；完整 Root/deployment 命令见 [English README](README.md)。Root 只调用 Composer
-公开 capture，不依赖私有 Editor 的挂载路径。
+公开 capture，不依赖私有 Textarea 的挂载路径。
 
 Action 指明 service binding/member/method 与类型化资源槽，每个槽调用 direct child 的
 公开 capture。JavaScript capture 只返回转发至自己 direct child 的纯计划，不能伪造原生
@@ -184,5 +184,16 @@ loading 时捕获实际 capability，后续 inspect 原 registration，不重新
 完整 borrowed 入参在值复制前受 1 MiB 限额；重复 import 的每次出现都计量，JS 精度
 检查在 guest 进入前完成，原生消费者保留精确整数。注册值与已提交 frame 共用应用
 32 MiB 序列化保留额度，退休不等于回收，真实 registration 清理后才释放。值在本次
-activation 内不可变；live reconcile 与窗口/局部主题投影仍需继续实现，不能据此宣称
-完整主题切换或产品已交付。
+activation 内不可变；Label 与 Textarea 已支持局部外观投影，live provider reconcile
+与完整产品界面仍需继续实现。
+
+`maka.ui.Textarea` 契约通过 `Textarea` 导出提供 Kit 普通多行文本编辑状态。
+props 要求完整 `appearance`，以及 `accessibilityLabel`、`readOnly`、`disabled`、
+`softWrap`、`tabIndex`。字体、RGBA（含透明）、间距、边框与实际 scrollbar 几何/动画
+投影到原有原生 owner；换肤不重置文本、选区、组合输入或撤销历史。Label 也使用
+明确的文字外观。示例品牌是 composition 选择的普通 JS Value 插件，原生层不读全局品牌。
+
+Textarea 向 AccessKit 暴露真实焦点、label、value 与可编辑状态，支持 Focus 和可编辑时
+SetValue。headless 测试经过平台回调验证请求与焦点导航；普通编辑右键菜单和 OS
+无障碍/IME 验收仍待完成。TUI Label 将颜色/字重投影到 RGB/bold；桌面字体与透明合成
+不代表终端有等效呈现。

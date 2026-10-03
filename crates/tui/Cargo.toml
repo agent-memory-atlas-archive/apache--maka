@@ -68,4 +68,5 @@ image = { version = "0.25", default-features = false, features = ["tiff"] }
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
+schemars.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
