@@ -20,7 +20,7 @@
 //! Durable operation observations, never execution or recovery grants.
 use crate::{
     composition::InstanceId,
-    contract::{Contract, Interface, MethodMode},
+    contract::{Contract, Interface, Method, MethodMode, Transport},
     deployment::DeploymentRef,
 };
 use schemars::JsonSchema;
@@ -125,4 +125,27 @@ pub enum Receipt {
 pub struct OperationReply {
     pub reference: RecoveryRef,
     pub receipt: Receipt,
+}
+
+/// A portable observation of the exact original journal, never a replay grant.
+/// Products bind a reader independently of the current business service.
+pub fn receipt_reader_contract() -> Contract {
+    Contract {
+        name: "maka.operations.ReceiptReader".into(),
+        version: 1,
+        transport: Transport::Remote,
+        interface: Interface::Service {
+            methods: std::collections::BTreeMap::from([(
+                "read".into(),
+                Method {
+                    mode: MethodMode::Query,
+                    input: serde_json::to_value(schemars::schema_for!(RecoveryRef))
+                        .expect("original receipt request schema"),
+                    output: serde_json::to_value(schemars::schema_for!(OperationReply))
+                        .expect("original receipt reply schema"),
+                    resources: std::collections::BTreeMap::new(),
+                },
+            )]),
+        },
+    }
 }

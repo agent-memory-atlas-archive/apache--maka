@@ -71,6 +71,7 @@ pub(super) fn catalog() -> Value {
             "label": maka_ui::label_contract(), "editor": editor::editor_contract(),
             "textReader": text::reader_contract(),
             "callerHistory": maka_ui::operations::caller_history_contract(),
+            "receiptReader": maka_plugin_core::operation::receipt_reader_contract(),
             "desktopSurface": maka_ui::surface_contract(PresentationTarget::Desktop),
             "terminalSurface": maka_ui::surface_contract(PresentationTarget::Tui),
         },

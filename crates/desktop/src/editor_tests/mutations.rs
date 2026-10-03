@@ -17,6 +17,9 @@
  * under the License.
  */
 
+#[path = "receipts.rs"]
+mod receipts;
+
 use super::*;
 use maka_event_log::{
     EventLog,
@@ -51,6 +54,7 @@ use uuid::Uuid;
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
     Normal,
+    LostReply,
     Inexact,
     Envelope,
     Queued,
@@ -345,6 +349,13 @@ impl NativeMutation for Session {
                     cleanup: self.scope.finish().await.map_err(|e| e.to_string()),
                 },
             };
+            if self.state.mode == Mode::LostReply {
+                // Deliberately discard only the completed business delivery, not
+                // the journal or real executor cleanup. This models reply loss.
+                completion.reply.receipt = Receipt::Unavailable {
+                    diagnostic: "test bridge discarded the original delivery".into(),
+                };
+            }
             if self.state.mode == Mode::ChangedRef {
                 completion.reply.reference.operation = Uuid::new_v4();
             }

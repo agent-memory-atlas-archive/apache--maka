@@ -57,7 +57,18 @@ identity，先记录原 caller intent 再派发。feedback 的 `ActionOutcome` �
 Root 重开保留；这些观察不授予 Host 权限，也不能代替 confirmed caller 执行 token。
 Subscription、副作用资源快照和旧业务迁移仍待实现。
 
-可以通过 `maka application commit --root ROOT --deployment UUID --expected-revision 0 --input input.json --package bundle.maka-plugin`
+持久 Host 组合可选择 `maka.operations.receipts`，通过 `Receipts` 导出提供
+`contracts.receiptReader`。普通 `read` Query 接收原 `RecoveryRef`，返回
+`OperationReply`；应独立于当前业务 import 绑定，读取 owner 固定持有的原 Root，
+且需要单独的恢复授权。错误 Root 或拒绝只产生 `unavailable`，不能冒充 `not_recorded`。
+configuration 不能选择其它 Root 或 namespace。UI 从 caller history 取得原引用后，
+可以通过普通 `actions` 查询；成功 Query feedback 的 `value` 是回执，仍须检查其中的
+receipt，不能把本次查询成功当成原效果已成功。传输或查询失败使用 `failed`，应保留原引用。
+可移植回执不能表示的大值或整数降为同原引用的 `unavailable`；raw native 恢复仍保留
+原始精确值。本次 Query cleanup 与原操作 cleanup 是独立事实。
+
+可以通过
+`maka application commit --root ROOT --deployment UUID --expected-revision 0 --input input.json --package bundle.maka-plugin`
 将部署来源存入实际持锁的 State Root；替换时必须提供已观察的修订号。
 `maka application read --root ROOT --deployment UUID` 会检查已保存的输入与精确包字节。
 返回的 `DeploymentRef` 只标识数据域与来源修订，不授予权限，也不表示运行就绪。

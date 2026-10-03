@@ -18,6 +18,7 @@
  */
 
 use super::abi::{HostActivation, HostRequest, ResourceMetadata};
+use super::operations::{receipt_reply, receipt_value};
 use super::*;
 use maka_js_runtime::plugin::Module;
 
@@ -106,19 +107,10 @@ impl maka_js_runtime::plugin::RequestBridge for Context {
             }
             HostRequest::Recover { reference } => {
                 let result = self.recover(reference.clone())?;
-                Ok(Box::pin(async move {
-                    let receipt = match result.await {
-                        Ok(Some(observation)) => Receipt::Recorded {
-                            outcome: observation.outcome,
-                            cleanup: observation.cleanup,
-                        },
-                        Ok(None) => Receipt::NotRecorded,
-                        Err(error) => Receipt::Unavailable {
-                            diagnostic: owner::diagnostic(&error),
-                        },
-                    };
-                    receipt_value(OperationReply { reference, receipt })
-                }) as BoxFuture<'static, Result<Value>>)
+                Ok(
+                    Box::pin(async move { receipt_value(receipt_reply(reference, result.await)) })
+                        as BoxFuture<'static, Result<Value>>,
+                )
             }
             operation => {
                 let result = self.read(operation);
@@ -188,16 +180,4 @@ impl Context {
             }
         }
     }
-}
-
-// Delivery failure must never replace the original journal's durable outcome.
-fn receipt_value(mut reply: OperationReply) -> Result<Value> {
-    let value = serde_json::to_value(&reply).map_err(|e| e.to_string())?;
-    if maka_js_runtime::plugin::check_json_delivery(&value, 1024 * 1024).is_ok() {
-        return Ok(value);
-    }
-    reply.receipt = Receipt::Unavailable { diagnostic: "original receipt cannot be represented by this observer; read original journal through a compatible observer".into() };
-    let value = serde_json::to_value(reply).map_err(|e| e.to_string())?;
-    maka_js_runtime::plugin::check_json_delivery(&value, 1024 * 1024).map_err(|e| e.to_string())?;
-    Ok(value)
 }

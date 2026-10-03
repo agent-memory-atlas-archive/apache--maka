@@ -17,6 +17,9 @@
  * under the License.
  */
 
+#[path = "receipts.rs"]
+mod receipts;
+
 use super::*;
 use maka_event_log::{
     EventLog,

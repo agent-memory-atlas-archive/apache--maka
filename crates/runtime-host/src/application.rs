@@ -20,6 +20,7 @@
 //! Host service execution over the shared plugin lifecycle kernel.
 pub mod abi;
 mod context;
+pub mod operations;
 mod owner;
 pub use context::Context;
 mod script;
@@ -472,7 +473,7 @@ impl Application {
     pub async fn start_from_store(
         store: Arc<maka_event_log::EventLog>,
         deployment: Uuid,
-        native: NativeRegistry,
+        mut native: NativeRegistry,
         issuer: Issuer,
         policy: Arc<dyn Policy>,
         limits: Limits,
@@ -487,6 +488,7 @@ impl Application {
         if !loaded.source.remote_exports.is_empty() {
             return Err("remote Host executor is unavailable".into());
         }
+        operations::provide(&mut native)?;
         Self::start_owned(
             loaded.source.input,
             loaded.packages,

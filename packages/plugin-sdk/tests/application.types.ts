@@ -18,6 +18,7 @@
  */
 
 import type {
+  Action,
   ActionOutcome,
   CallerHistoryPage,
   CallerIntent,
@@ -25,8 +26,27 @@ import type {
   ComponentInput,
   HostRequest,
   RequestContext,
+  RecoveryRef,
   Surface,
 } from '@maka-agent/plugin-sdk';
+
+function originalReceiptQuery(reference: RecoveryRef): Action {
+  // Explicitly bind the original reader independently of the business import.
+  return {
+    key: 'receipt',
+    binding: 'receipts',
+    member: 0,
+    method: 'read',
+    input: reference,
+    resources: {},
+  };
+}
+function forgedReceiptReference(reference: RecoveryRef) {
+  // @ts-expect-error A reference cannot select a Root or convey a recovery grant.
+  const forged = { ...reference, root: '/other', grant: 'approved' } satisfies RecoveryRef;
+  void forged;
+}
+void [originalReceiptQuery, forgedReceiptReference];
 
 function originalUiReceipt(outcome: ActionOutcome) {
   if (outcome.status !== 'operation') return;

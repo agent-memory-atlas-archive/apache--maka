@@ -62,6 +62,19 @@ complete array fits 1 MiB. If the full callback envelope exceeds its delivery bu
 the query returns `failed` and a healthy component can retry with fewer entries.
 Original references survive source replacement and Root reopening; these observations
 confer no Host grant and cannot be used as a confirmed caller execution token.
+A persisted Host composition can select `maka.operations.receipts` and export
+`Receipts` with `contracts.receiptReader`. Its ordinary `read` query accepts a
+`RecoveryRef` and returns an `OperationReply`. Bind this reader separately from
+the current business import; it reads its owner's original Root and needs an
+independent recovery grant. Wrong Root or denied recovery yields `unavailable`,
+never `not_recorded`. Configuration cannot select another Root or namespace.
+After reading caller history, a UI component can submit this query through its
+ordinary `actions`; successful Query feedback contains the reply in `value`.
+Read the receipt even when Query feedback says `succeeded`: the original effect
+may still be unknown or unavailable. Transport/query failures use `failed`;
+keep the original reference. Large or inexact journal values produce the same
+reference with `unavailable` for this portable contract, while raw native recovery
+preserves them. Query cleanup does not describe the original operation's cleanup.
 Subscriptions, effectful resource snapshots and business migration remain unfinished.
 
 Deployment sources can be stored in an owned State Root with
