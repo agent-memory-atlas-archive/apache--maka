@@ -32,6 +32,16 @@ real close completion covers its resources. Initialization is fenced before any
 asynchronous work starts. Rejected or late exports still close under that original
 owner; failed close retains the actual native owner and lifecycle fence.
 
+Native factories receive `(NativeContext, configuration)`. The context is built
+by that owner after acquiring the initialization fence, and carries the actual
+activation plus optional, paired applied source and `Arc<EventLog>`. Ephemeral
+applications have no persistence; services requiring a Root must reject them.
+`EventLog::owned_root()` validates and shares its existing lease with trusted
+native stores such as `ConfigurationStore`; their real shutdown belongs to the
+returned `NativeOwner`. Stable data ownership uses Root domain, deployment UUID
+and instance identity, while source revision and activation epoch remain execution
+facts. These native dependencies do not replace per-request Policy admission.
+
 Bindings capture the exact consumer and registration. Final admission checks the
 Host `Issuer`, current Scope cancellation, method input, exact attachment slots/types
 and explicit Host `Policy`,

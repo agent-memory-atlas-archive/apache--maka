@@ -17,6 +17,8 @@
  * under the License.
  */
 
+#[path = "application_services/native_context.rs"]
+mod native_context;
 #[path = "application_services/operations.rs"]
 mod operations;
 #[path = "application_services/persistence.rs"]
@@ -295,7 +297,7 @@ fn registry_contract(query: Arc<dyn Handler>, contract: Contract) -> NativeRegis
     registry
         .insert(
             "native.echo".into(),
-            Arc::new(move |_| {
+            Arc::new(move |_, _| {
                 let query = query.clone();
                 let contract = contract.clone();
                 Box::pin(async move {
@@ -483,7 +485,7 @@ async fn abandoned_observer_and_root_keep_actual_query_resource_and_native_close
         native
             .insert(
                 "native.echo".into(),
-                Arc::new(move |_| {
+                Arc::new(move |_, _| {
                     let query: Arc<dyn Handler> = query.clone();
                     let close = close.clone();
                     Box::pin(async move {
@@ -571,7 +573,7 @@ async fn initialization_is_fenced_before_await_and_late_exports_close_under_orig
         native
             .insert(
                 "native.echo".into(),
-                Arc::new(move |_| {
+                Arc::new(move |_, _| {
                     let a = a.clone();
                     let b = b.clone();
                     let c = c.clone();
@@ -857,7 +859,7 @@ async fn rejected_exports_and_failed_close_preserve_actual_native_owner() {
         native
             .insert(
                 "native.echo".into(),
-                Arc::new(move |_| {
+                Arc::new(move |_, _| {
                     let observed = observed.clone();
                     Box::pin(async move {
                         let resource = Arc::new(());
@@ -1149,7 +1151,7 @@ async fn forwarding_preserves_private_evidence_and_never_substitutes_wrapper_aut
         native
             .insert(
                 "native.wrapper".into(),
-                Arc::new(move |_| {
+                Arc::new(move |_, _| {
                     let implementation: Arc<dyn Handler> = implementation.clone();
                     Box::pin(async move {
                         NativeActivation {
@@ -1294,7 +1296,7 @@ async fn resource_timeout_keeps_input_quota_until_actual_cleanup_is_confirmed() 
         native
             .insert(
                 "native.held".into(),
-                Arc::new(move |_| {
+                Arc::new(move |_, _| {
                     let implementation: Arc<dyn Handler> = implementation.clone();
                     Box::pin(async move {
                         NativeActivation {
@@ -1743,7 +1745,7 @@ async fn failed_cleanup_retains_actual_attachments_and_the_shared_64_mib_capacit
         native
             .insert(
                 "native.healthy".into(),
-                Arc::new(move |_| {
+                Arc::new(move |_, _| {
                     let query = query.clone();
                     Box::pin(async move {
                         NativeActivation {
@@ -2590,7 +2592,7 @@ async fn accepted_parent_descriptor_panics_are_cleanup_failure_but_ordinary_chil
             native
                 .insert(
                     "native.descriptor".into(),
-                    Arc::new(|_| {
+                    Arc::new(|_, _| {
                         Box::pin(async {
                             NativeActivation {
                                 exports: Ok(BTreeMap::from([(

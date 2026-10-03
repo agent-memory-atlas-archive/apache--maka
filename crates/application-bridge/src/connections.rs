@@ -381,7 +381,7 @@ impl NativeOwner for Gateway {
 fn gateway(mut native: NativeRegistry) -> Result<NativeRegistry> {
     native.insert(
         GATEWAY.into(),
-        Arc::new(|configuration| {
+        Arc::new(|_, configuration| {
             Box::pin(async move {
                 #[derive(Deserialize)]
                 #[serde(deny_unknown_fields)]

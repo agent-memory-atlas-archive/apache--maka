@@ -399,7 +399,7 @@ fn compiled_native_availability_keeps_real_file_and_root_until_actual_close() {
     native
         .insert(
             "native.File".into(),
-            Arc::new(move |_| {
+            Arc::new(move |_, _| {
                 let resource = resource.clone();
                 Box::pin(async move {
                     NativeActivation {

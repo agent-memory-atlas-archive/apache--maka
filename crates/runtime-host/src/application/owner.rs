@@ -372,10 +372,21 @@ impl Owner {
             Implementation::Native { implementation } => {
                 let factory = self.native.0[implementation].clone();
                 let configuration = instance.configuration;
+                let context = NativeContext {
+                    activation: activation.clone(),
+                    persistence: self
+                        .persisted
+                        .as_ref()
+                        .map(|(source, store)| NativePersistence {
+                            source: source.clone(),
+                            store: store.clone(),
+                        }),
+                };
                 self.jobs.push(Box::pin(async move {
-                    let initialized = AssertUnwindSafe(async move { factory(configuration).await })
-                        .catch_unwind()
-                        .await;
+                    let initialized =
+                        AssertUnwindSafe(async move { factory(context, configuration).await })
+                            .catch_unwind()
+                            .await;
                     match initialized {
                         Ok(native) => {
                             let exports = native.exports.and_then(|actual| {

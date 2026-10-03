@@ -171,7 +171,7 @@ mod probe {
             });
             native.insert(
                 "probe.File".into(),
-                Arc::new(move |_| {
+                Arc::new(move |_, _| {
                     let resource = resource.clone();
                     Box::pin(async move {
                         NativeActivation {

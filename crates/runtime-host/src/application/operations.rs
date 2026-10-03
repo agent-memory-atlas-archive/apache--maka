@@ -64,7 +64,7 @@ pub(super) fn provide(native: &mut NativeRegistry) -> Result<()> {
     struct Configuration {}
     native.insert(
         RECEIPT_READER.into(),
-        Arc::new(|configuration| {
+        Arc::new(|_, configuration| {
             Box::pin(async move {
                 let exports = serde_json::from_value::<Configuration>(configuration)
                     .map_err(|e| e.to_string())

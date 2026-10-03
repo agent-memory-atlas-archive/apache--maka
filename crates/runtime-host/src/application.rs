@@ -20,9 +20,11 @@
 //! Host service execution over the shared plugin lifecycle kernel.
 pub mod abi;
 mod context;
+mod native_context;
 pub mod operations;
 mod owner;
 pub use context::Context;
+pub use native_context::{NativeContext, NativePersistence};
 mod script;
 mod subscriptions;
 pub use subscriptions::Subscription;
@@ -107,7 +109,8 @@ pub struct NativeActivation {
     pub exports: Result<BTreeMap<String, Published<Arc<dyn Handler>>>>,
     pub owner: Arc<dyn NativeOwner>,
 }
-type Factory = Arc<dyn Fn(Value) -> BoxFuture<'static, NativeActivation> + Send + Sync>;
+type Factory =
+    Arc<dyn Fn(NativeContext, Value) -> BoxFuture<'static, NativeActivation> + Send + Sync>;
 #[derive(Clone, Default)]
 pub struct NativeRegistry(BTreeMap<String, Factory>);
 impl NativeRegistry {

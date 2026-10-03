@@ -66,7 +66,7 @@ async fn stored_source_and_lease_survive_abandoned_query_resources_and_native_cl
         native
             .insert(
                 "native.echo".into(),
-                Arc::new(move |_| {
+                Arc::new(move |_, _| {
                     let query = query.clone();
                     let closing = closing.clone();
                     let closed = closed.clone();
@@ -247,7 +247,7 @@ async fn stored_failed_native_cleanup_keeps_the_actual_state_root_lease() {
     native
         .insert(
             "native.echo".into(),
-            Arc::new(|_| {
+            Arc::new(|_, _| {
                 Box::pin(async {
                     NativeActivation {
                         exports: Err("exports rejected".into()),

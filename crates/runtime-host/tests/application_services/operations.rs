@@ -802,7 +802,7 @@ async fn dropped_root_and_all_observers_keep_mutation_resources_native_close_and
         registry
             .insert(
                 "native.echo".into(),
-                Arc::new(move |_| {
+                Arc::new(move |_, _| {
                     let handler = handler.clone();
                     let closing = closing.clone();
                     let closed = closed.clone();

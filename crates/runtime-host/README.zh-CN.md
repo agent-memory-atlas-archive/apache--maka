@@ -28,6 +28,13 @@ owner task 校验整批实际导出后一次发布。JavaScript 服务用 `Captu
 覆盖资源清理。异步初始化开始前即登记资源；拒绝或迟到的导出仍沿原 owner 关闭，close 失败保留
 实际 native owner 与生命周期 fence。
 
+原生 factory 接收 `(NativeContext, configuration)`。owner 在初始化 fence 建立后构造上下文，
+提供实际 activation，以及成对的可选 applied source 和 `Arc<EventLog>`。非持久化应用没有 store，
+要求 Root 的服务须拒绝初始化。`EventLog::owned_root()` 验证并共享现有 lease，供可信原生存储
+（如 `ConfigurationStore`）使用；其真实关闭由返回的 `NativeOwner` 负责。持久数据归属使用
+Root domain、deployment UUID 和 instance identity；source revision、activation epoch 仅为
+执行事实。初始化依赖不替代逐次请求的 Policy 准入。
+
 绑定捕获准确 consumer 和 registration。最终准入检查实际 Host `Issuer`、Scope 当前取消状态、
 方法输入、准确附件槽位/类型与显式 Host `Policy`，这些检查与 core 接受工作之间不等待。转发 child Scope 保留原始
 private evidence。包名、JSON 中的来源身份或绑定本身不是业务效果授权。

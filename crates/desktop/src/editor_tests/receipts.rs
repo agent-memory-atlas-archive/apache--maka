@@ -135,7 +135,7 @@ async fn start_reader(
     native
         .insert(
             "test.host-consumer".into(),
-            Arc::new(|_| {
+            Arc::new(|_, _| {
                 Box::pin(async {
                     NativeActivation {
                         exports: Ok(BTreeMap::new()),

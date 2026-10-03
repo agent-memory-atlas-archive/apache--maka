@@ -1118,7 +1118,7 @@ async fn host_service_fixture(
     native
         .insert(
             "test.host-reader".into(),
-            std::sync::Arc::new(move |_| {
+            std::sync::Arc::new(move |_, _| {
                 let query = query.clone();
                 let contract = contract.clone();
                 Box::pin(async move {
@@ -1139,7 +1139,7 @@ async fn host_service_fixture(
     native
         .insert(
             "test.host-consumer".into(),
-            std::sync::Arc::new(|_| {
+            std::sync::Arc::new(|_, _| {
                 Box::pin(async {
                     NativeActivation {
                         exports: Ok(BTreeMap::new()),

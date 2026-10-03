@@ -155,6 +155,15 @@ impl EventLog {
         Self::open_owned(&path, Some(owner)).await
     }
 
+    /// Reuse the actual owned Root for another trusted native store. This is a
+    /// writer lease, never a guest path or serialized authorization token.
+    pub fn owned_root(&self) -> Result<Arc<root::RootOwner>, StoreError> {
+        self.validate_root()?;
+        self.root_owner.clone().ok_or_else(|| {
+            StoreError::InvalidTransition("store requires an owned State Root".into())
+        })
+    }
+
     fn validate_root(&self) -> Result<(), StoreError> {
         if let Some(owner) = &self.root_owner {
             owner.validate_current()?;
