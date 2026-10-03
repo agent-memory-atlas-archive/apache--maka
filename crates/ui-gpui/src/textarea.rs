@@ -28,6 +28,7 @@ use maka_ui::{
 };
 use serde_json::json;
 use std::{any::Any, collections::BTreeMap, ops::Range, rc::Rc};
+mod accessibility;
 mod menu;
 
 /// Kit alone owns the buffer, selections and composition. This owner records
@@ -317,12 +318,13 @@ impl Render for TextareaOwner {
         let disabled = presentation.is_disabled();
         let readonly = presentation.is_readonly();
         let placeholder = presentation.placeholder().clone();
+        let native_text = state.text_accessibility();
+        let selection_owner = cx.weak_entity();
         let value = (window.is_a11y_active() || cfg!(test)).then(|| state.text().to_string());
         let appearance = &self.projection.data;
         let focus_state = self.state.clone();
-        let edit_state = self.state.clone();
+        let edit_owner = cx.weak_entity();
         let focus_input = self.input.clone();
-        let edit_input = self.input.clone();
         let mouse_state = self.state.clone();
         let mouse_input = self.input.clone();
         let mouse_up_state = self.state.clone();
@@ -370,13 +372,22 @@ impl Render for TextareaOwner {
             })
             .when(!disabled && !readonly, |this| {
                 this.on_a11y_action(AccessibleAction::SetValue, move |data, window, cx| {
-                    if edit_input.0.borrow().is_some()
-                        && let Some(accesskit::ActionData::Value(value)) = data
-                    {
-                        edit_state.update(cx, |state, cx| {
-                            if state.is_editable() {
-                                state.replace_all(value.clone(), window, cx);
+                    if let Some(accesskit::ActionData::Value(value)) = data {
+                        let _ = edit_owner.update(cx, |owner, cx| {
+                            if owner.input.0.borrow().is_none()
+                                || owner.open_menu.is_some()
+                                || !owner.state.read(cx).is_editable()
+                                || owner
+                                    .state
+                                    .update(cx, |state, cx| state.marked_text_range(window, cx))
+                                    .is_some()
+                            {
+                                return;
                             }
+                            owner.state.update(cx, |state, cx| {
+                                state.replace_all(value.clone(), window, cx);
+                            });
+                            owner.refresh(false, window, cx);
                         });
                     }
                 })
@@ -394,6 +405,7 @@ impl Render for TextareaOwner {
             }))
             .rounded(px(appearance.radius))
             .child(self.state.clone());
+        let content = accessibility::attach(content, native_text, selection_owner);
         Proxy {
             content: div()
                 .size_full()

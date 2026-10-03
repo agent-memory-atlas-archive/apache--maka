@@ -2852,6 +2852,20 @@ impl<M: InputModeKind> Element for TextElement<M> {
         let hitbox = window.insert_hitbox(input_bounds, HitboxBehavior::Normal);
 
         let token_elements = self.prepaint_tokens(&last_layout, bounds, token_elements, window, cx);
+        let state = self.state.read(cx);
+        state
+            .text_accessibility
+            .publish(if window.is_a11y_active() {
+                super::text_accessibility::snapshot(
+                    state,
+                    &last_layout,
+                    bounds,
+                    input_bounds,
+                    window.scale_factor(),
+                )
+            } else {
+                None
+            });
         PrepaintState {
             token_elements,
             hitbox,

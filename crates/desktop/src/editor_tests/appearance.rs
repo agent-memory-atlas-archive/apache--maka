@@ -73,6 +73,8 @@ pub(super) fn scoped_fixture() -> (
         .replace("brand:values.brand[0]", "brand:values.brand[0],otherBrand:values.otherBrand[0]")
         .replace("appearance:state.brand.textarea", "appearance:(state.alternate?state.otherBrand:state.brand).textarea")
         .replace("menu:state.brand.menu", "menu:state.menuClosed?null:(state.alternate?state.otherBrand:state.brand).menu")
+        .replace("softWrap:true", "softWrap:state.softWrap??true")
+        .replace("const next={...state,revision:state.revision+1};", "const next={...state,revision:state.revision+1};if(event.event?.softWrap!==undefined)next.softWrap=event.event.softWrap;")
         .replace("readOnly:false,disabled:false", "readOnly:state.readOnly??false,disabled:state.disabled??false")
         .replace("const next={...state,revision:state.revision+1};", "const next={...state,revision:state.revision+1};if(event.event?.switch)next.alternate=!state.alternate;if(event.event?.menuClosed!==undefined)next.menuClosed=event.event.menuClosed;if(event.event?.readOnly!==undefined)next.readOnly=event.event.readOnly;if(event.event?.disabled!==undefined)next.disabled=event.event.disabled;")
         .replace("},{kind:'component',key:'nativeLabel'", "},{kind:'component',key:'second',binding:'editor',member:0,on:{},props:{initialText:'Second',placeholder:'Other draft',appearance:state.otherBrand.textarea,accessibilityLabel:'Other draft',readOnly:false,disabled:false,softWrap:true,tabIndex:0}},{kind:'component',key:'nativeLabel'");

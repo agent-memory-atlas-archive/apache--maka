@@ -1587,5 +1587,6 @@ fn empty_host_quit_waits_for_actual_caller_sql_close_after_accepted_writer_waite
 
 mod composition;
 
+mod accessibility;
 mod appearance;
 mod menu;

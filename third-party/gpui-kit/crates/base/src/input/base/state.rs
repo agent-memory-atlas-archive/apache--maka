@@ -425,6 +425,7 @@ pub struct InputBaseState<M: InputModeKind> {
     /// The size of the scrollable content.
     pub(crate) scroll_size: gpui::Size<Pixels>,
     pub(super) editor_scrollbar_snapshot: Cell<Option<EditorScrollbarSnapshot>>,
+    pub(super) text_accessibility: super::text_accessibility::InputTextAccessibility,
     /// The unwrapped width of the longest line and what it was measured for.
     pub(super) longest_line_width: Cell<Option<(LongestLineKey, Pixels)>>,
     pub(super) editor_paddings: Edges<Pixels>,
@@ -770,6 +771,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             longest_line_width: Cell::new(None),
             editor_paddings: Edges::default(),
             deferred_scroll_offset: None,
+            text_accessibility: super::text_accessibility::InputTextAccessibility::default(),
             placeholder: SharedString::default(),
             mask_pattern: MaskPattern::default(),
             mask_pattern_set: false,
@@ -1318,6 +1320,12 @@ impl<M: InputModeKind> InputBaseState<M> {
     /// nothing. See [`Self::value`] when an owned string is wanted.
     pub fn text(&self) -> &Rope {
         &self.text
+    }
+
+    /// Revision of the original document, including resets and history replay.
+    /// Selection and presentation changes do not create a new document.
+    pub fn document_revision(&self) -> u64 {
+        self.document_revision
     }
 
     /// Return the (0-based) [`Position`] of the cursor.
@@ -2599,7 +2607,18 @@ impl<M: InputModeKind> InputBaseState<M> {
         let display_pos = self
             .display_map
             .buffer_pos_to_display_pos(crate::input::BufferPoint::new(row, point.column));
-        let row_offset_y = line_height * display_pos.row;
+        let affinity = offset == self.cursor() && self.cursor_line_end_affinity;
+        let display_row = if affinity {
+            let wrap = self
+                .display_map
+                .offset_to_wrap_display_point_with_affinity(offset, true);
+            self.display_map
+                .wrap_row_to_display_row(wrap.row)
+                .unwrap_or(display_pos.row)
+        } else {
+            display_pos.row
+        };
+        let row_offset_y = line_height * display_row;
 
         // For Right alignment use 0 margin: the cursor indicator is clamped inside bounds
         // in layout_cursors, so shifting the text here would cause a first-click visual jump.
@@ -2615,7 +2634,7 @@ impl<M: InputModeKind> InputBaseState<M> {
         {
             let line = &last_layout.lines[vi];
             let local_offset = offset.saturating_sub(last_layout.visible_line_byte_offsets[vi]);
-            if let Some(pos) = line.position_for_index(local_offset, last_layout, false) {
+            if let Some(pos) = line.position_for_index(local_offset, last_layout, affinity) {
                 let bounds_width = bounds.size.width - last_layout.line_number_width;
                 let col_offset_x = pos.x;
                 if col_offset_x - safety_margin < -scroll_offset.x {
@@ -3067,6 +3086,38 @@ impl<M: InputModeKind> InputBaseState<M> {
         self.active_selection_mut().reversed = false;
         self.selected_word_range = None;
         self.select_to(end, cx);
+    }
+
+    /// Apply a user selection in exact UTF-8 byte units, preserving direction.
+    /// Invalid scalar/token/CRLF boundaries are rejected rather than relocated.
+    /// Read-only text remains selectable; composition owns its current range.
+    pub fn set_selection_anchor_focus(
+        &mut self,
+        anchor: usize,
+        focus: usize,
+        focus_line_end_affinity: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.disabled
+            || self.ime_marked_range.is_some()
+            || anchor > self.text.len()
+            || focus > self.text.len()
+            || self.cursor_boundary(anchor, Bias::Left) != anchor
+            || self.cursor_boundary(focus, Bias::Left) != focus
+        {
+            return false;
+        }
+        self.move_to(anchor, None, cx);
+        self.selected_word_range = None;
+        self.select_to_with_affinity(focus, focus_line_end_affinity, cx);
+        self.update_preferred_column();
+        self.scroll_to(focus, None, cx);
+        true
+    }
+
+    /// Read current native prepaint data without granting text or selection mutation.
+    pub fn text_accessibility(&self) -> super::InputTextAccessibility {
+        self.text_accessibility.clone()
     }
 
     /// Resolve a mouse position to a byte offset in the text.
@@ -3951,6 +4002,25 @@ impl<M: InputModeKind> InputBaseState<M> {
 }
 
 impl<M: InputModeKind> EntityInputHandler for InputBaseState<M> {
+    fn set_selected_text_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let start = self.offset_from_utf16(range_utf16.start);
+        let end = self.offset_from_utf16(range_utf16.end);
+        if self.offset_to_utf16(start) == range_utf16.start
+            && self.offset_to_utf16(end) == range_utf16.end
+        {
+            self.set_selection_anchor_focus(start, end, false, cx);
+        }
+    }
+
+    fn text_length_utf16(&mut self, _: &mut Window, _: &mut Context<Self>) -> Option<usize> {
+        Some(self.offset_to_utf16(self.text.len()))
+    }
+
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
@@ -4622,6 +4692,118 @@ impl<M: InputModeKind> Render for InputBaseState<M> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[gpui::test]
+    fn test_textarea_native_reverse_selection_reveals_focus(cx: &mut TestAppContext) {
+        let mut input = None;
+        let window = cx.open_window(size(px(720.), px(400.)), |window, cx| {
+            cx.set_global(Theme::default());
+            super::super::init(cx);
+            let state = cx.new(|cx| crate::input::TextareaState::new(window, cx).auto_grow(1, 6));
+            input = Some(state.clone());
+            TestRoot(state)
+        });
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        let input = input.unwrap();
+        cx.update(|window, cx| {
+            input.update(cx, |state, cx| {
+                state.set_value(
+                    (1..=100).map(|i| format!("line {i}\n")).collect::<String>(),
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            input.update(cx, |state, cx| {
+                assert!(state.set_selection_anchor_focus(state.text.len(), 2, false, cx));
+                assert!(state.active_selection().reversed);
+                assert_eq!(
+                    state.active_selection().column_anchor,
+                    state.preferred_column_for(2)
+                );
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            input.read_with(cx, |state, _| {
+                let (caret, _) = state.cursor_layout().expect("focus caret painted");
+                let viewport = state.input_bounds();
+                let top = caret.origin.y - viewport.origin.y + state.scroll_handle.offset().y;
+                assert!(
+                    top >= px(0.) && top + caret.size.height <= viewport.size.height,
+                    "focus {top:?} outside viewport {:?}",
+                    viewport.size.height
+                );
+                assert_eq!(state.selected_range(), 2..state.text.len());
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn test_textarea_native_selection_preserves_direction_and_exact_units(cx: &mut TestAppContext) {
+        let view = InputView::build_textarea(cx, |state| state);
+        view.window_handle
+            .update(cx, |_, window, cx| {
+                view.input.update(cx, |state, cx| {
+                    state.set_value("A中🙂e\u{301}\r\nZ", window, cx);
+                    let revision = state.document_revision();
+                    assert_eq!(state.text_length_utf16(window, cx), Some(9));
+                    assert!(state.set_selection_anchor_focus(11, 1, false, cx));
+                    let selected = state.selected_text_range(true, window, cx).unwrap();
+                    assert_eq!(selected.range, 1..6);
+                    assert!(selected.reversed);
+                    assert_eq!(state.selected_range(), 1..11);
+                    assert_eq!(state.document_revision(), revision);
+
+                    // Scalars, not graphemes: the combining mark is selectable.
+                    state.set_readonly(true, cx);
+                    state.set_selected_text_range(5..6, window, cx);
+                    assert_eq!(state.selected_range(), 9..11);
+                    assert!(
+                        !state
+                            .selected_text_range(true, window, cx)
+                            .unwrap()
+                            .reversed
+                    );
+                    for (anchor, focus) in [(2, 8), (1, 5), (12, 13), (0, 15)] {
+                        assert!(!state.set_selection_anchor_focus(anchor, focus, false, cx));
+                        assert_eq!(state.selected_range(), 9..11);
+                    }
+                    // A half surrogate, half CRLF and out-of-range UTF16 are not
+                    // silently relocated into some other valid source selection.
+                    for range in [3..4, 6..7, 0..100] {
+                        state.set_selected_text_range(range, window, cx);
+                        assert_eq!(state.selected_range(), 9..11);
+                    }
+                    state.set_disabled(true, cx);
+                    assert!(!state.set_selection_anchor_focus(0, 1, false, cx));
+                    assert_eq!(state.selected_range(), 9..11);
+                    state.set_disabled(false, cx);
+                    state.set_readonly(false, cx);
+                    state.replace_and_mark_text_in_range(Some(0..1), "你", Some(0..1), window, cx);
+                    let marked_selection = state.selected_range();
+                    assert!(!state.set_selection_anchor_focus(0, state.text().len(), false, cx));
+                    assert_eq!(state.selected_range(), marked_selection);
+                    state.unmark_text(window, cx);
+                    let committed_revision = state.document_revision();
+                    assert!(committed_revision > revision);
+                    assert!(state.set_selection_anchor_focus(state.text().len(), 0, false, cx));
+                    assert!(
+                        state
+                            .selected_text_range(true, window, cx)
+                            .unwrap()
+                            .reversed
+                    );
+                    assert_eq!(state.document_revision(), committed_revision);
+                    state.undo(&Undo, window, cx);
+                    assert_eq!(state.value().as_ref(), "A中🙂e\u{301}\r\nZ");
+                    assert!(state.document_revision() > committed_revision);
+                });
+            })
+            .unwrap();
+    }
+
     #[gpui::test]
     fn test_textarea_history_availability_matches_pending_transaction_replay(
         cx: &mut TestAppContext,

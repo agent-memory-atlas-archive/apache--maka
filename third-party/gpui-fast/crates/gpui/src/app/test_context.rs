@@ -150,7 +150,28 @@ impl TestAppContext {
 
     /// Skip all drawing operations for the duration of this test.
     pub fn skip_drawing(&mut self) {
-        self.app.borrow_mut().mode = GpuiMode::Test { skip_drawing: true };
+        if let GpuiMode::Test { skip_drawing, .. } = &mut self.app.borrow_mut().mode {
+            *skip_drawing = true;
+        }
+    }
+
+    /// Deliver real asynchronous effects/actions while retaining the last
+    /// painted listeners/tree. Explicit draws still work. Restores on unwind.
+    pub fn with_paused_automatic_drawing<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        struct Restore(Rc<AppCell>, bool);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                if let GpuiMode::Test { automatic_drawing, .. } = &mut self.0.borrow_mut().mode {
+                    *automatic_drawing = self.1;
+                }
+            }
+        }
+        let old = match &mut self.app.borrow_mut().mode {
+            GpuiMode::Test { automatic_drawing, .. } => std::mem::replace(automatic_drawing, false),
+            GpuiMode::Production => panic!("automatic drawing control is test-only"),
+        };
+        let _restore = Restore(self.app.clone(), old);
+        f(self)
     }
 
     /// Create a single TestAppContext, for non-multi-client tests

@@ -646,6 +646,7 @@ pub(crate) enum GpuiMode {
     #[cfg(any(test, feature = "test-support"))]
     Test {
         skip_drawing: bool,
+        automatic_drawing: bool,
     },
     Production,
 }
@@ -655,6 +656,7 @@ impl GpuiMode {
     pub fn test() -> Self {
         GpuiMode::Test {
             skip_drawing: false,
+            automatic_drawing: true,
         }
     }
 
@@ -662,7 +664,7 @@ impl GpuiMode {
     pub(crate) fn skip_drawing(&self) -> bool {
         match self {
             #[cfg(any(test, feature = "test-support"))]
-            GpuiMode::Test { skip_drawing } => *skip_drawing,
+            GpuiMode::Test { skip_drawing, .. } => *skip_drawing,
             GpuiMode::Production => false,
         }
     }
@@ -1762,7 +1764,7 @@ impl App {
                 }
             } else {
                 #[cfg(any(test, feature = "test-support"))]
-                if matches!(self.mode, GpuiMode::Test { .. }) {
+                if matches!(self.mode, GpuiMode::Test { automatic_drawing: true, .. }) {
                     for window in self
                         .windows
                         .values()

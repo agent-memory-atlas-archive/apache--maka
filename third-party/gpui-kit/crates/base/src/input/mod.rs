@@ -68,6 +68,12 @@ mod search;
 mod selection;
 #[path = "base/state.rs"]
 mod state;
+#[path = "base/text_accessibility.rs"]
+mod text_accessibility;
+pub use text_accessibility::{
+    InputTextAccessibility, InputTextAccessibilityGeometry, InputTextAccessibilityRun,
+    InputTextAccessibilitySnapshot,
+};
 mod textarea;
 #[path = "base/touch.rs"]
 mod touch;
