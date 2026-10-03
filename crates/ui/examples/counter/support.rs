@@ -255,7 +255,16 @@ pub(crate) const PARENT_EVENT: &str = "const next={...state,revision:state.revis
 pub(crate) fn brand_appearance() -> serde_json::Value {
     let text = json!({"font":{"family":".SystemUIFont","fallbacks":[],"size":16,"lineHeight":1.5,"weight":400},"foreground":0x242724ffu32});
     let thumb = json!({"color":0x92998cffu32,"width":8,"inset":3,"radius":3,"minLength":40});
-    json!({"label":text,"textarea":{
+    json!({"label":text,"menu":{
+        "appearance":{"text":text,"background":0xfaf9f6ffu32,"border":0xd8ddd5ffu32,
+            "activeBackground":0x416653ffu32,"activeForeground":0xffffffffu32,
+            "disabledForeground":0x92998cffu32,"borderWidth":1,"radius":10,
+            "padding":{"top":4,"right":4,"bottom":4,"left":4},
+            "rowPadding":{"top":7,"right":12,"bottom":7,"left":12},
+            "width":220,"windowMargin":8},
+        "labels":{"title":"Edit draft","undo":"Undo","redo":"Redo","cut":"Cut",
+            "copy":"Copy","paste":"Paste","selectAll":"Select all"}
+    },"textarea":{
         "text":text,"mutedForeground":0x656a63ffu32,"background":0xfaf9f6ffu32,
         "selection":0x41665340u32,"caret":0x242724ffu32,"border":0xd8ddd5ffu32,
         "focusedBorder":0x416653ffu32,"borderWidth":1,"radius":12,
@@ -270,8 +279,9 @@ fn bind_brand(input: &mut Input, packages: &mut Vec<Package>, declaration: &mut 
     let mut generator = schemars::SchemaGenerator::default();
     let label = generator.subschema_for::<maka_ui::appearance::TextAppearance>();
     let textarea = generator.subschema_for::<maka_ui::appearance::TextareaAppearance>();
-    let schema = json!({"type":"object","properties":{"label":label,"textarea":textarea},
-        "required":["label","textarea"],"additionalProperties":false,"$defs":generator.definitions()});
+    let menu = generator.subschema_for::<maka_ui::textarea::TextareaMenu>();
+    let schema = json!({"type":"object","properties":{"label":label,"textarea":textarea,"menu":menu},
+        "required":["label","textarea","menu"],"additionalProperties":false,"$defs":generator.definitions()});
     let contract = Contract {
         name: "example.brand.Appearance".into(),
         version: 1,
@@ -423,7 +433,7 @@ pub(crate) fn editor_fixture() -> (Input, Vec<Package>) {
             },
         );
     let source = std::str::from_utf8(root.file("index.mjs").unwrap()).unwrap();
-    let source = source.replace("...(state.right?[{kind:'component',key:'nativeLabel'", "...(state.right?[{kind:'component',key:'editor',binding:'editor',member:0,on:{},props:{initialText:'Start',placeholder:'Write here',appearance:state.brand.textarea,accessibilityLabel:'Write a draft',readOnly:false,disabled:false,softWrap:true,tabIndex:0,command:state.command??null}},{kind:'component',key:'nativeLabel'");
+    let source = source.replace("...(state.right?[{kind:'component',key:'nativeLabel'", "...(state.right?[{kind:'component',key:'editor',binding:'editor',member:0,on:{},props:{initialText:'Start',placeholder:'Write here',appearance:state.brand.textarea,menu:state.brand.menu,accessibilityLabel:'Write a draft',readOnly:false,disabled:false,softWrap:true,tabIndex:0,command:state.command??null}},{kind:'component',key:'nativeLabel'");
     let source = source.replace("const next={...state,revision:state.revision+1};", "const next={...state,revision:state.revision+1};if(event.event?.command)next.command=event.event.command;");
     let source = source.replace(
         "title:'Composed product',width:640,height:400",
@@ -518,7 +528,7 @@ pub(crate) fn resource_fixture() -> (Input, Vec<Package>) {
         r#"
     const contract={};
     export function activate(){{return {{App:{{contract,kind:'component',component:['app']}}}};}}
-    function frame(state){{return {{actions:[],events:[],frame:{{revision:state.revision,state,surface:{{kind:'window',binding:'surface',title:'Immutable draft',width:640,height:480}},view:{{kind:'stack',key:'root',direction:'column',padding:16,gap:12,background:1513239,children:[{{kind:'text',key:'status',text:'Captured: '+(state.outcome?.value?.text??state.outcome?.status??'—'),color:16777215}},...(state.show?[{{kind:'component',key:'editor',binding:'editor',member:0,on:{{changed:'changed'}},props:{{initialText:'Start',placeholder:'Write here',appearance:state.brand.textarea,accessibilityLabel:'Write a draft',readOnly:false,disabled:false,softWrap:true,tabIndex:0,command:state.command??null}}}}]:[]),{{kind:'button',key:'read',label:'Capture draft'}},{{kind:'button',key:'remove',label:'Remove composer'}}]}}}}}};}}
+    function frame(state){{return {{actions:[],events:[],frame:{{revision:state.revision,state,surface:{{kind:'window',binding:'surface',title:'Immutable draft',width:640,height:480}},view:{{kind:'stack',key:'root',direction:'column',padding:16,gap:12,background:1513239,children:[{{kind:'text',key:'status',text:'Captured: '+(state.outcome?.value?.text??state.outcome?.status??'—'),color:16777215}},...(state.show?[{{kind:'component',key:'editor',binding:'editor',member:0,on:{{changed:'changed'}},props:{{initialText:'Start',placeholder:'Write here',appearance:state.brand.textarea,menu:state.brand.menu,accessibilityLabel:'Write a draft',readOnly:false,disabled:false,softWrap:true,tabIndex:0,command:state.command??null}}}}]:[]),{{kind:'button',key:'read',label:'Capture draft'}},{{kind:'button',key:'remove',label:'Remove composer'}}]}}}}}};}}
     export const app={{mount(props,values){{return frame({{revision:0,show:true,brand:values.brand[0]}});}},update(state,props,values){{return frame({{...state,revision:state.revision+1,brand:values.brand[0]}});}},event(state,event){{
         const next={{...state,revision:state.revision+1}};
         if(event.kind==='action')next.outcome=event.event;

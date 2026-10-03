@@ -123,6 +123,17 @@ export const contracts = {
           appearance: {
             $ref: '#/$defs/TextareaAppearance',
           },
+          menu: {
+            anyOf: [
+              {
+                $ref: '#/$defs/TextareaMenu',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
           accessibilityLabel: {
             type: 'string',
             minLength: 1,
@@ -442,6 +453,131 @@ export const contracts = {
             },
             additionalProperties: false,
             required: ['color', 'width', 'inset', 'radius', 'minLength'],
+          },
+          TextareaMenu: {
+            description:
+              'Local presentation for user-initiated native editing actions. This is not\na command interface: clipboard access still requires native activation.',
+            type: 'object',
+            properties: {
+              appearance: {
+                $ref: '#/$defs/TextareaMenuAppearance',
+              },
+              labels: {
+                $ref: '#/$defs/TextareaMenuLabels',
+              },
+            },
+            additionalProperties: false,
+            required: ['appearance', 'labels'],
+          },
+          TextareaMenuAppearance: {
+            type: 'object',
+            properties: {
+              text: {
+                $ref: '#/$defs/TextAppearance',
+              },
+              background: {
+                $ref: '#/$defs/Color',
+              },
+              border: {
+                $ref: '#/$defs/Color',
+              },
+              activeBackground: {
+                $ref: '#/$defs/Color',
+              },
+              activeForeground: {
+                $ref: '#/$defs/Color',
+              },
+              disabledForeground: {
+                $ref: '#/$defs/Color',
+              },
+              borderWidth: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 8,
+              },
+              radius: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 64,
+              },
+              padding: {
+                $ref: '#/$defs/Insets',
+              },
+              rowPadding: {
+                $ref: '#/$defs/Insets',
+              },
+              width: {
+                type: 'number',
+                format: 'float',
+                minimum: 32,
+                maximum: 1024,
+              },
+              windowMargin: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'text',
+              'background',
+              'border',
+              'activeBackground',
+              'activeForeground',
+              'disabledForeground',
+              'borderWidth',
+              'radius',
+              'padding',
+              'rowPadding',
+              'width',
+              'windowMargin',
+            ],
+          },
+          TextareaMenuLabels: {
+            type: 'object',
+            properties: {
+              title: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              undo: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              redo: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              cut: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              copy: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              paste: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              selectAll: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+            },
+            additionalProperties: false,
+            required: ['title', 'undo', 'redo', 'cut', 'copy', 'paste', 'selectAll'],
           },
           TextareaCommand: {
             type: 'object',

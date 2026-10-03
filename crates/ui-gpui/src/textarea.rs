@@ -28,6 +28,7 @@ use maka_ui::{
 };
 use serde_json::json;
 use std::{any::Any, collections::BTreeMap, ops::Range, rc::Rc};
+mod menu;
 
 /// Kit alone owns the buffer, selections and composition. This owner records
 /// observations and causality, not a second writable copy of the text.
@@ -52,6 +53,9 @@ pub struct TextareaOwner {
     _observation: Subscription,
     projection: super::appearance::TextareaProjection,
     label: String,
+    menu: Option<TextareaMenu>,
+    open_menu: Option<menu::OpenMenu>,
+    _menu_input: Option<Subscription>,
 }
 impl TextareaOwner {
     fn new(
@@ -86,12 +90,13 @@ impl TextareaOwner {
             );
             state.set_value(props.initial_text.clone(), window, cx);
             state.set_placeholder(props.placeholder.clone(), window, cx);
+            state.set_context_menu_enabled(props.menu.is_some());
             // Entity references release before GPUI reclaims their values.
             // Keep the resource lease until Kit's actual release processing.
             cx.on_release(move |_, _| drop(keep)).detach();
             state
         });
-        cx.new(|cx: &mut Context<Self>| {
+        let owner = cx.new(|cx: &mut Context<Self>| {
             let snapshot = Self::read_snapshot(&state, window, cx);
             let observation = cx.observe_in(&state, window, |owner, _, window, cx| {
                 owner.refresh(false, window, cx);
@@ -112,8 +117,14 @@ impl TextareaOwner {
                 _observation: observation,
                 projection,
                 label: props.accessibility_label.clone(),
+                menu: props.menu.clone(),
+                open_menu: None,
+                _menu_input: None,
             }
-        })
+        });
+        let subscription = Self::install_menu_input(&owner, cx);
+        owner.update(cx, |owner, _| owner._menu_input = Some(subscription));
+        owner
     }
     fn read_snapshot(
         state: &Entity<TextareaState>,
@@ -229,6 +240,13 @@ impl TextareaOwner {
             self.label = props.accessibility_label.clone();
             cx.notify();
         }
+        if self.menu != props.menu {
+            self.menu = props.menu.clone();
+            cx.notify();
+        }
+        if props.disabled || props.menu.is_none() {
+            self.close_menu(true, window, cx);
+        }
         self.state.update(cx, |state, cx| {
             if appearance_changed {
                 self.projection.apply(state);
@@ -239,6 +257,7 @@ impl TextareaOwner {
                 window.blur(cx);
             }
             state.set_disabled(props.disabled, cx);
+            state.set_context_menu_enabled(props.menu.is_some());
             state.set_soft_wrap(props.soft_wrap, window, cx);
             state.set_tab_index(
                 if props.disabled {
@@ -290,6 +309,7 @@ impl TextareaOwner {
 }
 impl Render for TextareaOwner {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let menu = self.render_menu(window, cx);
         let state = self.state.read(cx);
         let presentation = state.presentation();
         let focused = presentation.focus_handle().is_focused(window);
@@ -305,17 +325,30 @@ impl Render for TextareaOwner {
         let edit_input = self.input.clone();
         let mouse_state = self.state.clone();
         let mouse_input = self.input.clone();
+        let mouse_up_state = self.state.clone();
+        let mouse_up_input = self.input.clone();
         let content = InputBase::new(("textarea", self.state.entity_id()))
             .size_full()
             .flex()
             .track_focus(&focus)
             .focused(focused)
             .disabled(disabled)
-            .capture_any_mouse_down(move |_, _, cx| {
+            .capture_any_mouse_down(move |event, window, cx| {
                 // A commit can disable/remove this owner before the next paint.
                 // Admit against live native facts, never a prior frame's flags.
                 if mouse_input.0.borrow().is_none()
                     || mouse_state.read(cx).presentation().is_disabled()
+                    || (event.button == MouseButton::Right
+                        && mouse_state
+                            .update(cx, |s, cx| s.marked_text_range(window, cx))
+                            .is_some())
+                {
+                    cx.stop_propagation();
+                }
+            })
+            .capture_any_mouse_up(move |_, _, cx| {
+                if mouse_up_input.0.borrow().is_none()
+                    || mouse_up_state.read(cx).presentation().is_disabled()
                 {
                     cx.stop_propagation();
                 }
@@ -362,14 +395,20 @@ impl Render for TextareaOwner {
             .rounded(px(appearance.radius))
             .child(self.state.clone());
         Proxy {
-            content: content.into_any_element(),
+            content: div()
+                .size_full()
+                .relative()
+                .child(content)
+                .children(menu)
+                .into_any_element(),
             owner: cx.entity(),
         }
     }
 }
 
 /// Register the proxy after Kit's handler, retaining the same editing engine.
-/// Only the proxy adds the missing mark/unmark observation boundary.
+/// The proxy observes composition and fences new platform input against the
+/// live owner, actual native focus, editability and local menu navigation.
 struct Proxy {
     content: AnyElement,
     owner: Entity<TextareaOwner>,
@@ -475,6 +514,9 @@ impl EntityInputHandler for TextareaOwner {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.accepts_text_input(window, cx) {
+            return;
+        }
         self.state
             .update(cx, |s, cx| s.replace_text_in_range(r, text, window, cx));
         self.refresh(false, window, cx);
@@ -487,6 +529,9 @@ impl EntityInputHandler for TextareaOwner {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.accepts_text_input(window, cx) {
+            return;
+        }
         self.state.update(cx, |s, cx| {
             s.replace_and_mark_text_in_range(r, text, selected, window, cx)
         });
@@ -517,6 +562,18 @@ impl EntityInputHandler for TextareaOwner {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.input.0.borrow().is_none()
+            || self.open_menu.is_some()
+            || !self
+                .state
+                .read(cx)
+                .presentation()
+                .focus_handle()
+                .is_focused(window)
+            || self.state.read(cx).presentation().is_disabled()
+        {
+            return;
+        }
         self.state
             .update(cx, |s, cx| s.set_selected_text_range(r, window, cx));
         self.refresh(false, window, cx);
@@ -526,8 +583,15 @@ impl EntityInputHandler for TextareaOwner {
             .update(cx, |s, cx| s.text_length_utf16(window, cx))
     }
     fn accepts_text_input(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        self.state
-            .update(cx, |s, cx| s.accepts_text_input(window, cx))
+        self.input.0.borrow().is_some()
+            && self.open_menu.is_none()
+            && self.state.read(cx).is_editable()
+            && self
+                .state
+                .read(cx)
+                .presentation()
+                .focus_handle()
+                .is_focused(window)
     }
     fn text_input_configuration(
         &mut self,

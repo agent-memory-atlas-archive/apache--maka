@@ -649,6 +649,7 @@ export interface FontAppearance {
 }
 export interface TextareaProps {
   appearance: TextareaAppearance;
+  menu?: TextareaMenu | null;
   accessibilityLabel: string;
   readOnly: boolean;
   disabled: boolean;
@@ -702,6 +703,37 @@ export interface ScrollbarThumb {
   inset: number;
   radius: number;
   minLength: number;
+}
+/**
+ * Local presentation for user-initiated native editing actions. This is not
+ * a command interface: clipboard access still requires native activation.
+ */
+export interface TextareaMenu {
+  appearance: TextareaMenuAppearance;
+  labels: TextareaMenuLabels;
+}
+export interface TextareaMenuAppearance {
+  text: TextAppearance;
+  background: Color;
+  border: Color;
+  activeBackground: Color;
+  activeForeground: Color;
+  disabledForeground: Color;
+  borderWidth: number;
+  radius: number;
+  padding: Insets;
+  rowPadding: Insets;
+  width: number;
+  windowMargin: number;
+}
+export interface TextareaMenuLabels {
+  title: string;
+  undo: string;
+  redo: string;
+  cut: string;
+  copy: string;
+  paste: string;
+  selectAll: string;
 }
 export interface TextareaCommand {
   sequence: number;

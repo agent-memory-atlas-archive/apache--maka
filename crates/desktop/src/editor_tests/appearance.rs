@@ -21,7 +21,7 @@ use super::*;
 use gpui_kit::{AccessibleAction, Role, accesskit};
 use serde_json::{Value, json};
 
-fn scoped_fixture() -> (
+pub(super) fn scoped_fixture() -> (
     maka_plugin_core::composition::Input,
     Vec<maka_plugins::package::Package>,
 ) {
@@ -72,15 +72,16 @@ fn scoped_fixture() -> (
     let source = std::str::from_utf8(old.file("index.mjs").unwrap()).unwrap()
         .replace("brand:values.brand[0]", "brand:values.brand[0],otherBrand:values.otherBrand[0]")
         .replace("appearance:state.brand.textarea", "appearance:(state.alternate?state.otherBrand:state.brand).textarea")
+        .replace("menu:state.brand.menu", "menu:state.menuClosed?null:(state.alternate?state.otherBrand:state.brand).menu")
         .replace("readOnly:false,disabled:false", "readOnly:state.readOnly??false,disabled:state.disabled??false")
-        .replace("const next={...state,revision:state.revision+1};", "const next={...state,revision:state.revision+1};if(event.event?.switch)next.alternate=!state.alternate;if(event.event?.readOnly!==undefined)next.readOnly=event.event.readOnly;if(event.event?.disabled!==undefined)next.disabled=event.event.disabled;")
+        .replace("const next={...state,revision:state.revision+1};", "const next={...state,revision:state.revision+1};if(event.event?.switch)next.alternate=!state.alternate;if(event.event?.menuClosed!==undefined)next.menuClosed=event.event.menuClosed;if(event.event?.readOnly!==undefined)next.readOnly=event.event.readOnly;if(event.event?.disabled!==undefined)next.disabled=event.event.disabled;")
         .replace("},{kind:'component',key:'nativeLabel'", "},{kind:'component',key:'second',binding:'editor',member:0,on:{},props:{initialText:'Second',placeholder:'Other draft',appearance:state.otherBrand.textarea,accessibilityLabel:'Other draft',readOnly:false,disabled:false,softWrap:true,tabIndex:0}},{kind:'component',key:'nativeLabel'");
     let root = support::package("dynamic.app", declaration, Some(source));
     input.instances.get_mut("app").unwrap().package = root.application_ref().into();
     packages.push(root);
     (input, packages)
 }
-fn event(scene: &Scene, event: Value, cx: &mut TestAppContext) {
+pub(super) fn event(scene: &Scene, event: Value, cx: &mut TestAppContext) {
     let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
     scene
         .app
@@ -129,6 +130,12 @@ fn branded_textareas_share_window_but_not_appearance_and_switch_preserves_native
         assert!(state.read(cx).input_bounds().size.height >= px(24.));
         assert!(second_state.read(cx).input_bounds().size.height >= px(36.));
         first.update(cx, |owner, cx| {
+            owner
+                .state
+                .read(cx)
+                .presentation()
+                .focus_handle()
+                .focus(window, cx);
             owner.replace_text_in_range(Some(0..5), "Draft", window, cx)
         });
         state.update(cx, |state, cx| {
@@ -169,6 +176,12 @@ fn branded_textareas_share_window_but_not_appearance_and_switch_preserves_native
     cx.update(|cx| assert_eq!(state.read(cx).value().as_ref(), "Start"));
     cx.update_window(scene.window, |_, window, cx| {
         first.update(cx, |owner, cx| {
+            owner
+                .state
+                .read(cx)
+                .presentation()
+                .focus_handle()
+                .focus(window, cx);
             owner.replace_and_mark_text_in_range(Some(0..5), "中文", Some(0..2), window, cx)
         })
     })
@@ -502,6 +515,78 @@ fn committed_disabled_textarea_is_not_a_tab_stop_before_next_paint(cx: &mut Test
                 .focus_handle()
                 .is_focused(window)
         );
+    })
+    .unwrap();
+    scene.close(cx);
+}
+
+#[gpui::test]
+fn textarea_history_availability_uses_real_history_and_current_editability(
+    cx: &mut TestAppContext,
+) {
+    let timer = timer();
+    let scene = Scene::new(cx, &timer, false);
+    scene.draw(cx);
+    let owner = scene.owner();
+    let state = cx.update(|cx| owner.read(cx).state.clone());
+    cx.update_window(scene.window, |_, window, cx| {
+        assert!(!state.read(cx).can_undo());
+        assert!(!state.read(cx).can_redo());
+        state.update(cx, |state, cx| {
+            state.focus(window, cx);
+            state.replace_all("Draft", window, cx);
+        });
+        assert!(state.read(cx).can_undo());
+        assert!(!state.read(cx).can_redo());
+    })
+    .unwrap();
+    scene.draw(cx);
+    cx.update_window(scene.window, |_, window, cx| {
+        let focus = state.read(cx).presentation().focus_handle().clone();
+        focus.dispatch_action(&gpui_kit::base::input::Undo, window, cx);
+        assert_eq!(state.read(cx).value().as_ref(), "Start");
+        assert!(!state.read(cx).can_undo());
+        assert!(state.read(cx).can_redo());
+        state.update(cx, |state, cx| {
+            state.set_readonly(true, cx);
+            assert!(!state.can_undo());
+            assert!(!state.can_redo());
+            state.set_readonly(false, cx);
+            assert!(state.can_redo());
+            state.set_disabled(true, cx);
+            assert!(!state.can_undo());
+            assert!(!state.can_redo());
+            state.set_disabled(false, cx);
+            assert!(state.can_redo());
+        });
+        focus.dispatch_action(&gpui_kit::base::input::Redo, window, cx);
+        assert_eq!(state.read(cx).value().as_ref(), "Draft");
+        assert!(state.read(cx).can_undo());
+        assert!(!state.read(cx).can_redo());
+        owner.update(cx, |owner, cx| {
+            owner
+                .state
+                .read(cx)
+                .presentation()
+                .focus_handle()
+                .focus(window, cx);
+            owner.replace_and_mark_text_in_range(Some(0..5), "中文", Some(0..2), window, cx);
+        });
+        assert!(!state.read(cx).can_undo());
+        assert!(!state.read(cx).can_redo());
+        state.update(cx, |state, cx| state.set_readonly(true, cx));
+        owner.update(cx, |owner, cx| owner.unmark_text(window, cx));
+        assert_eq!(
+            owner.update(cx, |owner, cx| owner.marked_text_range(window, cx)),
+            None
+        );
+        assert!(!state.read(cx).can_undo());
+        state.update(cx, |state, cx| state.set_readonly(false, cx));
+        assert!(state.read(cx).can_undo());
+        focus.dispatch_action(&gpui_kit::base::input::Undo, window, cx);
+        assert_eq!(state.read(cx).value().as_ref(), "Draft");
+        assert!(state.read(cx).can_redo());
+        assert_eq!(owner.read(cx).state.entity_id(), state.entity_id());
     })
     .unwrap();
     scene.close(cx);

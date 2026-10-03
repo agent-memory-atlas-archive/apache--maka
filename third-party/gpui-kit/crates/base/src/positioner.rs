@@ -75,6 +75,21 @@ pub struct PositionerState {
 }
 
 impl Positioner {
+    /// Content size available inside the same decoration and margin bounds
+    /// used for positioning. Callers constrain their own scrollable surface;
+    /// positioning alone cannot make an oversized child fit the viewport.
+    pub fn available_size(window: &Window, margin: Pixels) -> Size<Pixels> {
+        let frame = frame_insets(
+            window.window_decorations(),
+            window.client_inset().unwrap_or(px(0.)),
+        );
+        let viewport = window.viewport_size();
+        Size {
+            width: (viewport.width - frame.left - frame.right - margin * 2.).max(px(0.)),
+            height: (viewport.height - frame.top - frame.bottom - margin * 2.).max(px(0.)),
+        }
+    }
+
     /// Places the popup on a side of `trigger_bounds`, flipping when needed.
     pub fn side(trigger_bounds: Bounds<Pixels>) -> Self {
         Self {

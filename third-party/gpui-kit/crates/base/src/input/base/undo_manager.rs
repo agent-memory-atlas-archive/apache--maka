@@ -362,6 +362,22 @@ impl UndoManager {
         Some(replay)
     }
 
+    fn has_pending_changes(&self) -> bool {
+        self.pending
+            .as_ref()
+            .is_some_and(|pending| !is_noop_batch(&pending.changes))
+    }
+
+    pub(super) fn can_undo(&self) -> bool {
+        !self.undo_transactions.is_empty() || self.has_pending_changes()
+    }
+
+    pub(super) fn can_redo(&self) -> bool {
+        // Replay first commits an open transaction. A real edit clears redo,
+        // while an empty or canceled transaction preserves the existing redo.
+        !self.redo_transactions.is_empty() && !self.has_pending_changes()
+    }
+
     #[cfg(test)]
     pub(super) fn has_undos(&self) -> bool {
         !self.undo_transactions.is_empty()

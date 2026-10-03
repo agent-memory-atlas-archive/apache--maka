@@ -210,6 +210,11 @@ fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_pa
     };
     cx.update_window(scene.window, |_, window, cx| {
         owner.update(cx, |s, cx| {
+            s.state
+                .read(cx)
+                .presentation()
+                .focus_handle()
+                .focus(window, cx);
             s.replace_text_in_range(Some(0..5), "Draft", window, cx)
         })
     })
@@ -285,7 +290,17 @@ fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_pa
         // paint or observation publication occurs.
         let before = owner.read(cx).revision;
         owner.update(cx, |s, cx| {
+            s.state
+                .read(cx)
+                .presentation()
+                .focus_handle()
+                .focus(window, cx);
             s.replace_and_mark_text_in_range(Some(0..2), "n", Some(1..1), window, cx);
+            s.state
+                .read(cx)
+                .presentation()
+                .focus_handle()
+                .focus(window, cx);
             s.replace_and_mark_text_in_range(None, "ni", Some(2..2), window, cx);
         });
         assert_eq!(owner.read(cx).revision, before + 2);
@@ -389,6 +404,11 @@ fn editor_large_text_observations_use_revision_checked_bounded_resources(cx: &mu
     let text = format!("中🌟{}", "x".repeat(1024 * 1024));
     cx.update_window(scene.window, |_, window, cx| {
         owner.update(cx, |s, cx| {
+            s.state
+                .read(cx)
+                .presentation()
+                .focus_handle()
+                .focus(window, cx);
             s.replace_text_in_range(Some(0..5), &text, window, cx)
         })
     })
@@ -432,6 +452,11 @@ fn editor_large_text_observations_use_revision_checked_bounded_resources(cx: &mu
                 "中🌟"
             );
             assert_eq!(adjusted, Some(0..3));
+            s.state
+                .read(cx)
+                .presentation()
+                .focus_handle()
+                .focus(window, cx);
             s.replace_text_in_range(Some(3..3), "!", window, cx);
             assert!(matches!(
                 s.read_text(&reference, 0..7, window, cx),
@@ -456,6 +481,11 @@ fn failed_composed_batch_cannot_execute_staged_editor_reset(cx: &mut TestAppCont
     let owner = scene.owner();
     cx.update_window(scene.window, |_, window, cx| {
         owner.update(cx, |s, cx| {
+            s.state
+                .read(cx)
+                .presentation()
+                .focus_handle()
+                .focus(window, cx);
             s.replace_text_in_range(Some(0..5), "Draft", window, cx)
         });
         let based_on = owner.read(cx).revision;
@@ -699,6 +729,11 @@ fn real_composer_snapshot_precedes_reset_and_capture_conflict_does_not_fake_scen
         let owner = scene.owner();
         cx.update_window(scene.window, |_, window, cx| {
             owner.update(cx, |o, cx| {
+                o.state
+                    .read(cx)
+                    .presentation()
+                    .focus_handle()
+                    .focus(window, cx);
                 o.replace_text_in_range(Some(0..5), "Draft", window, cx)
             })
         })
@@ -1332,6 +1367,11 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
             .surface
             .update(cx, |s, cx| s.sync_native(window, cx).unwrap());
         owner.update(cx, |o, cx| {
+            o.state
+                .read(cx)
+                .presentation()
+                .focus_handle()
+                .focus(window, cx);
             o.replace_text_in_range(Some(0..5), "After", window, cx)
         });
     })
@@ -1548,3 +1588,4 @@ fn empty_host_quit_waits_for_actual_caller_sql_close_after_accepted_writer_waite
 mod composition;
 
 mod appearance;
+mod menu;

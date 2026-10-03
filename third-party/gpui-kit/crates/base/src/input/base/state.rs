@@ -629,6 +629,16 @@ impl<M: InputModeKind> InputBaseState<M> {
         self.selections.iter().any(|sel| !sel.is_empty()) && !self.masked
     }
 
+    /// Whether a user undo can replay the original editing history now.
+    pub fn can_undo(&self) -> bool {
+        self.is_editable() && self.ime_marked_range.is_none() && self.undo_manager.can_undo()
+    }
+
+    /// Whether a user redo can replay the original editing history now.
+    pub fn can_redo(&self) -> bool {
+        self.is_editable() && self.ime_marked_range.is_none() && self.undo_manager.can_redo()
+    }
+
     pub fn context_menu_capabilities(&self) -> InputContextMenuCapabilities {
         let (go_to_definition, code_actions) = self.extras.context_menu_capabilities();
         InputContextMenuCapabilities::new()
@@ -794,6 +804,9 @@ impl<M: InputModeKind> InputBaseState<M> {
 
     pub fn set_context_menu_enabled(&mut self, enabled: bool) {
         self.enable_context_menu = enabled;
+        if !enabled {
+            self.pending_context_menu = None;
+        }
     }
 
     /// Set whether search UI allows replacement, default is true.
@@ -1107,6 +1120,7 @@ impl<M: InputModeKind> InputBaseState<M> {
 
         self.disabled = disabled;
         if disabled {
+            self.pending_context_menu = None;
             M::hide_context_menu(self, cx);
             M::clear_inline_completion(self, cx);
         }
@@ -2142,7 +2156,7 @@ impl<M: InputModeKind> InputBaseState<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.disabled {
+        if self.disabled || !self.enable_context_menu || self.ime_marked_range.is_some() {
             return;
         }
         if crate::GlobalState::is_in_deferred_context(cx) {
@@ -2159,7 +2173,9 @@ impl<M: InputModeKind> InputBaseState<M> {
 
         if let Some(handler) = self.context_menu_handler.clone() {
             let capabilities = self.context_menu_capabilities();
-            cx.defer_in(window, move |_, window, cx| {
+            // The presentation callback may read the same native State. Leave
+            // its update borrow before delivering the deferred menu request.
+            window.defer(cx, move |window, cx| {
                 handler(NativeMenu::new(), capabilities, position, window, cx);
             });
         }
@@ -4606,6 +4622,57 @@ impl<M: InputModeKind> Render for InputBaseState<M> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[gpui::test]
+    fn test_textarea_history_availability_matches_pending_transaction_replay(
+        cx: &mut TestAppContext,
+    ) {
+        let view = InputView::build_textarea(cx, |state| state);
+        view.window_handle
+            .update(cx, |_, window, cx| {
+                view.input.update(cx, |state, cx| {
+                    // The first edit is still inside an open transaction.
+                    state.undo_manager.begin_transaction();
+                    state.replace_text_in_range(None, "draft", window, cx);
+                    assert!(state.can_undo());
+                    assert!(!state.can_redo());
+                    state.undo(&Undo, window, cx);
+                    assert_eq!(state.value(), "");
+                    assert!(!state.can_undo());
+                    assert!(state.can_redo());
+
+                    // Empty and canceled transactions preserve the real redo.
+                    state.undo_manager.begin_transaction();
+                    assert!(state.can_redo());
+                    state.redo(&Redo, window, cx);
+                    assert_eq!(state.value(), "draft");
+                    state.undo(&Undo, window, cx);
+                    state.undo_manager.begin_transaction();
+                    state.replace_text_in_range(Some(0..0), "x", window, cx);
+                    state.replace_text_in_range(Some(0..1), "", window, cx);
+                    assert_eq!(state.value(), "");
+                    assert!(!state.can_undo());
+                    assert!(state.can_redo());
+                    state.redo(&Redo, window, cx);
+                    assert_eq!(state.value(), "draft");
+
+                    // An effective pending edit consumes that redo on replay.
+                    state.undo(&Undo, window, cx);
+                    state.undo_manager.begin_transaction();
+                    state.replace_text_in_range(Some(0..0), "new", window, cx);
+                    assert!(state.can_undo());
+                    assert!(!state.can_redo());
+                    state.redo(&Redo, window, cx);
+                    assert_eq!(state.value(), "new");
+                    assert!(!state.can_redo());
+                    state.undo(&Undo, window, cx);
+                    assert_eq!(state.value(), "");
+                    state.redo(&Redo, window, cx);
+                    assert_eq!(state.value(), "new");
+                });
+            })
+            .unwrap();
+    }
+
     #[gpui::test]
     fn test_inline_token_wrap_and_size_refresh(cx: &mut TestAppContext) {
         use crate::input::{InlineToken, InlineTokenPresentation};

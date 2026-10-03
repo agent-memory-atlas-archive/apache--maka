@@ -27,6 +27,8 @@ use std::collections::BTreeMap;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TextareaProps {
     pub appearance: crate::appearance::TextareaAppearance,
+    #[serde(default)]
+    pub menu: Option<TextareaMenu>,
     #[schemars(length(min = 1, max = 512))]
     pub accessibility_label: String,
     pub read_only: bool,
@@ -44,6 +46,55 @@ pub struct TextareaProps {
     /// None issues no new command; an accepted command remains pending until
     /// its matching receipt commits. Clearing props is not cancellation.
     pub command: Option<TextareaCommand>,
+}
+
+/// Local presentation for user-initiated native editing actions. This is not
+/// a command interface: clipboard access still requires native activation.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TextareaMenu {
+    pub appearance: TextareaMenuAppearance,
+    pub labels: TextareaMenuLabels,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextareaMenuAppearance {
+    pub text: crate::appearance::TextAppearance,
+    pub background: crate::appearance::Color,
+    pub border: crate::appearance::Color,
+    pub active_background: crate::appearance::Color,
+    pub active_foreground: crate::appearance::Color,
+    pub disabled_foreground: crate::appearance::Color,
+    #[schemars(range(min = 0, max = 8))]
+    pub border_width: f32,
+    #[schemars(range(min = 0, max = 64))]
+    pub radius: f32,
+    pub padding: crate::appearance::Insets,
+    pub row_padding: crate::appearance::Insets,
+    #[schemars(range(min = 32, max = 1024))]
+    pub width: f32,
+    #[schemars(range(min = 0, max = 128))]
+    pub window_margin: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextareaMenuLabels {
+    #[schemars(length(min = 1, max = 512))]
+    pub title: String,
+    #[schemars(length(min = 1, max = 512))]
+    pub undo: String,
+    #[schemars(length(min = 1, max = 512))]
+    pub redo: String,
+    #[schemars(length(min = 1, max = 512))]
+    pub cut: String,
+    #[schemars(length(min = 1, max = 512))]
+    pub copy: String,
+    #[schemars(length(min = 1, max = 512))]
+    pub paste: String,
+    #[schemars(length(min = 1, max = 512))]
+    pub select_all: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

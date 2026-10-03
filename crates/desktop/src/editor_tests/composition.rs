@@ -333,6 +333,11 @@ fn native_slots_virtual_measurement_repaint_preserve_editor_and_composing_state(
     let entity = owner.entity_id();
     cx.update_window(scene.window, |_, window, cx| {
         owner.update(cx, |s, cx| {
+            s.state
+                .read(cx)
+                .presentation()
+                .focus_handle()
+                .focus(window, cx);
             s.replace_and_mark_text_in_range(Some(0..5), "你好", Some(2..2), window, cx);
         })
     })
