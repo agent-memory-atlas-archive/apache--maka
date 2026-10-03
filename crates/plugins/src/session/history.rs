@@ -20,6 +20,7 @@
 use crate::{call::Scope, execution::CommandError};
 use futures_util::future::BoxFuture;
 use maka_runtime::attachment::AttachmentRef;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -108,7 +109,7 @@ impl CopyMaterial {
 }
 
 /// Byte offset in one message's UTF-8 text, not a bearer capability.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Cursor {
     pub sequence: u64,
@@ -116,7 +117,7 @@ pub struct Cursor {
 }
 
 /// A stable log fence prevents a scan from chasing newly appended messages.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Read {
     pub session_id: String,
@@ -141,7 +142,7 @@ impl Read {
 
 /// Text visible in the durable conversation; reasoning and runtime metadata are
 /// not conversation text. Tool JSON contributes string values, never its keys.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     User,

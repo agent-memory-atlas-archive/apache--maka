@@ -42,6 +42,23 @@ export type RuntimeProtocol =
   | TextareaCapture
   | ReadText
   | TextChunk
+  | AgentConfiguration
+  | AgentModelSelection
+  | AgentList
+  | AgentCreate
+  | AgentSend
+  | AgentStop
+  | AgentWatch
+  | AgentSession
+  | AgentSessionPage
+  | AgentStarted
+  | AgentStopped
+  | AgentDelivery
+  | AgentDeliveryKind
+  | AgentDeliveryPage
+  | AgentHistoryChunk
+  | AgentHistoryPage
+  | Read
   | HostActivation
   | HostRequest
   | HostObservation
@@ -280,7 +297,7 @@ export type TextareaOutcome =
       reason: TextareaConflict;
       status: 'conflict';
     };
-export type TextareaConflict = 'revision' | 'composition' | 'sequence';
+export type TextareaConflict = 'representation' | 'revision' | 'composition' | 'sequence';
 export type TextareaCapture =
   | {
       kind: 'current';
@@ -288,6 +305,23 @@ export type TextareaCapture =
   | {
       revision: number;
       kind: 'at_revision';
+    };
+export type AgentDeliveryKind = 'opened' | 'part_started' | 'delta' | 'part_finished' | 'ended';
+/**
+ * Text visible in the durable conversation; reasoning and runtime metadata are
+ * not conversation text. Tool JSON contributes string values, never its keys.
+ */
+export type Role = 'user' | 'assistant' | 'tool_call' | 'tool_result';
+export type AgentHistoryPage =
+  | {
+      through: number;
+      kind: 'preparing';
+    }
+  | {
+      through: number;
+      chunks: AgentHistoryChunk[];
+      next?: Cursor | null;
+      kind: 'ready';
     };
 /**
  * Resource names select slots in the current request, not durable grants.
@@ -787,6 +821,96 @@ export interface ReadText {
 export interface TextChunk {
   text: string;
   metadata: unknown;
+}
+export interface AgentConfiguration {
+  model: AgentModelSelection;
+  /**
+   * Compiled API provider; never an endpoint, credential or mutable fallback.
+   */
+  provider: string;
+  maxActiveRuns: number;
+  maxSteps: number;
+}
+export interface AgentModelSelection {
+  connectionId: string;
+  connectionSlug: string;
+  model: string;
+}
+export interface AgentList {
+  revision?: string | null;
+  cursor?: string | null;
+}
+export interface AgentCreate {
+  title: string;
+}
+export interface AgentSend {
+  sessionId: string;
+  message: string;
+}
+export interface AgentStop {
+  sessionId: string;
+  invocationId: string;
+}
+export interface AgentWatch {
+  sessionId: string;
+  after: number;
+}
+export interface AgentSession {
+  id: string;
+  title: string;
+  revision: number;
+  updatedAt: number;
+  archived: boolean;
+}
+export interface AgentSessionPage {
+  revision: string;
+  sessions: AgentSession[];
+  nextCursor?: string | null;
+}
+export interface AgentStarted {
+  sessionId: string;
+  invocationId: string;
+}
+export interface AgentStopped {
+  requested: boolean;
+}
+export interface AgentDelivery {
+  sequence: number;
+  invocationId: string;
+  kind: AgentDeliveryKind;
+  text?: string | null;
+  partId?: string | null;
+  failed?: boolean | null;
+}
+export interface AgentDeliveryPage {
+  through: number;
+  nextAfter: number;
+  events: AgentDelivery[];
+}
+export interface AgentHistoryChunk {
+  messageId: string;
+  turnId: string;
+  timestamp: number;
+  role: Role;
+  sequence: number;
+  offset: number;
+  totalBytes: number;
+  text: string;
+}
+/**
+ * Byte offset in one message's UTF-8 text, not a bearer capability.
+ */
+export interface Cursor {
+  sequence: number;
+  offset: number;
+}
+/**
+ * A stable log fence prevents a scan from chasing newly appended messages.
+ */
+export interface Read {
+  sessionId: string;
+  through?: number | null;
+  cursor?: Cursor | null;
 }
 export interface HostActivation {
   contract: Contract;

@@ -386,6 +386,20 @@ impl Fixture {
         )
         .await
     }
+    async fn query(&self, method: &str, input: Value) -> Result<Value, String> {
+        self.app
+            .client()
+            .start(
+                self.binding(2).await,
+                method.into(),
+                input,
+                scope(&self.issuer, true),
+                Attachments::new(),
+            )
+            .await?
+            .result()
+            .await
+    }
     async fn drained(&self) {
         while !self.owner.workers.is_empty() {
             tokio::task::yield_now().await;
@@ -429,6 +443,73 @@ async fn request(socket: &mut TcpStream) -> Value {
 async fn response(socket: &mut TcpStream) {
     let body = "data: {\"id\":\"fixture\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Elegant response\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"fixture\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}\n\ndata: [DONE]\n\n";
     socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+}
+
+#[tokio::test]
+async fn canonical_history_is_bounded_utf8_and_keeps_its_original_fence() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let reply = "中文👩🏽‍💻\u{1}".repeat(700);
+        let response_text = reply.clone();
+        let server = tokio::spawn(async move {
+            for turn in 0..2 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                request(&mut socket).await;
+                let text = if turn == 0 { &response_text } else { "Later response" };
+                let delta = json!({"id":"history","choices":[{"index":0,"delta":{"content":text},"finish_reason":null}]});
+                let body = format!("data: {delta}\n\ndata: {{\"id\":\"history\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"stop\"}}]}}\n\ndata: [DONE]\n\n");
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            }
+        });
+        let fixture = Fixture::new(&base, 1, None).await;
+        let session = fixture.create("History").await;
+        let message = format!("{}中文", "\u{0}".repeat(9000));
+        fixture.mutation(2, "send", json!({"sessionId":session,"message":message}), Uuid::new_v4()).await.unwrap();
+        fixture.drained().await;
+        let mut input = json!({"sessionId":session});
+        let mut user = String::new();
+        let mut assistant = String::new();
+        let mut fence = None;
+        let mut later = false;
+        let mut finished = false;
+        for _ in 0..128 {
+            let page = fixture.query("history", input.clone()).await.unwrap();
+            assert!(serde_json::to_vec(&page).unwrap().len() < 64 * 1024);
+            assert!(!page.to_string().contains("private-fixture-key"));
+            let through = page["through"].as_u64().unwrap();
+            assert_eq!(*fence.get_or_insert(through), through);
+            input["through"] = json!(through);
+            if page["kind"] == "preparing" { continue; }
+            let chunks = page["chunks"].as_array().unwrap();
+            assert!(chunks.len() <= 2);
+            for chunk in chunks {
+                let text = chunk["text"].as_str().unwrap();
+                assert!(text.len() <= 4096);
+                match chunk["role"].as_str().unwrap() {
+                    "user" => user.push_str(text),
+                    "assistant" => assistant.push_str(text),
+                    role => panic!("unexpected conversation role {role}"),
+                }
+                assert!(chunk.get("attachments").is_none());
+            }
+            if !later {
+                fixture.send(&session).await.unwrap();
+                fixture.drained().await;
+                later = true;
+            }
+            if page["next"].is_null() { finished = true; break; }
+            input["cursor"] = page["next"].clone();
+        }
+        assert!(finished);
+        assert_eq!(user, message);
+        assert_eq!(assistant, reply);
+        assert!(fixture.query("history", json!({"sessionId":session,"cursor":{"sequence":0,"offset":0}})).await.is_err());
+        assert!(fixture.query("history", json!({"sessionId":"foreign_session"})).await.is_err());
+        server.await.unwrap();
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
 }
 #[tokio::test]
 async fn actual_http_runs_are_bounded_and_observer_loss_does_not_release_capacity() {

@@ -35,6 +35,7 @@ fn fixture(handler: &str) -> (tokio::runtime::Runtime, Input, Vec<Package>) {
     (runtime, input, packages)
 }
 fn draw(presenter: &mut Presenter, width: u16, height: u16) -> Buffer {
+    presenter.sync_native().unwrap();
     let area = Rect::new(0, 0, width, height);
     let mut buffer = Buffer::empty(area);
     let scene = presenter.paint(area, &mut buffer).unwrap();
@@ -845,3 +846,85 @@ fn raw_click_focus_is_a_default_after_successful_commit() {
 
 #[path = "subscriptions.rs"]
 mod subscriptions;
+
+#[path = "tests/textarea.rs"]
+mod textarea;
+
+#[test]
+fn pure_native_paint_panics_drain_original_state_and_failed_drop_keeps_root() {
+    use std::{
+        any::Any,
+        collections::BTreeMap,
+        rc::Rc,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
+    struct State {
+        drops: Arc<AtomicUsize>,
+        failed: bool,
+    }
+    impl Drop for State {
+        fn drop(&mut self) {
+            self.drops.fetch_add(1, Ordering::SeqCst);
+            assert!(!self.failed, "original native destruction failed");
+        }
+    }
+    struct Panic {
+        drops: Arc<AtomicUsize>,
+        failed: bool,
+    }
+    impl Widget for Panic {
+        fn create(&self) -> Box<dyn Any> {
+            Box::new(State {
+                drops: self.drops.clone(),
+                failed: self.failed,
+            })
+        }
+        fn measure(&self, _: &Slots<'_>, _: u16) -> maka_ui::Result<(u16, u16)> {
+            panic!("pure measurement failure")
+        }
+        fn paint(&self, _: &mut Slots<'_>, _: Rect, _: &mut Buffer) -> maka_ui::Result<()> {
+            panic!("pure painting failure")
+        }
+    }
+    for failed in [false, true] {
+        let (runtime, input, packages) = fixture("");
+        let drops = Arc::new(AtomicUsize::new(0));
+        let watched = drops.clone();
+        let native = NativeRegistry::with_surface(PresentationTarget::Tui)
+            .with_scene_compiler(scene::language(), move |_, _| {
+                maka_ui::NativeView::<dyn Widget>::new(
+                    Rc::new(Panic {
+                        drops: watched.clone(),
+                        failed,
+                    }),
+                    BTreeMap::new(),
+                    vec![],
+                )
+            })
+            .unwrap();
+        let mut tui = Presenter::new(
+            &input,
+            packages,
+            runtime.handle().clone(),
+            native,
+            json!({}),
+        )
+        .unwrap();
+        assert!(tui.measure_mount(&tui.root, 30).is_err());
+        let area = Rect::new(0, 0, 30, 12);
+        assert!(tui.paint(area, &mut Buffer::empty(area)).is_err());
+        assert_eq!(drops.load(Ordering::SeqCst), 0);
+        assert_eq!(tui.surface_closed(Ok(())).is_ok(), !failed);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        assert_eq!(tui.can_shutdown(), !failed);
+        if failed {
+            assert!(tui.application.frame(&tui.root).is_ok());
+            assert!(tui.shutdown().is_err());
+        } else {
+            tui.shutdown().unwrap();
+        }
+    }
+}

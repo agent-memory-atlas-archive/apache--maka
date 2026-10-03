@@ -672,7 +672,7 @@ async fn copies_own_history_and_files_without_replaying_execution_across_retries
             1
         );
         let history = log
-            .history_text(session, root.high_water, None)
+            .history_text(session, root.high_water, None, 16 * 1024, 8)
             .await
             .unwrap();
         let maka_plugins::session::history::Page::Ready { chunks, next, .. } = &history else {
@@ -705,7 +705,7 @@ async fn copies_own_history_and_files_without_replaying_execution_across_retries
         );
         assert_eq!(
             serde_json::to_value(
-                log.history_text(session, root.high_water, None)
+                log.history_text(session, root.high_water, None, 16 * 1024, 8)
                     .await
                     .unwrap()
             )

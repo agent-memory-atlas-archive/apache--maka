@@ -779,7 +779,7 @@ export const contracts = {
             },
             TextareaConflict: {
               type: 'string',
-              enum: ['revision', 'composition', 'sequence'],
+              enum: ['representation', 'revision', 'composition', 'sequence'],
             },
           },
         },
@@ -838,7 +838,7 @@ export const contracts = {
           mode: 'mutation',
           input: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
-            title: 'Create',
+            title: 'AgentCreate',
             type: 'object',
             properties: {
               title: {
@@ -852,7 +852,7 @@ export const contracts = {
           },
           output: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
-            title: 'Session',
+            title: 'AgentSession',
             type: 'object',
             properties: {
               id: {
@@ -880,11 +880,191 @@ export const contracts = {
           },
           resources: {},
         },
+        history: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'Read',
+            description: 'A stable log fence prevents a scan from chasing newly appended messages.',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              through: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+              cursor: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/Cursor',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId'],
+            $defs: {
+              Cursor: {
+                description: "Byte offset in one message's UTF-8 text, not a bearer capability.",
+                type: 'object',
+                properties: {
+                  sequence: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sequence', 'offset'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentHistoryPage',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  through: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'preparing',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'through'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  through: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  chunks: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/AgentHistoryChunk',
+                    },
+                  },
+                  next: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Cursor',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'ready',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'through', 'chunks'],
+              },
+            ],
+            $defs: {
+              AgentHistoryChunk: {
+                type: 'object',
+                properties: {
+                  messageId: {
+                    type: 'string',
+                  },
+                  turnId: {
+                    type: 'string',
+                  },
+                  timestamp: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  role: {
+                    $ref: '#/$defs/Role',
+                  },
+                  sequence: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  totalBytes: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  text: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'messageId',
+                  'turnId',
+                  'timestamp',
+                  'role',
+                  'sequence',
+                  'offset',
+                  'totalBytes',
+                  'text',
+                ],
+              },
+              Role: {
+                description:
+                  'Text visible in the durable conversation; reasoning and runtime metadata are\nnot conversation text. Tool JSON contributes string values, never its keys.',
+                type: 'string',
+                enum: ['user', 'assistant', 'tool_call', 'tool_result'],
+              },
+              Cursor: {
+                description: "Byte offset in one message's UTF-8 text, not a bearer capability.",
+                type: 'object',
+                properties: {
+                  sequence: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sequence', 'offset'],
+              },
+            },
+          },
+          resources: {},
+        },
         list: {
           mode: 'query',
           input: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
-            title: 'List',
+            title: 'AgentList',
             type: 'object',
             properties: {
               revision: {
@@ -900,7 +1080,7 @@ export const contracts = {
           },
           output: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
-            title: 'SessionPage',
+            title: 'AgentSessionPage',
             type: 'object',
             properties: {
               revision: {
@@ -909,7 +1089,7 @@ export const contracts = {
               sessions: {
                 type: 'array',
                 items: {
-                  $ref: '#/$defs/Session',
+                  $ref: '#/$defs/AgentSession',
                 },
               },
               nextCursor: {
@@ -919,7 +1099,7 @@ export const contracts = {
             additionalProperties: false,
             required: ['revision', 'sessions'],
             $defs: {
-              Session: {
+              AgentSession: {
                 type: 'object',
                 properties: {
                   id: {
@@ -953,7 +1133,7 @@ export const contracts = {
           mode: 'mutation',
           input: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
-            title: 'Send',
+            title: 'AgentSend',
             type: 'object',
             properties: {
               sessionId: {
@@ -972,7 +1152,7 @@ export const contracts = {
           },
           output: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
-            title: 'Started',
+            title: 'AgentStarted',
             type: 'object',
             properties: {
               sessionId: {
@@ -991,7 +1171,7 @@ export const contracts = {
           mode: 'mutation',
           input: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
-            title: 'Stop',
+            title: 'AgentStop',
             type: 'object',
             properties: {
               sessionId: {
@@ -1010,7 +1190,7 @@ export const contracts = {
           },
           output: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
-            title: 'Stopped',
+            title: 'AgentStopped',
             type: 'object',
             properties: {
               requested: {
@@ -1026,7 +1206,7 @@ export const contracts = {
           mode: 'subscription',
           input: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
-            title: 'Watch',
+            title: 'AgentWatch',
             type: 'object',
             properties: {
               sessionId: {
@@ -1046,7 +1226,7 @@ export const contracts = {
           },
           output: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
-            title: 'DeliveryPage',
+            title: 'AgentDeliveryPage',
             type: 'object',
             properties: {
               through: {
@@ -1062,14 +1242,14 @@ export const contracts = {
               events: {
                 type: 'array',
                 items: {
-                  $ref: '#/$defs/Delivery',
+                  $ref: '#/$defs/AgentDelivery',
                 },
               },
             },
             additionalProperties: false,
             required: ['through', 'nextAfter', 'events'],
             $defs: {
-              Delivery: {
+              AgentDelivery: {
                 type: 'object',
                 properties: {
                   sequence: {
@@ -1081,7 +1261,7 @@ export const contracts = {
                     type: 'string',
                   },
                   kind: {
-                    $ref: '#/$defs/DeliveryKind',
+                    $ref: '#/$defs/AgentDeliveryKind',
                   },
                   text: {
                     type: ['string', 'null'],
@@ -1096,7 +1276,7 @@ export const contracts = {
                 additionalProperties: false,
                 required: ['sequence', 'invocationId', 'kind'],
               },
-              DeliveryKind: {
+              AgentDeliveryKind: {
                 type: 'string',
                 enum: ['opened', 'part_started', 'delta', 'part_finished', 'ended'],
               },

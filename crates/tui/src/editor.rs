@@ -23,7 +23,9 @@
 pub mod completion;
 mod layout;
 pub mod marks;
+mod presentation;
 mod preview;
+pub(crate) use presentation::Geometry;
 pub mod saved;
 
 use std::{collections::VecDeque, ops::Range};
@@ -127,6 +129,11 @@ impl Editor {
     }
     pub(crate) fn selection_range(&self) -> Range<usize> {
         self.selection.range()
+    }
+    pub(crate) fn selection_reversed(&self) -> bool {
+        self.selection
+            .anchor
+            .is_some_and(|anchor| anchor > self.selection.cursor)
     }
     pub(crate) fn selected_text(&self) -> &str {
         &self.text[self.selection.range()]

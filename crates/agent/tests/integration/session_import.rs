@@ -226,7 +226,7 @@ async fn import_is_retryable_history_not_an_execution_and_survives_copy_and_rest
         .unwrap()
     {}
     let read = log
-        .history_text("imported", prefix.high_water, None)
+        .history_text("imported", prefix.high_water, None, 16 * 1024, 8)
         .await
         .unwrap();
     let text = serde_json::to_string(&read).unwrap();

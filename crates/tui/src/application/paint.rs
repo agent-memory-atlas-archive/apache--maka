@@ -94,10 +94,14 @@ pub(super) struct Target {
     pub key: String,
     pub revision: u64,
     pub area: Rect,
+    pub tab_index: i16,
+    pub owner: std::rc::Rc<()>,
 }
 impl Target {
     pub fn same(&self, other: &Self) -> bool {
-        self.mount == other.mount && self.key == other.key
+        self.mount == other.mount
+            && self.key == other.key
+            && std::rc::Rc::ptr_eq(&self.owner, &other.owner)
     }
 }
 /// A pending scene is not input geometry until the embedding confirms a flush.
@@ -105,6 +109,7 @@ impl Target {
 pub struct PaintedScene {
     pub(super) targets: Vec<Target>,
     placed: std::collections::BTreeSet<uuid::Uuid>,
+    geometries: Vec<NativeGeometry>,
 }
 
 /// Synchronous terminal geometry over one parent's committed component slots.
@@ -115,7 +120,74 @@ pub struct Slots<'a> {
     declarations: &'a [maka_ui::ComponentSlot],
     pub(super) scene: Option<&'a mut PaintedScene>,
 }
+struct NativeGeometry {
+    mount: Mount,
+    owner: std::rc::Rc<()>,
+    geometry: Box<dyn std::any::Any>,
+}
 impl Slots<'_> {
+    pub fn native_state<T: std::any::Any>(&self) -> maka_ui::Result<&T> {
+        self.presenter
+            .resources
+            .owners
+            .get(&self.parent.id())
+            .and_then(|owner| owner.state.downcast_ref())
+            .ok_or_else(|| maka_ui::Error::Invalid("terminal native state unavailable".into()))
+    }
+    pub fn native_geometry(&mut self, geometry: Box<dyn std::any::Any>) -> maka_ui::Result<()> {
+        let owner = self
+            .presenter
+            .resources
+            .owners
+            .get(&self.parent.id())
+            .ok_or_else(|| maka_ui::Error::Invalid("terminal native owner unavailable".into()))?;
+        self.scene
+            .as_deref_mut()
+            .ok_or_else(|| {
+                maka_ui::Error::Invalid("cannot publish geometry while measuring".into())
+            })?
+            .geometries
+            .push(NativeGeometry {
+                mount: self.parent.clone(),
+                owner: owner.identity.clone(),
+                geometry,
+            });
+        Ok(())
+    }
+    pub fn native_target(&mut self, key: &str, area: Rect, tab_index: i16) -> maka_ui::Result<()> {
+        let owner = self
+            .presenter
+            .resources
+            .owners
+            .get(&self.parent.id())
+            .ok_or_else(|| maka_ui::Error::Invalid("terminal native owner unavailable".into()))?;
+        let target = Target {
+            mount: self.parent.clone(),
+            key: key.into(),
+            revision: self.presenter.application.frame(self.parent)?.revision,
+            area,
+            tab_index,
+            owner: owner.identity.clone(),
+        };
+        self.scene
+            .as_deref_mut()
+            .ok_or_else(|| maka_ui::Error::Invalid("cannot publish hits while measuring".into()))?
+            .targets
+            .push(target);
+        Ok(())
+    }
+    pub fn focused(&self) -> bool {
+        self.presenter.focus.as_ref().is_some_and(|target| {
+            target.mount == *self.parent
+                && self
+                    .presenter
+                    .resources
+                    .owners
+                    .get(&self.parent.id())
+                    .is_some_and(|owner| std::rc::Rc::ptr_eq(&owner.identity, &target.owner))
+        })
+    }
+
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.declarations.iter().map(|slot| slot.key.as_str())
     }
@@ -152,6 +224,7 @@ impl Presenter {
         let mut scene = PaintedScene {
             targets: Vec::new(),
             placed: Default::default(),
+            geometries: Vec::new(),
         };
         self.paint_mount(&self.root, area, buffer, &mut scene)?;
         Ok(scene)
@@ -160,24 +233,38 @@ impl Presenter {
         if self.closing {
             return;
         }
+        for pending in scene.geometries {
+            self.resources
+                .present(&pending.mount, &pending.owner, pending.geometry);
+        }
         self.focus = self
             .focus
             .take()
             .and_then(|old| scene.targets.iter().find(|new| new.same(&old)).cloned())
-            .or_else(|| scene.targets.first().cloned());
+            .or_else(|| {
+                scene
+                    .targets
+                    .iter()
+                    .filter(|target| target.tab_index >= 0)
+                    .min_by_key(|target| (target.tab_index == 0, target.tab_index))
+                    .cloned()
+            });
         self.scene = scene.targets;
     }
-    fn measure_mount(&self, mount: &Mount, width: u16) -> maka_ui::Result<(u16, u16)> {
+    pub(super) fn measure_mount(&self, mount: &Mount, width: u16) -> maka_ui::Result<(u16, u16)> {
         let native = &self.application.frame(mount)?.view;
-        native.view.measure(
-            &Slots {
-                presenter: self,
-                parent: mount,
-                declarations: native.slots(),
-                scene: None,
-            },
-            width,
-        )
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            native.view.measure(
+                &Slots {
+                    presenter: self,
+                    parent: mount,
+                    declarations: native.slots(),
+                    scene: None,
+                },
+                width,
+            )
+        }))
+        .map_err(|_| maka_ui::Error::Invalid("terminal native measurement panicked".into()))?
     }
     pub(super) fn measure(
         &self,
@@ -254,16 +341,19 @@ impl Presenter {
             ));
         }
         let native = &self.application.frame(mount)?.view;
-        native.view.paint(
-            &mut Slots {
-                presenter: self,
-                parent: mount,
-                declarations: native.slots(),
-                scene: Some(scene),
-            },
-            area,
-            buffer,
-        )
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            native.view.paint(
+                &mut Slots {
+                    presenter: self,
+                    parent: mount,
+                    declarations: native.slots(),
+                    scene: Some(scene),
+                },
+                area,
+                buffer,
+            )
+        }))
+        .map_err(|_| maka_ui::Error::Invalid("terminal native painting panicked".into()))?
     }
     pub(super) fn paint_node(
         &self,
@@ -289,6 +379,16 @@ impl Presenter {
                     key: key.clone(),
                     revision: self.application.frame(mount)?.revision,
                     area: Rect::new(area.x, area.y, area.width, 1),
+                    tab_index: 0,
+                    owner: self
+                        .resources
+                        .owners
+                        .get(&mount.id())
+                        .ok_or_else(|| {
+                            maka_ui::Error::Invalid("terminal native owner unavailable".into())
+                        })?
+                        .identity
+                        .clone(),
                 };
                 let mut style = Style::default().fg(Color::Rgb(156, 194, 230));
                 if self.focus.as_ref().is_some_and(|old| old.same(&target)) {

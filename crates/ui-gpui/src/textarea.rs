@@ -23,8 +23,8 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use maka_ui::textarea::*;
 use maka_ui::{
-    ComponentCall, ComponentOutput, Emission, Frame, NativeCapability, NativeComponent,
-    NativeExport, NativeRegistry, NativeView,
+    ComponentCall, ComponentOutput, NativeCapability, NativeComponent, NativeExport,
+    NativeRegistry, NativeView,
 };
 use serde_json::json;
 use std::{any::Any, collections::BTreeMap, ops::Range, rc::Rc};
@@ -748,96 +748,18 @@ impl NativeComponent<dyn Widget> for TextareaComponent {
         call: ComponentCall<'_>,
         _values: &maka_ui::abi::ValueBindings,
     ) -> maka_ui::Result<ComponentOutput<NativeView<dyn Widget>>> {
-        let (props, revision, observation, mut request, mut pending) = match call {
-            ComponentCall::Mount { props } => {
-                (props.clone(), 0, serde_json::Value::Null, None, false)
-            }
-            ComponentCall::Update { state, props } => (
-                props.clone(),
-                state["revision"].as_u64().expect("editor UI revision") + 1,
-                state["observation"].clone(),
-                serde_json::from_value::<Option<TextareaCommand>>(state["request"].clone())
-                    .expect("editor requested command"),
-                state["pending"].as_bool().expect("editor pending command"),
-            ),
-            ComponentCall::Event {
-                state,
-                props,
-                input,
-                ..
-            } => {
-                let request =
-                    serde_json::from_value::<Option<TextareaCommand>>(state["request"].clone())
-                        .expect("editor requested command");
-                let observation: TextareaObservation =
-                    serde_json::from_value(input.clone()).expect("validated editor observation");
-                let settled = request
-                    .as_ref()
-                    .zip(observation.receipt.as_ref())
-                    .is_some_and(|(command, receipt)| command.sequence == receipt.sequence);
-                return Self::frame(
-                    props.clone(),
-                    state["revision"].as_u64().expect("editor UI revision") + 1,
-                    input.clone(),
-                    request,
-                    state["pending"].as_bool().expect("editor pending command") && !settled,
-                )
-                .map(|mut output| {
-                    output.events.push(Emission {
-                        name: "changed".into(),
-                        value: input.clone(),
-                    });
-                    output
-                });
-            }
-        };
-        let typed: TextareaProps = serde_json::from_value(props.clone())
-            .map_err(|e| maka_ui::Error::Invalid(e.to_string()))?;
-        if let Some(command) = &typed.command
-            && request.as_ref() != Some(command)
-        {
-            if pending {
-                return Err(maka_ui::Error::Invalid(
-                    "editor prior command has not settled".into(),
-                ));
-            }
-            if request
-                .as_ref()
-                .is_some_and(|prior| command.sequence <= prior.sequence)
-            {
-                return Err(maka_ui::Error::Invalid(
-                    "editor command sequence must advance".into(),
-                ));
-            }
-            request = Some(command.clone());
-            pending = true;
-        }
-        Self::frame(props, revision, observation, request, pending)
+        let output = maka_ui::textarea::reduce(call)?;
+        let view = NativeView::<dyn Widget>::new(
+            Rc::new(TextareaRecipe {
+                props: output.frame.view.clone(),
+            }),
+            BTreeMap::from([("observe".into(), observation_schema())]),
+            vec![],
+        )?;
+        Ok(output.map_view(|_| view))
     }
 }
-impl TextareaComponent {
-    fn frame(
-        props: serde_json::Value,
-        revision: u64,
-        observation: serde_json::Value,
-        request: Option<TextareaCommand>,
-        pending: bool,
-    ) -> maka_ui::Result<ComponentOutput<NativeView<dyn Widget>>> {
-        let mut typed: TextareaProps =
-            serde_json::from_value(props).map_err(|e| maka_ui::Error::Invalid(e.to_string()))?;
-        // Props propose new commands; the accepted request remains authoritative
-        // until its receipt commits. None does not cancel a staged request.
-        typed.command = request.clone().filter(|_| pending);
-        Ok(Frame {
-            revision,
-            state: json!({"revision":revision,"request":request,"pending":pending,"observation":observation}),
-            surface: None,
-            view: NativeView::<dyn Widget>::new(
-                Rc::new(TextareaRecipe { props: typed }),
-                BTreeMap::from([("observe".into(), maka_ui::textarea::observation_schema())]), vec![])?,
-        }.output(Vec::new()))
-    }
-}
+
 pub(super) fn register(registry: &mut NativeRegistry<dyn Widget>) {
     registry
         .register("maka.ui.textarea", |_, _values| {

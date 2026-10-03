@@ -95,6 +95,60 @@ impl Handler for Agent {
                         .map_err(|_| "agent_creation_failed")?;
                     encode(summary(session))
                 }
+                "history" => {
+                    use maka_plugins::session::history::{Page, Read};
+                    let input: Read = decode(input)?;
+                    input.validate().map_err(|_| "agent_cursor_invalid")?;
+                    owner.session(&input.session_id).await?;
+                    let high_water = *owner.store.subscribe_commits().borrow();
+                    let through = input.through.unwrap_or(high_water);
+                    if through > high_water {
+                        return Err("agent_cursor_invalid".into());
+                    }
+                    let result = if !owner
+                        .store
+                        .prepare_transcript(&input.session_id, through, 32)
+                        .await
+                        .map_err(|_| "agent_history_unavailable")?
+                    {
+                        HistoryPage::Preparing { through }
+                    } else {
+                        let Page::Ready {
+                            through,
+                            chunks,
+                            next,
+                        } = owner
+                            .store
+                            .history_text(&input.session_id, through, input.cursor, 4096, 2)
+                            .await
+                            .map_err(|_| "agent_history_unavailable")?
+                        else {
+                            return Err("agent_history_unavailable".into());
+                        };
+                        HistoryPage::Ready {
+                            through,
+                            next,
+                            chunks: chunks
+                                .into_iter()
+                                .map(|chunk| HistoryChunk {
+                                    message_id: chunk.message_id,
+                                    turn_id: chunk.turn_id,
+                                    timestamp: chunk.timestamp,
+                                    role: chunk.role,
+                                    sequence: chunk.sequence,
+                                    offset: chunk.offset,
+                                    total_bytes: chunk.total_bytes,
+                                    text: chunk.text,
+                                })
+                                .collect(),
+                        }
+                    };
+                    owner.session(&input.session_id).await?;
+                    if context.scope().cancellation.is_cancelled() {
+                        return Err("agent_observation_cancelled".into());
+                    }
+                    encode(result)
+                }
                 "send" => {
                     let input: Send = decode(input)?;
                     let operation = context.operation().ok_or("agent_mutation_required")?;

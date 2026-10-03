@@ -96,5 +96,6 @@ pub fn registry() -> NativeRegistry<dyn Widget> {
             )]))
         })
         .expect("unique label factory");
+    super::textarea::register(&mut registry);
     registry
 }

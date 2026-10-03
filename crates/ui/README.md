@@ -319,3 +319,9 @@ cover those requests and focus navigation. The ordinary editing context menu and
 OS accessibility/IME acceptance remain pending. The TUI Label projects colour and
 weight to RGB/bold terminal styling; desktop fonts and alpha compositing do not
 imply equivalent terminal rendering.
+
+The pure `textarea::reduce` command/receipt protocol is shared by GPUI and TUI.
+Each presenter keeps its own original native editor as the sole buffer, selection
+and undo owner. TUI prepares native owners, captures immutable resources, then
+applies staged commands. Successfully flushed geometry alone becomes interactive;
+unpublished observations retain their original receipt without replaying commands.

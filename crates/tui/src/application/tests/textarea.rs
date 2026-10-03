@@ -1,0 +1,312 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::*;
+use maka_plugin_core::package::{EntryTarget, Implementation};
+use std::collections::BTreeMap;
+
+fn editor_fixture() -> (tokio::runtime::Runtime, Input, Vec<Package>) {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_time()
+        .build()
+        .unwrap();
+    let (mut input, packages) = support::resource_fixture();
+    input.environment.presentation = Some(PresentationTarget::Tui);
+    let packages = packages.into_iter().map(|original| {
+        let mut declaration = original.manifest().application.clone().unwrap();
+        let mut entry = declaration.entries.remove(&EntryTarget::Desktop).unwrap();
+        let mut files = BTreeMap::new();
+        match &mut entry.implementation {
+            Implementation::Native {implementation} if implementation == "maka.ui.surface.desktop" => {
+                *implementation = "maka.ui.surface.tui".into();
+                entry.exports.get_mut("Surface").unwrap().contract = maka_ui::surface_contract(PresentationTarget::Tui);
+            }
+            Implementation::JavaScript {module, ..} => {
+                if entry.scene.is_some() { entry.scene = Some(support::scene::language(PresentationTarget::Tui)); }
+                if let Some(surface) = entry.imports.get_mut("surface") { surface.contract = maka_ui::surface_contract(PresentationTarget::Tui); }
+                let mut source = std::str::from_utf8(original.file(module).unwrap()).unwrap()
+                    .replace("{kind:'window',binding:'surface',title:'Immutable draft',width:640,height:480}", "{kind:'terminal',binding:'surface'}")
+                    .replace("padding:16,gap:12", "padding:1,gap:1");
+                if original.manifest().id == "dynamic.app" {
+                    source = source.replace("if(event.kind==='action')", "if(event.key==='reject'){next.reject=event.event.reject;next.observation=null;}if(event.key==='configure'){next.options=event.event;}if(event.kind==='action')")
+                        .replace("{kind:'button',key:'remove'", "{kind:'button',key:'reject',label:'Reject observation'},{kind:'button',key:'configure',label:'Configure editor'},{kind:'button',key:'remove'");
+                    source.push_str("const normalFrame=frame;frame=(state)=>{const out=normalFrame(state);const editor=out.frame.view.children.find(node=>node.key==='editor');if(editor)editor.props={...editor.props,...state.options};if(state.reject&&state.observation)out.frame.view={kind:'invalid'};return out;};");
+                }
+                files.insert(module.clone(), source.into_bytes());
+            }
+            _ => {}
+        }
+        declaration.entries.insert(EntryTarget::Tui, entry);
+        files.insert("maka.extension.json".into(), serde_json::to_vec(&json!({"schemaVersion":2,"id":original.manifest().id,"application":declaration})).unwrap());
+        let package = Package::new(files).unwrap();
+        for node in input.instances.values_mut().filter(|node| matches!(&node.package,maka_plugin_core::package::PackageSelection::Pinned {package} if package.id == original.manifest().id)) {
+            node.package = package.application_ref().into();
+        }
+        package
+    }).collect();
+    (runtime, input, packages)
+}
+fn presenter() -> (tokio::runtime::Runtime, Presenter) {
+    let (runtime, input, packages) = editor_fixture();
+    let presenter = Presenter::new(
+        &input,
+        packages,
+        runtime.handle().clone(),
+        registry(),
+        json!({}),
+    )
+    .unwrap();
+    (runtime, presenter)
+}
+fn draft(tui: &Presenter) -> Mount {
+    let composer = tui.application.child_mount(&tui.root, "editor").unwrap();
+    tui.application
+        .child_mount(composer, "draft")
+        .unwrap()
+        .clone()
+}
+fn observation(tui: &Presenter) -> Value {
+    tui.application.frame(&tui.root).unwrap().state["observation"].clone()
+}
+fn click(tui: &mut Presenter, kind: MouseEventKind, x: u16, y: u16) {
+    tui.input(Event::Mouse(MouseEvent {
+        kind,
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    }))
+    .unwrap();
+}
+fn dispatch(tui: &mut Presenter, key: &str, value: Value) {
+    let revision = tui.application.frame(&tui.root).unwrap().revision;
+    tui.application
+        .dispatch(&tui.root, revision, key, value)
+        .unwrap();
+    tui.pump().unwrap();
+}
+fn close(tui: &mut Presenter) {
+    tui.surface_closed(Ok(())).unwrap();
+    assert!(tui.can_shutdown());
+    tui.shutdown().unwrap();
+}
+
+#[test]
+fn native_unicode_selection_and_undo_survive_component_updates_and_stale_owner_cannot_edit() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 20);
+    let original = observation(&tui)["snapshot"]["text"]["owner"].clone();
+    tui.input(Event::Paste("中文👩🏽‍💻e\u{301}".into())).unwrap();
+    let observed = observation(&tui);
+    assert_eq!(observed["snapshot"]["text"]["owner"], original);
+    assert_eq!(
+        observed["snapshot"]["selection"]["end"],
+        "Start中文👩🏽‍💻e\u{301}".encode_utf16().count()
+    );
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Char('z'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    assert_eq!(observation(&tui)["snapshot"]["text"]["bytes"], 5);
+    let mount = draft(&tui);
+    // A captured target cannot gain authority over a replacement physical owner.
+    tui.resources.close(&mount).unwrap();
+    tui.sync_native().unwrap();
+    assert_ne!(observation(&tui)["snapshot"]["text"]["owner"], original);
+    tui.input(Event::Paste("foreign".into())).unwrap();
+    assert_eq!(observation(&tui)["snapshot"]["text"]["bytes"], 5);
+    close(&mut tui);
+}
+
+#[test]
+fn failed_flush_keeps_previous_geometry_and_new_document_rejects_old_pointer_mapping() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 20);
+    let target = tui.scene[0].clone();
+    let x = target.area.x + 1;
+    let y = target.area.y + 1;
+    // Paint a completely different viewport without publishing a flush.
+    let area = Rect::new(10, 5, 30, 14);
+    let mut buffer = Buffer::empty(area);
+    let _unflushed = tui.paint(area, &mut buffer).unwrap();
+    click(&mut tui, MouseEventKind::Down(MouseButton::Left), x, y);
+    assert_eq!(observation(&tui)["snapshot"]["selection"]["end"], 0);
+    click(&mut tui, MouseEventKind::Drag(MouseButton::Left), x + 3, y);
+    assert_eq!(
+        observation(&tui)["snapshot"]["selection"],
+        json!({"start":0,"end":3})
+    );
+    click(&mut tui, MouseEventKind::Up(MouseButton::Left), x + 3, y);
+    tui.input(Event::Paste("中".into())).unwrap();
+    let after_edit = observation(&tui);
+    click(&mut tui, MouseEventKind::Down(MouseButton::Left), x, y);
+    assert_eq!(observation(&tui), after_edit);
+    draw(&mut tui, 50, 20);
+    click(&mut tui, MouseEventKind::Down(MouseButton::Left), x, y);
+    assert_eq!(observation(&tui)["snapshot"]["selection"]["end"], 0);
+    close(&mut tui);
+}
+
+#[test]
+fn forwarding_capture_precedes_same_frame_reset_and_stale_reset_preserves_later_edits() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 20);
+    let revision = observation(&tui)["revision"].as_u64().unwrap();
+    dispatch(
+        &mut tui,
+        "read",
+        json!({"command":{"sequence":1,"basedOn":revision,"edit":{"kind":"reset","text":""}}}),
+    );
+    assert_eq!(observation(&tui)["snapshot"]["text"]["bytes"], 0);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while tui.application.frame(&tui.root).unwrap().state["outcome"].is_null() {
+        assert!(std::time::Instant::now() < deadline);
+        tui.pump().unwrap();
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["outcome"]["value"]["text"],
+        "Start"
+    );
+    tui.input(Event::Paste("新草稿".into())).unwrap();
+    let current = observation(&tui)["revision"].as_u64().unwrap();
+    // Capture against the accepted current revision, but clear against an old
+    // revision: immutable read succeeds and the later native draft remains.
+    dispatch(
+        &mut tui,
+        "read",
+        json!({"end":9,"capture":{"kind":"at_revision","revision":current},"command":{"sequence":2,"basedOn":revision,"edit":{"kind":"reset","text":""}}}),
+    );
+    let observed = observation(&tui);
+    assert_eq!(observed["snapshot"]["text"]["bytes"], 9);
+    assert_eq!(
+        observed["receipt"]["outcome"],
+        json!({"status":"conflict","reason":"revision"})
+    );
+    dispatch(&mut tui, "remove", json!({}));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !tui.jobs.is_empty() {
+        assert!(std::time::Instant::now() < deadline);
+        tui.pump().unwrap();
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["outcome"]["value"]["text"],
+        "新草稿"
+    );
+    close(&mut tui);
+}
+
+#[test]
+fn non_tab_stop_keeps_mouse_editing_and_readonly_disabled_gate_before_edit() {
+    let (_runtime, mut tui) = presenter();
+    dispatch(&mut tui, "configure", json!({"tabIndex":-1}));
+    draw(&mut tui, 50, 24);
+    assert_eq!(tui.focus.as_ref().unwrap().key, "read");
+    let target = tui
+        .scene
+        .iter()
+        .find(|target| target.key == "observe")
+        .unwrap()
+        .clone();
+    click(
+        &mut tui,
+        MouseEventKind::Down(MouseButton::Left),
+        target.area.x + 1,
+        target.area.y + 1,
+    );
+    tui.input(Event::Paste("中".into())).unwrap();
+    assert_eq!(observation(&tui)["snapshot"]["text"]["bytes"], 8);
+    tui.input(key(KeyCode::Tab)).unwrap();
+    assert_ne!(tui.focus.as_ref().unwrap().key, "observe");
+    dispatch(&mut tui, "configure", json!({"tabIndex":2,"readOnly":true}));
+    draw(&mut tui, 50, 24);
+    tui.input(key(KeyCode::BackTab)).unwrap();
+    assert_eq!(tui.focus.as_ref().unwrap().key, "observe");
+    let before = observation(&tui);
+    tui.input(Event::Paste("blocked".into())).unwrap();
+    assert_eq!(observation(&tui), before);
+    dispatch(&mut tui, "configure", json!({"tabIndex":0,"disabled":true}));
+    // Old successfully presented geometry is still visible, but current native
+    // props must reject editing before touching the original buffer.
+    tui.input(Event::Paste("blocked".into())).unwrap();
+    assert_eq!(observation(&tui), before);
+    close(&mut tui);
+}
+
+#[test]
+fn failed_observation_preserves_edits_and_original_command_receipt_until_publication() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 24);
+    let revision = observation(&tui)["revision"].as_u64().unwrap();
+    dispatch(&mut tui, "reject", json!({"reject":true}));
+    dispatch(
+        &mut tui,
+        "read",
+        json!({"command":{"sequence":1,"basedOn":revision,"edit":{"kind":"reset","text":""}}}),
+    );
+    assert!(!tui.closing);
+    assert!(observation(&tui).is_null());
+    tui.input(Event::Paste("Later".into())).unwrap();
+    assert!(!tui.closing);
+    dispatch(&mut tui, "reject", json!({"reject":false}));
+    let observed = observation(&tui);
+    assert_eq!(observed["receipt"]["sequence"], 1);
+    assert_eq!(observed["receipt"]["outcome"]["status"], "applied");
+    assert_eq!(observed["snapshot"]["text"]["bytes"], 5);
+    tui.pump().unwrap();
+    assert_eq!(observation(&tui), observed);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !tui.jobs.is_empty() {
+        assert!(std::time::Instant::now() < deadline);
+        tui.pump().unwrap();
+        std::thread::yield_now();
+    }
+    close(&mut tui);
+}
+
+#[test]
+fn wheel_hits_visible_editor_without_stealing_button_focus_or_snapping_back() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 30);
+    let text = (0..20).map(|i| format!("\nrow {i:02}")).collect::<String>();
+    tui.input(Event::Paste(text)).unwrap();
+    draw(&mut tui, 50, 30);
+    tui.input(key(KeyCode::Tab)).unwrap();
+    assert_eq!(tui.focus.as_ref().unwrap().key, "read");
+    let before = draw(&mut tui, 50, 30);
+    let editor = tui
+        .scene
+        .iter()
+        .find(|target| target.key == "observe")
+        .unwrap()
+        .clone();
+    click(
+        &mut tui,
+        MouseEventKind::ScrollUp,
+        editor.area.x + 1,
+        editor.area.y + 1,
+    );
+    assert_eq!(tui.focus.as_ref().unwrap().key, "read");
+    let after = draw(&mut tui, 50, 30);
+    assert_ne!(before, after);
+    assert_eq!(after, draw(&mut tui, 50, 30));
+    close(&mut tui);
+}

@@ -122,7 +122,7 @@ impl Executions {
             Page::Preparing { through }
         } else {
             self.log
-                .history_text(&input.session_id, through, input.cursor)
+                .history_text(&input.session_id, through, input.cursor, 16 * 1024, 8)
                 .await
                 .map_err(storage)?
         };

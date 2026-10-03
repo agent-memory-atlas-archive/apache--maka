@@ -19,7 +19,8 @@
 
 //! Agent execution as an ordinary native application plugin. Product composition
 //! chooses whether to activate it; installing this crate does not start a product.
-mod contract;
+/// Public wire types and generated contracts. 公开协议类型与生成契约。
+pub mod contract;
 mod model;
 mod owner;
 mod service;

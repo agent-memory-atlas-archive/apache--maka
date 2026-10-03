@@ -25,19 +25,21 @@ use unicode_width::UnicodeWidthStr;
 
 /// One source of truth for rendering, vertical movement and pointer hit-testing.
 /// Bytes identify text; columns identify terminal cells. Never interchange them.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Layout {
     pub rows: Vec<Row>,
     pub boundaries: Vec<usize>,
     pub width: u16,
 }
 
+#[derive(Clone)]
 pub(super) struct Row {
     pub start: usize,
     pub end: usize,
     pub cells: Vec<Cell>,
 }
 
+#[derive(Clone)]
 pub(super) struct Cell {
     pub bytes: Range<usize>,
     pub column: u16,

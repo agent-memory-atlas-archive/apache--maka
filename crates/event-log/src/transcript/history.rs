@@ -22,9 +22,6 @@ use crate::{EventLog, StoreError, sequence_number};
 use maka_plugins::session::history::{Chunk, Cursor, Page, Role};
 use sqlx::{Connection, Row};
 
-const CHUNK_BYTES: u64 = 16 * 1024;
-const PAGE_CHUNKS: usize = 8;
-
 impl EventLog {
     /// Exact text fragments from the disposable transcript index. BLOB slicing
     /// preserves embedded NULs; only a complete UTF-8 prefix leaves this boundary.
@@ -34,8 +31,13 @@ impl EventLog {
         session: &str,
         through: u64,
         cursor: Option<Cursor>,
+        chunk_bytes: usize,
+        max_chunks: usize,
     ) -> Result<Page, StoreError> {
         self.validate_root()?;
+        if !(4..=16 * 1024).contains(&chunk_bytes) || !(1..=8).contains(&max_chunks) {
+            return Err(invalid("invalid history page limits"));
+        }
         crate::sessions::validate_id(session)?;
         let through_sql = sql_number(maka_presentation::watermark(through)?)?;
         let cursor = cursor.unwrap_or_default();
@@ -86,7 +88,7 @@ impl EventLog {
                     FROM missing JOIN transcript_rows USING (sequence)
                     WHERE transcript_rows.session_id = ?1 AND preceding_bytes < 1048576"
             ).bind(&session).bind(sequence).bind(through_sql)
-                .bind(if offset > 0 { 1 } else { (PAGE_CHUNKS + 1) as i64 })
+                .bind(if offset > 0 { 1 } else { (max_chunks + 1) as i64 })
                 .execute(&mut *tx).await?;
             let rows = sqlx::query(
                 "SELECT source.sequence, source.message_id, source.turn_id,
@@ -99,13 +101,13 @@ impl EventLog {
                 WHERE source.session_id = ?1 AND source.sequence >= ?2 AND source.sequence <= ?3
                 ORDER BY source.sequence LIMIT ?4"
             ).bind(&session).bind(sequence).bind(through_sql)
-                .bind((PAGE_CHUNKS + 1) as i64).bind(offset).bind(CHUNK_BYTES as i64)
+                .bind((max_chunks + 1) as i64).bind(offset).bind(chunk_bytes as i64)
                 .fetch_all(&mut *tx).await?;
             let mut chunks = Vec::new();
             let mut next = None;
             for (index, row) in rows.iter().enumerate() {
                 let sequence = sequence_number(row.try_get("sequence")?)?;
-                if index == PAGE_CHUNKS || !row.try_get::<bool, _>("cached")? {
+                if index == max_chunks || !row.try_get::<bool, _>("cached")? {
                     next = Some(Cursor { sequence, offset: 0 });
                     break;
                 }

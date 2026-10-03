@@ -18,6 +18,8 @@
  */
 
 //! Native editor protocol. Snapshots are observations, never writable buffers.
+mod component;
+pub use component::reduce;
 use maka_plugin_core::contract::{Capture, Contract, Interface, Transport};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -141,6 +143,7 @@ pub struct TextareaSnapshot {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TextareaConflict {
+    Representation,
     Revision,
     Composition,
     Sequence,

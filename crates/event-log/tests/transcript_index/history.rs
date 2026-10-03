@@ -122,7 +122,10 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
     let mut messages: BTreeMap<String, (Role, String)> = BTreeMap::new();
     let mut pages = 0;
     loop {
-        let page = log.history_text("a", through, cursor).await.unwrap();
+        let page = log
+            .history_text("a", through, cursor, 16 * 1024, 8)
+            .await
+            .unwrap();
         assert!(serde_json::to_vec(&page).unwrap().len() < 256 * 1024);
         let Page::Ready { chunks, next, .. } = page else {
             panic!("prepared")
@@ -160,7 +163,11 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
         format!("{text}\nsecond\nline"),
         "JSON string values stay multiline; property names and non-text leaves are not searchable"
     );
-    let Page::Ready { chunks, next, .. } = log.history_text("a", old, None).await.unwrap() else {
+    let Page::Ready { chunks, next, .. } = log
+        .history_text("a", old, None, 16 * 1024, 8)
+        .await
+        .unwrap()
+    else {
         panic!("prepared")
     };
     assert!(next.is_none());
@@ -200,7 +207,10 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
     let Page::Ready {
         chunks: destination,
         ..
-    } = log.history_text("b", old, None).await.unwrap()
+    } = log
+        .history_text("b", old, None, 16 * 1024, 8)
+        .await
+        .unwrap()
     else {
         panic!("prepared destination");
     };
@@ -210,7 +220,11 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
             .iter()
             .all(|chunk| chunk.text == "destination cache")
     );
-    let Page::Ready { chunks: source, .. } = log.history_text("a", old, None).await.unwrap() else {
+    let Page::Ready { chunks: source, .. } = log
+        .history_text("a", old, None, 16 * 1024, 8)
+        .await
+        .unwrap()
+    else {
         panic!("prepared source");
     };
     assert_eq!(
@@ -220,15 +234,27 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
     cache
         .execute("DELETE FROM transcript_text WHERE session_id = 'b'", [])
         .unwrap();
-    let rebuilt = log.history_text("b", old, None).await.unwrap();
+    let rebuilt = log
+        .history_text("b", old, None, 16 * 1024, 8)
+        .await
+        .unwrap();
     assert_eq!(
         serde_json::to_value(rebuilt).unwrap(),
-        serde_json::to_value(log.history_text("a", old, None).await.unwrap()).unwrap(),
+        serde_json::to_value(
+            log.history_text("a", old, None, 16 * 1024, 8)
+                .await
+                .unwrap()
+        )
+        .unwrap(),
     );
     drop(cache);
     log.close().await.unwrap();
     let log = EventLog::open(&path).await.unwrap();
-    let Page::Ready { chunks, .. } = log.history_text("a", through, None).await.unwrap() else {
+    let Page::Ready { chunks, .. } = log
+        .history_text("a", through, None, 16 * 1024, 8)
+        .await
+        .unwrap()
+    else {
         panic!("prepared")
     };
     assert!(!chunks.is_empty(), "restart retains readable archive");

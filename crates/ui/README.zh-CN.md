@@ -222,3 +222,5 @@ SetValue。headless 测试经过平台回调验证请求与焦点导航；普通
 等待后继续真实 source cleanup；原生实现必须响应取消并报告真实清理结果，不能把取消或
 EOF 当成功清理。失败/panic 保留原 Work fence。每次 output 至多16 subscriptions，
 当前声明计入完整回调与 retained UI 预算，一个流的 pending feedback 不重复计为新请求。
+
+GPUI 与 TUI 共用纯 `textarea::reduce` 命令/回执协议，各自的原始原生编辑器仍是文本、选区和撤销历史的唯一 owner。TUI 先准备原生 owner，再捕获不可变资源，最后执行已暂存命令；成功 flush 后的几何才参与输入。未发布的观察保留原回执，不重复执行命令。

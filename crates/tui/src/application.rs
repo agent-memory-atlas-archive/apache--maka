@@ -21,8 +21,10 @@
 //! 统一插件应用内核的原生终端呈现器。
 mod native;
 mod paint;
+mod resources;
 mod run;
 mod scene;
+mod textarea;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
 use maka_plugin_core::{
@@ -42,21 +44,53 @@ use serde_json::{Value, json};
 use std::{future::Future, pin::Pin};
 use uuid::Uuid;
 
-/// Trusted, immutable paint data. No resource, input subscription or OS owner.
-/// 可信不可变绘制数据；真实资源生命周期不能藏在 recipe 中。
-pub trait Widget: 'static {
+/// Trusted immutable recipe; resources belong only to its separately retained
+/// `create` result. Measurement/paint stay pure; native input and command hooks
+/// run against the original presenter-owned state, never a replacement frame.
+/// 可信不可变 recipe；资源由独立原生 owner 持有，绘制不创建资源或执行命令。
+pub trait Widget: std::any::Any {
+    fn create(&self) -> Box<dyn std::any::Any> {
+        Box::new(())
+    }
+    fn commit(&self, _: &mut dyn std::any::Any) -> maka_ui::Result<Option<NativeInput>> {
+        Ok(None)
+    }
+    fn input(&self, _: &mut dyn std::any::Any, _: &Event) -> maka_ui::Result<WidgetInput> {
+        Ok(WidgetInput::Unhandled)
+    }
+    fn capture(
+        &self,
+        _: &dyn std::any::Any,
+        _: &maka_ui::actions::CaptureTarget,
+    ) -> maka_ui::Result<std::sync::Arc<dyn maka_plugins::call::ReadResource>> {
+        Err(Error::Invalid("terminal widget capture unavailable".into()))
+    }
+    fn present(&self, _: &mut dyn std::any::Any, _: Box<dyn std::any::Any>) {}
+    fn deactivate(&self, _: &mut dyn std::any::Any) {}
     fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u16)>;
     fn paint(&self, slots: &mut Slots<'_>, area: Rect, buffer: &mut Buffer) -> maka_ui::Result<()>;
+}
+/// Owner-originated observation; never a guest-created native resource.
+#[derive(Clone, PartialEq)]
+pub struct NativeInput {
+    pub key: String,
+    pub value: Value,
+}
+pub enum WidgetInput {
+    Unhandled,
+    Consumed(Option<NativeInput>),
 }
 type Job = Pin<Box<dyn Future<Output = (Uuid, TaskCompletion)> + Send>>;
 pub struct Presenter {
     application: Application<dyn Widget>,
     root: Mount,
     scene: Vec<paint::Target>,
+    resources: resources::Resources,
     focus: Option<paint::Target>,
     jobs: FuturesUnordered<Job>,
     closing: bool,
     surface_cleanup: Option<Result<(), String>>,
+    reported: std::collections::BTreeSet<String>,
 }
 impl Presenter {
     pub fn new(
@@ -125,15 +159,49 @@ impl Presenter {
                 return Err(error);
             }
         };
-        Ok(Self {
+        let mut presenter = Self {
             application,
             root,
             scene: Vec::new(),
+            resources: Default::default(),
             focus: None,
             jobs: FuturesUnordered::new(),
             closing: false,
             surface_cleanup: None,
-        })
+            reported: Default::default(),
+        };
+        if let Err(error) = presenter.sync_native() {
+            // No terminal was created. Native initialization may still have
+            // acquired resources: retain this actual owner until cleanup is
+            // confirmed, including a failed native initialization fence.
+            let mut reported = std::collections::BTreeSet::new();
+            if let Err(failure) = presenter.surface_closed(Ok(())) {
+                reported.insert(sanitize(&failure.to_string()));
+                eprintln!("{}", sanitize(&failure.to_string()));
+            }
+            loop {
+                if let Err(failure) = presenter.pump() {
+                    let failure = sanitize(&failure.to_string());
+                    if reported.insert(failure.clone()) {
+                        eprintln!("{failure}");
+                    }
+                }
+                if presenter.can_shutdown() {
+                    match presenter.shutdown() {
+                        Ok(()) => break,
+                        Err(failure) => {
+                            let failure = sanitize(&failure.to_string());
+                            if reported.insert(failure.clone()) {
+                                eprintln!("{failure}");
+                            }
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            return Err(error);
+        }
+        Ok(presenter)
     }
     /// Resolve raw coordinates immediately against the last successfully flushed
     /// scene. Crossterm supplies no screen epoch; never re-resolve a captured key.
@@ -142,40 +210,86 @@ impl Presenter {
         if self.closing {
             return Ok(());
         }
-        let target = match event {
+        let target = match &event {
             Event::Key(key) if key.kind != KeyEventKind::Release => match key.code {
                 KeyCode::Tab | KeyCode::BackTab => {
                     let reverse =
                         key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
-                    if !self.scene.is_empty() {
-                        let index = self.focus.as_ref().and_then(|focus| {
-                            self.scene.iter().position(|target| target.same(focus))
-                        });
-                        let n = self.scene.len();
+                    let mut stops: Vec<_> = self
+                        .scene
+                        .iter()
+                        .filter(|target| target.tab_index >= 0)
+                        .collect();
+                    stops.sort_by_key(|target| (target.tab_index == 0, target.tab_index));
+                    if !stops.is_empty() {
+                        let index = self
+                            .focus
+                            .as_ref()
+                            .and_then(|focus| stops.iter().position(|target| target.same(focus)));
+                        let n = stops.len();
                         let next = match (index, reverse) {
                             (Some(i), true) => (i + n - 1) % n,
                             (Some(i), false) => (i + 1) % n,
                             (None, true) => n - 1,
                             (None, false) => 0,
                         };
-                        self.focus = Some(self.scene[next].clone());
+                        self.focus = Some(stops[next].clone());
                     }
                     None
                 }
                 KeyCode::Enter | KeyCode::Char(' ') if key.modifiers.is_empty() => {
                     self.focus.clone()
                 }
-                _ => None,
+                _ => self.focus.clone(),
             },
-            Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => self
-                .scene
-                .iter()
-                .rev()
-                .find(|t| t.area.contains((mouse.column, mouse.row).into()))
-                .cloned(),
+            Event::Paste(_) => self.focus.clone(),
+            Event::Mouse(mouse)
+                if matches!(
+                    mouse.kind,
+                    MouseEventKind::Down(MouseButton::Left)
+                        | MouseEventKind::ScrollUp
+                        | MouseEventKind::ScrollDown
+                ) =>
+            {
+                self.scene
+                    .iter()
+                    .rev()
+                    .find(|t| t.area.contains((mouse.column, mouse.row).into()))
+                    .cloned()
+            }
+            Event::Mouse(mouse)
+                if matches!(
+                    mouse.kind,
+                    MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
+                ) =>
+            {
+                self.focus.clone()
+            }
             _ => None,
         };
         if let Some(target) = target {
+            if self.application.is_retiring(&target.mount) {
+                return Ok(());
+            }
+            let Some(native) = self.resources.input(&target, &event)? else {
+                return Ok(());
+            };
+            if let WidgetInput::Consumed(observed) = native {
+                if let Some(observed) = observed {
+                    self.resources.observe(&target.mount, observed);
+                }
+                if !matches!(event,Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown))
+                {
+                    self.focus = Some(target);
+                }
+                self.sync_native()?;
+                return Ok(());
+            }
+            if !matches!(event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left))
+                && !matches!(event,Event::Key(key) if (key.code==KeyCode::Enter || key.code==KeyCode::Char(' ')) && key.modifiers.is_empty())
+            {
+                return Ok(());
+            }
             let decision = self.application.dispatch(
                 &target.mount,
                 target.revision,
@@ -185,10 +299,18 @@ impl Presenter {
             if !decision.prevent_default {
                 self.focus = Some(target);
             }
+            self.sync_native()?;
         }
         Ok(())
     }
+    fn report(&mut self, error: &Error) {
+        let diagnostic: String = sanitize(&error.to_string()).chars().take(2048).collect();
+        if self.reported.len() < 64 && self.reported.insert(diagnostic.clone()) {
+            eprintln!("{diagnostic}");
+        }
+    }
     pub fn pump(&mut self) -> maka_ui::Result<()> {
+        self.sync_native()?;
         // Each join observer stays with the actual owner, independently of UI.
         while let Some(Some((id, completion))) = self.jobs.next().now_or_never() {
             if let Some(task) = self.application.finish_task(id, completion)? {
@@ -196,17 +318,13 @@ impl Presenter {
             }
         }
         if !self.closing && !self.application.is_retiring(&self.root) {
-            self.application.capture_actions(&self.root, |_| {
-                Err(Error::Invalid(
-                    "terminal widget has no capture owner".into(),
-                ))
-            })?;
             while let Some(action) = self.application.start_task(&self.root)? {
                 self.execute(action);
             }
             self.application.deliver_action_results(&self.root)?;
         }
-        // Pure recipes have no native owners. Discard hit references before
+        self.sync_native()?;
+        // Discard native hit references before
         // acknowledging retired children; root additionally requires Guard.
         let retired = self.application.retiring_mounts();
         self.scene.retain(|target| !retired.contains(&target.mount));
@@ -217,22 +335,31 @@ impl Presenter {
         {
             self.focus = None;
         }
+        let mut failure = None;
         for mount in retired {
             if mount == self.root {
                 if let Some(cleanup) = self.surface_cleanup.take() {
-                    self.application.close(&mount, cleanup)?;
+                    let native = self.resources.close(&mount);
+                    if let Err(error) = self.application.close(&mount, native.and(cleanup)) {
+                        failure.get_or_insert(error);
+                    }
                 }
             } else {
-                self.application.close(&mount, Ok(()))?;
+                let cleanup = self.resources.close(&mount);
+                if let Err(error) = self.application.close(&mount, cleanup) {
+                    failure.get_or_insert(error);
+                }
             }
         }
-        Ok(())
+        failure.map_or(Ok(()), Err)
     }
     pub fn retire(&mut self) -> maka_ui::Result<()> {
         self.closing = true;
         self.scene.clear();
         self.focus = None;
-        self.application.retire(&self.root)
+        self.application.retire(&self.root)?;
+        self.resources.deactivate(&self.application);
+        Ok(())
     }
     fn execute(&mut self, action: ActionTask) {
         let id = action.id;

@@ -18,6 +18,7 @@
  */
 
 use maka_plugin_core::contract::{Contract, Interface, Method, MethodMode, Transport};
+use maka_plugins::session::history::{Cursor, Read as History, Role};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -25,6 +26,7 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentModelSelection")]
 pub struct ModelSelection {
     #[schemars(length(min = 1, max = 128))]
     pub connection_id: String,
@@ -44,6 +46,7 @@ impl ModelSelection {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentConfiguration")]
 pub struct Configuration {
     pub model: ModelSelection,
     /// Compiled API provider; never an endpoint, credential or mutable fallback.
@@ -60,20 +63,23 @@ pub fn configuration_schema() -> Value {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct List {
+#[schemars(rename = "AgentList")]
+pub struct List {
     pub revision: Option<String>,
     #[schemars(length(min = 1, max = 128))]
     pub cursor: Option<String>,
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Create {
+#[schemars(rename = "AgentCreate")]
+pub struct Create {
     #[schemars(length(min = 1, max = 128))]
     pub title: String,
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct Send {
+#[schemars(rename = "AgentSend")]
+pub struct Send {
     #[schemars(length(min = 1, max = 128))]
     pub session_id: String,
     #[schemars(length(min = 1, max = 65536))]
@@ -81,7 +87,8 @@ pub(crate) struct Send {
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct Stop {
+#[schemars(rename = "AgentStop")]
+pub struct Stop {
     #[schemars(length(min = 1, max = 128))]
     pub session_id: String,
     #[schemars(length(min = 1, max = 128))]
@@ -89,7 +96,8 @@ pub(crate) struct Stop {
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct Watch {
+#[schemars(rename = "AgentWatch")]
+pub struct Watch {
     #[schemars(length(min = 1, max = 128))]
     pub session_id: String,
     #[schemars(range(max = 9_007_199_254_740_991u64))]
@@ -97,7 +105,8 @@ pub(crate) struct Watch {
 }
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct Session {
+#[schemars(rename = "AgentSession")]
+pub struct Session {
     pub id: String,
     pub title: String,
     pub revision: u64,
@@ -106,25 +115,29 @@ pub(crate) struct Session {
 }
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct SessionPage {
+#[schemars(rename = "AgentSessionPage")]
+pub struct SessionPage {
     pub revision: String,
     pub sessions: Vec<Session>,
     pub next_cursor: Option<String>,
 }
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct Started {
+#[schemars(rename = "AgentStarted")]
+pub struct Started {
     pub session_id: String,
     pub invocation_id: String,
 }
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct Stopped {
+#[schemars(rename = "AgentStopped")]
+pub struct Stopped {
     pub requested: bool,
 }
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct Delivery {
+#[schemars(rename = "AgentDelivery")]
+pub struct Delivery {
     pub sequence: u64,
     pub invocation_id: String,
     pub kind: DeliveryKind,
@@ -134,7 +147,8 @@ pub(crate) struct Delivery {
 }
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum DeliveryKind {
+#[schemars(rename = "AgentDeliveryKind")]
+pub enum DeliveryKind {
     Opened,
     PartStarted,
     Delta,
@@ -143,10 +157,43 @@ pub(crate) enum DeliveryKind {
 }
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct DeliveryPage {
+#[schemars(rename = "AgentDeliveryPage")]
+pub struct DeliveryPage {
     pub through: u64,
     pub next_after: u64,
     pub events: Vec<Delivery>,
+}
+
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentHistoryChunk")]
+pub struct HistoryChunk {
+    pub message_id: String,
+    pub turn_id: String,
+    pub timestamp: u64,
+    pub role: Role,
+    pub sequence: u64,
+    pub offset: u64,
+    pub total_bytes: u64,
+    pub text: String,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename = "AgentHistoryPage")]
+pub enum HistoryPage {
+    Preparing {
+        through: u64,
+    },
+    Ready {
+        through: u64,
+        chunks: Vec<HistoryChunk>,
+        next: Option<Cursor>,
+    },
 }
 
 pub fn contract() -> Contract {
@@ -167,6 +214,10 @@ pub fn contract() -> Contract {
                 (
                     "list".into(),
                     method::<List, SessionPage>(MethodMode::Query),
+                ),
+                (
+                    "history".into(),
+                    method::<History, HistoryPage>(MethodMode::Query),
                 ),
                 (
                     "create".into(),
