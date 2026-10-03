@@ -39,6 +39,8 @@ across layout changes; removing or changing their kind closes old input admissio
 The compiler validates bounded shapes, styles and numeric values against the
 original JSON before narrowing to native floats, within the callback deadline.
 
+`Input` dispatch returns a committed `InputDecision`. `bind` applies default prevention and propagation only during its current native listener; rejected batches prevent defaults and stop propagation. It cannot reverse earlier native actions or mouse-down focus. Owner observations call the dispatcher without applying those flags to an already completed event. Desktop synchronizes native effects after kernel commit; a native synchronization failure retains the committed decision and is diagnosed separately.
+
 `Widget::create` returns renderer-owned resource state; `capture` takes bounded
 request-local snapshots and `commit` applies committed commands before rendering.
 `deactivate` releases native focus/input on logical retirement, before old paints

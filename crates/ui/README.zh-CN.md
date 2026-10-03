@@ -22,10 +22,12 @@
 `maka-ui` 从不可变包激活已检查的 UI entry，向共用核心发布实际组件。
 前台 JavaScript 只在激活、挂载初始化、props 更新和输入处理时执行。
 发布前捕获必需的 `mount`、`event`、`update` 函数及 receiver；命名空间后续变更
-不能替换已注册处理器。回调返回 `ComponentOutput { frame, events, actions }`；events/actions 是
+不能替换已注册处理器。回调返回 `ComponentOutput { frame, events, actions, decision? }`；events/actions 是
 本次事务的一次性意图，不属于保留状态。声明 capture 时也在发布前捕获其回调。呈现器只读取已提交
 `Frame`。有界批次完整校验后原子替换，每个挂载有独立状态与 revision，旧视图事件
 不会调用新处理器。执行域故障撤销该域全部注册与挂载。
+
+原始输入回调可返回 `decision: { preventDefault, stopPropagation }`，省略的标志为 false。只有整个因果批次提交成功，内核才返回决定。生命周期回调、组件通知与异步 action 结果不能返回决定。决定受事务限额约束，不保留在 `Frame`；平台仅在实际监听阶段采用，不能撤销已经发生的原生行为。
 
 `NativeRegistry<V>` 提供随构建编译的工厂；只有组合选中的 entry 才会激活，实际导出
 仍由同一个 runtime 校验并发布。原生组件与 JavaScript 共用 props/state/revision 和

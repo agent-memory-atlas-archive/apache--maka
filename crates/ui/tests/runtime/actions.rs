@@ -334,45 +334,50 @@ fn native_capture_uses_the_complete_call_limit_before_native_callback() {
 #[test]
 fn failed_or_lost_result_handlers_do_not_hold_accepted_work_or_healthy_pending_mounts() {
     let timer = timer();
-    let (input, mut packages, native, _) = fixture(false);
-    let i = packages
-        .iter()
-        .position(|p| p.manifest().id == "dynamic.app")
-        .unwrap();
-    let old = packages.remove(i);
-    let source = std::str::from_utf8(old.file("index.mjs").unwrap())
-        .unwrap()
-        .replace(
-            "if(event.kind==='action')next.outcome=event.event;",
-            "if(event.kind==='action')throw new Error('result handler failed');",
+    for feedback in [
+        "if(event.kind==='action')throw new Error('result handler failed');",
+        "if(event.kind==='action'){const out=frame(next);out.decision={preventDefault:true};return out;}",
+    ] {
+        let (input, mut packages, native, _) = fixture(false);
+        let i = packages
+            .iter()
+            .position(|p| p.manifest().id == "dynamic.app")
+            .unwrap();
+        let old = packages.remove(i);
+        let source = std::str::from_utf8(old.file("index.mjs").unwrap())
+            .unwrap()
+            .replace(
+                "if(event.kind==='action')next.outcome=event.event;",
+                feedback,
+            );
+        let root_pkg = support::package(
+            "dynamic.app",
+            old.manifest().application.clone().unwrap(),
+            Some(source),
         );
-    let root_pkg = support::package(
-        "dynamic.app",
-        old.manifest().application.clone().unwrap(),
-        Some(source),
-    );
-    let mut input = input;
-    input.instances.get_mut("app").unwrap().package = root_pkg.application_ref().into();
-    packages.push(root_pkg);
-    let mut app = Application::new(
-        &input,
-        packages,
-        timer.handle().clone(),
-        Default::default(),
-        native,
-        Default::default(),
-    )
-    .unwrap();
-    let root = app.mount_launch(json!({})).unwrap();
-    app.dispatch(&root, 0, "read", Value::Null).unwrap();
-    capture(&mut app, &root, "Start");
-    let work = app.start_task(&root).unwrap().unwrap();
-    let done = timer.block_on(work.future);
-    app.finish_task(work.id, done).unwrap();
-    assert_eq!(app.accepted_action_count(), 0);
-    assert!(app.deliver_action_results(&root).is_err());
-    assert!(app.is_retiring(&root));
-    close_all(&mut app, &[root]);
+        let mut input = input;
+        input.instances.get_mut("app").unwrap().package = root_pkg.application_ref().into();
+        packages.push(root_pkg);
+        let mut app = Application::new(
+            &input,
+            packages,
+            timer.handle().clone(),
+            Default::default(),
+            native,
+            Default::default(),
+        )
+        .unwrap();
+        let root = app.mount_launch(json!({})).unwrap();
+        app.dispatch(&root, 0, "read", Value::Null).unwrap();
+        capture(&mut app, &root, "Start");
+        let work = app.start_task(&root).unwrap().unwrap();
+        let done = timer.block_on(work.future);
+        app.finish_task(work.id, done).unwrap();
+        assert_eq!(app.accepted_action_count(), 0);
+        assert!(app.deliver_action_results(&root).is_err());
+        assert!(app.is_retiring(&root));
+        close_all(&mut app, &[root]);
+    }
 }
 
 struct CompletionService {

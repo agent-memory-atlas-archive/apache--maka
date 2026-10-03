@@ -63,22 +63,22 @@ impl Surface {
         let view = cx.weak_entity();
         widgets::Input(Rc::new(move |key, event, window, cx| {
             if window.window_handle().window_id() != window_id {
-                eprintln!("component input rejected: window owner mismatch");
-                return;
+                return Err(maka_ui::Error::Invalid("window owner mismatch".into()));
             }
             let result = view.update(cx, |view, cx| {
-                view.application
-                    .borrow_mut()
-                    .dispatch(lease.mount(), revision, key, event)?;
-                view.sync_native(window, cx)?;
+                let decision =
+                    view.application
+                        .borrow_mut()
+                        .dispatch(lease.mount(), revision, key, event)?;
+                // The plugin transaction has committed. Native effects have
+                // their own receipts; failure cannot undo its input decision.
+                if let Err(error) = view.sync_native(window, cx) {
+                    eprintln!("component native synchronization failed: {error}");
+                }
                 cx.notify();
-                maka_ui::Result::Ok(())
+                maka_ui::Result::Ok(decision)
             });
-            match result {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => eprintln!("component input rejected: {error}"),
-                Err(error) => eprintln!("component input owner unavailable: {error}"),
-            }
+            result.map_err(|error| maka_ui::Error::Invalid(error.to_string()))?
         }))
     }
     /// Native creation/commands run after the whole declarative transaction,

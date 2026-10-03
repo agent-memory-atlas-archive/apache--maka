@@ -524,6 +524,11 @@ export interface ComponentOutput {
   frame: Frame;
   events: Emission[];
   actions: Action[];
+  /**
+   * Applies only to the original raw input, after the entire batch commits.
+   * It is never retained in a frame or replayed by a renderer.
+   */
+  decision?: InputDecision | null;
 }
 export interface Frame {
   revision: number;
@@ -552,6 +557,10 @@ export interface CaptureSource {
   child: string;
   method: string;
   input: unknown;
+}
+export interface InputDecision {
+  preventDefault?: boolean;
+  stopPropagation?: boolean;
 }
 /**
  * One child of a committed component, owned by a committed native presentation.

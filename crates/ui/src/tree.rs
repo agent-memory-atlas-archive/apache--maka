@@ -228,7 +228,7 @@ impl<V: ?Sized + 'static> Application<V> {
         revision: u64,
         key: &str,
         event: Value,
-    ) -> Result<()> {
+    ) -> Result<InputDecision> {
         let current = self
             .views
             .get(&mount.id())
@@ -259,8 +259,13 @@ impl<V: ?Sized + 'static> Application<V> {
                 event,
             },
         )
+        .map(|_| ())
     }
-    fn dispatch_origin(&mut self, mount: &Mount, event: super::abi::ComponentInput) -> Result<()> {
+    fn dispatch_origin(
+        &mut self,
+        mount: &Mount,
+        event: super::abi::ComponentInput,
+    ) -> Result<InputDecision> {
         let event =
             serde_json::to_value(event).map_err(|error| Error::Invalid(error.to_string()))?;
         let mut update = Update::new(self.slice);
@@ -278,16 +283,20 @@ impl<V: ?Sized + 'static> Application<V> {
         let result = (|| {
             update.step(depth)?;
             let next = self.invoke(mount, "event", &args, update.deadline)?;
+            let decision = next.decision.unwrap_or_default();
             Self::check_next(revision, &surface, &next.frame)?;
             self.stage(mount, props, next, subscription, depth, &mut update)?;
             self.deliver(&mut update)?;
-            self.commit(&mut update)
+            self.commit(&mut update)?;
+            Ok(decision)
         })();
-        if let Err(error) = result {
-            self.rollback(&update)?;
-            return Err(error);
+        match result {
+            Ok(decision) => Ok(decision),
+            Err(error) => {
+                self.rollback(&update)?;
+                Err(error)
+            }
         }
-        Ok(())
     }
 
     fn check_initial(frame: &Frame<NativeView<V>>) -> Result<()> {
@@ -455,6 +464,7 @@ impl<V: ?Sized + 'static> Application<V> {
     ) -> Result<()> {
         let bytes = update.charge(&output.frame, &props, &output.events)?;
         update.charge_intent(&output.actions)?;
+        update.charge_intent(&output.decision)?;
         let actions = output.actions;
         update.emit(mount, subscription, output.events)?;
         let frame = output.frame;

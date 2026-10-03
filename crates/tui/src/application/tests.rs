@@ -790,3 +790,47 @@ fn duplicate_native_terminal_placement_rejects_pending_scene_before_input_public
     tui.surface_closed(Ok(())).unwrap();
     tui.shutdown().unwrap();
 }
+
+#[test]
+fn raw_click_focus_is_a_default_after_successful_commit() {
+    for (handler, accepts, focuses) in [
+        (
+            "const out=frame({count:state.count+1,revision:state.revision+1});out.decision={preventDefault:true};return out;",
+            true,
+            false,
+        ),
+        (
+            "return frame({count:state.count+1,revision:state.revision+1});",
+            true,
+            true,
+        ),
+        ("throw new Error('reject input');", false, false),
+    ] {
+        let (runtime, input, packages) = fixture(handler);
+        let mut tui = Presenter::new(
+            &input,
+            packages,
+            runtime.handle().clone(),
+            registry(),
+            json!({}),
+        )
+        .unwrap();
+        draw(&mut tui, 30, 12);
+        let hit = tui.scene[0].area;
+        tui.focus = None;
+        let result = tui.input(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: hit.x,
+            row: hit.y,
+            modifiers: KeyModifiers::NONE,
+        }));
+        assert_eq!(result.is_ok(), accepts);
+        assert_eq!(tui.focus.is_some(), focuses);
+        assert_eq!(
+            tui.application.frame(&tui.root).unwrap().revision,
+            u64::from(accepts)
+        );
+        tui.surface_closed(Ok(())).unwrap();
+        tui.shutdown().unwrap();
+    }
+}

@@ -333,6 +333,13 @@ impl NativeComponent<()> for NativeEmitter {
         call: ComponentCall<'_>,
         _values: &maka_ui::abi::ValueBindings,
     ) -> maka_ui::Result<ComponentOutput<NativeView<()>>> {
+        let raw = matches!(
+            call,
+            ComponentCall::Event {
+                origin: maka_ui::EventOrigin::Raw,
+                ..
+            }
+        );
         let (state, events) = match call {
             ComponentCall::Mount { props } => (
                 json!({"revision":0,"count":props["initial"],"label":props["label"]}),
@@ -350,7 +357,7 @@ impl NativeComponent<()> for NativeEmitter {
                 }],
             ),
         };
-        Ok(Frame {
+        let mut output = Frame {
             revision: state["revision"].as_u64().unwrap(),
             state,
             surface: None,
@@ -359,7 +366,12 @@ impl NativeComponent<()> for NativeEmitter {
                 label: "Native".into(),
             })?,
         }
-        .output(events))
+        .output(events);
+        output.decision = raw.then_some(maka_ui::InputDecision {
+            prevent_default: true,
+            stop_propagation: false,
+        });
+        Ok(output)
     }
 }
 #[test]
@@ -375,7 +387,8 @@ fn native_emission_and_js_emission_share_the_same_contract_and_subscription() {
     let mut app = native_application(input, packages, contract, Rc::new(NativeEmitter), &timer);
     let root = app.mount_launch(json!({})).unwrap();
     let right = app.child_mount(&root, "right").unwrap().clone();
-    app.dispatch(&right, 0, "inc", Value::Null).unwrap();
+    let decision = app.dispatch(&right, 0, "inc", Value::Null).unwrap();
+    assert!(decision.prevent_default && !decision.stop_propagation);
     assert_eq!(
         app.frame(&root).unwrap().state["seen"],
         json!([["right", "changed", "notice", 7]])
@@ -524,4 +537,82 @@ fn event_payloads_and_intermediate_frames_do_not_occupy_final_retained_scene_quo
         }
     }
     app.shutdown().unwrap();
+}
+
+#[test]
+fn raw_input_decision_waits_for_the_complete_causal_commit_and_is_not_retained() {
+    let timer = timer();
+    let (input, packages, _) = fixture(
+        MOUNT,
+        "const out=frame({...state,count:state.count+1,revision:state.revision+1},[{name:'changed',value:3}]);out.decision={preventDefault:true,stopPropagation:true};return out;",
+        support::CHILD_UPDATE,
+        RECEIVE,
+        "{changed:'notice'}",
+    );
+    let mut app = application(&input, packages, &timer);
+    let root = app.mount_launch(json!({})).unwrap();
+    let child = app.child_mount(&root, "left").unwrap().clone();
+    let decision = app.dispatch(&child, 0, "inc", Value::Null).unwrap();
+    assert!(decision.prevent_default && decision.stop_propagation);
+    assert_eq!(app.frame(&root).unwrap().state["total"], 3);
+    assert_eq!(app.frame(&child).unwrap().state["count"], 11);
+    assert!(app.dispatch(&child, 0, "inc", Value::Null).is_err());
+    close_all(&mut app, &root);
+}
+
+#[test]
+fn input_decisions_cannot_escape_a_failed_or_overridden_causal_transaction() {
+    let timer = timer();
+    for receive in [
+        "throw new Error('parent rejects batch');",
+        "const out=frame({...state,revision:state.revision+1});out.decision={preventDefault:false};return out;",
+        "const out=frame({...state,revision:state.revision+2});return out;",
+    ] {
+        let (input, packages, _) = fixture(
+            MOUNT,
+            "const out=frame({...state,count:99,revision:state.revision+1},[{name:'changed',value:3}]);out.decision={preventDefault:true};return out;",
+            support::CHILD_UPDATE,
+            receive,
+            "{changed:'notice'}",
+        );
+        let mut app = application(&input, packages, &timer);
+        let root = app.mount_launch(json!({})).unwrap();
+        let child = app.child_mount(&root, "left").unwrap().clone();
+        assert!(app.dispatch(&child, 0, "inc", Value::Null).is_err());
+        assert_eq!(app.frame(&root).unwrap().revision, 0);
+        assert_eq!(app.frame(&child).unwrap().revision, 0);
+        assert_eq!(app.frame(&child).unwrap().state["count"], 10);
+        close_all(&mut app, &root);
+    }
+}
+
+#[test]
+fn lifecycle_outputs_cannot_decide_input_and_payload_cannot_forge_its_origin() {
+    let timer = timer();
+    let (input, packages, _) = fixture(
+        "const out=frame({count:props.initial,label:props.label,revision:0});out.decision={};return out;",
+        CHILD_EVENT,
+        support::CHILD_UPDATE,
+        RECEIVE,
+        "{}",
+    );
+    let mut app = application(&input, packages, &timer);
+    assert!(app.mount_launch(json!({})).is_err());
+    app.shutdown().unwrap();
+    let mut app = super::app(
+        "if(event.kind!=='raw')throw new Error('wrong origin');const out=frame({count:state.count+1,revision:state.revision+1});out.decision={stopPropagation:true};return out;",
+        &timer,
+    );
+    let root = app.mount_launch(json!({})).unwrap();
+    let decision = app
+        .dispatch(&root, 0, "inc", json!({"kind":"component","decision":{}}))
+        .unwrap();
+    assert_eq!(
+        decision,
+        maka_ui::InputDecision {
+            prevent_default: false,
+            stop_propagation: true
+        }
+    );
+    close_all(&mut app, &root);
 }

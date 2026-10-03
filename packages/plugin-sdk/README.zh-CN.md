@@ -33,6 +33,8 @@ Wire 类型和内置契约由 Host/UI 实际执行所用的 Rust 类型生成。
 不能提供权限。因此同一插件的 Desktop/TUI 入口可以分别设计呈现方式。平台必须
 在激活 JavaScript component 前安装编译器；原场景 JSON 参与回调、事务及驻留预算。
 
+`raw` 事件可返回 `decision: { preventDefault: true, stopPropagation: true }`，省略的标志为 false。决定仅在整个因果事务提交后可见，不保留在 frame。其他事件来源和生命周期回调不能返回决定。它作用于平台实际监听阶段，不能撤销更早的原生行为。
+
 ```sh
 npm run schema:generate -w @maka-agent/plugin-sdk
 npm run schema:check -w @maka-agent/plugin-sdk

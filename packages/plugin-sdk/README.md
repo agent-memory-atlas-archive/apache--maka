@@ -37,6 +37,8 @@ and TUI entries can therefore present the same plugin differently. A platform
 must install its compiler before activating JavaScript components. Original scene
 JSON counts toward callback, transaction and retained-frame budgets.
 
+A `raw` event may return `decision: { preventDefault: true, stopPropagation: true }`. Omitted flags default to false. The decision becomes visible only after the whole causal transaction commits and is never stored in a frame. Other event origins and lifecycle callbacks cannot return it. It affects the actual platform listener phase, so it cannot undo earlier native behavior.
+
 ```sh
 npm run schema:generate -w @maka-agent/plugin-sdk
 npm run schema:check -w @maka-agent/plugin-sdk

@@ -29,7 +29,7 @@ pub mod text;
 pub mod textarea;
 mod tree;
 mod values;
-pub use frame::{ComponentOutput, ComponentSlot, Emission, Frame, Surface};
+pub use frame::{ComponentOutput, ComponentSlot, Emission, Frame, InputDecision, Surface};
 pub use native::{
     ComponentCall, EventOrigin, LabelProps, NativeCapability, NativeComponent, NativeExport,
     NativeRegistry, NativeView, label_contract,
@@ -477,6 +477,14 @@ impl<V: ?Sized + 'static> Application<V> {
         args: &[Value],
         deadline: std::time::Instant,
     ) -> Result<ComponentOutput<NativeView<V>>> {
+        let input = if method == "event" {
+            Some(
+                serde_json::from_value::<abi::ComponentInput>(args[1].clone())
+                    .map_err(|error| Error::Invalid(error.to_string()))?,
+            )
+        } else {
+            None
+        };
         let values = self.mount_values(mount, &args)?;
         let execution = self.runtime.admit_mount(mount)?;
         let Export::Component {
@@ -530,15 +538,7 @@ impl<V: ?Sized + 'static> Application<V> {
                     })
                 })
             }
-            Component::Native(component) => (|| {
-                let input = if method == "event" {
-                    Some(
-                        serde_json::from_value::<abi::ComponentInput>(args[1].clone())
-                            .map_err(|error| Error::Invalid(error.to_string()))?,
-                    )
-                } else {
-                    None
-                };
+            Component::Native(component) => {
                 let call = match method {
                     "mount" => ComponentCall::Mount { props: &args[0] },
                     "update" => ComponentCall::Update {
@@ -571,9 +571,15 @@ impl<V: ?Sized + 'static> Application<V> {
                     _ => unreachable!(),
                 };
                 component.call(call, &values)
-            })(),
+            }
         };
         let result = result.and_then(|output| {
+            if output.decision.is_some() && !matches!(input, Some(abi::ComponentInput::Raw { .. }))
+            {
+                return Err(Error::Invalid(
+                    "input decision requires an original raw callback".into(),
+                ));
+            }
             // All declarative data is charged, including the original guest
             // scene. Only trusted opaque Rust recipe memory is excluded.
             let metadata = (
@@ -582,6 +588,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 &output.frame.surface,
                 &output.events,
                 &output.actions,
+                &output.decision,
             );
             tree::check_call_bytes(&(metadata, output.frame.view.metadata()))?;
             if output.events.len() > 64 {

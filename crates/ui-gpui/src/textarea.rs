@@ -220,12 +220,16 @@ impl TextareaOwner {
             }) else {
                 return;
             };
-            (input.0)(
+            if let Err(error) = (input.0)(
                 "observe",
                 serde_json::to_value(observation).expect("editor observation"),
                 window,
                 cx,
-            );
+            ) {
+                // This observation follows native input. It cannot cancel an
+                // already completed event or affect a later event's defaults.
+                eprintln!("editor observation rejected: {error}");
+            }
         });
     }
     fn apply(&mut self, props: &TextareaProps, window: &mut Window, cx: &mut Context<Self>) {

@@ -176,13 +176,15 @@ impl Presenter {
             _ => None,
         };
         if let Some(target) = target {
-            self.focus = Some(target.clone());
-            self.application.dispatch(
+            let decision = self.application.dispatch(
                 &target.mount,
                 target.revision,
                 &target.key,
                 json!({"kind":"click"}),
             )?;
+            if !decision.prevent_default {
+                self.focus = Some(target);
+            }
         }
         Ok(())
     }

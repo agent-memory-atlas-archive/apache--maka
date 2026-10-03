@@ -76,7 +76,10 @@ export function createApp(surface: Surface): Component<CounterState> {
     },
     event(state, input) {
       if (input.kind !== 'raw' || input.key !== 'inc') throw Error('Unexpected counter input');
-      return frame({ count: state.count + 1, revision: state.revision + 1 });
+      return {
+        ...frame({ count: state.count + 1, revision: state.revision + 1 }),
+        decision: { stopPropagation: true },
+      };
     },
   };
 }

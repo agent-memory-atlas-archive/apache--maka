@@ -24,12 +24,14 @@ component registrations through `maka-plugin-core`. Foreground JavaScript execut
 only during activation, mount initialization, props updates and input. Required
 `mount`, `event` and `update` functions and their receiver are captured before
 publication; later namespace mutation cannot replace a registered handler.
-Callbacks return `ComponentOutput { frame, events, actions }`; events and actions are
+Callbacks return `ComponentOutput { frame, events, actions, decision? }`; events and actions are
 one-shot transaction intents, separate from retained state. A declared `capture`
 callback is also captured before publication. Renderers read committed
 `Frame` values; successful, bounded, validated batches replace a frame atomically.
 Each mount has independent state and a revision, so old view events cannot invoke
 new handlers. A realm failure retires every registration and mount in that realm.
+
+A raw input callback may return `decision: { preventDefault, stopPropagation }`; omitted flags are false. The kernel returns this decision only after the entire causal batch commits. Lifecycle callbacks, component notifications and asynchronous action results cannot supply a decision. Decisions are bounded transaction data, never retained in `Frame`. A platform applies them at its actual listener phase; they cannot cancel native behavior that already happened.
 
 `NativeRegistry<V>` supplies compiled implementation factories; only selected
 composition entries activate them and publish their actual contracts through the

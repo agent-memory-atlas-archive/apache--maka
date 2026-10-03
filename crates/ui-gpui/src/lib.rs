@@ -70,7 +70,8 @@ pub trait Widget: Any {
 /// before dropping the owner, so delayed observations cannot retarget a new one.
 #[derive(Clone)]
 pub struct LiveInput(pub Rc<RefCell<Option<Input>>>);
-type Dispatch = dyn Fn(&str, Value, &mut Window, &mut App);
+type Dispatch =
+    dyn Fn(&str, Value, &mut Window, &mut App) -> maka_ui::Result<maka_ui::InputDecision>;
 #[derive(Clone)]
 pub struct Input(pub Rc<Dispatch>);
 impl Input {
@@ -80,7 +81,24 @@ impl Input {
         encode: impl Fn(&E) -> Value + 'static,
     ) -> impl Fn(&E, &mut Window, &mut App) + 'static {
         let dispatch = self.0.clone();
-        move |event, window, cx| dispatch(&key, encode(event), window, cx)
+        move |event, window, cx| {
+            let decision = match dispatch(&key, encode(event), window, cx) {
+                Ok(decision) => decision,
+                Err(error) => {
+                    eprintln!("component input rejected: {error}");
+                    maka_ui::InputDecision {
+                        prevent_default: true,
+                        stop_propagation: true,
+                    }
+                }
+            };
+            if decision.prevent_default {
+                window.prevent_default();
+            }
+            if decision.stop_propagation {
+                cx.stop_propagation();
+            }
+        }
     }
 }
 
@@ -197,4 +215,89 @@ pub fn registry() -> NativeRegistry<dyn Widget> {
         .expect("unique native label implementation");
     textarea::register(&mut registry);
     registry
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::{
+        AppContext, Context, InteractiveElement, Modifiers, MouseButton, MouseDownEvent, Render,
+        TestAppContext, point,
+    };
+    use std::cell::Cell;
+
+    struct DecisionSurface {
+        input: Input,
+        parent: Rc<Cell<usize>>,
+    }
+    impl Render for DecisionSurface {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let parent = self.parent.clone();
+            div()
+                .size(px(200.))
+                .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                    parent.set(parent.get() + 1);
+                })
+                .child(
+                    div().size(px(100.)).on_mouse_down(
+                        MouseButton::Left,
+                        self.input
+                            .bind("rule".into(), |_: &MouseDownEvent| Value::Null),
+                    ),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn committed_decisions_control_native_defaults_and_bubbling_and_failure_rejects(
+        cx: &mut TestAppContext,
+    ) {
+        let mode = Rc::new(Cell::new(0_u8));
+        let delivered = Rc::new(Cell::new(0_usize));
+        let parent = Rc::new(Cell::new(0_usize));
+        let decision = mode.clone();
+        let seen = delivered.clone();
+        let input = Input(Rc::new(move |_, _, _, _| {
+            seen.set(seen.get() + 1);
+            if decision.get() == 4 {
+                return Err(maka_ui::Error::Invalid("uncommitted batch".into()));
+            }
+            Ok(maka_ui::InputDecision {
+                prevent_default: decision.get() & 1 != 0,
+                stop_propagation: decision.get() & 2 != 0,
+            })
+        }));
+        let observed = parent.clone();
+        let (_, _) = cx.add_window_view(move |_, _| DecisionSurface {
+            input,
+            parent: observed,
+        });
+        let handle = cx.windows()[0];
+        cx.update_window(handle, |_, w, cx| {
+            w.draw(cx).clear(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        for current in 0..=4 {
+            mode.set(current);
+            let before = parent.get();
+            let result = cx
+                .update_window(handle, |_, w, cx| {
+                    w.dispatch_event(
+                        gpui_kit::PlatformInput::MouseDown(MouseDownEvent {
+                            button: MouseButton::Left,
+                            position: point(px(10.), px(10.)),
+                            modifiers: Modifiers::default(),
+                            click_count: 1,
+                            first_mouse: false,
+                        }),
+                        cx,
+                    )
+                })
+                .unwrap();
+            assert_eq!(delivered.get(), usize::from(current) + 1);
+            assert_eq!(result.default_prevented, current & 1 != 0 || current == 4);
+            assert_eq!(parent.get() - before, usize::from(current < 2));
+        }
+    }
 }

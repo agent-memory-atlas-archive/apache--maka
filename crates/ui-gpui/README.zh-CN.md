@@ -34,6 +34,8 @@ slots；局部 key 在布局改变时保留同一机械焦点/滚动 owner，删
 准入。编译器在回调 deadline 内检查形状、样式和数值限额；原 JSON 先验证，再缩窄为
 原生浮点数。
 
+`Input` 派发返回已提交的 `InputDecision`。`bind` 仅在当前原生监听器内阻止默认行为或传播；批次失败时拒绝默认行为并停止传播。它不能撤销更早的原生 action 或 mouse-down 焦点。Owner 观察直接调用 dispatcher，不把标志应用到已完成输入。Desktop 在内核提交后同步原生副作用；同步失败单独诊断，仍保留已提交决定。
+
 `Widget::create` 返回呈现器拥有的资源状态；`capture` 捕获有界请求私有快照，
 `commit` 在绘制前消费已提交命令。`deactivate` 在逻辑退休时释放原生焦点/输入，不等待
 旧绘制资源销毁。`render` 读取 owner、获得准确的子组件 `Slots`，返回 Result 将放置失败

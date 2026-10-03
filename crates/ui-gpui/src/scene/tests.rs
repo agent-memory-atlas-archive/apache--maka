@@ -69,7 +69,10 @@ fn source(disabled: bool, moved: bool, removed: bool) -> Value {
 fn harness(cx: &mut TestAppContext) -> (Entity<Harness>, AnyWindowHandle, Rc<Cell<usize>>) {
     let clicks = Rc::new(Cell::new(0));
     let seen = clicks.clone();
-    let input = Input(Rc::new(move |_, _, _, _| seen.set(seen.get() + 1)));
+    let input = Input(Rc::new(move |_, _, _, _| {
+        seen.set(seen.get() + 1);
+        Ok(Default::default())
+    }));
     let (entity, _) = cx.add_window_view(move |window, cx| {
         let recipe = compile(
             &source(false, false, false),
@@ -233,7 +236,7 @@ fn scene_slot_render_errors_are_returned_before_publication(cx: &mut TestAppCont
     let (_, window, _) = harness(cx);
     let recipe=compile(&json!({"kind":"component","key":"missing","binding":"child","member":0,"props":{},"on":{}}),Instant::now()+std::time::Duration::from_secs(1)).unwrap().view;
     cx.update_window(window, |_, w, cx| {
-        let input = Input(Rc::new(|_, _, _, _| {}));
+        let input = Input(Rc::new(|_, _, _, _| Ok(Default::default())));
         let state = recipe.create(LiveInput(Rc::new(RefCell::new(Some(input.clone())))), w, cx);
         let slots = Slots::new(vec!["missing".into()], input, |_, _, _| {
             Err(maka_ui::Error::Invalid("detached exact child".into()))

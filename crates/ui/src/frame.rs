@@ -30,6 +30,16 @@ pub struct ComponentOutput<V = Value> {
     pub frame: Frame<V>,
     pub events: Vec<Emission>,
     pub actions: Vec<super::actions::Action>,
+    /// Applies only to the original raw input, after the entire batch commits.
+    /// It is never retained in a frame or replayed by a renderer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<InputDecision>,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+pub struct InputDecision {
+    pub prevent_default: bool,
+    pub stop_propagation: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -43,6 +53,7 @@ impl<V> ComponentOutput<V> {
             frame: self.frame.map_view(map),
             events: self.events,
             actions: self.actions,
+            decision: self.decision,
         }
     }
 }
@@ -141,6 +152,7 @@ impl<V> Frame<V> {
             frame: self,
             events,
             actions: Vec::new(),
+            decision: None,
         }
     }
     pub fn validate_metadata(&self) -> Result<(), String> {
