@@ -36,6 +36,8 @@ fn namespaces(dir: &tempfile::TempDir) -> RootNamespaces {
 
 #[tokio::test]
 async fn ephemeral_native_context_has_actual_activation_and_no_fallback_store() {
+    let provider = native_package();
+    let expected_package = provider.application_ref();
     let mut native = NativeRegistry::default();
     let observed = Arc::new(Mutex::new(None));
     let capture = observed.clone();
@@ -44,6 +46,7 @@ async fn ephemeral_native_context_has_actual_activation_and_no_fallback_store() 
             "native.echo".into(),
             Arc::new(move |context, configuration| {
                 assert_eq!(configuration, json!({}));
+                assert_eq!(context.package(), &expected_package);
                 assert!(context.persistence().is_none());
                 *capture.lock().unwrap() = Some(context.activation().clone());
                 Box::pin(async {
@@ -55,7 +58,6 @@ async fn ephemeral_native_context_has_actual_activation_and_no_fallback_store() 
             }),
         )
         .unwrap();
-    let provider = native_package();
     let consumer = consumer();
     let issuer = Issuer::default();
     let app = Application::start(

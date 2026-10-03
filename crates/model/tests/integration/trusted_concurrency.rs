@@ -89,11 +89,11 @@ async fn shared_sdk_requests_progress_through_backpressure_and_cancellation() {
             }
             assert_eq!(text, "alive");
             step.finish().unwrap();
-            stream.cancel_and_wait().await;
+            stream.cancel_and_wait().await.expect("actual stream cleanup");
         }
         complete(&models, &base).await;
 
-        held.cancel_and_wait().await;
+        held.cancel_and_wait().await.expect("actual stream cleanup");
         pending_http.await.unwrap();
         // An abandoned model consumer also cancels and settles its SDK request.
         let abandoned = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -116,7 +116,7 @@ async fn shared_sdk_requests_progress_through_backpressure_and_cancellation() {
         abandoned_http.await.unwrap();
         complete(&models, &base).await;
 
-        slow.cancel_and_wait().await;
+        slow.cancel_and_wait().await.expect("actual stream cleanup");
         flood_http.await.unwrap();
         complete(&models, &base).await;
         healthy_http.await.unwrap();

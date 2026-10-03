@@ -121,7 +121,7 @@ async fn ingress_limits_close_only_offending_http_and_preserve_bounded_sse_recor
                 }
             }
             server.await.unwrap();
-            stream.cancel_and_wait().await;
+            stream.cancel_and_wait().await.expect("actual stream cleanup");
             if accepted {
                 assert!(error.is_none(), "legal record failed in case {index}");
                 assert_eq!(text, "alive");

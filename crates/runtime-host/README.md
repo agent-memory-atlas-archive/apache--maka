@@ -34,7 +34,8 @@ owner; failed close retains the actual native owner and lifecycle fence.
 
 Native factories receive `(NativeContext, configuration)`. The context is built
 by that owner after acquiring the initialization fence, and carries the actual
-activation plus optional, paired applied source and `Arc<EventLog>`. Ephemeral
+activation, exact immutable selected package, plus optional paired applied source
+and `Arc<EventLog>`. The package identifies execution provenance, not data ownership. Ephemeral
 applications have no persistence; services requiring a Root must reject them.
 `EventLog::owned_root()` validates and shares its existing lease with trusted
 native stores such as `ConfigurationStore`; their real shutdown belongs to the

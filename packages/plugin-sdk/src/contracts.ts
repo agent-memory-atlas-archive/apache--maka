@@ -827,6 +827,286 @@ export const contracts = {
       },
     },
   },
+  agent: {
+    name: 'maka.agent.Agent',
+    version: 1,
+    transport: 'remote',
+    interface: {
+      kind: 'service',
+      methods: {
+        create: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'Create',
+            type: 'object',
+            properties: {
+              title: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['title'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'Session',
+            type: 'object',
+            properties: {
+              id: {
+                type: 'string',
+              },
+              title: {
+                type: 'string',
+              },
+              revision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              updatedAt: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              archived: {
+                type: 'boolean',
+              },
+            },
+            additionalProperties: false,
+            required: ['id', 'title', 'revision', 'updatedAt', 'archived'],
+          },
+          resources: {},
+        },
+        list: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'List',
+            type: 'object',
+            properties: {
+              revision: {
+                type: ['string', 'null'],
+              },
+              cursor: {
+                type: ['string', 'null'],
+                minLength: 1,
+                maxLength: 128,
+              },
+            },
+            additionalProperties: false,
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SessionPage',
+            type: 'object',
+            properties: {
+              revision: {
+                type: 'string',
+              },
+              sessions: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/Session',
+                },
+              },
+              nextCursor: {
+                type: ['string', 'null'],
+              },
+            },
+            additionalProperties: false,
+            required: ['revision', 'sessions'],
+            $defs: {
+              Session: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  archived: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'title', 'revision', 'updatedAt', 'archived'],
+              },
+            },
+          },
+          resources: {},
+        },
+        send: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'Send',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              message: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 65536,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'message'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'Started',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              invocationId: {
+                type: 'string',
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'invocationId'],
+          },
+          resources: {},
+        },
+        stop: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'Stop',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              invocationId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'invocationId'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'Stopped',
+            type: 'object',
+            properties: {
+              requested: {
+                type: 'boolean',
+              },
+            },
+            additionalProperties: false,
+            required: ['requested'],
+          },
+          resources: {},
+        },
+        watch: {
+          mode: 'subscription',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'Watch',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              after: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'after'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'DeliveryPage',
+            type: 'object',
+            properties: {
+              through: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              nextAfter: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              events: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/Delivery',
+                },
+              },
+            },
+            additionalProperties: false,
+            required: ['through', 'nextAfter', 'events'],
+            $defs: {
+              Delivery: {
+                type: 'object',
+                properties: {
+                  sequence: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  invocationId: {
+                    type: 'string',
+                  },
+                  kind: {
+                    $ref: '#/$defs/DeliveryKind',
+                  },
+                  text: {
+                    type: ['string', 'null'],
+                  },
+                  partId: {
+                    type: ['string', 'null'],
+                  },
+                  failed: {
+                    type: ['boolean', 'null'],
+                  },
+                },
+                additionalProperties: false,
+                required: ['sequence', 'invocationId', 'kind'],
+              },
+              DeliveryKind: {
+                type: 'string',
+                enum: ['opened', 'part_started', 'delta', 'part_finished', 'ended'],
+              },
+            },
+          },
+          resources: {},
+        },
+      },
+    },
+  },
   textReader: {
     name: 'maka.text.Reader',
     version: 1,

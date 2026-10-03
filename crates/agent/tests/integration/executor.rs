@@ -272,3 +272,101 @@ async fn external_backend_uses_canonical_admission_settlement_and_never_enters_m
     );
     log.shutdown().await.unwrap();
 }
+
+struct CleanupFault {
+    log: Arc<EventLog>,
+    sql_failure: bool,
+}
+impl Provider for CleanupFault {
+    fn execute(&self, _: Request, _: Context) -> BoxFuture<'static, Result<Outcome, Error>> {
+        let log = self.log.clone();
+        let sql_failure = self.sql_failure;
+        Box::pin(async move {
+            if sql_failure {
+                log.shutdown().await.unwrap();
+            }
+            Err(Error::CleanupUnconfirmed)
+        })
+    }
+}
+async fn unconfirmed_executor(sql_failure: bool) {
+    let temp = tempfile::tempdir().unwrap();
+    let log = Arc::new(
+        EventLog::open(&temp.path().join("executor.sqlite"))
+            .await
+            .unwrap(),
+    );
+    let engine = context::engine(log.clone());
+    let catalog = Catalog::default();
+    let fiber = Fiber::new("cleanup.fixture", "cleanup.fixture", Scope::Profile).unwrap();
+    fiber.begin_loading().unwrap();
+    fiber.ready().unwrap();
+    fiber.publish().unwrap();
+    let mut staged = Staged::default();
+    staged
+        .insert(
+            "cleanup.fixture",
+            Executor {
+                id: "cleanup.fixture".to_owned().try_into().unwrap(),
+                display_name: "Cleanup fixture".into(),
+                capabilities: Default::default(),
+                provider: Arc::new(CleanupFault {
+                    log: log.clone(),
+                    sql_failure,
+                }),
+            },
+        )
+        .unwrap();
+    let registration = catalog.register(&fiber.context(), staged).unwrap();
+    let configuration = invocation::configuration(ToolMode::Direct);
+    let contribution = catalog
+        .snapshot::<Executor>(&Scope::Profile)
+        .entries
+        .remove("cleanup.fixture")
+        .unwrap();
+    let running = engine
+        .start_executor(
+            ExecutorInput {
+                request: Request {
+                    invocation: Invocation {
+                        session_id: "session".into(),
+                        turn_id: "turn".into(),
+                        run_id: "run".into(),
+                        invocation_id: "invocation".into(),
+                    },
+                    conversation_key: "session".into(),
+                    settings: Default::default(),
+                    content: "question".into(),
+                    cwd: configuration.cwd.clone(),
+                    instructions: None,
+                },
+                binding: Binding::new("session".into(), contribution).unwrap(),
+                configuration,
+                request_fingerprint: Some("original cleanup request".into()),
+                source_messages: vec![],
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let completion = running.completion().await;
+    assert!(completion.result.is_err());
+    assert!(
+        completion.cleanup.is_err(),
+        "terminal SQL failure cannot clear original executor cleanup failure"
+    );
+    engine.drain().await;
+    drop(registration);
+}
+#[tokio::test]
+async fn executor_cleanup_failure_is_independent_of_ordinary_terminal_verdict() {
+    tokio::time::timeout(Duration::from_secs(10), unconfirmed_executor(false))
+        .await
+        .unwrap();
+}
+#[tokio::test]
+async fn executor_cleanup_failure_survives_terminal_sql_failure() {
+    tokio::time::timeout(Duration::from_secs(10), unconfirmed_executor(true))
+        .await
+        .unwrap();
+}

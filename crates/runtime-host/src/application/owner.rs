@@ -374,6 +374,7 @@ impl Owner {
                 let configuration = instance.configuration;
                 let context = NativeContext {
                     activation: activation.clone(),
+                    package: instance.package.clone(),
                     persistence: self
                         .persisted
                         .as_ref()

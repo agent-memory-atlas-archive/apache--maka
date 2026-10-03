@@ -184,7 +184,10 @@ async fn generate_step(
         builder.push(event.unwrap()).unwrap();
     }
     let output = builder.finish().unwrap();
-    stream.cancel_and_wait().await;
+    stream
+        .cancel_and_wait()
+        .await
+        .expect("actual stream cleanup");
     output
 }
 

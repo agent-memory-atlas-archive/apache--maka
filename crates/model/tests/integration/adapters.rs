@@ -143,7 +143,10 @@ async fn publication_replacement_preserves_accepted_calls_rejects_stale_starts_a
         ModelEvent::Finished { .. }
     ));
     assert!(accepted.next().await.is_none());
-    accepted.cancel_and_wait().await;
+    accepted
+        .cancel_and_wait()
+        .await
+        .expect("actual stream cleanup");
     let context = retained.lock().unwrap().take().unwrap();
     assert!(matches!(
         context
@@ -169,7 +172,10 @@ async fn publication_replacement_preserves_accepted_calls_rejects_stale_starts_a
         stalled.next().await.unwrap(),
         Err(Error::TimedOut)
     ));
-    stalled.cancel_and_wait().await;
+    stalled
+        .cancel_and_wait()
+        .await
+        .expect("actual stream cleanup");
     owner
         .shutdown(tokio::time::Instant::now() + Duration::from_secs(1))
         .await

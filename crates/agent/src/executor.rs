@@ -96,6 +96,9 @@ impl Engine {
                     cancellation.clone(),
                 ));
                 let settlement = call.execute(output.clone(), cancellation.clone()).await;
+                if matches!(&settlement.result, Err(Error::CleanupUnconfirmed)) {
+                    crate::cleanup::unconfirmed();
+                }
                 let outcome = outcome(&settlement.result, &cancellation);
                 let committed = output.finish(&settlement.result, &outcome).await;
                 drop(settlement); // the terminal fact owns the lease through its commit

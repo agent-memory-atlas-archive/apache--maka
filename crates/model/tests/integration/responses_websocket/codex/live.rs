@@ -178,7 +178,10 @@ async fn live_luna_subscription_http_decodes_the_stream_without_a_content_type_h
             step.push(event.unwrap()).unwrap();
         }
         let step = step.finish().unwrap();
-        stream.cancel_and_wait().await;
+        stream
+            .cancel_and_wait()
+            .await
+            .expect("actual stream cleanup");
         let text: String = step
             .parts
             .iter()

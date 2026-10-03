@@ -128,12 +128,18 @@ async fn collect(executor: &ModelExecutor, url: &str) -> Result<ModelStep, Strin
         match event {
             Ok(event) => builder.push(event).unwrap(),
             Err(error) => {
-                stream.cancel_and_wait().await;
+                stream
+                    .cancel_and_wait()
+                    .await
+                    .expect("actual stream cleanup");
                 return Err(error.to_string());
             }
         }
     }
-    stream.cancel_and_wait().await;
+    stream
+        .cancel_and_wait()
+        .await
+        .expect("actual stream cleanup");
     Ok(builder.finish().unwrap())
 }
 
@@ -272,7 +278,7 @@ async fn cancellation_drains_failure_body_and_retry_without_poisoning_capacity()
         for _ in 0..2 {
             let stream = executor.stream(request(&url), CancellationToken::new()).await.unwrap();
             received.recv().await.unwrap();
-            stream.cancel_and_wait().await;
+            stream.cancel_and_wait().await.expect("actual stream cleanup");
         }
         assert!(collect(&executor.clone(), &url).await.is_ok());
         server.await.unwrap();

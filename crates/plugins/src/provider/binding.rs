@@ -71,19 +71,8 @@ impl Binding {
     }
 
     pub async fn prepare(&self, request: super::Resolve) -> Result<super::Model, Error> {
-        self.definition()
-            .validate_configuration(&request.connection.configuration)?;
-        request.model.validate().map_err(Error::Invalid)?;
-        let expected = request.model.id.clone();
         let _call = self.admit()?;
-        let model = self.definition().implementation.resolve(request).await?;
-        model.validate()?;
-        if model.info.id != expected {
-            return Err(Error::Invalid(
-                "provider changed the selected model identity".into(),
-            ));
-        }
-        Ok(model)
+        self.definition().prepare(request).await
     }
 
     pub async fn authorize(
@@ -92,19 +81,10 @@ impl Binding {
         credential: Option<super::authentication::Credential>,
         session_id: String,
     ) -> Result<crate::model::Credentials, Error> {
-        self.definition()
-            .validate_configuration(&connection.configuration)?;
-        if let Some(credential) = &credential {
-            credential.validate().map_err(Error::Invalid)?;
-        }
         let _call = self.admit()?;
-        let credentials = self
-            .definition()
-            .implementation
+        self.definition()
             .authorize(connection, credential, session_id)
-            .await?;
-        credentials.validate().map_err(Error::Invalid)?;
-        Ok(credentials)
+            .await
     }
 
     pub async fn authenticate(

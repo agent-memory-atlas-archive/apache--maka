@@ -155,7 +155,7 @@ async fn large_sdk_requests_reserve_the_queue_without_a_body_size_cap() {
             let mut output = StepBuilder::for_step("large-sdk-request").unwrap();
             while let Some(event) = stream.next().await { output.push(event.unwrap()).unwrap(); }
             assert!(serde_json::to_string(&output.finish().unwrap()).unwrap().contains("large request accepted"));
-            stream.cancel_and_wait().await;
+            stream.cancel_and_wait().await.expect("actual stream cleanup");
         }
         server.await.unwrap();
     }).await.unwrap();
@@ -358,7 +358,7 @@ async fn chat_tool_deltas_keep_arguments_separate_when_gateways_omit_or_reuse_id
                 while let Some(event) = stream.next().await {
                     builder.push(event.unwrap()).unwrap();
                 }
-                stream.cancel_and_wait().await;
+                stream.cancel_and_wait().await.expect("actual stream cleanup");
                 let step = builder.finish().unwrap();
                 let calls: Vec<_> = step.tool_calls().collect();
                 assert_eq!(calls.len(), 2, "{kind:?}: {deltas:?}");
@@ -404,7 +404,7 @@ async fn malformed_provider_tool_identity_cannot_complete_a_model_step() {
                     break;
                 }
             }
-            stream.cancel_and_wait().await;
+            stream.cancel_and_wait().await.expect("actual stream cleanup");
             assert!(rejected_call);
             assert!(builder.finish().is_err());
             server.await.unwrap();
@@ -457,7 +457,7 @@ async fn active_stream_outlives_idle_budget_but_silence_closes_the_socket() {
                     Err(error) => { failure = Some(error); break; }
                 }
             }
-            stream.cancel_and_wait().await;
+            stream.cancel_and_wait().await.expect("actual stream cleanup");
             if silent {
                 assert!(matches!(failure, Some(maka_model::ModelError::TimedOut)), "{failure:?}");
             } else {
@@ -494,7 +494,7 @@ async fn native_connect_failure_is_retryable_but_invalid_http_is_not() {
                     Err(error) => break error,
                 }
             };
-            stream.cancel_and_wait().await;
+            stream.cancel_and_wait().await.expect("actual stream cleanup");
             if connect_failure {
                 assert!(matches!(error, maka_model::ModelError::Provider(ref failure)
                     if failure.reason() == maka_model::ProviderFailureReason::Network && failure.replay_safe()), "{error:?}");
@@ -541,7 +541,10 @@ async fn cancellation_closes_pending_fetch_and_releases_model_capacity() {
                 _ = received.notified() => {},
                 result = stream.next() => panic!("model failed before HTTP request: {result:?}"),
             }
-            stream.cancel_and_wait().await;
+            stream
+                .cancel_and_wait()
+                .await
+                .expect("actual stream cleanup");
         }
         server.await.unwrap();
     })
@@ -576,7 +579,7 @@ async fn customization_cannot_replace_generated_headers_or_body_fields() {
             };
             assert!(error.contains(&expected), "expected {expected}, got {error}");
             assert!(!error.contains("private-conflict"));
-            stream.cancel_and_wait().await;
+            stream.cancel_and_wait().await.expect("actual stream cleanup");
         }
         assert!(tokio::time::timeout(Duration::from_millis(100), listener.accept()).await.is_err());
     }).await.expect("customization conflicts must fail promptly");

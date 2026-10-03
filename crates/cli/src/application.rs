@@ -153,13 +153,15 @@ impl Command {
                     .transpose()?
                     .unwrap_or_default();
                 let namespaces = maka_event_log::root::RootNamespaces::for_current_account()?;
+                let mut native = maka_runtime_host::application::NativeRegistry::default();
+                maka_agent_service::provide(&mut native)?;
                 let store = std::sync::Arc::new(open_store(args.root).await?);
                 let mut connections = match maka_application_bridge::Connections::start(
                     &store,
                     args.deployment,
                     configuration,
                     &namespaces,
-                    maka_runtime_host::application::NativeRegistry::default(),
+                    native,
                 )
                 .await
                 {

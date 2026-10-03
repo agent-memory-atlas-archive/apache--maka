@@ -165,7 +165,10 @@ async fn scenario() {
                 .any(|part| matches!(part, ModelPart::ToolResult {name, ..} if name == "Research"))
         );
         assert!(step.parts.iter().any(|part| matches!(part, ModelPart::Source {source: ModelSource::Url {url, ..}} if url == "https://example.com/source")));
-        stream.cancel_and_wait().await;
+        stream
+            .cancel_and_wait()
+            .await
+            .expect("actual stream cleanup");
         if websocket && incomplete {
             assert!(
                 !lane.as_ref().unwrap().needs_confirmation(),
@@ -218,6 +221,9 @@ async fn scenario() {
                 .contains("Unsupported provider-executed tool"),
             "{error}"
         );
-        stream.cancel_and_wait().await;
+        stream
+            .cancel_and_wait()
+            .await
+            .expect("actual stream cleanup");
     }
 }

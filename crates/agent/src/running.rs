@@ -22,6 +22,12 @@ use std::{collections::HashSet, sync::Arc};
 use tokio::task::JoinHandle;
 
 use crate::RunError;
+
+pub struct RunningCompletion {
+    pub result: Result<Invocation, RunError>,
+    pub cleanup: Result<(), crate::CleanupUnconfirmed>,
+}
+
 use tokio_util::sync::CancellationToken;
 
 /// An admitted invocation's lifetime owner. Cancellation is a request, not a
@@ -31,7 +37,7 @@ pub struct RunningInvocation {
     tool_names: Arc<HashSet<String>>,
     cancellation: CancellationToken,
     handoff: Option<crate::HandoffGate>,
-    worker: JoinHandle<Result<Invocation, RunError>>,
+    worker: JoinHandle<RunningCompletion>,
 }
 
 impl RunningInvocation {
@@ -40,7 +46,7 @@ impl RunningInvocation {
         tool_names: Arc<HashSet<String>>,
         cancellation: CancellationToken,
         handoff: Option<crate::HandoffGate>,
-        worker: JoinHandle<Result<Invocation, RunError>>,
+        worker: JoinHandle<RunningCompletion>,
     ) -> Self {
         Self {
             invocation,
@@ -73,10 +79,16 @@ impl RunningInvocation {
         self.handoff.as_ref()
     }
 
-    pub async fn wait(mut self) -> Result<Invocation, RunError> {
-        (&mut self.worker)
-            .await
-            .map_err(|error| RunError::Internal(error.to_string()))?
+    /// Observe business only; this does not acknowledge resource cleanup.
+    pub async fn wait(self) -> Result<Invocation, RunError> {
+        self.completion().await.result
+    }
+
+    pub async fn completion(mut self) -> RunningCompletion {
+        (&mut self.worker).await.unwrap_or(RunningCompletion {
+            result: Err(RunError::CleanupUnconfirmed),
+            cleanup: Err(crate::CleanupUnconfirmed),
+        })
     }
 }
 

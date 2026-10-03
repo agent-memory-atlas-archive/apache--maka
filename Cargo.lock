@@ -7890,6 +7890,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "maka-agent-service"
+version = "0.2.0"
+dependencies = [
+ "futures-util",
+ "jsonschema 0.56.0",
+ "maka-agent",
+ "maka-config",
+ "maka-event-log",
+ "maka-js-runtime",
+ "maka-model",
+ "maka-network",
+ "maka-plugin-core",
+ "maka-plugins",
+ "maka-providers",
+ "maka-runtime",
+ "maka-runtime-host",
+ "maka-tools",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
 name = "maka-application-bridge"
 version = "0.2.0"
 dependencies = [
@@ -7956,6 +7984,7 @@ dependencies = [
  "flate2",
  "libc",
  "maka-acp",
+ "maka-agent-service",
  "maka-application-bridge",
  "maka-client",
  "maka-computer-use",
@@ -8094,6 +8123,7 @@ dependencies = [
  "futures-util",
  "gpui-kit",
  "log",
+ "maka-agent-service",
  "maka-application-bridge",
  "maka-event-log",
  "maka-js-runtime",

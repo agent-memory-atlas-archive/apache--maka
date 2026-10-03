@@ -71,6 +71,8 @@ pub(super) fn catalog() -> Value {
         },
         "contracts": {
             "label": maka_ui::label_contract(), "textarea": textarea::textarea_contract(),
+            // Bundled availability is data, never an activated service or grant.
+            "agent": maka_agent_service::contract(),
             "textReader": text::reader_contract(),
             "callerHistory": maka_ui::operations::caller_history_contract(),
             "receiptReader": maka_plugin_core::operation::receipt_reader_contract(),

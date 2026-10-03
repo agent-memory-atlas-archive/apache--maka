@@ -101,7 +101,10 @@ async fn sglang_protocols_preserve_reasoning_tools_and_replay() {
                     .unwrap();
             }
             let step = builder.finish().unwrap();
-            stream.cancel_and_wait().await;
+            stream
+                .cancel_and_wait()
+                .await
+                .expect("actual stream cleanup");
             assert!(
                 step.usage.input_tokens.is_some(),
                 "{protocol}: missing input usage"
@@ -242,7 +245,7 @@ async fn codex_search_preserves_real_provider_calls_and_citations() {
         let mut builder = StepBuilder::for_step("live-native-search").unwrap();
         while let Some(event) = stream.next().await { builder.push(event.unwrap()).unwrap(); }
         let step = builder.finish().unwrap();
-        stream.cancel_and_wait().await;
+        stream.cancel_and_wait().await.expect("actual stream cleanup");
         let calls = step.tool_calls().filter(|call| call.provider_executed && call.name == "WebSearch").count();
         let sources = step.parts.iter().filter(|part| matches!(part, ModelPart::Source { source: ModelSource::Url { .. } })).count();
         println!("Codex native search: {calls} provider calls, {sources} cited sources; websocket={}", lane.needs_confirmation());

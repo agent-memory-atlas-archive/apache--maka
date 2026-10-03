@@ -595,7 +595,7 @@ async fn receive(
         }
         builder.finish().map_err(Into::into)
     }.await;
-    stream.cancel_and_wait().await;
+    let stream_cleanup = stream.cancel_and_wait().await;
     if matches!(result, Err(ref error) if !matches!(error, RunError::Model(_))) {
         tool_cancellation.cancel();
     }
@@ -608,6 +608,7 @@ async fn receive(
             }
         }
     }
+    stream_cleanup.map_err(|_| crate::cleanup::unconfirmed())?;
     cleanup?;
     let output = result?;
     if purpose == ModelPurpose::Summary

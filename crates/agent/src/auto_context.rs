@@ -185,8 +185,12 @@ pub(super) async fn start(
     let cancellation = cancellation.child_token();
     let worker_cancel = cancellation.clone();
     let inner = inner.clone();
-    let worker =
-        tokio::spawn(async move { job.execute(&inner, &worker_cancel, reservation).await });
+    let cleanup = crate::cleanup::current();
+    let worker = tokio::spawn(async move {
+        cleanup
+            .scope(job.execute(&inner, &worker_cancel, reservation))
+            .await
+    });
     Ok(Some((
         Pending {
             cancellation,
@@ -214,7 +218,7 @@ impl Pending {
             .take()
             .expect("candidate has one owner")
             .await
-            .map_err(|error| RunError::Internal(format!("summary worker failed: {error}")))?
+            .map_err(|_| crate::cleanup::unconfirmed())?
         {
             Ok((_, checkpoint)) => Ok(checkpoint),
             Err(RunError::Model(_) | RunError::Cancelled) => Ok(None),

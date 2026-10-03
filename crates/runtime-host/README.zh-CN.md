@@ -29,7 +29,8 @@ owner task 校验整批实际导出后一次发布。JavaScript 服务用 `Captu
 实际 native owner 与生命周期 fence。
 
 原生 factory 接收 `(NativeContext, configuration)`。owner 在初始化 fence 建立后构造上下文，
-提供实际 activation，以及成对的可选 applied source 和 `Arc<EventLog>`。非持久化应用没有 store，
+提供实际 activation、选定的确切不可变 package，以及成对的可选 applied source 和 `Arc<EventLog>`。
+package 标识执行来源，不决定数据归属。非持久化应用没有 store，
 要求 Root 的服务须拒绝初始化。`EventLog::owned_root()` 验证并共享现有 lease，供可信原生存储
 （如 `ConfigurationStore`）使用；其真实关闭由返回的 `NativeOwner` 负责。持久数据归属使用
 Root domain、deployment UUID 和 instance identity；source revision、activation epoch 仅为

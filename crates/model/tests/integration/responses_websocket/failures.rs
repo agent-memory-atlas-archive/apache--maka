@@ -142,7 +142,10 @@ async fn cancellation_and_bad_frames_do_not_replay_or_poison_other_lanes() {
             .unwrap();
         retry_received.await.unwrap();
         connecting_cancel.cancel();
-        connecting.cancel_and_wait().await;
+        connecting
+            .cancel_and_wait()
+            .await
+            .expect("actual stream cleanup");
         let healthy_lane = Conversation::default();
         let cancel = CancellationToken::new();
         let mut stalled = executor
@@ -161,7 +164,10 @@ async fn cancellation_and_bad_frames_do_not_replay_or_poison_other_lanes() {
                 break;
             }
         }
-        stalled.cancel_and_wait().await;
+        stalled
+            .cancel_and_wait()
+            .await
+            .expect("actual stream cleanup");
         let incomplete = executor
             .stream_in_conversation(
                 request(&base, "incomplete"),
@@ -264,7 +270,10 @@ async fn assert_failed(mut stream: maka_model::ModelStream) {
         }
     }
     assert!(failed);
-    stream.cancel_and_wait().await;
+    stream
+        .cancel_and_wait()
+        .await
+        .expect("actual stream cleanup");
 }
 
 async fn http_ok(listener: &TcpListener) -> Value {
@@ -353,7 +362,7 @@ async fn interrupted_reads_preserve_diagnostics_and_decoder_replay_safety() {
             while let Some(event) = stream.next().await {
                 if let Err(error) = event { failure = Some(error); break; }
             }
-            stream.cancel_and_wait().await;
+            stream.cancel_and_wait().await.expect("actual stream cleanup");
             let failure = failure.expect("interrupted request must not fabricate completion");
             if mode == "policy" {
                 assert!(matches!(&failure, ModelError::Adapter(message) if message.contains("1008") && message.contains("request refused")), "{failure}");

@@ -25,9 +25,15 @@ use super::*;
 /// Any acquired native work remains the returned NativeOwner's responsibility.
 pub struct NativeContext {
     pub(super) activation: Activation,
+    pub(super) package: PackageRef,
     pub(super) persistence: Option<NativePersistence>,
 }
 impl NativeContext {
+    /// Exact immutable package selected by the actual deployment plan.
+    pub fn package(&self) -> &PackageRef {
+        &self.package
+    }
+
     pub fn activation(&self) -> &Activation {
         &self.activation
     }

@@ -69,7 +69,10 @@ async fn failure_with_headers(
             None => panic!("provider failure was lost"),
         }
     };
-    stream.cancel_and_wait().await;
+    stream
+        .cancel_and_wait()
+        .await
+        .expect("actual stream cleanup");
     let listener = server.await.unwrap();
     // No retry belongs to this boundary, even for a recoverable rejection.
     assert!(

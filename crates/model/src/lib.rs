@@ -130,11 +130,18 @@ impl ModelRequest {
 pub struct ModelStream {
     receiver: mpsc::Receiver<Result<ModelEvent, ModelError>>,
     cancellation: CancellationToken,
-    worker: Option<tokio::task::JoinHandle<()>>,
+    worker: Option<tokio::task::JoinHandle<Result<(), StreamCleanupError>>>,
+    cleanup: Result<(), StreamCleanupError>,
     finished: bool,
     pending_delta: Option<delta::PendingDelta>,
     ended: bool,
 }
+
+/// Physical stream ownership was lost or a cancelled adapter failed to drain.
+/// This is separate from a provider's ordinary business failure.
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("model stream cleanup is unconfirmed")]
+pub struct StreamCleanupError;
 
 impl ModelStream {
     pub async fn next(&mut self) -> Option<Result<ModelEvent, ModelError>> {
@@ -156,7 +163,8 @@ impl ModelStream {
                     result = worker => {
                         self.worker = None;
                         self.receiver.close();
-                        if result.is_err() {
+                        self.cleanup = result.unwrap_or(Err(StreamCleanupError));
+                        if self.cleanup.is_err() {
                             self.ended = true;
                             return Some(Err(ModelError::Adapter("model adapter worker failed".into())));
                         }
@@ -210,12 +218,13 @@ impl ModelStream {
         }
     }
 
-    pub async fn cancel_and_wait(mut self) {
+    pub async fn cancel_and_wait(mut self) -> Result<(), StreamCleanupError> {
         self.cancellation.cancel();
         self.receiver.close();
         if let Some(worker) = self.worker.take() {
-            let _ = worker.await;
+            self.cleanup = worker.await.unwrap_or(Err(StreamCleanupError));
         }
+        self.cleanup.clone()
     }
 }
 
@@ -468,6 +477,7 @@ impl ModelExecutor {
                     .await
             };
             tokio::pin!(operation);
+            let mut cleanup = Ok(());
             let result = loop {
                 let deadline = *progress.borrow_and_update() + idle_timeout;
                 let cause = tokio::select! {
@@ -478,19 +488,26 @@ impl ModelExecutor {
                     Ok(()) = progress.changed() => continue,
                 };
                 adapter_cancel.cancel();
-                // JS callbacks are signalled and given their bounded cleanup
-                // window. A stuck native adapter cannot hold Host admission forever.
-                let _ = tokio::time::timeout(Duration::from_secs(6), &mut operation).await;
+                // Give the original adapter a bounded cleanup window. Expiry
+                // reports unknown physical cleanup; its owner must keep its fence.
+                if tokio::time::timeout(Duration::from_secs(6), &mut operation)
+                    .await
+                    .is_err()
+                {
+                    cleanup = Err(StreamCleanupError);
+                }
                 break Err(cause);
             };
             if let Err(error) = result {
                 let _ = failure_sender.send(Err(error)).await;
             }
+            cleanup
         });
         Ok(ModelStream {
             receiver,
             cancellation,
             worker: Some(worker),
+            cleanup: Ok(()),
             finished: false,
             pending_delta: None,
             ended: false,

@@ -43,6 +43,23 @@ pub const ID: &str = "maka.providers";
 
 pub struct ApiProviders;
 impl ApiProviders {
+    /// A compiled API implementation for a native application owner. Availability
+    /// does not activate legacy contributions or grant execution authority.
+    pub fn definition(id: &str) -> Result<Definition, String> {
+        let (id, facts) = facts::all()
+            .map_err(|error| error.to_string())?
+            .iter()
+            .find(|(name, facts)| {
+                name.as_str() == id && !facts.retired && facts.auth_kind != AuthKind::OauthToken
+            })
+            .ok_or("API provider is unavailable")?;
+        ApiProvider {
+            id: id.as_str(),
+            facts,
+        }
+        .definition()
+    }
+
     pub fn stage(&self) -> Result<Staged, String> {
         let mut staged = Staged::default();
         for (id, facts) in facts::all().map_err(|error| error.to_string())? {

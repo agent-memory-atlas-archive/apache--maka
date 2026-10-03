@@ -392,12 +392,9 @@ impl Render for Surface {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::set_logger(&NativeLog)?;
     log::set_max_level(log::LevelFilter::Warn);
-    Launcher::start(
-        Args::parse(),
-        maka_runtime_host::application::NativeRegistry::default(),
-        widgets::registry(),
-    )?
-    .run()
+    let mut native = maka_runtime_host::application::NativeRegistry::default();
+    maka_agent_service::provide(&mut native)?;
+    Launcher::start(Args::parse(), native, widgets::registry())?.run()
 }
 
 /// Trusted launcher owns the actual caller store and compiled availability.

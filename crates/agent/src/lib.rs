@@ -18,6 +18,7 @@
  */
 
 mod auto_context;
+mod cleanup;
 mod compact;
 mod continuation;
 mod executor;
@@ -37,7 +38,11 @@ pub mod recovery;
 mod runner;
 mod running;
 mod steps;
-pub use running::RunningInvocation;
+pub use running::{RunningCompletion, RunningInvocation};
+
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("invocation cleanup is unconfirmed")]
+pub struct CleanupUnconfirmed;
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -78,9 +83,33 @@ pub enum RunError {
     #[error(transparent)]
     Model(#[from] ModelError),
     #[error(transparent)]
-    Tool(#[from] ToolError),
+    Tool(ToolError),
+    /// Physical ownership is uncertain; an enclosing native owner must retain
+    /// its Root and capacity rather than infer cleanup from business completion.
+    #[error("execution cleanup is unconfirmed")]
+    CleanupUnconfirmed,
     #[error("execution worker failed: {0}")]
     Internal(String),
+}
+
+impl RunError {
+    /// Explicit unconfirmed cleanup in this error. Absence is not proof of
+    /// cleanup; only the original RunningCompletion carries that observation.
+    pub fn is_cleanup_unconfirmed(&self) -> bool {
+        matches!(
+            self,
+            Self::CleanupUnconfirmed | Self::Tool(ToolError::CleanupUnconfirmed(_))
+        )
+    }
+}
+
+impl From<ToolError> for RunError {
+    fn from(error: ToolError) -> Self {
+        if matches!(error, ToolError::CleanupUnconfirmed(_)) {
+            cleanup::unconfirmed();
+        }
+        Self::Tool(error)
+    }
 }
 
 #[derive(Clone)]
@@ -299,6 +328,9 @@ impl Engine {
     /// The owner first stops admissions and requests cancellation. This barrier
     /// also covers workers whose admission waiter was dropped before receiving
     /// a RunningInvocation handle.
+    /// Caller must fence admission and request cancellation first. Tracking task
+    /// termination alone does not confirm successful resource cleanup; retain
+    /// and observe each original RunningCompletion separately.
     pub async fn drain(&self) {
         self.0.workers.close();
         self.0.workers.wait().await;
@@ -463,17 +495,32 @@ impl Engine {
         let cancel_on_drop = cancellation.clone().drop_guard();
         let worker_cancellation = cancellation.clone();
         let (admitted, ready) = tokio::sync::oneshot::channel();
+        let cleanup = cleanup::Evidence::default();
         let worker = self.0.workers.spawn(async move {
             let _admission = admission;
-            run(worker_cancellation, admitted).await
+            let result = cleanup.scope(run(worker_cancellation, admitted)).await;
+            let physical = if cleanup.confirmed()
+                && !result.as_ref().is_err_and(RunError::is_cleanup_unconfirmed)
+            {
+                Ok(())
+            } else {
+                Err(CleanupUnconfirmed)
+            };
+            RunningCompletion {
+                result,
+                cleanup: physical,
+            }
         });
         if ready.await.is_err() {
             return match worker.await {
-                Ok(Err(error)) => Err(error),
-                Ok(Ok(_)) => Err(RunError::Internal(
-                    "worker omitted durable admission".into(),
-                )),
-                Err(error) => Err(RunError::Internal(error.to_string())),
+                Ok(completion) if completion.cleanup.is_err() => Err(RunError::CleanupUnconfirmed),
+                Ok(completion) => match completion.result {
+                    Err(error) => Err(error),
+                    Ok(_) => Err(RunError::Internal(
+                        "worker omitted durable admission".into(),
+                    )),
+                },
+                Err(_) => Err(RunError::CleanupUnconfirmed),
             };
         }
         cancel_on_drop.disarm();

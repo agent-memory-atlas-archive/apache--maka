@@ -22,6 +22,7 @@ members = [
     "third-party/gpui-kit/crates/base",
     "crates/acp",
     "crates/agent",
+    "crates/agent-service",
     "crates/apply-patch",
     "crates/assistant",
     "crates/application-bridge",
@@ -96,6 +97,7 @@ jsonschema = { version = "0.56.0", default-features = false }
 libc = "0.2"
 maka-acp = { path = "crates/acp" }
 maka-agent = { path = "crates/agent" }
+maka-agent-service = { path = "crates/agent-service" }
 maka-assistant = { path = "crates/assistant" }
 maka-background-health = { path = "crates/background-health" }
 maka-client = { path = "crates/client" }

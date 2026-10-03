@@ -173,6 +173,41 @@ impl Definition {
         Ok(configuration)
     }
 
+    /// Validated policy for a trusted embedding. The embedding must retain and
+    /// drain its actual implementation owner; this value is not an admission grant.
+    pub async fn prepare(&self, request: Resolve) -> Result<Model, Error> {
+        self.validate_configuration(&request.connection.configuration)?;
+        request.model.validate().map_err(Error::Invalid)?;
+        let expected = request.model.id.clone();
+        let model = self.implementation.resolve(request).await?;
+        model.validate()?;
+        if model.info.id != expected {
+            return Err(Error::Invalid(
+                "provider changed the selected model identity".into(),
+            ));
+        }
+        Ok(model)
+    }
+
+    /// Private credential resolution after the embedding's execution admission.
+    pub async fn authorize(
+        &self,
+        connection: Connection,
+        credential: Option<Credential>,
+        session_id: String,
+    ) -> Result<Credentials, Error> {
+        self.validate_configuration(&connection.configuration)?;
+        if let Some(credential) = &credential {
+            credential.validate().map_err(Error::Invalid)?;
+        }
+        let credentials = self
+            .implementation
+            .authorize(connection, credential, session_id)
+            .await?;
+        credentials.validate().map_err(Error::Invalid)?;
+        Ok(credentials)
+    }
+
     fn validate_configuration(&self, configuration: &serde_json::Value) -> Result<(), Error> {
         if serde_json::to_vec(configuration)
             .map_err(|_| Error::Invalid("invalid configuration".into()))?

@@ -389,9 +389,19 @@ pub(super) async fn run(
     })
     .catch_unwind()
     .await
-    .unwrap_or_else(|_| Err(RunError::Internal("model step worker panicked".into())));
+    .unwrap_or_else(|_| Err(crate::cleanup::unconfirmed()));
     let summary_cleanup = auto_context::drain(&mut pending).await;
-    tools.shutdown().await?;
+    let tool_cleanup = tools.shutdown().await;
+    if matches!(&result, Err(error) if error.is_cleanup_unconfirmed())
+        || matches!(&summary_cleanup, Err(error) if error.is_cleanup_unconfirmed())
+        || matches!(
+            &tool_cleanup,
+            Err(maka_runtime::tools::ToolError::CleanupUnconfirmed(_))
+        )
+    {
+        return Err(crate::cleanup::unconfirmed());
+    }
+    tool_cleanup?;
     summary_cleanup?;
     if matches!(
         result,

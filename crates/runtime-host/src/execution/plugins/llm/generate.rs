@@ -145,7 +145,10 @@ async fn receive(
     }
     .await;
     // EOF alone does not release the shared worker's permits and transport.
-    stream.cancel_and_wait().await;
+    stream
+        .cancel_and_wait()
+        .await
+        .map_err(|error| ToolError::CleanupUnconfirmed(error.to_string()))?;
     result
 }
 
