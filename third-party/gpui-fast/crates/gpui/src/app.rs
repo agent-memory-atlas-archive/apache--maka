@@ -718,6 +718,8 @@ pub struct App {
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
+    quit_request: Option<Box<dyn FnMut(&mut App) -> bool>>,
+    checking_quit: bool,
     pub(crate) restart_observers: SubscriberSet<(), Handler>,
     pub(crate) window_closed_observers: SubscriberSet<(), WindowClosedHandler>,
 
@@ -854,6 +856,8 @@ impl App {
                 system_wake_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
+                quit_request: None,
+                checking_quit: false,
                 restart_observers: SubscriberSet::new(),
                 restart_path: None,
                 restart_arguments: Vec::new(),
@@ -943,6 +947,7 @@ impl App {
                 };
                 match cx.try_borrow_mut() {
                     Ok(mut cx) => {
+                        if !cx.allow_quit() { return false; }
                         cx.shutdown();
                         true
                     }
@@ -1048,8 +1053,27 @@ impl App {
     }
 
     /// Gracefully quit the application via the platform's standard routine.
-    pub fn quit(&self) {
-        self.platform.quit();
+    pub fn quit(&mut self) {
+        if self.allow_quit() { self.platform.quit(); }
+    }
+
+    /// Install the embedding's single quit admission gate. Unlike `on_app_quit`,
+    /// this runs before stopping the platform loop and may refuse termination.
+    /// Returning false keeps normal event processing alive for actual cleanup.
+    pub fn on_request_quit(&mut self, callback: impl FnMut(&mut App) -> bool + 'static) -> anyhow::Result<()> {
+        if self.quit_request.is_some() { anyhow::bail!("quit admission gate already installed"); }
+        self.quit_request = Some(Box::new(callback));
+        Ok(())
+    }
+
+    fn allow_quit(&mut self) -> bool {
+        if self.checking_quit { return false; }
+        let Some(mut callback) = self.quit_request.take() else { return true; };
+        self.checking_quit = true;
+        let allowed = callback(self);
+        self.quit_request = Some(callback);
+        self.checking_quit = false;
+        allowed
     }
 
     /// Returns the current policy for hiding the cursor in response to

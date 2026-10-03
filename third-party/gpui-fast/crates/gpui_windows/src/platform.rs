@@ -514,20 +514,21 @@ impl Platform for WindowsPlatform {
 
         let mut msg = MSG::default();
         unsafe {
-            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            loop {
+                let result = GetMessageW(&mut msg, None, 0, 0);
+                if result.0 == -1 { break; } // Lost message loop is not clean shutdown.
+                if result.0 == 0 {
+                    let mut allowed = true;
+                    self.inner.with_callback(|callbacks| &callbacks.quit, |callback| { allowed = callback(); });
+                    if allowed { break; }
+                    continue;
+                }
                 if translate_accelerator(&msg).is_none() {
                     _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }
             }
         }
-
-        self.inner.with_callback(
-            |callbacks| &callbacks.quit,
-            |callback| {
-                callback();
-            },
-        );
     }
 
     fn quit(&self) {

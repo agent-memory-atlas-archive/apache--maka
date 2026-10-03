@@ -508,7 +508,7 @@ impl Harness {
         let application = timer
             .block_on(Application::start_from_store(
                 caller.clone(),
-                deployment,
+                source.clone(),
                 PresentationTarget::Desktop,
                 timer.handle().clone(),
                 Default::default(),
@@ -541,7 +541,7 @@ impl Harness {
             .unwrap();
         assert_ne!(desired, source);
         let scene = Scene::from_application(cx, application);
-        cx.update(|cx| actions::own(scene.app.clone(), cx).unwrap());
+        cx.update(|cx| actions::own(scene.app.clone(), None, None, cx).unwrap());
         scene.draw(cx);
         Self {
             scene,
@@ -998,4 +998,57 @@ fn actual_mutation_failed_cleanup_retains_both_roots_after_window_exit(cx: &mut 
     assert!(weak_session.upgrade().is_some());
     assert!(RootOwner::open(&caller_root, &caller_ns).is_err());
     assert!(RootOwner::open(&host_root, &host_ns).is_err());
+}
+
+#[gpui::test]
+fn independent_foreground_owner_consumes_actual_sql_receipt_and_close_without_a_gpui_waiter(
+    cx: &mut TestAppContext,
+) {
+    let timer = timer();
+    let h = Harness::new(cx, &timer, Mode::SqlExit);
+    let sql =
+        rusqlite::Connection::open(h.caller_dir.path().join("root").join(ROOT_DATABASE)).unwrap();
+    sql.execute_batch("BEGIN IMMEDIATE;").unwrap();
+    let owner = cx.update(|cx| actions::own(h.scene.app.clone(), None, None, cx).unwrap());
+    let mut app = h.scene.app.borrow_mut();
+    let revision = app.frame(&h.scene.root).unwrap().revision;
+    app.dispatch(&h.scene.root, revision, "read", Value::Null)
+        .unwrap();
+    app.capture_actions(&h.scene.root, |_| unreachable!("resource-free mutation"))
+        .unwrap();
+    let task = app.start_task(&h.scene.root).unwrap().unwrap();
+    drop(app);
+    // This observer is deliberately lost. The actual foreground owner retains it.
+    drop(owner.start(task));
+    let wait = |predicate: &dyn Fn() -> bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !predicate() {
+            owner.pump().unwrap();
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+    wait(&|| h.state.original.lock().unwrap().is_some());
+    h.scene.close(cx);
+    h.blocked();
+    sql.execute_batch("COMMIT;").unwrap();
+    // Do not run the GPUI executor: actual preparation receipt starts close here.
+    wait(&|| h.state.close_started.available_permits() == 1);
+    h.blocked();
+    assert_eq!(h.state.calls.load(Ordering::SeqCst), 0);
+    assert!(!h.scene.app.borrow().can_shutdown());
+    h.state.close_release.add_permits(1);
+    wait(&|| h.scene.app.borrow().can_shutdown());
+    let saved = timer
+        .block_on(h.caller.upgrade().unwrap().application_intents(
+            h.source.deployment,
+            InstanceId(vec![Uuid::from_u128(2)]),
+            0,
+            128,
+        ))
+        .unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].reference, h.reference());
+    drop(sql);
+    h.finish(cx, &timer);
 }

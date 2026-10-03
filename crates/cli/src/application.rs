@@ -68,6 +68,9 @@ pub(super) struct Run {
     root: PathBuf,
     #[arg(long)]
     deployment: uuid::Uuid,
+    /// Trusted local Host connections and explicit method/recovery grants.
+    #[arg(long, value_name = "FILE")]
+    connections: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -143,12 +146,48 @@ impl Command {
                 // Keep the foreground VM on one dedicated blocking owner, with
                 // no deeply nested CLI async stack under V8 initialization.
                 let scheduler = tokio::runtime::Handle::current();
+                let configuration = args
+                    .connections
+                    .as_deref()
+                    .map(maka_application_bridge::Configuration::read)
+                    .transpose()?
+                    .unwrap_or_default();
+                let namespaces = maka_event_log::root::RootNamespaces::for_current_account()?;
                 let store = std::sync::Arc::new(open_store(args.root).await?);
-                tokio::task::spawn_blocking(move || -> Result<(), HostError> {
-                    maka_tui::application::run(store, args.deployment, scheduler)
+                let mut connections = match maka_application_bridge::Connections::start(
+                    &store,
+                    args.deployment,
+                    configuration,
+                    &namespaces,
+                    maka_runtime_host::application::NativeRegistry::default(),
+                )
+                .await
+                {
+                    Ok(connections) => connections,
+                    Err(error) => {
+                        maka_application_bridge::drain_store(&store).await;
+                        return Err(error.into());
+                    }
+                };
+                let source = connections.source().clone();
+                let registrations = connections.take_registrations();
+                let foreground_store = store.clone();
+                let result = tokio::task::spawn_blocking(move || -> Result<(), HostError> {
+                    maka_tui::application::run(foreground_store, source, registrations, scheduler)
                         .map_err(Into::into)
                 })
-                .await??;
+                .await;
+                // A panic is not a terminal/module cleanup receipt. Preserve
+                // both actual owners if the foreground execution was lost.
+                if let Err(error) = &result {
+                    eprintln!("terminal execution cleanup unconfirmed: {error}");
+                    std::future::pending::<()>().await;
+                }
+                tokio::join!(
+                    connections.drain(),
+                    maka_application_bridge::drain_store(&store)
+                );
+                result??;
             }
         }
         Ok(())

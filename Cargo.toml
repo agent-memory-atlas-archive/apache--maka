@@ -23,6 +23,7 @@ members = [
     "crates/agent",
     "crates/apply-patch",
     "crates/assistant",
+    "crates/application-bridge",
     "crates/background-health",
     "crates/cli",
     "crates/client",
@@ -72,6 +73,7 @@ license = "Apache-2.0"
 publish = false
 
 [workspace.dependencies]
+maka-application-bridge = { path = "crates/application-bridge" }
 cua-driver-sdk = { git = "https://github.com/maka-agent/cua", rev = "79c9b58a1b61f66ae966635c464e54cb2c8151d6" }
 cua-driver-contract = { git = "https://github.com/maka-agent/cua", rev = "79c9b58a1b61f66ae966635c464e54cb2c8151d6" }
 agent-client-protocol = { version = "2.2.0", default-features = false, features = ["unstable_protocol_v2"] }

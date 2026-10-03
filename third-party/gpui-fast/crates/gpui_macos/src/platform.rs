@@ -100,8 +100,8 @@ unsafe fn build_classes() {
                 should_handle_reopen as extern "C" fn(&mut Object, Sel, id, bool),
             );
             decl.add_method(
-                sel!(applicationWillTerminate:),
-                will_terminate as extern "C" fn(&mut Object, Sel, id),
+                sel!(applicationShouldTerminate:),
+                should_terminate as extern "C" fn(&mut Object, Sel, id) -> usize,
             );
             decl.add_method(
                 sel!(handleGPUIMenuItem:),
@@ -1389,14 +1389,16 @@ extern "C" fn should_handle_reopen(this: &mut Object, _: Sel, _: id, has_open_wi
     }
 }
 
-extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {
+extern "C" fn should_terminate(this: &mut Object, _: Sel, _: id) -> usize {
     let platform = unsafe { get_mac_platform(this) };
     let mut lock = platform.0.lock();
-    if let Some(mut callback) = lock.quit.take() {
-        drop(lock);
-        callback();
-        platform.0.lock().quit.get_or_insert(callback);
-    }
+    let Some(mut callback) = lock.quit.take() else { return 1; };
+    drop(lock);
+    let allowed = callback();
+    platform.0.lock().quit.get_or_insert(callback);
+    // NSTerminateCancel / NSTerminateNow. No timed shutdown observer can
+    // substitute for this veto while embedding resources are still owned.
+    usize::from(allowed)
 }
 
 extern "C" fn on_keyboard_layout_change(this: &mut Object, _: Sel, _: id) {

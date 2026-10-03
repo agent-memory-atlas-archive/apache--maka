@@ -74,3 +74,7 @@ Tab/Shift+Tab 切换焦点，Enter/Space 或左键激活按钮，Ctrl+C 退休�
 不靠丢弃 owner 返回。现支持 Stack/Text/Button/导入组件及编译的 Label recipe；
 原生编辑、滚动、选区和交互恢复尚待实现。上文 `maka tui` 业务客户端仍待迁移删除，
 不是新架构的兼容承诺。
+
+应用启动器另支持 `--connections FILE`，选择[明确授权的本地 Host 连接](../application-bridge/README.zh-CN.md)。
+终端恢复先于服务清理，进程退出还要等待 caller SQL 和 Host 的真实关闭确认。
+前台执行丢失不能被认定为终端或 module 清理成功。

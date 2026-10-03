@@ -126,7 +126,7 @@ impl<V: ?Sized + 'static> Application<V> {
     /// separate trusted registrations. Construct on the presentation owner thread.
     pub async fn start_from_store(
         store: std::sync::Arc<maka_event_log::EventLog>,
-        deployment: Uuid,
+        source: maka_plugin_core::deployment::DeploymentRef,
         target: PresentationTarget,
         timer: tokio::runtime::Handle,
         limits: Limits,
@@ -134,7 +134,7 @@ impl<V: ?Sized + 'static> Application<V> {
         registrations: Vec<actions::RemoteService>,
     ) -> Result<Self> {
         let loaded = store
-            .load_application(deployment)
+            .load_application_at(&source)
             .await
             .map_err(|e| Error::Invalid(e.to_string()))?
             .ok_or_else(|| Error::Invalid("UI deployment not found".into()))?;

@@ -81,25 +81,49 @@ impl Presenter {
     /// Construct on the actual terminal owner thread from its owned source.
     pub async fn start_from_store(
         store: std::sync::Arc<maka_event_log::EventLog>,
-        deployment: Uuid,
+        source: maka_plugin_core::deployment::DeploymentRef,
         scheduler: tokio::runtime::Handle,
         native: NativeRegistry<dyn Widget>,
         props: Value,
+        registrations: Vec<maka_ui::actions::RemoteService>,
     ) -> maka_ui::Result<Self> {
         let application = Application::start_from_store(
             store,
-            deployment,
+            source,
             PresentationTarget::Tui,
             scheduler,
             Default::default(),
             native,
-            vec![],
+            registrations,
         )
         .await?;
         Self::mount(application, props)
     }
     fn mount(mut application: Application<dyn Widget>, props: Value) -> maka_ui::Result<Self> {
-        let root = application.mount_launch(props)?;
+        let root = match application.mount_launch(props) {
+            Ok(root) => root,
+            Err(error) => {
+                // This presenter has not created a terminal or renderer resources.
+                // Retain the foreground application until its actual modules close.
+                let mut reported = std::collections::BTreeSet::new();
+                loop {
+                    match application.shutdown() {
+                        Ok(()) => break,
+                        Err(failure) => {
+                            for mount in application.retiring_mounts() {
+                                let _ = application.close(&mount, Ok(()));
+                            }
+                            let failure = sanitize(&failure.to_string());
+                            if reported.insert(failure.clone()) {
+                                eprintln!("{failure}");
+                            }
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                return Err(error);
+            }
+        };
         Ok(Self {
             application,
             root,

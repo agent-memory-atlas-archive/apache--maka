@@ -168,10 +168,11 @@ fn terminal_restoration_during_preparation_runs_close_successor_before_root_rele
     let mut tui = runtime
         .block_on(Presenter::start_from_store(
             store,
-            deployment,
+            source.clone(),
             runtime.handle().clone(),
             native,
             json!({}),
+            vec![],
         ))
         .unwrap();
     draw(&mut tui, 30, 12);

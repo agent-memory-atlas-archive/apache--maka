@@ -227,7 +227,7 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
             .publish(&consumer, BTreeMap::new())
             .map_err(|e| e.error)
             .unwrap();
-        let binding = Binding(owner.runtime.bind(&consumer, "echo").unwrap().remove(0));
+        let binding = owner.capture_bindings(&consumer, "echo").unwrap().remove(0);
         owner.vms[vm].terminate("actual consumer execution domain failure");
         owner.vms[vm].failed().await;
         // Deliberately leave the notification unpolled. The command must check

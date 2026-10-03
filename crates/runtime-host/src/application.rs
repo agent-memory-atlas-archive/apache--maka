@@ -82,6 +82,7 @@ pub struct Invocation<'a> {
     pub scope: &'a Scope,
     pub consumer: &'a Activation,
     pub provider: &'a Activation,
+    pub export: &'a str,
     pub contract: &'a Contract,
     pub method: &'a str,
     pub input: &'a Value,
@@ -105,7 +106,7 @@ pub struct NativeActivation {
     pub owner: Arc<dyn NativeOwner>,
 }
 type Factory = Arc<dyn Fn(Value) -> BoxFuture<'static, NativeActivation> + Send + Sync>;
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct NativeRegistry(BTreeMap<String, Factory>);
 impl NativeRegistry {
     pub fn insert(&mut self, name: String, factory: Factory) -> Result<()> {
@@ -168,13 +169,23 @@ impl Service {
 }
 
 /// An exact consumer/provider registration, never a JSON or name-based grant.
-pub struct Binding(Capability<Service>);
+pub struct Binding(Capability<Service>, Arc<Contract>);
 impl Clone for Binding {
     fn clone(&self) -> Self {
-        Self(self.0.clone())
+        Self(self.0.clone(), self.1.clone())
     }
 }
 impl Binding {
+    /// Read-only facts from the exact captured registration, never a grant.
+    pub fn consumer(&self) -> &Activation {
+        self.0.consumer()
+    }
+    pub fn export(&self) -> &str {
+        self.0.export()
+    }
+    pub fn contract(&self) -> &Contract {
+        &self.1
+    }
     pub fn provider(&self) -> &Activation {
         self.0.provider()
     }

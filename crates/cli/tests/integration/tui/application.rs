@@ -18,10 +18,8 @@
  */
 
 use super::{AsRawFd, Command, Pty};
+use local_fixture::counter as fixture;
 use maka_plugin_core::composition::PresentationTarget;
-#[allow(dead_code)]
-#[path = "../../../../ui/examples/counter/support.rs"]
-mod fixture;
 fn packages(directory: &std::path::Path, poisoned: bool) -> Vec<String> {
     let (mut input, mut packages) =
         fixture::dual_fixture("return frame({count:state.count+1,revision:state.revision+1});");
@@ -190,4 +188,77 @@ fn plugin_application_setup_rejection_is_clean_and_diagnostics_cannot_emit_escap
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("stored presentation target mismatch")
     );
+}
+
+#[allow(dead_code)]
+#[path = "../../../../application-bridge/tests/support/mod.rs"]
+mod local_fixture;
+fn local_arguments(directory: &std::path::Path) -> Vec<String> {
+    let timer = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_time()
+        .build()
+        .unwrap();
+    let ns = maka_event_log::root::RootNamespaces::for_current_account().unwrap();
+    let host = uuid::Uuid::new_v4();
+    let caller = uuid::Uuid::new_v4();
+    timer.block_on(async {
+        for (name, id, target) in [
+            ("host", host, None),
+            ("caller", caller, Some(PresentationTarget::Tui)),
+        ] {
+            let owner = std::sync::Arc::new(
+                maka_event_log::root::RootOwner::create(&directory.join(name), &ns).unwrap(),
+            );
+            let store = maka_event_log::EventLog::for_root(owner).await.unwrap();
+            let (input, packages, observations) = if let Some(target) = target {
+                local_fixture::ui(target)
+            } else {
+                let (input, packages) = local_fixture::host();
+                (input, packages, vec![])
+            };
+            store
+                .commit_application(id, 0, input, observations, packages)
+                .await
+                .unwrap();
+            store.close().await.unwrap();
+        }
+    });
+    let path = directory.join("connections.json");
+    std::fs::write(&path,serde_json::to_vec(&serde_json::json!({"hosts":[{
+        "name":"local","root":directory.join("host"),"deployment":host,"consumer":local_fixture::identity(13),
+        "imports":{"business":{"methods":["read","write"],"recovery":false},"receipts":{"methods":["read"],"recovery":true}}
+    }]})).unwrap()).unwrap();
+    vec![
+        "application".into(),
+        "run".into(),
+        "--root".into(),
+        directory.join("caller").to_str().unwrap().into(),
+        "--deployment".into(),
+        caller.to_string(),
+        "--connections".into(),
+        path.to_str().unwrap().into(),
+    ]
+}
+#[test]
+fn production_terminal_connections_execute_host_mutation_and_read_original_receipt_before_exit() {
+    let directory = tempfile::tempdir().unwrap();
+    let args = local_arguments(directory.path());
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut tui = Pty::spawn(&args);
+    tui.wait_for("Read Host");
+    tui.send(b"\r");
+    tui.wait_for("\"effects\":0");
+    tui.send(b"\t\r");
+    tui.wait_for("\"effects\":1");
+    tui.send(b"\t\r");
+    tui.wait_for("Original receipt recorded");
+    tui.send(b"\x03");
+    tui.finish();
+    let ns = maka_event_log::root::RootNamespaces::for_current_account().unwrap();
+    drop(maka_event_log::root::RootOwner::open(&directory.path().join("caller"), &ns).unwrap());
+    drop(maka_event_log::root::RootOwner::open(&directory.path().join("host"), &ns).unwrap());
+    let snapshot = tui.screen.snapshot().unwrap();
+    assert!(!snapshot.alternate_screen);
+    assert!(snapshot.cursor.visible);
 }

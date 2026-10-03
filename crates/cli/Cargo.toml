@@ -35,6 +35,7 @@ path = "src/service_main.rs"
 test = false
 
 [dependencies]
+maka-application-bridge.workspace = true
 maka-computer-use.workspace = true
 maka-acp.workspace = true
 maka-client.workspace = true

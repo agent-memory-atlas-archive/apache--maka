@@ -79,3 +79,11 @@ stored source and exact package bytes, and checks the Desktop target before
 activation. A newer desired source does not rewrite the running source. Root
 custody remains with the application through pending/failed cleanup; successful
 UI shutdown releases its custody separately from actual SQL connection close.
+
+Both launchers support trusted [local Host connections](../application-bridge/README.md)
+through `--connections FILE`. One foreground lifetime owner preserves actual worker
+observers if the platform loop disappears. Native quit is denied until physical UI
+cleanup, accepted work, caller SQL close acknowledgement and Host cleanup all
+complete. Failed close keeps the store/Root/runtime held. macOS native quit has
+been exercised with a real window and blocked File/SQL owners; Windows/Linux
+native acceptance and complete product UI remain pending.

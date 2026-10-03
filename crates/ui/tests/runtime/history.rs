@@ -215,10 +215,16 @@ fn start(
     deployment: Uuid,
     target: PresentationTarget,
 ) -> (Application, maka_plugin_core::runtime::Mount) {
+    let source = timer
+        .block_on(store.load_application(deployment))
+        .unwrap()
+        .unwrap()
+        .source
+        .reference;
     let mut app = timer
         .block_on(Application::start_from_store(
             store,
-            deployment,
+            source,
             target,
             timer.handle().clone(),
             maka_js_runtime::plugin::Limits {
@@ -461,11 +467,11 @@ fn history_requires_persisted_source_and_rejects_configuration_selecting_another
     let dir = tempfile::tempdir().unwrap();
     let store = store(&timer, dir.path(), true);
     let deployment = Uuid::new_v4();
-    timer
+    let source = timer
         .block_on(store.commit_application(deployment, 0, input, vec![], packages))
         .unwrap();
     assert!(
-        matches!(timer.block_on(Application::<()>::start_from_store(store.clone(),deployment,PresentationTarget::Desktop,timer.handle().clone(),Default::default(),NativeRegistry::with_surface(PresentationTarget::Desktop),vec![])),Err(maka_ui::Error::Invalid(reason)) if reason.contains("unknown field"))
+        matches!(timer.block_on(Application::<()>::start_from_store(store.clone(),source,PresentationTarget::Desktop,timer.handle().clone(),Default::default(),NativeRegistry::with_surface(PresentationTarget::Desktop),vec![])),Err(maka_ui::Error::Invalid(reason)) if reason.contains("unknown field"))
     );
     timer.block_on(store.shutdown()).unwrap();
 }

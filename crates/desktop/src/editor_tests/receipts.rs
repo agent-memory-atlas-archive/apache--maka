@@ -413,13 +413,15 @@ fn caller_history_recovers_lost_original_receipt_after_both_roots_reopen_and_bus
         .remove(0);
     let reader_activation = binding.provider().clone();
     let observed = Arc::new(Mutex::new(None));
-    let reader_bridge = Arc::new(ForwardHostRead {
-        client: client.clone(),
-        binding: binding.clone(),
-        issuer,
-        approved: Arc::new(AtomicBool::new(true)),
-        observed: observed.clone(),
-    });
+    let reader_bridge = Arc::new(maka_application_bridge::LocalService::new(
+        client.clone(),
+        binding.clone(),
+        Arc::new(UiReadScopes {
+            issuer,
+            approved: Arc::new(AtomicBool::new(true)),
+            observed: observed.clone(),
+        }),
+    ));
     let business_calls = Arc::new(AtomicUsize::new(0));
     let registrations = vec![
         RemoteService {
@@ -438,7 +440,7 @@ fn caller_history_recovers_lost_original_receipt_after_both_roots_reopen_and_bus
     let application = timer
         .block_on(Application::start_from_store(
             caller.clone(),
-            current.deployment,
+            current.clone(),
             PresentationTarget::Desktop,
             timer.handle().clone(),
             Default::default(),
@@ -447,7 +449,7 @@ fn caller_history_recovers_lost_original_receipt_after_both_roots_reopen_and_bus
         ))
         .unwrap();
     let scene = Scene::from_application(cx, application);
-    cx.update(|cx| actions::own(scene.app.clone(), cx).unwrap());
+    cx.update(|cx| actions::own(scene.app.clone(), None, None, cx).unwrap());
     scene.draw(cx);
     assert_eq!(scene.app.borrow().source(), Some(&current));
     dispatch_history(&scene, cx);

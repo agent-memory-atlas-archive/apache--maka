@@ -804,7 +804,7 @@ fn application_owner_preserves_failed_and_panicked_work_after_real_window_cleanu
             native,
             Default::default(),
         );
-        cx.update(|cx| actions::own(scene.app.clone(), cx).unwrap());
+        cx.update(|cx| actions::own(scene.app.clone(), None, None, cx).unwrap());
         scene.draw(cx);
         cx.update_window(scene.window, |_, window, cx| {
             let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
@@ -949,56 +949,29 @@ impl maka_runtime_host::application::NativeOwner for HostClose {
         Box::pin(async { Ok(()) })
     }
 }
-struct ForwardHostRead {
-    client: maka_runtime_host::application::Client,
-    binding: maka_runtime_host::application::Binding,
+struct UiReadScopes {
     issuer: maka_plugins::call::Issuer,
     approved: std::sync::Arc<std::sync::atomic::AtomicBool>,
     observed: std::sync::Arc<std::sync::Mutex<Option<maka_ui::actions::ServiceSource>>>,
 }
-impl maka_ui::actions::NativeService for ForwardHostRead {
-    fn call(&self, request: maka_ui::actions::ServiceRequest) -> maka_ui::actions::ServiceFuture {
-        let maka_ui::actions::ServiceRequest {
-            source,
-            method,
-            input,
-            resources: attachments,
-        } = request;
-        let client = self.client.clone();
-        let binding = self.binding.clone();
-        let issuer = self.issuer.clone();
-        let approved = self.approved.clone();
+impl maka_application_bridge::Scopes for UiReadScopes {
+    fn scope(
+        &self,
+        source: &maka_ui::actions::ServiceSource,
+    ) -> Result<maka_plugins::call::Scope, String> {
         *self.observed.lock().unwrap() = Some(source.clone());
-        Box::pin(async move {
-            let scope = issuer
-                .issue_with(
-                    maka_plugins::call::Identity::Remote {
-                        request_id: source.request_id(),
-                    },
-                    UiReadGrant {
-                        source,
-                        approved: approved.load(std::sync::atomic::Ordering::SeqCst),
-                    },
-                    tokio_util::sync::CancellationToken::new(),
-                )
-                .unwrap();
-            match client
-                .start(binding, method, input, scope, attachments)
-                .await
-            {
-                Ok(accepted) => {
-                    let completion = accepted.completion().await;
-                    maka_ui::actions::ServiceCompletion {
-                        result: completion.result,
-                        cleanup: completion.cleanup,
-                    }
-                }
-                Err(error) => maka_ui::actions::ServiceCompletion {
-                    result: Err(error),
-                    cleanup: Ok(()),
+        self.issuer
+            .issue_with(
+                maka_plugins::call::Identity::Remote {
+                    request_id: source.request_id(),
                 },
-            }
-        })
+                UiReadGrant {
+                    source: source.clone(),
+                    approved: self.approved.load(std::sync::atomic::Ordering::SeqCst),
+                },
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .map_err(|e| e.to_string())
     }
 }
 async fn host_service_fixture(
@@ -1226,13 +1199,15 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
     let registration_epoch = binding.registration_epoch();
     let approved = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let observed = std::sync::Arc::new(std::sync::Mutex::new(None));
-    let bridge = std::sync::Arc::new(ForwardHostRead {
+    let bridge = std::sync::Arc::new(maka_application_bridge::LocalService::new(
         client,
         binding,
-        issuer,
-        approved: approved.clone(),
-        observed: observed.clone(),
-    });
+        std::sync::Arc::new(UiReadScopes {
+            issuer,
+            approved: approved.clone(),
+            observed: observed.clone(),
+        }),
+    ));
     let (mut input, mut packages) = support::resource_fixture();
     input.instances.remove("reader");
     packages.retain(|p| p.manifest().id != "native.reader");
@@ -1312,7 +1287,7 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
     let application = timer
         .block_on(Application::start_from_store(
             store.clone(),
-            deployment,
+            ui_source.clone(),
             PresentationTarget::Desktop,
             timer.handle().clone(),
             Default::default(),
@@ -1322,7 +1297,7 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
         .unwrap();
     drop(store);
     let scene = Scene::from_application(cx, application);
-    cx.update(|cx| actions::own(scene.app.clone(), cx).unwrap());
+    cx.update(|cx| actions::own(scene.app.clone(), None, None, cx).unwrap());
     scene.draw(cx);
     // Source facts alone cannot authorize a call in the independent Host kernel.
     let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
@@ -1474,3 +1449,97 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
 
 #[path = "editor_tests/mutations.rs"]
 mod mutations;
+
+#[gpui::test]
+fn empty_host_quit_waits_for_actual_caller_sql_close_after_accepted_writer_waiter_is_lost(
+    cx: &mut TestAppContext,
+) {
+    use maka_event_log::{
+        EventLog,
+        root::{ROOT_DATABASE, RootNamespaces, RootOwner},
+    };
+    // This case owns real Tokio and SQL threads, rather than the test dispatcher.
+    cx.executor().allow_parking();
+    let timer = timer();
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("root");
+    let namespaces = RootNamespaces {
+        ownership: directory.path().join("owners"),
+        control: directory.path().join("control"),
+    };
+    let caller = Arc::new(
+        timer
+            .block_on(EventLog::for_root(Arc::new(
+                RootOwner::create(&root, &namespaces).unwrap(),
+            )))
+            .unwrap(),
+    );
+    let (input, packages) = support::editor_fixture();
+    let source = timer
+        .block_on(caller.commit_application(uuid::Uuid::new_v4(), 0, input, vec![], packages))
+        .unwrap();
+    let application = timer
+        .block_on(Application::start_from_store(
+            caller.clone(),
+            source,
+            PresentationTarget::Desktop,
+            timer.handle().clone(),
+            Default::default(),
+            widgets::registry(),
+            vec![],
+        ))
+        .unwrap();
+    let scene = Scene::from_application(cx, application);
+    cx.update(|cx| actions::own(scene.app.clone(), None, Some(caller.clone()), cx).unwrap());
+    scene.draw(cx);
+    let blocker = rusqlite::Connection::open(root.join(ROOT_DATABASE)).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE;").unwrap();
+    let pending = uuid::Uuid::new_v4();
+    let (input, packages) = support::editor_fixture();
+    assert!(
+        timer
+            .block_on(async {
+                tokio::time::timeout(
+                    std::time::Duration::from_millis(50),
+                    caller.commit_application(pending, 0, input, vec![], packages),
+                )
+                .await
+            })
+            .is_err()
+    );
+    scene.close(cx);
+    assert!(
+        scene.app.borrow().can_shutdown(),
+        "UI has no outstanding service work"
+    );
+    cx.update(|cx| actions::quit_when_drained(&scene.app, cx));
+    cx.run_until_parked();
+    assert!(cx.update(|cx| cx.has_global::<actions::Owner>()));
+    assert!(RootOwner::open(&root, &namespaces).is_err());
+    blocker.execute_batch("COMMIT;").unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while cx.update(|cx| cx.has_global::<actions::Owner>()) {
+        cx.run_until_parked();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    // The cached receipt must already be ready when the quit gate releases.
+    use futures_util::FutureExt;
+    assert!(matches!(caller.shutdown().now_or_never(), Some(Ok(()))));
+    drop(blocker);
+    drop(scene);
+    drop(caller);
+    cx.run_until_parked();
+    let reopened = timer
+        .block_on(EventLog::for_root(Arc::new(
+            RootOwner::open(&root, &namespaces).unwrap(),
+        )))
+        .unwrap();
+    assert!(
+        timer
+            .block_on(reopened.load_application(pending))
+            .unwrap()
+            .is_some()
+    );
+    timer.block_on(reopened.close()).unwrap();
+}

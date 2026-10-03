@@ -39,10 +39,16 @@ fn store(timer: &tokio::runtime::Runtime, dir: &std::path::Path) -> Arc<EventLog
     Arc::new(timer.block_on(EventLog::for_root(owner)).unwrap())
 }
 fn start(timer: &tokio::runtime::Runtime, store: Arc<EventLog>, id: Uuid) -> Application {
+    let source = timer
+        .block_on(store.load_application(id))
+        .unwrap()
+        .unwrap()
+        .source
+        .reference;
     timer
         .block_on(Application::start_from_store(
             store,
-            id,
+            source,
             PresentationTarget::Desktop,
             timer.handle().clone(),
             Default::default(),
@@ -157,7 +163,7 @@ fn missing_or_wrong_selected_presentation_never_activates_native_code() {
     let store = store(&timer, dir.path());
     let id = Uuid::new_v4();
     let (input, packages) = support::fixture("");
-    timer
+    let source = timer
         .block_on(store.commit_application(id, 0, input, vec![], packages))
         .unwrap();
     let calls = Rc::new(Cell::new(0));
@@ -183,7 +189,10 @@ fn missing_or_wrong_selected_presentation_never_activates_native_code() {
             timer
                 .block_on(Application::start_from_store(
                     store.clone(),
-                    deployment,
+                    maka_plugin_core::deployment::DeploymentRef {
+                        deployment,
+                        ..source.clone()
+                    },
                     target,
                     timer.handle().clone(),
                     Default::default(),
@@ -228,7 +237,7 @@ fn unavailable_native_implementation_is_rejected_before_an_earlier_factory_execu
     assert_eq!(app.source(), Some(&source));
     app.shutdown().unwrap();
     input.instances.get_mut("z-missing").unwrap().disabled = false;
-    timer
+    let desired = timer
         .block_on(store.commit_application(id, 1, input, vec![], packages))
         .unwrap();
     let calls = Rc::new(Cell::new(0));
@@ -248,7 +257,7 @@ fn unavailable_native_implementation_is_rejected_before_an_earlier_factory_execu
         .unwrap();
     let result = timer.block_on(Application::start_from_store(
         store.clone(),
-        id,
+        desired,
         PresentationTarget::Desktop,
         timer.handle().clone(),
         Default::default(),

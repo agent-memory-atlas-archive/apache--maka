@@ -59,3 +59,9 @@ MPL-2.0，不 vendoring 源码；分发须带许可证与源码链接。当前�
 生产启动使用 `--root PATH --deployment UUID`，读取原存储来源和精确包字节，
 激活前检查 Desktop 目标。desired source 更新不改写运行来源。应用保有 Root 至真实
 成功清理；UI shutdown 释放自身 custody，与 SQL 连接真实关闭分别确认。
+
+两个启动器都支持 `--connections FILE`，使用[可信本地 Host 连接](../application-bridge/README.zh-CN.md)。
+唯一前台 lifetime owner 在平台循环丢失后仍持有真实 worker observer。原生退出必须等
+物理 UI、已接受 Work、caller SQL 关闭确认和 Host 清理全部完成；失败继续保留
+store/Root/runtime。macOS 已用真实窗口及阻塞的 File/SQL owner 验证原生退出；
+Windows/Linux 原生验收和完整产品 UI 仍未完成。

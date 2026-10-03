@@ -474,6 +474,7 @@ lru@0.18.4											X
 lru-slab@0.1.2		X									X					X
 maka-acp@0.2.0		X														
 maka-agent@0.2.0		X														
+maka-application-bridge@0.2.0		X														
 maka-assistant@0.2.0		X														
 maka-background-health@0.2.0		X														
 maka-cli@0.2.0		X														

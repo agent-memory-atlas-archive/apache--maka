@@ -346,10 +346,8 @@ impl Owner {
             .imports
             .keys()
             .map(|name| {
-                self.runtime
-                    .bind(&activation, name)
-                    .map(|bindings| (name.clone(), bindings.into_iter().map(Binding).collect()))
-                    .map_err(|e| e.to_string())
+                self.capture_bindings(&activation, name)
+                    .map(|bindings| (name.clone(), bindings))
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
         // This fence precedes every asynchronous initialization step, including
@@ -512,6 +510,22 @@ impl Owner {
         }
         Ok(())
     }
+    fn capture_bindings(&self, consumer: &Activation, import: &str) -> Result<Vec<Binding>> {
+        self.runtime
+            .bind(consumer, import)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|capability| {
+                let contract = self
+                    .runtime
+                    .inspect(&capability)
+                    .map_err(|e| e.to_string())?
+                    .contract
+                    .clone();
+                Ok(Binding(capability, Arc::new(contract)))
+            })
+            .collect()
+    }
     fn command(&mut self, command: Command) {
         match command {
             Command::Bind {
@@ -522,10 +536,7 @@ impl Owner {
                 let result = if self.closing {
                     Err("Host deployment is closing".into())
                 } else {
-                    self.runtime
-                        .bind(&consumer, &import)
-                        .map(|bindings| bindings.into_iter().map(Binding).collect())
-                        .map_err(|e| e.to_string())
+                    self.capture_bindings(&consumer, &import)
                 };
                 let _ = reply.send(result);
             }
@@ -635,6 +646,7 @@ impl Owner {
                             scope: &scope,
                             consumer: binding.0.consumer(),
                             provider: binding.provider(),
+                            export: binding.export(),
                             contract: &service.contract,
                             method: &method,
                             input: &input,

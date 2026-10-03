@@ -88,3 +88,9 @@ This presenter currently supports Stack/Text/Button/imported Component and compi
 Label recipes. Native editing, scrolling, selection and interactive recovery are
 pending. The `maka tui` business client described above still awaits migration and
 deletion; it is not a compatibility contract for the new application architecture.
+
+The application launcher also accepts `--connections FILE` for explicit
+[local Host connections](../application-bridge/README.md). Terminal restoration
+precedes service cleanup; process exit additionally awaits actual caller SQL and
+Host close acknowledgements. A lost foreground execution is not a successful
+terminal/module cleanup receipt.

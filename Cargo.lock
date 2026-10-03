@@ -7776,6 +7776,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "maka-application-bridge"
+version = "0.2.0"
+dependencies = [
+ "futures-util",
+ "maka-event-log",
+ "maka-plugin-core",
+ "maka-plugins",
+ "maka-runtime-host",
+ "maka-ui",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
 name = "maka-assistant"
 version = "0.2.0"
 dependencies = [
@@ -7823,6 +7841,7 @@ dependencies = [
  "flate2",
  "libc",
  "maka-acp",
+ "maka-application-bridge",
  "maka-client",
  "maka-computer-use",
  "maka-config",
@@ -7956,14 +7975,18 @@ name = "maka-desktop"
 version = "0.2.0"
 dependencies = [
  "clap",
+ "dispatch2",
+ "futures-util",
  "gpui-kit",
  "log",
+ "maka-application-bridge",
  "maka-event-log",
  "maka-js-runtime",
  "maka-plugin-core",
  "maka-plugins",
  "maka-runtime-host",
  "maka-ui",
+ "objc2 0.6.4",
  "rusqlite",
  "schemars 1.2.2",
  "serde_json",

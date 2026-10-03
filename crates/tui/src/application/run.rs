@@ -28,16 +28,18 @@ use std::{collections::BTreeSet, time::Duration};
 /// 在前台线程运行；关闭界面后仍等待真实服务执行与资源回执。
 pub fn run(
     store: std::sync::Arc<maka_event_log::EventLog>,
-    deployment: uuid::Uuid,
+    source: maka_plugin_core::deployment::DeploymentRef,
+    registrations: Vec<maka_ui::actions::RemoteService>,
     scheduler: tokio::runtime::Handle,
 ) -> Result<(), String> {
     let mut presenter = scheduler
         .block_on(Presenter::start_from_store(
             store,
-            deployment,
+            source,
             scheduler.clone(),
             registry(),
             json!({}),
+            registrations,
         ))
         .map_err(|e| sanitize(&e.to_string()))?;
     let mut guard = terminal::Guard::new();
