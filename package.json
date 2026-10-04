@@ -10,6 +10,7 @@
   "type": "module",
   "workspaces": [
     "packages/plugin-sdk",
+    "packages/agent-product",
     "packages/cli"
   ],
   "scripts": {

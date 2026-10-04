@@ -20,6 +20,7 @@
 /** Application authoring types. Runtime admission remains in Rust. */
 export type * from './generated/runtime.js';
 export { contracts } from './contracts.js';
+export { configurations } from './configurations.js';
 
 import type {
   ComponentInput,

@@ -31,6 +31,7 @@ serde_json.workspace = true
 serde.workspace = true
 schemars.workspace = true
 jsonschema.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "f89c5cc9576d823d253b4563806e5f842e9d69f9", features = ["test-support"] }

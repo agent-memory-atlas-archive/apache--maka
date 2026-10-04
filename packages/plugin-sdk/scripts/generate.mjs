@@ -75,6 +75,13 @@ outputs.set(
     JSON.stringify(catalog.contracts, null, 2) +
     ' satisfies Record<string, Contract>;\n',
 );
+outputs.set(
+  new URL('../src/configurations.ts', import.meta.url),
+  banner +
+    'export const configurations = ' +
+    JSON.stringify(catalog.configurations, null, 2) +
+    ' as const;\n',
+);
 for (const [url, source] of outputs) {
   const content = execFileSync(
     process.execPath,

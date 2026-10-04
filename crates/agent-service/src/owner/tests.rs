@@ -17,6 +17,9 @@
  * under the License.
  */
 
+#[path = "tests/product.rs"]
+mod product;
+
 use super::*;
 use crate::{EXPORT, ModelSelection, contract, service::Agent};
 use maka_event_log::root::{RootNamespaces, RootOwner};
@@ -44,6 +47,16 @@ use tokio::net::{TcpListener, TcpStream};
 
 struct Grant(Issuer);
 impl Policy for Grant {
+    fn recover(
+        &self,
+        invocation: maka_runtime_host::application::RecoveryInvocation<'_>,
+    ) -> Result<(), String> {
+        if self.0.evidence::<bool>(invocation.scope) == Some(&true) {
+            Ok(())
+        } else {
+            Err("denied".into())
+        }
+    }
     fn admit(&self, invocation: HostInvocation<'_>) -> Result<(), String> {
         if self.0.evidence::<bool>(invocation.scope) == Some(&true) {
             Ok(())
@@ -161,7 +174,30 @@ fn input(settings: &Configuration) -> (Input, Vec<Package>) {
             )])
         },
     };
-    let input = Input {
+    let receipt_contract = maka_plugin_core::operation::receipt_reader_contract();
+    let receipts = Package::new(BTreeMap::from([(
+        MANIFEST_FILE.into(),
+        serde_json::to_vec(&json!({
+            "schemaVersion":2,"id":"receipts","application":{"entries":{"host":{
+                "implementation":{"kind":"native","implementation":"maka.operations.receipts"},
+                "configuration":{"type":"object","additionalProperties":false},"imports":{},
+                "exports":{"Receipts":{"contract":receipt_contract,"availability":"required"}}
+            }}}
+        }))
+        .unwrap(),
+    )]))
+    .unwrap();
+    let receipt_node = Node {
+        key: Uuid::from_u128(4),
+        package: receipts.application_ref().into(),
+        use_package: PackageUse::Entry,
+        configuration: Default::default(),
+        parameters: Default::default(),
+        bindings: BTreeMap::new(),
+        disabled: false,
+        overrides: vec![],
+    };
+    let mut input = Input {
         environment: Environment {
             location: ExecutionLocation::Host,
             presentation: None,
@@ -173,7 +209,40 @@ fn input(settings: &Configuration) -> (Input, Vec<Package>) {
         ]),
         launch: None,
     };
-    (input, vec![provider, consumer])
+    input.instances.insert("receipts".into(), receipt_node);
+    for name in ["a", "b"] {
+        input.instances.get_mut(name).unwrap().bindings.insert(
+            "receipts".into(),
+            vec![Target::Instance {
+                path: vec!["receipts".into()],
+                export: "Receipts".into(),
+            }],
+        );
+    }
+    // Both consumers declare recovery independently of their execution import.
+    let mut files = consumer.files().clone();
+    let mut manifest = consumer.manifest().clone();
+    manifest
+        .application
+        .as_mut()
+        .unwrap()
+        .entries
+        .get_mut(&EntryTarget::Host)
+        .unwrap()
+        .imports
+        .insert(
+            "receipts".into(),
+            Import {
+                contract: receipt_contract,
+                cardinality: Cardinality::One,
+            },
+        );
+    files.insert(MANIFEST_FILE.into(), serde_json::to_vec(&manifest).unwrap());
+    let consumer = Package::new(files).unwrap();
+    for name in ["a", "b"] {
+        input.instances.get_mut(name).unwrap().package = consumer.application_ref().into();
+    }
+    (input, vec![provider, consumer, receipts])
 }
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -467,7 +536,7 @@ async fn canonical_history_is_bounded_utf8_and_keeps_its_original_fence() {
         let message = format!("{}中文", "\u{0}".repeat(9000));
         fixture.mutation(2, "send", json!({"sessionId":session,"message":message}), Uuid::new_v4()).await.unwrap();
         fixture.drained().await;
-        let mut input = json!({"sessionId":session});
+        let mut input = json!({"sessionId":session,"position":{"kind":"start"}});
         let mut user = String::new();
         let mut assistant = String::new();
         let mut fence = None;
@@ -499,13 +568,39 @@ async fn canonical_history_is_bounded_utf8_and_keeps_its_original_fence() {
                 later = true;
             }
             if page["next"].is_null() { finished = true; break; }
-            input["cursor"] = page["next"].clone();
+            input["position"] = json!({"kind":"cursor","cursor":page["next"]});
         }
         assert!(finished);
         assert_eq!(user, message);
         assert_eq!(assistant, reply);
-        assert!(fixture.query("history", json!({"sessionId":session,"cursor":{"sequence":0,"offset":0}})).await.is_err());
-        assert!(fixture.query("history", json!({"sessionId":"foreign_session"})).await.is_err());
+        let event_fence = fence.unwrap();
+        let mut input = json!({"sessionId":session,"position":{"kind":"event","sequence":event_fence + 1}});
+        let mut newer_fence = None;
+        let mut newer_user = String::new();
+        let mut newer_assistant = String::new();
+        let mut finished = false;
+        for _ in 0..128 {
+            let page = fixture.query("history", input.clone()).await.unwrap();
+            let through = page["through"].as_u64().unwrap();
+            assert_eq!(*newer_fence.get_or_insert(through), through);
+            input["through"] = json!(through);
+            if page["kind"] == "preparing" { continue; }
+            for chunk in page["chunks"].as_array().unwrap() {
+                assert!(chunk["sequence"].as_u64().unwrap() > maka_presentation::watermark(event_fence).unwrap());
+                match chunk["role"].as_str().unwrap() {
+                    "user" => newer_user.push_str(chunk["text"].as_str().unwrap()),
+                    "assistant" => newer_assistant.push_str(chunk["text"].as_str().unwrap()),
+                    role => panic!("unexpected conversation role {role}"),
+                }
+            }
+            if page["next"].is_null() { finished = true; break; }
+            input["position"] = json!({"kind":"cursor","cursor":page["next"]});
+        }
+        assert!(finished);
+        assert_eq!(newer_user, "Hello");
+        assert_eq!(newer_assistant, "Later response");
+        assert!(fixture.query("history", json!({"sessionId":session,"position":{"kind":"cursor","cursor":{"sequence":0,"offset":0}}})).await.is_err());
+        assert!(fixture.query("history", json!({"sessionId":"foreign_session","position":{"kind":"start"}})).await.is_err());
         server.await.unwrap();
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
@@ -527,7 +622,12 @@ async fn actual_http_runs_are_bounded_and_observer_loss_does_not_release_capacit
         });
         let fixture = Fixture::new(&base,2,None).await;
         let first = fixture.create("First").await; let second = fixture.create("Second").await; let third = fixture.create("Third").await;
-        fixture.send(&first).await.unwrap(); entered.acquire().await.unwrap().forget();
+        let started = fixture.send(&first).await.unwrap(); entered.acquire().await.unwrap().forget();
+        let active = fixture.query("observe", json!({"sessionId":first})).await.unwrap();
+        assert_eq!(active["session"]["id"], first);
+        assert_eq!(active["run"]["invocationId"], started["invocationId"]);
+        assert_eq!(active["run"]["state"], "running");
+        assert!(!active.to_string().contains("private-fixture-key"));
         let mut watch = fixture.app.client().subscribe(fixture.binding(2).await,"watch".into(),json!({"sessionId":first,"after":0}),scope(&fixture.issuer,true),Attachments::new()).await.unwrap();
         let page = watch.recv().await.unwrap(); assert!(!page.to_string().contains("private-fixture-key"));
         drop(watch);
@@ -537,6 +637,10 @@ async fn actual_http_runs_are_bounded_and_observer_loss_does_not_release_capacit
         assert_eq!(fixture.owner.runs.lock().await.controls.len(),2);
         release.add_permits(2); server.await.unwrap(); fixture.drained().await;
         assert!(fixture.owner.runs.lock().await.controls.is_empty()); assert_eq!(fixture.owner.permits.available_permits(),2);
+        let completed = fixture.query("observe", json!({"sessionId":first})).await.unwrap();
+        assert!(completed["run"].is_null());
+        assert_eq!(completed["parts"], json!([]));
+        assert!(completed["through"].as_u64().unwrap() >= active["through"].as_u64().unwrap());
         let observation = fixture.store.session_projection::<Value>(&first).await.unwrap().unwrap();
         let events = fixture.store.session_stream_events(&first,0,observation.through_sequence,32,64*1024).await.unwrap();
         assert!(events.events.iter().any(|event| matches!(&event.fact,maka_event_log::observation::StreamFact::PartDelta{text,..} if text=="Elegant response")));

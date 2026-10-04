@@ -28,6 +28,10 @@ uses actual invocation-local slots and returns `unknown` for service results.
 Validate those results against the service contract; a TypeScript generic is not
 validation. Numeric bounds, JSON limits and authority are checked by Rust.
 
+`configurations.agent` is the generated native agent configuration schema for
+package declarations. Use it alongside `contracts.agent`; product builders do
+not maintain a second copy of the native configuration or service protocol.
+
 `Component<State, Props, View>` lets an entrypoint type its platform's scene
 language. The kernel treats `View` as opaque JSON and delegates interpretation to
 the selected platform's pure scene compiler; there is no shared kernel layout

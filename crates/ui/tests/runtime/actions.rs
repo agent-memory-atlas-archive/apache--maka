@@ -321,7 +321,7 @@ fn native_capture_uses_the_complete_call_limit_before_native_callback() {
             0,
             "read",
             json!({"capture":{
-                "kind":"at_revision", "revision":9007199254740991u64
+                "kind":"at_revision", "owner":"original", "revision":9007199254740991u64
             }})
         )
         .is_err()

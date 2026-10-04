@@ -131,7 +131,7 @@ snapping/drop/key rules and native drawing, focus and drag tracking.
 
 Use `editor` instead of `native` to persist a composition importing the native Kit
 Textarea. Its Rust contract describes initial text, explicit
-revision-based replace/reset commands, metadata observations and command receipts.
+owner/revision-based replace/reset commands, metadata observations and command receipts.
 The native buffer remains outside serialized component state. The public `changed`
 event contains typed metadata observations and receipts;
 receiving a TextRef does not grant a global lookup or text-read authority. Public
@@ -169,7 +169,10 @@ Desktop publishes the scene, prepares native owners, captures an immutable Rope
 at the native read barrier, then applies native commands and collects retired
 owners. A capture conflict produces `not_accepted`; it does not roll back a
 published scene. `current` explicitly selects the barrier's current text;
-`at_revision` rejects a changed revision. Only the trusted request sidecar carries
+`at_revision` checks the original native owner and revision. Commands and receipts
+also correlate by owner and sequence; a replacement editor cannot consume an old
+command even when its local revision is equal. Snapshot metadata retains that
+original owner for correlation, not as read authority. Only the trusted request sidecar carries
 the actual resource. Metadata, JSON slot names and UUIDs are not read authority.
 The snapshot retains no live input, entity or mount resource lease.
 

@@ -169,10 +169,11 @@ fn forwarding_capture_precedes_same_frame_reset_and_stale_reset_preserves_later_
     let (_runtime, mut tui) = presenter();
     draw(&mut tui, 50, 20);
     let revision = observation(&tui)["revision"].as_u64().unwrap();
+    let original_owner = observation(&tui)["snapshot"]["text"]["owner"].clone();
     dispatch(
         &mut tui,
         "read",
-        json!({"command":{"sequence":1,"basedOn":revision,"edit":{"kind":"reset","text":""}}}),
+        json!({"command":{"owner":original_owner,"sequence":1,"basedOn":revision,"edit":{"kind":"reset","text":""}}}),
     );
     assert_eq!(observation(&tui)["snapshot"]["text"]["bytes"], 0);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -189,10 +190,11 @@ fn forwarding_capture_precedes_same_frame_reset_and_stale_reset_preserves_later_
     let current = observation(&tui)["revision"].as_u64().unwrap();
     // Capture against the accepted current revision, but clear against an old
     // revision: immutable read succeeds and the later native draft remains.
+    let original_owner = observation(&tui)["snapshot"]["text"]["owner"].clone();
     dispatch(
         &mut tui,
         "read",
-        json!({"end":9,"capture":{"kind":"at_revision","revision":current},"command":{"sequence":2,"basedOn":revision,"edit":{"kind":"reset","text":""}}}),
+        json!({"end":9,"capture":{"kind":"at_revision","owner":original_owner,"revision":current},"command":{"owner":original_owner,"sequence":2,"basedOn":revision,"edit":{"kind":"reset","text":""}}}),
     );
     let observed = observation(&tui);
     assert_eq!(observed["snapshot"]["text"]["bytes"], 9);
@@ -256,11 +258,12 @@ fn failed_observation_preserves_edits_and_original_command_receipt_until_publica
     let (_runtime, mut tui) = presenter();
     draw(&mut tui, 50, 24);
     let revision = observation(&tui)["revision"].as_u64().unwrap();
+    let original_owner = observation(&tui)["snapshot"]["text"]["owner"].clone();
     dispatch(&mut tui, "reject", json!({"reject":true}));
     dispatch(
         &mut tui,
         "read",
-        json!({"command":{"sequence":1,"basedOn":revision,"edit":{"kind":"reset","text":""}}}),
+        json!({"command":{"owner":original_owner,"sequence":1,"basedOn":revision,"edit":{"kind":"reset","text":""}}}),
     );
     assert!(!tui.closing);
     assert!(observation(&tui).is_null());
@@ -309,4 +312,63 @@ fn wheel_hits_visible_editor_without_stealing_button_focus_or_snapping_back() {
     assert_ne!(before, after);
     assert_eq!(after, draw(&mut tui, 50, 30));
     close(&mut tui);
+}
+
+#[test]
+fn a_different_editor_with_equal_revision_cannot_capture_or_clear_the_original_draft() {
+    let (_runtime_a, mut a) = presenter();
+    let (_runtime_b, mut b) = presenter();
+    draw(&mut a, 50, 20);
+    draw(&mut b, 50, 20);
+    let original = observation(&a);
+    let replacement = observation(&b);
+    assert_eq!(original["revision"], replacement["revision"]);
+    assert_eq!(
+        original["snapshot"]["text"]["bytes"],
+        replacement["snapshot"]["text"]["bytes"]
+    );
+    assert_ne!(
+        original["snapshot"]["text"]["owner"],
+        replacement["snapshot"]["text"]["owner"]
+    );
+    let owner = &original["snapshot"]["text"]["owner"];
+    let revision = &original["revision"];
+    dispatch(
+        &mut b,
+        "configure",
+        json!({"command":{"owner":owner,"sequence":900,"basedOn":revision,"edit":{"kind":"reset","text":""}}}),
+    );
+    assert_eq!(
+        observation(&b)["receipt"]["outcome"],
+        json!({"status":"conflict","reason":"owner"})
+    );
+    assert_eq!(observation(&b)["snapshot"]["text"]["bytes"], 5);
+    dispatch(
+        &mut b,
+        "read",
+        json!({"capture":{"kind":"at_revision","owner":owner,"revision":revision}}),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while b.application.frame(&b.root).unwrap().state["outcome"].is_null() {
+        assert!(std::time::Instant::now() < deadline);
+        b.pump().unwrap();
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        b.application.frame(&b.root).unwrap().state["outcome"]["status"],
+        "not_accepted"
+    );
+    let current_owner = observation(&b)["snapshot"]["text"]["owner"].clone();
+    dispatch(
+        &mut b,
+        "configure",
+        json!({"command":{"owner":current_owner,"sequence":1,"basedOn":revision,"edit":{"kind":"reset","text":""}}}),
+    );
+    assert_eq!(
+        observation(&b)["receipt"]["outcome"],
+        json!({"status":"applied"})
+    );
+    assert_eq!(observation(&b)["snapshot"]["text"]["bytes"], 0);
+    close(&mut a);
+    close(&mut b);
 }

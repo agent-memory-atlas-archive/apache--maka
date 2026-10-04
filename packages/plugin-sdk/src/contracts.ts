@@ -582,6 +582,12 @@ export const contracts = {
           TextareaCommand: {
             type: 'object',
             properties: {
+              owner: {
+                description: 'Correlation with the original native editor, never a resource grant.',
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
               sequence: {
                 type: 'integer',
                 format: 'uint64',
@@ -599,7 +605,7 @@ export const contracts = {
               },
             },
             additionalProperties: false,
-            required: ['sequence', 'basedOn', 'edit'],
+            required: ['owner', 'sequence', 'basedOn', 'edit'],
           },
           TextareaEdit: {
             oneOf: [
@@ -731,6 +737,9 @@ export const contracts = {
             TextareaReceipt: {
               type: 'object',
               properties: {
+                owner: {
+                  type: 'string',
+                },
                 sequence: {
                   type: 'integer',
                   format: 'uint64',
@@ -746,7 +755,7 @@ export const contracts = {
                 },
               },
               additionalProperties: false,
-              required: ['sequence', 'revision', 'outcome'],
+              required: ['owner', 'sequence', 'revision', 'outcome'],
             },
             TextareaOutcome: {
               oneOf: [
@@ -779,7 +788,7 @@ export const contracts = {
             },
             TextareaConflict: {
               type: 'string',
-              enum: ['representation', 'revision', 'composition', 'sequence'],
+              enum: ['owner', 'representation', 'revision', 'composition', 'sequence'],
             },
           },
         },
@@ -804,6 +813,11 @@ export const contracts = {
               {
                 type: 'object',
                 properties: {
+                  owner: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
                   revision: {
                     type: 'integer',
                     format: 'uint64',
@@ -815,7 +829,7 @@ export const contracts = {
                   },
                 },
                 additionalProperties: false,
-                required: ['kind', 'revision'],
+                required: ['kind', 'owner', 'revision'],
               },
             ],
           },
@@ -884,32 +898,75 @@ export const contracts = {
           mode: 'query',
           input: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
-            title: 'Read',
-            description: 'A stable log fence prevents a scan from chasing newly appended messages.',
+            title: 'AgentHistoryRead',
             type: 'object',
             properties: {
               sessionId: {
                 type: 'string',
+                minLength: 1,
+                maxLength: 128,
               },
               through: {
                 type: ['integer', 'null'],
                 format: 'uint64',
                 minimum: 0,
+                maximum: 9007199254740991,
               },
-              cursor: {
-                anyOf: [
-                  {
-                    $ref: '#/$defs/Cursor',
-                  },
-                  {
-                    type: 'null',
-                  },
-                ],
+              position: {
+                $ref: '#/$defs/AgentHistoryPosition',
               },
             },
             additionalProperties: false,
-            required: ['sessionId'],
+            required: ['sessionId', 'position'],
             $defs: {
+              AgentHistoryPosition: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'start',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    description:
+                      'Inclusive event-log sequence. The service maps to its sparse transcript rows.',
+                    type: 'object',
+                    properties: {
+                      sequence: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 1,
+                        maximum: 9007199254740991,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'event',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'sequence'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      cursor: {
+                        $ref: '#/$defs/Cursor',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'cursor',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'cursor'],
+                  },
+                ],
+              },
               Cursor: {
                 description: "Byte offset in one message's UTF-8 text, not a bearer capability.",
                 type: 'object',
@@ -1129,6 +1186,130 @@ export const contracts = {
           },
           resources: {},
         },
+        observe: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentSessionRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentObservation',
+            type: 'object',
+            properties: {
+              session: {
+                $ref: '#/$defs/AgentSession',
+              },
+              through: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              run: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/AgentRun',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              parts: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/AgentPart',
+                },
+              },
+            },
+            additionalProperties: false,
+            required: ['session', 'through', 'parts'],
+            $defs: {
+              AgentSession: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  archived: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'title', 'revision', 'updatedAt', 'archived'],
+              },
+              AgentRun: {
+                type: 'object',
+                properties: {
+                  invocationId: {
+                    type: 'string',
+                  },
+                  state: {
+                    $ref: '#/$defs/AgentRunState',
+                  },
+                },
+                additionalProperties: false,
+                required: ['invocationId', 'state'],
+              },
+              AgentRunState: {
+                type: 'string',
+                enum: ['admitted', 'running', 'waiting_for_user'],
+              },
+              AgentPart: {
+                type: 'object',
+                properties: {
+                  startSequence: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  messageId: {
+                    type: 'string',
+                  },
+                  stepId: {
+                    type: 'string',
+                  },
+                  partId: {
+                    type: 'string',
+                  },
+                  textKind: {
+                    $ref: '#/$defs/AgentContentKind',
+                  },
+                },
+                additionalProperties: false,
+                required: ['startSequence', 'messageId', 'stepId', 'partId', 'textKind'],
+              },
+              AgentContentKind: {
+                type: 'string',
+                enum: ['text', 'thinking'],
+              },
+            },
+          },
+          resources: {},
+        },
         send: {
           mode: 'mutation',
           input: {
@@ -1260,25 +1441,132 @@ export const contracts = {
                   invocationId: {
                     type: 'string',
                   },
-                  kind: {
-                    $ref: '#/$defs/AgentDeliveryKind',
-                  },
-                  text: {
-                    type: ['string', 'null'],
-                  },
-                  partId: {
-                    type: ['string', 'null'],
-                  },
-                  failed: {
-                    type: ['boolean', 'null'],
+                  fact: {
+                    $ref: '#/$defs/AgentDeliveryFact',
                   },
                 },
                 additionalProperties: false,
-                required: ['sequence', 'invocationId', 'kind'],
+                required: ['sequence', 'invocationId', 'fact'],
               },
-              AgentDeliveryKind: {
+              AgentDeliveryFact: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'opened',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    description:
+                      'Canonical transcript facts changed; clients query bounded history.',
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'transcript_changed',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      stepId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'step_ended',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'stepId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      messageId: {
+                        type: 'string',
+                      },
+                      stepId: {
+                        type: 'string',
+                      },
+                      partId: {
+                        type: 'string',
+                      },
+                      textKind: {
+                        $ref: '#/$defs/AgentContentKind',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'part_started',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'messageId', 'stepId', 'partId', 'textKind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      stepId: {
+                        type: 'string',
+                      },
+                      partId: {
+                        type: 'string',
+                      },
+                      text: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'delta',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'stepId', 'partId', 'text'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      stepId: {
+                        type: 'string',
+                      },
+                      partId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'part_finished',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'stepId', 'partId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      failed: {
+                        type: 'boolean',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'ended',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'failed'],
+                  },
+                ],
+              },
+              AgentContentKind: {
                 type: 'string',
-                enum: ['opened', 'part_started', 'delta', 'part_finished', 'ended'],
+                enum: ['text', 'thinking'],
               },
             },
           },

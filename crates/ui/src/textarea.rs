@@ -101,6 +101,9 @@ pub struct TextareaMenuLabels {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TextareaCommand {
+    /// Correlation with the original native editor, never a resource grant.
+    #[schemars(length(min = 1, max = 128))]
+    pub owner: String,
     #[schemars(range(min = 1, max = 9007199254740991u64))]
     pub sequence: u64,
     #[schemars(range(max = 9007199254740991u64))]
@@ -143,6 +146,7 @@ pub struct TextareaSnapshot {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TextareaConflict {
+    Owner,
     Representation,
     Revision,
     Composition,
@@ -157,6 +161,7 @@ pub enum TextareaOutcome {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextareaReceipt {
+    pub owner: String,
     pub sequence: u64,
     pub revision: u64,
     pub outcome: TextareaOutcome,
@@ -208,6 +213,10 @@ pub enum TextareaReadError {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TextareaCapture {
     Current,
-    AtRevision { revision: u64 },
+    AtRevision {
+        #[schemars(length(min = 1, max = 128))]
+        owner: String,
+        revision: u64,
+    },
 }
 pub use super::text::text_resource_type;

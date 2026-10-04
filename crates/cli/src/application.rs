@@ -41,12 +41,20 @@ pub(super) enum Command {
     Check(Check),
     /// Emit authoring schemas from the actual runtime wire types.
     Schema,
+    /// Validate immutable package bytes and print their exact pinned reference.
+    InspectPackage(InspectPackage),
     /// Run a plugin composition with native terminal presentation.
     Run(Run),
     /// Atomically commit desired deployment input and exact immutable bytes.
     Commit(Commit),
     /// Read and validate the persisted source and every selected package.
     Read(ReadSource),
+}
+
+#[derive(Args)]
+pub(super) struct InspectPackage {
+    #[arg(long, value_name = "PATH")]
+    package: PathBuf,
 }
 
 #[derive(Args)]
@@ -112,6 +120,14 @@ impl Command {
     async fn run_inner(self) -> Result<(), HostError> {
         match self {
             Self::Schema => println!("{}", serde_json::to_string_pretty(&schema::catalog())?),
+            Self::InspectPackage(args) => {
+                let reference = tokio::task::spawn_blocking(move || {
+                    Package::read_from(&std::path::absolute(args.package)?)
+                        .map(|package| package.application_ref())
+                })
+                .await??;
+                println!("{}", serde_json::to_string_pretty(&reference)?);
+            }
             Self::Check(args) => {
                 let report = tokio::task::spawn_blocking(move || args.check()).await??;
                 println!("{report}");

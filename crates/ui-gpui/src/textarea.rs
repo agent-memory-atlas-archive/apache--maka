@@ -59,6 +59,12 @@ pub struct TextareaOwner {
     _menu_input: Option<Subscription>,
 }
 impl TextareaOwner {
+    /// Original editor correlation, including across application processes.
+    /// The identifier conveys no lookup or read authority.
+    pub fn owner_id(&self) -> &str {
+        &self.id
+    }
+
     fn new(
         props: &TextareaProps,
         input: LiveInput,
@@ -106,7 +112,7 @@ impl TextareaOwner {
                 cx.notify();
             });
             Self {
-                id: cx.entity_id().to_string(),
+                id: uuid::Uuid::new_v4().to_string(),
                 state,
                 input,
                 revision: 0,
@@ -281,7 +287,11 @@ impl TextareaOwner {
             return;
         }
         self.last_request = Some(command.clone());
-        let outcome = if command.sequence <= self.sequence {
+        let outcome = if command.owner != self.id {
+            TextareaOutcome::Conflict {
+                reason: TextareaConflict::Owner,
+            }
+        } else if command.sequence <= self.sequence {
             TextareaOutcome::Conflict {
                 reason: TextareaConflict::Sequence,
             }
@@ -305,6 +315,7 @@ impl TextareaOwner {
             }
         };
         self.receipt = Some(TextareaReceipt {
+            owner: command.owner.clone(),
             sequence: command.sequence,
             revision: self.revision,
             outcome,
@@ -631,6 +642,7 @@ struct TextareaRecipe {
     props: TextareaProps,
 }
 struct TextSnapshot {
+    owner: String,
     text: Rope,
     revision: u64,
 }
@@ -642,7 +654,7 @@ impl maka_plugins::call::ReadResource for TextSnapshot {
         self.text.len()
     }
     fn metadata(&self) -> serde_json::Value {
-        json!({"revision":self.revision,"bytes":self.text.len()})
+        json!({"owner":self.owner,"revision":self.revision,"bytes":self.text.len()})
     }
     fn read(&self, range: Range<usize>) -> Result<Vec<u8>, String> {
         if range
@@ -679,12 +691,16 @@ impl Widget for TextareaRecipe {
                     return Err(maka_ui::Error::Invalid("editor closed".into()));
                 }
                 owner.refresh(false, window, cx);
-                if let TextareaCapture::AtRevision { revision } = input
-                    && revision != owner.revision
+                if let TextareaCapture::AtRevision {
+                    owner: ref expected,
+                    revision,
+                } = input
+                    && (expected != &owner.id || revision != owner.revision)
                 {
                     return Err(maka_ui::Error::Invalid("editor revision changed".into()));
                 }
                 Ok(std::sync::Arc::new(TextSnapshot {
+                    owner: owner.id.clone(),
                     text: owner.snapshot.text.clone(),
                     revision: owner.revision,
                 })

@@ -1,0 +1,10 @@
+{
+  "extends": "../plugin-sdk/tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false,
+    "composite": false,
+    "rootDir": "../.."
+  },
+  "include": ["src"]
+}

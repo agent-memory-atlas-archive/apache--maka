@@ -105,7 +105,11 @@ impl Owner {
     }
     fn apply(&mut self, command: &TextareaCommand) {
         self.last_request = Some(command.clone());
-        let outcome = if command.sequence <= self.sequence {
+        let outcome = if command.owner != self.id {
+            TextareaOutcome::Conflict {
+                reason: TextareaConflict::Owner,
+            }
+        } else if command.sequence <= self.sequence {
             TextareaOutcome::Conflict {
                 reason: TextareaConflict::Sequence,
             }
@@ -139,6 +143,7 @@ impl Owner {
             }
         };
         self.receipt = Some(TextareaReceipt {
+            owner: command.owner.clone(),
             sequence: command.sequence,
             revision: self.revision,
             outcome,
@@ -231,10 +236,12 @@ impl Widget for Recipe {
             .expect("terminal editor owner");
         let capture: TextareaCapture = serde_json::from_value(target.input().clone())
             .map_err(|e| maka_ui::Error::Invalid(e.to_string()))?;
-        if matches!(capture,TextareaCapture::AtRevision {revision} if revision!=owner.revision) {
+        if matches!(capture,TextareaCapture::AtRevision {owner:ref expected,revision} if expected!=&owner.id || revision!=owner.revision)
+        {
             return Err(maka_ui::Error::Invalid("editor revision changed".into()));
         }
         Ok(Arc::new(Snapshot {
+            owner: owner.id.clone(),
             text: owner.editor.text().to_owned(),
             revision: owner.revision,
         }))
@@ -304,6 +311,7 @@ impl Widget for Recipe {
     }
 }
 struct Snapshot {
+    owner: String,
     text: String,
     revision: u64,
 }
@@ -315,7 +323,7 @@ impl maka_plugins::call::ReadResource for Snapshot {
         self.text.len()
     }
     fn metadata(&self) -> Value {
-        json!({"revision":self.revision,"bytes":self.text.len()})
+        json!({"owner":self.owner,"revision":self.revision,"bytes":self.text.len()})
     }
     fn read(&self, range: Range<usize>) -> Result<Vec<u8>, String> {
         if range

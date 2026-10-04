@@ -7893,9 +7893,11 @@ dependencies = [
 name = "maka-agent-service"
 version = "0.2.0"
 dependencies = [
+ "crossterm",
  "futures-util",
  "jsonschema 0.56.0",
  "maka-agent",
+ "maka-application-bridge",
  "maka-config",
  "maka-event-log",
  "maka-js-runtime",
@@ -7903,10 +7905,14 @@ dependencies = [
  "maka-network",
  "maka-plugin-core",
  "maka-plugins",
+ "maka-presentation",
  "maka-providers",
  "maka-runtime",
  "maka-runtime-host",
  "maka-tools",
+ "maka-tui",
+ "maka-ui",
+ "ratatui",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -8816,6 +8822,7 @@ dependencies = [
  "schemars 1.2.2",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]

@@ -35,6 +35,11 @@ struct Scene {
     editor: Mount,
 }
 impl Scene {
+    fn editor_owner(&self, cx: &App) -> String {
+        // Some transaction tests deliberately reject publication of the native
+        // observation. Use the actual original owner in those fixtures too.
+        self.owner().read(cx).owner_id().to_owned()
+    }
     fn new(cx: &mut TestAppContext, timer: &tokio::runtime::Runtime, fail_sibling: bool) -> Self {
         Self::from_packages(cx, timer, fail_sibling, support::editor_fixture())
     }
@@ -241,6 +246,7 @@ fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_pa
         scene
             .command(
                 TextareaCommand {
+                    owner: scene.editor_owner(cx),
                     sequence: 1,
                     based_on: native,
                     edit: TextareaEdit::Replace {
@@ -265,6 +271,7 @@ fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_pa
             scene
                 .command(
                     TextareaCommand {
+                        owner: scene.editor_owner(cx),
                         sequence: 2,
                         based_on: native + 1,
                         edit: TextareaEdit::Reset {
@@ -308,6 +315,7 @@ fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_pa
         scene
             .command(
                 TextareaCommand {
+                    owner: scene.editor_owner(cx),
                     sequence: 2,
                     based_on,
                     edit: TextareaEdit::Reset {
@@ -340,6 +348,7 @@ fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_pa
         scene
             .command(
                 TextareaCommand {
+                    owner: scene.editor_owner(cx),
                     sequence: 3,
                     based_on: revision,
                     edit: TextareaEdit::Reset {
@@ -363,6 +372,7 @@ fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_pa
     cx.update_window(scene.window, |_, window, cx| {
         let based_on = owner.read(cx).revision;
         let command = TextareaCommand {
+            owner: scene.editor_owner(cx),
             sequence: 4,
             based_on,
             edit: TextareaEdit::Reset {
@@ -392,6 +402,130 @@ fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_pa
         false
     );
     scene.draw(cx);
+    scene.close(cx);
+}
+
+#[gpui::test]
+fn restarted_process_rejects_the_original_editor_capture_and_command(cx: &mut TestAppContext) {
+    let timer = timer();
+    cx.executor().allow_parking();
+    let scene = Scene::from_packages(cx, &timer, false, support::resource_fixture());
+    scene.draw(cx);
+    // The initial owner has not emitted a changed event. Obtain the reference
+    // from an actual native selection observation in both independent processes.
+    cx.update_window(scene.window, |_, window, cx| {
+        scene.owner().update(cx, |editor, cx| {
+            let state = editor.state.clone();
+            state
+                .read(cx)
+                .presentation()
+                .focus_handle()
+                .focus(window, cx);
+            state.update(cx, |state, cx| state.set_selected_range(0..1, cx));
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let observation: TextareaObservation = serde_json::from_value(
+        scene.app.borrow().frame(&scene.editor).unwrap().state["observation"].clone(),
+    )
+    .unwrap();
+    let reference = observation.snapshot.text;
+    const ORIGINAL: &str = "MAKA_UI_TEST_ORIGINAL_EDITOR_REF";
+    if let Ok(original) = std::env::var(ORIGINAL) {
+        let original: maka_ui::textarea::TextareaTextRef = serde_json::from_str(&original).unwrap();
+        assert_eq!(reference.revision, original.revision);
+        assert_eq!(reference.bytes, original.bytes);
+        let owner = scene.owner();
+        cx.update_window(scene.window, |_, window, cx| {
+            owner.update(cx, |editor, cx| {
+                assert!(matches!(
+                    editor.read_text(&original, 0..5, window, cx),
+                    Err(TextareaReadError::Owner)
+                ));
+            });
+            let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
+            scene.app.borrow_mut().dispatch(
+                &scene.root,
+                revision,
+                "read",
+                serde_json::json!({
+                    "capture": {"kind":"at_revision", "owner":original.owner, "revision":original.revision},
+                    "command": TextareaCommand {
+                        owner: original.owner.clone(),
+                        sequence: 900,
+                        based_on: original.revision,
+                        edit: TextareaEdit::Reset { text: "Must not appear".into() },
+                    },
+                }),
+            ).unwrap();
+            scene.surface.update(cx, |s, cx| s.sync_native(window, cx).unwrap());
+            assert_eq!(
+                owner.read(cx).receipt.as_ref().unwrap().outcome,
+                TextareaOutcome::Conflict {
+                    reason: TextareaConflict::Owner
+                }
+            );
+            assert_eq!(owner.read(cx).state.read(cx).value().as_ref(), "Start");
+        })
+        .unwrap();
+        await_action(cx, &scene.app, |a| {
+            a.frame(&scene.root).unwrap().state["outcome"].is_object()
+        });
+        assert_eq!(
+            scene.app.borrow().frame(&scene.root).unwrap().state["outcome"]["status"],
+            "not_accepted"
+        );
+        assert_eq!(scene.app.borrow().accepted_action_count(), 0);
+        cx.update_window(scene.window, |_, window, cx| {
+            let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
+            scene.app.borrow_mut().dispatch(
+                &scene.root,
+                revision,
+                "read",
+                serde_json::json!({
+                    "capture": {"kind":"at_revision", "owner":reference.owner, "revision":reference.revision},
+                    "command": TextareaCommand {
+                        owner: reference.owner.clone(),
+                        sequence: 1,
+                        based_on: reference.revision,
+                        edit: TextareaEdit::Reset { text: "New".into() },
+                    },
+                }),
+            ).unwrap();
+            scene.surface.update(cx, |s, cx| s.sync_native(window, cx).unwrap());
+            assert_eq!(
+                owner.read(cx).receipt.as_ref().unwrap().outcome,
+                TextareaOutcome::Applied
+            );
+            assert_eq!(owner.read(cx).state.read(cx).value().as_ref(), "New");
+        })
+        .unwrap();
+        await_action(cx, &scene.app, |a| {
+            a.frame(&scene.root).unwrap().state["outcome"]["status"] == "succeeded"
+        });
+        assert_eq!(
+            scene.app.borrow().frame(&scene.root).unwrap().state["outcome"]["value"]["text"],
+            "Start"
+        );
+        assert_eq!(scene.app.borrow().accepted_action_count(), 0);
+    } else {
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "editor_tests::restarted_process_rejects_the_original_editor_capture_and_command",
+                "--nocapture",
+            ])
+            .env(ORIGINAL, serde_json::to_string(&reference).unwrap())
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success() && String::from_utf8_lossy(&result.stdout).contains("1 passed"),
+            "child must run the exact regression: {}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
     scene.close(cx);
 }
 
@@ -493,6 +627,7 @@ fn failed_composed_batch_cannot_execute_staged_editor_reset(cx: &mut TestAppCont
             scene
                 .command(
                     TextareaCommand {
+                        owner: scene.editor_owner(cx),
                         sequence: 1,
                         based_on,
                         edit: TextareaEdit::Reset {
@@ -620,8 +755,10 @@ fn public_editor_events_preserve_a_same_batch_command_until_receipt_and_do_not_l
             .child_mount(&scene.root, "left")
             .unwrap()
             .clone();
-        let based_on = cx.update(|cx| owner.read(cx).revision);
+        let (based_on, original_owner) =
+            cx.update(|cx| (owner.read(cx).revision, scene.editor_owner(cx)));
         let command = TextareaCommand {
+            owner: original_owner,
             sequence: 1,
             based_on,
             edit: TextareaEdit::Replace {
@@ -677,6 +814,7 @@ fn public_editor_events_preserve_a_same_batch_command_until_receipt_and_do_not_l
                 scene
                     .command(
                         TextareaCommand {
+                            owner: scene.editor_owner(cx),
                             sequence: 2,
                             based_on: revision,
                             edit: TextareaEdit::Replace {
@@ -740,8 +878,8 @@ fn real_composer_snapshot_precedes_reset_and_capture_conflict_does_not_fake_scen
         .unwrap();
         cx.run_until_parked();
         cx.update_window(scene.window,|_,window,cx| {
-            let native=owner.read(cx).revision;let revision=scene.app.borrow().frame(&scene.root).unwrap().revision;
-            scene.app.borrow_mut().dispatch(&scene.root,revision,"read",serde_json::json!({"capture":if conflict {serde_json::json!({"kind":"at_revision","revision":native+100})} else {serde_json::json!({"kind":"at_revision","revision":native})},"command":{"sequence":1,"basedOn":native,"edit":{"kind":"reset","text":"Reset"}}})).unwrap();
+            let correlation=scene.editor_owner(cx);let native=owner.read(cx).revision;let revision=scene.app.borrow().frame(&scene.root).unwrap().revision;
+            scene.app.borrow_mut().dispatch(&scene.root,revision,"read",serde_json::json!({"capture":if conflict {serde_json::json!({"kind":"at_revision","owner":correlation,"revision":native+100})} else {serde_json::json!({"kind":"at_revision","owner":correlation,"revision":native})},"command":{"owner":correlation,"sequence":1,"basedOn":native,"edit":{"kind":"reset","text":"Reset"}}})).unwrap();
             assert_eq!(owner.read(cx).state.read(cx).value().as_ref(),"Draft");
             scene.surface.update(cx,|s,cx|s.sync_native(window,cx).unwrap());
             assert_eq!(owner.read(cx).state.read(cx).value().as_ref(),"Reset");

@@ -438,3 +438,89 @@ async fn active_stream_seeds_are_fenced_bounded_and_survive_reopen() {
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn stream_seed_bytes_are_bounded_before_identity_hydration() {
+    let temp = tempfile::tempdir().unwrap();
+    let log = EventLog::open(&temp.path().join("seed-budget.sqlite"))
+        .await
+        .unwrap();
+    for (index, ids, allowed) in [
+        (0, vec!["😀".repeat(4096)], true),
+        (1, vec!["😀".repeat(16500)], false),
+        (2, vec!["a".repeat(33000), "b".repeat(33000)], false),
+    ] {
+        let session = format!("budget-{index}");
+        let step = format!("current-{index}");
+        log.create_session(&session, &format!("create-{index}"), &json!({}), 1)
+            .await
+            .unwrap();
+        let invocation = Invocation {
+            session_id: session.clone(),
+            turn_id: format!("turn-{index}"),
+            run_id: format!("run-{index}"),
+            invocation_id: format!("invocation-{index}"),
+        };
+        let event = |fact| RuntimeEvent::new(invocation.clone(), fact);
+        log.append(
+            &EventWrite::plain(event(Fact::InvocationOpened {
+                configuration: None,
+                input: maka_runtime::input::InvocationInput::Message {
+                    source_messages: vec![],
+                    content: "".into(),
+                    request_fingerprint: None,
+                },
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        log.append(
+            &EventWrite::plain(event(Fact::ModelRequested {
+                item_acceptance: false,
+                purpose: maka_runtime::context::ModelPurpose::Main,
+                context: None,
+                checkpoint_event_id: None,
+                step_id: step.clone(),
+                model_id: "test".into(),
+                source_scope: LogScope::Root,
+                source_high_water: 0,
+                source_digest: "fixture".into(),
+                effective_source_digest: None,
+                input_digest: "input".into(),
+                route_identity: "route".into(),
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        for id in &ids {
+            log.append(
+                &EventWrite::plain(event(Fact::ModelObserved {
+                    step_id: step.clone(),
+                    event: ModelEvent::PartStarted {
+                        id: id.clone(),
+                        text_kind: TextKind::Text,
+                        provider_options: None,
+                    },
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        }
+        let observation = log.observe_session::<Value>(&session).await;
+        if allowed {
+            assert_eq!(
+                observation.unwrap().unwrap().active_streams.len(),
+                ids.len()
+            );
+        } else {
+            assert!(matches!(
+                observation,
+                Err(maka_event_log::StoreError::PrefixTooLarge)
+            ));
+        }
+    }
+    log.close().await.unwrap();
+}

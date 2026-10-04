@@ -27,6 +27,9 @@ Wire 类型和内置契约由 Host/UI 实际执行所用的 Rust 类型生成。
 `unknown`，作者需要按服务契约检查结果。TypeScript 泛型不能代替验证；
 数值范围、JSON 限制和权限由 Rust 检查。
 
+`configurations.agent` 是从原生 agent 类型生成的配置 schema，供包声明使用。
+与 `contracts.agent` 配合，不在产品构建器中维护第二份原生配置或服务协议。
+
 `Component<State, Props, View>` 可以为入口指定平台场景语言的类型。内核将
 `View` 视为不透明 JSON，由选定平台的纯场景编译器解释，不提供统一布局语言。
 `ComponentSlot` 仍是公共的子组件声明：绑定从原父组件的 import 解析，绘制状态

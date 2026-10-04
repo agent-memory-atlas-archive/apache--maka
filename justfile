@@ -50,12 +50,14 @@ lint:
 typecheck:
     npm --workspace @maka-agent/plugin-sdk run schema:check
     npm --workspace @maka-agent/plugin-sdk run typecheck
+    npm --workspace @maka-agent/product run typecheck
 
 test *args:
     cargo nextest run --locked --workspace "$@"
 
 test-js:
     node --test scripts/*.test.mjs scripts/rust/*.test.mjs packages/plugin-sdk/tests/*.test.mjs packages/cli/tests/*.test.mjs
+    npm --workspace @maka-agent/product test
 
 licenses:
     node scripts/asf-license-headers.mjs check

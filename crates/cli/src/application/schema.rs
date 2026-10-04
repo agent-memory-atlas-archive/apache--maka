@@ -67,7 +67,11 @@ pub(super) fn catalog() -> Value {
         root::<maka_agent_service::contract::Started>(&mut g),
         root::<maka_agent_service::contract::Stopped>(&mut g),
         root::<maka_agent_service::contract::Delivery>(&mut g),
-        root::<maka_agent_service::contract::DeliveryKind>(&mut g),
+        root::<maka_agent_service::contract::DeliveryFact>(&mut g),
+        root::<maka_agent_service::contract::ContentKind>(&mut g),
+        root::<maka_agent_service::contract::Observation>(&mut g),
+        root::<maka_agent_service::contract::SessionRead>(&mut g),
+        root::<maka_agent_service::contract::History>(&mut g),
         root::<maka_agent_service::contract::DeliveryPage>(&mut g),
         root::<maka_agent_service::contract::HistoryChunk>(&mut g),
         root::<maka_agent_service::contract::HistoryPage>(&mut g),
@@ -86,6 +90,7 @@ pub(super) fn catalog() -> Value {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "title": "RuntimeProtocol", "$defs": g.definitions(), "anyOf": roots,
         },
+        "configurations": { "agent": maka_agent_service::configuration_schema() },
         "contracts": {
             "label": maka_ui::label_contract(), "textarea": textarea::textarea_contract(),
             // Bundled availability is data, never an activated service or grant.

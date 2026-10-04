@@ -48,7 +48,9 @@ pub fn reduce(call: ComponentCall<'_>) -> crate::Result<ComponentOutput<Textarea
             let settled = request
                 .as_ref()
                 .zip(observation.receipt.as_ref())
-                .is_some_and(|(command, receipt)| command.sequence == receipt.sequence);
+                .is_some_and(|(command, receipt)| {
+                    command.owner == receipt.owner && command.sequence == receipt.sequence
+                });
             return frame(
                 props.clone(),
                 state["revision"].as_u64().expect("editor UI revision") + 1,
@@ -77,7 +79,7 @@ pub fn reduce(call: ComponentCall<'_>) -> crate::Result<ComponentOutput<Textarea
         }
         if request
             .as_ref()
-            .is_some_and(|prior| command.sequence <= prior.sequence)
+            .is_some_and(|prior| command.owner == prior.owner && command.sequence <= prior.sequence)
         {
             return Err(crate::Error::Invalid(
                 "editor command sequence must advance".into(),

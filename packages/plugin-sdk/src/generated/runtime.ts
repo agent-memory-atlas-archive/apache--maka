@@ -54,7 +54,11 @@ export type RuntimeProtocol =
   | AgentStarted
   | AgentStopped
   | AgentDelivery
-  | AgentDeliveryKind
+  | AgentDeliveryFact
+  | AgentContentKind
+  | AgentObservation
+  | AgentSessionRead
+  | AgentHistoryRead
   | AgentDeliveryPage
   | AgentHistoryChunk
   | AgentHistoryPage
@@ -297,16 +301,63 @@ export type TextareaOutcome =
       reason: TextareaConflict;
       status: 'conflict';
     };
-export type TextareaConflict = 'representation' | 'revision' | 'composition' | 'sequence';
+export type TextareaConflict = 'owner' | 'representation' | 'revision' | 'composition' | 'sequence';
 export type TextareaCapture =
   | {
       kind: 'current';
     }
   | {
+      owner: string;
       revision: number;
       kind: 'at_revision';
     };
-export type AgentDeliveryKind = 'opened' | 'part_started' | 'delta' | 'part_finished' | 'ended';
+export type AgentDeliveryFact =
+  | {
+      kind: 'opened';
+    }
+  | {
+      kind: 'transcript_changed';
+    }
+  | {
+      stepId: string;
+      kind: 'step_ended';
+    }
+  | {
+      messageId: string;
+      stepId: string;
+      partId: string;
+      textKind: AgentContentKind;
+      kind: 'part_started';
+    }
+  | {
+      stepId: string;
+      partId: string;
+      text: string;
+      kind: 'delta';
+    }
+  | {
+      stepId: string;
+      partId: string;
+      kind: 'part_finished';
+    }
+  | {
+      failed: boolean;
+      kind: 'ended';
+    };
+export type AgentContentKind = 'text' | 'thinking';
+export type AgentRunState = 'admitted' | 'running' | 'waiting_for_user';
+export type AgentHistoryPosition =
+  | {
+      kind: 'start';
+    }
+  | {
+      sequence: number;
+      kind: 'event';
+    }
+  | {
+      cursor: Cursor;
+      kind: 'cursor';
+    };
 /**
  * Text visible in the durable conversation; reasoning and runtime metadata are
  * not conversation text. Tool JSON contributes string values, never its keys.
@@ -785,6 +836,10 @@ export interface TextareaMenuLabels {
   selectAll: string;
 }
 export interface TextareaCommand {
+  /**
+   * Correlation with the original native editor, never a resource grant.
+   */
+  owner: string;
   sequence: number;
   basedOn: number;
   edit: TextareaEdit;
@@ -810,6 +865,7 @@ export interface TextRange {
   end: number;
 }
 export interface TextareaReceipt {
+  owner: string;
   sequence: number;
   revision: number;
   outcome: TextareaOutcome;
@@ -877,10 +933,39 @@ export interface AgentStopped {
 export interface AgentDelivery {
   sequence: number;
   invocationId: string;
-  kind: AgentDeliveryKind;
-  text?: string | null;
-  partId?: string | null;
-  failed?: boolean | null;
+  fact: AgentDeliveryFact;
+}
+export interface AgentObservation {
+  session: AgentSession;
+  through: number;
+  run?: AgentRun | null;
+  parts: AgentPart[];
+}
+export interface AgentRun {
+  invocationId: string;
+  state: AgentRunState;
+}
+export interface AgentPart {
+  startSequence: number;
+  messageId: string;
+  stepId: string;
+  partId: string;
+  textKind: AgentContentKind;
+}
+export interface AgentSessionRead {
+  sessionId: string;
+}
+export interface AgentHistoryRead {
+  sessionId: string;
+  through?: number | null;
+  position: AgentHistoryPosition;
+}
+/**
+ * Byte offset in one message's UTF-8 text, not a bearer capability.
+ */
+export interface Cursor {
+  sequence: number;
+  offset: number;
 }
 export interface AgentDeliveryPage {
   through: number;
@@ -896,13 +981,6 @@ export interface AgentHistoryChunk {
   offset: number;
   totalBytes: number;
   text: string;
-}
-/**
- * Byte offset in one message's UTF-8 text, not a bearer capability.
- */
-export interface Cursor {
-  sequence: number;
-  offset: number;
 }
 /**
  * A stable log fence prevents a scan from chasing newly appended messages.

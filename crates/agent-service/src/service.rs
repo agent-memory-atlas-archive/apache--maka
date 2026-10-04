@@ -95,16 +95,88 @@ impl Handler for Agent {
                         .map_err(|_| "agent_creation_failed")?;
                     encode(summary(session))
                 }
+                "observe" => {
+                    use maka_event_log::turns::InvocationState;
+                    let input: SessionRead = decode(input)?;
+                    owner.session(&input.session_id).await?;
+                    let observed = owner
+                        .store
+                        .observe_session::<SessionConfiguration>(&input.session_id)
+                        .await
+                        .map_err(|_| "agent_observation_unavailable")?
+                        .ok_or("agent_session_unavailable")?;
+                    let run = observed.root_turn.and_then(|turn| {
+                        let state = match turn.state {
+                            InvocationState::Admitted => RunState::Admitted,
+                            InvocationState::Running => RunState::Running,
+                            InvocationState::WaitingForUser => RunState::WaitingForUser,
+                            InvocationState::Ended { .. } => return None,
+                        };
+                        Some(Run {
+                            invocation_id: turn.invocation.invocation_id,
+                            state,
+                        })
+                    });
+                    let result = encode(Observation {
+                        session: summary(observed.session),
+                        through: observed.through_sequence,
+                        run,
+                        parts: observed
+                            .active_streams
+                            .into_iter()
+                            .map(|part| Part {
+                                start_sequence: part.start_sequence,
+                                message_id: part.message_id,
+                                step_id: part.step_id,
+                                part_id: part.part_id,
+                                text_kind: part.text_kind.into(),
+                            })
+                            .collect(),
+                    })?;
+                    maka_js_runtime::plugin::check_json_delivery(&result, 48 * 1024)
+                        .map_err(|_| "agent_observation_unavailable")?;
+                    owner.session(&input.session_id).await?;
+                    if context.scope().cancellation.is_cancelled() {
+                        return Err("agent_observation_cancelled".into());
+                    }
+                    Ok(result)
+                }
                 "history" => {
                     use maka_plugins::session::history::{Page, Read};
-                    let input: Read = decode(input)?;
-                    input.validate().map_err(|_| "agent_cursor_invalid")?;
+                    let input: History = decode(input)?;
                     owner.session(&input.session_id).await?;
                     let high_water = *owner.store.subscribe_commits().borrow();
                     let through = input.through.unwrap_or(high_water);
                     if through > high_water {
                         return Err("agent_cursor_invalid".into());
                     }
+                    let cursor = match input.position {
+                        HistoryPosition::Start => None,
+                        HistoryPosition::Cursor { cursor } => {
+                            if input.through.is_none() {
+                                return Err("agent_cursor_invalid".into());
+                            }
+                            Some(cursor)
+                        }
+                        HistoryPosition::Event { sequence } => {
+                            if sequence == 0 || sequence > through {
+                                return Err("agent_cursor_invalid".into());
+                            }
+                            Some(maka_plugins::session::history::Cursor {
+                                sequence: maka_presentation::watermark(sequence - 1)
+                                    .map_err(|_| "agent_cursor_invalid")?
+                                    + 1,
+                                offset: 0,
+                            })
+                        }
+                    };
+                    Read {
+                        session_id: input.session_id.clone(),
+                        through: Some(through),
+                        cursor,
+                    }
+                    .validate()
+                    .map_err(|_| "agent_cursor_invalid")?;
                     let result = if !owner
                         .store
                         .prepare_transcript(&input.session_id, through, 32)
@@ -119,7 +191,7 @@ impl Handler for Agent {
                             next,
                         } = owner
                             .store
-                            .history_text(&input.session_id, through, input.cursor, 4096, 2)
+                            .history_text(&input.session_id, through, cursor, 4096, 2)
                             .await
                             .map_err(|_| "agent_history_unavailable")?
                         else {
@@ -235,29 +307,42 @@ fn summary(session: SessionRecord<SessionConfiguration>) -> Session {
     }
 }
 fn delivery(event: StoreStreamEvent) -> Option<Delivery> {
-    let (kind, text, part_id, failed) = match event.fact {
-        StreamFact::InvocationOpened => (DeliveryKind::Opened, None, None, None),
-        StreamFact::PartStarted { part_id, .. } => {
-            (DeliveryKind::PartStarted, None, Some(part_id), None)
+    let fact = match event.fact {
+        StreamFact::InvocationOpened => DeliveryFact::Opened,
+        StreamFact::PartStarted {
+            step_id,
+            part_id,
+            text_kind,
+        } => DeliveryFact::PartStarted {
+            message_id: event.id,
+            step_id,
+            part_id,
+            text_kind: text_kind.into(),
+        },
+        StreamFact::PartDelta {
+            step_id,
+            part_id,
+            text,
+        } => DeliveryFact::Delta {
+            step_id,
+            part_id,
+            text,
+        },
+        StreamFact::PartFinished { step_id, part_id } => {
+            DeliveryFact::PartFinished { step_id, part_id }
         }
-        StreamFact::PartDelta { part_id, text, .. } => {
-            (DeliveryKind::Delta, Some(text), Some(part_id), None)
-        }
-        StreamFact::PartFinished { part_id, .. } => {
-            (DeliveryKind::PartFinished, None, Some(part_id), None)
-        }
-        StreamFact::InvocationEnded { failed, .. } => {
-            (DeliveryKind::Ended, None, None, Some(failed))
-        }
+        StreamFact::InvocationEnded { failed, .. } => DeliveryFact::Ended { failed },
+        StreamFact::StepEnded { step_id, .. } => DeliveryFact::StepEnded { step_id },
+        StreamFact::MessageSteered
+        | StreamFact::ToolDispatched { .. }
+        | StreamFact::ToolRejected { .. }
+        | StreamFact::ToolSettled { .. } => DeliveryFact::TranscriptChanged,
         _ => return None,
     };
     Some(Delivery {
         sequence: event.sequence,
         invocation_id: event.invocation.invocation_id,
-        kind,
-        text,
-        part_id,
-        failed,
+        fact,
     })
 }
 

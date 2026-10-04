@@ -73,11 +73,13 @@ pub(super) async fn read(
             .collect());
     }
     // Select only identities. Neither finished output bodies nor accumulated text
-    // cross the SQL boundary. The existing invocation_sequence index scopes scans.
+    // cross the SQL boundary. The aggregate byte check returns NULL columns
+    // before any oversized provider identity can cross into native Strings. The existing invocation_sequence index scopes scans.
     let rows = sqlx::query(
-        "SELECT s.sequence, json_extract(s.event_json, '$.fact.step_id'), s.event_id,
-                json_extract(s.event_json, '$.fact.event.data.id'),
-                json_extract(s.event_json, '$.fact.event.data.text_kind')
+        "WITH seeds AS MATERIALIZED (
+         SELECT s.sequence, json_extract(s.event_json, '$.fact.step_id') AS step_id, s.event_id,
+                json_extract(s.event_json, '$.fact.event.data.id') AS part_id,
+                json_extract(s.event_json, '$.fact.event.data.text_kind') AS text_kind
          FROM runtime_events s WHERE s.invocation_id = ?1 AND s.kind = 'model_observed'
          AND EXISTS (SELECT 1 FROM runtime_events request
              JOIN runtime_events opening ON opening.invocation_id = request.invocation_id
@@ -96,11 +98,22 @@ pub(super) async fn read(
                   AND json_extract(e.event_json, '$.fact.event.kind') = 'part_started'
                   AND json_extract(e.event_json, '$.fact.event.data.id') =
                       json_extract(s.event_json, '$.fact.event.data.id'))))
-         ORDER BY s.sequence LIMIT 129",
+         ORDER BY s.sequence LIMIT 129), budget AS (
+             SELECT COUNT(*) AS count,
+                 COALESCE(SUM(length(CAST(step_id AS BLOB)) + length(CAST(event_id AS BLOB))
+                     + length(CAST(part_id AS BLOB)) + length(CAST(text_kind AS BLOB))), 0) AS bytes
+             FROM seeds)
+         SELECT sequence,
+             CASE WHEN bytes <= 65536 AND count <= 128 THEN step_id END,
+             CASE WHEN bytes <= 65536 AND count <= 128 THEN event_id END,
+             CASE WHEN bytes <= 65536 AND count <= 128 THEN part_id END,
+             CASE WHEN bytes <= 65536 AND count <= 128 THEN text_kind END,
+             bytes, count
+         FROM seeds CROSS JOIN budget ORDER BY sequence",
     ).bind(&root.invocation.invocation_id).fetch_all(&mut *connection).await?;
     let mut result = Vec::new();
     for row in rows {
-        if result.len() == 128 {
+        if row.try_get::<i64, _>(5)? > 65536 || row.try_get::<i64, _>(6)? > 128 {
             return Err(StoreError::PrefixTooLarge);
         }
         let sequence: i64 = row.try_get(0)?;

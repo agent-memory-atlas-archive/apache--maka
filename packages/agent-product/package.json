@@ -1,0 +1,13 @@
+{
+  "name": "@maka-agent/product",
+  "version": "0.2.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "compose": "node scripts/compose.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test tests/*.test.mjs"
+  }
+}

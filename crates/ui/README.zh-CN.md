@@ -89,7 +89,7 @@ props 由产品决定。平台在实际原生监听阶段应用同步输入决�
 使用 `canvas` 导出动态工作流面板：插件定义吸附、放置与键盘规则，原生层负责绘制、焦点与拖拽追踪。
 
 使用 `editor` 可在存储组合中导入 Kit Textarea。Rust 契约表达
-初始文本、基于原生 revision 的 replace/reset 命令、元数据观察与命令回执；原生 buffer
+初始文本、基于原生 owner/revision 的 replace/reset 命令、元数据观察与命令回执；原生 buffer
 不放进序列化组件 state。公开 `changed` 事件包含类型化元数据观察与回执；收到
 TextRef 不获得全局查找或读取权限；capture 提供请求私有的不可变文本资源。`command: null` 不提出
 新命令，不取消已接受的请求；请求保留 pending 直到匹配回执提交，最终原生描述只消费一次。
@@ -115,7 +115,9 @@ Action 指明 service binding/member/method 与类型化资源槽，每个槽调
 
 Desktop 单次发布 scene → 准备 native owner → 在 native read barrier 捕获不可变 Rope →
 执行 native command → collect 退休 owner。捕获冲突返回 `not_accepted`，不回滚已发布场景。
-`current` 显式读取 barrier 当前值，`at_revision` 严格拒绝修订变化。真实资源只在受信任的
+`current` 显式读取 barrier 当前值，`at_revision` 同时校验原生 owner 和 revision。命令与回执
+通过 owner + sequence 关联；替代 editor 即使局部 revision 相同，也不能消费旧命令。快照
+metadata 保留原 owner 用于因果关联，不构成读取权限。真实资源只在受信任的
 请求 sidecar 中；metadata、JSON 槽名及 UUID 都不是读取权限。快照不保留 LiveInput、entity
 或 mount resource lease。
 
