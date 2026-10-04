@@ -17,6 +17,9 @@
  * under the License.
  */
 
+#[path = "tests/selection.rs"]
+mod selection;
+
 #[path = "tests/product.rs"]
 mod product;
 
@@ -242,7 +245,77 @@ fn input(settings: &Configuration) -> (Input, Vec<Package>) {
     for name in ["a", "b"] {
         input.instances.get_mut(name).unwrap().package = consumer.application_ref().into();
     }
-    (input, vec![provider, consumer, receipts])
+    let settings = {
+        let mut manifest = provider.manifest().clone();
+        manifest.id = "settings".into();
+        let entry = manifest
+            .application
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(&EntryTarget::Host)
+            .unwrap();
+        entry.implementation = Implementation::Native {
+            implementation: maka_settings_service::IMPLEMENTATION.into(),
+        };
+        entry.configuration = json!({"type":"object","properties":{},"additionalProperties":false});
+        entry.exports = BTreeMap::from([(
+            maka_settings_service::EXPORT.into(),
+            Export {
+                contract: maka_settings_service::contract::contract(),
+                availability: Availability::Required,
+            },
+        )]);
+        Package::new(BTreeMap::from([(
+            MANIFEST_FILE.into(),
+            serde_json::to_vec(&manifest).unwrap(),
+        )]))
+        .unwrap()
+    };
+    let mut files = consumer.files().clone();
+    let mut manifest = consumer.manifest().clone();
+    manifest
+        .application
+        .as_mut()
+        .unwrap()
+        .entries
+        .get_mut(&EntryTarget::Host)
+        .unwrap()
+        .imports
+        .insert(
+            "settings".into(),
+            Import {
+                contract: maka_settings_service::contract::contract(),
+                cardinality: Cardinality::One,
+            },
+        );
+    files.insert(MANIFEST_FILE.into(), serde_json::to_vec(&manifest).unwrap());
+    let consumer = Package::new(files).unwrap();
+    input.instances.insert(
+        "settings".into(),
+        Node {
+            key: Uuid::from_u128(5),
+            package: settings.application_ref().into(),
+            use_package: PackageUse::Entry,
+            configuration: NodeConfiguration::default(),
+            parameters: NodeConfiguration::default(),
+            disabled: false,
+            overrides: vec![],
+            bindings: BTreeMap::new(),
+        },
+    );
+    for name in ["a", "b"] {
+        let node = input.instances.get_mut(name).unwrap();
+        node.package = consumer.application_ref().into();
+        node.bindings.insert(
+            "settings".into(),
+            vec![Target::Instance {
+                path: vec!["settings".into()],
+                export: maka_settings_service::EXPORT.into(),
+            }],
+        );
+    }
+    (input, vec![provider, consumer, receipts, settings])
 }
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -313,12 +386,6 @@ impl Fixture {
             maka_config::oauth::enrollment::LoginCompletion::Committed(_)
         ));
         let settings = Configuration {
-            model: ModelSelection {
-                connection_id: basis.connection_id,
-                connection_slug: "fixture".into(),
-                model: "fixture-model".into(),
-            },
-            provider: "openai-compatible".into(),
             max_active_runs: cap,
             max_steps: 1,
         };
@@ -332,6 +399,7 @@ impl Fixture {
         let capture = captured.clone();
         let replacement = Arc::new(StdMutex::new(model));
         let mut native = NativeRegistry::default();
+        maka_settings_service::provide(&mut native).unwrap();
         // Actual Host NativeContext and original NativeOwner; only the model
         // implementation is controlled in failure tests, never Root/admission.
         native
@@ -448,11 +516,19 @@ impl Fixture {
             .unwrap()
             .into()
     }
+    async fn selection(&self) -> ModelSelection {
+        let row = self.config.catalog().await.unwrap().connections.remove(0);
+        ModelSelection {
+            connection_id: row.connection_id,
+            revision: row.revision,
+            model_id: "fixture-model".into(),
+        }
+    }
     async fn send(&self, session: &str) -> Result<Value, String> {
         self.mutation(
             2,
             "send",
-            json!({"sessionId":session,"message":"Hello"}),
+            json!({"sessionId":session,"message":"Hello","model":self.selection().await}),
             Uuid::new_v4(),
         )
         .await
@@ -536,7 +612,7 @@ async fn canonical_history_is_bounded_utf8_and_keeps_its_original_fence() {
         let fixture = Fixture::new(&base, 1, None).await;
         let session = fixture.create("History").await;
         let message = format!("{}中文", "\u{0}".repeat(9000));
-        fixture.mutation(2, "send", json!({"sessionId":session,"message":message}), Uuid::new_v4()).await.unwrap();
+        fixture.mutation(2, "send", json!({"sessionId":session,"message":message,"model":fixture.selection().await}), Uuid::new_v4()).await.unwrap();
         fixture.drained().await;
         let mut input = json!({"sessionId":session,"position":{"kind":"start"}});
         let mut user = String::new();
@@ -704,7 +780,7 @@ async fn original_operation_conflicts_and_private_namespace_never_cross_sessions
                 .prepare_mutation(
                     fixture.binding(2).await,
                     "send".into(),
-                    json!({"sessionId":first["id"],"message":"Unauthorized"}),
+                    json!({"sessionId":first["id"],"message":"Unauthorized","model":fixture.selection().await}),
                     scope(&fixture.issuer, false),
                     Uuid::new_v4(),
                     Attachments::new(),
@@ -919,6 +995,7 @@ async fn public_availability_resumes_stable_sessions_and_separates_deployments()
         let deployment = fixture.app.source().unwrap().deployment;
         fixture.app.shutdown().await.unwrap();
         let mut native = NativeRegistry::default();
+        maka_settings_service::provide(&mut native).unwrap();
         crate::provide(&mut native).unwrap();
         let resumed = Application::start_from_store(
             fixture.store.clone(),
@@ -959,6 +1036,7 @@ async fn public_availability_resumes_stable_sessions_and_separates_deployments()
             .await
             .unwrap();
         let mut native = NativeRegistry::default();
+        maka_settings_service::provide(&mut native).unwrap();
         crate::provide(&mut native).unwrap();
         let other = Application::start_from_store(
             fixture.store.clone(),

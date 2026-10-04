@@ -17,115 +17,204 @@
  * under the License.
  */
 
-use crate::Configuration;
 use futures_util::future::BoxFuture;
 use maka_agent::{ModelSource, PreparedModel, RunError};
-use maka_config::ConfigurationStore;
+use maka_config::{ConfigurationStore, ConnectionObservation};
 use maka_model::{ProviderAuth, ProviderConfig};
-use maka_plugins::provider::{Connection, Definition, Resolve};
-use maka_runtime::{composition::SourceRevision, configuration::ModelInfo, scope::Scope};
+use maka_plugins::provider::{Connection, Definition, Model, Resolve};
+use maka_runtime::{
+    composition::SourceRevision,
+    configuration::{ModelCapabilities, ModelInfo, ModelSelection},
+    execution::ModelBinding,
+    scope::Scope,
+};
+use serde_json::Value;
 use std::sync::Arc;
 
+/// Only parameters actually supplied to execution. Catalog labels, tests and
+/// other models are observations, not a mutable authority over an accepted run.
+#[derive(PartialEq)]
+struct ExecutionBasis {
+    adapter: String,
+    protocol: maka_runtime::model::request::ProviderKind,
+    base_url: String,
+    capabilities: ModelCapabilities,
+    options: Value,
+    main_output_limit: Option<u64>,
+    body_overlay: Option<Value>,
+}
+impl ExecutionBasis {
+    fn new(model: &Model, row: &maka_runtime::configuration::ConnectionCatalogEntry) -> Self {
+        Self {
+            adapter: model.adapter.clone(),
+            protocol: model.protocol.clone(),
+            base_url: model.base_url.clone(),
+            capabilities: model.info.capabilities.unwrap_or_default(),
+            options: model.provider_options.clone(),
+            main_output_limit: model.main_output_limit,
+            body_overlay: row.request_body_overlay.clone(),
+        }
+    }
+}
 pub(crate) struct Source {
-    pub configuration: Arc<ConfigurationStore>,
-    pub settings: Configuration,
-    pub definition: Arc<Definition>,
-    pub session: String,
-    pub revision: SourceRevision,
+    configuration: Arc<ConfigurationStore>,
+    pub binding: ModelBinding,
+    definition: Arc<Definition>,
+    provider: maka_runtime::provider::Identity,
+    provider_configuration: Value,
+    basis: ExecutionBasis,
+    session: String,
+    revision: SourceRevision,
+}
+impl Source {
+    pub async fn select(
+        configuration: Arc<ConfigurationStore>,
+        selection: ModelSelection,
+        session: String,
+        mut revision: SourceRevision,
+    ) -> Result<(Self, PreparedModel), RunError> {
+        let material = configuration
+            .observe_selected_model(selection.clone())
+            .await
+            .map_err(|_| unavailable())?
+            .ok_or_else(unavailable)?;
+        let row = &material.connection;
+        if row.provider.package_id != maka_providers::api::ID
+            || row.provider.entry_id != maka_providers::api::ID
+            || row.provider.scope != Scope::Profile
+        {
+            return Err(unavailable());
+        }
+        let definition = Arc::new(
+            maka_providers::api::ApiProviders::definition(&row.provider.name)
+                .map_err(|_| unavailable())?,
+        );
+        let model = resolve(&definition, row, &selection.model_id).await?;
+        revision.name = row.provider.name.clone();
+        let source = Self {
+            configuration,
+            binding: ModelBinding {
+                connection_id: row.connection_id.clone(),
+                connection_slug: row.slug.clone(),
+                model: selection.model_id,
+            },
+            definition,
+            provider: row.provider.clone(),
+            provider_configuration: row.configuration.clone(),
+            basis: ExecutionBasis::new(&model, row),
+            session,
+            revision,
+        };
+        let prepared = source.prepare(material, model).await?;
+        Ok((source, prepared))
+    }
+    async fn prepare(
+        &self,
+        material: ConnectionObservation,
+        model: Model,
+    ) -> Result<PreparedModel, RunError> {
+        let capabilities = model.info.capabilities.unwrap_or_default();
+        if capabilities.chat == Some(false) {
+            return Err(unavailable());
+        }
+        let row = &material.connection;
+        let credentials = self
+            .definition
+            .authorize(
+                connection(row),
+                material
+                    .credential
+                    .as_ref()
+                    .map(|value| value.credential().clone()),
+                self.session.clone(),
+            )
+            .await
+            .map_err(|_| RunError::InvalidInput("agent_authentication_unavailable".into()))?;
+        let auth = match credentials {
+            maka_plugins::model::Credentials::ApiKey(key) => ProviderAuth::ApiKey(key),
+            maka_plugins::model::Credentials::RequestHeaders(headers) => {
+                ProviderAuth::RequestHeaders(headers)
+            }
+        };
+        let network = maka_network::Policy::from_host_settings(
+            &material.network.proxy,
+            material.network.password.as_deref(),
+        )
+        .map_err(|_| unavailable())?;
+        Ok(PreparedModel {
+            provider_id: self.provider.name.clone(),
+            provider: ProviderConfig {
+                adapter: Some(model.adapter),
+                capabilities,
+                kind: model.protocol,
+                model: self.binding.model.clone(),
+                base_url: model.base_url,
+                auth,
+                headers: material.request_headers,
+                network,
+                body_overlay: row
+                    .request_body_overlay
+                    .as_ref()
+                    .map(|value| value.as_object().expect("validated overlay").clone()),
+            },
+            options: model.provider_options,
+            context: None,
+            main_output_limit: model.main_output_limit,
+            supports_vision: capabilities.vision.unwrap_or(false),
+            revision: self.revision.clone(),
+        })
+    }
 }
 impl ModelSource for Source {
     fn capture(&self) -> BoxFuture<'_, Result<PreparedModel, RunError>> {
         Box::pin(async move {
-            // Every logical step observes the actual selected Root in one SQL
-            // snapshot. Disabled, removed or replaced providers never fall back.
             let material = self
                 .configuration
-                .observe_model(self.settings.model.binding())
+                .observe_model(self.binding.clone())
                 .await
                 .map_err(|_| unavailable())?
                 .ok_or_else(unavailable)?;
             let row = &material.connection;
-            if row.provider.package_id != maka_providers::api::ID
-                || row.provider.entry_id != maka_providers::api::ID
-                || row.provider.scope != Scope::Profile
-                || row.provider.name != self.settings.provider
-            {
+            if row.provider != self.provider || row.configuration != self.provider_configuration {
                 return Err(unavailable());
             }
-            let connection = Connection {
-                id: row.connection_id.clone(),
-                revision: row.revision,
-                configuration: row.configuration.clone(),
-            };
-            let model = self
-                .definition
-                .prepare(Resolve {
-                    connection: connection.clone(),
-                    model: row
-                        .models
-                        .iter()
-                        .find(|model| model.id == self.settings.model.model)
-                        .cloned()
-                        .unwrap_or_else(|| ModelInfo::new(&self.settings.model.model)),
-                    overrides: row
-                        .model_overrides
-                        .as_ref()
-                        .and_then(|models| models.get(&self.settings.model.model))
-                        .cloned(),
-                    thinking_level: None,
-                })
-                .await
-                .map_err(|_| unavailable())?;
-            let capabilities = model.info.capabilities.unwrap_or_default();
-            if capabilities.chat == Some(false) {
+            let model = resolve(&self.definition, row, &self.binding.model).await?;
+            if ExecutionBasis::new(&model, row) != self.basis {
                 return Err(unavailable());
             }
-            let credentials = self
-                .definition
-                .authorize(
-                    connection,
-                    material
-                        .credential
-                        .as_ref()
-                        .map(|value| value.credential().clone()),
-                    self.session.clone(),
-                )
-                .await
-                .map_err(|_| RunError::InvalidInput("agent_authentication_unavailable".into()))?;
-            let auth = match credentials {
-                maka_plugins::model::Credentials::ApiKey(key) => ProviderAuth::ApiKey(key),
-                maka_plugins::model::Credentials::RequestHeaders(headers) => {
-                    ProviderAuth::RequestHeaders(headers)
-                }
-            };
-            let network = maka_network::Policy::from_host_settings(
-                &material.network.proxy,
-                material.network.password.as_deref(),
-            )
-            .map_err(|_| unavailable())?;
-            Ok(PreparedModel {
-                provider_id: self.settings.provider.clone(),
-                provider: ProviderConfig {
-                    adapter: Some(model.adapter),
-                    capabilities,
-                    kind: model.protocol,
-                    model: self.settings.model.model.clone(),
-                    base_url: model.base_url,
-                    auth,
-                    headers: material.request_headers,
-                    network,
-                    body_overlay: row
-                        .request_body_overlay
-                        .as_ref()
-                        .map(|value| value.as_object().expect("validated overlay").clone()),
-                },
-                options: model.provider_options,
-                context: None,
-                main_output_limit: model.main_output_limit,
-                supports_vision: capabilities.vision.unwrap_or(false),
-                revision: self.revision.clone(),
-            })
+            self.prepare(material, model).await
         })
+    }
+}
+async fn resolve(
+    definition: &Definition,
+    row: &maka_runtime::configuration::ConnectionCatalogEntry,
+    model: &str,
+) -> Result<Model, RunError> {
+    definition
+        .prepare(Resolve {
+            connection: connection(row),
+            model: row
+                .models
+                .iter()
+                .find(|info| info.id == model)
+                .cloned()
+                .unwrap_or_else(|| ModelInfo::new(model)),
+            overrides: row
+                .model_overrides
+                .as_ref()
+                .and_then(|models| models.get(model))
+                .cloned(),
+            thinking_level: None,
+        })
+        .await
+        .map_err(|_| unavailable())
+}
+fn connection(row: &maka_runtime::configuration::ConnectionCatalogEntry) -> Connection {
+    Connection {
+        id: row.connection_id.clone(),
+        revision: row.revision,
+        configuration: row.configuration.clone(),
     }
 }
 fn unavailable() -> RunError {

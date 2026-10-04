@@ -43,7 +43,11 @@ export type RuntimeProtocol =
   | ReadText
   | TextChunk
   | AgentConfiguration
-  | AgentModelSelection
+  | ModelSelection
+  | SettingsModelsRead
+  | SettingsModelsPage
+  | SetDefaultConnectionTargetInput
+  | CatalogMutationResult
   | AgentList
   | AgentCreate
   | AgentSend
@@ -310,6 +314,208 @@ export type TextareaCapture =
       owner: string;
       revision: number;
       kind: 'at_revision';
+    };
+export type SettingsModelsRead =
+  | {
+      kind: 'start';
+    }
+  | {
+      revision: number;
+      cursor: SettingsModelCursor;
+      kind: 'continue';
+    };
+export type SettingsModelsPage =
+  | {
+      revision: number;
+      kind: 'changed';
+    }
+  | {
+      revision: number;
+      /**
+       * @maxItems 16
+       */
+      choices:
+        | []
+        | [SettingsModelChoice]
+        | [SettingsModelChoice, SettingsModelChoice]
+        | [SettingsModelChoice, SettingsModelChoice, SettingsModelChoice]
+        | [SettingsModelChoice, SettingsModelChoice, SettingsModelChoice, SettingsModelChoice]
+        | [
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+          ]
+        | [
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+          ]
+        | [
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+          ]
+        | [
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+          ]
+        | [
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+          ]
+        | [
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+          ]
+        | [
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+          ]
+        | [
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+          ]
+        | [
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+          ]
+        | [
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+          ]
+        | [
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+          ]
+        | [
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+            SettingsModelChoice,
+          ];
+      next: SettingsModelCursor | null;
+      kind: 'ready';
+    };
+export type CatalogMutationResult =
+  | {
+      catalogRevision: number;
+      connection?: ConnectionVersionBasis | null;
+      kind: 'committed';
+    }
+  | {
+      expectedRevision: number;
+      actualRevision: number;
+      kind: 'revision_conflict';
+    }
+  | {
+      slug: string;
+      kind: 'connection_exists';
+    }
+  | {
+      expected: ConnectionVersionBasis;
+      actual?: ConnectionVersionBasis | null;
+      kind: 'connection_stale';
+    }
+  | {
+      target: ConnectionTarget;
+      kind: 'invalid_default_target';
     };
 export type AgentDeliveryFact =
   | {
@@ -882,18 +1088,38 @@ export interface TextChunk {
   metadata: unknown;
 }
 export interface AgentConfiguration {
-  model: AgentModelSelection;
-  /**
-   * Compiled API provider; never an endpoint, credential or mutable fallback.
-   */
-  provider: string;
   maxActiveRuns: number;
   maxSteps: number;
 }
-export interface AgentModelSelection {
+/**
+ * Exact public selection observed by a caller, checked once at run admission.
+ */
+export interface ModelSelection {
   connectionId: string;
-  connectionSlug: string;
-  model: string;
+  revision: number;
+  modelId: string;
+}
+export interface SettingsModelCursor {
+  connection: number;
+  model: number;
+}
+export interface SettingsModelChoice {
+  selection: ModelSelection;
+  connectionName: string;
+  label: string;
+  isDefault: boolean;
+}
+export interface SetDefaultConnectionTargetInput {
+  expectedCatalogRevision: number;
+  target: ConnectionTarget | null;
+}
+export interface ConnectionTarget {
+  connectionId: string;
+  modelId: string;
+}
+export interface ConnectionVersionBasis {
+  connectionId: string;
+  revision: number;
 }
 export interface AgentList {
   revision?: string | null;
@@ -903,6 +1129,7 @@ export interface AgentCreate {
   title: string;
 }
 export interface AgentSend {
+  model: ModelSelection;
   sessionId: string;
   message: string;
 }

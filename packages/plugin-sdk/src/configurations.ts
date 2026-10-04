@@ -24,15 +24,6 @@ export const configurations = {
     title: 'AgentConfiguration',
     type: 'object',
     properties: {
-      model: {
-        $ref: '#/$defs/AgentModelSelection',
-      },
-      provider: {
-        description: 'Compiled API provider; never an endpoint, credential or mutable fallback.',
-        type: 'string',
-        minLength: 1,
-        maxLength: 128,
-      },
       maxActiveRuns: {
         type: 'integer',
         format: 'uint',
@@ -47,30 +38,6 @@ export const configurations = {
       },
     },
     additionalProperties: false,
-    required: ['model', 'provider', 'maxActiveRuns', 'maxSteps'],
-    $defs: {
-      AgentModelSelection: {
-        type: 'object',
-        properties: {
-          connectionId: {
-            type: 'string',
-            minLength: 1,
-            maxLength: 128,
-          },
-          connectionSlug: {
-            type: 'string',
-            minLength: 1,
-            maxLength: 128,
-          },
-          model: {
-            type: 'string',
-            minLength: 1,
-            maxLength: 512,
-          },
-        },
-        additionalProperties: false,
-        required: ['connectionId', 'connectionSlug', 'model'],
-      },
-    },
+    required: ['maxActiveRuns', 'maxSteps'],
   },
 } as const;

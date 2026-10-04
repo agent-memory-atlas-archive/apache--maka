@@ -47,6 +47,7 @@ tokio-util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+maka-settings-service.workspace = true
 maka-ui.workspace = true
 maka-tui.workspace = true
 maka-application-bridge.workspace = true

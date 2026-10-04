@@ -18,6 +18,10 @@
  */
 
 import type {
+  ModelSelection,
+  AgentSend,
+  SetDefaultConnectionTargetInput,
+  SettingsModelsPage,
   Action,
   ActionOutcome,
   CallerHistoryPage,
@@ -245,3 +249,23 @@ function streamingOutput(output: ComponentOutput, outcome: ActionOutcome) {
   return desired;
 }
 void streamingOutput;
+
+const selectedModel: ModelSelection = {
+  connectionId: 'observed-connection',
+  revision: 3,
+  modelId: 'chosen-model',
+};
+const explicitSend: AgentSend = {
+  sessionId: 'conversation',
+  message: 'Hello',
+  model: selectedModel,
+};
+const clearDefault: SetDefaultConnectionTargetInput = { expectedCatalogRevision: 5, target: null };
+// @ts-expect-error Absence is not an explicit clear.
+const missingDefault: SetDefaultConnectionTargetInput = { expectedCatalogRevision: 5 };
+const exhaustedModels: SettingsModelsPage = { kind: 'ready', revision: 5, choices: [], next: null };
+// @ts-expect-error Serialized nullable cursor requires field presence.
+const missingCursor: SettingsModelsPage = { kind: 'ready', revision: 5, choices: [] };
+// @ts-expect-error A send cannot inherit an implicit activation model.
+const implicitSend: AgentSend = { sessionId: 'conversation', message: 'Hello' };
+void [explicitSend, clearDefault, missingDefault, exhaustedModels, missingCursor, implicitSend];

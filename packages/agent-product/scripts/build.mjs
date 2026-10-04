@@ -61,6 +61,7 @@ const specifications = {
     module: 'workspace',
     imports: {
       agent: one(sdk.contracts.agent),
+      models: one(own.modelsContract),
       receipts: one(sdk.contracts.receiptReader),
       history: one(sdk.contracts.callerHistory),
       reader: one(sdk.contracts.textReader),
@@ -97,6 +98,12 @@ const specifications = {
     configuration: own.object({ scheme: { enum: ['light', 'dark'] } }),
   },
 };
+specifications.models = {
+  contract: own.modelsContract,
+  export: 'Models',
+  module: 'models',
+  imports: { settings: one(sdk.contracts.settings) },
+};
 const packages = [];
 for (const [name, spec] of Object.entries(specifications)) {
   const directory = resolve(destination, 'packages', name);
@@ -109,6 +116,8 @@ for (const [name, spec] of Object.entries(specifications)) {
       contents = `export {activate} from '${resolve(root, 'src/theme.ts')}';`;
     else if (name === 'workspace')
       contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace('${target}',configuration.locale);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
+    else if (name === 'models')
+      contents = `import {models,activate} from '${resolve(root, 'src/models.ts')}';export const component=models('${target}');export {activate};`;
     else
       contents = `import {components,exports} from '${resolve(root, 'src/components.ts')}';export const component=components('${target}').${name};export function activate(){const declaration=exports().${spec.export};return {${spec.export}:{...declaration,component:['component']}};}`;
     await build({
@@ -149,6 +158,9 @@ for (const [name, spec] of Object.entries(specifications)) {
   packages.push(name);
 }
 const mechanical = {
+  settings: {
+    entries: { host: native('maka.settings', { Settings: required(sdk.contracts.settings) }) },
+  },
   history: {
     entries: Object.fromEntries(
       ['desktop', 'tui'].map((target) => [
@@ -203,7 +215,11 @@ const mechanical = {
     entries: {
       host: {
         ...native('maka.application.gateway', {}),
-        imports: { agent: one(sdk.contracts.agent), receipts: one(sdk.contracts.receiptReader) },
+        imports: {
+          agent: one(sdk.contracts.agent),
+          settings: one(sdk.contracts.settings),
+          receipts: one(sdk.contracts.receiptReader),
+        },
       },
     },
   },

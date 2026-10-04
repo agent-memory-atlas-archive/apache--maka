@@ -24,34 +24,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[schemars(rename = "AgentModelSelection")]
-pub struct ModelSelection {
-    #[schemars(length(min = 1, max = 128))]
-    pub connection_id: String,
-    #[schemars(length(min = 1, max = 128))]
-    pub connection_slug: String,
-    #[schemars(length(min = 1, max = 512))]
-    pub model: String,
-}
-impl ModelSelection {
-    pub(crate) fn binding(&self) -> maka_runtime::execution::ModelBinding {
-        maka_runtime::execution::ModelBinding {
-            connection_id: self.connection_id.clone(),
-            connection_slug: self.connection_slug.clone(),
-            model: self.model.clone(),
-        }
-    }
-}
+pub use maka_runtime::configuration::ModelSelection;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentConfiguration")]
 pub struct Configuration {
-    pub model: ModelSelection,
-    /// Compiled API provider; never an endpoint, credential or mutable fallback.
-    #[schemars(length(min = 1, max = 128))]
-    pub provider: String,
     #[schemars(range(min = 1, max = 16))]
     pub max_active_runs: usize,
     #[schemars(range(min = 1, max = 16))]
@@ -80,6 +57,7 @@ pub struct Create {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentSend")]
 pub struct Send {
+    pub model: ModelSelection,
     #[schemars(length(min = 1, max = 128))]
     pub session_id: String,
     #[schemars(length(min = 1, max = 65536))]

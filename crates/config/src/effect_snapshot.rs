@@ -41,17 +41,41 @@ impl ConfigurationStore {
         self: &Arc<Self>,
         target: maka_runtime::execution::ModelBinding,
     ) -> Result<Option<ConnectionObservation>> {
+        let id = target.connection_id.clone();
+        self.observe_model_if(id, move |row| {
+            row.slug == target.connection_slug && row.enabled_model_ids.contains(&target.model)
+        })
+        .await
+    }
+
+    /// First admission checks the caller's original public selection in the
+    /// very same snapshot that supplies private execution material.
+    pub async fn observe_selected_model(
+        self: &Arc<Self>,
+        target: ModelSelection,
+    ) -> Result<Option<ConnectionObservation>> {
+        validation::entity_id(&target.connection_id).map_err(ConfigError::Invalid)?;
+        validation::revision(target.revision, true).map_err(ConfigError::Invalid)?;
+        validation::text(&target.model_id, 512, true).map_err(ConfigError::Invalid)?;
+        let id = target.connection_id.clone();
+        self.observe_model_if(id, move |row| {
+            row.revision == target.revision && row.enabled_model_ids.contains(&target.model_id)
+        })
+        .await
+    }
+
+    async fn observe_model_if(
+        self: &Arc<Self>,
+        id: String,
+        selected: impl FnOnce(&ConnectionCatalogEntry) -> bool + Send + 'static,
+    ) -> Result<Option<ConnectionObservation>> {
         let store = self.clone();
         self.transaction(crate::TransactionMode::Deferred, move |tx| {
             Box::pin(async move {
-                let Some(connection) = crate::catalog::find(tx, &target.connection_id).await?
-                else {
+                let Some(connection) = crate::catalog::find(tx, &id).await? else {
                     return Ok(None);
                 };
-                if !connection.enabled
-                    || connection.slug != target.connection_slug
-                    || !connection.enabled_model_ids.contains(&target.model)
-                {
+                if !connection.enabled || !selected(&connection) {
                     return Ok(None);
                 }
                 let material = EffectSnapshot::read(tx, connection).await?;

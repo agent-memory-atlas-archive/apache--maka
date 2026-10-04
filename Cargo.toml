@@ -54,6 +54,7 @@ members = [
     "crates/runtime-host",
     "crates/sandbox",
     "crates/scheduler",
+    "crates/settings-service",
     "crates/session-import",
     "crates/session-recap",
     "crates/session-title",
@@ -125,6 +126,7 @@ maka-runtime = { path = "crates/runtime" }
 maka-runtime-host = { path = "crates/runtime-host" }
 maka-sandbox = { path = "crates/sandbox" }
 maka-scheduler = { path = "crates/scheduler" }
+maka-settings-service = { path = "crates/settings-service" }
 maka-session-import = { path = "crates/session-import" }
 maka-session-recap = { path = "crates/session-recap" }
 maka-session-title = { path = "crates/session-title" }

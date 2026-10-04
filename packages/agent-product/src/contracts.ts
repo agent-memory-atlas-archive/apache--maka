@@ -21,6 +21,7 @@ import {
   contracts as native,
   type Contract,
   type AgentSession,
+  type SettingsModelChoice,
   type TextareaAppearance,
   type TextareaMenuAppearance,
   type TextareaCommand,
@@ -52,6 +53,12 @@ export interface Message {
   role: Role;
   text: string;
   continued: boolean;
+}
+export interface ModelsProps {
+  theme: Theme;
+  locale: string;
+  selection: SettingsModelChoice | null;
+  busy: boolean;
 }
 export interface NavigationProps {
   theme: Theme;
@@ -158,3 +165,27 @@ export const themeContract: Contract = {
   interface: { kind: 'value', schema: withDefs(themeSchema) },
 };
 export type ComposerObservation = TextareaObservation;
+
+const modelChoice = native.settings.interface.methods.models.output.$defs.SettingsModelChoice;
+const modelDefs = native.settings.interface.methods.models.output.$defs;
+export const modelsContract: Contract = {
+  name: 'maka.agent.Models',
+  version: 1,
+  transport: 'local',
+  interface: {
+    kind: 'component',
+    props: {
+      ...withDefs(
+        object({
+          theme: { $ref: '#/$defs/Theme' },
+          locale,
+          selection: { anyOf: [{ $ref: '#/$defs/SettingsModelChoice' }, { type: 'null' }] },
+          busy: { type: 'boolean' },
+        }),
+      ),
+      $defs: { ...defs, Theme: themeSchema, ...modelDefs },
+    },
+    events: { selected: { ...modelChoice, $defs: modelDefs } },
+    captures: {},
+  },
+};

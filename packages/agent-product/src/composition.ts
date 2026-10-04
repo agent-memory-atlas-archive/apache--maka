@@ -36,6 +36,8 @@ export const packageNames = [
   'editor',
   'reader',
   'history',
+  'models',
+  'settings',
   'agent',
   'receipts',
   'gateway',
@@ -66,7 +68,7 @@ export function composition(configuration: CompositionConfiguration): {
     path: [name],
     export: exportName,
   });
-  const remote = (name: 'agent' | 'receipts', exportName: string): BindingTarget => ({
+  const remote = (name: 'agent' | 'settings' | 'receipts', exportName: string): BindingTarget => ({
     kind: 'remote',
     deployment: 'local',
     instance: [keys[name]],
@@ -87,11 +89,16 @@ export function composition(configuration: CompositionConfiguration): {
     environment: { location: 'host' },
     instances: {
       agent: node('agent', { ...configuration.agent }),
+      settings: node('settings'),
       receipts: node('receipts'),
       gateway: node(
         'gateway',
         {},
-        { agent: [local('agent', 'agent')], receipts: [local('receipts', 'Receipts')] },
+        {
+          agent: [local('agent', 'agent')],
+          settings: [local('settings', 'Settings')],
+          receipts: [local('receipts', 'Receipts')],
+        },
       ),
     },
   };
@@ -107,12 +114,14 @@ export function composition(configuration: CompositionConfiguration): {
           reader: [local('reader', 'Reader')],
           history: [local('history', 'History')],
           composer: [local('composer', 'Composer')],
+          models: [local('models', 'Models')],
           navigation: [local('navigation', 'Navigation')],
           timeline: [local('timeline', 'Timeline')],
           appearance: [local('appearance', 'Appearance')],
           surface: [local('surface', 'Surface')],
         },
       ),
+      models: node('models', {}, { settings: [remote('settings', 'Settings')] }),
       composer: node('composer', {}, { editor: [local('editor', 'Textarea')] }),
       navigation: node('navigation'),
       timeline: node('timeline'),
@@ -134,6 +143,10 @@ export function composition(configuration: CompositionConfiguration): {
       declaration: { contract: contracts.receiptReader, availability: 'required' },
     },
   ];
+  remoteExports.push({
+    capability: { deployment: 'local', instance: [keys.settings], export: 'Settings' },
+    declaration: { contract: contracts.settings, availability: 'required' },
+  });
   const connections = {
     hosts: [
       {

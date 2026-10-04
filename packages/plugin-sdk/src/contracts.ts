@@ -1317,6 +1317,9 @@ export const contracts = {
             title: 'AgentSend',
             type: 'object',
             properties: {
+              model: {
+                $ref: '#/$defs/ModelSelection',
+              },
               sessionId: {
                 type: 'string',
                 minLength: 1,
@@ -1329,7 +1332,34 @@ export const contracts = {
               },
             },
             additionalProperties: false,
-            required: ['sessionId', 'message'],
+            required: ['model', 'sessionId', 'message'],
+            $defs: {
+              ModelSelection: {
+                description:
+                  'Exact public selection observed by a caller, checked once at run admission.',
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  modelId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision', 'modelId'],
+              },
+            },
           },
           output: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
@@ -1567,6 +1597,378 @@ export const contracts = {
               AgentContentKind: {
                 type: 'string',
                 enum: ['text', 'thinking'],
+              },
+            },
+          },
+          resources: {},
+        },
+      },
+    },
+  },
+  settings: {
+    name: 'maka.settings.Settings',
+    version: 1,
+    transport: 'remote',
+    interface: {
+      kind: 'service',
+      methods: {
+        models: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsModelsRead',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'start',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  cursor: {
+                    $ref: '#/$defs/SettingsModelCursor',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'continue',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision', 'cursor'],
+              },
+            ],
+            $defs: {
+              SettingsModelCursor: {
+                type: 'object',
+                properties: {
+                  connection: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                    maximum: 1024,
+                  },
+                  model: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                    maximum: 4096,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connection', 'model'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsModelsPage',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  choices: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/SettingsModelChoice',
+                    },
+                    maxItems: 16,
+                  },
+                  next: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/SettingsModelCursor',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'ready',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision', 'choices', 'next'],
+              },
+            ],
+            $defs: {
+              SettingsModelChoice: {
+                type: 'object',
+                properties: {
+                  selection: {
+                    $ref: '#/$defs/ModelSelection',
+                  },
+                  connectionName: {
+                    type: 'string',
+                    maxLength: 256,
+                  },
+                  label: {
+                    type: 'string',
+                    maxLength: 512,
+                  },
+                  isDefault: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['selection', 'connectionName', 'label', 'isDefault'],
+              },
+              ModelSelection: {
+                description:
+                  'Exact public selection observed by a caller, checked once at run admission.',
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  modelId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision', 'modelId'],
+              },
+              SettingsModelCursor: {
+                type: 'object',
+                properties: {
+                  connection: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                    maximum: 1024,
+                  },
+                  model: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                    maximum: 4096,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connection', 'model'],
+              },
+            },
+          },
+          resources: {},
+        },
+        setDefault: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SetDefaultConnectionTargetInput',
+            type: 'object',
+            properties: {
+              expectedCatalogRevision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              target: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/ConnectionTarget',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            additionalProperties: false,
+            required: ['expectedCatalogRevision', 'target'],
+            $defs: {
+              ConnectionTarget: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  modelId: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'modelId'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'CatalogMutationResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  catalogRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  connection: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ConnectionVersionBasis',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'committed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'catalogRevision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  expectedRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  actualRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'revision_conflict',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expectedRevision', 'actualRevision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  slug: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'connection_exists',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'slug'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  expected: {
+                    $ref: '#/$defs/ConnectionVersionBasis',
+                  },
+                  actual: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ConnectionVersionBasis',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'connection_stale',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expected', 'actual'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  target: {
+                    $ref: '#/$defs/ConnectionTarget',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'invalid_default_target',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'target'],
+              },
+            ],
+            $defs: {
+              ConnectionVersionBasis: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision'],
+              },
+              ConnectionTarget: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  modelId: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'modelId'],
               },
             },
           },

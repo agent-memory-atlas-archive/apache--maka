@@ -42,6 +42,7 @@ pub mod oauth;
 pub mod pricing;
 pub mod provider;
 pub mod read;
+pub mod schema;
 pub mod scope;
 pub mod session;
 pub mod shell_result;

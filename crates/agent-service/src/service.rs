@@ -86,8 +86,6 @@ impl Handler for Agent {
                             &SessionConfiguration {
                                 schema_version: 1,
                                 title: input.title,
-                                model: owner.settings.model.clone(),
-                                provider: owner.settings.provider.clone(),
                             },
                             now(),
                         )
@@ -226,7 +224,7 @@ impl Handler for Agent {
                     let operation = context.operation().ok_or("agent_mutation_required")?;
                     encode(
                         owner
-                            .send(input.session_id, input.message, operation)
+                            .send(input.session_id, input.message, input.model, operation)
                             .await?,
                     )
                 }

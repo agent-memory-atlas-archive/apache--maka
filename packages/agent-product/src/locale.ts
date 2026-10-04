@@ -18,6 +18,16 @@
  */
 
 export const en = {
+  previousModels: 'Previous',
+  chooseModel: 'Choose model',
+  models: 'Models',
+  loadingModels: 'Loading models…',
+  modelsUnavailable: 'Could not load models.',
+  noModels: 'Add a connection to choose a model.',
+  refreshModels: 'Refresh models',
+  moreModels: 'More models',
+  closeModels: 'Close',
+
   new: 'New conversation',
   conversations: 'Conversations',
   moreSessions: 'More conversations',
@@ -57,6 +67,16 @@ export const en = {
 } as const;
 export type Copy = { [K in keyof typeof en]: string };
 const zhCN: Copy = {
+  previousModels: '上一页',
+  chooseModel: '选择模型',
+  models: '模型',
+  loadingModels: '正在加载模型…',
+  modelsUnavailable: '无法加载模型。',
+  noModels: '添加连接后即可选择模型。',
+  refreshModels: '刷新模型',
+  moreModels: '更多模型',
+  closeModels: '关闭',
+
   new: '新建对话',
   conversations: '对话',
   moreSessions: '更多对话',
@@ -95,6 +115,16 @@ const zhCN: Copy = {
   connecting: '正在连接…',
 };
 const zhTW: Copy = {
+  previousModels: '上一頁',
+  chooseModel: '選擇模型',
+  models: '模型',
+  loadingModels: '正在載入模型…',
+  modelsUnavailable: '無法載入模型。',
+  noModels: '新增連線後即可選擇模型。',
+  refreshModels: '重新整理模型',
+  moreModels: '更多模型',
+  closeModels: '關閉',
+
   new: '新增對話',
   conversations: '對話',
   moreSessions: '更多對話',

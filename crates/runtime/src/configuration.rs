@@ -78,14 +78,26 @@ impl<T: Serialize> Serialize for Patch<T> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ConnectionVersionBasis {
     pub connection_id: String,
     pub revision: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Exact public selection observed by a caller, checked once at run admission.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelSelection {
+    #[schemars(length(min = 1, max = 128))]
+    pub connection_id: String,
+    #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
+    pub revision: u64,
+    #[schemars(length(min = 1, max = 512))]
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ConnectionTarget {
     pub connection_id: String,
@@ -248,9 +260,11 @@ pub struct RemoveCatalogConnectionInput {
     pub expected: ConnectionVersionBasis,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SetDefaultConnectionTargetInput {
     pub expected_catalog_revision: u64,
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[schemars(with = "crate::schema::RequiredNullable<ConnectionTarget>")]
     pub target: Option<ConnectionTarget>,
 }

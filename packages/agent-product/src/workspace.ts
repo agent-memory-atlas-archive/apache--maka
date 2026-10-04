@@ -20,6 +20,8 @@
 import type {
   Action,
   ActionOutcome,
+  ModelSelection,
+  SettingsModelChoice,
   AgentDeliveryPage,
   AgentHistoryPage,
   AgentHistoryPosition,
@@ -54,9 +56,9 @@ type Request =
       refresh: boolean;
       position: AgentHistoryPosition;
     }
-  | { kind: 'read'; draft: TextareaObservation; sessionId: string }
+  | { kind: 'read'; draft: TextareaObservation; sessionId: string; model: ModelSelection }
   | { kind: 'create' }
-  | { kind: 'send'; draft: TextareaObservation; sessionId: string }
+  | { kind: 'send'; draft: TextareaObservation; sessionId: string; model: ModelSelection }
   | { kind: 'stop'; sessionId: string }
   | { kind: 'receipt' }
   | { kind: 'restorePage' }
@@ -79,6 +81,7 @@ export interface State {
   listRevision: string | null;
   listCursor: string | null;
   selected: string | null;
+  model: SettingsModelChoice | null;
   messages: Message[];
   through: number | null;
   cursor: Cursor | null;
@@ -460,10 +463,10 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
       intent(
         state,
         actions,
-        { kind: 'send', draft: request.draft, sessionId: request.sessionId },
+        { kind: 'send', draft: request.draft, sessionId: request.sessionId, model: request.model },
         'agent',
         'send',
-        { sessionId: request.sessionId, message: chunk.text },
+        { sessionId: request.sessionId, message: chunk.text, model: request.model },
       );
       break;
     }
@@ -634,7 +637,8 @@ function frame(
       locale,
       busy: busy || executionPending(state),
       running: !!state.run,
-      enabled: !!state.selected && !state.loading && state.notice !== 'unavailable',
+      enabled:
+        !!state.selected && !!state.model && !state.loading && state.notice !== 'unavailable',
       command: state.command,
     },
     { send: 'send', stop: 'stop', changed: 'draft' },
@@ -658,6 +662,12 @@ function frame(
             17,
             theme.text,
             550,
+          ),
+          slot(
+            'models',
+            'models',
+            { theme, locale, selection: state.model, busy: busy || executionPending(state) },
+            { selected: 'model' },
           ),
           ...(status ? [ui.text('status', status, 13, theme.muted)] : []),
           ...(state.uncertain
@@ -742,6 +752,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         listRevision: null,
         listCursor: null,
         selected: null,
+        model: null,
         messages: [],
         through: null,
         cursor: null,
@@ -815,6 +826,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
           state.notice !== 'unavailable' &&
           !mutationPending(state) &&
           state.selected &&
+          state.model &&
           !state.loading &&
           !state.run &&
           !state.command
@@ -826,7 +838,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
             intent(
               state,
               actions,
-              { kind: 'read', draft, sessionId: state.selected },
+              { kind: 'read', draft, sessionId: state.selected, model: state.model.selection },
               'reader',
               'read',
               { start: 0, end: draft.snapshot.text.bytes },
@@ -853,6 +865,13 @@ export function workspace(target: Target, locale: string): Component<State, Reco
             sessionId: state.selected,
             invocationId: state.run.invocationId,
           });
+        } else if (
+          input.child === 'models' &&
+          input.name === 'selected' &&
+          !mutationPending(state) &&
+          !executionPending(state)
+        ) {
+          state.model = input.event as SettingsModelChoice;
         } else if (input.name === 'create' && !mutationPending(state))
           intent(state, actions, { kind: 'create' }, 'agent', 'create', {
             title: copy(locale).new,

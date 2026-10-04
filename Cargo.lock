@@ -7909,6 +7909,7 @@ dependencies = [
  "maka-providers",
  "maka-runtime",
  "maka-runtime-host",
+ "maka-settings-service",
  "maka-tools",
  "maka-tui",
  "maka-ui",
@@ -8005,6 +8006,7 @@ dependencies = [
  "maka-runtime",
  "maka-runtime-host",
  "maka-sandbox",
+ "maka-settings-service",
  "maka-transport",
  "maka-tui",
  "maka-ui",
@@ -8136,6 +8138,7 @@ dependencies = [
  "maka-plugin-core",
  "maka-plugins",
  "maka-runtime-host",
+ "maka-settings-service",
  "maka-ui",
  "maka-ui-gpui",
  "objc2 0.6.4",
@@ -8673,6 +8676,21 @@ version = "0.2.0"
 dependencies = [
  "futures-util",
  "maka-plugins",
+ "serde_json",
+]
+
+[[package]]
+name = "maka-settings-service"
+version = "0.2.0"
+dependencies = [
+ "futures-util",
+ "maka-config",
+ "maka-plugin-core",
+ "maka-providers",
+ "maka-runtime",
+ "maka-runtime-host",
+ "schemars 1.2.2",
+ "serde",
  "serde_json",
 ]
 

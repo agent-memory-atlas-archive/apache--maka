@@ -46,3 +46,5 @@ node packages/agent-product/scripts/compose.mjs \
 历史固定事件 fence，使用 Host 返回的 transcript cursor 分页。活动文本从原 PartStarted 重放，thinking 不作为回答；规范历史变化不重启原订阅。显示节选有界并明确标注，后续分页仍是独立读取。
 
 类型检查和测试使用 `npm --workspace @maka-agent/product run typecheck` / `test`。设置 `MAKA_PRODUCT_CLI_CHECK=1` 额外验证实际包引用与两端组合。原生 opt-in 测试使用实际打包 guest、TUI 编辑器、持久调用意图、已授权原生服务和本地 HTTP provider，命令见英文文档；最终桌面视觉和三平台交互需要另行实际验收。
+
+普通 `models` 组件从显式绑定的 Root 设置能力读取有界模型选项，仅在尚未选择模型时建议已保存默认项。每次发送固定该次选择的连接 revision；Desktop 使用滚动列表，TUI 每屏三个选项并保留导航。宿主不隐式替换模型，未知结果不自动重发；添加连接与原生密码编辑仍待产品接入。`agent` 配置仅包含 `maxActiveRuns` 与 `maxSteps`。

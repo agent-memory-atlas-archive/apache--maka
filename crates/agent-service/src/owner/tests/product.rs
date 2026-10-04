@@ -32,7 +32,7 @@ impl maka_application_bridge::Scopes for Scopes {
 }
 fn draw(presenter: &mut maka_tui::application::Presenter) -> Buffer {
     presenter.pump().unwrap();
-    let area = Rect::new(0, 0, 100, 50);
+    let area = Rect::new(0, 0, 80, 24);
     let mut buffer = Buffer::empty(area);
     let scene = presenter.paint(area, &mut buffer).unwrap();
     presenter.present(scene);
@@ -107,11 +107,14 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     let server = runtime.spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
         let body = request(&mut socket).await;
-        assert_eq!(body["model"], "fixture-model");
+        assert_eq!(body["model"], "fixture-model-19");
         assert!(body.to_string().contains("Hello product"));
         response(&mut socket).await;
     });
     let fixture = runtime.block_on(Fixture::new(&base, 1, None));
+    runtime.block_on(super::selection::edit(&fixture, |changes| {
+        changes.enabled_model_ids = (0..20).map(|at| format!("fixture-model-{at:02}")).collect();
+    }));
     let ui_owner =
         Arc::new(RootOwner::create(&fixture._dir.path().join("ui"), &fixture.namespaces).unwrap());
     let caller = Arc::new(runtime.block_on(EventLog::for_root(ui_owner)).unwrap());
@@ -119,6 +122,7 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     let names = [
         "workspace",
         "composer",
+        "models",
         "navigation",
         "timeline",
         "appearance",
@@ -142,7 +146,7 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         .collect::<BTreeMap<_, _>>();
     // The authoring function accepts actual Rust-computed package refs. Do not
     // duplicate package hashing or native manifest schemas in a fixture.
-    let script = r#"const {composition,packageNames}=await import(process.argv[1]);const refs=JSON.parse(process.argv[2]);const keys=Object.fromEntries(packageNames.map((name,i)=>[name,'00000000-0000-0000-0000-'+String(i+20).padStart(12,'0')]));keys.agent='00000000-0000-0000-0000-000000000001';keys.receipts='00000000-0000-0000-0000-000000000004';for(const name of packageNames)refs[name]??={id:'unused.'+name,revision:'sha256-'+ 'a'.repeat(64)};const result=composition({presentation:'tui',locale:'en',scheme:'light',packages:refs,keys,agent:{model:{connectionId:'fixture',connectionSlug:'fixture',model:'fixture-model'},provider:'openai-compatible',maxActiveRuns:1,maxSteps:1},hostRoot:'/fixture',hostDeployment:'00000000-0000-0000-0000-000000000080'});console.log(JSON.stringify({input:result.ui,observations:result.remoteExports}));"#;
+    let script = r#"const {composition,packageNames}=await import(process.argv[1]);const refs=JSON.parse(process.argv[2]);const keys=Object.fromEntries(packageNames.map((name,i)=>[name,'00000000-0000-0000-0000-'+String(i+20).padStart(12,'0')]));keys.agent='00000000-0000-0000-0000-000000000001';keys.receipts='00000000-0000-0000-0000-000000000004';keys.settings='00000000-0000-0000-0000-000000000005';for(const name of packageNames)refs[name]??={id:'unused.'+name,revision:'sha256-'+ 'a'.repeat(64)};const result=composition({presentation:'tui',locale:'en',scheme:'light',packages:refs,keys,agent:{maxActiveRuns:1,maxSteps:1},hostRoot:'/fixture',hostDeployment:'00000000-0000-0000-0000-000000000080'});console.log(JSON.stringify({input:result.ui,observations:result.remoteExports}));"#;
     let authored = Command::new("node")
         .arg("--input-type=module")
         .arg("-e")
@@ -191,7 +195,18 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         ))
         .unwrap()
         .remove(0);
-    let bindings = [runtime.block_on(fixture.binding(2)), receipt_binding];
+    let settings_binding = runtime
+        .block_on(fixture.app.client().bind(
+            fixture.app.client().activation(&id(2)).unwrap(),
+            "settings".into(),
+        ))
+        .unwrap()
+        .remove(0);
+    let bindings = [
+        runtime.block_on(fixture.binding(2)),
+        receipt_binding,
+        settings_binding,
+    ];
     let start = || {
         runtime
             .block_on(maka_tui::application::Presenter::start_from_store(
@@ -218,6 +233,16 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     presenter
         .input(Event::Paste("Hello product".into()))
         .unwrap();
+    await_screen(&mut presenter, "[ Choose model ]");
+    click(&mut presenter, "[ Choose model ]");
+    await_screen(&mut presenter, "fixture-model-00");
+    for expected in ["03", "06", "09", "12", "15", "16", "19"] {
+        click(&mut presenter, "More models");
+        await_screen(&mut presenter, &format!("fixture-model-{expected}"));
+    }
+    assert!(screen(&draw(&mut presenter)).contains("Close"));
+    click(&mut presenter, "fixture-model-19");
+    assert!(screen(&draw(&mut presenter)).contains("Hello product"));
     await_screen(&mut presenter, "[ Send ]");
     click(&mut presenter, "[ Send ]");
     await_screen(&mut presenter, "Elegant response");

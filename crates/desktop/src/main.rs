@@ -394,6 +394,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::set_max_level(log::LevelFilter::Warn);
     let mut native = maka_runtime_host::application::NativeRegistry::default();
     maka_agent_service::provide(&mut native)?;
+    maka_settings_service::provide(&mut native)?;
     Launcher::start(Args::parse(), native, widgets::registry())?.run()
 }
 

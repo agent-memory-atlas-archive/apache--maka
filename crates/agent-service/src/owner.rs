@@ -19,7 +19,7 @@
 
 use crate::{Configuration, IMPLEMENTATION, NativeContext, configuration_schema};
 use futures_util::{FutureExt, future::BoxFuture};
-use maka_agent::{Engine, ModelSource, RunError, RunInput, RunWork};
+use maka_agent::{Engine, RunError, RunInput, RunWork};
 use maka_config::ConfigurationStore;
 use maka_event_log::{EventLog, sessions::SessionRecord};
 use maka_model::ModelExecutor;
@@ -47,8 +47,6 @@ use uuid::Uuid;
 pub(crate) struct SessionConfiguration {
     pub schema_version: u32,
     pub title: String,
-    pub model: crate::ModelSelection,
-    pub provider: String,
 }
 struct Control {
     invocation: String,
@@ -66,7 +64,6 @@ pub(crate) struct Owner {
     pub settings: Configuration,
     pub prefix: String,
     configuration: Arc<ConfigurationStore>,
-    definition: Arc<maka_plugins::provider::Definition>,
     revision: SourceRevision,
     cwd: String,
     engine: Engine,
@@ -97,10 +94,6 @@ impl Owner {
             .to_str()
             .ok_or("agent_root_path_invalid")?
             .to_owned();
-        let definition = Arc::new(
-            maka_providers::api::ApiProviders::definition(&settings.provider)
-                .map_err(|_| "agent_provider_unavailable")?,
-        );
         let models = ModelExecutor::new(1, Duration::from_secs(60))
             .map_err(|_| "agent_executor_unavailable")?;
         let cells = maka_js_runtime::CodeExecutor::new(1, maka_js_runtime::CellLimits::default())
@@ -108,7 +101,7 @@ impl Owner {
         let engine = Engine::new(persistence.store().clone(), models, cells);
         let revision = SourceRevision {
             kind: SourceKind::ModelProvider,
-            name: settings.provider.clone(),
+            name: IMPLEMENTATION.into(),
             package_id: context.package().id.clone(),
             entry_id: IMPLEMENTATION.into(),
             activation: context.activation().epoch().to_string(),
@@ -125,7 +118,6 @@ impl Owner {
             store: persistence.store().clone(),
             prefix,
             cwd,
-            definition,
             revision,
             permits: Arc::new(Semaphore::new(settings.max_active_runs)),
             settings,
@@ -166,6 +158,7 @@ impl Owner {
         self: &Arc<Self>,
         id: String,
         text: String,
+        selection: crate::ModelSelection,
         operation: &maka_plugin_core::operation::RecoveryRef,
     ) -> Result<crate::contract::Started, String> {
         if text.trim().is_empty() || text.len() > 64 * 1024 {
@@ -186,21 +179,19 @@ impl Owner {
             return Err("agent_session_busy".into());
         }
         let session = self.session(&id).await?;
-        if session.archived
-            || session.configuration.schema_version != 1
-            || session.configuration.model != self.settings.model
-            || session.configuration.provider != self.settings.provider
-        {
+        if session.archived || session.configuration.schema_version != 1 {
             return Err("agent_session_configuration_changed".into());
         }
-        let source = Arc::new(crate::model::Source {
-            configuration: self.configuration.clone(),
-            settings: self.settings.clone(),
-            definition: self.definition.clone(),
-            session: id.clone(),
-            revision: self.revision.clone(),
-        });
-        let prepared = source.capture().await.map_err(public_error)?;
+        let (source, prepared) = crate::model::Source::select(
+            self.configuration.clone(),
+            selection,
+            id.clone(),
+            self.revision.clone(),
+        )
+        .await
+        .map_err(public_error)?;
+        let binding = source.binding.clone();
+        let source = Arc::new(source);
         let identity = self.operation_id(operation);
         let invocation = Invocation {
             session_id: id.clone(),
@@ -255,7 +246,7 @@ impl Owner {
                 collaboration_mode: CollaborationMode::Agent,
                 orchestration_mode: BehaviorId::default(),
                 tool_mode: ToolMode::Direct,
-                model: Some(self.settings.model.binding()),
+                model: Some(binding),
                 thinking_level: None,
                 system_prompt: None,
                 tool_composition: None,

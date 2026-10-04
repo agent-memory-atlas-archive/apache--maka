@@ -74,10 +74,11 @@ const returned = (value) => ({
 });
 class Client {
   constructor() {
-    this.output = product.component.mount({}, values);
     this.actions = new Map();
+    this.output = product.component.mount({}, values);
     this.save();
   }
+
   save() {
     for (const action of this.output.actions) this.actions.set(action.key, action);
   }
@@ -123,6 +124,18 @@ class Client {
     this.query('list', { revision: 'catalog', sessions: [session], nextCursor: null });
     this.query('observe', { session, through, run, parts });
     this.query('history', { kind: 'ready', through, chunks, next: null });
+    this.input({
+      kind: 'component',
+      key: 'model',
+      child: 'models',
+      name: 'selected',
+      event: {
+        selection: { connectionId: 'fixture', revision: 2, modelId: 'fixture-model' },
+        connectionName: 'Fixture',
+        label: 'Fixture model',
+        isDefault: false,
+      },
+    });
     return this;
   }
   page(events, through) {
@@ -358,8 +371,6 @@ test('both product compositions use actual immutable package refs and check in t
         scheme: 'light',
         keys,
         agent: {
-          model: { connectionId: 'fixture', connectionSlug: 'fixture', model: 'fixture-model' },
-          provider: 'openai-compatible',
           maxActiveRuns: 1,
           maxSteps: 1,
         },
@@ -488,4 +499,99 @@ test('reconnect isolates late reads before building the new active-prefix watch'
     41,
   );
   assert.equal(client.state.liveMessages[0].text, 'Preserved reply');
+});
+
+const modelRoot = new URL('../', import.meta.url);
+const modelAppearance = await import(new URL('dist/packages/appearance/tui.js', modelRoot));
+const modelProps = {
+  theme: modelAppearance.activate({ scheme: 'light' }).Appearance.value,
+  locale: 'en',
+  selection: null,
+  busy: true,
+};
+const modelGuest = await import(new URL('dist/packages/models/tui.js', modelRoot));
+modelGuest.activate();
+const modelChoices = Array.from({ length: 16 }, (_, at) => ({
+  selection: { connectionId: 'connection', revision: 5, modelId: `model-${at}` },
+  connectionName: 'Account',
+  label: `Model ${at}`,
+  isDefault: at === 0,
+}));
+const modelAction = (out, key, reply, p = modelProps) =>
+  modelGuest.component.event(
+    structuredClone(out.frame.state),
+    { kind: 'action', key, event: reply },
+    p,
+    {},
+  );
+const modelRaw = (out, key, p = modelProps) =>
+  modelGuest.component.event(
+    structuredClone(out.frame.state),
+    { kind: 'raw', key, event: {} },
+    p,
+    {},
+  );
+function modelButtons(view, result = []) {
+  if (view.kind === 'button') result.push(view.key);
+  for (const child of view.children ?? []) modelButtons(child, result);
+  return result;
+}
+test('TUI pages expose every original choice, keep controls visible and retain late default until enabled', () => {
+  let out = modelGuest.component.mount(modelProps, {});
+  const request = out.actions[0];
+  assert.equal(request.method, 'models');
+  out = modelAction(out, request.key, {
+    status: 'succeeded',
+    value: { kind: 'ready', revision: 5, choices: modelChoices, next: null },
+  });
+  assert.equal(out.events[0].value.selection.modelId, 'model-0');
+  out = modelGuest.component.update(out.frame.state, { ...modelProps, busy: false }, {});
+  assert.equal(out.events[0].value.selection.modelId, 'model-0');
+  const enabled = { ...modelProps, busy: false, selection: modelChoices[0] };
+  out = modelRaw(out, 'toggle', enabled);
+  assert.deepEqual(
+    modelButtons(out.frame.view).filter((key) => key.startsWith('choose-')),
+    ['choose-0', 'choose-1', 'choose-2'],
+  );
+  for (let i = 0; i < 5; i++) out = modelRaw(out, 'more', enabled);
+  assert.deepEqual(
+    modelButtons(out.frame.view).filter((key) => key.startsWith('choose-')),
+    ['choose-15'],
+  );
+  assert.ok(modelButtons(out.frame.view).includes('close'));
+  out = modelRaw(out, 'choose-15', enabled);
+  assert.equal(out.events[0].value.selection.modelId, 'model-15');
+  assert.equal(out.frame.state.open, false);
+  out = modelGuest.component.update(
+    out.frame.state,
+    { ...enabled, selection: modelChoices[15] },
+    {},
+  );
+  assert.equal(out.events.length, 0);
+});
+test('late query is ignored and catalog changes restart only the observation', () => {
+  const enabled = { ...modelProps, busy: false, selection: modelChoices[1] };
+  let out = modelGuest.component.mount(enabled, {});
+  const original = out.actions[0];
+  out = modelAction(
+    out,
+    'retired-query',
+    {
+      status: 'succeeded',
+      value: { kind: 'ready', revision: 5, choices: modelChoices, next: null },
+    },
+    enabled,
+  );
+  assert.equal(out.frame.state.pending, original.key);
+  assert.equal(out.frame.state.choices.length, 0);
+  out = modelAction(
+    out,
+    original.key,
+    { status: 'succeeded', value: { kind: 'changed', revision: 6 } },
+    enabled,
+  );
+  assert.equal(out.actions.length, 1);
+  assert.deepEqual(out.actions[0].input, { kind: 'start' });
+  assert.equal(out.events.length, 0);
+  assert.equal(out.actions[0].method, 'models');
 });
