@@ -2538,6 +2538,1180 @@ export const contracts = {
     interface: {
       kind: 'service',
       methods: {
+        connection: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'ConnectionVersionBasis',
+            type: 'object',
+            properties: {
+              connectionId: {
+                type: 'string',
+              },
+              revision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['connectionId', 'revision'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsConnectionDetail',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  actual: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ConnectionVersionBasis',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'stale',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'actual'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  target: {
+                    $ref: '#/$defs/ConnectionCredentialTarget',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                  enabled: {
+                    type: 'boolean',
+                  },
+                  enabledModelCount: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'ready',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'target', 'name', 'enabled', 'enabledModelCount'],
+              },
+            ],
+            $defs: {
+              ConnectionVersionBasis: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision'],
+              },
+              ConnectionCredentialTarget: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  slug: {
+                    type: 'string',
+                  },
+                  provider: {
+                    $ref: '#/$defs/Identity',
+                  },
+                  configuration: {
+                    type: 'object',
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision', 'slug', 'provider', 'configuration'],
+              },
+              Identity: {
+                description:
+                  'Durable recipient, not a registration lease. Re-loading the same package can\nrestore it; another package, Entry or scope cannot inherit its credentials.',
+                type: 'object',
+                properties: {
+                  packageId: {
+                    type: 'string',
+                  },
+                  entryId: {
+                    type: 'string',
+                  },
+                  scope: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['packageId', 'entryId', 'scope', 'name'],
+              },
+            },
+          },
+          resources: {},
+        },
+        connections: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsConnectionsRead',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'start',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                    maximum: 1024,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'continue',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision', 'offset'],
+              },
+            ],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsConnectionsPage',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  defaultTarget: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ConnectionTarget',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  connections: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/SettingsConnectionSummary',
+                    },
+                    maxItems: 16,
+                  },
+                  next: {
+                    type: ['integer', 'null'],
+                    format: 'uint',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'ready',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision', 'defaultTarget', 'connections', 'next'],
+              },
+            ],
+            $defs: {
+              ConnectionTarget: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  modelId: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'modelId'],
+              },
+              SettingsConnectionSummary: {
+                type: 'object',
+                properties: {
+                  basis: {
+                    $ref: '#/$defs/ConnectionVersionBasis',
+                  },
+                  slug: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                  provider: {
+                    $ref: '#/$defs/Identity',
+                  },
+                  enabled: {
+                    type: 'boolean',
+                  },
+                  enabledModelCount: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['basis', 'slug', 'name', 'provider', 'enabled', 'enabledModelCount'],
+              },
+              ConnectionVersionBasis: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision'],
+              },
+              Identity: {
+                description:
+                  'Durable recipient, not a registration lease. Re-loading the same package can\nrestore it; another package, Entry or scope cannot inherit its credentials.',
+                type: 'object',
+                properties: {
+                  packageId: {
+                    type: 'string',
+                  },
+                  entryId: {
+                    type: 'string',
+                  },
+                  scope: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['packageId', 'entryId', 'scope', 'name'],
+              },
+            },
+          },
+          resources: {},
+        },
+        create: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'CreateCatalogConnectionInput',
+            type: 'object',
+            properties: {
+              expectedCatalogRevision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              connection: {
+                $ref: '#/$defs/ConnectionCatalogEntryDraft',
+              },
+            },
+            additionalProperties: false,
+            required: ['expectedCatalogRevision', 'connection'],
+            $defs: {
+              ConnectionCatalogEntryDraft: {
+                type: 'object',
+                properties: {
+                  slug: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                  provider: {
+                    $ref: '#/$defs/Identity',
+                  },
+                  configuration: {
+                    type: 'object',
+                  },
+                  enabled: {
+                    type: 'boolean',
+                  },
+                  enabledModelIds: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  modelOverrides: {
+                    type: 'object',
+                    additionalProperties: {
+                      $ref: '#/$defs/ModelOverride',
+                    },
+                  },
+                  requestBodyOverlay: {
+                    type: 'object',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'slug',
+                  'name',
+                  'provider',
+                  'configuration',
+                  'enabled',
+                  'enabledModelIds',
+                ],
+              },
+              Identity: {
+                description:
+                  'Durable recipient, not a registration lease. Re-loading the same package can\nrestore it; another package, Entry or scope cannot inherit its credentials.',
+                type: 'object',
+                properties: {
+                  packageId: {
+                    type: 'string',
+                  },
+                  entryId: {
+                    type: 'string',
+                  },
+                  scope: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['packageId', 'entryId', 'scope', 'name'],
+              },
+              ModelOverride: {
+                type: 'object',
+                properties: {
+                  adapter: {
+                    description:
+                      "Public adapter contribution name; omitted selects the wire's default.",
+                    type: 'string',
+                  },
+                  codeMode: {
+                    description:
+                      'Omitted means model-specific defaults; false is an explicit opt-out.',
+                    type: 'boolean',
+                  },
+                  applyPatch: {
+                    description:
+                      'Independent of Code Mode: select patch editing or structured Edit/Write.',
+                    type: 'boolean',
+                  },
+                  thinkingLevels: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/ThinkingLevel',
+                    },
+                  },
+                  defaultThinkingLevel: {
+                    $ref: '#/$defs/ThinkingLevel',
+                  },
+                  vision: {
+                    type: 'boolean',
+                  },
+                  contextWindow: {
+                    description:
+                      'Override total input-plus-output capacity, without subtracting a reply budget.',
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  compactionThreshold: {
+                    description:
+                      'Optional override of the automatic compaction threshold, in retained tokens.\nBy default Host uses 85% of the smaller total window/input ceiling.',
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  inputLimit: {
+                    description:
+                      'Independent input ceiling; also caps the default compaction input budget.',
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  maxOutputTokens: {
+                    description:
+                      'Requested per-step output budget, subject to provider and remaining-capacity caps.',
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  displayName: {
+                    type: 'string',
+                  },
+                  description: {
+                    type: 'string',
+                  },
+                  apiProtocol: {
+                    $ref: '#/$defs/ApiProtocol',
+                  },
+                  knowledgeCutoff: {
+                    type: 'string',
+                  },
+                  capabilities: {
+                    $ref: '#/$defs/ModelOverrideCapabilities',
+                  },
+                  modalities: {
+                    $ref: '#/$defs/ModelModalities',
+                  },
+                  serviceTier: {
+                    $ref: '#/$defs/RelayServiceTier',
+                  },
+                },
+                additionalProperties: false,
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              ApiProtocol: {
+                type: 'string',
+                enum: ['openai-chat', 'openai-responses', 'anthropic-messages'],
+              },
+              ModelOverrideCapabilities: {
+                description: 'Vision has one declaration owner: ModelOverride::vision.',
+                type: 'object',
+                properties: {
+                  chat: {
+                    type: 'boolean',
+                  },
+                  reasoning: {
+                    type: 'boolean',
+                  },
+                  functionCalling: {
+                    type: 'boolean',
+                  },
+                  parallelToolCalls: {
+                    type: 'boolean',
+                  },
+                  imageGeneration: {
+                    type: 'boolean',
+                  },
+                  webSearch: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+              },
+              ModelModalities: {
+                type: 'object',
+                properties: {
+                  input: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/ModelModality',
+                    },
+                  },
+                  output: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/ModelModality',
+                    },
+                  },
+                },
+                additionalProperties: false,
+                required: ['input', 'output'],
+              },
+              ModelModality: {
+                type: 'string',
+                enum: ['text', 'image', 'audio', 'pdf', 'video'],
+              },
+              RelayServiceTier: {
+                type: 'string',
+                enum: ['fast'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'CatalogMutationResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  catalogRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  connection: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ConnectionVersionBasis',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'committed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'catalogRevision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  expectedRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  actualRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'revision_conflict',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expectedRevision', 'actualRevision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  slug: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'connection_exists',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'slug'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  expected: {
+                    $ref: '#/$defs/ConnectionVersionBasis',
+                  },
+                  actual: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ConnectionVersionBasis',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'connection_stale',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expected', 'actual'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  target: {
+                    $ref: '#/$defs/ConnectionTarget',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'invalid_default_target',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'target'],
+              },
+            ],
+            $defs: {
+              ConnectionVersionBasis: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision'],
+              },
+              ConnectionTarget: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  modelId: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'modelId'],
+              },
+            },
+          },
+          resources: {},
+        },
+        credentialStatus: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'CredentialVaultQueryInput',
+            type: 'object',
+            properties: {
+              locator: {
+                $ref: '#/$defs/CredentialLocator',
+              },
+            },
+            additionalProperties: false,
+            required: ['locator'],
+            $defs: {
+              CredentialLocator: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        $ref: '#/$defs/ConnectionCredentialKind',
+                      },
+                      scope: {
+                        type: 'string',
+                        const: 'connection',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['scope', 'connectionId', 'kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        $ref: '#/$defs/PasswordKind',
+                      },
+                      scope: {
+                        type: 'string',
+                        const: 'network_proxy',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['scope', 'kind'],
+                  },
+                ],
+              },
+              ConnectionCredentialKind: {
+                type: 'string',
+                enum: ['provider', 'request_headers'],
+              },
+              PasswordKind: {
+                type: 'string',
+                enum: ['password'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'CredentialVaultQueryResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  status: {
+                    $ref: '#/$defs/CredentialStatus',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'status',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'status'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'connection_not_found',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            $defs: {
+              CredentialStatus: {
+                type: 'object',
+                properties: {
+                  locator: {
+                    $ref: '#/$defs/CredentialLocator',
+                  },
+                  configured: {
+                    type: 'boolean',
+                  },
+                  credentialId: {
+                    type: ['string', 'null'],
+                  },
+                  revision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['locator', 'configured', 'credentialId', 'revision', 'updatedAt'],
+              },
+              CredentialLocator: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        $ref: '#/$defs/ConnectionCredentialKind',
+                      },
+                      scope: {
+                        type: 'string',
+                        const: 'connection',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['scope', 'connectionId', 'kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        $ref: '#/$defs/PasswordKind',
+                      },
+                      scope: {
+                        type: 'string',
+                        const: 'network_proxy',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['scope', 'kind'],
+                  },
+                ],
+              },
+              ConnectionCredentialKind: {
+                type: 'string',
+                enum: ['provider', 'request_headers'],
+              },
+              PasswordKind: {
+                type: 'string',
+                enum: ['password'],
+              },
+            },
+          },
+          resources: {},
+        },
+        deleteCredential: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'DeleteCredentialInput',
+            type: 'object',
+            properties: {
+              expected: {
+                $ref: '#/$defs/CredentialVersionBasis',
+              },
+              expectedConnection: {
+                description: 'Required for connection credentials; null for network credentials.',
+                anyOf: [
+                  {
+                    $ref: '#/$defs/ConnectionCredentialTarget',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            additionalProperties: false,
+            required: ['expected', 'expectedConnection'],
+            $defs: {
+              CredentialVersionBasis: {
+                type: 'object',
+                properties: {
+                  locator: {
+                    $ref: '#/$defs/CredentialLocator',
+                  },
+                  credentialId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['locator', 'credentialId', 'revision'],
+              },
+              CredentialLocator: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        $ref: '#/$defs/ConnectionCredentialKind',
+                      },
+                      scope: {
+                        type: 'string',
+                        const: 'connection',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['scope', 'connectionId', 'kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        $ref: '#/$defs/PasswordKind',
+                      },
+                      scope: {
+                        type: 'string',
+                        const: 'network_proxy',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['scope', 'kind'],
+                  },
+                ],
+              },
+              ConnectionCredentialKind: {
+                type: 'string',
+                enum: ['provider', 'request_headers'],
+              },
+              PasswordKind: {
+                type: 'string',
+                enum: ['password'],
+              },
+              ConnectionCredentialTarget: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  slug: {
+                    type: 'string',
+                  },
+                  provider: {
+                    $ref: '#/$defs/Identity',
+                  },
+                  configuration: {
+                    type: 'object',
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision', 'slug', 'provider', 'configuration'],
+              },
+              Identity: {
+                description:
+                  'Durable recipient, not a registration lease. Re-loading the same package can\nrestore it; another package, Entry or scope cannot inherit its credentials.',
+                type: 'object',
+                properties: {
+                  packageId: {
+                    type: 'string',
+                  },
+                  entryId: {
+                    type: 'string',
+                  },
+                  scope: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['packageId', 'entryId', 'scope', 'name'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'CredentialMutationResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  vaultRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  status: {
+                    $ref: '#/$defs/CredentialStatus',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'committed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'vaultRevision', 'status'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'connection_not_found',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  expected: {
+                    $ref: '#/$defs/ConnectionVersionBasis',
+                  },
+                  actual: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ConnectionVersionBasis',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'connection_stale',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expected', 'actual'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  expected: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/CredentialVersionBasis',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  actual: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/CredentialVersionBasis',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'credential_stale',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expected', 'actual'],
+              },
+            ],
+            $defs: {
+              CredentialStatus: {
+                type: 'object',
+                properties: {
+                  locator: {
+                    $ref: '#/$defs/CredentialLocator',
+                  },
+                  configured: {
+                    type: 'boolean',
+                  },
+                  credentialId: {
+                    type: ['string', 'null'],
+                  },
+                  revision: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['locator', 'configured', 'credentialId', 'revision', 'updatedAt'],
+              },
+              CredentialLocator: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        $ref: '#/$defs/ConnectionCredentialKind',
+                      },
+                      scope: {
+                        type: 'string',
+                        const: 'connection',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['scope', 'connectionId', 'kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        $ref: '#/$defs/PasswordKind',
+                      },
+                      scope: {
+                        type: 'string',
+                        const: 'network_proxy',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['scope', 'kind'],
+                  },
+                ],
+              },
+              ConnectionCredentialKind: {
+                type: 'string',
+                enum: ['provider', 'request_headers'],
+              },
+              PasswordKind: {
+                type: 'string',
+                enum: ['password'],
+              },
+              ConnectionVersionBasis: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision'],
+              },
+              CredentialVersionBasis: {
+                type: 'object',
+                properties: {
+                  locator: {
+                    $ref: '#/$defs/CredentialLocator',
+                  },
+                  credentialId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['locator', 'credentialId', 'revision'],
+              },
+            },
+          },
+          resources: {},
+        },
         models: {
           mode: 'query',
           input: {
@@ -2722,6 +3896,532 @@ export const contracts = {
           },
           resources: {},
         },
+        providers: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsProvidersRead',
+            type: 'object',
+            properties: {
+              offset: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+                maximum: 1024,
+              },
+            },
+            additionalProperties: false,
+            required: ['offset'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsProvidersPage',
+            type: 'object',
+            properties: {
+              providers: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/SettingsProvider',
+                },
+                maxItems: 8,
+              },
+              next: {
+                type: ['integer', 'null'],
+                format: 'uint',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['providers', 'next'],
+            $defs: {
+              SettingsProvider: {
+                type: 'object',
+                properties: {
+                  identity: {
+                    $ref: '#/$defs/Identity',
+                  },
+                  descriptor: {
+                    $ref: '#/$defs/Descriptor',
+                  },
+                },
+                additionalProperties: false,
+                required: ['identity', 'descriptor'],
+              },
+              Identity: {
+                description:
+                  'Durable recipient, not a registration lease. Re-loading the same package can\nrestore it; another package, Entry or scope cannot inherit its credentials.',
+                type: 'object',
+                properties: {
+                  packageId: {
+                    type: 'string',
+                  },
+                  entryId: {
+                    type: 'string',
+                  },
+                  scope: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['packageId', 'entryId', 'scope', 'name'],
+              },
+              Descriptor: {
+                type: 'object',
+                properties: {
+                  label: {
+                    type: 'string',
+                  },
+                  customEndpoint: {
+                    description: 'Offers a user-selected endpoint instead of a named service.',
+                    type: 'boolean',
+                    default: false,
+                  },
+                  configurationSchema: true,
+                  configurationDefaults: true,
+                  authentication: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/Method',
+                    },
+                  },
+                  anonymous: {
+                    description:
+                      "Whether the provider supports a connection without a stored credential.\nPresentation metadata; authorization remains the provider's decision.",
+                    type: 'boolean',
+                  },
+                  discovery: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'label',
+                  'customEndpoint',
+                  'configurationSchema',
+                  'configurationDefaults',
+                  'authentication',
+                  'anonymous',
+                  'discovery',
+                ],
+              },
+              Method: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  label: {
+                    type: 'string',
+                  },
+                  inputSchema: {
+                    description:
+                      'Secret-bearing form input never enters the connection configuration.',
+                  },
+                  interactive: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'label', 'inputSchema', 'interactive'],
+              },
+            },
+          },
+          resources: {},
+        },
+        remove: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'RemoveCatalogConnectionInput',
+            type: 'object',
+            properties: {
+              expected: {
+                $ref: '#/$defs/ConnectionVersionBasis',
+              },
+            },
+            additionalProperties: false,
+            required: ['expected'],
+            $defs: {
+              ConnectionVersionBasis: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'CatalogMutationResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  catalogRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  connection: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ConnectionVersionBasis',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'committed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'catalogRevision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  expectedRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  actualRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'revision_conflict',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expectedRevision', 'actualRevision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  slug: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'connection_exists',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'slug'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  expected: {
+                    $ref: '#/$defs/ConnectionVersionBasis',
+                  },
+                  actual: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ConnectionVersionBasis',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'connection_stale',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expected', 'actual'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  target: {
+                    $ref: '#/$defs/ConnectionTarget',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'invalid_default_target',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'target'],
+              },
+            ],
+            $defs: {
+              ConnectionVersionBasis: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision'],
+              },
+              ConnectionTarget: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  modelId: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'modelId'],
+              },
+            },
+          },
+          resources: {},
+        },
+        saveCredential: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsSaveCredential',
+            type: 'object',
+            properties: {
+              expected: {
+                $ref: '#/$defs/ConnectionCredentialTarget',
+              },
+              expectedCredential: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/CredentialVersionBasis',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            additionalProperties: false,
+            required: ['expected', 'expectedCredential'],
+            $defs: {
+              ConnectionCredentialTarget: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  slug: {
+                    type: 'string',
+                  },
+                  provider: {
+                    $ref: '#/$defs/Identity',
+                  },
+                  configuration: {
+                    type: 'object',
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision', 'slug', 'provider', 'configuration'],
+              },
+              Identity: {
+                description:
+                  'Durable recipient, not a registration lease. Re-loading the same package can\nrestore it; another package, Entry or scope cannot inherit its credentials.',
+                type: 'object',
+                properties: {
+                  packageId: {
+                    type: 'string',
+                  },
+                  entryId: {
+                    type: 'string',
+                  },
+                  scope: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['packageId', 'entryId', 'scope', 'name'],
+              },
+              CredentialVersionBasis: {
+                type: 'object',
+                properties: {
+                  locator: {
+                    $ref: '#/$defs/CredentialLocator',
+                  },
+                  credentialId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['locator', 'credentialId', 'revision'],
+              },
+              CredentialLocator: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        $ref: '#/$defs/ConnectionCredentialKind',
+                      },
+                      scope: {
+                        type: 'string',
+                        const: 'connection',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['scope', 'connectionId', 'kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        $ref: '#/$defs/PasswordKind',
+                      },
+                      scope: {
+                        type: 'string',
+                        const: 'network_proxy',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['scope', 'kind'],
+                  },
+                ],
+              },
+              ConnectionCredentialKind: {
+                type: 'string',
+                enum: ['provider', 'request_headers'],
+              },
+              PasswordKind: {
+                type: 'string',
+                enum: ['password'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'SettingsCredentialSaveResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  connection: {
+                    $ref: '#/$defs/ConnectionIdentity',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'saved',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'connection'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/SettingsCredentialRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+            ],
+            $defs: {
+              ConnectionIdentity: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  slug: {
+                    type: 'string',
+                  },
+                  provider: {
+                    $ref: '#/$defs/Identity',
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'slug', 'provider'],
+              },
+              Identity: {
+                description:
+                  'Durable recipient, not a registration lease. Re-loading the same package can\nrestore it; another package, Entry or scope cannot inherit its credentials.',
+                type: 'object',
+                properties: {
+                  packageId: {
+                    type: 'string',
+                  },
+                  entryId: {
+                    type: 'string',
+                  },
+                  scope: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['packageId', 'entryId', 'scope', 'name'],
+              },
+              SettingsCredentialRejection: {
+                type: 'string',
+                enum: [
+                  'attempt_conflict',
+                  'connection_changed',
+                  'credential_changed',
+                  'capacity',
+                  'slug_taken',
+                  'authentication',
+                ],
+              },
+            },
+          },
+          resources: {
+            secret: {
+              name: 'maka.text.utf8',
+              version: 1,
+            },
+          },
+        },
         setDefault: {
           mode: 'mutation',
           input: {
@@ -2760,6 +4460,352 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['connectionId', 'modelId'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'CatalogMutationResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  catalogRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  connection: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ConnectionVersionBasis',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'committed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'catalogRevision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  expectedRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  actualRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'revision_conflict',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expectedRevision', 'actualRevision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  slug: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'connection_exists',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'slug'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  expected: {
+                    $ref: '#/$defs/ConnectionVersionBasis',
+                  },
+                  actual: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ConnectionVersionBasis',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'connection_stale',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expected', 'actual'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  target: {
+                    $ref: '#/$defs/ConnectionTarget',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'invalid_default_target',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'target'],
+              },
+            ],
+            $defs: {
+              ConnectionVersionBasis: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision'],
+              },
+              ConnectionTarget: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  modelId: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'modelId'],
+              },
+            },
+          },
+          resources: {},
+        },
+        update: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'UpdateCatalogConnectionInput',
+            type: 'object',
+            properties: {
+              expected: {
+                $ref: '#/$defs/ConnectionVersionBasis',
+              },
+              changes: {
+                $ref: '#/$defs/ConnectionCatalogEntryUpdate',
+              },
+            },
+            additionalProperties: false,
+            required: ['expected', 'changes'],
+            $defs: {
+              ConnectionVersionBasis: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision'],
+              },
+              ConnectionCatalogEntryUpdate: {
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  configuration: {
+                    type: 'object',
+                  },
+                  enabled: {
+                    type: 'boolean',
+                  },
+                  enabledModelIds: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  modelOverrides: {
+                    $ref: '#/$defs/Nullable_Map_of_ModelOverride',
+                  },
+                  requestBodyOverlay: {
+                    type: ['object', 'null'],
+                  },
+                },
+                additionalProperties: false,
+              },
+              Nullable_Map_of_ModelOverride: {
+                type: ['object', 'null'],
+                additionalProperties: {
+                  $ref: '#/$defs/ModelOverride',
+                },
+              },
+              ModelOverride: {
+                type: 'object',
+                properties: {
+                  adapter: {
+                    description:
+                      "Public adapter contribution name; omitted selects the wire's default.",
+                    type: 'string',
+                  },
+                  codeMode: {
+                    description:
+                      'Omitted means model-specific defaults; false is an explicit opt-out.',
+                    type: 'boolean',
+                  },
+                  applyPatch: {
+                    description:
+                      'Independent of Code Mode: select patch editing or structured Edit/Write.',
+                    type: 'boolean',
+                  },
+                  thinkingLevels: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/ThinkingLevel',
+                    },
+                  },
+                  defaultThinkingLevel: {
+                    $ref: '#/$defs/ThinkingLevel',
+                  },
+                  vision: {
+                    type: 'boolean',
+                  },
+                  contextWindow: {
+                    description:
+                      'Override total input-plus-output capacity, without subtracting a reply budget.',
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  compactionThreshold: {
+                    description:
+                      'Optional override of the automatic compaction threshold, in retained tokens.\nBy default Host uses 85% of the smaller total window/input ceiling.',
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  inputLimit: {
+                    description:
+                      'Independent input ceiling; also caps the default compaction input budget.',
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  maxOutputTokens: {
+                    description:
+                      'Requested per-step output budget, subject to provider and remaining-capacity caps.',
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  displayName: {
+                    type: 'string',
+                  },
+                  description: {
+                    type: 'string',
+                  },
+                  apiProtocol: {
+                    $ref: '#/$defs/ApiProtocol',
+                  },
+                  knowledgeCutoff: {
+                    type: 'string',
+                  },
+                  capabilities: {
+                    $ref: '#/$defs/ModelOverrideCapabilities',
+                  },
+                  modalities: {
+                    $ref: '#/$defs/ModelModalities',
+                  },
+                  serviceTier: {
+                    $ref: '#/$defs/RelayServiceTier',
+                  },
+                },
+                additionalProperties: false,
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              ApiProtocol: {
+                type: 'string',
+                enum: ['openai-chat', 'openai-responses', 'anthropic-messages'],
+              },
+              ModelOverrideCapabilities: {
+                description: 'Vision has one declaration owner: ModelOverride::vision.',
+                type: 'object',
+                properties: {
+                  chat: {
+                    type: 'boolean',
+                  },
+                  reasoning: {
+                    type: 'boolean',
+                  },
+                  functionCalling: {
+                    type: 'boolean',
+                  },
+                  parallelToolCalls: {
+                    type: 'boolean',
+                  },
+                  imageGeneration: {
+                    type: 'boolean',
+                  },
+                  webSearch: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+              },
+              ModelModalities: {
+                type: 'object',
+                properties: {
+                  input: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/ModelModality',
+                    },
+                  },
+                  output: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/ModelModality',
+                    },
+                  },
+                },
+                additionalProperties: false,
+                required: ['input', 'output'],
+              },
+              ModelModality: {
+                type: 'string',
+                enum: ['text', 'image', 'audio', 'pdf', 'video'],
+              },
+              RelayServiceTier: {
+                type: 'string',
+                enum: ['fast'],
               },
             },
           },

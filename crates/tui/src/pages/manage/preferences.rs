@@ -388,7 +388,7 @@ impl App {
                             return None;
                         };
                         let mut input = connection::update(row, Kind::Rename, &row.name);
-                        input.changes.configuration = f.value().ok()?;
+                        input.changes.configuration = Some(f.value().ok()?);
                         let wire = serde_json::to_value(&input).ok()?;
                         match maka_protocol::configuration::decode_update_connection_input(&wire) {
                             Ok(input) => Work::SaveProvider(input),

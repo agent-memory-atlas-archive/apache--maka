@@ -113,7 +113,8 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     });
     let fixture = runtime.block_on(Fixture::new(&base, 1, None));
     runtime.block_on(super::selection::edit(&fixture, |changes| {
-        changes.enabled_model_ids = (0..20).map(|at| format!("fixture-model-{at:02}")).collect();
+        changes.enabled_model_ids =
+            Some((0..20).map(|at| format!("fixture-model-{at:02}")).collect());
     }));
     let ui_owner =
         Arc::new(RootOwner::create(&fixture._dir.path().join("ui"), &fixture.namespaces).unwrap());

@@ -210,9 +210,15 @@ pub fn normalize_draft(value: &mut ConnectionCatalogEntryDraft) -> ValidationRes
     Ok(())
 }
 pub fn normalize_update(value: &mut ConnectionCatalogEntryUpdate) -> ValidationResult {
-    text(&value.name, 256, false)?;
-    model_ids(&value.enabled_model_ids)?;
-    provider_configuration(&value.configuration)?;
+    if let Some(name) = &value.name {
+        text(name, 256, false)?;
+    }
+    if let Some(ids) = &value.enabled_model_ids {
+        model_ids(ids)?;
+    }
+    if let Some(configuration) = &value.configuration {
+        provider_configuration(configuration)?;
+    }
     if let Patch::Set(v) = &value.model_overrides {
         profiles(v)?;
         if v.is_empty() {

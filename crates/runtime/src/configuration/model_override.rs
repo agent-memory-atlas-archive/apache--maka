@@ -21,7 +21,9 @@ use super::present;
 use crate::execution::ThinkingLevel;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum ApiProtocol {
     OpenaiChat,
@@ -29,7 +31,7 @@ pub enum ApiProtocol {
     AnthropicMessages,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelModality {
     Text,
@@ -39,7 +41,7 @@ pub enum ModelModality {
     Video,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ModelOverride {
     /// Public adapter contribution name; omitted selects the wire's default.
@@ -48,6 +50,7 @@ pub struct ModelOverride {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "String")]
     pub adapter: Option<String>,
     /// Omitted means model-specific defaults; false is an explicit opt-out.
     #[serde(
@@ -55,6 +58,7 @@ pub struct ModelOverride {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "bool")]
     pub code_mode: Option<bool>,
     /// Independent of Code Mode: select patch editing or structured Edit/Write.
     #[serde(
@@ -62,24 +66,28 @@ pub struct ModelOverride {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "bool")]
     pub apply_patch: Option<bool>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "Vec<ThinkingLevel>")]
     pub thinking_levels: Option<Vec<ThinkingLevel>>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "ThinkingLevel")]
     pub default_thinking_level: Option<ThinkingLevel>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "bool")]
     pub vision: Option<bool>,
     #[serde(
         default,
@@ -87,6 +95,7 @@ pub struct ModelOverride {
         deserialize_with = "present"
     )]
     /// Override total input-plus-output capacity, without subtracting a reply budget.
+    #[schemars(with = "u64")]
     pub context_window: Option<u64>,
     #[serde(
         default,
@@ -95,6 +104,7 @@ pub struct ModelOverride {
     )]
     /// Optional override of the automatic compaction threshold, in retained tokens.
     /// By default Host uses 85% of the smaller total window/input ceiling.
+    #[schemars(with = "u64")]
     pub compaction_threshold: Option<u64>,
     #[serde(
         default,
@@ -102,6 +112,7 @@ pub struct ModelOverride {
         deserialize_with = "present"
     )]
     /// Independent input ceiling; also caps the default compaction input budget.
+    #[schemars(with = "u64")]
     pub input_limit: Option<u64>,
     #[serde(
         default,
@@ -109,58 +120,66 @@ pub struct ModelOverride {
         deserialize_with = "present"
     )]
     /// Requested per-step output budget, subject to provider and remaining-capacity caps.
+    #[schemars(with = "u64")]
     pub max_output_tokens: Option<u64>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "String")]
     pub display_name: Option<String>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "String")]
     pub description: Option<String>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "ApiProtocol")]
     pub api_protocol: Option<ApiProtocol>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "String")]
     pub knowledge_cutoff: Option<String>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "ModelOverrideCapabilities")]
     pub capabilities: Option<ModelOverrideCapabilities>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "ModelModalities")]
     pub modalities: Option<ModelModalities>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "RelayServiceTier")]
     pub service_tier: Option<RelayServiceTier>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RelayServiceTier {
     Fast,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelModalities {
     pub input: Vec<ModelModality>,
@@ -168,7 +187,7 @@ pub struct ModelModalities {
 }
 
 /// Vision has one declaration owner: ModelOverride::vision.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ModelOverrideCapabilities {
     #[serde(
@@ -176,36 +195,42 @@ pub struct ModelOverrideCapabilities {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "bool")]
     pub chat: Option<bool>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "bool")]
     pub reasoning: Option<bool>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "bool")]
     pub function_calling: Option<bool>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "bool")]
     pub parallel_tool_calls: Option<bool>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "bool")]
     pub image_generation: Option<bool>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "bool")]
     pub web_search: Option<bool>,
 }
 

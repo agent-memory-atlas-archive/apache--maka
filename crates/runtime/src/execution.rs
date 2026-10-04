@@ -39,7 +39,7 @@ pub use behavior::BehaviorId;
 mod tool_policy;
 pub use tool_policy::EditingTools;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ThinkingLevel {
     Off,

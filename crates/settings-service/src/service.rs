@@ -34,6 +34,82 @@ impl Handler for Settings {
         let store = self.0.clone();
         Box::pin(async move {
             match method.as_str() {
+                "connections" => super::connections::page(&store, input).await,
+                "connection" => super::connections::detail(&store, input).await,
+                "providers" => super::connections::providers(input),
+                "create" => {
+                    context.operation().ok_or("settings_mutation_required")?;
+                    let mut input: CreateCatalogConnectionInput =
+                        serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;
+                    let definition = super::connections::definition(&input.connection.provider)?;
+                    input.connection.configuration = definition
+                        .configure(input.connection.configuration)
+                        .map_err(|_| "settings_configuration_invalid")?;
+                    super::connections::encode(
+                        store
+                            .create_connection(input)
+                            .await
+                            .map_err(|_| "settings_effect_unknown")?,
+                    )
+                }
+                "update" => {
+                    context.operation().ok_or("settings_mutation_required")?;
+                    let input: UpdateCatalogConnectionInput =
+                        serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;
+                    if let Some(configuration) = &input.changes.configuration {
+                        let catalog = store
+                            .catalog()
+                            .await
+                            .map_err(|_| "settings_store_unavailable")?;
+                        if let Some(row) = catalog.connections.iter().find(|row| {
+                            row.connection_id == input.expected.connection_id
+                                && row.revision == input.expected.revision
+                        }) {
+                            super::connections::definition(&row.provider)?
+                                .validate_configuration(configuration)
+                                .map_err(|_| "settings_configuration_invalid")?;
+                        }
+                    }
+                    super::connections::encode(
+                        store
+                            .update_connection(input)
+                            .await
+                            .map_err(|_| "settings_effect_unknown")?,
+                    )
+                }
+                "remove" => {
+                    context.operation().ok_or("settings_mutation_required")?;
+                    let input =
+                        serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;
+                    super::connections::encode(
+                        store
+                            .remove_connection(input)
+                            .await
+                            .map_err(|_| "settings_effect_unknown")?,
+                    )
+                }
+                "credentialStatus" => {
+                    let input: CredentialVaultQueryInput =
+                        serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;
+                    super::connections::encode(
+                        store
+                            .credential_status(input.locator)
+                            .await
+                            .map_err(|_| "settings_store_unavailable")?,
+                    )
+                }
+                "deleteCredential" => {
+                    context.operation().ok_or("settings_mutation_required")?;
+                    let input =
+                        serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;
+                    super::connections::encode(
+                        store
+                            .delete_credential(input)
+                            .await
+                            .map_err(|_| "settings_effect_unknown")?,
+                    )
+                }
+                "saveCredential" => super::credential::save(&store, input, context).await,
                 "models" => {
                     let input: ModelsRead =
                         serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;

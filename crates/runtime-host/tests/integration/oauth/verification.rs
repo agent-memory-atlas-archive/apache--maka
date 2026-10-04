@@ -113,10 +113,10 @@ async fn provider_verification_uses_pinned_proxy_and_persists_observations() {
                         revision: row.revision
                     },
                     changes: ConnectionCatalogEntryUpdate {
-                        name: row.name,
-                        configuration: row.configuration,
-                        enabled: true,
-                        enabled_model_ids: vec!["fixture-model".into()],
+                        name: Some(row.name),
+                        configuration: Some(row.configuration),
+                        enabled: Some(true),
+                        enabled_model_ids: Some(vec!["fixture-model".into()]),
                         model_overrides: Patch::Keep,
                         request_body_overlay: Patch::Keep,
                     },

@@ -26,3 +26,5 @@
 `oauth::LoginStart` 要求 `expectedCredential`，caller 观察未配置时也须显式 null。已有连接登录包含原 `ConnectionCredentialTarget`。prepare 在同一 SQL snapshot 核两者，complete 再核准备时的连接和 vault generation；refresh 或 logout 不会被基于旧观察的请求静默覆盖。原认证 fingerprint 包含该观察，recovery 只观察原 attempt，不授权第二次 exchange。
 
 Provider 凭据沿原 authentication/enrollment owner 与受校验 envelope；普通 `set_credential` 拒绝 provider key。可信原生扩展可在真实 Host 准入后使用同一个 `Definition::authenticate` 校验，再通过原 enrollment 发布。认证输入与替换 secret 保持私有，公开 query 仅返回目录事实和凭据状态。commit 不确定、业务成功与实际清理结果分别保留，不能互相代替。
+
+`ConnectionCatalogEntryUpdate` 是部分更新：省略名称、配置、启用状态或启用模型 ID 就保留原值；明确的 false 或空数组替换对应字段。这些字段拒绝 null。原 overrides 与 request-body patch 仍区分省略（保留）、null（清空）和提供值（设置）。只有原 SQL 事务中的准确连接 CAS 通过后才合并与校验最终 row；配置变化仍执行原发现/测试失效与 overrides 政策。

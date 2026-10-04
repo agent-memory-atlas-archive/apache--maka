@@ -17,18 +17,18 @@
  * under the License.
  */
 use super::*;
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectionCredentialKind {
     Provider,
     RequestHeaders,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PasswordKind {
     Password,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "scope",
     rename_all = "snake_case",
@@ -44,13 +44,13 @@ pub enum CredentialLocator {
         kind: PasswordKind,
     },
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CredentialIdentityBasis {
     pub credential_id: String,
     pub revision: u64,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CredentialVersionBasis {
     pub locator: CredentialLocator,
@@ -108,22 +108,34 @@ impl Serialize for CredentialStatus {
         wire.end()
     }
 }
+#[derive(Deserialize, schemars::JsonSchema)]
+#[schemars(rename = "CredentialStatus")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CredentialStatusWire {
+    locator: CredentialLocator,
+    configured: bool,
+    // The wire requires these keys even when their values are null.
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[schemars(with = "crate::schema::RequiredNullable<String>")]
+    credential_id: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[schemars(with = "crate::schema::RequiredNullable<u64>")]
+    revision: Option<u64>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[schemars(with = "crate::schema::RequiredNullable<u64>")]
+    updated_at: Option<u64>,
+}
+impl schemars::JsonSchema for CredentialStatus {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        <CredentialStatusWire as schemars::JsonSchema>::schema_name()
+    }
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        <CredentialStatusWire as schemars::JsonSchema>::json_schema(generator)
+    }
+}
 impl<'de> Deserialize<'de> for CredentialStatus {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase", deny_unknown_fields)]
-        struct Wire {
-            locator: CredentialLocator,
-            configured: bool,
-            // The wire requires these keys even when their values are null.
-            #[serde(deserialize_with = "Option::deserialize")]
-            credential_id: Option<String>,
-            #[serde(deserialize_with = "Option::deserialize")]
-            revision: Option<u64>,
-            #[serde(deserialize_with = "Option::deserialize")]
-            updated_at: Option<u64>,
-        }
-        let wire = Wire::deserialize(deserializer)?;
+        let wire = CredentialStatusWire::deserialize(deserializer)?;
         let state = match (
             wire.configured,
             wire.credential_id,
@@ -150,13 +162,13 @@ impl<'de> Deserialize<'de> for CredentialStatus {
         })
     }
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CredentialVaultSnapshot {
     pub revision: u64,
     pub entries: Vec<CredentialStatus>,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CredentialVaultQueryInput {
     pub locator: CredentialLocator,
@@ -170,16 +182,17 @@ pub struct SetCredentialInput {
     pub expected_connection: Option<ConnectionCredentialTarget>,
     pub secret: String,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeleteCredentialInput {
     pub expected: CredentialVersionBasis,
     /// Required for connection credentials; null for network credentials.
     #[serde(deserialize_with = "Option::deserialize")]
+    #[schemars(with = "crate::schema::RequiredNullable<ConnectionCredentialTarget>")]
     pub expected_connection: Option<ConnectionCredentialTarget>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "kind",
     rename_all = "snake_case",
@@ -190,7 +203,7 @@ pub enum CredentialVaultQueryResult {
     Status { status: CredentialStatus },
     ConnectionNotFound,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "kind",
     rename_all = "snake_case",
@@ -205,10 +218,13 @@ pub enum CredentialMutationResult {
     ConnectionNotFound,
     ConnectionStale {
         expected: ConnectionVersionBasis,
+        #[schemars(with = "crate::schema::RequiredNullable<ConnectionVersionBasis>")]
         actual: Option<ConnectionVersionBasis>,
     },
     CredentialStale {
+        #[schemars(with = "crate::schema::RequiredNullable<CredentialVersionBasis>")]
         expected: Option<CredentialVersionBasis>,
+        #[schemars(with = "crate::schema::RequiredNullable<CredentialVersionBasis>")]
         actual: Option<CredentialVersionBasis>,
     },
 }

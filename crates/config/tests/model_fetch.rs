@@ -78,10 +78,10 @@ impl Fixture {
                         revision: row.revision
                     },
                     changes: ConnectionCatalogEntryUpdate {
-                        name: row.name,
-                        configuration: row.configuration,
-                        enabled: row.enabled,
-                        enabled_model_ids: row.enabled_model_ids,
+                        name: Some(row.name),
+                        configuration: Some(row.configuration),
+                        enabled: Some(row.enabled),
+                        enabled_model_ids: Some(row.enabled_model_ids),
                         model_overrides: Patch::Keep,
                         request_body_overlay: Patch::Keep,
                     },

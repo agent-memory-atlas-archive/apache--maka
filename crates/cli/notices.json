@@ -1,9 +1,9 @@
 {
   "inputs": {
-    "Cargo.lock": "487ade1bd204ec584263faf7673f0234d7351642a82472337ffc7467e4514bd0",
+    "Cargo.lock": "5e75c6bfe5cb90d92f82189558ed1c90adcf1c146b2b2b2f68ee94e910a8a5a2",
     "Cargo.toml": "2498e864b07fe63519d57e0b8db0da9725ece71573cf5a79cfdbf71305293eb6",
     "crates/acp/Cargo.toml": "836cf57acda320dc984f4648e5893580e79063e95ced700f33cfbaa75994b8f8",
-    "crates/agent-service/Cargo.toml": "6925a5be32335345f3c66afe8ecde06744fd0e8d9afc5611f64c497bd2d85904",
+    "crates/agent-service/Cargo.toml": "3336209347e391f4f571dab5548d94a72e57def1e204a9d1a482ad39f572fd70",
     "crates/agent/Cargo.toml": "241d363907d6e5491ba6645de5c114877165e4abd6844b2c581a35fd19c0f4f4",
     "crates/application-bridge/Cargo.toml": "dec64ff55aa0657ba51b233c35047d8dd5b079ebabd0ce9675ef6e2480b172a6",
     "crates/apply-patch/Cargo.toml": "049167f87e46959c056e9c3ec990d2243ea6366f883afc6cf5ff5f1364c94e51",
@@ -49,7 +49,7 @@
     "crates/session-import/Cargo.toml": "85da543221ec0c7f64c4384abac9b53cac9b3bcf4619085580c0737d7235eb71",
     "crates/session-recap/Cargo.toml": "923108fc70feb78a44d6cabf10ce114459e7c5db5055a242447ec3ccba0991a1",
     "crates/session-title/Cargo.toml": "cf8d4882b3a5a076e9456850b425bd67fa08dc4fd58447afcdfcd4501cd45cff",
-    "crates/settings-service/Cargo.toml": "27866f8d9be44f63968b8f223fc8e3495f0ddb68097b24dc3574f56788c865fa",
+    "crates/settings-service/Cargo.toml": "8652a0d28bdef54541934dbcb8d0d795a68a593a5b5d45c6edc7582776473d75",
     "crates/skills/Cargo.toml": "851dc2bca12782353978b2631fe25a909fa24802a5387e2c78119da357223c5f",
     "crates/tool-catalog/Cargo.toml": "ebad8ad9afef6254d4d12e4b66dc8355d9ffc48760566d76920d303cb9eef9b9",
     "crates/tools/Cargo.toml": "be918aeeae9874d3bdcdd66f1c6fc51b4650f9abfef784e9a796ac8b997c39d8",

@@ -78,6 +78,21 @@ impl<T: Serialize> Serialize for Patch<T> {
     }
 }
 
+impl<T: schemars::JsonSchema> schemars::JsonSchema for Patch<T> {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        <Option<T> as schemars::JsonSchema>::schema_name()
+    }
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        <Option<T> as schemars::JsonSchema>::json_schema(generator)
+    }
+}
+fn configuration_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type":"object"})
+}
+fn overlay_patch_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type":["object","null"]})
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ConnectionVersionBasis {
@@ -104,13 +119,14 @@ pub struct ConnectionTarget {
     pub model_id: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ConnectionCredentialTarget {
     pub connection_id: String,
     pub revision: u64,
     pub slug: String,
     pub provider: crate::provider::Identity,
+    #[schemars(schema_with = "configuration_schema")]
     pub configuration: Value,
 }
 
@@ -152,12 +168,13 @@ pub enum ModelDiscoverySource {
     Fallback,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ConnectionCatalogEntryDraft {
     pub slug: String,
     pub name: String,
     pub provider: crate::provider::Identity,
+    #[schemars(schema_with = "configuration_schema")]
     pub configuration: Value,
     pub enabled: bool,
     pub enabled_model_ids: Vec<String>,
@@ -166,25 +183,52 @@ pub struct ConnectionCatalogEntryDraft {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "BTreeMap<String, ModelOverride>")]
     pub model_overrides: Option<BTreeMap<String, ModelOverride>>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(schema_with = "configuration_schema")]
     pub request_body_overlay: Option<Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ConnectionCatalogEntryUpdate {
-    pub name: String,
-    pub configuration: Value,
-    pub enabled: bool,
-    pub enabled_model_ids: Vec<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    #[schemars(with = "String")]
+    pub name: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    #[schemars(schema_with = "configuration_schema")]
+    pub configuration: Option<Value>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    #[schemars(with = "bool")]
+    pub enabled: Option<bool>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    #[schemars(with = "Vec<String>")]
+    pub enabled_model_ids: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Patch::is_keep")]
     pub model_overrides: Patch<BTreeMap<String, ModelOverride>>,
     #[serde(default, skip_serializing_if = "Patch::is_keep")]
+    #[schemars(schema_with = "overlay_patch_schema")]
     pub request_body_overlay: Patch<Value>,
 }
 
@@ -240,21 +284,21 @@ pub struct ConnectionCatalogSnapshot {
     pub connections: Vec<ConnectionCatalogEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateCatalogConnectionInput {
     pub expected_catalog_revision: u64,
     pub connection: ConnectionCatalogEntryDraft,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UpdateCatalogConnectionInput {
     pub expected: ConnectionVersionBasis,
     pub changes: ConnectionCatalogEntryUpdate,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RemoveCatalogConnectionInput {
     pub expected: ConnectionVersionBasis,

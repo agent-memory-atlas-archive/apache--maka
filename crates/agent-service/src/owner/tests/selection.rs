@@ -32,10 +32,10 @@ pub(super) async fn edit(
         .connections
         .remove(0);
     let mut changes = ConnectionCatalogEntryUpdate {
-        name: row.name,
-        configuration: row.configuration,
-        enabled: row.enabled,
-        enabled_model_ids: row.enabled_model_ids,
+        name: Some(row.name),
+        configuration: Some(row.configuration),
+        enabled: Some(row.enabled),
+        enabled_model_ids: Some(row.enabled_model_ids),
         model_overrides: Patch::Keep,
         request_body_overlay: Patch::Keep,
     };
@@ -96,7 +96,11 @@ async fn explicit_models_switch_in_one_session_and_stale_selection_has_no_admiss
         let session = fixture.create("Per-message model choice").await;
         let stale = fixture.selection().await;
         edit(&fixture, |changes| {
-            changes.enabled_model_ids.push("second-model".into())
+            changes
+                .enabled_model_ids
+                .as_mut()
+                .unwrap()
+                .push("second-model".into())
         })
         .await;
         assert!(
@@ -160,8 +164,12 @@ async fn captured_execution_ignores_catalog_labels_and_other_models_but_rejects_
     .await
     .unwrap();
     edit(&fixture, |changes| {
-        changes.name = "A different label".into();
-        changes.enabled_model_ids.push("other-model".into());
+        changes.name = Some("A different label".into());
+        changes
+            .enabled_model_ids
+            .as_mut()
+            .unwrap()
+            .push("other-model".into());
         changes.model_overrides = Patch::Set(BTreeMap::from([
             (
                 "fixture-model".into(),
@@ -230,7 +238,7 @@ async fn captured_execution_ignores_catalog_labels_and_other_models_but_rejects_
     .await
     .unwrap();
     edit(&fixture, |changes| {
-        changes.configuration = json!({"baseUrl":"http://127.0.0.1:2/v1"})
+        changes.configuration = Some(json!({"baseUrl":"http://127.0.0.1:2/v1"}))
     })
     .await;
     assert!(current.capture().await.is_err());
@@ -243,7 +251,7 @@ async fn captured_execution_ignores_catalog_labels_and_other_models_but_rejects_
     .await
     .unwrap();
     edit(&fixture, |changes| {
-        changes.enabled_model_ids = vec!["other-model".into()]
+        changes.enabled_model_ids = Some(vec!["other-model".into()])
     })
     .await;
     assert!(current.capture().await.is_err());
@@ -256,7 +264,7 @@ async fn ordinary_settings_pages_keep_root_revision_and_exact_default_cas_withou
     let first = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
     let second = Fixture::new("http://127.0.0.1:2/v1", 1, None).await;
     edit(&first, |changes| {
-        changes.enabled_model_ids = (0..20).map(|at| format!("model-{at:02}")).collect()
+        changes.enabled_model_ids = Some((0..20).map(|at| format!("model-{at:02}")).collect())
     })
     .await;
     let page = models(&first, json!({"kind":"start"})).await.unwrap();

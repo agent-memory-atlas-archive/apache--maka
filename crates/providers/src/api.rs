@@ -60,6 +60,16 @@ impl ApiProviders {
         .definition()
     }
 
+    /// Available compiled API policies, without activating legacy contributions.
+    pub fn names() -> Result<Vec<String>, String> {
+        Ok(facts::all()
+            .map_err(|error| error.to_string())?
+            .iter()
+            .filter(|(_, facts)| !facts.retired && facts.auth_kind != AuthKind::OauthToken)
+            .map(|(name, _)| name.clone())
+            .collect())
+    }
+
     pub fn stage(&self) -> Result<Staged, String> {
         let mut staged = Staged::default();
         for (id, facts) in facts::all().map_err(|error| error.to_string())? {

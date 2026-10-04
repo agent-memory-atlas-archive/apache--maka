@@ -20,6 +20,9 @@
 #[path = "tests/selection.rs"]
 mod selection;
 
+#[path = "tests/settings.rs"]
+mod settings;
+
 #[path = "tests/product.rs"]
 mod product;
 
@@ -1109,10 +1112,10 @@ async fn disabled_connection() {
         .update_connection(UpdateCatalogConnectionInput {
             expected,
             changes: ConnectionCatalogEntryUpdate {
-                name: row.name.clone(),
-                configuration: row.configuration.clone(),
-                enabled: false,
-                enabled_model_ids: row.enabled_model_ids.clone(),
+                name: Some(row.name.clone()),
+                configuration: Some(row.configuration.clone()),
+                enabled: Some(false),
+                enabled_model_ids: Some(row.enabled_model_ids.clone()),
                 model_overrides: Patch::Keep,
                 request_body_overlay: Patch::Keep,
             },

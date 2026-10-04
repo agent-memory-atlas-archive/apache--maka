@@ -70,11 +70,12 @@ impl Credential {
 
 /// Durable recipient, not a registration lease. Re-loading the same package can
 /// restore it; another package, Entry or scope cannot inherit its credentials.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Identity {
     pub package_id: String,
     pub entry_id: String,
+    #[schemars(with = "String")]
     pub scope: Scope,
     pub name: String,
 }

@@ -18,7 +18,9 @@
  */
 
 //! Root-owned settings as an ordinary compiled capability, activated only by composition.
+mod connections;
 pub mod contract;
+mod credential;
 mod service;
 use futures_util::future::BoxFuture;
 use maka_runtime_host::application::{NativeActivation, NativeOwner, NativeRegistry};

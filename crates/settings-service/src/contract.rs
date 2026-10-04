@@ -71,6 +71,130 @@ pub enum ModelsPage {
         next: Option<ModelCursor>,
     },
 }
+#[derive(Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "SettingsConnectionsRead")]
+pub enum ConnectionsRead {
+    Start,
+    Continue {
+        revision: u64,
+        #[schemars(range(max = 1024))]
+        offset: usize,
+    },
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "SettingsConnectionSummary")]
+pub struct ConnectionSummary {
+    pub basis: maka_runtime::configuration::ConnectionVersionBasis,
+    pub slug: String,
+    pub name: String,
+    pub provider: maka_runtime::provider::Identity,
+    pub enabled: bool,
+    pub enabled_model_count: usize,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename = "SettingsConnectionsPage")]
+pub enum ConnectionsPage {
+    Changed {
+        revision: u64,
+    },
+    Ready {
+        revision: u64,
+        #[schemars(
+            with = "maka_runtime::schema::RequiredNullable<maka_runtime::configuration::ConnectionTarget>"
+        )]
+        default_target: Option<maka_runtime::configuration::ConnectionTarget>,
+        #[schemars(length(max = 16))]
+        connections: Vec<ConnectionSummary>,
+        #[schemars(with = "maka_runtime::schema::RequiredNullable<usize>")]
+        next: Option<usize>,
+    },
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename = "SettingsConnectionDetail")]
+pub enum ConnectionDetail {
+    Stale {
+        #[schemars(
+            with = "maka_runtime::schema::RequiredNullable<maka_runtime::configuration::ConnectionVersionBasis>"
+        )]
+        actual: Option<maka_runtime::configuration::ConnectionVersionBasis>,
+    },
+    Ready {
+        target: Box<maka_runtime::configuration::ConnectionCredentialTarget>,
+        name: String,
+        enabled: bool,
+        enabled_model_count: usize,
+    },
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "SettingsProvidersRead")]
+pub struct ProvidersRead {
+    #[schemars(range(max = 1024))]
+    pub offset: usize,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "SettingsProvider")]
+pub struct Provider {
+    pub identity: maka_runtime::provider::Identity,
+    pub descriptor: maka_plugins::provider::Descriptor,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "SettingsProvidersPage")]
+pub struct ProvidersPage {
+    #[schemars(length(max = 8))]
+    pub providers: Vec<Provider>,
+    #[schemars(with = "maka_runtime::schema::RequiredNullable<usize>")]
+    pub next: Option<usize>,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "SettingsSaveCredential")]
+pub struct SaveCredential {
+    pub expected: maka_runtime::configuration::ConnectionCredentialTarget,
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[schemars(
+        with = "maka_runtime::schema::RequiredNullable<maka_runtime::configuration::CredentialVersionBasis>"
+    )]
+    pub expected_credential: Option<maka_runtime::configuration::CredentialVersionBasis>,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "SettingsCredentialSaveResult")]
+pub enum CredentialSaveResult {
+    Saved {
+        connection: maka_runtime::oauth::ConnectionIdentity,
+    },
+    Rejected {
+        reason: CredentialRejection,
+    },
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "SettingsCredentialRejection")]
+pub enum CredentialRejection {
+    AttemptConflict,
+    ConnectionChanged,
+    CredentialChanged,
+    Capacity,
+    SlugTaken,
+    Authentication,
+}
 pub fn contract() -> Contract {
     fn schema<T: JsonSchema>() -> serde_json::Value {
         let settings = schemars::generate::SchemaSettings::default()
@@ -92,6 +216,68 @@ pub fn contract() -> Contract {
         transport: Transport::Remote,
         interface: Interface::Service {
             methods: BTreeMap::from([
+                (
+                    "connections".into(),
+                    method::<ConnectionsRead, ConnectionsPage>(MethodMode::Query),
+                ),
+                (
+                    "connection".into(),
+                    method::<maka_runtime::configuration::ConnectionVersionBasis, ConnectionDetail>(
+                        MethodMode::Query,
+                    ),
+                ),
+                (
+                    "providers".into(),
+                    method::<ProvidersRead, ProvidersPage>(MethodMode::Query),
+                ),
+                (
+                    "create".into(),
+                    method::<
+                        maka_runtime::configuration::CreateCatalogConnectionInput,
+                        CatalogMutationResult,
+                    >(MethodMode::Mutation),
+                ),
+                (
+                    "update".into(),
+                    method::<
+                        maka_runtime::configuration::UpdateCatalogConnectionInput,
+                        CatalogMutationResult,
+                    >(MethodMode::Mutation),
+                ),
+                (
+                    "remove".into(),
+                    method::<
+                        maka_runtime::configuration::RemoveCatalogConnectionInput,
+                        CatalogMutationResult,
+                    >(MethodMode::Mutation),
+                ),
+                (
+                    "credentialStatus".into(),
+                    method::<
+                        maka_runtime::configuration::CredentialVaultQueryInput,
+                        maka_runtime::configuration::CredentialVaultQueryResult,
+                    >(MethodMode::Query),
+                ),
+                (
+                    "deleteCredential".into(),
+                    method::<
+                        maka_runtime::configuration::DeleteCredentialInput,
+                        maka_runtime::configuration::CredentialMutationResult,
+                    >(MethodMode::Mutation),
+                ),
+                (
+                    "saveCredential".into(),
+                    Method {
+                        resources: BTreeMap::from([(
+                            "secret".into(),
+                            maka_plugin_core::contract::ResourceType {
+                                name: "maka.text.utf8".into(),
+                                version: 1,
+                            },
+                        )]),
+                        ..method::<SaveCredential, CredentialSaveResult>(MethodMode::Mutation)
+                    },
+                ),
                 (
                     "models".into(),
                     method::<ModelsRead, ModelsPage>(MethodMode::Query),

@@ -39,6 +39,7 @@ pub enum CatalogMutationResult {
     },
     ConnectionStale {
         expected: ConnectionVersionBasis,
+        #[schemars(with = "crate::schema::RequiredNullable<ConnectionVersionBasis>")]
         actual: Option<ConnectionVersionBasis>,
     },
     InvalidDefaultTarget {

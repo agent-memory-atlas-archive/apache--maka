@@ -435,10 +435,10 @@ async fn connection_mutations_bind_cas_and_acknowledgements_to_the_requested_ide
                         .update_connection(UpdateCatalogConnectionInput {
                             expected,
                             changes: ConnectionCatalogEntryUpdate {
-                                name: "Connection".into(),
-                                configuration: json!({}),
-                                enabled: true,
-                                enabled_model_ids: vec!["model".into()],
+                                name: Some("Connection".into()),
+                                configuration: Some(json!({})),
+                                enabled: Some(true),
+                                enabled_model_ids: Some(vec!["model".into()]),
                                 model_overrides: Patch::Keep,
                                 request_body_overlay: Patch::Keep,
                             },

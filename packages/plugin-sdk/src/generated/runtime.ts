@@ -47,6 +47,20 @@ export type RuntimeProtocol =
   | ModelSelection
   | SettingsModelsRead
   | SettingsModelsPage
+  | SettingsConnectionsRead
+  | SettingsConnectionsPage
+  | SettingsConnectionDetail
+  | SettingsProvidersRead
+  | SettingsProvidersPage
+  | SettingsSaveCredential
+  | SettingsCredentialSaveResult
+  | CreateCatalogConnectionInput
+  | UpdateCatalogConnectionInput
+  | RemoveCatalogConnectionInput
+  | CredentialVaultQueryInput
+  | CredentialVaultQueryResult
+  | DeleteCredentialInput
+  | CredentialMutationResult
   | SetDefaultConnectionTargetInput
   | CatalogMutationResult
   | AgentList
@@ -494,6 +508,272 @@ export type SettingsModelsPage =
       next: SettingsModelCursor | null;
       kind: 'ready';
     };
+export type SettingsConnectionsRead =
+  | {
+      kind: 'start';
+    }
+  | {
+      revision: number;
+      offset: number;
+      kind: 'continue';
+    };
+export type SettingsConnectionsPage =
+  | {
+      revision: number;
+      kind: 'changed';
+    }
+  | {
+      revision: number;
+      defaultTarget: ConnectionTarget | null;
+      /**
+       * @maxItems 16
+       */
+      connections:
+        | []
+        | [SettingsConnectionSummary]
+        | [SettingsConnectionSummary, SettingsConnectionSummary]
+        | [SettingsConnectionSummary, SettingsConnectionSummary, SettingsConnectionSummary]
+        | [
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+          ]
+        | [
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+          ]
+        | [
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+          ]
+        | [
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+          ]
+        | [
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+          ]
+        | [
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+          ]
+        | [
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+          ]
+        | [
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+          ]
+        | [
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+          ]
+        | [
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+          ]
+        | [
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+          ]
+        | [
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+          ]
+        | [
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+            SettingsConnectionSummary,
+          ];
+      next: number | null;
+      kind: 'ready';
+    };
+export type SettingsConnectionDetail =
+  | {
+      actual: ConnectionVersionBasis | null;
+      kind: 'stale';
+    }
+  | {
+      target: ConnectionCredentialTarget;
+      name: string;
+      enabled: boolean;
+      enabledModelCount: number;
+      kind: 'ready';
+    };
+export type CredentialLocator =
+  | {
+      connectionId: string;
+      kind: ConnectionCredentialKind;
+      scope: 'connection';
+    }
+  | {
+      kind: PasswordKind;
+      scope: 'network_proxy';
+    };
+export type ConnectionCredentialKind = 'provider' | 'request_headers';
+export type PasswordKind = 'password';
+export type SettingsCredentialSaveResult =
+  | {
+      connection: ConnectionIdentity;
+      kind: 'saved';
+    }
+  | {
+      reason: SettingsCredentialRejection;
+      kind: 'rejected';
+    };
+export type SettingsCredentialRejection =
+  | 'attempt_conflict'
+  | 'connection_changed'
+  | 'credential_changed'
+  | 'capacity'
+  | 'slug_taken'
+  | 'authentication';
+export type ThinkingLevel =
+  | 'off'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max'
+  | 'ultra';
+export type ApiProtocol = 'openai-chat' | 'openai-responses' | 'anthropic-messages';
+export type ModelModality = 'text' | 'image' | 'audio' | 'pdf' | 'video';
+export type RelayServiceTier = 'fast';
+export type Nullable_MapOf_ModelOverride = {
+  [k: string]: ModelOverride | undefined;
+} | null;
+export type CredentialVaultQueryResult =
+  | {
+      status: CredentialStatus;
+      kind: 'status';
+    }
+  | {
+      kind: 'connection_not_found';
+    };
+export type CredentialMutationResult =
+  | {
+      vaultRevision: number;
+      status: CredentialStatus;
+      kind: 'committed';
+    }
+  | {
+      kind: 'connection_not_found';
+    }
+  | {
+      expected: ConnectionVersionBasis;
+      actual: ConnectionVersionBasis | null;
+      kind: 'connection_stale';
+    }
+  | {
+      expected: CredentialVersionBasis | null;
+      actual: CredentialVersionBasis | null;
+      kind: 'credential_stale';
+    };
 export type CatalogMutationResult =
   | {
       catalogRevision: number;
@@ -511,7 +791,7 @@ export type CatalogMutationResult =
     }
   | {
       expected: ConnectionVersionBasis;
-      actual?: ConnectionVersionBasis | null;
+      actual: ConnectionVersionBasis | null;
       kind: 'connection_stale';
     }
   | {
@@ -624,7 +904,7 @@ export type HostRequest =
       end: number;
       operation: 'read';
     };
-export type Identity =
+export type Identity2 =
   | {
       invocation: Invocation;
       operationId?: string | null;
@@ -1131,17 +1411,244 @@ export interface SettingsModelChoice {
   label: string;
   isDefault: boolean;
 }
-export interface SetDefaultConnectionTargetInput {
-  expectedCatalogRevision: number;
-  target: ConnectionTarget | null;
-}
 export interface ConnectionTarget {
   connectionId: string;
   modelId: string;
 }
+export interface SettingsConnectionSummary {
+  basis: ConnectionVersionBasis;
+  slug: string;
+  name: string;
+  provider: Identity;
+  enabled: boolean;
+  enabledModelCount: number;
+}
 export interface ConnectionVersionBasis {
   connectionId: string;
   revision: number;
+}
+/**
+ * Durable recipient, not a registration lease. Re-loading the same package can
+ * restore it; another package, Entry or scope cannot inherit its credentials.
+ */
+export interface Identity {
+  packageId: string;
+  entryId: string;
+  scope: string;
+  name: string;
+}
+export interface ConnectionCredentialTarget {
+  connectionId: string;
+  revision: number;
+  slug: string;
+  provider: Identity;
+  configuration: {
+    [k: string]: unknown | undefined;
+  };
+}
+export interface SettingsProvidersRead {
+  offset: number;
+}
+export interface SettingsProvidersPage {
+  /**
+   * @maxItems 8
+   */
+  providers:
+    | []
+    | [SettingsProvider]
+    | [SettingsProvider, SettingsProvider]
+    | [SettingsProvider, SettingsProvider, SettingsProvider]
+    | [SettingsProvider, SettingsProvider, SettingsProvider, SettingsProvider]
+    | [SettingsProvider, SettingsProvider, SettingsProvider, SettingsProvider, SettingsProvider]
+    | [
+        SettingsProvider,
+        SettingsProvider,
+        SettingsProvider,
+        SettingsProvider,
+        SettingsProvider,
+        SettingsProvider,
+      ]
+    | [
+        SettingsProvider,
+        SettingsProvider,
+        SettingsProvider,
+        SettingsProvider,
+        SettingsProvider,
+        SettingsProvider,
+        SettingsProvider,
+      ]
+    | [
+        SettingsProvider,
+        SettingsProvider,
+        SettingsProvider,
+        SettingsProvider,
+        SettingsProvider,
+        SettingsProvider,
+        SettingsProvider,
+        SettingsProvider,
+      ];
+  next: number | null;
+}
+export interface SettingsProvider {
+  identity: Identity;
+  descriptor: Descriptor;
+}
+export interface Descriptor {
+  label: string;
+  /**
+   * Offers a user-selected endpoint instead of a named service.
+   */
+  customEndpoint?: boolean;
+  configurationSchema: unknown;
+  configurationDefaults: unknown;
+  authentication: Method2[];
+  /**
+   * Whether the provider supports a connection without a stored credential.
+   * Presentation metadata; authorization remains the provider's decision.
+   */
+  anonymous: boolean;
+  discovery: boolean;
+}
+export interface Method2 {
+  id: string;
+  label: string;
+  /**
+   * Secret-bearing form input never enters the connection configuration.
+   */
+  inputSchema: {
+    [k: string]: unknown | undefined;
+  };
+  interactive: boolean;
+}
+export interface SettingsSaveCredential {
+  expected: ConnectionCredentialTarget;
+  expectedCredential: CredentialVersionBasis | null;
+}
+export interface CredentialVersionBasis {
+  locator: CredentialLocator;
+  credentialId: string;
+  revision: number;
+}
+export interface ConnectionIdentity {
+  connectionId: string;
+  slug: string;
+  provider: Identity;
+}
+export interface CreateCatalogConnectionInput {
+  expectedCatalogRevision: number;
+  connection: ConnectionCatalogEntryDraft;
+}
+export interface ConnectionCatalogEntryDraft {
+  slug: string;
+  name: string;
+  provider: Identity;
+  configuration: {
+    [k: string]: unknown | undefined;
+  };
+  enabled: boolean;
+  enabledModelIds: string[];
+  modelOverrides?: {
+    [k: string]: ModelOverride | undefined;
+  };
+  requestBodyOverlay?: {
+    [k: string]: unknown | undefined;
+  };
+}
+export interface ModelOverride {
+  /**
+   * Public adapter contribution name; omitted selects the wire's default.
+   */
+  adapter?: string;
+  /**
+   * Omitted means model-specific defaults; false is an explicit opt-out.
+   */
+  codeMode?: boolean;
+  /**
+   * Independent of Code Mode: select patch editing or structured Edit/Write.
+   */
+  applyPatch?: boolean;
+  thinkingLevels?: ThinkingLevel[];
+  defaultThinkingLevel?: ThinkingLevel;
+  vision?: boolean;
+  /**
+   * Override total input-plus-output capacity, without subtracting a reply budget.
+   */
+  contextWindow?: number;
+  /**
+   * Optional override of the automatic compaction threshold, in retained tokens.
+   * By default Host uses 85% of the smaller total window/input ceiling.
+   */
+  compactionThreshold?: number;
+  /**
+   * Independent input ceiling; also caps the default compaction input budget.
+   */
+  inputLimit?: number;
+  /**
+   * Requested per-step output budget, subject to provider and remaining-capacity caps.
+   */
+  maxOutputTokens?: number;
+  displayName?: string;
+  description?: string;
+  apiProtocol?: ApiProtocol;
+  knowledgeCutoff?: string;
+  capabilities?: ModelOverrideCapabilities;
+  modalities?: ModelModalities;
+  serviceTier?: RelayServiceTier;
+}
+/**
+ * Vision has one declaration owner: ModelOverride::vision.
+ */
+export interface ModelOverrideCapabilities {
+  chat?: boolean;
+  reasoning?: boolean;
+  functionCalling?: boolean;
+  parallelToolCalls?: boolean;
+  imageGeneration?: boolean;
+  webSearch?: boolean;
+}
+export interface ModelModalities {
+  input: ModelModality[];
+  output: ModelModality[];
+}
+export interface UpdateCatalogConnectionInput {
+  expected: ConnectionVersionBasis;
+  changes: ConnectionCatalogEntryUpdate;
+}
+export interface ConnectionCatalogEntryUpdate {
+  name?: string;
+  configuration?: {
+    [k: string]: unknown | undefined;
+  };
+  enabled?: boolean;
+  enabledModelIds?: string[];
+  modelOverrides?: Nullable_MapOf_ModelOverride;
+  requestBodyOverlay?: {
+    [k: string]: unknown | undefined;
+  } | null;
+}
+export interface RemoveCatalogConnectionInput {
+  expected: ConnectionVersionBasis;
+}
+export interface CredentialVaultQueryInput {
+  locator: CredentialLocator;
+}
+export interface CredentialStatus {
+  locator: CredentialLocator;
+  configured: boolean;
+  credentialId: string | null;
+  revision: number | null;
+  updatedAt: number | null;
+}
+export interface DeleteCredentialInput {
+  expected: CredentialVersionBasis;
+  /**
+   * Required for connection credentials; null for network credentials.
+   */
+  expectedConnection: ConnectionCredentialTarget | null;
+}
+export interface SetDefaultConnectionTargetInput {
+  expectedCatalogRevision: number;
+  target: ConnectionTarget | null;
 }
 export interface AgentList {
   revision?: string | null;
@@ -1250,7 +1757,7 @@ export interface HostActivation {
  * Actual callback observation. Neither the source nor receipt is a grant.
  */
 export interface HostObservation {
-  source: Identity;
+  source: Identity2;
   operation?: RecoveryRef | null;
 }
 export interface Invocation {

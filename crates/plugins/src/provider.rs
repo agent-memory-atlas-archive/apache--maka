@@ -254,7 +254,7 @@ impl Definition {
         Ok(())
     }
 
-    fn validate_configuration(&self, configuration: &serde_json::Value) -> Result<(), Error> {
+    pub fn validate_configuration(&self, configuration: &serde_json::Value) -> Result<(), Error> {
         if serde_json::to_vec(configuration)
             .map_err(|_| Error::Invalid("invalid configuration".into()))?
             .len()

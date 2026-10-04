@@ -25,10 +25,12 @@ publish.workspace = true
 [dependencies]
 maka-config.workspace = true
 maka-plugin-core.workspace = true
+maka-plugins.workspace = true
 maka-runtime.workspace = true
 maka-runtime-host.workspace = true
 maka-providers.workspace = true
 futures-util.workspace = true
 schemars.workspace = true
+sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true

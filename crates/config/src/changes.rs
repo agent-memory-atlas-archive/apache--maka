@@ -43,7 +43,10 @@ impl ConfigurationStore {
                 }
                 let mut changes = input.changes;
                 validation::normalize_update(&mut changes).map_err(ConfigError::Invalid)?;
-                let configuration_changed = row.configuration != changes.configuration;
+                let configuration_changed = changes
+                    .configuration
+                    .as_ref()
+                    .is_some_and(|value| row.configuration != *value);
                 let overlay_changed = match &changes.request_body_overlay {
                     Patch::Keep => false,
                     Patch::Clear => row.request_body_overlay.is_some(),
@@ -52,14 +55,25 @@ impl ConfigurationStore {
                 let previous = row.clone();
                 let validate_limits = matches!(changes.model_overrides, Patch::Set(_));
                 let mut test_changed = configuration_changed
-                    || row.enabled != changes.enabled
-                    || row.enabled_model_ids != changes.enabled_model_ids
+                    || changes.enabled.is_some_and(|value| row.enabled != value)
+                    || changes
+                        .enabled_model_ids
+                        .as_ref()
+                        .is_some_and(|value| row.enabled_model_ids != *value)
                     || overlay_changed;
                 row.revision = catalog::next_revision(row.revision)?;
-                row.name = changes.name;
-                row.configuration = changes.configuration;
-                row.enabled = changes.enabled;
-                row.enabled_model_ids = changes.enabled_model_ids;
+                if let Some(value) = changes.name {
+                    row.name = value;
+                }
+                if let Some(value) = changes.configuration {
+                    row.configuration = value;
+                }
+                if let Some(value) = changes.enabled {
+                    row.enabled = value;
+                }
+                if let Some(value) = changes.enabled_model_ids {
+                    row.enabled_model_ids = value;
+                }
                 row.model_overrides = match changes.model_overrides {
                     Patch::Set(profiles) => Some(profiles),
                     Patch::Clear => None,

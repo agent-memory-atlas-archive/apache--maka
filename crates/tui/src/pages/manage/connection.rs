@@ -76,22 +76,22 @@ pub(super) fn update(row: &Row, kind: Kind, name: &str) -> UpdateCatalogConnecti
     UpdateCatalogConnectionInput {
         expected: basis(row),
         changes: ConnectionCatalogEntryUpdate {
-            name: if kind == Kind::Rename {
+            name: Some(if kind == Kind::Rename {
                 name.into()
             } else {
                 row.name.clone()
-            },
-            configuration: if kind == Kind::Connection(Change::Configuration) {
+            }),
+            configuration: Some(if kind == Kind::Connection(Change::Configuration) {
                 serde_json::from_str(name).expect("reviewed provider configuration")
             } else {
                 row.configuration.clone()
-            },
-            enabled: match kind {
+            }),
+            enabled: Some(match kind {
                 Kind::Connection(Change::Enable) => true,
                 Kind::Connection(Change::Disable) => false,
                 _ => row.enabled,
-            },
-            enabled_model_ids: row.model_ids.clone(),
+            }),
+            enabled_model_ids: Some(row.model_ids.clone()),
             model_overrides: Patch::Keep,
             request_body_overlay: Patch::Keep,
         },
@@ -131,7 +131,7 @@ pub(super) async fn execute(
         ) => {
             let mut input = update(row, ticket.kind, &ticket.text);
             if let Some(ids) = &ticket.enabled_model_ids {
-                input.changes.enabled_model_ids = ids.clone();
+                input.changes.enabled_model_ids = Some(ids.clone());
             }
             if let Some(profiles) = &ticket.model_overrides {
                 input.changes.model_overrides = Patch::Set(profiles.clone());
@@ -273,9 +273,15 @@ impl App {
                 if row.revision < committed.revision {
                     let mut changed = (**basis).clone();
                     let changes = update(&changed, ticket.kind, &ticket.text).changes;
-                    changed.name = changes.name;
-                    changed.configuration = changes.configuration;
-                    changed.enabled = changes.enabled;
+                    if let Some(value) = changes.name {
+                        changed.name = value;
+                    }
+                    if let Some(value) = changes.configuration {
+                        changed.configuration = value;
+                    }
+                    if let Some(value) = changes.enabled {
+                        changed.enabled = value;
+                    }
                     if let Some(ids) = &ticket.enabled_model_ids {
                         changed.model_ids = ids.clone();
                         changed.enabled_models = ids.len() as u64;
@@ -647,10 +653,13 @@ mod tests {
         let renamed = update(row, Kind::Rename, "New name");
         assert_eq!(renamed.expected.revision, 7);
         assert_eq!(
-            renamed.changes.configuration,
-            json!({"baseUrl":"http://127.0.0.1/v1"})
+            renamed.changes.configuration.as_ref().unwrap(),
+            &json!({"baseUrl":"http://127.0.0.1/v1"})
         );
-        assert_eq!(renamed.changes.enabled_model_ids, ["model"]);
+        assert_eq!(
+            renamed.changes.enabled_model_ids.as_ref().unwrap(),
+            &["model"]
+        );
         let wire = serde_json::to_value(renamed).unwrap();
         assert!(wire["changes"].get("modelOverrides").is_none());
         assert!(wire["changes"].get("requestBodyOverlay").is_none());
@@ -658,6 +667,7 @@ mod tests {
             !update(row, Kind::Connection(Change::Disable), "ignored")
                 .changes
                 .enabled
+                .unwrap()
         );
         let mut screen = Terminal::new(TestBackend::new(80, 24)).unwrap();
         for failure in [

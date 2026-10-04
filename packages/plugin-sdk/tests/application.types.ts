@@ -25,6 +25,13 @@ import type {
   AgentSend,
   SetDefaultConnectionTargetInput,
   SettingsModelsPage,
+  ConnectionCatalogEntryUpdate,
+  ConnectionCredentialTarget,
+  SettingsSaveCredential,
+  SettingsConnectionsPage,
+  SettingsProvidersRead,
+  CredentialMutationResult,
+  CatalogMutationResult,
   Action,
   ActionOutcome,
   CallerHistoryPage,
@@ -290,3 +297,69 @@ function nativeEditorMetadata(snapshot: EditorSnapshot, props: InputProps) {
   void [observed, required, missingReceipt, missingMarked, props.command];
 }
 void nativeEditorMetadata;
+
+// Basic editing must not require resending hidden model inventories.
+const nameOnly: ConnectionCatalogEntryUpdate = { name: 'Personal' };
+const explicitEmpty: ConnectionCatalogEntryUpdate = { enabled: false, enabledModelIds: [] };
+const clearPatches: ConnectionCatalogEntryUpdate = {
+  modelOverrides: null,
+  requestBodyOverlay: null,
+};
+// @ts-expect-error A present basic field cannot be null.
+const nullName: ConnectionCatalogEntryUpdate = { name: null };
+// @ts-expect-error An override field may be omitted but not supplied as null.
+const nullVision: ConnectionCatalogEntryUpdate = { modelOverrides: { model: { vision: null } } };
+const providersRead: SettingsProvidersRead = { offset: 0 };
+// @ts-expect-error Provider paging uses an explicit offset.
+const missingOffset: SettingsProvidersRead = {};
+function settingsObservations(target: ConnectionCredentialTarget) {
+  const absent: SettingsSaveCredential = { expected: target, expectedCredential: null };
+  // @ts-expect-error Omission does not prove that no credential was observed.
+  const unobserved: SettingsSaveCredential = { expected: target };
+  const secretInJson: SettingsSaveCredential = {
+    ...absent,
+    // @ts-expect-error Secrets are request-local resource captures, never input JSON.
+    secret: 'private',
+  };
+  const page: SettingsConnectionsPage = {
+    kind: 'ready',
+    revision: 1,
+    connections: [],
+    defaultTarget: null,
+    next: null,
+  };
+  // @ts-expect-error Serialized nullable fields require explicit presence.
+  const incomplete: SettingsConnectionsPage = { kind: 'ready', revision: 1, connections: [] };
+  const basis = { connectionId: target.connectionId, revision: target.revision };
+  const removed: CredentialMutationResult = {
+    kind: 'connection_stale',
+    expected: basis,
+    actual: null,
+  };
+  // @ts-expect-error A stale result explicitly describes absence.
+  const missingActual: CredentialMutationResult = { kind: 'connection_stale', expected: basis };
+  const noConnectionCommit: CatalogMutationResult = { kind: 'committed', catalogRevision: 2 };
+  // @ts-expect-error A stale catalog result explicitly describes absence.
+  const missingCatalogActual: CatalogMutationResult = { kind: 'connection_stale', expected: basis };
+  void [
+    absent,
+    unobserved,
+    secretInJson,
+    page,
+    incomplete,
+    removed,
+    missingActual,
+    noConnectionCommit,
+    missingCatalogActual,
+  ];
+}
+void [
+  nameOnly,
+  explicitEmpty,
+  clearPatches,
+  nullName,
+  nullVision,
+  providersRead,
+  missingOffset,
+  settingsObservations,
+];
