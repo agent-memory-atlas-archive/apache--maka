@@ -19,7 +19,7 @@
 
 import type {
   Component,
-  TextareaObservation,
+  EditorObservation,
   TextareaProps,
   UiExport,
 } from '../../plugin-sdk/src/index.js';
@@ -37,7 +37,7 @@ interface Revision {
   revision: number;
 }
 interface Draft extends Revision {
-  observation: TextareaObservation | null;
+  observation: EditorObservation | null;
 }
 export function components(target: Target): {
   composer: Component<Draft, ComposerProps>;
@@ -200,7 +200,7 @@ export function components(target: Target): {
       event(state, input, props) {
         const next = { ...state, revision: state.revision + 1 };
         if (input.kind === 'component' && input.name === 'changed') {
-          next.observation = input.event as TextareaObservation;
+          next.observation = input.event as EditorObservation;
           return composerFrame(next, props, [{ name: 'changed', value: next.observation }]);
         }
         if (

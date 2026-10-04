@@ -69,3 +69,24 @@ one mount once. Native invariant violations are trusted-code failures, without a
 sandbox or fake cleanup receipt.
 
 See [desktop ownership](../desktop/README.md) and [shared kernel](../ui/README.md).
+
+The fixed `TextInput` and `SecretInput` exports from `maka.ui.input` use the
+shared `Editor*` command, observation and capture protocol. Single-line props
+supply complete `InputAppearance`, label, placeholder, editability and tab order.
+Both controls start empty; an initial metadata observation permits a revision
+checked prefill command. Input rejects control characters as one complete edit,
+before clipboard or IME normalization. Reset clears native undo history.
+
+SecretInput stays masked for its lifetime. Its AccessKit password node has no
+plaintext value or text runs, and platform surrounding-text queries return masks
+in the original UTF-16 units. Captures retain the original immutable UTF-8 bytes;
+masking does not remove an explicitly granted Reader capability. Normal settings
+composition should bind secure capture to its trusted setter and omit Reader.
+Native Enter is consumed before keybindings and emits `submitted` as a business
+event, not a synchronous native decision. TUI emits this independently of its
+retryable observation/receipt slot. OS input-method and screen-reader acceptance
+requires separate platform verification.
+
+A rejected metadata transaction stays pending in the original native owner.
+The next application synchronization republishes it even when the component
+frame is unchanged, without replaying an already executed command.

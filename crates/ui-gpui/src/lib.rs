@@ -21,6 +21,8 @@
 extern crate gpui_kit as gpui;
 
 mod appearance;
+mod editing;
+pub mod input;
 pub mod scene;
 pub mod textarea;
 
@@ -54,6 +56,9 @@ pub trait Widget: Any {
         Err(maka_ui::Error::Invalid("widget capture unavailable".into()))
     }
     fn commit(&self, _: &mut dyn Any, _: &mut Window, _: &mut App) {}
+    /// Attempt retained native observations after a real synchronization,
+    /// including when the committed child frame is unchanged. No effects replay.
+    fn publish_pending(&self, _: &mut dyn Any, _: &mut Window, _: &mut App) {}
     /// Close mechanical input/focus on the original window before resource
     /// release. Cached listeners may still retain the old owner during cleanup.
     fn deactivate(&self, _: &mut dyn Any, _: &mut Window, _: &mut App) {}
@@ -215,6 +220,7 @@ pub fn registry() -> NativeRegistry<dyn Widget> {
         })
         .expect("unique native label implementation");
     textarea::register(&mut registry);
+    input::register(&mut registry);
     registry
 }
 

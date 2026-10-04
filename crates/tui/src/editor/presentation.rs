@@ -28,6 +28,7 @@ pub(crate) struct Geometry {
     layout: Layout,
     area: Rect,
     top: usize,
+    left: usize,
 }
 impl Editor {
     pub(crate) fn mouse_presented(&mut self, mouse: MouseEvent, geometry: &Geometry) -> bool {
@@ -35,6 +36,7 @@ impl Editor {
             return false;
         }
         self.layout = geometry.layout.clone();
+        self.left = geometry.left;
         self.area = (!geometry.area.is_empty()).then_some(geometry.area);
         if !matches!(
             mouse.kind,
@@ -53,7 +55,8 @@ impl Editor {
         selected: Style,
         caret: Style,
     ) -> Geometry {
-        let layout = Layout::new(&self.text, area.width);
+        let layout = self.make_layout(area.width);
+        let mut left = self.left;
         let (cursor_row, cursor_column) =
             layout.cursor(self.selection.cursor, self.selection.upstream);
         let mut top = self
@@ -67,6 +70,25 @@ impl Editor {
                 top = cursor_row.saturating_sub(area.height.saturating_sub(1) as usize);
             }
         }
+        if self.single_line {
+            top = 0;
+            left = left.min(
+                layout.rows[0]
+                    .cells
+                    .last()
+                    .map_or(0, |cell| cell.column + cell.width),
+            );
+            if cursor_column < left {
+                left = cursor_column;
+            }
+            if cursor_column >= left + area.width as usize {
+                left = cursor_column
+                    .saturating_add(1)
+                    .saturating_sub(area.width as usize);
+            }
+        } else {
+            left = 0;
+        }
         if !area.is_empty() {
             let selection = self.selection.range();
             for (screen_row, row) in layout
@@ -78,19 +100,28 @@ impl Editor {
             {
                 let y = area.y + screen_row as u16;
                 for cell in &row.cells {
-                    let x = area.x + cell.column;
+                    if cell.column < left || cell.column + cell.width > left + area.width as usize {
+                        continue;
+                    }
+                    let x = area.x + (cell.column - left) as u16;
                     let style =
                         if cell.bytes.start < selection.end && cell.bytes.end > selection.start {
                             selected
                         } else {
                             normal
                         };
-                    let text = &self.text[cell.bytes.clone()];
+                    let text = if self.single_line && self.masked {
+                        "•"
+                    } else {
+                        &self.text[cell.bytes.clone()]
+                    };
                     if text == "\t" {
                         for column in 0..cell.width {
-                            buffer[(x + column, y)].set_symbol(" ").set_style(style);
+                            buffer[(x + column as u16, y)]
+                                .set_symbol(" ")
+                                .set_style(style);
                         }
-                    } else if text.width() > cell.width as usize {
+                    } else if text.width() > cell.width {
                         buffer[(x, y)].set_symbol("�").set_style(style);
                     } else {
                         let symbol = if text.width() == 0 {
@@ -98,18 +129,26 @@ impl Editor {
                         } else {
                             text.to_owned()
                         };
-                        buffer.set_stringn(x, y, symbol, cell.width as usize, style);
+                        buffer.set_stringn(x, y, symbol, cell.width, style);
                     }
                 }
                 if self.text.as_bytes().get(row.end) == Some(&b'\n') && selection.contains(&row.end)
                 {
                     let column = row.cells.last().map_or(0, |cell| cell.column + cell.width);
-                    buffer[(area.x + column.min(area.width - 1), y)].set_style(selected);
+                    buffer[(
+                        area.x + column.min(area.width.saturating_sub(1) as usize) as u16,
+                        y,
+                    )]
+                        .set_style(selected);
                 }
             }
             if focused && cursor_row >= top && cursor_row < top + area.height as usize {
                 buffer[(
-                    area.x + cursor_column.min(area.width - 1),
+                    area.x
+                        + cursor_column
+                            .saturating_sub(left)
+                            .min(area.width.saturating_sub(1) as usize)
+                            as u16,
                     area.y + (cursor_row - top) as u16,
                 )]
                     .set_style(caret);
@@ -121,6 +160,7 @@ impl Editor {
             layout,
             area,
             top,
+            left,
         }
     }
     pub(crate) fn present_geometry(&mut self, geometry: Geometry) {
@@ -131,6 +171,7 @@ impl Editor {
         self.layout = geometry.layout;
         self.area = (!geometry.area.is_empty()).then_some(geometry.area);
         self.top = geometry.top;
+        self.left = geometry.left;
     }
 }
 
@@ -179,5 +220,54 @@ mod tests {
         editor.key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
         let (_, after_key) = paint(&editor, area);
         assert_ne!(first, after_key);
+    }
+    #[test]
+    fn masked_single_line_full_capacity_and_unicode_hit_use_original_bytes() {
+        let mut editor = Editor::single_line(65536, true);
+        editor.insert(&"x".repeat(65536));
+        let area = Rect::new(3, 2, 20, 1);
+        let (visible, buffer) = paint(&editor, area);
+        assert_eq!(visible.layout.rows.len(), 1);
+        assert_eq!(visible.layout.rows[0].cells.last().unwrap().column, 65535);
+        assert_eq!(visible.left, 65517);
+        assert!(!buffer.content().iter().any(|cell| cell.symbol() == "x"));
+        editor.present_geometry(visible.clone());
+        assert_eq!(editor.cursor_position(), Some(Position::new(22, 2)));
+        assert!(editor.mouse_presented(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 3,
+                row: 2,
+                modifiers: KeyModifiers::NONE
+            },
+            &visible
+        ));
+        assert_eq!(editor.selection.cursor, 65517);
+        let old = visible;
+        editor.clear();
+        editor.insert("A👩🏽‍💻e\u{301}中");
+        assert!(!editor.mouse_presented(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 3,
+                row: 2,
+                modifiers: KeyModifiers::NONE
+            },
+            &old
+        ));
+        let (visible, _) = paint(&editor, area);
+        editor.present_geometry(visible.clone());
+        assert!(editor.mouse_presented(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 5,
+                row: 2,
+                modifiers: KeyModifiers::NONE
+            },
+            &visible
+        ));
+        assert_eq!(editor.selection.cursor, "A👩🏽‍💻".len());
+        editor.key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
+        assert_eq!(editor.selected_text(), "e\u{301}");
     }
 }

@@ -225,4 +225,16 @@ SetValue。headless 测试经过平台回调验证请求与焦点导航；普通
 EOF 当成功清理。失败/panic 保留原 Work fence。每次 output 至多16 subscriptions，
 当前声明计入完整回调与 retained UI 预算，一个流的 pending feedback 不重复计为新请求。
 
-GPUI 与 TUI 共用纯 `textarea::reduce` 命令/回执协议，各自的原始原生编辑器仍是文本、选区和撤销历史的唯一 owner。TUI 先准备原生 owner，再捕获不可变资源，最后执行已暂存命令；成功 flush 后的几何才参与输入。未发布的观察保留原回执，不重复执行命令。
+GPUI 与 TUI 共用纯 `editor::reduce` 命令/回执协议，各自的原始原生编辑器仍是文本、选区和撤销历史的唯一 owner。TUI 先准备原生 owner，再捕获不可变资源，最后执行已暂存命令；成功 flush 后的几何才参与输入。未发布的观察保留原回执，不重复执行命令。
+
+`maka.ui.input` 提供固定的 `TextInput` 与 `SecretInput` exports，共用 `Editor*`
+命令、观察与捕获协议。单行 props 提供完整 `InputAppearance`、标签、placeholder、
+可编辑性和 tab 顺序。控件初始为空，首次元数据观察允许按 revision 发起 prefill 命令。
+控制字符在剪贴板或 IME 规范化前按整次输入拒绝；Reset 清空原生撤销历史。
+
+SecretInput 在原 owner 生命周期中保持掩码。AccessKit password 节点不发布明文 value
+或 TextRun；平台 surrounding-text 查询按原 UTF-16 单位返回掩码。捕获仍为原不可变
+UTF-8 bytes；掩码不会撤销显式授予的 Reader 能力。普通设置组合应将 secure capture
+绑定给可信 setter，并不绑定 Reader。原生 Enter 在 keybinding 前 consume，随后发布
+`submitted` 业务事件，不返回同步原生 decision。TUI 将它与可重试的观察/回执分开发送。
+OS 输入法与屏幕阅读器仍需逐平台验收。

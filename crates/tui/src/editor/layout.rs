@@ -42,14 +42,14 @@ pub(super) struct Row {
 #[derive(Clone)]
 pub(super) struct Cell {
     pub bytes: Range<usize>,
-    pub column: u16,
-    pub width: u16,
+    pub column: usize,
+    pub width: usize,
 }
 
 impl Layout {
     pub fn new(text: &str, width: u16) -> Self {
         // Keep a cell for the insertion cursor even on a full logical line.
-        let wrap = width.saturating_sub(1).max(1);
+        let wrap = width.saturating_sub(1).max(1) as usize;
         let mut rows = Vec::new();
         let mut row = Row {
             start: 0,
@@ -71,11 +71,11 @@ impl Layout {
                 column = 0;
                 continue;
             }
-            let cell_width = |column: u16| {
+            let cell_width = |column: usize| {
                 if grapheme == "\t" {
                     4 - column % 4
                 } else {
-                    grapheme.width().max(1).min(u16::MAX as usize) as u16
+                    grapheme.width().max(1)
                 }
                 .min(wrap)
             };
@@ -108,7 +108,33 @@ impl Layout {
         }
     }
 
-    pub fn cursor(&self, byte: usize, upstream: bool) -> (usize, u16) {
+    pub fn single_line(text: &str, width: u16, masked: bool) -> Self {
+        let mut cells = Vec::new();
+        let mut boundaries = Vec::new();
+        let mut column = 0;
+        for (byte, grapheme) in text.grapheme_indices(true) {
+            boundaries.push(byte);
+            let size = if masked { 1 } else { grapheme.width().max(1) };
+            cells.push(Cell {
+                bytes: byte..byte + grapheme.len(),
+                column,
+                width: size,
+            });
+            column += size;
+        }
+        boundaries.push(text.len());
+        Self {
+            rows: vec![Row {
+                start: 0,
+                end: text.len(),
+                cells,
+            }],
+            boundaries,
+            width,
+        }
+    }
+
+    pub fn cursor(&self, byte: usize, upstream: bool) -> (usize, usize) {
         let mut index = self
             .rows
             .partition_point(|row| row.start <= byte)
@@ -128,7 +154,7 @@ impl Layout {
         (index, column)
     }
 
-    pub fn byte_at(&self, row: usize, column: u16) -> usize {
+    pub fn byte_at(&self, row: usize, column: usize) -> usize {
         let row = &self.rows[row.min(self.rows.len() - 1)];
         for cell in &row.cells {
             if column <= cell.column + cell.width / 2 {
@@ -138,7 +164,7 @@ impl Layout {
         row.end
     }
 
-    pub fn hit(&self, row: usize, column: u16) -> (usize, bool) {
+    pub fn hit(&self, row: usize, column: usize) -> (usize, bool) {
         let row = row.min(self.rows.len() - 1);
         let byte = self.byte_at(row, column);
         (byte, self.cursor(byte, false).0 != row)
@@ -150,7 +176,7 @@ impl Layout {
             .x
             .saturating_sub(area.x)
             .min(area.width.saturating_sub(1));
-        self.hit(top + row as usize, column)
+        self.hit(top + row as usize, column as usize)
     }
 
     pub fn previous(&self, byte: usize) -> usize {

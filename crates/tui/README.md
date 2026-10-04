@@ -103,3 +103,20 @@ child and `paint` renders it through the same presenter, preserving child input
 geometry and identity. Measurements may repeat; duplicate actual placement rejects
 the pending scene before flush/input publication. Native layouts choose terminal
 geometry independently of desktop pixels and cannot create another mount runtime.
+
+The fixed `TextInput` and `SecretInput` exports from `maka.ui.input` use the
+shared `Editor*` command, observation and capture protocol. Single-line props
+supply complete `InputAppearance`, label, placeholder, editability and tab order.
+Both controls start empty; an initial metadata observation permits a revision
+checked prefill command. Input rejects control characters as one complete edit,
+before clipboard or IME normalization. Reset clears native undo history.
+
+SecretInput stays masked for its lifetime. Its AccessKit password node has no
+plaintext value or text runs, and platform surrounding-text queries return masks
+in the original UTF-16 units. Captures retain the original immutable UTF-8 bytes;
+masking does not remove an explicitly granted Reader capability. Normal settings
+composition should bind secure capture to its trusted setter and omit Reader.
+Native Enter is consumed before keybindings and emits `submitted` as a business
+event, not a synchronous native decision. TUI emits this independently of its
+retryable observation/receipt slot. OS input-method and screen-reader acceptance
+requires separate platform verification.

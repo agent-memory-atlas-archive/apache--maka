@@ -18,6 +18,9 @@
  */
 
 import type {
+  EditorObservation,
+  EditorSnapshot,
+  InputProps,
   ModelSelection,
   AgentSend,
   SetDefaultConnectionTargetInput,
@@ -269,3 +272,21 @@ const missingCursor: SettingsModelsPage = { kind: 'ready', revision: 5, choices:
 // @ts-expect-error A send cannot inherit an implicit activation model.
 const implicitSend: AgentSend = { sessionId: 'conversation', message: 'Hello' };
 void [explicitSend, clearDefault, missingDefault, exhaustedModels, missingCursor, implicitSend];
+
+// Absence is distinct from the explicit no-composition/no-receipt observation.
+function nativeEditorMetadata(snapshot: EditorSnapshot, props: InputProps) {
+  const observed: EditorObservation = { revision: 0, snapshot, receipt: null };
+  const selection = snapshot.selection;
+  const required: EditorSnapshot = {
+    text: { owner: 'native', revision: 0, bytes: 0 },
+    selection,
+    reversed: false,
+    marked: null,
+  };
+  // @ts-expect-error Metadata must explicitly declare whether there is a receipt.
+  const missingReceipt: EditorObservation = { revision: 0, snapshot };
+  // @ts-expect-error Metadata must explicitly declare whether IME is composing.
+  const missingMarked: EditorSnapshot = { text: required.text, selection, reversed: false };
+  void [observed, required, missingReceipt, missingMarked, props.command];
+}
+void nativeEditorMetadata;

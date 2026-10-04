@@ -195,6 +195,9 @@ impl Surface {
                 native.view.commit(owner.state.as_mut(), window, cx);
                 owner.revision = Some(frame.revision);
             }
+            native
+                .view
+                .publish_pending(owner.state.as_mut(), window, cx);
         }
         drop(application);
         self.resources

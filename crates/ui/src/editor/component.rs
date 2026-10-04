@@ -19,18 +19,24 @@
 
 use super::*;
 use crate::{ComponentCall, ComponentOutput, Emission, Frame};
+use serde::de::DeserializeOwned;
 use serde_json::json;
 
-/// Pure native textarea protocol shared by presentation adapters. The renderer
+/// Pure native editing protocol shared by presentation adapters. The renderer
 /// remains the sole buffer, selection and composition owner.
-pub fn reduce(call: ComponentCall<'_>) -> crate::Result<ComponentOutput<TextareaProps>> {
+pub trait Props: DeserializeOwned {
+    fn command(&self) -> Option<&EditorCommand>;
+    fn set_command(&mut self, command: Option<EditorCommand>);
+}
+
+pub fn reduce<P: Props>(call: ComponentCall<'_>) -> crate::Result<ComponentOutput<P>> {
     let (props, revision, observation, mut request, mut pending) = match call {
         ComponentCall::Mount { props } => (props.clone(), 0, serde_json::Value::Null, None, false),
         ComponentCall::Update { state, props } => (
             props.clone(),
             state["revision"].as_u64().expect("editor UI revision") + 1,
             state["observation"].clone(),
-            serde_json::from_value::<Option<TextareaCommand>>(state["request"].clone())
+            serde_json::from_value::<Option<EditorCommand>>(state["request"].clone())
                 .expect("editor requested command"),
             state["pending"].as_bool().expect("editor pending command"),
         ),
@@ -40,10 +46,9 @@ pub fn reduce(call: ComponentCall<'_>) -> crate::Result<ComponentOutput<Textarea
             input,
             ..
         } => {
-            let request =
-                serde_json::from_value::<Option<TextareaCommand>>(state["request"].clone())
-                    .expect("editor requested command");
-            let observation: TextareaObservation =
+            let request = serde_json::from_value::<Option<EditorCommand>>(state["request"].clone())
+                .expect("editor requested command");
+            let observation: EditorObservation =
                 serde_json::from_value(input.clone()).expect("validated editor observation");
             let settled = request
                 .as_ref()
@@ -67,9 +72,9 @@ pub fn reduce(call: ComponentCall<'_>) -> crate::Result<ComponentOutput<Textarea
             });
         }
     };
-    let typed: TextareaProps =
+    let typed: P =
         serde_json::from_value(props.clone()).map_err(|e| crate::Error::Invalid(e.to_string()))?;
-    if let Some(command) = &typed.command
+    if let Some(command) = typed.command()
         && request.as_ref() != Some(command)
     {
         if pending {
@@ -91,18 +96,18 @@ pub fn reduce(call: ComponentCall<'_>) -> crate::Result<ComponentOutput<Textarea
     frame(props, revision, observation, request, pending)
 }
 
-fn frame(
+fn frame<P: Props>(
     props: serde_json::Value,
     revision: u64,
     observation: serde_json::Value,
-    request: Option<TextareaCommand>,
+    request: Option<EditorCommand>,
     pending: bool,
-) -> crate::Result<ComponentOutput<TextareaProps>> {
-    let mut typed: TextareaProps =
+) -> crate::Result<ComponentOutput<P>> {
+    let mut typed: P =
         serde_json::from_value(props).map_err(|e| crate::Error::Invalid(e.to_string()))?;
     // Props propose new commands; the accepted request remains authoritative
     // until its receipt commits. None does not cancel a staged request.
-    typed.command = request.clone().filter(|_| pending);
+    typed.set_command(request.clone().filter(|_| pending));
     Ok(Frame {
             revision,
             state: json!({"revision":revision,"request":request,"pending":pending,"observation":observation}),

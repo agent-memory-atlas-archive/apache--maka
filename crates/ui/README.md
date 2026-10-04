@@ -323,8 +323,25 @@ OS accessibility/IME acceptance remain pending. The TUI Label projects colour an
 weight to RGB/bold terminal styling; desktop fonts and alpha compositing do not
 imply equivalent terminal rendering.
 
-The pure `textarea::reduce` command/receipt protocol is shared by GPUI and TUI.
+The pure `editor::reduce` command/receipt protocol is shared by GPUI and TUI.
 Each presenter keeps its own original native editor as the sole buffer, selection
 and undo owner. TUI prepares native owners, captures immutable resources, then
 applies staged commands. Successfully flushed geometry alone becomes interactive;
 unpublished observations retain their original receipt without replaying commands.
+
+The fixed `TextInput` and `SecretInput` exports from `maka.ui.input` use the
+shared `Editor*` command, observation and capture protocol. Single-line props
+supply complete `InputAppearance`, label, placeholder, editability and tab order.
+Both controls start empty; an initial metadata observation permits a revision
+checked prefill command. Input rejects control characters as one complete edit,
+before clipboard or IME normalization. Reset clears native undo history.
+
+SecretInput stays masked for its lifetime. Its AccessKit password node has no
+plaintext value or text runs, and platform surrounding-text queries return masks
+in the original UTF-16 units. Captures retain the original immutable UTF-8 bytes;
+masking does not remove an explicitly granted Reader capability. Normal settings
+composition should bind secure capture to its trusted setter and omit Reader.
+Native Enter is consumed before keybindings and emits `submitted` as a business
+event, not a synchronous native decision. TUI emits this independently of its
+retryable observation/receipt slot. OS input-method and screen-reader acceptance
+requires separate platform verification.

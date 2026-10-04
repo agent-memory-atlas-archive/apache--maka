@@ -19,6 +19,8 @@
 
 //! Native terminal presentation of the shared plugin application kernel.
 //! 统一插件应用内核的原生终端呈现器。
+mod editor;
+mod input;
 mod native;
 mod paint;
 mod resources;
@@ -79,6 +81,8 @@ pub struct NativeInput {
 pub enum WidgetInput {
     Unhandled,
     Consumed(Option<NativeInput>),
+    /// An immediate business event; never replaces retryable native observations.
+    Emitted(NativeInput),
 }
 type Job = Pin<Box<dyn Future<Output = (Uuid, TaskCompletion)> + Send>>;
 pub struct Presenter {
@@ -273,6 +277,21 @@ impl Presenter {
             }
             let Some(native) = self.resources.input(&target, &event)? else {
                 return Ok(());
+            };
+            let native = match native {
+                WidgetInput::Emitted(emitted) => {
+                    let revision = self.application.frame(&target.mount)?.revision;
+                    self.application.dispatch(
+                        &target.mount,
+                        revision,
+                        &emitted.key,
+                        emitted.value,
+                    )?;
+                    self.focus = Some(target);
+                    self.sync_native()?;
+                    return Ok(());
+                }
+                other => other,
             };
             if let WidgetInput::Consumed(observed) = native {
                 if let Some(observed) = observed {

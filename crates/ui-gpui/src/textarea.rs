@@ -17,29 +17,19 @@
  * under the License.
  */
 
+use super::editing::{NativeSnapshot, TextSnapshot};
 use super::{LiveInput, Slots, Widget};
-use gpui_kit::base::input::{InputBase, Rope, RopeExt, TextareaState};
+use gpui_kit::base::input::{InputBase, RopeExt, TextareaState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
-use maka_ui::textarea::*;
 use maka_ui::{
     ComponentCall, ComponentOutput, NativeCapability, NativeComponent, NativeExport,
     NativeRegistry, NativeView,
 };
-use serde_json::json;
+use maka_ui::{editor::*, textarea::*};
 use std::{any::Any, collections::BTreeMap, ops::Range, rc::Rc};
 mod accessibility;
 mod menu;
-
-/// Kit alone owns the buffer, selections and composition. This owner records
-/// observations and causality, not a second writable copy of the text.
-#[derive(PartialEq)]
-struct NativeSnapshot {
-    text: Rope,
-    selection: TextRange,
-    reversed: bool,
-    marked: Option<TextRange>,
-}
 
 pub struct TextareaOwner {
     id: String,
@@ -47,10 +37,11 @@ pub struct TextareaOwner {
     input: LiveInput,
     pub revision: u64,
     snapshot: NativeSnapshot,
-    last_request: Option<TextareaCommand>,
+    last_request: Option<EditorCommand>,
     sequence: u64,
-    pub receipt: Option<TextareaReceipt>,
+    pub receipt: Option<EditorReceipt>,
     pending: bool,
+    needs_publication: bool,
     _observation: Subscription,
     projection: super::appearance::TextareaProjection,
     label: String,
@@ -121,6 +112,7 @@ impl TextareaOwner {
                 sequence: 0,
                 receipt: None,
                 pending: false,
+                needs_publication: true,
                 _observation: observation,
                 projection,
                 label: props.accessibility_label.clone(),
@@ -131,6 +123,7 @@ impl TextareaOwner {
         });
         let subscription = Self::install_menu_input(&owner, cx);
         owner.update(cx, |owner, _| owner._menu_input = Some(subscription));
+        owner.update(cx, |owner, cx| owner.schedule(window, cx));
         owner
     }
     fn read_snapshot(
@@ -156,9 +149,9 @@ impl TextareaOwner {
             }
         })
     }
-    fn observation_snapshot(&self) -> TextareaSnapshot {
-        TextareaSnapshot {
-            text: TextareaTextRef {
+    fn observation_snapshot(&self) -> EditorSnapshot {
+        EditorSnapshot {
+            text: EditorTextRef {
                 owner: self.id.clone(),
                 revision: self.revision,
                 bytes: self.snapshot.text.len(),
@@ -172,41 +165,42 @@ impl TextareaOwner {
     /// owner. There is no global resource lookup or authority in its string id.
     pub fn read_text(
         &mut self,
-        reference: &TextareaTextRef,
+        reference: &EditorTextRef,
         range: Range<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<String, TextareaReadError> {
+    ) -> Result<String, EditorReadError> {
         if self.input.0.borrow().is_none() || reference.owner != self.id {
-            return Err(TextareaReadError::Owner);
+            return Err(EditorReadError::Owner);
         }
         self.refresh(false, window, cx);
         if reference.revision != self.revision {
-            return Err(TextareaReadError::Revision);
+            return Err(EditorReadError::Revision);
         }
         if range
             .end
             .checked_sub(range.start)
             .is_none_or(|len| len > 64 * 1024)
         {
-            return Err(TextareaReadError::Range);
+            return Err(EditorReadError::Range);
         }
         self.snapshot
             .text
             .try_slice(range)
             .map(|slice| slice.to_string())
-            .map_err(|_| TextareaReadError::Range)
+            .map_err(|_| EditorReadError::Range)
     }
     fn refresh(&mut self, force: bool, window: &mut Window, cx: &mut Context<Self>) {
         let snapshot = Self::read_snapshot(&self.state, window, cx);
         if force || snapshot != self.snapshot {
             self.snapshot = snapshot;
+            self.needs_publication = true;
             self.revision = self.revision.checked_add(1).expect("editor revision");
             self.schedule(window, cx);
         }
     }
     fn schedule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pending {
+        if self.pending || !self.needs_publication || self.input.0.borrow().is_none() {
             return;
         }
         self.pending = true;
@@ -216,8 +210,11 @@ impl TextareaOwner {
             let Ok(Some((input, observation))) = owner.update(cx, |owner, cx| {
                 owner.refresh(false, window, cx);
                 owner.pending = false;
+                if !owner.needs_publication {
+                    return None;
+                }
                 let input = owner.input.0.borrow().clone()?;
-                let value = TextareaObservation {
+                let value = EditorObservation {
                     revision: owner.revision,
                     snapshot: owner.observation_snapshot(),
                     receipt: owner.receipt.clone(),
@@ -228,13 +225,21 @@ impl TextareaOwner {
             };
             if let Err(error) = (input.0)(
                 "observe",
-                serde_json::to_value(observation).expect("editor observation"),
+                serde_json::to_value(&observation).expect("editor observation"),
                 window,
                 cx,
             ) {
                 // This observation follows native input. It cannot cancel an
                 // already completed event or affect a later event's defaults.
                 eprintln!("editor observation rejected: {error}");
+            } else {
+                let _ = owner.update(cx, |owner, _| {
+                    if owner.revision == observation.revision
+                        && owner.receipt == observation.receipt
+                    {
+                        owner.needs_publication = false;
+                    }
+                });
             }
         });
     }
@@ -288,33 +293,34 @@ impl TextareaOwner {
         }
         self.last_request = Some(command.clone());
         let outcome = if command.owner != self.id {
-            TextareaOutcome::Conflict {
-                reason: TextareaConflict::Owner,
+            EditorOutcome::Conflict {
+                reason: EditorConflict::Owner,
             }
         } else if command.sequence <= self.sequence {
-            TextareaOutcome::Conflict {
-                reason: TextareaConflict::Sequence,
+            EditorOutcome::Conflict {
+                reason: EditorConflict::Sequence,
             }
         } else {
             self.sequence = command.sequence;
             if command.based_on != self.revision {
-                TextareaOutcome::Conflict {
-                    reason: TextareaConflict::Revision,
+                EditorOutcome::Conflict {
+                    reason: EditorConflict::Revision,
                 }
             } else if self.snapshot.marked.is_some() {
-                TextareaOutcome::Conflict {
-                    reason: TextareaConflict::Composition,
+                EditorOutcome::Conflict {
+                    reason: EditorConflict::Composition,
                 }
             } else {
                 self.state.update(cx, |state, cx| match &command.edit {
-                    TextareaEdit::Replace { text } => state.replace_all(text.clone(), window, cx),
-                    TextareaEdit::Reset { text } => state.set_value(text.clone(), window, cx),
+                    EditorEdit::Replace { text } => state.replace_all(text.clone(), window, cx),
+                    EditorEdit::Reset { text } => state.set_value(text.clone(), window, cx),
                 });
                 self.refresh(true, window, cx);
-                TextareaOutcome::Applied
+                EditorOutcome::Applied
             }
         };
-        self.receipt = Some(TextareaReceipt {
+        self.needs_publication = true;
+        self.receipt = Some(EditorReceipt {
             owner: command.owner.clone(),
             sequence: command.sequence,
             revision: self.revision,
@@ -641,35 +647,6 @@ impl EntityInputHandler for TextareaOwner {
 struct TextareaRecipe {
     props: TextareaProps,
 }
-struct TextSnapshot {
-    owner: String,
-    text: Rope,
-    revision: u64,
-}
-impl maka_plugins::call::ReadResource for TextSnapshot {
-    fn resource_type(&self) -> maka_plugin_core::contract::ResourceType {
-        text_resource_type()
-    }
-    fn bytes(&self) -> usize {
-        self.text.len()
-    }
-    fn metadata(&self) -> serde_json::Value {
-        json!({"owner":self.owner,"revision":self.revision,"bytes":self.text.len()})
-    }
-    fn read(&self, range: Range<usize>) -> Result<Vec<u8>, String> {
-        if range
-            .end
-            .checked_sub(range.start)
-            .is_none_or(|len| len > 64 * 1024)
-        {
-            return Err("invalid text range or chunk exceeds 64 KiB".into());
-        }
-        self.text
-            .try_slice(range)
-            .map(|s| s.to_string().into_bytes())
-            .map_err(|_| "invalid UTF-8 range".into())
-    }
-}
 impl Widget for TextareaRecipe {
     fn capture(
         &self,
@@ -681,7 +658,7 @@ impl Widget for TextareaRecipe {
         if target.method() != "snapshot" {
             return Err(maka_ui::Error::Invalid("unknown editor capture".into()));
         }
-        let input: TextareaCapture = serde_json::from_value(target.input().clone())
+        let input: EditorCapture = serde_json::from_value(target.input().clone())
             .map_err(|e| maka_ui::Error::Invalid(e.to_string()))?;
         state
             .downcast_ref::<Entity<TextareaOwner>>()
@@ -691,7 +668,7 @@ impl Widget for TextareaRecipe {
                     return Err(maka_ui::Error::Invalid("editor closed".into()));
                 }
                 owner.refresh(false, window, cx);
-                if let TextareaCapture::AtRevision {
+                if let EditorCapture::AtRevision {
                     owner: ref expected,
                     revision,
                 } = input
@@ -716,6 +693,12 @@ impl Widget for TextareaRecipe {
             .downcast_ref::<Entity<TextareaOwner>>()
             .expect("editor native owner")
             .update(cx, |owner, cx| owner.apply(&self.props, window, cx));
+    }
+    fn publish_pending(&self, state: &mut dyn Any, window: &mut Window, cx: &mut App) {
+        state
+            .downcast_ref::<Entity<TextareaOwner>>()
+            .expect("editor owner")
+            .update(cx, |owner, cx| owner.schedule(window, cx));
     }
     fn deactivate(&self, state: &mut dyn Any, window: &mut Window, cx: &mut App) {
         let owner = state
@@ -764,7 +747,7 @@ impl NativeComponent<dyn Widget> for TextareaComponent {
         call: ComponentCall<'_>,
         _values: &maka_ui::abi::ValueBindings,
     ) -> maka_ui::Result<ComponentOutput<NativeView<dyn Widget>>> {
-        let output = maka_ui::textarea::reduce(call)?;
+        let output = maka_ui::editor::reduce::<TextareaProps>(call)?;
         let view = NativeView::<dyn Widget>::new(
             Rc::new(TextareaRecipe {
                 props: output.frame.view.clone(),

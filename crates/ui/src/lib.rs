@@ -22,7 +22,9 @@
 pub mod abi;
 pub mod actions;
 pub mod appearance;
+pub mod editor;
 mod frame;
+pub mod input;
 mod native;
 pub mod operations;
 pub mod text;

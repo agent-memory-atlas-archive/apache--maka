@@ -38,8 +38,9 @@ export type RuntimeProtocol =
   | CallerIntent
   | LabelProps
   | TextareaProps
-  | TextareaObservation
-  | TextareaCapture
+  | InputProps
+  | EditorObservation
+  | EditorCapture
   | ReadText
   | TextChunk
   | AgentConfiguration
@@ -288,7 +289,7 @@ export type FontFamily = string;
 export type Color = number;
 export type ScrollbarMode = 'scrolling' | 'hover' | 'always';
 export type ScrollbarEntrance = 'fade' | 'slide_and_fade';
-export type TextareaEdit =
+export type EditorEdit =
   | {
       text: string;
       kind: 'replace';
@@ -297,16 +298,16 @@ export type TextareaEdit =
       text: string;
       kind: 'reset';
     };
-export type TextareaOutcome =
+export type EditorOutcome =
   | {
       status: 'applied';
     }
   | {
-      reason: TextareaConflict;
+      reason: EditorConflict;
       status: 'conflict';
     };
-export type TextareaConflict = 'owner' | 'representation' | 'revision' | 'composition' | 'sequence';
-export type TextareaCapture =
+export type EditorConflict = 'owner' | 'representation' | 'revision' | 'composition' | 'sequence';
+export type EditorCapture =
   | {
       kind: 'current';
     }
@@ -970,7 +971,7 @@ export interface TextareaProps {
    * None issues no new command; an accepted command remains pending until
    * its matching receipt commits. Clearing props is not cancellation.
    */
-  command?: TextareaCommand | null;
+  command?: EditorCommand | null;
 }
 export interface TextareaAppearance {
   text: TextAppearance;
@@ -1044,27 +1045,48 @@ export interface TextareaMenuLabels {
   paste: string;
   selectAll: string;
 }
-export interface TextareaCommand {
+export interface EditorCommand {
   /**
    * Correlation with the original native editor, never a resource grant.
    */
   owner: string;
   sequence: number;
   basedOn: number;
-  edit: TextareaEdit;
+  edit: EditorEdit;
 }
-export interface TextareaObservation {
+export interface InputProps {
+  appearance: InputAppearance;
+  accessibilityLabel: string;
+  readOnly: boolean;
+  disabled: boolean;
+  tabIndex: number;
+  placeholder?: string;
+  command?: EditorCommand | null;
+}
+export interface InputAppearance {
+  text: TextAppearance;
+  mutedForeground: Color;
+  background: Color;
+  selection: Color;
+  caret: Color;
+  border: Color;
+  focusedBorder: Color;
+  borderWidth: number;
+  radius: number;
+  padding: Insets;
+}
+export interface EditorObservation {
   revision: number;
-  snapshot: TextareaSnapshot;
-  receipt?: TextareaReceipt | null;
+  snapshot: EditorSnapshot;
+  receipt: EditorReceipt | null;
 }
-export interface TextareaSnapshot {
-  text: TextareaTextRef;
+export interface EditorSnapshot {
+  text: EditorTextRef;
   selection: TextRange;
   reversed: boolean;
-  marked?: TextRange | null;
+  marked: TextRange | null;
 }
-export interface TextareaTextRef {
+export interface EditorTextRef {
   owner: string;
   revision: number;
   bytes: number;
@@ -1073,11 +1095,11 @@ export interface TextRange {
   start: number;
   end: number;
 }
-export interface TextareaReceipt {
+export interface EditorReceipt {
   owner: string;
   sequence: number;
   revision: number;
-  outcome: TextareaOutcome;
+  outcome: EditorOutcome;
 }
 export interface ReadText {
   start: number;

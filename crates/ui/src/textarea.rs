@@ -18,11 +18,18 @@
  */
 
 //! Native editor protocol. Snapshots are observations, never writable buffers.
-mod component;
-pub use component::reduce;
+use crate::editor::*;
 use maka_plugin_core::contract::{Capture, Contract, Interface, Transport};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+impl crate::editor::Props for TextareaProps {
+    fn command(&self) -> Option<&EditorCommand> {
+        self.command.as_ref()
+    }
+    fn set_command(&mut self, command: Option<EditorCommand>) {
+        self.command = command;
+    }
+}
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -47,7 +54,7 @@ pub struct TextareaProps {
     #[serde(default)]
     /// None issues no new command; an accepted command remains pending until
     /// its matching receipt commits. Clearing props is not cancellation.
-    pub command: Option<TextareaCommand>,
+    pub command: Option<EditorCommand>,
 }
 
 /// Local presentation for user-initiated native editing actions. This is not
@@ -98,81 +105,6 @@ pub struct TextareaMenuLabels {
     #[schemars(length(min = 1, max = 512))]
     pub select_all: String,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct TextareaCommand {
-    /// Correlation with the original native editor, never a resource grant.
-    #[schemars(length(min = 1, max = 128))]
-    pub owner: String,
-    #[schemars(range(min = 1, max = 9007199254740991u64))]
-    pub sequence: u64,
-    #[schemars(range(max = 9007199254740991u64))]
-    pub based_on: u64,
-    pub edit: TextareaEdit,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum TextareaEdit {
-    Replace {
-        #[schemars(length(max = 8192))]
-        text: String,
-    },
-    Reset {
-        #[schemars(length(max = 8192))]
-        text: String,
-    },
-}
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TextRange {
-    pub start: usize,
-    pub end: usize,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TextareaTextRef {
-    pub owner: String,
-    pub revision: u64,
-    pub bytes: usize,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TextareaSnapshot {
-    pub text: TextareaTextRef,
-    pub selection: TextRange,
-    pub reversed: bool,
-    pub marked: Option<TextRange>,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum TextareaConflict {
-    Owner,
-    Representation,
-    Revision,
-    Composition,
-    Sequence,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
-#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
-pub enum TextareaOutcome {
-    Applied,
-    Conflict { reason: TextareaConflict },
-}
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TextareaReceipt {
-    pub owner: String,
-    pub sequence: u64,
-    pub revision: u64,
-    pub outcome: TextareaOutcome,
-}
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TextareaObservation {
-    pub revision: u64,
-    pub snapshot: TextareaSnapshot,
-    pub receipt: Option<TextareaReceipt>,
-}
 pub fn textarea_contract() -> Contract {
     Contract {
         name: "maka.ui.Textarea".into(),
@@ -185,7 +117,7 @@ pub fn textarea_contract() -> Contract {
             captures: BTreeMap::from([(
                 "snapshot".into(),
                 Capture {
-                    input: serde_json::to_value(schemars::schema_for!(TextareaCapture))
+                    input: serde_json::to_value(schemars::schema_for!(EditorCapture))
                         .expect("capture schema"),
                     resource: text_resource_type(),
                 },
@@ -193,30 +125,3 @@ pub fn textarea_contract() -> Contract {
         },
     }
 }
-
-pub fn observation_schema() -> serde_json::Value {
-    serde_json::to_value(schemars::schema_for!(TextareaObservation))
-        .expect("editor observation schema")
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum TextareaReadError {
-    #[error("editor resource is closed or belongs to another owner")]
-    Owner,
-    #[error("editor revision changed")]
-    Revision,
-    #[error("invalid editor UTF-8 byte range or range exceeds 64 KiB")]
-    Range,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum TextareaCapture {
-    Current,
-    AtRevision {
-        #[schemars(length(min = 1, max = 128))]
-        owner: String,
-        revision: u64,
-    },
-}
-pub use super::text::text_resource_type;

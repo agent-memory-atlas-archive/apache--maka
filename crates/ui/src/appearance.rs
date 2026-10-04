@@ -66,6 +66,23 @@ pub struct Insets {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InputAppearance {
+    pub text: TextAppearance,
+    pub muted_foreground: Color,
+    pub background: Color,
+    pub selection: Color,
+    pub caret: Color,
+    pub border: Color,
+    pub focused_border: Color,
+    #[schemars(range(min = 0, max = 8))]
+    pub border_width: f32,
+    #[schemars(range(min = 0, max = 64))]
+    pub radius: f32,
+    pub padding: Insets,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TextareaAppearance {
     pub text: TextAppearance,
     pub muted_foreground: Color,

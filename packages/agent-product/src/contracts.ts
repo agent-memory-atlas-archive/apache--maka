@@ -24,8 +24,8 @@ import {
   type SettingsModelChoice,
   type TextareaAppearance,
   type TextareaMenuAppearance,
-  type TextareaCommand,
-  type TextareaObservation,
+  type EditorCommand,
+  type EditorObservation,
   type Role,
 } from '../../plugin-sdk/src/index.js';
 export type Schema = Record<string, unknown>;
@@ -82,7 +82,7 @@ export interface ComposerProps {
   busy: boolean;
   running: boolean;
   enabled: boolean;
-  command: TextareaCommand | null;
+  command: EditorCommand | null;
 }
 // Reuse the exact native schemas; this package defines only its own interfaces.
 const editor = native.textarea.interface;
@@ -164,7 +164,7 @@ export const themeContract: Contract = {
   transport: 'local',
   interface: { kind: 'value', schema: withDefs(themeSchema) },
 };
-export type ComposerObservation = TextareaObservation;
+export type ComposerObservation = EditorObservation;
 
 const modelChoice = native.settings.interface.methods.models.output.$defs.SettingsModelChoice;
 const modelDefs = native.settings.interface.methods.models.output.$defs;

@@ -21,7 +21,7 @@ use super::*;
 use maka_plugin_core::package::{EntryTarget, Implementation};
 use std::collections::BTreeMap;
 
-fn editor_fixture() -> (tokio::runtime::Runtime, Input, Vec<Package>) {
+pub(super) fn editor_fixture() -> (tokio::runtime::Runtime, Input, Vec<Package>) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_time()

@@ -847,6 +847,8 @@ fn raw_click_focus_is_a_default_after_successful_commit() {
 #[path = "subscriptions.rs"]
 mod subscriptions;
 
+#[path = "tests/input.rs"]
+mod input;
 #[path = "tests/textarea.rs"]
 mod textarea;
 

@@ -118,3 +118,37 @@ fn thumb(
         .radius(px(value.radius))
         .min_length(px(value.min_length))
 }
+
+/// Single-line controls have no multiline scrollbar policy.
+pub(super) struct InputProjection {
+    pub data: data::InputAppearance,
+    pub font: Font,
+    editor: base::input::InputEditorStyle,
+}
+impl InputProjection {
+    pub fn new(value: &data::InputAppearance) -> Self {
+        Self {
+            data: value.clone(),
+            font: font(&value.text.font),
+            editor: base::input::InputEditorStyle {
+                foreground: color(value.text.foreground),
+                muted_foreground: color(value.muted_foreground),
+                background: color(value.background),
+                border: color(value.border),
+                selection: color(value.selection),
+                caret: color(value.caret),
+                ..Default::default()
+            },
+        }
+    }
+    pub fn apply(&self, state: &mut base::input::InputState) {
+        state.set_complete_editor_style(self.editor.clone());
+        let p = self.data.padding;
+        state.set_editor_paddings(Edges {
+            top: px(p.top),
+            right: px(p.right),
+            bottom: px(p.bottom),
+            left: px(p.left),
+        });
+    }
+}

@@ -19,9 +19,8 @@
 
 use super::*;
 use gpui_kit::{AnyWindowHandle, Entity, EntityInputHandler};
-use maka_ui::textarea::{
-    TextareaCommand, TextareaConflict, TextareaEdit, TextareaObservation, TextareaOutcome,
-    TextareaReadError,
+use maka_ui::editor::{
+    EditorCommand, EditorConflict, EditorEdit, EditorObservation, EditorOutcome, EditorReadError,
 };
 use std::collections::BTreeMap;
 use widgets::textarea::TextareaOwner;
@@ -172,7 +171,7 @@ impl Scene {
     }
     fn command(
         &self,
-        command: TextareaCommand,
+        command: EditorCommand,
         window: &mut gpui_kit::Window,
         cx: &mut App,
     ) -> maka_ui::Result<()> {
@@ -208,7 +207,7 @@ fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_pa
     scene.draw(cx);
     let owner = scene.owner();
     let observation = || {
-        serde_json::from_value::<TextareaObservation>(
+        serde_json::from_value::<EditorObservation>(
             scene.app.borrow().frame(&scene.editor).unwrap().state["observation"].clone(),
         )
         .unwrap()
@@ -245,11 +244,11 @@ fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_pa
             .update(cx, |s, cx| s.set_selected_range(0..2, cx));
         scene
             .command(
-                TextareaCommand {
+                EditorCommand {
                     owner: scene.editor_owner(cx),
                     sequence: 1,
                     based_on: native,
-                    edit: TextareaEdit::Replace {
+                    edit: EditorEdit::Replace {
                         text: "Wrong".into(),
                     },
                 },
@@ -259,8 +258,8 @@ fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_pa
             .unwrap();
         assert_eq!(
             owner.read(cx).receipt.as_ref().unwrap().outcome,
-            TextareaOutcome::Conflict {
-                reason: TextareaConflict::Revision
+            EditorOutcome::Conflict {
+                reason: EditorConflict::Revision
             }
         );
         assert_eq!(owner.read(cx).state.read(cx).value().as_ref(), "Draft");
@@ -270,11 +269,11 @@ fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_pa
         assert!(
             scene
                 .command(
-                    TextareaCommand {
+                    EditorCommand {
                         owner: scene.editor_owner(cx),
                         sequence: 2,
                         based_on: native + 1,
-                        edit: TextareaEdit::Reset {
+                        edit: EditorEdit::Reset {
                             text: "Early".into()
                         }
                     },
@@ -314,11 +313,11 @@ fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_pa
         let based_on = owner.read(cx).revision;
         scene
             .command(
-                TextareaCommand {
+                EditorCommand {
                     owner: scene.editor_owner(cx),
                     sequence: 2,
                     based_on,
-                    edit: TextareaEdit::Reset {
+                    edit: EditorEdit::Reset {
                         text: "Clear".into(),
                     },
                 },
@@ -328,8 +327,8 @@ fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_pa
             .unwrap();
         assert_eq!(
             owner.read(cx).receipt.as_ref().unwrap().outcome,
-            TextareaOutcome::Conflict {
-                reason: TextareaConflict::Composition
+            EditorOutcome::Conflict {
+                reason: EditorConflict::Composition
             }
         );
         assert!(
@@ -347,11 +346,11 @@ fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_pa
         assert_eq!(owner.read(cx).revision, revision + 1);
         scene
             .command(
-                TextareaCommand {
+                EditorCommand {
                     owner: scene.editor_owner(cx),
                     sequence: 3,
                     based_on: revision,
-                    edit: TextareaEdit::Reset {
+                    edit: EditorEdit::Reset {
                         text: "Late".into(),
                     },
                 },
@@ -361,8 +360,8 @@ fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_pa
             .unwrap();
         assert_eq!(
             owner.read(cx).receipt.as_ref().unwrap().outcome,
-            TextareaOutcome::Conflict {
-                reason: TextareaConflict::Revision
+            EditorOutcome::Conflict {
+                reason: EditorConflict::Revision
             }
         );
     })
@@ -371,11 +370,11 @@ fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_pa
     published.push(observation().receipt.unwrap().sequence);
     cx.update_window(scene.window, |_, window, cx| {
         let based_on = owner.read(cx).revision;
-        let command = TextareaCommand {
+        let command = EditorCommand {
             owner: scene.editor_owner(cx),
             sequence: 4,
             based_on,
-            edit: TextareaEdit::Reset {
+            edit: EditorEdit::Reset {
                 text: "Reset".into(),
             },
         };
@@ -385,7 +384,7 @@ fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_pa
         assert_eq!(owner.read(cx).state.read(cx).value().as_ref(), "Reset");
         assert_eq!(
             owner.read(cx).receipt.as_ref().unwrap().outcome,
-            TextareaOutcome::Applied
+            EditorOutcome::Applied
         );
     })
     .unwrap();
@@ -426,14 +425,14 @@ fn restarted_process_rejects_the_original_editor_capture_and_command(cx: &mut Te
     })
     .unwrap();
     cx.run_until_parked();
-    let observation: TextareaObservation = serde_json::from_value(
+    let observation: EditorObservation = serde_json::from_value(
         scene.app.borrow().frame(&scene.editor).unwrap().state["observation"].clone(),
     )
     .unwrap();
     let reference = observation.snapshot.text;
     const ORIGINAL: &str = "MAKA_UI_TEST_ORIGINAL_EDITOR_REF";
     if let Ok(original) = std::env::var(ORIGINAL) {
-        let original: maka_ui::textarea::TextareaTextRef = serde_json::from_str(&original).unwrap();
+        let original: maka_ui::editor::EditorTextRef = serde_json::from_str(&original).unwrap();
         assert_eq!(reference.revision, original.revision);
         assert_eq!(reference.bytes, original.bytes);
         let owner = scene.owner();
@@ -441,7 +440,7 @@ fn restarted_process_rejects_the_original_editor_capture_and_command(cx: &mut Te
             owner.update(cx, |editor, cx| {
                 assert!(matches!(
                     editor.read_text(&original, 0..5, window, cx),
-                    Err(TextareaReadError::Owner)
+                    Err(EditorReadError::Owner)
                 ));
             });
             let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
@@ -451,19 +450,19 @@ fn restarted_process_rejects_the_original_editor_capture_and_command(cx: &mut Te
                 "read",
                 serde_json::json!({
                     "capture": {"kind":"at_revision", "owner":original.owner, "revision":original.revision},
-                    "command": TextareaCommand {
+                    "command": EditorCommand {
                         owner: original.owner.clone(),
                         sequence: 900,
                         based_on: original.revision,
-                        edit: TextareaEdit::Reset { text: "Must not appear".into() },
+                        edit: EditorEdit::Reset { text: "Must not appear".into() },
                     },
                 }),
             ).unwrap();
             scene.surface.update(cx, |s, cx| s.sync_native(window, cx).unwrap());
             assert_eq!(
                 owner.read(cx).receipt.as_ref().unwrap().outcome,
-                TextareaOutcome::Conflict {
-                    reason: TextareaConflict::Owner
+                EditorOutcome::Conflict {
+                    reason: EditorConflict::Owner
                 }
             );
             assert_eq!(owner.read(cx).state.read(cx).value().as_ref(), "Start");
@@ -485,18 +484,18 @@ fn restarted_process_rejects_the_original_editor_capture_and_command(cx: &mut Te
                 "read",
                 serde_json::json!({
                     "capture": {"kind":"at_revision", "owner":reference.owner, "revision":reference.revision},
-                    "command": TextareaCommand {
+                    "command": EditorCommand {
                         owner: reference.owner.clone(),
                         sequence: 1,
                         based_on: reference.revision,
-                        edit: TextareaEdit::Reset { text: "New".into() },
+                        edit: EditorEdit::Reset { text: "New".into() },
                     },
                 }),
             ).unwrap();
             scene.surface.update(cx, |s, cx| s.sync_native(window, cx).unwrap());
             assert_eq!(
                 owner.read(cx).receipt.as_ref().unwrap().outcome,
-                TextareaOutcome::Applied
+                EditorOutcome::Applied
             );
             assert_eq!(owner.read(cx).state.read(cx).value().as_ref(), "New");
         })
@@ -559,7 +558,7 @@ fn editor_large_text_observations_use_revision_checked_bounded_resources(cx: &mu
         serde_json::to_vec(&frame).unwrap().len() < 4096,
         "observation never transports the whole document"
     );
-    let observation: TextareaObservation =
+    let observation: EditorObservation =
         serde_json::from_value(frame["observation"].clone()).unwrap();
     assert_eq!(observation.snapshot.text.bytes, text.len());
     let reference = observation.snapshot.text;
@@ -568,17 +567,17 @@ fn editor_large_text_observations_use_revision_checked_bounded_resources(cx: &mu
             assert_eq!(s.read_text(&reference, 0..7, window, cx).unwrap(), "中🌟");
             assert!(matches!(
                 s.read_text(&reference, 1..2, window, cx),
-                Err(TextareaReadError::Range)
+                Err(EditorReadError::Range)
             ));
             assert!(matches!(
                 s.read_text(&reference, 0..reference.bytes, window, cx),
-                Err(TextareaReadError::Range)
+                Err(EditorReadError::Range)
             ));
             let mut foreign = reference.clone();
             foreign.owner = "another owner".into();
             assert!(matches!(
                 s.read_text(&foreign, 0..7, window, cx),
-                Err(TextareaReadError::Owner)
+                Err(EditorReadError::Owner)
             ));
             let mut adjusted = None;
             assert_eq!(
@@ -594,7 +593,7 @@ fn editor_large_text_observations_use_revision_checked_bounded_resources(cx: &mu
             s.replace_text_in_range(Some(3..3), "!", window, cx);
             assert!(matches!(
                 s.read_text(&reference, 0..7, window, cx),
-                Err(TextareaReadError::Revision)
+                Err(EditorReadError::Revision)
             ));
         });
     })
@@ -626,11 +625,11 @@ fn failed_composed_batch_cannot_execute_staged_editor_reset(cx: &mut TestAppCont
         assert!(
             scene
                 .command(
-                    TextareaCommand {
+                    EditorCommand {
                         owner: scene.editor_owner(cx),
                         sequence: 1,
                         based_on,
-                        edit: TextareaEdit::Reset {
+                        edit: EditorEdit::Reset {
                             text: "Must not escape".into()
                         }
                     },
@@ -711,7 +710,7 @@ fn public_editor_events_preserve_a_same_batch_command_until_receipt_and_do_not_l
         };
         events.insert(
             "set".into(),
-            serde_json::to_value(schemars::schema_for!(TextareaCommand)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(EditorCommand)).unwrap(),
         );
         events.insert("clear".into(), serde_json::json!({"type":"null"}));
         let contract = contract.clone();
@@ -757,11 +756,11 @@ fn public_editor_events_preserve_a_same_batch_command_until_receipt_and_do_not_l
             .clone();
         let (based_on, original_owner) =
             cx.update(|cx| (owner.read(cx).revision, scene.editor_owner(cx)));
-        let command = TextareaCommand {
+        let command = EditorCommand {
             owner: original_owner,
             sequence: 1,
             based_on,
-            edit: TextareaEdit::Replace {
+            edit: EditorEdit::Replace {
                 text: "Accepted".into(),
             },
         };
@@ -813,11 +812,11 @@ fn public_editor_events_preserve_a_same_batch_command_until_receipt_and_do_not_l
                 let revision = owner.read(cx).revision;
                 scene
                     .command(
-                        TextareaCommand {
+                        EditorCommand {
                             owner: scene.editor_owner(cx),
                             sequence: 2,
                             based_on: revision,
-                            edit: TextareaEdit::Replace {
+                            edit: EditorEdit::Replace {
                                 text: "Next".into(),
                             },
                         },
@@ -1771,3 +1770,5 @@ fn dynamic_workspace_layout_changes_preserve_original_editor_draft_focus_and_mar
 
 #[path = "editor_tests/subscriptions.rs"]
 mod subscriptions;
+
+mod publication;

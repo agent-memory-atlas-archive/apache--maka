@@ -17,139 +17,21 @@
  * under the License.
  */
 
+use super::editor::Owner;
 use super::{NativeInput, Slots, Widget, WidgetInput};
 use crate::editor::{Editor, Geometry};
 use crossterm::event::{Event, KeyCode, KeyModifiers};
 use maka_ui::{
     ComponentCall, ComponentOutput, NativeCapability, NativeComponent, NativeExport,
-    NativeRegistry, NativeView, textarea::*,
+    NativeRegistry, NativeView, editor::*, textarea::*,
 };
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
 };
-use serde_json::{Value, json};
-use std::{any::Any, collections::BTreeMap, ops::Range, rc::Rc, sync::Arc};
+use std::{any::Any, collections::BTreeMap, rc::Rc, sync::Arc};
 
-struct Owner {
-    editor: Editor,
-    presented: Option<Geometry>,
-    id: String,
-    revision: u64,
-    last_edit: u64,
-    last_selection: (Range<usize>, bool),
-    last_request: Option<TextareaCommand>,
-    sequence: u64,
-    receipt: Option<TextareaReceipt>,
-    announced: bool,
-}
-impl Owner {
-    fn new(props: &TextareaProps) -> Self {
-        let mut editor = Editor::bounded(64 * 1024, "composer-too-large");
-        editor.insert(&props.initial_text);
-        editor.clear_history();
-        let last_edit = editor.revision();
-        let last_selection = (editor.selection_range(), editor.selection_reversed());
-        Self {
-            editor,
-            presented: None,
-            id: uuid::Uuid::new_v4().to_string(),
-            revision: 0,
-            last_edit,
-            last_selection,
-            last_request: None,
-            sequence: 0,
-            receipt: None,
-            announced: false,
-        }
-    }
-    fn refresh(&mut self) -> bool {
-        let edit = self.editor.revision();
-        let selection = (
-            self.editor.selection_range(),
-            self.editor.selection_reversed(),
-        );
-        if edit != self.last_edit || selection != self.last_selection {
-            self.last_edit = edit;
-            self.last_selection = selection;
-            self.revision += 1;
-            return true;
-        }
-        false
-    }
-    fn observation(&self) -> NativeInput {
-        let range = self.editor.selection_range();
-        let selection = TextRange {
-            start: self.editor.text()[..range.start].encode_utf16().count(),
-            end: self.editor.text()[..range.end].encode_utf16().count(),
-        };
-        let observation = TextareaObservation {
-            revision: self.revision,
-            snapshot: TextareaSnapshot {
-                text: TextareaTextRef {
-                    owner: self.id.clone(),
-                    revision: self.revision,
-                    bytes: self.editor.text().len(),
-                },
-                selection,
-                reversed: self.editor.selection_reversed(),
-                marked: None,
-            },
-            receipt: self.receipt.clone(),
-        };
-        NativeInput {
-            key: "observe".into(),
-            value: serde_json::to_value(observation).expect("native textarea observation"),
-        }
-    }
-    fn apply(&mut self, command: &TextareaCommand) {
-        self.last_request = Some(command.clone());
-        let outcome = if command.owner != self.id {
-            TextareaOutcome::Conflict {
-                reason: TextareaConflict::Owner,
-            }
-        } else if command.sequence <= self.sequence {
-            TextareaOutcome::Conflict {
-                reason: TextareaConflict::Sequence,
-            }
-        } else {
-            self.sequence = command.sequence;
-            if command.based_on != self.revision {
-                TextareaOutcome::Conflict {
-                    reason: TextareaConflict::Revision,
-                }
-            } else {
-                let (TextareaEdit::Replace { text } | TextareaEdit::Reset { text }) = &command.edit;
-                if !representable(text) {
-                    TextareaOutcome::Conflict {
-                        reason: TextareaConflict::Representation,
-                    }
-                } else {
-                    match &command.edit {
-                        TextareaEdit::Replace { text } => {
-                            self.editor.select_all();
-                            self.editor.insert(text);
-                        }
-                        TextareaEdit::Reset { text } => {
-                            self.editor.clear();
-                            self.editor.insert(text);
-                            self.editor.clear_history();
-                        }
-                    }
-                    self.refresh();
-                    TextareaOutcome::Applied
-                }
-            }
-        };
-        self.receipt = Some(TextareaReceipt {
-            owner: command.owner.clone(),
-            sequence: command.sequence,
-            revision: self.revision,
-            outcome,
-        });
-    }
-}
 fn representable(text: &str) -> bool {
     text.len() <= 64 * 1024
         && !text
@@ -165,7 +47,10 @@ struct Recipe {
 }
 impl Widget for Recipe {
     fn create(&self) -> Box<dyn Any> {
-        Box::new(Owner::new(&self.props))
+        Box::new(Owner::new(
+            Editor::bounded(65536, "composer-too-large"),
+            &self.props.initial_text,
+        ))
     }
     fn commit(&self, state: &mut dyn Any) -> maka_ui::Result<Option<NativeInput>> {
         let owner = state
@@ -226,26 +111,12 @@ impl Widget for Recipe {
         state: &dyn Any,
         target: &maka_ui::actions::CaptureTarget,
     ) -> maka_ui::Result<Arc<dyn maka_plugins::call::ReadResource>> {
-        if target.method() != "snapshot" {
-            return Err(maka_ui::Error::Invalid(
-                "unknown terminal editor capture".into(),
-            ));
-        }
-        let owner = state
+        state
             .downcast_ref::<Owner>()
-            .expect("terminal editor owner");
-        let capture: TextareaCapture = serde_json::from_value(target.input().clone())
-            .map_err(|e| maka_ui::Error::Invalid(e.to_string()))?;
-        if matches!(capture,TextareaCapture::AtRevision {owner:ref expected,revision} if expected!=&owner.id || revision!=owner.revision)
-        {
-            return Err(maka_ui::Error::Invalid("editor revision changed".into()));
-        }
-        Ok(Arc::new(Snapshot {
-            owner: owner.id.clone(),
-            text: owner.editor.text().to_owned(),
-            revision: owner.revision,
-        }))
+            .expect("terminal editor owner")
+            .capture(target)
     }
+
     fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u16)> {
         let owner = slots.native_state::<Owner>()?;
         Ok((
@@ -310,35 +181,6 @@ impl Widget for Recipe {
         owner.presented = None;
     }
 }
-struct Snapshot {
-    owner: String,
-    text: String,
-    revision: u64,
-}
-impl maka_plugins::call::ReadResource for Snapshot {
-    fn resource_type(&self) -> maka_plugin_core::contract::ResourceType {
-        text_resource_type()
-    }
-    fn bytes(&self) -> usize {
-        self.text.len()
-    }
-    fn metadata(&self) -> Value {
-        json!({"owner":self.owner,"revision":self.revision,"bytes":self.text.len()})
-    }
-    fn read(&self, range: Range<usize>) -> Result<Vec<u8>, String> {
-        if range
-            .end
-            .checked_sub(range.start)
-            .is_none_or(|n| n > 64 * 1024)
-        {
-            return Err("invalid text range or chunk exceeds 64 KiB".into());
-        }
-        self.text
-            .get(range)
-            .map(|text| text.as_bytes().to_vec())
-            .ok_or_else(|| "invalid editor UTF-8 range".into())
-    }
-}
 struct Component;
 impl NativeComponent<dyn Widget> for Component {
     fn capture(
@@ -352,7 +194,7 @@ impl NativeComponent<dyn Widget> for Component {
         call: ComponentCall<'_>,
         _: &maka_ui::abi::ValueBindings,
     ) -> maka_ui::Result<ComponentOutput<NativeView<dyn Widget>>> {
-        let output = maka_ui::textarea::reduce(call)?;
+        let output = maka_ui::editor::reduce::<TextareaProps>(call)?;
         let props = output.frame.view.clone();
         if !props.soft_wrap {
             return Err(maka_ui::Error::Invalid(

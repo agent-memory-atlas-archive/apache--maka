@@ -169,7 +169,7 @@ export const contracts = {
               'None issues no new command; an accepted command remains pending until\nits matching receipt commits. Clearing props is not cancellation.',
             anyOf: [
               {
-                $ref: '#/$defs/TextareaCommand',
+                $ref: '#/$defs/EditorCommand',
               },
               {
                 type: 'null',
@@ -579,7 +579,7 @@ export const contracts = {
             additionalProperties: false,
             required: ['title', 'undo', 'redo', 'cut', 'copy', 'paste', 'selectAll'],
           },
-          TextareaCommand: {
+          EditorCommand: {
             type: 'object',
             properties: {
               owner: {
@@ -601,13 +601,13 @@ export const contracts = {
                 maximum: 9007199254740991,
               },
               edit: {
-                $ref: '#/$defs/TextareaEdit',
+                $ref: '#/$defs/EditorEdit',
               },
             },
             additionalProperties: false,
             required: ['owner', 'sequence', 'basedOn', 'edit'],
           },
-          TextareaEdit: {
+          EditorEdit: {
             oneOf: [
               {
                 type: 'object',
@@ -646,7 +646,7 @@ export const contracts = {
       events: {
         changed: {
           $schema: 'https://json-schema.org/draft/2020-12/schema',
-          title: 'TextareaObservation',
+          title: 'EditorObservation',
           type: 'object',
           properties: {
             revision: {
@@ -655,12 +655,12 @@ export const contracts = {
               minimum: 0,
             },
             snapshot: {
-              $ref: '#/$defs/TextareaSnapshot',
+              $ref: '#/$defs/EditorSnapshot',
             },
             receipt: {
               anyOf: [
                 {
-                  $ref: '#/$defs/TextareaReceipt',
+                  $ref: '#/$defs/EditorReceipt',
                 },
                 {
                   type: 'null',
@@ -669,13 +669,13 @@ export const contracts = {
             },
           },
           additionalProperties: false,
-          required: ['revision', 'snapshot'],
+          required: ['revision', 'snapshot', 'receipt'],
           $defs: {
-            TextareaSnapshot: {
+            EditorSnapshot: {
               type: 'object',
               properties: {
                 text: {
-                  $ref: '#/$defs/TextareaTextRef',
+                  $ref: '#/$defs/EditorTextRef',
                 },
                 selection: {
                   $ref: '#/$defs/TextRange',
@@ -695,9 +695,9 @@ export const contracts = {
                 },
               },
               additionalProperties: false,
-              required: ['text', 'selection', 'reversed'],
+              required: ['text', 'selection', 'reversed', 'marked'],
             },
-            TextareaTextRef: {
+            EditorTextRef: {
               type: 'object',
               properties: {
                 owner: {
@@ -734,7 +734,7 @@ export const contracts = {
               additionalProperties: false,
               required: ['start', 'end'],
             },
-            TextareaReceipt: {
+            EditorReceipt: {
               type: 'object',
               properties: {
                 owner: {
@@ -751,13 +751,13 @@ export const contracts = {
                   minimum: 0,
                 },
                 outcome: {
-                  $ref: '#/$defs/TextareaOutcome',
+                  $ref: '#/$defs/EditorOutcome',
                 },
               },
               additionalProperties: false,
               required: ['owner', 'sequence', 'revision', 'outcome'],
             },
-            TextareaOutcome: {
+            EditorOutcome: {
               oneOf: [
                 {
                   type: 'object',
@@ -774,7 +774,7 @@ export const contracts = {
                   type: 'object',
                   properties: {
                     reason: {
-                      $ref: '#/$defs/TextareaConflict',
+                      $ref: '#/$defs/EditorConflict',
                     },
                     status: {
                       type: 'string',
@@ -786,7 +786,7 @@ export const contracts = {
                 },
               ],
             },
-            TextareaConflict: {
+            EditorConflict: {
               type: 'string',
               enum: ['owner', 'representation', 'revision', 'composition', 'sequence'],
             },
@@ -797,7 +797,933 @@ export const contracts = {
         snapshot: {
           input: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
-            title: 'TextareaCapture',
+            title: 'EditorCapture',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'current',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  owner: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'at_revision',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'owner', 'revision'],
+              },
+            ],
+          },
+          resource: {
+            name: 'maka.text.utf8',
+            version: 1,
+          },
+        },
+      },
+    },
+  },
+  textInput: {
+    name: 'maka.ui.TextInput',
+    version: 1,
+    transport: 'local',
+    interface: {
+      kind: 'component',
+      props: {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        title: 'InputProps',
+        type: 'object',
+        properties: {
+          appearance: {
+            $ref: '#/$defs/InputAppearance',
+          },
+          accessibilityLabel: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 512,
+          },
+          readOnly: {
+            type: 'boolean',
+          },
+          disabled: {
+            type: 'boolean',
+          },
+          tabIndex: {
+            type: 'integer',
+            format: 'int16',
+            minimum: -1,
+            maximum: 32767,
+          },
+          placeholder: {
+            type: 'string',
+            maxLength: 512,
+            default: '',
+          },
+          command: {
+            anyOf: [
+              {
+                $ref: '#/$defs/EditorCommand',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
+        },
+        additionalProperties: false,
+        required: ['appearance', 'accessibilityLabel', 'readOnly', 'disabled', 'tabIndex'],
+        $defs: {
+          InputAppearance: {
+            type: 'object',
+            properties: {
+              text: {
+                $ref: '#/$defs/TextAppearance',
+              },
+              mutedForeground: {
+                $ref: '#/$defs/Color',
+              },
+              background: {
+                $ref: '#/$defs/Color',
+              },
+              selection: {
+                $ref: '#/$defs/Color',
+              },
+              caret: {
+                $ref: '#/$defs/Color',
+              },
+              border: {
+                $ref: '#/$defs/Color',
+              },
+              focusedBorder: {
+                $ref: '#/$defs/Color',
+              },
+              borderWidth: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 8,
+              },
+              radius: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 64,
+              },
+              padding: {
+                $ref: '#/$defs/Insets',
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'text',
+              'mutedForeground',
+              'background',
+              'selection',
+              'caret',
+              'border',
+              'focusedBorder',
+              'borderWidth',
+              'radius',
+              'padding',
+            ],
+          },
+          TextAppearance: {
+            type: 'object',
+            properties: {
+              font: {
+                $ref: '#/$defs/FontAppearance',
+              },
+              foreground: {
+                $ref: '#/$defs/Color',
+              },
+            },
+            additionalProperties: false,
+            required: ['font', 'foreground'],
+          },
+          FontAppearance: {
+            type: 'object',
+            properties: {
+              family: {
+                $ref: '#/$defs/FontFamily',
+              },
+              fallbacks: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/FontFamily',
+                },
+                maxItems: 8,
+              },
+              size: {
+                type: 'number',
+                format: 'float',
+                minimum: 6,
+                maximum: 96,
+              },
+              lineHeight: {
+                description: 'Line height relative to this font size.',
+                type: 'number',
+                format: 'float',
+                minimum: 1,
+                maximum: 3,
+              },
+              weight: {
+                type: 'integer',
+                format: 'uint16',
+                minimum: 1,
+                maximum: 1000,
+              },
+            },
+            additionalProperties: false,
+            required: ['family', 'fallbacks', 'size', 'lineHeight', 'weight'],
+          },
+          FontFamily: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+          },
+          Color: {
+            description: 'Packed RGBA, including explicit alpha zero.',
+            type: 'integer',
+            format: 'uint32',
+            minimum: 0,
+          },
+          Insets: {
+            type: 'object',
+            properties: {
+              top: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+              right: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+              bottom: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+              left: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['top', 'right', 'bottom', 'left'],
+          },
+          EditorCommand: {
+            type: 'object',
+            properties: {
+              owner: {
+                description: 'Correlation with the original native editor, never a resource grant.',
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              sequence: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 1,
+                maximum: 9007199254740991,
+              },
+              basedOn: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+              edit: {
+                $ref: '#/$defs/EditorEdit',
+              },
+            },
+            additionalProperties: false,
+            required: ['owner', 'sequence', 'basedOn', 'edit'],
+          },
+          EditorEdit: {
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  text: {
+                    type: 'string',
+                    maxLength: 8192,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'replace',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'text'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  text: {
+                    type: 'string',
+                    maxLength: 8192,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'reset',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'text'],
+              },
+            ],
+          },
+        },
+      },
+      events: {
+        changed: {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          title: 'EditorObservation',
+          type: 'object',
+          properties: {
+            revision: {
+              type: 'integer',
+              format: 'uint64',
+              minimum: 0,
+            },
+            snapshot: {
+              $ref: '#/$defs/EditorSnapshot',
+            },
+            receipt: {
+              anyOf: [
+                {
+                  $ref: '#/$defs/EditorReceipt',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+            },
+          },
+          additionalProperties: false,
+          required: ['revision', 'snapshot', 'receipt'],
+          $defs: {
+            EditorSnapshot: {
+              type: 'object',
+              properties: {
+                text: {
+                  $ref: '#/$defs/EditorTextRef',
+                },
+                selection: {
+                  $ref: '#/$defs/TextRange',
+                },
+                reversed: {
+                  type: 'boolean',
+                },
+                marked: {
+                  anyOf: [
+                    {
+                      $ref: '#/$defs/TextRange',
+                    },
+                    {
+                      type: 'null',
+                    },
+                  ],
+                },
+              },
+              additionalProperties: false,
+              required: ['text', 'selection', 'reversed', 'marked'],
+            },
+            EditorTextRef: {
+              type: 'object',
+              properties: {
+                owner: {
+                  type: 'string',
+                },
+                revision: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                bytes: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+              },
+              additionalProperties: false,
+              required: ['owner', 'revision', 'bytes'],
+            },
+            TextRange: {
+              type: 'object',
+              properties: {
+                start: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+                end: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+              },
+              additionalProperties: false,
+              required: ['start', 'end'],
+            },
+            EditorReceipt: {
+              type: 'object',
+              properties: {
+                owner: {
+                  type: 'string',
+                },
+                sequence: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                revision: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                outcome: {
+                  $ref: '#/$defs/EditorOutcome',
+                },
+              },
+              additionalProperties: false,
+              required: ['owner', 'sequence', 'revision', 'outcome'],
+            },
+            EditorOutcome: {
+              oneOf: [
+                {
+                  type: 'object',
+                  properties: {
+                    status: {
+                      type: 'string',
+                      const: 'applied',
+                    },
+                  },
+                  required: ['status'],
+                  additionalProperties: false,
+                },
+                {
+                  type: 'object',
+                  properties: {
+                    reason: {
+                      $ref: '#/$defs/EditorConflict',
+                    },
+                    status: {
+                      type: 'string',
+                      const: 'conflict',
+                    },
+                  },
+                  additionalProperties: false,
+                  required: ['status', 'reason'],
+                },
+              ],
+            },
+            EditorConflict: {
+              type: 'string',
+              enum: ['owner', 'representation', 'revision', 'composition', 'sequence'],
+            },
+          },
+        },
+        submitted: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {},
+        },
+      },
+      captures: {
+        snapshot: {
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'EditorCapture',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'current',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  owner: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'at_revision',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'owner', 'revision'],
+              },
+            ],
+          },
+          resource: {
+            name: 'maka.text.utf8',
+            version: 1,
+          },
+        },
+      },
+    },
+  },
+  secretInput: {
+    name: 'maka.ui.SecretInput',
+    version: 1,
+    transport: 'local',
+    interface: {
+      kind: 'component',
+      props: {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        title: 'InputProps',
+        type: 'object',
+        properties: {
+          appearance: {
+            $ref: '#/$defs/InputAppearance',
+          },
+          accessibilityLabel: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 512,
+          },
+          readOnly: {
+            type: 'boolean',
+          },
+          disabled: {
+            type: 'boolean',
+          },
+          tabIndex: {
+            type: 'integer',
+            format: 'int16',
+            minimum: -1,
+            maximum: 32767,
+          },
+          placeholder: {
+            type: 'string',
+            maxLength: 512,
+            default: '',
+          },
+          command: {
+            anyOf: [
+              {
+                $ref: '#/$defs/EditorCommand',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
+        },
+        additionalProperties: false,
+        required: ['appearance', 'accessibilityLabel', 'readOnly', 'disabled', 'tabIndex'],
+        $defs: {
+          InputAppearance: {
+            type: 'object',
+            properties: {
+              text: {
+                $ref: '#/$defs/TextAppearance',
+              },
+              mutedForeground: {
+                $ref: '#/$defs/Color',
+              },
+              background: {
+                $ref: '#/$defs/Color',
+              },
+              selection: {
+                $ref: '#/$defs/Color',
+              },
+              caret: {
+                $ref: '#/$defs/Color',
+              },
+              border: {
+                $ref: '#/$defs/Color',
+              },
+              focusedBorder: {
+                $ref: '#/$defs/Color',
+              },
+              borderWidth: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 8,
+              },
+              radius: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 64,
+              },
+              padding: {
+                $ref: '#/$defs/Insets',
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'text',
+              'mutedForeground',
+              'background',
+              'selection',
+              'caret',
+              'border',
+              'focusedBorder',
+              'borderWidth',
+              'radius',
+              'padding',
+            ],
+          },
+          TextAppearance: {
+            type: 'object',
+            properties: {
+              font: {
+                $ref: '#/$defs/FontAppearance',
+              },
+              foreground: {
+                $ref: '#/$defs/Color',
+              },
+            },
+            additionalProperties: false,
+            required: ['font', 'foreground'],
+          },
+          FontAppearance: {
+            type: 'object',
+            properties: {
+              family: {
+                $ref: '#/$defs/FontFamily',
+              },
+              fallbacks: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/FontFamily',
+                },
+                maxItems: 8,
+              },
+              size: {
+                type: 'number',
+                format: 'float',
+                minimum: 6,
+                maximum: 96,
+              },
+              lineHeight: {
+                description: 'Line height relative to this font size.',
+                type: 'number',
+                format: 'float',
+                minimum: 1,
+                maximum: 3,
+              },
+              weight: {
+                type: 'integer',
+                format: 'uint16',
+                minimum: 1,
+                maximum: 1000,
+              },
+            },
+            additionalProperties: false,
+            required: ['family', 'fallbacks', 'size', 'lineHeight', 'weight'],
+          },
+          FontFamily: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+          },
+          Color: {
+            description: 'Packed RGBA, including explicit alpha zero.',
+            type: 'integer',
+            format: 'uint32',
+            minimum: 0,
+          },
+          Insets: {
+            type: 'object',
+            properties: {
+              top: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+              right: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+              bottom: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+              left: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['top', 'right', 'bottom', 'left'],
+          },
+          EditorCommand: {
+            type: 'object',
+            properties: {
+              owner: {
+                description: 'Correlation with the original native editor, never a resource grant.',
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              sequence: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 1,
+                maximum: 9007199254740991,
+              },
+              basedOn: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+              edit: {
+                $ref: '#/$defs/EditorEdit',
+              },
+            },
+            additionalProperties: false,
+            required: ['owner', 'sequence', 'basedOn', 'edit'],
+          },
+          EditorEdit: {
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  text: {
+                    type: 'string',
+                    maxLength: 8192,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'replace',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'text'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  text: {
+                    type: 'string',
+                    maxLength: 8192,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'reset',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'text'],
+              },
+            ],
+          },
+        },
+      },
+      events: {
+        changed: {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          title: 'EditorObservation',
+          type: 'object',
+          properties: {
+            revision: {
+              type: 'integer',
+              format: 'uint64',
+              minimum: 0,
+            },
+            snapshot: {
+              $ref: '#/$defs/EditorSnapshot',
+            },
+            receipt: {
+              anyOf: [
+                {
+                  $ref: '#/$defs/EditorReceipt',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+            },
+          },
+          additionalProperties: false,
+          required: ['revision', 'snapshot', 'receipt'],
+          $defs: {
+            EditorSnapshot: {
+              type: 'object',
+              properties: {
+                text: {
+                  $ref: '#/$defs/EditorTextRef',
+                },
+                selection: {
+                  $ref: '#/$defs/TextRange',
+                },
+                reversed: {
+                  type: 'boolean',
+                },
+                marked: {
+                  anyOf: [
+                    {
+                      $ref: '#/$defs/TextRange',
+                    },
+                    {
+                      type: 'null',
+                    },
+                  ],
+                },
+              },
+              additionalProperties: false,
+              required: ['text', 'selection', 'reversed', 'marked'],
+            },
+            EditorTextRef: {
+              type: 'object',
+              properties: {
+                owner: {
+                  type: 'string',
+                },
+                revision: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                bytes: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+              },
+              additionalProperties: false,
+              required: ['owner', 'revision', 'bytes'],
+            },
+            TextRange: {
+              type: 'object',
+              properties: {
+                start: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+                end: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+              },
+              additionalProperties: false,
+              required: ['start', 'end'],
+            },
+            EditorReceipt: {
+              type: 'object',
+              properties: {
+                owner: {
+                  type: 'string',
+                },
+                sequence: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                revision: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                outcome: {
+                  $ref: '#/$defs/EditorOutcome',
+                },
+              },
+              additionalProperties: false,
+              required: ['owner', 'sequence', 'revision', 'outcome'],
+            },
+            EditorOutcome: {
+              oneOf: [
+                {
+                  type: 'object',
+                  properties: {
+                    status: {
+                      type: 'string',
+                      const: 'applied',
+                    },
+                  },
+                  required: ['status'],
+                  additionalProperties: false,
+                },
+                {
+                  type: 'object',
+                  properties: {
+                    reason: {
+                      $ref: '#/$defs/EditorConflict',
+                    },
+                    status: {
+                      type: 'string',
+                      const: 'conflict',
+                    },
+                  },
+                  additionalProperties: false,
+                  required: ['status', 'reason'],
+                },
+              ],
+            },
+            EditorConflict: {
+              type: 'string',
+              enum: ['owner', 'representation', 'revision', 'composition', 'sequence'],
+            },
+          },
+        },
+        submitted: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {},
+        },
+      },
+      captures: {
+        snapshot: {
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'EditorCapture',
             oneOf: [
               {
                 type: 'object',

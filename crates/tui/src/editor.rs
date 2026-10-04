@@ -85,7 +85,10 @@ pub struct Editor {
     layout: Layout,
     area: Option<Rect>,
     top: usize,
-    preferred_column: Option<u16>,
+    preferred_column: Option<usize>,
+    single_line: bool,
+    masked: bool,
+    left: usize,
     dragging: bool,
     // Message IDs, not English strings; errors survive a locale switch.
     pub error: Option<&'static str>,
@@ -107,6 +110,9 @@ impl Default for Editor {
             area: None,
             top: 0,
             preferred_column: None,
+            single_line: false,
+            masked: false,
+            left: 0,
             dragging: false,
             error: None,
         }
@@ -120,6 +126,29 @@ impl Editor {
             limit_error,
             ..Self::default()
         }
+    }
+    pub(crate) fn single_line(byte_limit: usize, masked: bool) -> Self {
+        Self {
+            single_line: true,
+            masked,
+            ..Self::bounded(byte_limit, "input-too-large")
+        }
+    }
+    fn make_layout(&self, width: u16) -> Layout {
+        if self.single_line {
+            Layout::single_line(&self.text, width, self.masked)
+        } else {
+            Layout::new(&self.text, width)
+        }
+    }
+    pub(crate) fn secret(&self) -> bool {
+        self.single_line && self.masked
+    }
+    pub(crate) fn accepts_text(&self, text: &str) -> bool {
+        text.len() <= self.byte_limit
+            && !text
+                .chars()
+                .any(|c| c.is_control() && (self.single_line || !matches!(c, '\n' | '\t')))
     }
     pub fn text(&self) -> &str {
         &self.text
@@ -154,7 +183,7 @@ impl Editor {
 
     pub fn preferred_height(&mut self, width: u16, maximum: u16) -> u16 {
         if self.layout.width != width {
-            self.layout = Layout::new(&self.text, width);
+            self.layout = self.make_layout(width);
         }
         self.layout.rows.len().min(maximum as usize).max(1) as u16
     }
@@ -164,7 +193,7 @@ impl Editor {
         let rows = if self.layout.width == width {
             self.layout.rows.len()
         } else {
-            Layout::new(&self.text, width).rows.len()
+            self.make_layout(width).rows.len()
         };
         rows.max(1) as u16
     }
@@ -182,7 +211,10 @@ impl Editor {
             .cursor(self.selection.cursor, self.selection.upstream);
         (row >= self.top && row < self.top + usize::from(area.height)).then(|| {
             Position::new(
-                area.x + column.min(area.width - 1),
+                area.x
+                    + column
+                        .saturating_sub(self.left)
+                        .min(area.width.saturating_sub(1) as usize) as u16,
                 area.y + (row - self.top) as u16,
             )
         })
@@ -208,13 +240,26 @@ impl Editor {
     }
 
     fn reflow(&mut self) {
-        self.layout = Layout::new(&self.text, self.layout.width);
+        self.layout = self.make_layout(self.layout.width);
     }
 
     fn reveal_cursor(&mut self) {
         let Some(area) = self.area else {
             return;
         };
+        if self.single_line {
+            let (_, column) = self
+                .layout
+                .cursor(self.selection.cursor, self.selection.upstream);
+            if column < self.left {
+                self.left = column;
+            }
+            if column >= self.left + area.width as usize {
+                self.left = column.saturating_add(1).saturating_sub(area.width as usize);
+            }
+            self.top = 0;
+            return;
+        }
         let (row, _) = self
             .layout
             .cursor(self.selection.cursor, self.selection.upstream);
@@ -230,6 +275,10 @@ impl Editor {
 
     /// Bracketed paste is one edit, never interpreted as keys or submitted.
     pub fn insert(&mut self, text: &str) -> bool {
+        if self.single_line && text.chars().any(char::is_control) {
+            self.error = Some("input-control");
+            return true;
+        }
         if text.len() > self.byte_limit {
             self.error = Some(self.limit_error);
             return true;
@@ -361,6 +410,9 @@ impl Editor {
     }
 
     fn word_boundary(&self, forward: bool) -> usize {
+        if self.single_line && self.masked {
+            return if forward { self.text.len() } else { 0 };
+        }
         let cursor = self.selection.cursor;
         if forward {
             self.text[cursor..]
@@ -429,7 +481,7 @@ impl Editor {
                 upstream = true;
                 Some(self.layout.rows[self.layout.cursor(cursor, self.selection.upstream).0].end)
             }
-            KeyCode::Up | KeyCode::Down => {
+            KeyCode::Up | KeyCode::Down if !self.single_line => {
                 let (row, column) = self.layout.cursor(cursor, self.selection.upstream);
                 let column = *self.preferred_column.get_or_insert(column);
                 let row = if key.code == KeyCode::Up {
@@ -470,7 +522,7 @@ impl Editor {
                 self.replace(range, "");
                 true
             }
-            KeyCode::Enter if !control => self.insert("\n"),
+            KeyCode::Enter if !control && !self.single_line => self.insert("\n"),
             KeyCode::Char(c)
                 if !c.is_control()
                     && (!key.modifiers.intersects(
@@ -486,6 +538,22 @@ impl Editor {
         }
     }
 
+    fn pointer(&self, point: Position) -> (usize, bool) {
+        let area = self.area.expect("presented editor");
+        if self.single_line {
+            self.layout.hit(
+                0,
+                self.left
+                    + point
+                        .x
+                        .saturating_sub(area.x)
+                        .min(area.width.saturating_sub(1)) as usize,
+            )
+        } else {
+            self.layout.pointer(area, self.top, point)
+        }
+    }
+
     pub fn mouse(&mut self, mouse: MouseEvent) -> bool {
         let Some(area) = self.area.filter(|area| !area.is_empty()) else {
             return false;
@@ -496,7 +564,7 @@ impl Editor {
                 self.dragging = true;
                 self.preferred_column = None;
                 self.move_to(
-                    self.layout.pointer(area, self.top, point),
+                    self.pointer(point),
                     mouse.modifiers.contains(KeyModifiers::SHIFT),
                 );
                 self.selection.anchor.get_or_insert(self.selection.cursor);
@@ -508,7 +576,7 @@ impl Editor {
                     self.top = (self.top + 1)
                         .min(self.layout.rows.len().saturating_sub(area.height as usize));
                 }
-                self.move_to(self.layout.pointer(area, self.top, point), true);
+                self.move_to(self.pointer(point), true);
             }
             MouseEventKind::Up(MouseButton::Left) if self.dragging => {
                 self.dragging = false;
@@ -561,7 +629,7 @@ impl Editor {
         let resized = self.area != Some(area);
         self.area = Some(area);
         if self.layout.width != area.width {
-            self.layout = Layout::new(&self.text, area.width);
+            self.layout = self.make_layout(area.width);
         }
         if resized {
             self.reveal_cursor();
@@ -578,7 +646,7 @@ impl Editor {
         {
             let y = area.y + screen_row as u16;
             for cell in &row.cells {
-                let x = area.x + cell.column;
+                let x = area.x + cell.column as u16;
                 let style = if cell.bytes.start < selection.end && cell.bytes.end > selection.start
                 {
                     selected
@@ -588,17 +656,17 @@ impl Editor {
                 let text = &self.text[cell.bytes.clone()];
                 if masked {
                     for column in 0..cell.width {
-                        frame.buffer_mut()[(x + column, y)]
+                        frame.buffer_mut()[(x + column as u16, y)]
                             .set_symbol("*")
                             .set_style(style);
                     }
                 } else if text == "\t" {
                     for column in 0..cell.width {
-                        frame.buffer_mut()[(x + column, y)]
+                        frame.buffer_mut()[(x + column as u16, y)]
                             .set_symbol(" ")
                             .set_style(style);
                     }
-                } else if text.width() > cell.width as usize {
+                } else if text.width() > cell.width {
                     frame.buffer_mut()[(x, y)].set_symbol("�").set_style(style);
                 } else {
                     let symbol = if text.width() == 0 {
@@ -608,12 +676,20 @@ impl Editor {
                     };
                     frame
                         .buffer_mut()
-                        .set_stringn(x, y, symbol, cell.width as usize, style);
+                        .set_stringn(x, y, symbol, cell.width, style);
                 }
             }
             if self.text.as_bytes().get(row.end) == Some(&b'\n') && selection.contains(&row.end) {
                 let column = row.cells.last().map_or(0, |cell| cell.column + cell.width);
-                frame.buffer_mut()[(area.x + column.min(area.width - 1), y)].set_style(selected);
+                frame.buffer_mut()[(
+                    area.x
+                        + column
+                            .saturating_sub(self.left)
+                            .min(area.width.saturating_sub(1) as usize)
+                            as u16,
+                    y,
+                )]
+                    .set_style(selected);
             }
         }
         if focused {
@@ -622,7 +698,11 @@ impl Editor {
                 .cursor(self.selection.cursor, self.selection.upstream);
             if row >= self.top && row < self.top + area.height as usize {
                 let position = Position::new(
-                    area.x + column.min(area.width - 1),
+                    area.x
+                        + column
+                            .saturating_sub(self.left)
+                            .min(area.width.saturating_sub(1) as usize)
+                            as u16,
                     area.y + (row - self.top) as u16,
                 );
                 frame.buffer_mut()[position]

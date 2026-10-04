@@ -37,8 +37,8 @@ import type {
   Cursor,
   OperationReply,
   RecoveryRef,
-  TextareaCommand,
-  TextareaObservation,
+  EditorCommand,
+  EditorObservation,
   TextChunk,
 } from '../../plugin-sdk/src/index.js';
 import type { Message, Theme } from './contracts.js';
@@ -56,9 +56,9 @@ type Request =
       refresh: boolean;
       position: AgentHistoryPosition;
     }
-  | { kind: 'read'; draft: TextareaObservation; sessionId: string; model: ModelSelection }
+  | { kind: 'read'; draft: EditorObservation; sessionId: string; model: ModelSelection }
   | { kind: 'create' }
-  | { kind: 'send'; draft: TextareaObservation; sessionId: string; model: ModelSelection }
+  | { kind: 'send'; draft: EditorObservation; sessionId: string; model: ModelSelection }
   | { kind: 'stop'; sessionId: string }
   | { kind: 'receipt' }
   | { kind: 'restorePage' }
@@ -98,7 +98,7 @@ export interface State {
   uncertain: Uncertain | null;
   restoring: boolean;
   restoreAfter: number;
-  command: TextareaCommand | null;
+  command: EditorCommand | null;
   commandSequence: number;
   notice: Notice;
 }
@@ -811,7 +811,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         }
       } else if (input.kind === 'component') {
         if (input.name === 'draft') {
-          const observation = input.event as TextareaObservation;
+          const observation = input.event as EditorObservation;
           if (
             state.command &&
             observation.receipt?.owner === state.command.owner &&
@@ -831,7 +831,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
           !state.run &&
           !state.command
         ) {
-          const draft = input.event as TextareaObservation;
+          const draft = input.event as EditorObservation;
           if (draft.snapshot.marked) state.notice = 'draftKept';
           else if (draft.snapshot.text.bytes > 65536) state.notice = 'tooLarge';
           else

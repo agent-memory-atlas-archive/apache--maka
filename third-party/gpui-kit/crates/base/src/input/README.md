@@ -18,3 +18,12 @@ implementation does not change callers' imports.
 
 The root uses explicit `#[path]` declarations so this organization remains an
 implementation detail and existing internal module relationships stay intact.
+
+## Local raw-input admission
+
+Maka adds `InputState::filter_inserted_text` to this pinned upstream source.
+The original editing state tests complete inserted text before normalization,
+clipboard distribution, composition changes or undo-history mutation. A rejection
+preserves the original text, selection and history; final-value validation remains
+independent. The hook is restricted to single-line state and is unset by default.
+Maka uses it to reject control characters rather than silently alter credentials.

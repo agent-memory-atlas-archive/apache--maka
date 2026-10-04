@@ -412,6 +412,7 @@ pub struct InputBaseState<M: InputModeKind> {
     pub(crate) cursor_line_end_affinity: bool,
     pub(super) pattern: Option<regex::Regex>,
     pub(super) validate: Option<Box<dyn Fn(&str, &mut App) -> bool + 'static>>,
+    inserted_text_filter: Option<Box<dyn Fn(&str) -> bool + 'static>>,
     /// The step strategy for [`super::NumberInput`] to increment/decrement.
     /// See [`Self::step`] and [`Self::step_by`].
     pub(crate) number_step: Option<NumberStep>,
@@ -756,6 +757,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             loading: false,
             pattern: None,
             validate: None,
+            inserted_text_filter: None,
             number_step: Some(NumberStep::Fixed(1.)),
             number_min: None,
             number_max: None,
@@ -973,6 +975,9 @@ impl<M: InputModeKind> InputBaseState<M> {
         cx: &mut Context<Self>,
     ) {
         let content = value.into();
+        if !self.accepts_inserted_text(content.text()) {
+            return;
+        }
         self.inline_tokens = None;
         self.undo_manager.set_ignoring(true);
         self.emit_events = false;
@@ -1004,6 +1009,10 @@ impl<M: InputModeKind> InputBaseState<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let text: SharedString = text.into();
+        if !self.accepts_inserted_text(&text) {
+            return;
+        }
         self.replace_text(text, window, cx);
         self.reset_selection();
         self.reset_lsp_state();
@@ -1274,6 +1283,9 @@ impl<M: InputModeKind> InputBaseState<M> {
     /// Set the default value of the input field.
     pub fn default_value(mut self, value: impl Into<SharedString>) -> Self {
         let text: SharedString = value.into();
+        if !self.accepts_inserted_text(&text) {
+            return self;
+        }
         self.text = Rope::from(self.normalize_input(&text).as_ref());
         if let Some(diagnostics) = self.mode.diagnostics_mut() {
             diagnostics.reset(&self.text)
@@ -2795,6 +2807,9 @@ impl<M: InputModeKind> InputBaseState<M> {
         let Some(mut new_text) = clipboard.text().filter(|text| !text.is_empty()) else {
             return;
         };
+        if !self.accepts_inserted_text(&new_text) {
+            return;
+        }
         // A paste is one atomic edit, never part of a typing run.
         self.undo_manager.set_pending_intent(EditIntent::Atomic);
 
@@ -3583,6 +3598,12 @@ impl<M: InputModeKind> InputBaseState<M> {
         }
     }
 
+    fn accepts_inserted_text(&self, text: &str) -> bool {
+        self.inserted_text_filter
+            .as_ref()
+            .is_none_or(|filter| filter(text))
+    }
+
     /// Normalize the inserted text before applying it to the input.
     ///
     /// For number inputs (with [`MaskPattern::Number`]), this converts
@@ -4070,6 +4091,9 @@ impl<M: InputModeKind> EntityInputHandler for InputBaseState<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.accepts_inserted_text(new_text) {
+            return;
+        }
         let requested_intent = self.undo_manager.take_pending_intent();
         if !self.is_editable() {
             return;
@@ -4310,6 +4334,9 @@ impl<M: InputModeKind> EntityInputHandler for InputBaseState<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.accepts_inserted_text(new_text) {
+            return;
+        }
         let requested_intent = self.undo_manager.take_pending_intent();
         if !self.is_editable() {
             return;
@@ -10191,6 +10218,13 @@ impl InputBaseState<crate::input::InputMode> {
     /// ```
     pub fn step_by(mut self, f: impl Fn(f64, StepAction, &mut App) -> f64 + 'static) -> Self {
         self.number_step = Some(NumberStep::by_value(f));
+        self
+    }
+
+    /// Reject raw inserted text before normalization, clipboard distribution,
+    /// composition mutation or history. This does not rewrite the input.
+    pub fn filter_inserted_text(mut self, filter: impl Fn(&str) -> bool + 'static) -> Self {
+        self.inserted_text_filter = Some(Box::new(filter));
         self
     }
 
