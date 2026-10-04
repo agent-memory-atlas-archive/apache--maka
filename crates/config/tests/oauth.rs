@@ -75,6 +75,7 @@ async fn refresh_cas_preserves_generation_across_races_logout_aba_and_reopen() {
     let deleted = fixture
         .store
         .delete_credential(DeleteCredentialInput {
+            expected_connection: Some(fixture.target.clone()),
             expected: winner.clone(),
         })
         .await

@@ -127,6 +127,7 @@ mod tests {
     fn recovery_is_observation_only_and_dispatch_requires_its_exact_durable_checkpoint() {
         let provider = entry("external-login", false).identity;
         let start = LoginStart {
+            expected_credential: None,
             attempt_id: "original-attempt".into(),
             target: LoginTarget::Create {
                 provider: provider.clone(),

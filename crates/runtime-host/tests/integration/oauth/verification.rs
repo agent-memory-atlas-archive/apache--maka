@@ -64,6 +64,7 @@ async fn provider_verification_uses_pinned_proxy_and_persists_observations() {
     ] {
         let LoginPreparation::Ready(ticket) = store
             .prepare_oauth_login(LoginStart {
+                expected_credential: None,
                 attempt_id: name.into(),
                 target: Target::Create {
                     provider: serde_json::from_value(provider).unwrap(),

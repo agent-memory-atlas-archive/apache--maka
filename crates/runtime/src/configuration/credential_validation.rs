@@ -127,3 +127,18 @@ pub fn normalize_set_credential(value: &mut SetCredentialInput) -> ValidationRes
     }
     Ok(())
 }
+
+pub fn delete_credential(value: &DeleteCredentialInput) -> ValidationResult {
+    credential_basis(&value.expected)?;
+    match (&value.expected.locator, &value.expected_connection) {
+        (CredentialLocator::Connection { connection_id, .. }, Some(target)) => {
+            credential_target(target)?;
+            if *connection_id != target.connection_id {
+                return Err("credential belongs to another connection".into());
+            }
+            Ok(())
+        }
+        (CredentialLocator::NetworkProxy { .. }, None) => Ok(()),
+        _ => Err("credential deletion requires its connection basis".into()),
+    }
+}

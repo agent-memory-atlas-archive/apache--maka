@@ -62,6 +62,7 @@ pub async fn create(
     .await
     .expect("fixture provider did not publish");
     let input = LoginStart {
+        expected_credential: None,
         attempt_id: uuid::Uuid::new_v4().to_string(),
         target: Target::Create {
             provider: provider.identity,

@@ -145,6 +145,10 @@ async fn login_rollback_unknown_commit_and_stale_tickets_never_publish_partial_s
     assert!(matches!(
         store
             .delete_credential(DeleteCredentialInput {
+                expected_connection: Some(match &input.target {
+                    Target::Existing { expected, .. } => expected.clone(),
+                    _ => unreachable!(),
+                }),
                 expected: CredentialVersionBasis {
                     locator: locator.clone(),
                     credential_id,

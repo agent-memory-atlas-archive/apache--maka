@@ -104,7 +104,7 @@ pub fn decode_set_credential_input(value: &Value) -> Result<SetCredentialInput> 
 }
 pub fn decode_delete_credential_input(value: &Value) -> Result<DeleteCredentialInput> {
     let input: DeleteCredentialInput = decode(value)?;
-    validated(v::credential_basis(&input.expected))?;
+    validated(v::delete_credential(&input))?;
     Ok(input)
 }
 pub fn decode_catalog_query_input(value: &Value) -> Result<ConnectionCatalogQueryInput> {

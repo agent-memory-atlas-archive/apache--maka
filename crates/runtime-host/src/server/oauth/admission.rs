@@ -118,6 +118,9 @@ pub(super) async fn start(
                 LoginRejection::ConnectionChanged => {
                     failure(Code::OperationConflict, "Connection changed")
                 }
+                LoginRejection::CredentialChanged => {
+                    failure(Code::OperationConflict, "Credential changed")
+                }
                 LoginRejection::AttemptsFull => failure(
                     Code::OperationConflict,
                     "Unresolved login capacity is exhausted",

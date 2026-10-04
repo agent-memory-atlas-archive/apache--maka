@@ -155,6 +155,7 @@ async fn login(
 ) -> maka_protocol::oauth::LoginProjection {
     use maka_protocol::oauth::{LoginStart, Phase};
     let input = LoginStart {
+        expected_credential: None,
         attempt_id: uuid::Uuid::new_v4().to_string(),
         target,
         authentication: maka_runtime::provider::AuthenticationInput {

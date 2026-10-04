@@ -59,6 +59,7 @@ fn credential(secret: &str) -> Credential {
 }
 fn create(attempt: &str) -> LoginStart {
     LoginStart {
+        expected_credential: None,
         attempt_id: attempt.into(),
         target: Target::Create {
             provider: Identity {
@@ -87,6 +88,19 @@ async fn existing(store: &ConfigurationStore, attempt: &str, id: &str) -> LoginS
         .find(|r| r.connection_id == id)
         .unwrap();
     LoginStart {
+        expected_credential: match store
+            .credential_status(CredentialLocator::Connection {
+                connection_id: row.connection_id.clone(),
+                kind: ConnectionCredentialKind::Provider,
+            })
+            .await
+            .unwrap()
+        {
+            maka_runtime::configuration::CredentialVaultQueryResult::Status { status } => {
+                status.basis()
+            }
+            _ => panic!("connection status"),
+        },
         attempt_id: attempt.into(),
         target: Target::Existing {
             expected: ConnectionCredentialTarget {
@@ -324,3 +338,247 @@ mod recovery;
 
 #[path = "oauth_login/inventory.rs"]
 mod inventory;
+
+#[tokio::test]
+async fn enrollment_cas_rejects_refresh_and_logout_that_leave_the_connection_unchanged() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = open(temp.path(), true).await;
+    let first = prepare(&store, create("original")).await;
+    assert!(first.claim().await.unwrap());
+    assert!(matches!(
+        first.complete(credential("original-key"), 1).await.unwrap(),
+        LoginCompletion::Committed(_)
+    ));
+    let id = first.identity().connection_id.clone();
+    let observed = existing(&store, "stale-observation", &id).await;
+    let Target::Existing {
+        expected: connection,
+        ..
+    } = &observed.target
+    else {
+        unreachable!()
+    };
+    let connection = connection.clone();
+    let before = store.catalog().await.unwrap();
+    let current = store
+        .provider_credential(connection.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    let rotated = current
+        .commit_refresh(credential("rotated-key"), 2)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(store.catalog().await.unwrap(), before);
+    assert!(matches!(
+        store.prepare_oauth_login(observed.clone()).await.unwrap(),
+        LoginPreparation::Rejected(LoginRejection::CredentialChanged)
+    ));
+    assert!(
+        store
+            .oauth_login_receipt(observed.attempt_id.clone())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let after_refresh = existing(&store, "stale-after-logout", &id).await;
+    assert_eq!(after_refresh.expected_credential.as_ref(), Some(&rotated));
+    assert!(matches!(
+        store
+            .delete_credential(DeleteCredentialInput {
+                expected: rotated,
+                expected_connection: Some(connection.clone())
+            })
+            .await
+            .unwrap(),
+        CredentialMutationResult::Committed { .. }
+    ));
+    assert_eq!(
+        store.catalog().await.unwrap(),
+        before,
+        "logout without a saved test does not change the connection"
+    );
+    assert!(matches!(
+        store.prepare_oauth_login(after_refresh).await.unwrap(),
+        LoginPreparation::Rejected(LoginRejection::CredentialChanged)
+    ));
+    let mut fresh = observed;
+    fresh.attempt_id = "fresh-after-logout".into();
+    fresh.expected_credential = None;
+    let ready = prepare(&store, fresh).await;
+    assert!(ready.claim().await.unwrap());
+    assert!(matches!(
+        ready.complete(credential("fresh-key"), 3).await.unwrap(),
+        LoginCompletion::Committed(_)
+    ));
+    let row = ready.connection();
+    let value = store
+        .provider_credential(ConnectionCredentialTarget {
+            connection_id: row.connection_id.clone(),
+            revision: row.revision,
+            slug: row.slug.clone(),
+            provider: row.provider.clone(),
+            configuration: row.configuration.clone(),
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(value.credential().secret, "fresh-key");
+    assert_ne!(value.basis().credential_id, current.basis().credential_id);
+    store.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn credential_delete_cas_rejects_an_edited_connection_with_the_same_vault_generation() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = open(temp.path(), true).await;
+    let first = prepare(&store, create("delete-original")).await;
+    assert!(first.claim().await.unwrap());
+    assert!(matches!(
+        first
+            .complete(credential("keep-this-key"), 1)
+            .await
+            .unwrap(),
+        LoginCompletion::Committed(_)
+    ));
+    let observed = existing(
+        &store,
+        "delete-observation",
+        &first.identity().connection_id,
+    )
+    .await;
+    let Target::Existing {
+        expected: connection,
+        ..
+    } = observed.target
+    else {
+        unreachable!()
+    };
+    let old = observed.expected_credential.unwrap();
+    let row = store.catalog().await.unwrap().connections.remove(0);
+    let result = store
+        .update_connection(UpdateCatalogConnectionInput {
+            expected: ConnectionVersionBasis {
+                connection_id: row.connection_id.clone(),
+                revision: row.revision,
+            },
+            changes: ConnectionCatalogEntryUpdate {
+                name: row.name,
+                configuration: json!({"endpoint":"https://changed.test"}),
+                enabled: row.enabled,
+                enabled_model_ids: row.enabled_model_ids,
+                model_overrides: Patch::Keep,
+                request_body_overlay: Patch::Keep,
+            },
+        })
+        .await
+        .unwrap();
+    assert!(matches!(result, CatalogMutationResult::Committed { .. }));
+    assert!(matches!(
+        store
+            .delete_credential(DeleteCredentialInput {
+                expected: old.clone(),
+                expected_connection: Some(connection)
+            })
+            .await
+            .unwrap(),
+        CredentialMutationResult::ConnectionStale { .. }
+    ));
+    let CredentialVaultQueryResult::Status { status } =
+        store.credential_status(old.locator.clone()).await.unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(
+        status.basis(),
+        Some(old.clone()),
+        "stale delete must leave the actual generation untouched"
+    );
+    let row = store.catalog().await.unwrap().connections.remove(0);
+    let current = ConnectionCredentialTarget {
+        connection_id: row.connection_id,
+        revision: row.revision,
+        slug: row.slug,
+        provider: row.provider,
+        configuration: row.configuration,
+    };
+    assert!(matches!(
+        store
+            .delete_credential(DeleteCredentialInput {
+                expected: old,
+                expected_connection: Some(current)
+            })
+            .await
+            .unwrap(),
+        CredentialMutationResult::Committed { .. }
+    ));
+    store.shutdown().await.unwrap();
+}
+
+#[test]
+fn enrollment_wire_requires_an_explicit_generation_and_rejects_cross_connection_basis() {
+    let original = create("wire-input");
+    let mut value = serde_json::to_value(&original).unwrap();
+    assert!(serde_json::from_value::<LoginStart>(value.clone()).is_ok());
+    value.as_object_mut().unwrap().remove("expectedCredential");
+    assert!(serde_json::from_value::<LoginStart>(value).is_err());
+    let mut invalid = original.clone();
+    invalid.expected_credential = Some(CredentialVersionBasis {
+        locator: CredentialLocator::Connection {
+            connection_id: "00000000-0000-4000-8000-000000000001".into(),
+            kind: ConnectionCredentialKind::Provider,
+        },
+        credential_id: "00000000-0000-4000-8000-000000000002".into(),
+        revision: 1,
+    });
+    assert!(invalid.validate().is_err(), "creation must expect absence");
+    let Target::Create {
+        provider,
+        configuration,
+        slug,
+        ..
+    } = original.target
+    else {
+        unreachable!()
+    };
+    invalid.target = Target::Existing {
+        expected: ConnectionCredentialTarget {
+            connection_id: "00000000-0000-4000-8000-000000000003".into(),
+            revision: 1,
+            slug,
+            provider,
+            configuration: configuration.clone(),
+        },
+        configuration,
+    };
+    assert!(
+        invalid.validate().is_err(),
+        "observed generation cannot belong to another recipient"
+    );
+}
+
+#[test]
+fn credential_delete_wire_requires_connection_basis_and_distinguishes_network_credentials() {
+    let network = DeleteCredentialInput {
+        expected: CredentialVersionBasis {
+            locator: CredentialLocator::NetworkProxy {
+                kind: PasswordKind::Password,
+            },
+            credential_id: "00000000-0000-4000-8000-000000000001".into(),
+            revision: 1,
+        },
+        expected_connection: None,
+    };
+    assert!(validation::delete_credential(&network).is_ok());
+    let mut value = serde_json::to_value(&network).unwrap();
+    assert!(serde_json::from_value::<DeleteCredentialInput>(value.clone()).is_ok());
+    value.as_object_mut().unwrap().remove("expectedConnection");
+    assert!(serde_json::from_value::<DeleteCredentialInput>(value).is_err());
+    let mut invalid = network;
+    invalid.expected.locator = CredentialLocator::Connection {
+        connection_id: "00000000-0000-4000-8000-000000000002".into(),
+        kind: ConnectionCredentialKind::Provider,
+    };
+    assert!(validation::delete_credential(&invalid).is_err());
+}

@@ -45,6 +45,9 @@ pub enum Target {
 pub struct LoginStart {
     pub attempt_id: String,
     pub target: Target,
+    /// The caller's observed vault generation; null explicitly expects absence.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub expected_credential: Option<crate::configuration::CredentialVersionBasis>,
     pub authentication: crate::provider::AuthenticationInput,
 }
 
@@ -68,6 +71,25 @@ impl LoginStart {
 
     pub fn validate(&self) -> Result<(), String> {
         validate_attempt(&self.attempt_id, &self.target)?;
+        if let Some(expected) = &self.expected_credential {
+            use crate::configuration::{ConnectionCredentialKind, CredentialLocator, validation};
+            validation::credential_basis(expected)?;
+            let Target::Existing {
+                expected: connection,
+                ..
+            } = &self.target
+            else {
+                return Err("new connection must expect no credential".into());
+            };
+            if expected.locator
+                != (CredentialLocator::Connection {
+                    connection_id: connection.connection_id.clone(),
+                    kind: ConnectionCredentialKind::Provider,
+                })
+            {
+                return Err("credential belongs to another connection".into());
+            }
+        }
         self.authentication.validate()
     }
 }

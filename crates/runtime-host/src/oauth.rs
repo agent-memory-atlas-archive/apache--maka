@@ -410,7 +410,7 @@ mod tests {
                 serde_json::from_value(json!({
                     "attemptId":"fixture-login",
                     "target":{"kind":"create","provider":provider.identity(),"configuration":{},"slug":"account","name":"Account"},
-                    "authentication":{"method":"fixture","input":{}}
+                    "expectedCredential":null,"authentication":{"method":"fixture","input":{}}
                 })).unwrap()
             ).await.unwrap() else { panic!("fixture login") };
             assert!(login.claim().await.unwrap());
@@ -547,7 +547,7 @@ mod tests {
                 sqlx::query("DROP TRIGGER fail_rotation").execute(&mut sql).await.unwrap();
                 let current = binding.resolve(fixture.provider.clone(), context.clone()).await.unwrap();
                 assert!(current.credential() == &envelope("rotated", None));
-                fixture.store.delete_credential(DeleteCredentialInput { expected: current.basis().clone() }).await.unwrap();
+                fixture.store.delete_credential(DeleteCredentialInput { expected_connection: Some(current.target().clone()), expected: current.basis().clone() }).await.unwrap();
                 assert!(binding.resolve(fixture.provider.clone(), context).await.is_err());
                 assert!(fixture.snapshot.current_generation().await.unwrap().is_none());
                 workers.close();

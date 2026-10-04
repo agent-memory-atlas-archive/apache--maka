@@ -94,6 +94,7 @@ impl Command {
 enum Operation {
     Publish,
     Enrollment,
+    Credential,
     Start,
     Query,
     Cancel,
@@ -111,6 +112,7 @@ pub struct Request {
 enum Call {
     Publish,
     Enrollment(maka_protocol::model_provider::Identity),
+    Credential(maka_protocol::configuration::CredentialLocator),
     Start(Box<LoginStart>),
     Query(Observation),
     Cancel(Observation),
@@ -137,6 +139,7 @@ impl Request {
         match &self.call {
             Call::Publish => Operation::Publish,
             Call::Enrollment(_) => Operation::Enrollment,
+            Call::Credential(_) => Operation::Credential,
             Call::Start(_) => Operation::Start,
             Call::Query(_) => Operation::Query,
             Call::Cancel(_) => Operation::Cancel,
@@ -150,6 +153,7 @@ impl Request {
 pub enum Output {
     Published(OAuthPresentationService),
     Enrollment(EnrollmentProjection),
+    Credential(maka_protocol::configuration::CredentialVaultQueryResult),
     Login(LoginProjection),
 }
 
@@ -164,6 +168,10 @@ pub async fn execute(client: &Client, request: &Request) -> Result<Output, Reque
             .await
             .map(Output::Enrollment),
         Call::Start(input) => client.start_oauth_login(input).await.map(Output::Login),
+        Call::Credential(locator) => client
+            .credential_status(locator.clone())
+            .await
+            .map(Output::Credential),
         Call::Query(input) => client
             .query_oauth_login(&input.attempt, input.connection.as_ref())
             .await
@@ -182,6 +190,7 @@ pub struct State {
     picker: crate::providers::picker::Picker,
     choices: Vec<Choice>,
     existing: Option<maka_protocol::configuration::ConnectionCredentialTarget>,
+    credential: Option<maka_protocol::configuration::CredentialStatus>,
     connection_label: String,
     ready: bool,
     enrollment: Option<bool>,
@@ -251,6 +260,7 @@ impl State {
         self.copy_note = None;
         self.not_found = false;
         self.enrollment = None;
+        self.credential = None;
         self.identity = identity::Identity::default();
         self.generation += 1;
     }
@@ -536,6 +546,7 @@ impl App {
                 state.attempt.is_none()
                     && state.ready
                     && state.enrollment == Some(true)
+                    && (state.existing.is_none() || state.credential.is_some())
                     && (!state.customizable() || state.identity.error().is_none())
             }
             Command::New => state.terminal() || state.not_found,
@@ -572,8 +583,18 @@ impl App {
             }
             Command::Field(_) => {}
             Command::Begin => {
+                if state.existing.is_some() && state.credential.is_none() {
+                    return None;
+                }
                 let choice = state.choices.get(state.provider?)?;
-                let start = state.identity.start(choice, state.existing.as_ref()).ok()?;
+                let start = state
+                    .identity
+                    .start(
+                        choice,
+                        state.existing.as_ref(),
+                        state.credential.as_ref().and_then(|status| status.basis()),
+                    )
+                    .ok()?;
                 state.connection_label = match &start.target {
                     LoginTarget::Create { name, slug, .. } => format!("{name} · {slug}"),
                     LoginTarget::Existing { expected, .. } => expected.slug.clone(),
@@ -635,6 +656,8 @@ impl App {
                 Operation::Publish
             } else if state.enrollment.is_none() {
                 Operation::Enrollment
+            } else if state.existing.is_some() && state.credential.is_none() {
+                Operation::Credential
             } else {
                 return None;
             }
@@ -649,6 +672,12 @@ impl App {
             epoch: epoch.clone(),
             call: match operation {
                 Operation::Publish => Call::Publish,
+                Operation::Credential => Call::Credential(
+                    maka_protocol::configuration::CredentialLocator::Connection {
+                        connection_id: state.existing.as_ref()?.connection_id.clone(),
+                        kind: maka_protocol::configuration::ConnectionCredentialKind::Provider,
+                    },
+                ),
                 Operation::Enrollment => Call::Enrollment(
                     state
                         .choices
@@ -729,6 +758,14 @@ impl App {
                     state.next_poll = Some(Instant::now() + Duration::from_secs(2));
                 }
             }
+            Ok(Output::Credential(maka_protocol::configuration::CredentialVaultQueryResult::Status { status })) => {
+                if matches!(&request.call, Call::Credential(locator) if *locator == status.locator)
+                    && state.existing.as_ref().is_some_and(|connection| matches!(&status.locator, maka_protocol::configuration::CredentialLocator::Connection { connection_id, .. } if *connection_id == connection.connection_id))
+                {
+                    state.credential = Some(status);
+                }
+            }
+            Ok(Output::Credential(maka_protocol::configuration::CredentialVaultQueryResult::ConnectionNotFound)) => state.error = Some("oauth-not-found"),
             Err(error) => {
                 state.not_found = request.operation() == Operation::Query
                     && matches!(&error, RequestFailure::Rejected(maka_client::ClientError::Rejected(error))
@@ -868,6 +905,56 @@ mod tests {
     }
 
     #[test]
+    fn reauthentication_requires_the_observed_vault_generation_before_start_checkpoint() {
+        use maka_protocol::configuration::*;
+        let mut app = app();
+        let connection = ConnectionCredentialTarget {
+            connection_id: "00000000-0000-4000-8000-000000000001".into(),
+            revision: 7,
+            slug: "work".into(),
+            provider: app.management.oauth.choices[0].provider.identity.clone(),
+            configuration: serde_json::json!({}),
+        };
+        app.management.oauth.existing = Some(connection.clone());
+        app.management.oauth.ready = true;
+        app.management.oauth.enrollment = Some(true);
+        assert!(!app.oauth_enabled(Command::Begin));
+        assert!(app.oauth_action(Command::Begin).is_none());
+        assert!(app.management.oauth.prepared.is_none());
+        let request = app.oauth_request().unwrap();
+        assert_eq!(request.operation(), Operation::Credential);
+        let Call::Credential(locator) = &request.call else {
+            unreachable!()
+        };
+        let status = CredentialStatus {
+            locator: locator.clone(),
+            state: CredentialState::Configured {
+                credential_id: "00000000-0000-4000-8000-000000000002".into(),
+                revision: 4,
+                updated_at: 1,
+            },
+        };
+        let expected = status.basis();
+        app.oauth_completed(
+            request,
+            Ok(Output::Credential(CredentialVaultQueryResult::Status {
+                status,
+            })),
+        );
+        assert!(app.oauth_enabled(Command::Begin));
+        app.oauth_action(Command::Begin);
+        let request = app.oauth_request().unwrap();
+        assert!(request.needs_checkpoint());
+        let Call::Start(start) = request.call else {
+            unreachable!()
+        };
+        assert_eq!(start.expected_credential, expected);
+        assert!(
+            matches!(start.target, LoginTarget::Existing { expected, .. } if expected == connection)
+        );
+    }
+
+    #[test]
     fn new_connection_panel_exposes_protocols_and_builds_exact_provider_inputs() {
         let protocols = [
             ("openai-compatible", "Chat Completions"),
@@ -934,7 +1021,7 @@ mod tests {
             app.management.oauth.identity.fields[3].insert("example-key");
             let state = &app.management.oauth;
             let choice = &state.choices[selected];
-            let request = state.identity.start(choice, None).unwrap();
+            let request = state.identity.start(choice, None, None).unwrap();
             let LoginTarget::Create {
                 provider,
                 configuration,

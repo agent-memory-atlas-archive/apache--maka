@@ -91,7 +91,7 @@ async fn external_provider_authentication_execution_retirement_and_recovery_shar
             let input = json!({"attemptId":"external-login", "target":{
                 "kind":"create", "provider":identity, "configuration":{"baseUrl":model.base_url},
                 "slug":"external", "name":"External"
-            }, "authentication":{"method":"key", "input":{"key":"fixture-account-secret"}}});
+            }, "expectedCredential":null,"authentication":{"method":"key", "input":{"key":"fixture-account-secret"}}});
             let authenticated = login(&mut peer, &input).await;
             let connection_id = authenticated["connection"]["connectionId"].clone();
             assert_eq!(success(peer.rpc("oauth.login.start", input.clone()).await), authenticated);

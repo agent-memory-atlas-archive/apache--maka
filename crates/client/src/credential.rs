@@ -68,6 +68,8 @@ impl Client {
         &self,
         input: DeleteCredentialInput,
     ) -> Result<CredentialMutationResult, RequestFailure> {
+        validation::delete_credential(&input)
+            .map_err(|error| RequestFailure::NotDispatched(ClientError::Protocol(error)))?;
         let value = self
             .request(
                 Operation::CredentialVaultDelete,
@@ -79,7 +81,7 @@ impl Client {
             value,
             &input.expected.locator,
             Some(&input.expected),
-            None,
+            input.expected_connection.as_ref(),
         )
     }
     fn credential_invalid(&self) -> RequestFailure {

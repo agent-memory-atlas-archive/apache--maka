@@ -153,7 +153,7 @@ pub async fn configure_provider(
         "target":{"kind":"create","slug":"recovery","name":"Recovery fixture",
             "provider":{"packageId":"maka.providers","entryId":"maka.providers","scope":"profile","name":provider_name},
             "configuration":{"baseUrl":base_url}},
-        "authentication":{"method":"api-key","input":{"apiKey":"local-recovery-fixture"}}
+        "expectedCredential":null,"authentication":{"method":"api-key","input":{"apiKey":"local-recovery-fixture"}}
     })).unwrap()).await.unwrap();
     let maka_config::oauth::enrollment::LoginPreparation::Ready(login) = login else {
         panic!("fixture login");

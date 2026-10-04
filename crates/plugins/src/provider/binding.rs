@@ -101,33 +101,7 @@ impl Binding {
         context: super::Context,
     ) -> Result<super::AuthenticationCall, Error> {
         self.definition()
-            .validate_configuration(&request.connection.configuration)?;
-        let validator = self
-            .definition()
-            .authentication
-            .get(&request.method)
-            .ok_or_else(|| Error::Invalid("unknown authentication method".into()))?;
-        // Validation errors must never echo submitted credentials.
-        if serde_json::to_vec(&request.input)
-            .map_err(|_| Error::Invalid("invalid authentication input".into()))?
-            .len()
-            > 64 * 1024
-            || !validator.is_valid(&request.input)
-        {
-            return Err(Error::Invalid(
-                "authentication input does not satisfy its schema".into(),
-            ));
-        }
-        let method = self
-            .definition()
-            .descriptor
-            .authentication
-            .iter()
-            .find(|method| method.id == request.method)
-            .expect("compiled authentication schema");
-        if method.interactive && context.interaction.is_none() {
-            return Err(Error::Unavailable);
-        }
+            .validate_authentication(&request, &context)?;
         Ok(super::AuthenticationCall {
             call: self.admit()?,
             implementation: self.definition().implementation.clone(),

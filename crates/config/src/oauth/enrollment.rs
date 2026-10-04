@@ -37,6 +37,7 @@ pub enum LoginRejection {
     AttemptConflict,
     ConnectionNotFound,
     ConnectionChanged,
+    CredentialChanged,
     CatalogFull,
     SlugTaken,
     AttemptsFull,
@@ -166,6 +167,9 @@ impl ConfigurationStore {
                     provider: after.provider.clone(),
                 };
                 let credential = vault::status_basis(&vault::status(tx, &locator(&after)).await?);
+                if credential != input.expected_credential {
+                    return Ok(P::Rejected(R::CredentialChanged));
+                }
                 let network = NetworkSnapshot::read(tx).await?.configuration;
                 Ok(P::Ready(Box::new(PreparedLogin {
                     store,

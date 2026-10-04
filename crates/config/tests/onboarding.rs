@@ -176,6 +176,7 @@ async fn onboarding_publishes_atomically_and_rejects_stale_configuration_or_auth
     let stale = prepare(&store, target.clone()).await;
     let LoginPreparation::Ready(login) = store
         .prepare_oauth_login(LoginStart {
+            expected_credential: None,
             attempt_id: "login".into(),
             target,
             authentication: AuthenticationInput {

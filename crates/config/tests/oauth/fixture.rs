@@ -89,6 +89,20 @@ impl Fixture {
 
     pub(super) async fn login(&mut self, secret: &str) {
         let input = LoginStart {
+            expected_credential: match self
+                .store
+                .credential_status(maka_runtime::configuration::CredentialLocator::Connection {
+                    connection_id: self.target.connection_id.clone(),
+                    kind: maka_runtime::configuration::ConnectionCredentialKind::Provider,
+                })
+                .await
+                .unwrap()
+            {
+                maka_runtime::configuration::CredentialVaultQueryResult::Status { status } => {
+                    status.basis()
+                }
+                _ => panic!("connection status"),
+            },
             attempt_id: uuid::Uuid::new_v4().to_string(),
             target: Target::Existing {
                 expected: self.target.clone(),

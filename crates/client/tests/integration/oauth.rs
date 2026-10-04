@@ -34,6 +34,7 @@ fn provider(name: &str) -> Identity {
 
 fn start() -> LoginStart {
     LoginStart {
+        expected_credential: None,
         attempt_id: "login-attempt".into(),
         target: Target::Create {
             provider: provider("subscription"),

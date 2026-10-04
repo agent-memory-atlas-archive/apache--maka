@@ -276,6 +276,7 @@ impl Fixture {
         };
         let maka_config::oauth::enrollment::LoginPreparation::Ready(ticket) = config
             .prepare_oauth_login(maka_runtime::oauth::LoginStart {
+                expected_credential: None,
                 attempt_id: Uuid::new_v4().to_string(),
                 target: maka_runtime::oauth::Target::Existing {
                     expected: ConnectionCredentialTarget {
@@ -1059,6 +1060,7 @@ async fn disabled_connection() {
     let maka_config::oauth::enrollment::LoginPreparation::Ready(ticket) = fixture
         .config
         .prepare_oauth_login(maka_runtime::oauth::LoginStart {
+            expected_credential: None,
             attempt_id: Uuid::new_v4().to_string(),
             target: maka_runtime::oauth::Target::Existing {
                 expected: ConnectionCredentialTarget {

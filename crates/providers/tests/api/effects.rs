@@ -307,3 +307,77 @@ async fn discovery_survives_persistence_and_verification_does_not_require_stream
         "https://relay.test/v1/chat/completions"
     );
 }
+
+#[tokio::test]
+async fn compiled_definition_authenticates_without_legacy_registration_or_secret_diagnostics() {
+    use maka_plugins::provider::{Error, authentication::Authenticate};
+    let definition = ApiProviders::definition("openai-compatible").unwrap();
+    let transport = Arc::new(Exchange::default());
+    let context = Context {
+        transport: transport.clone(),
+        cancellation: CancellationToken::new(),
+        interaction: None,
+    };
+    let connection = Connection {
+        id: "native-account".into(),
+        revision: 1,
+        configuration: json!({"baseUrl":"https://native.test/v1"}),
+    };
+    let key = "synthetic-private-native-key";
+    let result = definition
+        .authenticate(
+            Authenticate {
+                connection: connection.clone(),
+                method: "api-key".into(),
+                input: json!({"apiKey":format!(" {key} ")}),
+            },
+            context.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.secret, key);
+    assert_eq!(result.refresh_at, None);
+    for (method, input, configuration) in [
+        (
+            "unknown",
+            json!({"apiKey":key}),
+            connection.configuration.clone(),
+        ),
+        (
+            "api-key",
+            json!({"apiKey":key,"unknown":key}),
+            connection.configuration.clone(),
+        ),
+        (
+            "api-key",
+            json!({"apiKey":format!("{key}\n{key}")}),
+            connection.configuration.clone(),
+        ),
+        ("api-key", json!({"apiKey":key}), json!({"unknown":key})),
+    ] {
+        let error = match definition
+            .authenticate(
+                Authenticate {
+                    connection: Connection {
+                        configuration,
+                        ..connection.clone()
+                    },
+                    method: method.into(),
+                    input,
+                },
+                context.clone(),
+            )
+            .await
+        {
+            Ok(_) => panic!("invalid authentication admitted"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, Error::Invalid(_)));
+        assert!(!error.to_string().contains(key));
+        assert!(!serde_json::to_string(&error).unwrap().contains(key));
+    }
+    assert!(
+        transport.0.lock().unwrap().is_empty(),
+        "API key validation must not issue an exchange"
+    );
+}

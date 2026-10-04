@@ -102,6 +102,20 @@ impl Fixture {
         let LoginPreparation::Ready(ticket) = self
             .store
             .prepare_oauth_login(LoginStart {
+                expected_credential: match self
+                    .store
+                    .credential_status(CredentialLocator::Connection {
+                        connection_id: row.connection_id.clone(),
+                        kind: ConnectionCredentialKind::Provider,
+                    })
+                    .await
+                    .unwrap()
+                {
+                    maka_runtime::configuration::CredentialVaultQueryResult::Status { status } => {
+                        status.basis()
+                    }
+                    _ => panic!("connection status"),
+                },
                 attempt_id: uuid::Uuid::new_v4().to_string(),
                 target: Target::Existing {
                     expected: ConnectionCredentialTarget {

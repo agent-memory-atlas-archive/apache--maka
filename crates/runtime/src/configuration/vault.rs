@@ -62,6 +62,23 @@ pub struct CredentialStatus {
     pub locator: CredentialLocator,
     pub state: CredentialState,
 }
+impl CredentialStatus {
+    pub fn basis(&self) -> Option<CredentialVersionBasis> {
+        let CredentialState::Configured {
+            credential_id,
+            revision,
+            ..
+        } = &self.state
+        else {
+            return None;
+        };
+        Some(CredentialVersionBasis {
+            locator: self.locator.clone(),
+            credential_id: credential_id.clone(),
+            revision: *revision,
+        })
+    }
+}
 #[derive(Debug, Clone, PartialEq)]
 pub enum CredentialState {
     Absent,
@@ -157,6 +174,9 @@ pub struct SetCredentialInput {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeleteCredentialInput {
     pub expected: CredentialVersionBasis,
+    /// Required for connection credentials; null for network credentials.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub expected_connection: Option<ConnectionCredentialTarget>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

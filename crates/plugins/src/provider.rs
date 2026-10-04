@@ -208,6 +208,52 @@ impl Definition {
         Ok(credentials)
     }
 
+    /// Authentication after the trusted embedding's actual execution admission.
+    /// The embedding owns cancellation and physical settlement, as for authorize.
+    pub async fn authenticate(
+        &self,
+        request: Authenticate,
+        context: Context,
+    ) -> Result<Credential, Error> {
+        self.validate_authentication(&request, &context)?;
+        let credential = self.implementation.authenticate(request, context).await?;
+        credential.validate().map_err(Error::Invalid)?;
+        Ok(credential)
+    }
+
+    fn validate_authentication(
+        &self,
+        request: &Authenticate,
+        context: &Context,
+    ) -> Result<(), Error> {
+        self.validate_configuration(&request.connection.configuration)?;
+        let validator = self
+            .authentication
+            .get(&request.method)
+            .ok_or_else(|| Error::Invalid("unknown authentication method".into()))?;
+        // Validation errors must never echo submitted credentials.
+        if serde_json::to_vec(&request.input)
+            .map_err(|_| Error::Invalid("invalid authentication input".into()))?
+            .len()
+            > 64 * 1024
+            || !validator.is_valid(&request.input)
+        {
+            return Err(Error::Invalid(
+                "authentication input does not satisfy its schema".into(),
+            ));
+        }
+        let method = self
+            .descriptor
+            .authentication
+            .iter()
+            .find(|method| method.id == request.method)
+            .expect("compiled authentication schema");
+        if method.interactive && context.interaction.is_none() {
+            return Err(Error::Unavailable);
+        }
+        Ok(())
+    }
+
     fn validate_configuration(&self, configuration: &serde_json::Value) -> Result<(), Error> {
         if serde_json::to_vec(configuration)
             .map_err(|_| Error::Invalid("invalid configuration".into()))?

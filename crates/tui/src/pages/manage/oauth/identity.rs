@@ -173,6 +173,7 @@ impl Identity {
         &self,
         choice: &Choice,
         existing: Option<&ConnectionCredentialTarget>,
+        expected_credential: Option<maka_protocol::configuration::CredentialVersionBasis>,
     ) -> Result<LoginStart, &'static str> {
         if let Some(error) = self.error() {
             return Err(error);
@@ -202,6 +203,7 @@ impl Identity {
             }
         };
         let input = LoginStart {
+            expected_credential,
             attempt_id: uuid::Uuid::new_v4().to_string(),
             target,
             authentication: maka_protocol::oauth::AuthenticationInput {
@@ -288,7 +290,7 @@ mod tests {
         form.fields[0].insert("Personal account");
         form.fields[1].insert("personal");
         form.fields[3].insert("private-key");
-        let start = form.start(&choice, None).unwrap();
+        let start = form.start(&choice, None, None).unwrap();
         assert_eq!(
             start.authentication.input,
             serde_json::json!({"apiKey":"private-key"})
@@ -324,7 +326,10 @@ mod tests {
         form.fields[3] = Editor::bounded(64 * 1024, "oauth-field-invalid");
         form.fields[3].insert(r#"{"token":{"value":"nested"}}"#);
         assert_eq!(
-            form.start(&choice, None).unwrap().authentication.input["token"]["value"],
+            form.start(&choice, None, None)
+                .unwrap()
+                .authentication
+                .input["token"]["value"],
             "nested"
         );
 
@@ -335,7 +340,10 @@ mod tests {
         form.configure(&interactive, None);
         assert!(form.authentication_field().is_none());
         assert_eq!(
-            form.start(&interactive, None).unwrap().authentication.input,
+            form.start(&interactive, None, None)
+                .unwrap()
+                .authentication
+                .input,
             serde_json::json!({})
         );
     }

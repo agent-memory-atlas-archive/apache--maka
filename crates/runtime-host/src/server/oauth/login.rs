@@ -328,6 +328,7 @@ mod tests {
             .await
             .unwrap();
         let input = LoginStart {
+            expected_credential: None,
             attempt_id: "cancel-race".into(),
             target: oauth::Target::Create {
                 provider: Identity {

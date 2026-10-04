@@ -86,11 +86,15 @@ impl ConfigurationStore {
         &self,
         input: DeleteCredentialInput,
     ) -> Result<DeleteCredentialResult> {
-        validation::credential_basis(&input.expected).map_err(ConfigError::Invalid)?;
+        validation::delete_credential(&input).map_err(ConfigError::Invalid)?;
         self.transaction(TransactionMode::Immediate, move |tx| {
             Box::pin(async move {
-                if let Some(conflict) =
-                    connection_conflict(tx, &input.expected.locator, None).await?
+                if let Some(conflict) = connection_conflict(
+                    tx,
+                    &input.expected.locator,
+                    input.expected_connection.as_ref(),
+                )
+                .await?
                 {
                     return Ok(conflict);
                 }
@@ -199,19 +203,7 @@ pub(crate) async fn status(
 }
 
 pub(crate) fn status_basis(status: &CredentialStatus) -> Option<CredentialVersionBasis> {
-    let CredentialState::Configured {
-        credential_id,
-        revision,
-        ..
-    } = &status.state
-    else {
-        return None;
-    };
-    Some(CredentialVersionBasis {
-        locator: status.locator.clone(),
-        credential_id: credential_id.clone(),
-        revision: *revision,
-    })
+    status.basis()
 }
 
 pub(crate) async fn advance(tx: &mut SqliteConnection) -> Result<u64> {

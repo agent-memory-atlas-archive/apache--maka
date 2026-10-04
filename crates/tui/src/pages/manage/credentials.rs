@@ -104,6 +104,16 @@ pub(super) async fn execute(client: &Client, ticket: &Ticket) -> Result<Updated,
             client
                 .delete_credential(DeleteCredentialInput {
                     expected: expected.ok_or_else(invalid)?,
+                    expected_connection: match &ticket.target.entity {
+                        Entity::Connection(row) => Some(ConnectionCredentialTarget {
+                            connection_id: row.id.clone(),
+                            revision: row.revision,
+                            slug: row.slug.clone(),
+                            provider: row.provider.clone(),
+                            configuration: row.configuration.clone(),
+                        }),
+                        _ => return Err(invalid()),
+                    },
                 })
                 .await?
         }

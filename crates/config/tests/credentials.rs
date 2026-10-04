@@ -282,6 +282,7 @@ async fn catalog_and_vault_keep_independent_cas_and_private_material_across_reop
     );
     let deleted = store
         .delete_credential(DeleteCredentialInput {
+            expected_connection: Some(expected_connection.clone()),
             expected: CredentialVersionBasis {
                 locator: locator.clone(),
                 credential_id: credential_id.clone(),

@@ -29,6 +29,7 @@ async fn credential_requests_bind_identity_cas_and_absence_without_exposing_save
         connection_id: "b746eb13-287c-4f3a-8590-dac93c0a1253".into(),
         kind: ConnectionCredentialKind::RequestHeaders,
     };
+    let expected_connection: ConnectionCredentialTarget = serde_json::from_value(json!({"connectionId":"b746eb13-287c-4f3a-8590-dac93c0a1253","revision":1,"slug":"fixture","provider":{"packageId":"fixture","entryId":"fixture","scope":"profile","name":"fixture"},"configuration":{}})).unwrap();
     let id = "fe26c818-0e6a-47ce-861c-e8c28f053bbd";
     let basis = CredentialVersionBasis {
         locator: locator.clone(),
@@ -89,6 +90,7 @@ async fn credential_requests_bind_identity_cas_and_absence_without_exposing_save
             let client = client.clone();
             let locator = locator.clone();
             let basis = basis.clone();
+            let expected_connection = expected_connection.clone();
             async move {
                 if operation == 0 {
                     client
@@ -110,7 +112,10 @@ async fn credential_requests_bind_identity_cas_and_absence_without_exposing_save
                         .map(|v| serde_json::to_value(v).unwrap())
                 } else {
                     client
-                        .delete_credential(DeleteCredentialInput { expected: basis })
+                        .delete_credential(DeleteCredentialInput {
+                            expected: basis,
+                            expected_connection: Some(expected_connection),
+                        })
                         .await
                         .map(|v| serde_json::to_value(v).unwrap())
                 }

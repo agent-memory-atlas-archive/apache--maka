@@ -39,6 +39,19 @@ pub async fn login(store: &Arc<ConfigurationStore>, id: &str, secret: &str) {
         .unwrap();
     let LoginPreparation::Ready(ticket) = store
         .prepare_oauth_login(LoginStart {
+            expected_credential: match store
+                .credential_status(maka_runtime::configuration::CredentialLocator::Connection {
+                    connection_id: row.connection_id.clone(),
+                    kind: maka_runtime::configuration::ConnectionCredentialKind::Provider,
+                })
+                .await
+                .unwrap()
+            {
+                maka_runtime::configuration::CredentialVaultQueryResult::Status { status } => {
+                    status.basis()
+                }
+                _ => panic!("connection status"),
+            },
             attempt_id: uuid::Uuid::new_v4().to_string(),
             target: Target::Existing {
                 expected: ConnectionCredentialTarget {
