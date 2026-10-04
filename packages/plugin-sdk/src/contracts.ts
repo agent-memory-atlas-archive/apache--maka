@@ -614,7 +614,7 @@ export const contracts = {
                 properties: {
                   text: {
                     type: 'string',
-                    maxLength: 8192,
+                    maxLength: 65536,
                   },
                   kind: {
                     type: 'string',
@@ -629,7 +629,7 @@ export const contracts = {
                 properties: {
                   text: {
                     type: 'string',
-                    maxLength: 8192,
+                    maxLength: 65536,
                   },
                   kind: {
                     type: 'string',
@@ -1072,7 +1072,7 @@ export const contracts = {
                 properties: {
                   text: {
                     type: 'string',
-                    maxLength: 8192,
+                    maxLength: 65536,
                   },
                   kind: {
                     type: 'string',
@@ -1087,7 +1087,7 @@ export const contracts = {
                 properties: {
                   text: {
                     type: 'string',
-                    maxLength: 8192,
+                    maxLength: 65536,
                   },
                   kind: {
                     type: 'string',
@@ -1535,7 +1535,7 @@ export const contracts = {
                 properties: {
                   text: {
                     type: 'string',
-                    maxLength: 8192,
+                    maxLength: 65536,
                   },
                   kind: {
                     type: 'string',
@@ -1550,7 +1550,7 @@ export const contracts = {
                 properties: {
                   text: {
                     type: 'string',
-                    maxLength: 8192,
+                    maxLength: 65536,
                   },
                   kind: {
                     type: 'string',

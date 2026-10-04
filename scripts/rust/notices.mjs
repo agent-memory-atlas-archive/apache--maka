@@ -41,6 +41,8 @@ async function inputs(root) {
     'scripts/apply-dependency-patches.mjs',
     'scripts/rust/notices.mjs',
     'scripts/rust/bundle-providers.mjs',
+    'packages/agent-product/scripts/build.mjs',
+    'packages/agent-product/package.json',
     'scripts/rust/notices-sources.json',
     'crates/computer-use/THIRD_PARTY_NOTICES',
     'scripts/rust/v8-source.json',
@@ -57,6 +59,8 @@ async function inputs(root) {
       'crates/**/Cargo.toml',
       'crates/js-runtime/trusted/*.js',
       'crates/js-runtime/third-party/**/*',
+      'packages/agent-product/src/**/*.ts',
+      'packages/plugin-sdk/src/**/*.ts',
       'patches/*.patch',
       'third-party/**/*',
     ],
@@ -275,8 +279,18 @@ export async function generateNotices(root = repository) {
   try {
     const meta = join(stage, 'inputs.json');
     run(process.execPath, ['scripts/rust/bundle-providers.mjs', stage, meta], root);
+    run(process.execPath, ['packages/agent-product/scripts/build.mjs'], root);
     const bundled = new Set();
-    for (const input of Object.keys(JSON.parse(await readFile(meta, 'utf8')).inputs)) {
+    const inputs = [
+      // Standalone validators contain Ajv-generated code without importing its
+      // compiler at runtime. Preserve that code's notice as well as imports.
+      fileURLToPath(import.meta.resolve('ajv/dist/standalone/index.js')),
+      ...Object.keys(JSON.parse(await readFile(meta, 'utf8')).inputs),
+      ...JSON.parse(
+        await readFile(join(root, 'packages/agent-product/dist/bundle-inputs.json'), 'utf8'),
+      ),
+    ];
+    for (const input of inputs) {
       let path = dirname(resolve(root, input));
       if (!path.includes('node_modules')) continue;
       while (true) {

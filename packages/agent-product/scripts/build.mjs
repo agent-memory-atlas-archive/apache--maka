@@ -21,6 +21,9 @@ import { build } from 'esbuild';
 import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import Ajv from 'ajv/dist/2020.js';
+import addFormats from 'ajv-formats';
+import standalone from 'ajv/dist/standalone/index.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const destination = resolve(root, 'dist');
@@ -45,6 +48,19 @@ const own = await import(
   pathToFileURL(resolve(destination, 'authoring/agent-product/src/contracts.mjs'))
 );
 const sdk = await import(pathToFileURL(resolve(destination, 'authoring/plugin-sdk/src/index.mjs')));
+// Compile the original Rust-generated input contracts; guests never compile
+// schemas, coerce values, or keep a second hand-written ModelOverride schema.
+const validator = new Ajv({
+  code: { source: true, esm: true },
+  strict: false,
+  strictNumbers: true,
+  formats: { uint64: true },
+});
+addFormats(validator);
+for (const method of ['create', 'update'])
+  validator.addSchema(sdk.contracts.settings.interface.methods[method].input, method);
+const validationPath = resolve(destination, 'settings-validation.mjs');
+await writeFile(validationPath, standalone(validator, { create: 'create', update: 'update' }));
 const required = (contract) => ({ contract, availability: 'required' });
 const one = (contract) => ({ contract, cardinality: { kind: 'one' } });
 const empty = own.object({});
@@ -109,7 +125,24 @@ specifications.connections = {
   contract: own.connectionsContract,
   export: 'Connections',
   module: 'connections',
-  imports: { settings: one(sdk.contracts.settings), credential: one(own.credentialContract) },
+  imports: {
+    settings: one(sdk.contracts.settings),
+    credential: one(own.credentialContract),
+    form: one(own.connectionFormContract),
+  },
+};
+specifications['connection-form'] = {
+  contract: own.connectionFormContract,
+  export: 'ConnectionForm',
+  module: 'connection-form',
+  imports: {
+    settings: one(sdk.contracts.settings),
+    input: one(sdk.contracts.textInput),
+    editor: one(sdk.contracts.textarea),
+    reader: one(sdk.contracts.textReader),
+    receipts: one(sdk.contracts.receiptReader),
+    history: one(sdk.contracts.callerHistory),
+  },
 };
 specifications.credential = {
   contract: own.credentialContract,
@@ -123,6 +156,7 @@ specifications.credential = {
   },
 };
 const packages = [];
+const bundleInputs = new Set();
 for (const [name, spec] of Object.entries(specifications)) {
   const directory = resolve(destination, 'packages', name);
   await mkdir(directory, { recursive: true });
@@ -134,11 +168,14 @@ for (const [name, spec] of Object.entries(specifications)) {
       contents = `export {activate} from '${resolve(root, 'src/theme.ts')}';`;
     else if (name === 'workspace')
       contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace('${target}',configuration.locale);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
+    else if (name === 'connection-form')
+      contents = `import {connectionForm,activate} from '${resolve(root, 'src/connection-form.ts')}';import * as validation from '${validationPath}';export const component=connectionForm('${target}',validation);export {activate};`;
     else if (['models', 'connections', 'credential'].includes(name))
       contents = `import {${name},activate} from '${resolve(root, 'src/' + name + '.ts')}';export const component=${name}('${target}');export {activate};`;
     else
       contents = `import {components,exports} from '${resolve(root, 'src/components.ts')}';export const component=components('${target}').${name};export function activate(){const declaration=exports().${spec.export};return {${spec.export}:{...declaration,component:['component']}};}`;
-    await build({
+    const bundled = await build({
+      absWorkingDir: root,
       stdin: { contents, resolveDir: root, sourcefile: `${name}-${target}.ts`, loader: 'ts' },
       outfile: resolve(directory, module),
       bundle: true,
@@ -146,10 +183,13 @@ for (const [name, spec] of Object.entries(specifications)) {
       platform: 'neutral',
       target: 'es2022',
       logLevel: 'silent',
+      metafile: true,
       banner: {
         js: (await readFile(resolve(root, 'src/view.ts'), 'utf8')).split('import type')[0].trim(),
       },
     });
+    for (const input of Object.keys(bundled.metafile.inputs))
+      if (!input.startsWith('<')) bundleInputs.add(resolve(root, input));
     entries[target] = {
       implementation: { kind: 'javascript', module, realm: 'dedicated' },
       configuration: spec.configuration ?? empty,
@@ -264,4 +304,8 @@ for (const [name, application] of Object.entries(mechanical)) {
   packages.push(name);
 }
 await writeFile(resolve(destination, 'packages.json'), JSON.stringify(packages, null, 2) + '\n');
+await writeFile(
+  resolve(destination, 'bundle-inputs.json'),
+  JSON.stringify([...bundleInputs].sort()) + '\n',
+);
 console.log(`${packages.length} ordinary plugin packages built`);

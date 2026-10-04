@@ -199,6 +199,78 @@ fn timer() -> tokio::runtime::Runtime {
 }
 
 #[gpui::test]
+fn full_capacity_reset_reads_every_byte_and_oversize_reset_keeps_native_draft(
+    cx: &mut TestAppContext,
+) {
+    let timer = timer();
+    let scene = Scene::new(cx, &timer, false);
+    scene.draw(cx);
+    let owner = scene.owner();
+    let text = "中".repeat(21845) + "x";
+    assert_eq!(text.len(), 65536);
+    cx.update_window(scene.window, |_, window, cx| {
+        scene
+            .command(
+                EditorCommand {
+                    owner: scene.editor_owner(cx),
+                    sequence: 1,
+                    based_on: owner.read(cx).revision,
+                    edit: EditorEdit::Reset { text: text.clone() },
+                },
+                window,
+                cx,
+            )
+            .unwrap();
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(scene.window, |_, window, cx| {
+        let snapshot = serde_json::from_value::<EditorObservation>(
+            scene.app.borrow().frame(&scene.editor).unwrap().state["observation"].clone(),
+        )
+        .unwrap()
+        .snapshot;
+        assert_eq!(snapshot.text.bytes, 65536);
+        assert_eq!(
+            owner
+                .update(cx, |o, cx| o.read_text(
+                    &snapshot.text,
+                    0..65536,
+                    window,
+                    cx
+                ))
+                .unwrap(),
+            text
+        );
+        scene
+            .command(
+                EditorCommand {
+                    owner: scene.editor_owner(cx),
+                    sequence: 2,
+                    based_on: owner.read(cx).revision,
+                    edit: EditorEdit::Reset {
+                        text: "中".repeat(21846),
+                    },
+                },
+                window,
+                cx,
+            )
+            .unwrap();
+        assert_eq!(owner.read(cx).revision, snapshot.text.revision);
+        assert_eq!(owner.read(cx).state.read(cx).value().as_ref(), text);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let observed = scene.app.borrow().frame(&scene.editor).unwrap().state["observation"].clone();
+    assert_eq!(
+        observed["receipt"]["outcome"],
+        serde_json::json!({"status":"conflict","reason":"representation"})
+    );
+    drop(owner);
+    scene.close(cx);
+}
+
+#[gpui::test]
 fn editor_native_revision_ime_barrier_and_command_receipts_are_independent_of_paint(
     cx: &mut TestAppContext,
 ) {

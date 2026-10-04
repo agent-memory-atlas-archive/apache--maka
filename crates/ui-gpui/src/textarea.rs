@@ -306,6 +306,12 @@ impl TextareaOwner {
                 EditorOutcome::Conflict {
                     reason: EditorConflict::Composition,
                 }
+            } else if match &command.edit {
+                EditorEdit::Replace { text } | EditorEdit::Reset { text } => text.len() > 65536,
+            } {
+                EditorOutcome::Conflict {
+                    reason: EditorConflict::Representation,
+                }
             } else {
                 self.state.update(cx, |state, cx| match &command.edit {
                     EditorEdit::Replace { text } => state.replace_all(text.clone(), window, cx),

@@ -158,6 +158,7 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         "models",
         "connections",
         "credential",
+        "connection-form",
         "input",
         "navigation",
         "timeline",
@@ -273,6 +274,144 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     // retained while a distinct native SecretInput is captured by Settings.
     click(&mut presenter, "[ Connections ]");
     await_screen(&mut presenter, "[ API key ]");
+    // Public fields use their original native owners. A schema-invalid but
+    // syntactically valid override must remain fixable without retiring them.
+    click(&mut presenter, "[ Edit connection ]");
+    await_screen(&mut presenter, "[ Edit / replace ]");
+    click(&mut presenter, "[ Edit / replace ]");
+    await_screen(&mut presenter, "Fixture");
+    click(&mut presenter, "Fixture");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    presenter
+        .input(Event::Paste("Public native name\nretained".into()))
+        .unwrap();
+    for _ in 0..4 {
+        click(&mut presenter, "[ Next field ]");
+    }
+    await_screen(&mut presenter, "Model overrides");
+    click(&mut presenter, "[ Edit / replace ]");
+    await_screen(&mut presenter, "null");
+    // The help text also mentions null; the second visible occurrence is the
+    // original native editor rather than that noninteractive label.
+    click_nth(&mut presenter, "null", 1);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    presenter
+        .input(Event::Paste(
+            r#"{"fixture-model-19":{"vision":null}}"#.into(),
+        ))
+        .unwrap();
+    assert!(screen(&draw(&mut presenter)).contains("vision"));
+    click(&mut presenter, "[ Save connection ]");
+    await_screen(&mut presenter, "Check the name");
+    assert!(screen(&draw(&mut presenter)).contains("vision"));
+    click(&mut presenter, "vision");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    presenter
+        .input(Event::Paste(
+            r#"{"fixture-model-19":{"vision":true}}"#.into(),
+        ))
+        .unwrap();
+    // A concurrent actor changes only the saved name. The retained local name
+    // and overrides can only be applied after explicit review of the new basis.
+    runtime.block_on(super::selection::edit(&fixture, |changes| {
+        changes.name = Some("Remote name".into());
+    }));
+    click(&mut presenter, "[ Save connection ]");
+    await_screen(&mut presenter, "The saved connection changed.");
+    click(&mut presenter, "Review current connection");
+    await_screen(&mut presenter, "[ Use this connection ]");
+    click(&mut presenter, "[ Use this connection ]");
+    click(&mut presenter, "[ Save connection ]");
+    await_screen(&mut presenter, "[ Refresh connections ]");
+    let public_row = runtime
+        .block_on(fixture.config.catalog())
+        .unwrap()
+        .connections
+        .remove(0);
+    assert_eq!(public_row.name, "Public native name\nretained");
+    assert_eq!(
+        public_row.enabled_model_ids.len(),
+        20,
+        "unread model IDs must remain untouched"
+    );
+    assert_eq!(public_row.configuration, json!({"baseUrl":base}));
+    assert_eq!(
+        public_row.model_overrides.as_ref().unwrap()["fixture-model-19"].vision,
+        Some(true)
+    );
+    // Create through the same ordinary Settings binding and real provider page,
+    // then explicitly rebase a catalog CAS conflict without replacing owners.
+    click(&mut presenter, "[ Add connection ]");
+    await_screen(&mut presenter, "Choose a provider");
+    await_screen(&mut presenter, "[ Refresh connections ]");
+    for _ in 0..24 {
+        if screen(&draw(&mut presenter)).contains("[ Chat Completions ]") {
+            break;
+        }
+        click(&mut presenter, "[ More providers ]");
+        await_screen(&mut presenter, "[ Refresh connections ]");
+    }
+    click(&mut presenter, "[ Chat Completions ]");
+    await_screen(&mut presenter, "[ Save connection ]");
+    click(&mut presenter, "Chat Completions");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    presenter
+        .input(Event::Paste("Created public".into()))
+        .unwrap();
+    click(&mut presenter, "[ Next field ]");
+    click(&mut presenter, "Enter: Connection ID");
+    presenter
+        .input(Event::Paste("created-public".into()))
+        .unwrap();
+    click(&mut presenter, "[ Next field ]");
+    click(&mut presenter, "Enter: Endpoint");
+    presenter.input(Event::Paste(base.clone())).unwrap();
+    click(&mut presenter, "[ Next field ]");
+    click(&mut presenter, "Enter: Model IDs");
+    presenter
+        .input(Event::Paste("created-model".into()))
+        .unwrap();
+    click(&mut presenter, "[ Enabled ]");
+    runtime.block_on(super::selection::edit(&fixture, |changes| {
+        changes.name = Some("Public concurrent name".into());
+    }));
+    click(&mut presenter, "[ Save connection ]");
+    await_screen(&mut presenter, "The saved connection changed.");
+    click(&mut presenter, "Review current connection");
+    await_screen(&mut presenter, "[ Use this connection ]");
+    click(&mut presenter, "[ Use this connection ]");
+    click(&mut presenter, "[ Save connection ]");
+    await_screen(&mut presenter, "[ Refresh connections ]");
+    let catalog = runtime.block_on(fixture.config.catalog()).unwrap();
+    let created = catalog
+        .connections
+        .iter()
+        .find(|row| row.slug == "created-public")
+        .unwrap();
+    assert_eq!(created.name, "Created public");
+    assert_eq!(created.configuration, json!({"baseUrl":base}));
+    assert_eq!(created.enabled_model_ids, vec!["created-model"]);
+    assert!(!created.enabled);
     // Every original local page item is physically reachable at 80x24,
     // even for the full legal label length and embedded line breaks.
     click_nth(&mut presenter, "[ API key ]", 2);

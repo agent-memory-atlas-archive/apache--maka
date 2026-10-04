@@ -45,6 +45,9 @@ pub(super) fn editor_fixture() -> (tokio::runtime::Runtime, Input, Vec<Package>)
                     .replace("{kind:'window',binding:'surface',title:'Immutable draft',width:640,height:480}", "{kind:'terminal',binding:'surface'}")
                     .replace("padding:16,gap:12", "padding:1,gap:1");
                 if original.manifest().id == "dynamic.app" {
+                    // The capture result remains complete in workflow state;
+                    // its disposable status label must obey the scene budget.
+                    source = source.replace("state.outcome?.value?.text??", "state.outcome?.value?.text?.slice(0,2048)??");
                     source = source.replace("if(event.kind==='action')", "if(event.key==='reject'){next.reject=event.event.reject;next.observation=null;}if(event.key==='configure'){next.options=event.event;}if(event.kind==='action')")
                         .replace("{kind:'button',key:'remove'", "{kind:'button',key:'reject',label:'Reject observation'},{kind:'button',key:'configure',label:'Configure editor'},{kind:'button',key:'remove'");
                     source.push_str("const normalFrame=frame;frame=(state)=>{const out=normalFrame(state);const editor=out.frame.view.children.find(node=>node.key==='editor');if(editor){editor.props={...editor.props,...state.options};delete editor.props.visible;}out.frame.view.children=out.frame.view.children.map(node=>node.key==='editor'?{kind:'stack',key:'presentation',direction:'column',gap:0,padding:0,background:out.frame.view.background,visible:state.options?.visible!==false,children:[node]}:node);if(state.reject&&state.observation)out.frame.view={kind:'invalid'};return out;};");
@@ -74,6 +77,59 @@ fn presenter() -> (tokio::runtime::Runtime, Presenter) {
     )
     .unwrap();
     (runtime, presenter)
+}
+
+#[test]
+fn full_capacity_reset_captures_every_byte_and_oversize_reset_preserves_original_draft() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 20);
+    let original = observation(&tui);
+    let text = "中".repeat(21845) + "x";
+    assert_eq!(text.len(), 65536);
+    dispatch(
+        &mut tui,
+        "configure",
+        json!({"command":{
+            "owner":original["snapshot"]["text"]["owner"],"sequence":1,
+            "basedOn":original["revision"],"edit":{"kind":"reset","text":text}
+        }}),
+    );
+    let full = observation(&tui);
+    assert_eq!(full["receipt"]["outcome"]["status"], "applied");
+    assert_eq!(full["snapshot"]["text"]["bytes"], 65536);
+    dispatch(
+        &mut tui,
+        "read",
+        json!({"end":65536,"capture":{
+            "kind":"at_revision","owner":full["snapshot"]["text"]["owner"],"revision":full["revision"]
+        }}),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while tui.application.frame(&tui.root).unwrap().state["outcome"].is_null() {
+        assert!(std::time::Instant::now() < deadline);
+        tui.pump().unwrap();
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["outcome"]["value"]["text"],
+        text
+    );
+    // Within the schema's character budget but above the native UTF-8 byte budget.
+    dispatch(
+        &mut tui,
+        "configure",
+        json!({"command":{
+            "owner":full["snapshot"]["text"]["owner"],"sequence":2,
+            "basedOn":full["revision"],"edit":{"kind":"reset","text":"中".repeat(21846)}
+        }}),
+    );
+    let kept = observation(&tui);
+    assert_eq!(
+        kept["receipt"]["outcome"],
+        json!({"status":"conflict","reason":"representation"})
+    );
+    assert_eq!(kept["snapshot"], full["snapshot"]);
+    close(&mut tui);
 }
 fn draft(tui: &Presenter) -> Mount {
     let composer = tui.application.child_mount(&tui.root, "editor").unwrap();

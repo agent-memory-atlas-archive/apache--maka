@@ -38,11 +38,11 @@ pub struct EditorCommand {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EditorEdit {
     Replace {
-        #[schemars(length(max = 8192))]
+        #[schemars(length(max = 65536))]
         text: String,
     },
     Reset {
-        #[schemars(length(max = 8192))]
+        #[schemars(length(max = 65536))]
         text: String,
     },
 }

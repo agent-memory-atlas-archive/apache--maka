@@ -25,6 +25,7 @@ import {
   type TextareaAppearance,
   type InputAppearance,
   type ConnectionCredentialTarget,
+  type SettingsConnectionDetail,
   type TextareaMenuAppearance,
   type EditorCommand,
   type EditorObservation,
@@ -207,6 +208,35 @@ export interface ConnectionsProps {
 export interface CredentialProps extends ConnectionsProps {
   target: ConnectionCredentialTarget;
 }
+export interface ConnectionFormProps extends ConnectionsProps {
+  catalogRevision: number;
+  connection: Extract<SettingsConnectionDetail, { kind: 'ready' }> | null;
+}
+export const connectionFormContract: Contract = {
+  name: 'maka.agent.ConnectionForm',
+  version: 1,
+  transport: 'local',
+  interface: {
+    kind: 'component',
+    props: {
+      ...object({
+        theme: { $ref: '#/$defs/Theme' },
+        locale,
+        catalogRevision: { type: 'integer', minimum: 0 },
+        connection: {
+          anyOf: [native.settings.interface.methods.connection.output.oneOf[1], { type: 'null' }],
+        },
+      }),
+      $defs: {
+        ...defs,
+        ...native.settings.interface.methods.connection.output.$defs,
+        Theme: themeSchema,
+      },
+    },
+    events: { closed: object({}), changed: object({}) },
+    captures: {},
+  },
+};
 export const credentialContract: Contract = {
   name: 'maka.agent.Credential',
   version: 1,

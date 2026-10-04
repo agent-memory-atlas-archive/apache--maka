@@ -40,6 +40,7 @@ export const packageNames = [
   'settings',
   'connections',
   'credential',
+  'connection-form',
   'input',
   'agent',
   'receipts',
@@ -131,6 +132,7 @@ export function composition(configuration: CompositionConfiguration): {
         {
           settings: [remote('settings', 'Settings')],
           credential: [local('credential', 'Credential')],
+          form: [local('connection-form', 'ConnectionForm')],
         },
       ),
       credential: node(
@@ -144,6 +146,18 @@ export function composition(configuration: CompositionConfiguration): {
         },
       ),
       input: node('input'),
+      'connection-form': node(
+        'connection-form',
+        {},
+        {
+          settings: [remote('settings', 'Settings')],
+          input: [local('input', 'TextInput')],
+          editor: [local('editor', 'Textarea')],
+          reader: [local('reader', 'Reader')],
+          receipts: [remote('receipts', 'Receipts')],
+          history: [local('history', 'History')],
+        },
+      ),
       models: node('models', {}, { settings: [remote('settings', 'Settings')] }),
       composer: node('composer', {}, { editor: [local('editor', 'Textarea')] }),
       navigation: node('navigation'),

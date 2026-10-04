@@ -41,7 +41,14 @@ test('release notices reject changed dependency inputs and edited texts', async 
       await copyFile(new URL(name, repository), join(root, name));
     }
     await verifyNotices(root);
-    for (const name of ['Cargo.lock', 'crates/cli/Cargo.toml', 'patches/zod+4.6.5.patch']) {
+    for (const name of [
+      'Cargo.lock',
+      'crates/cli/Cargo.toml',
+      'patches/zod+4.6.5.patch',
+      'packages/agent-product/scripts/build.mjs',
+      'packages/agent-product/src/connection-form.ts',
+      'packages/plugin-sdk/src/contracts.ts',
+    ]) {
       const original = await readFile(join(root, name));
       await writeFile(
         join(root, name),

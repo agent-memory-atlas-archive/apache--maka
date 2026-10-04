@@ -1262,3 +1262,439 @@ for (const [target, module] of credentialModules) {
     },
   );
 }
+
+const connectionFormModules = await Promise.all(
+  ['desktop', 'tui'].map(async (target) => [
+    target,
+    await import(pathToFileURL(resolve(root, 'dist/packages/connection-form/' + target + '.js'))),
+  ]),
+);
+const publicDetail = {
+  kind: 'ready',
+  target: {
+    ...connectionTarget,
+    configuration: { baseUrl: 'https://example.test/v1', notes: '界'.repeat(12000) },
+  },
+  name: 'A\nconnection',
+  enabled: true,
+  enabledModelCount: 29,
+};
+const publicRef = { ...credentialRef, method: 'update' };
+class PublicFormClient extends FormClient {
+  constructor(component, connection = publicDetail) {
+    super(component, { theme: values.appearance[0], locale: 'en', catalogRevision: 7, connection });
+    this.texts = new Map();
+    for (const name of [
+      'name',
+      'slug',
+      'endpoint',
+      'models',
+      'configuration',
+      'overrides',
+      'overlay',
+    ])
+      this.observe(name, '');
+  }
+  observe(name, text, extra = {}) {
+    this.texts.set(name, text);
+    const field = this.state.fields[name];
+    const revision = (field.observation?.revision ?? 0) + 1;
+    const command = field.command;
+    return this.input({
+      kind: 'component',
+      child: 'field-' + name,
+      name: 'changed',
+      key: 'field-changed',
+      event: {
+        revision,
+        snapshot: {
+          text: { owner: 'public-' + name, revision, bytes: Buffer.byteLength(text) },
+          selection: { start: text.length, end: text.length },
+          reversed: false,
+          marked: null,
+        },
+        receipt: command
+          ? {
+              owner: command.owner,
+              sequence: command.sequence,
+              revision,
+              outcome: { status: 'applied' },
+            }
+          : null,
+        ...extra,
+      },
+    });
+  }
+  commands() {
+    for (const name of Object.keys(this.state.fields)) {
+      const command = this.state.fields[name].command;
+      if (command) this.observe(name, command.edit.text);
+    }
+  }
+  edit(name, text) {
+    if (!this.state.fields[name].enabled) this.raw('edit-' + name);
+    this.commands();
+    this.observe(name, text);
+  }
+  readFields() {
+    this.raw('form-save');
+    const reads = [...this.actions.values()].filter((a) => a.binding === 'reader');
+    for (const action of reads) {
+      const name = action.resources.text.child.slice(6);
+      const capture = action.resources.text.input;
+      this.complete(action, {
+        status: 'succeeded',
+        value: {
+          text: this.texts.get(name),
+          metadata: {
+            owner: capture.owner,
+            revision: capture.revision,
+            bytes: action.input.end,
+          },
+        },
+      });
+    }
+    return reads;
+  }
+  chooseProvider() {
+    this.query('providers', {
+      next: null,
+      providers: [
+        {
+          identity: connectionTarget.provider,
+          descriptor: {
+            label: 'Compatible',
+            configurationDefaults: { baseUrl: 'https://api.test/v1', custom: 42 },
+            configurationSchema: {},
+            authentication: [],
+            anonymous: true,
+            discovery: false,
+          },
+        },
+      ],
+    });
+    this.raw('provider-0');
+    this.commands();
+    this.observe('slug', 'my-provider');
+    this.observe('name', 'My provider');
+    this.observe('models', 'first-model\nsecond-model');
+  }
+}
+for (const [target, module] of connectionFormModules) {
+  test(
+    target +
+      ' public name update preserves huge provider configuration and unknown model collections',
+    () => {
+      const form = new PublicFormClient(module.component);
+      form.edit('name', 'Updated\nname');
+      const reads = form.readFields();
+      assert.equal(reads.length, 1);
+      assert.deepEqual(reads[0].resources.text.input, {
+        kind: 'at_revision',
+        owner: form.state.fields.name.observation.snapshot.text.owner,
+        revision: form.state.fields.name.observation.revision,
+      });
+      assert.deepEqual(form.find('update').input, {
+        expected: {
+          connectionId: connectionTarget.connectionId,
+          revision: connectionTarget.revision,
+        },
+        changes: { name: 'Updated\nname' },
+      });
+      assert.equal(form.state.fields.configuration.observation.snapshot.text.bytes, 0);
+      assert.equal(form.state.fields.configuration.command, null);
+      assert.ok(!Object.hasOwn(form.find('update').input.changes, 'enabledModelIds'));
+      form.complete(
+        form.find('update'),
+        formReply(
+          {
+            kind: 'committed',
+            catalogRevision: 8,
+            connection: {
+              connectionId: connectionTarget.connectionId,
+              revision: connectionTarget.revision + 1,
+            },
+          },
+          publicRef,
+        ),
+      );
+      assert.deepEqual(
+        form.output.events.map((e) => e.name),
+        ['changed', 'closed'],
+      );
+    },
+  );
+  test(target + ' native selection changes do not replace unmodified configuration', () => {
+    const form = new PublicFormClient(module.component);
+    form.raw('edit-configuration');
+    const command = form.state.fields.configuration.command;
+    assert.ok(command.edit.text.length > 8192);
+    assert.deepEqual(JSON.parse(command.edit.text), publicDetail.target.configuration);
+    form.commands();
+    form.observe('configuration', form.texts.get('configuration'));
+    form.readFields();
+    assert.ok(![...form.actions.values()].some((a) => a.method === 'update'));
+    assert.equal(form.state.notice, 'noConnectionChanges');
+  });
+  test(target + ' marked, unacknowledged prefill and failed original capture never mutate', () => {
+    const form = new PublicFormClient(module.component);
+    form.raw('edit-name');
+    form.raw('form-save');
+    assert.equal(form.output.actions.length, 0);
+    form.commands();
+    const f = form.state.fields.name.observation;
+    form.observe('name', 'composing', {
+      snapshot: { ...f.snapshot, marked: { start: 0, end: 2 } },
+    });
+    form.raw('form-save');
+    assert.equal(form.output.actions.length, 0);
+    form.observe('name', 'Settled');
+    form.raw('form-save');
+    const read = form.find('read');
+    form.complete(read, {
+      status: 'succeeded',
+      value: {
+        text: 'Settled',
+        metadata: { ...form.state.fields.name.observation.snapshot.text, owner: 'another-editor' },
+      },
+    });
+    assert.equal(form.state.current, null);
+    assert.equal(form.state.notice, 'connectionDraftKept');
+    assert.ok(![...form.actions.values()].some((a) => a.method === 'update'));
+    assert.equal(form.state.fields.name.observation.snapshot.text.owner, 'public-name');
+    form.readFields();
+    assert.equal(form.find('update').input.changes.name, 'Settled');
+  });
+  test(target + ' full generated input validation keeps invalid typed JSON fixable', () => {
+    for (const invalid of [
+      '{"m":{"vision":null}}',
+      '{"m":{"maxOutputTokens":"oops"}}',
+      '{"m":{"maxOutputTokens":1e400}}',
+      '{"m":{"unknown":true}}',
+      '{"m":{"apiProtocol":"not-a-protocol"}}',
+    ]) {
+      const form = new PublicFormClient(module.component);
+      form.edit('overrides', invalid);
+      form.readFields();
+      assert.equal(form.state.current, null);
+      assert.equal(form.state.notice, 'invalidConnectionFields');
+      assert.ok(![...form.actions.values()].some((a) => a.method === 'update'));
+      assert.equal(form.texts.get('overrides'), invalid);
+      const owner = form.state.fields.overrides.observation.snapshot.text.owner;
+      form.observe('overrides', '{"m":{"vision":true}}');
+      form.readFields();
+      assert.deepEqual(form.find('update').input.changes, {
+        modelOverrides: { m: { vision: true } },
+      });
+      assert.equal(form.state.fields.overrides.observation.snapshot.text.owner, owner);
+    }
+  });
+  test(target + ' creation uses observed provider and separate exact field captures', () => {
+    const form = new PublicFormClient(module.component, null);
+    form.chooseProvider();
+    const reads = form.readFields();
+    assert.equal(reads.length, 4);
+    const create = form.find('create');
+    assert.deepEqual(create.input, {
+      expectedCatalogRevision: 7,
+      connection: {
+        slug: 'my-provider',
+        name: 'My provider',
+        provider: connectionTarget.provider,
+        configuration: { baseUrl: 'https://api.test/v1', custom: 42 },
+        enabled: true,
+        enabledModelIds: ['first-model', 'second-model'],
+      },
+    });
+    assert.equal(Object.keys(create.resources).length, 0);
+    assert.ok(!JSON.stringify(form.output.frame.view).includes('"binding":"secret"'));
+  });
+  test(target + ' nonfinite public configuration and overlay never silently become null', () => {
+    for (const field of ['configuration', 'overlay']) {
+      const form = new PublicFormClient(module.component);
+      form.edit(field, '{"value":1e400}');
+      form.readFields();
+      assert.equal(form.state.notice, 'invalidConnectionFields');
+      assert.equal(form.state.current, null);
+      assert.ok(![...form.actions.values()].some((a) => a.method === 'update'));
+      const owner = form.state.fields[field].observation.snapshot.text.owner;
+      form.observe(field, '{"value":1}');
+      form.readFields();
+      assert.deepEqual(form.find('update').input.changes, {
+        [field === 'overlay' ? 'requestBodyOverlay' : 'configuration']: { value: 1 },
+      });
+      assert.equal(form.state.fields[field].observation.snapshot.text.owner, owner);
+      form.complete(form.find('update'), { status: 'not_accepted', diagnostic: 'blocked' });
+      const nested = '{"value":'.repeat(150) + '1' + '}'.repeat(150);
+      form.observe(field, nested);
+      form.readFields();
+      assert.equal(form.state.current, null);
+      assert.equal(form.state.notice, 'invalidConnectionFields');
+      assert.ok(![...form.actions.values()].some((a) => a.method === 'update'));
+      assert.equal(form.state.fields[field].observation.snapshot.text.owner, owner);
+    }
+  });
+  test(
+    target + ' catalog CAS requires explicit review and preserves create owners and drafts',
+    () => {
+      const form = new PublicFormClient(module.component, null);
+      form.chooseProvider();
+      form.readFields();
+      const snapshot = structuredClone(form.state.fields);
+      const ref = { ...publicRef, method: 'create' };
+      form.complete(
+        form.find('create'),
+        formReply(
+          {
+            kind: 'revision_conflict',
+            expectedRevision: 7,
+            actualRevision: 8,
+          },
+          ref,
+        ),
+      );
+      form.raw('form-save');
+      assert.equal(form.output.actions.length, 0);
+      form.raw('form-review');
+      form.query('connections', { kind: 'ready', revision: 9, connections: [], next: null });
+      assert.equal(form.state.catalogRevision, 7);
+      form.raw('form-rebase');
+      assert.equal(form.state.catalogRevision, 9);
+      assert.equal(form.output.actions.length, 0);
+      assert.deepEqual(form.state.fields, snapshot);
+      form.readFields();
+      assert.equal(form.find('create').input.expectedCatalogRevision, 9);
+    },
+  );
+  test(
+    target + ' connection CAS review shows full remote keys and requires explicit replacement',
+    () => {
+      const form = new PublicFormClient(module.component);
+      form.edit('configuration', '{"baseUrl":"https://local.test","mine":1}');
+      form.readFields();
+      form.complete(
+        form.find('update'),
+        formReply(
+          {
+            kind: 'connection_stale',
+            expected: {
+              connectionId: connectionTarget.connectionId,
+              revision: connectionTarget.revision,
+            },
+            actual: {
+              connectionId: connectionTarget.connectionId,
+              revision: connectionTarget.revision + 1,
+            },
+          },
+          publicRef,
+        ),
+      );
+      form.raw('form-review');
+      form.query('connection', {
+        kind: 'stale',
+        actual: {
+          connectionId: connectionTarget.connectionId,
+          revision: connectionTarget.revision + 1,
+        },
+      });
+      const latest = {
+        ...publicDetail,
+        target: {
+          ...connectionTarget,
+          revision: connectionTarget.revision + 1,
+          configuration: {
+            baseUrl: 'https://remote.test',
+            newlyAdded: 'keep-unless-explicitly-replaced',
+          },
+        },
+      };
+      form.query('connection', latest);
+      assert.deepEqual(form.state.baseline, publicDetail);
+      const owner = form.state.fields.configuration.observation.snapshot.text.owner;
+      form.raw('form-rebase');
+      assert.deepEqual(form.state.baseline, latest);
+      assert.equal(form.state.fields.configuration.observation.snapshot.text.owner, owner);
+      form.readFields();
+      assert.deepEqual(form.find('update').input, {
+        expected: {
+          connectionId: connectionTarget.connectionId,
+          revision: connectionTarget.revision + 1,
+        },
+        changes: { configuration: { baseUrl: 'https://local.test', mine: 1 } },
+      });
+    },
+  );
+  test(
+    target +
+      ' parent refresh of the same connection needs consent and another target cannot take the draft',
+    () => {
+      const form = new PublicFormClient(module.component);
+      form.edit('name', 'Retained local name');
+      const fields = structuredClone(form.state.fields);
+      const latest = {
+        ...publicDetail,
+        name: 'Refreshed remote name',
+        target: {
+          ...publicDetail.target,
+          revision: publicDetail.target.revision + 1,
+        },
+      };
+      form.update({ connection: latest });
+      form.raw('form-save');
+      assert.equal(form.output.actions.length, 0);
+      form.raw('form-review');
+      form.query('connection', {
+        kind: 'stale',
+        actual: {
+          connectionId: latest.target.connectionId,
+          revision: latest.target.revision,
+        },
+      });
+      form.query('connection', latest);
+      form.raw('form-rebase');
+      assert.deepEqual(form.state.opened, latest);
+      assert.deepEqual(form.state.fields, fields);
+      form.readFields();
+      assert.equal(form.find('update').input.changes.name, 'Retained local name');
+      form.complete(form.find('update'), { status: 'not_accepted', diagnostic: 'blocked' });
+      form.update({
+        connection: { ...latest, target: { ...latest.target, connectionId: uuid(112) } },
+      });
+      form.raw('form-review');
+      assert.equal(form.output.actions.length, 0);
+      form.raw('form-save');
+      assert.equal(form.output.actions.length, 0);
+      assert.deepEqual(form.state.fields, fields);
+    },
+  );
+  test(
+    target + ' unknown mutation cannot be reviewed or replayed and checks only original reference',
+    () => {
+      const form = new PublicFormClient(module.component);
+      form.edit('name', 'Unknown draft');
+      form.readFields();
+      form.complete(form.find('update'), unknownReply(publicRef));
+      form.raw('form-save');
+      assert.equal(form.output.actions.length, 0);
+      form.raw('form-review');
+      assert.equal(form.output.actions.length, 0);
+      form.raw('form-check');
+      const check = form.find('read');
+      assert.equal(check.binding, 'receipts');
+      assert.deepEqual(check.input, publicRef);
+      form.complete(check, {
+        status: 'succeeded',
+        value: formReply(
+          {
+            kind: 'committed',
+            connection: { connectionId: 'other', revision: 1 },
+            catalogRevision: 9,
+          },
+          { ...publicRef, operation: uuid(119) },
+        ).reply,
+      });
+      assert.deepEqual(form.state.current.reference, publicRef);
+      assert.equal(form.output.events.length, 0);
+    },
+  );
+}
