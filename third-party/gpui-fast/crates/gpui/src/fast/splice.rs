@@ -283,6 +283,7 @@ impl Window {
     /// it was, and the nested views ask for the layout they had.
     pub(crate) fn splice_layout(&mut self, id: &GlobalElementId, cx: &mut App) -> Option<Splice> {
         if self.refreshing
+            || self.focus_reveal_pending()
             || cx.has_active_drag()
             || self.a11y.is_active()
             || self.is_inspector_picking(cx)

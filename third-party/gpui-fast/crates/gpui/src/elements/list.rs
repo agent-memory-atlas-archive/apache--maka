@@ -1315,7 +1315,9 @@ impl StateInner {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<LayoutItemsResponse, ListOffset> {
-        window.transact(|window| {
+        let outside_request = window.requested_autoscroll.take();
+        let mut parent_request = None;
+        let result = window.transact(|window| {
             match self.measuring_behavior {
                 ListMeasuringBehavior::Measure(has_measured) if !has_measured => {
                     self.layout_all_items(bounds.size.width, render_item, window, cx);
@@ -1332,9 +1334,6 @@ impl StateInner {
                 cx,
             );
 
-            // Avoid honoring autoscroll requests from elements other than our children.
-            window.take_autoscroll();
-
             // Only paint the visible items, if there is actually any space for them (taking padding into account)
             if bounds.size.height > padding.top + padding.bottom {
                 let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
@@ -1344,6 +1343,7 @@ impl StateInner {
                     &layout_response.scroll_top,
                     &mut item_origin,
                 );
+                let mut selected_request = None;
                 for item in &mut layout_response.item_layouts {
                     crate::fast::layers::lists::place_list_item(
                         window,
@@ -1355,11 +1355,35 @@ impl StateInner {
                         item.element.prepaint_at(item_origin, window, cx);
                     });
 
-                    if let Some(autoscroll_bounds) = window.take_autoscroll()
-                        && autoscroll
-                    {
-                        if autoscroll_bounds.top() < bounds.top() {
-                            let mut item_ix = item.index;
+                    if let Some(request) = window.requested_autoscroll.take() {
+                        let focus_wins = selected_request.as_ref().is_some_and(
+                            |(selected, _, _): &(
+                                crate::window::AutoscrollRequest,
+                                usize,
+                                Point<Pixels>,
+                            )| {
+                                window.focus_reveal_pending()
+                                    && selected.focus_generation == Some(window.focus_generation)
+                                    && request.focus_generation != Some(window.focus_generation)
+                            },
+                        );
+                        if !focus_wins {
+                            selected_request = Some((request, item.index, item_origin));
+                        }
+                    }
+
+                    item_origin.y += item.size.height;
+                }
+                if let Some((mut request, item_index, item_origin)) = selected_request {
+                    let autoscroll_bounds = request.bounds;
+                    request.bounds = autoscroll_bounds.intersect(&bounds);
+                    parent_request = Some(request);
+                    if autoscroll {
+                        let oversized = autoscroll_bounds.size.height > bounds.size.height;
+                        if autoscroll_bounds.top() < bounds.top()
+                            || (oversized && autoscroll_bounds.top() != bounds.top())
+                        {
+                            let mut item_ix = item_index;
                             let mut offset_in_item = autoscroll_bounds.top() - item_origin.y;
 
                             // The requested top can sit above this item's own
@@ -1398,9 +1422,9 @@ impl StateInner {
                                 item_ix,
                                 offset_in_item,
                             });
-                        } else if autoscroll_bounds.bottom() > bounds.bottom() {
+                        } else if !oversized && autoscroll_bounds.bottom() > bounds.bottom() {
                             let mut cursor = self.items.cursor::<Count>(());
-                            cursor.seek(&Count(item.index), Bias::Right);
+                            cursor.seek(&Count(item_index), Bias::Right);
                             let mut height = bounds.size.height - padding.top - padding.bottom;
 
                             // Account for the height of the element down until the autoscroll bottom.
@@ -1436,15 +1460,20 @@ impl StateInner {
                             });
                         }
                     }
-
-                    item_origin.y += item.size.height;
                 }
             } else {
                 layout_response.item_layouts.clear();
             }
 
             Ok(layout_response)
-        })
+        });
+        // The failed transaction's geometry is discarded; the caller renders
+        // fresh elements at its corrected offset before publishing a target.
+        window.requested_autoscroll = window.prioritize_autoscroll(
+            if result.is_ok() { parent_request } else { None },
+            outside_request,
+        );
+        result
     }
 
     // Scrollbar support

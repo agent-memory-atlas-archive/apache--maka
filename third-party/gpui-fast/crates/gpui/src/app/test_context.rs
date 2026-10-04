@@ -161,13 +161,18 @@ impl TestAppContext {
         struct Restore(Rc<AppCell>, bool);
         impl Drop for Restore {
             fn drop(&mut self) {
-                if let GpuiMode::Test { automatic_drawing, .. } = &mut self.0.borrow_mut().mode {
+                if let GpuiMode::Test {
+                    automatic_drawing, ..
+                } = &mut self.0.borrow_mut().mode
+                {
                     *automatic_drawing = self.1;
                 }
             }
         }
         let old = match &mut self.app.borrow_mut().mode {
-            GpuiMode::Test { automatic_drawing, .. } => std::mem::replace(automatic_drawing, false),
+            GpuiMode::Test {
+                automatic_drawing, ..
+            } => std::mem::replace(automatic_drawing, false),
             GpuiMode::Production => panic!("automatic drawing control is test-only"),
         };
         let _restore = Restore(self.app.clone(), old);
@@ -591,6 +596,15 @@ impl TestAppContext {
             window.dispatch_keystroke(keystroke, cx)
         })
         .unwrap();
+    }
+
+    /// Deliver a frame only when the native test platform scheduled one.
+    /// This exercises frame demand rather than forcing another window draw.
+    pub fn simulate_scheduled_frame(&mut self, window: AnyWindowHandle) -> bool {
+        self.run_until_parked();
+        let delivered = self.test_window(window).simulate_scheduled_frame();
+        self.run_until_parked();
+        delivered
     }
 
     /// Activate the actual platform accessibility callbacks on the test backend.

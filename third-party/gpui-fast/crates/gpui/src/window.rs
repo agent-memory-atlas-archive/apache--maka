@@ -1157,6 +1157,13 @@ enum InputModality {
     Touch,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct AutoscrollRequest {
+    pub(crate) bounds: Bounds<Pixels>,
+    pub(crate) focus_generation: Option<u64>,
+    pub(crate) precise: bool,
+}
+
 /// Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
@@ -1190,7 +1197,8 @@ pub struct Window {
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: f32,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
-    pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
+    pub(crate) requested_autoscroll: Option<AutoscrollRequest>,
+    pub(crate) autoscroll_focus_generation: Option<u64>,
     /// The [`TextInputConfiguration`] most recently forwarded to the platform
     /// window, so that only actual changes are forwarded (reconfiguring a live
     /// input session can restart the IME connection).
@@ -1237,9 +1245,15 @@ pub struct Window {
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
+    dispatching_pointer: bool,
     /// Incremented every time focus moves. Used to invalidate a
     /// pending keyboard activation state when focus changes.
     pub(crate) focus_generation: u64,
+    // A focus movement is revealed once, using actual prepaint geometry. These
+    // are frame facts, not an independent focus or geometry registry.
+    revealed_focus_generation: u64,
+    pub(crate) focus_reveal_seen: bool,
+    pub(crate) focus_reveal_scrolled: bool,
     pending_input: Option<PendingInput>,
     pending_modifier: ModifierState,
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
@@ -2062,6 +2076,7 @@ impl Window {
             content_mask_stack: Vec::new(),
             element_opacity: 1.0,
             requested_autoscroll: None,
+            autoscroll_focus_generation: None,
             last_text_input_configuration: None,
             focused_text_input_active: false,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
@@ -2105,7 +2120,11 @@ impl Window {
             activation_observers: SubscriberSet::new(),
             focus: None,
             focus_enabled: true,
+            dispatching_pointer: false,
             focus_generation: 0,
+            revealed_focus_generation: 0,
+            focus_reveal_seen: false,
+            focus_reveal_scrolled: false,
             pending_input: None,
             pending_modifier: ModifierState::default(),
             pending_input_observers: SubscriberSet::new(),
@@ -2317,9 +2336,19 @@ impl Window {
 
         self.focus = Some(handle.id);
         self.focus_generation = self.focus_generation.wrapping_add(1);
+        // Pointer focus must not move a partially visible target between down
+        // and up, or during text selection. Keyboard, AX and programmatic
+        // focus use the same native mechanism and request reveal normally.
+        if self.dispatching_pointer {
+            self.revealed_focus_generation = self.focus_generation;
+        }
         self.clear_pending_keystrokes(cx);
 
         self.refresh();
+    }
+
+    pub(crate) fn focus_reveal_pending(&self) -> bool {
+        self.focus.is_some() && self.focus_generation != self.revealed_focus_generation
     }
 
     /// Remove focus from all elements within this context's window.
@@ -3195,6 +3224,9 @@ impl Window {
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.invalidator.set_dirty(false);
         self.requested_autoscroll = None;
+        self.focus_reveal_seen = false;
+        self.focus_reveal_scrolled = false;
+        let reveal_focus = (self.focus, self.focus_generation);
 
         // Restore the previously-used input handler.
         // Place it back into a None slot (left by a previous .take()) so that
@@ -3316,7 +3348,16 @@ impl Window {
         // panel). `Window::focus` suppresses `refresh` while a draw is in progress, so
         // schedule another frame here to render the new focus state and dispatch the
         // resulting focus events.
-        if self.focus != focus_before_listeners {
+        if self.focus_reveal_seen
+            && !self.focus_reveal_scrolled
+            && reveal_focus == (self.focus, self.focus_generation)
+        {
+            self.revealed_focus_generation = self.focus_generation;
+        }
+        if self.focus != focus_before_listeners
+            || self.focus_generation != reveal_focus.1
+            || self.focus_reveal_scrolled
+        {
             self.refresh();
         }
         self.needs_present.set(true);
@@ -4014,8 +4055,14 @@ impl Window {
     pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
         self.invalidator.debug_assert_prepaint();
         let index = self.prepaint_index();
+        let reveal_seen = self.focus_reveal_seen;
+        let autoscroll = self.requested_autoscroll;
         let result = f(self);
         if result.is_err() {
+            // These describe discarded geometry. Actual native offset plans
+            // are not rolled back, so keep focus_reveal_scrolled to redraw.
+            self.focus_reveal_seen = reveal_seen;
+            self.requested_autoscroll = autoscroll;
             for id in self
                 .next_frame
                 .placement_claims
@@ -4048,14 +4095,38 @@ impl Window {
     /// called during the prepaint phase of element drawing.
     pub fn request_autoscroll(&mut self, bounds: Bounds<Pixels>) {
         self.invalidator.debug_assert_prepaint();
-        self.requested_autoscroll = Some(bounds);
+        let request = AutoscrollRequest {
+            bounds,
+            focus_generation: self.autoscroll_focus_generation,
+            precise: true,
+        };
+        self.requested_autoscroll =
+            self.prioritize_autoscroll(Some(request), self.requested_autoscroll);
     }
 
     /// This method can be called from a containing element such as [`crate::List`] to support the autoscroll behavior
     /// described in [`Self::request_autoscroll`].
     pub fn take_autoscroll(&mut self) -> Option<Bounds<Pixels>> {
         self.invalidator.debug_assert_prepaint();
-        self.requested_autoscroll.take()
+        self.requested_autoscroll
+            .take()
+            .map(|request| request.bounds)
+    }
+
+    pub(crate) fn prioritize_autoscroll(
+        &self,
+        preferred: Option<AutoscrollRequest>,
+        fallback: Option<AutoscrollRequest>,
+    ) -> Option<AutoscrollRequest> {
+        let is_focus = |request: &AutoscrollRequest| {
+            self.focus_reveal_pending() && request.focus_generation == Some(self.focus_generation)
+        };
+        match (preferred, fallback) {
+            (Some(preferred), Some(fallback)) if is_focus(&fallback) && !is_focus(&preferred) => {
+                Some(fallback)
+            }
+            (preferred, fallback) => preferred.or(fallback),
+        }
     }
 
     /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
@@ -5751,6 +5822,7 @@ impl Window {
             return;
         }
 
+        let previous_pointer = mem::replace(&mut self.dispatching_pointer, true);
         let mut mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
 
         // Capture phase, events bubble from back to front. Handlers for this phase are used for
@@ -5775,6 +5847,7 @@ impl Window {
         }
 
         self.rendered_frame.mouse_listeners = mouse_listeners;
+        self.dispatching_pointer = previous_pointer;
 
         if cx.has_active_drag() {
             if event.is::<MouseMoveEvent>() {

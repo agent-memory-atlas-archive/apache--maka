@@ -2430,7 +2430,71 @@ impl Interactivity {
 
                             let scroll_offset =
                                 self.clamp_scroll_position(bounds, &style, window, cx);
+                            // Isolate this subtree's request from siblings.
+                            let scrolls = style.overflow.x == Overflow::Scroll
+                                || style.overflow.y == Overflow::Scroll;
+                            let owns_focus = style.display != Display::None
+                                && self
+                                    .tracked_focus_handle
+                                    .as_ref()
+                                    .is_some_and(|h| h.is_focused(window));
+                            let scoped = scrolls || owns_focus;
+                            let outside_request =
+                                scoped.then(|| window.requested_autoscroll.take()).flatten();
+                            let outside_focus = window.autoscroll_focus_generation;
+                            if owns_focus && window.focus_reveal_pending() {
+                                window.autoscroll_focus_generation = Some(window.focus_generation);
+                            }
                             let result = f(&style, scroll_offset, hitbox, window, cx);
+                            if scoped {
+                                let mut request = window.requested_autoscroll.take();
+                                if owns_focus
+                                    && window.focus_reveal_pending()
+                                    && self
+                                        .tracked_focus_handle
+                                        .as_ref()
+                                        .is_some_and(|handle| handle.is_focused(window))
+                                {
+                                    window.focus_reveal_seen = true;
+                                    // A child's explicit caret/line request is
+                                    // more precise than the whole control.
+                                    match request.as_mut() {
+                                        Some(request)
+                                            if !request.precise
+                                                && request.focus_generation
+                                                    == Some(window.focus_generation) =>
+                                        {
+                                            // A control can track the same handle at
+                                            // its editor and outer border. Preserve
+                                            // the entire control's derived bounds.
+                                            request.bounds = request.bounds.union(&bounds);
+                                        }
+                                        None => {
+                                            request = Some(crate::window::AutoscrollRequest {
+                                                bounds,
+                                                focus_generation: Some(window.focus_generation),
+                                                precise: false,
+                                            })
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                if scrolls {
+                                    request = request.map(|mut request| {
+                                        request.bounds = self.reveal_bounds(
+                                            request.bounds,
+                                            bounds,
+                                            &style,
+                                            scroll_offset,
+                                            window,
+                                        );
+                                        request
+                                    });
+                                }
+                                window.requested_autoscroll =
+                                    window.prioritize_autoscroll(request, outside_request);
+                            }
+                            window.autoscroll_focus_generation = outside_focus;
                             (result, element_state)
                         },
                     )
@@ -2475,33 +2539,9 @@ impl Interactivity {
         window: &mut Window,
         _cx: &mut App,
     ) -> Point<Pixels> {
-        fn round_to_two_decimals(pixels: Pixels) -> Pixels {
-            const ROUNDING_FACTOR: f32 = 100.0;
-            (pixels * ROUNDING_FACTOR).round() / ROUNDING_FACTOR
-        }
-
         if let Some(scroll_offset) = self.scroll_offset.as_ref() {
             let mut scroll_to_bottom = false;
-            let rem_size = window.rem_size();
-            // Taffy lays the box out with the padding snapped to the device pixel
-            // grid (`to_taffy`); recomputed unsnapped, e.g. py_1 at a fractional
-            // rem size, it exceeds `bounds` and leaves the box scrollable by the
-            // sub-pixel difference.
-            let padding = style
-                .padding
-                .to_pixels(bounds.size.into(), rem_size)
-                .map(|edge| window.pixel_snap(*edge));
-            let padding_size = size(padding.left + padding.right, padding.top + padding.bottom);
-            // The floating point values produced by Taffy and ours often vary
-            // slightly after ~5 decimal places. This can lead to cases where after
-            // subtracting these, the container becomes scrollable for less than
-            // 0.00000x pixels. As we generally don't benefit from a precision that
-            // high for the maximum scroll, we round the scroll max to 2 decimal
-            // places here.
-            let padded_content_size = self.content_size + padding_size;
-            let scroll_max = Point::from(padded_content_size - bounds.size)
-                .map(round_to_two_decimals)
-                .max(&Default::default());
+            let scroll_max = self.max_scroll_offset(bounds, style, window);
             if let Some(handle) = self.tracked_scroll_handle.as_ref() {
                 {
                     let mut state = handle.0.borrow_mut();
@@ -2529,6 +2569,106 @@ impl Interactivity {
         } else {
             Point::default()
         }
+    }
+
+    fn max_scroll_offset(
+        &self,
+        bounds: Bounds<Pixels>,
+        style: &Style,
+        window: &Window,
+    ) -> Point<Pixels> {
+        fn round_to_two_decimals(pixels: Pixels) -> Pixels {
+            const ROUNDING_FACTOR: f32 = 100.0;
+            (pixels * ROUNDING_FACTOR).round() / ROUNDING_FACTOR
+        }
+        let rem_size = window.rem_size();
+        // Taffy lays the box out with the padding snapped to the device pixel
+        // grid (`to_taffy`); recomputed unsnapped, e.g. py_1 at a fractional
+        // rem size, it exceeds `bounds` and leaves the box scrollable by the
+        // sub-pixel difference.
+        let padding = style
+            .padding
+            .to_pixels(bounds.size.into(), rem_size)
+            .map(|edge| window.pixel_snap(*edge));
+        let padding_size = size(padding.left + padding.right, padding.top + padding.bottom);
+        // The floating point values produced by Taffy and ours often vary
+        // slightly after ~5 decimal places. This can lead to cases where after
+        // subtracting these, the container becomes scrollable for less than
+        // 0.00000x pixels. As we generally don't benefit from a precision that
+        // high for the maximum scroll, we round the scroll max to 2 decimal
+        // places here.
+        let padded_content_size = self.content_size + padding_size;
+        let scroll_max = Point::from(padded_content_size - bounds.size)
+            .map(round_to_two_decimals)
+            .max(&Default::default());
+        scroll_max
+    }
+
+    fn reveal_bounds(
+        &self,
+        mut request: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
+        style: &Style,
+        offset: Point<Pixels>,
+        window: &mut Window,
+    ) -> Bounds<Pixels> {
+        fn delta(start: Pixels, end: Pixels, min: Pixels, max: Pixels) -> Pixels {
+            if end - start > max - min || start < min {
+                min - start
+            } else if end > max {
+                max - end
+            } else {
+                px(0.)
+            }
+        }
+        let Some(shared_offset) = self.scroll_offset.as_ref() else {
+            return request;
+        };
+        let scroll_max = self.max_scroll_offset(bounds, style, window);
+        let mut next = offset;
+        if style.overflow.x == Overflow::Scroll {
+            next.x = (offset.x
+                + delta(
+                    request.left(),
+                    request.right(),
+                    bounds.left(),
+                    bounds.right(),
+                ))
+            .clamp(-scroll_max.x, px(0.));
+        }
+        if style.overflow.y == Overflow::Scroll {
+            next.y = (offset.y
+                + delta(
+                    request.top(),
+                    request.bottom(),
+                    bounds.top(),
+                    bounds.bottom(),
+                ))
+            .clamp(-scroll_max.y, px(0.));
+        }
+        let movement = next - offset;
+        if movement != Point::default() {
+            if let Some(handle) = self.tracked_scroll_handle.as_ref() {
+                handle.set_offset(next);
+            } else {
+                *shared_offset.borrow_mut() = next;
+            }
+            window.focus_reveal_scrolled = true;
+        }
+        request.origin += movement;
+        // Clip only by this container's own viewport, not an ancestor mask:
+        // an offscreen inner viewport still has to be revealed by its parent.
+        if style.overflow.x != Overflow::Visible {
+            let right = request.right().min(bounds.right());
+            request.origin.x = request.left().max(bounds.left()).min(bounds.right());
+            request.size.width = (right - request.left()).max(px(0.));
+        }
+        if style.overflow.y != Overflow::Visible {
+            let bottom = request.bottom().min(bounds.bottom());
+            request.origin.y = request.top().max(bounds.top()).min(bounds.bottom());
+            request.size.height = (bottom - request.top()).max(px(0.));
+        }
+        request
     }
 
     /// Paint this element according to this interactivity state's configured styles

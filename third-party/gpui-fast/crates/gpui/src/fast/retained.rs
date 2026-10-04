@@ -502,6 +502,7 @@ impl Window {
     /// [`Window::retained_context_matches`].
     pub(crate) fn reusable_retained(&self, id: &GlobalElementId, cx: &App) -> Option<usize> {
         if self.refreshing
+            || self.focus_reveal_pending()
             || cx.has_active_drag()
             || self.a11y.is_active()
             || self.is_inspector_picking(cx)

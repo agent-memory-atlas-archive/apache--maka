@@ -117,6 +117,7 @@ pub(crate) fn active(window: &Window, cx: &App) -> bool {
         && window.fast_layers.enabled
         && window.retained_state.view_retention
         && !window.refreshing
+        && !window.focus_reveal_pending()
         && !cx.has_active_drag()
         && !window.a11y.is_active()
         && !window.is_inspector_picking(cx)

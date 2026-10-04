@@ -560,3 +560,6 @@ mod tests {
         assert_ne!(ids[0], ids[1]);
     }
 }
+
+#[cfg(test)]
+mod focus_reveal;
