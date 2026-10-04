@@ -1382,6 +1382,156 @@ class PublicFormClient extends FormClient {
 }
 for (const [target, module] of connectionFormModules) {
   test(
+    target + ' removal requires confirmation and freezes the saved basis without reading drafts',
+    () => {
+      const form = new PublicFormClient(module.component);
+      form.edit('name', 'unsaved🙂');
+      const observation = structuredClone(form.state.fields.name.observation);
+      form.raw('form-confirm-remove');
+      assert.equal(form.output.actions.length, 0);
+      form.raw('form-remove');
+      assert.equal(form.state.confirmation, 'remove');
+      assert.equal(form.output.actions.length, 0);
+      const confirmation = form.output.frame.view.children.find(
+        (n) => n.key === 'form-confirmation',
+      );
+      let identity = '';
+      do {
+        const panel = form.output.frame.view.children.find((n) => n.key === 'form-confirmation');
+        identity += panel.children
+          .filter((n) => n.key.startsWith('review-line-'))
+          .map((n) => n.text)
+          .join('');
+        const navigation = panel.children.find((n) => n.key === 'confirm-actions');
+        if (!navigation.children.some((n) => n.key === 'review-next')) break;
+        form.raw('review-next');
+      } while (true);
+      assert.ok(identity.includes('Name: ' + publicDetail.name.replace(/\r?\n/gu, '')));
+      assert.ok(identity.includes('Connection ID: ' + connectionTarget.slug));
+      assert.ok(!identity.includes(connectionTarget.connectionId));
+      assert.equal(confirmation.visible, true);
+      form.raw('form-cancel');
+      assert.deepEqual(form.state.fields.name.observation, observation);
+      form.raw('form-remove');
+      form.raw('form-confirm-remove');
+      assert.deepEqual(form.find('remove').input, {
+        expected: {
+          connectionId: connectionTarget.connectionId,
+          revision: connectionTarget.revision,
+        },
+      });
+      assert.equal(form.output.actions.length, 1);
+      assert.ok(![...form.actions.values()].some((a) => a.binding === 'reader'));
+      form.complete(
+        form.find('remove'),
+        formReply({ kind: 'committed', catalogRevision: 8 }, { ...publicRef, method: 'remove' }),
+      );
+      assert.deepEqual(
+        form.output.events.map((e) => e.name),
+        ['changed', 'closed'],
+      );
+    },
+  );
+  test(
+    target + ' unknown removal only reads its original receipt and never resets or resends',
+    () => {
+      const form = new PublicFormClient(module.component);
+      form.edit('name', 'kept draft');
+      const before = structuredClone(form.state.fields);
+      const reference = { ...publicRef, method: 'remove' };
+      form.raw('form-remove');
+      form.raw('form-confirm-remove');
+      form.complete(form.find('remove'), {
+        status: 'operation',
+        reply: { reference, receipt: { kind: 'unavailable' } },
+      });
+      assert.equal(form.state.current.kind, 'remove');
+      assert.equal(form.state.notice, 'connectionUnknown');
+      form.raw('form-remove');
+      form.raw('form-confirm-remove');
+      form.raw('form-save');
+      assert.equal(form.output.actions.length, 0);
+      form.raw('form-check');
+      assert.deepEqual(form.find('read').input, reference);
+      form.query(
+        'read',
+        formReply({ kind: 'committed', catalogRevision: 8 }, { ...reference, operation: uuid(99) })
+          .reply,
+      );
+      assert.ok(form.state.current);
+      assert.equal(form.output.events.length, 0);
+      assert.deepEqual(form.state.fields, before);
+      form.raw('form-check');
+      form.query('read', formReply({ kind: 'committed', catalogRevision: 8 }, reference).reply);
+      assert.deepEqual(
+        form.output.events.map((e) => e.name),
+        ['changed', 'closed'],
+      );
+      assert.deepEqual(form.state.fields, before);
+    },
+  );
+  test(target + ' stale removal cannot silently adopt a newer connection version', () => {
+    const form = new PublicFormClient(module.component);
+    const reference = { ...publicRef, method: 'remove' };
+    form.raw('form-remove');
+    form.raw('form-confirm-remove');
+    form.complete(
+      form.find('remove'),
+      formReply(
+        {
+          kind: 'connection_stale',
+          expected: {
+            connectionId: connectionTarget.connectionId,
+            revision: connectionTarget.revision,
+          },
+          actual: { connectionId: connectionTarget.connectionId, revision: 20 },
+        },
+        reference,
+      ),
+    );
+    form.raw('form-remove');
+    assert.equal(form.output.actions.length, 0);
+    assert.equal(form.state.confirmation, null);
+    form.raw('form-review');
+    form.query('connection', {
+      kind: 'stale',
+      actual: { connectionId: connectionTarget.connectionId, revision: 20 },
+    });
+    form.query('connection', { ...publicDetail, target: { ...connectionTarget, revision: 20 } });
+    form.raw('form-rebase');
+    assert.equal(form.output.actions.length, 0);
+    form.raw('form-remove');
+    assert.equal(form.output.actions.length, 0);
+    form.raw('form-confirm-remove');
+    assert.equal(form.find('remove').input.expected.revision, 20);
+  });
+  test(
+    target +
+      ' parent replacement blocks a pending removal confirmation and historical receipts preserve drafts',
+    () => {
+      const form = new PublicFormClient(module.component);
+      form.edit('name', 'draft');
+      const before = structuredClone(form.state.fields);
+      form.raw('form-remove');
+      form.update({
+        connection: { ...publicDetail, target: { ...connectionTarget, connectionId: 'other' } },
+      });
+      form.raw('form-confirm-remove');
+      assert.equal(form.output.actions.length, 0);
+      form.raw('form-cancel');
+      form.raw('form-history');
+      const reference = { ...publicRef, method: 'remove' };
+      form.query('page', [{ cursor: 1, reference }]);
+      form.raw('form-earlier-0');
+      form.query('read', formReply({ kind: 'committed', catalogRevision: 8 }, reference).reply);
+      assert.equal(form.state.earlier.length, 1);
+      assert.equal(form.output.events.length, 0);
+      assert.deepEqual(form.state.fields, before);
+      assert.equal(form.state.current, null);
+    },
+  );
+
+  test(
     target +
       ' public name update preserves huge provider configuration and unknown model collections',
     () => {

@@ -91,6 +91,7 @@ interface State {
   pane: number;
   pending: Record<string, Request>;
   current: {
+    kind: 'save' | 'remove';
     attempt: number;
     values: Partial<Record<FieldName, string>>;
     remaining: FieldName[];
@@ -101,7 +102,7 @@ interface State {
   reviewed: Detail | null;
   reviewedCatalog: number | null;
   reviewPage: number;
-  confirmation: 'leave' | 'rebase' | null;
+  confirmation: 'leave' | 'rebase' | 'remove' | null;
   historyOpen: boolean;
   earlier: { cursor: number; reference: RecoveryRef; result: OperationReply | null }[];
   historyNext: number | null;
@@ -198,6 +199,25 @@ function canSave(state: State, props: ConnectionFormProps) {
     })
   );
 }
+function canRemove(state: State, props: ConnectionFormProps) {
+  return !!state.baseline && fresh(state, props) && !busy(state) && !state.conflict;
+}
+function remove(state: State, props: ConnectionFormProps, actions: Action[]) {
+  if (state.confirmation !== 'remove' || !canRemove(state, props)) return;
+  const target = state.baseline!.target;
+  state.confirmation = null;
+  state.current = {
+    kind: 'remove',
+    attempt: ++state.serial,
+    values: {},
+    remaining: [],
+    reference: null,
+  };
+  state.notice = null;
+  request(state, actions, { kind: 'mutate' }, 'settings', 'remove', {
+    expected: { connectionId: target.connectionId, revision: target.revision },
+  });
+}
 function save(
   state: State,
   props: ConnectionFormProps,
@@ -207,7 +227,7 @@ function save(
   if (!canSave(state, props)) return;
   const fields = active(state);
   const attempt = ++state.serial;
-  state.current = { attempt, values: {}, remaining: fields, reference: null };
+  state.current = { kind: 'save', attempt, values: {}, remaining: fields, reference: null };
   state.notice = null;
   for (const name of fields) {
     const captured = state.fields[name].observation!;
@@ -353,8 +373,10 @@ function settle(state: State, reply: OperationReply, events: Emission[]) {
   const value = reply.receipt.outcome.value as CatalogMutationResult;
   if (value.kind === 'committed') {
     if (
-      !value.connection ||
-      (state.baseline && value.connection.connectionId !== state.baseline.target.connectionId)
+      current.kind === 'remove'
+        ? value.connection !== undefined
+        : !value.connection ||
+          (state.baseline && value.connection.connectionId !== state.baseline.target.connectionId)
     ) {
       state.notice = 'connectionUnknown';
       return;
@@ -442,6 +464,9 @@ function frame(
         ],
         { row: target === 'desktop', gap: 0 },
       ),
+      ...(state.baseline
+        ? [ui.button('form-remove', text.removeConnection, !canRemove(state, props))]
+        : []),
       ...(state.notice ? [ui.text('form-notice', text[state.notice], 13, props.theme.muted)] : []),
       ...(!fresh(state, props)
         ? [ui.text('form-target-changed', text.connectionChanged, 13, props.theme.muted)]
@@ -482,16 +507,22 @@ function frame(
               ),
           ]
         : [
-            ui.text(
-              'provider-identity',
-              compactLabel(identity?.name ?? '', 36),
-              13,
-              props.theme.muted,
-            ),
-            ui.button(
-              'connection-enabled',
-              state.enabled ? text.connectionEnabled : text.connectionDisabled,
-              locked,
+            ui.box(
+              'provider-summary',
+              [
+                ui.text(
+                  'provider-identity',
+                  compactLabel(identity?.name ?? '', 36),
+                  13,
+                  props.theme.muted,
+                ),
+                ui.button(
+                  'connection-enabled',
+                  state.enabled ? text.connectionEnabled : text.connectionDisabled,
+                  locked,
+                ),
+              ],
+              { row: target === 'desktop', gap: target === 'desktop' ? 8 : 0 },
             ),
             ...(target === 'tui'
               ? [
@@ -526,7 +557,13 @@ function frame(
                   ? [
                       ui.button(
                         'edit-' + name,
-                        f.enabled ? text.keepSavedField : text.replaceField,
+                        (f.enabled
+                          ? state.baseline
+                            ? text.keepSavedField
+                            : text.useDefaultField
+                          : text.replaceField) +
+                          ': ' +
+                          label,
                         locked ||
                           (name === 'configuration' && state.fields.endpoint.enabled) ||
                           (name === 'endpoint' && state.fields.configuration.enabled),
@@ -537,14 +574,26 @@ function frame(
               { row: target === 'desktop', gap: 0 },
             ),
             ...(['models', 'overrides', 'overlay'].includes(name)
-              ? [ui.text('replace-help-' + name, text.replaceCollectionHelp, 12, props.theme.muted)]
+              ? [
+                  ui.text(
+                    'replace-help-' + name,
+                    state.baseline ? text.replaceCollectionHelp : text.newCollectionHelp,
+                    12,
+                    props.theme.muted,
+                  ),
+                ]
               : []),
             ...(name === 'configuration'
               ? [ui.text('configuration-help', text.configurationHelp, 12, props.theme.muted)]
               : []),
             ...(f.failed
               ? [
-                  ui.text('field-failed-' + name, text.fieldPrefillFailed, 12, props.theme.muted),
+                  ui.text(
+                    'field-failed-' + name,
+                    state.baseline ? text.fieldPrefillFailed : text.defaultPrefillFailed,
+                    12,
+                    props.theme.muted,
+                  ),
                   ui.button('empty-' + name, text.replaceFromEmpty, locked),
                 ]
               : []),
@@ -576,20 +625,30 @@ function frame(
                 style: {
                   width: fill,
                   height: pixels(
-                    ['configuration', 'overrides', 'overlay'].includes(name) ? 180 : 72,
+                    name === 'slug'
+                      ? 36
+                      : ['configuration', 'overrides', 'overlay'].includes(name)
+                        ? 180
+                        : 72,
                   ),
                 },
               },
             ),
             ...(!f.enabled
-              ? [ui.text('kept-' + name, text.savedFieldKept, 12, props.theme.muted)]
+              ? [
+                  ui.text(
+                    'kept-' + name,
+                    state.baseline ? text.savedFieldKept : text.defaultFieldKept,
+                    12,
+                    props.theme.muted,
+                  ),
+                ]
               : []),
           ],
           {
             visible: available && (target === 'desktop' || currentPane === name),
             gap: target === 'desktop' ? 8 : 0,
-            surface: target === 'desktop',
-            padding: target === 'desktop' ? 16 : 0,
+            padding: 0,
             style: { width: fill },
           },
         );
@@ -597,16 +656,31 @@ function frame(
     ],
     { visible: !state.historyOpen && !state.confirmation, gap: target === 'desktop' ? 16 : 0 },
   );
-  const reviewLines =
-    (state.reviewed
-      ? JSON.stringify(state.reviewed)
-      : state.reviewedCatalog !== null
-        ? JSON.stringify({
-            catalogRevision: state.reviewedCatalog,
-            provider: state.provider?.identity,
-          })
-        : ''
-    ).match(/[\s\S]{1,36}/gu) ?? [];
+  const reviewValue =
+    state.confirmation === 'remove'
+      ? [
+          text.connectionName + ': ' + state.baseline!.name,
+          text.connectionSlug + ': ' + state.baseline!.target.slug,
+          text.connectionProvider + ': ' + state.baseline!.target.provider.name,
+        ].join('\n')
+      : state.reviewed
+        ? JSON.stringify(state.reviewed)
+        : state.reviewedCatalog !== null
+          ? JSON.stringify({
+              catalogRevision: state.reviewedCatalog,
+              provider: state.provider?.identity,
+            })
+          : '';
+  // Full human-readable identity, with bounded terminal lines. Native version
+  // and package internals remain in the frozen request, not confirmation copy.
+  const reviewLines = reviewValue.split(/\r?\n/u).flatMap((line) => {
+    if (state.confirmation === 'remove' && target === 'desktop') return [line];
+    const characters = [...line],
+      lines: string[] = [];
+    for (let at = 0; at < characters.length; at += 36)
+      lines.push(characters.slice(at, at + 36).join(''));
+    return lines.length ? lines : [''];
+  });
   const pageSize = target === 'tui' ? 7 : 24;
   const pages = Math.max(1, Math.ceil(reviewLines.length / pageSize));
   const page = Math.min(state.reviewPage, pages - 1);
@@ -619,7 +693,9 @@ function frame(
           ? state.current
             ? text.connectionLeaveUnknown
             : text.discardConnection
-          : text.connectionRebaseHelp,
+          : state.confirmation === 'remove'
+            ? text.confirmRemoveConnection
+            : text.connectionRebaseHelp,
         14,
       ),
       ui.box(
@@ -628,11 +704,21 @@ function frame(
           ...(state.confirmation === 'leave'
             ? [ui.button('form-discard', text.discard)]
             : [
-                ui.button(
-                  'form-rebase',
-                  text.useConnection,
-                  (!state.reviewed && state.reviewedCatalog === null) || locked,
-                ),
+                ...(state.confirmation === 'remove'
+                  ? [
+                      ui.button(
+                        'form-confirm-remove',
+                        text.removeConnection,
+                        !canRemove(state, props),
+                      ),
+                    ]
+                  : [
+                      ui.button(
+                        'form-rebase',
+                        text.useConnection,
+                        (!state.reviewed && state.reviewedCatalog === null) || locked,
+                      ),
+                    ]),
                 ...(page > 0 ? [ui.button('review-prev', text.previousModels)] : []),
                 ...(page + 1 < pages ? [ui.button('review-next', text.moreTarget)] : []),
               ]),
@@ -640,7 +726,7 @@ function frame(
         ],
         { row: target === 'desktop', gap: 0 },
       ),
-      ...(state.confirmation === 'rebase'
+      ...(state.confirmation === 'rebase' || state.confirmation === 'remove'
         ? [
             ui.text('review-page', page + 1 + ' / ' + pages, 12, props.theme.muted),
             ...reviewLines
@@ -680,7 +766,11 @@ function frame(
             ui.text(
               'earlier-result-' + at,
               value?.kind === 'committed'
-                ? text.connectionSaved + ' ' + (value.connection?.connectionId ?? '')
+                ? (entry.reference.method === 'remove'
+                    ? text.connectionRemoved
+                    : text.connectionSaved) +
+                    ' ' +
+                    (value.connection?.connectionId ?? '')
                 : value
                   ? text.historyRejected
                   : text.historyUnknown,
@@ -876,7 +966,7 @@ export function connectionForm(
               .filter(
                 (entry) =>
                   entry.reference.contract.name === 'maka.settings.Settings' &&
-                  ['create', 'update'].includes(entry.reference.method),
+                  ['create', 'update', 'remove'].includes(entry.reference.method),
               )
               .map((entry) => ({ cursor: entry.cursor, reference: entry.reference, result: null }));
           }
@@ -893,6 +983,15 @@ export function connectionForm(
       } else if (input.kind === 'raw') {
         const key = input.key;
         if (key === 'form-save') save(state, props, actions, validation);
+        else if (
+          key === 'form-remove' &&
+          canRemove(state, props) &&
+          !state.confirmation &&
+          !state.historyOpen
+        ) {
+          state.confirmation = 'remove';
+          state.reviewPage = 0;
+        } else if (key === 'form-confirm-remove') remove(state, props, actions);
         else if (key === 'form-back') state.confirmation = 'leave';
         else if (key === 'form-cancel') {
           state.confirmation = null;
@@ -931,8 +1030,9 @@ export function connectionForm(
             request(state, actions, { kind: 'reviewCatalog' }, 'settings', 'connections', {
               kind: 'start',
             });
-        } else if (key === 'review-next' && state.confirmation === 'rebase') state.reviewPage++;
-        else if (key === 'review-prev' && state.confirmation === 'rebase')
+        } else if (key === 'review-next' && ['rebase', 'remove'].includes(state.confirmation ?? ''))
+          state.reviewPage++;
+        else if (key === 'review-prev' && ['rebase', 'remove'].includes(state.confirmation ?? ''))
           state.reviewPage = Math.max(0, state.reviewPage - 1);
         else if (
           key === 'form-rebase' &&

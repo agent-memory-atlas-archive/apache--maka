@@ -20,6 +20,17 @@
 export const en = {
   fieldPlaceholder: 'Enter: ',
   createConnection: 'Add connection',
+  connectionProvider: 'Provider',
+  removeConnection: 'Remove connection',
+  confirmRemoveConnection:
+    'Remove this saved connection, its API keys and its default model? Unsaved fields will be discarded. Earlier conversations are kept.',
+  connectionRemoved: 'Connection removed.',
+  useDefaultField: 'Use default value',
+  defaultFieldKept: 'The default value will be used.',
+  newCollectionHelp:
+    'Use one model ID per line; overrides and body overlay use a JSON object or null for no override.',
+  defaultPrefillFailed:
+    'The default value could not be put in this editor. Your draft has been kept.',
   editConnection: 'Edit connection',
   saveConnection: 'Save connection',
   connectionName: 'Name',
@@ -161,6 +172,15 @@ export type Copy = { [K in keyof typeof en]: string };
 const zhCN: Copy = {
   fieldPlaceholder: '填写：',
   createConnection: '添加连接',
+  connectionProvider: '服务商',
+  removeConnection: '移除连接',
+  confirmRemoveConnection:
+    '移除此已保存连接、它的密钥及默认模型？未保存字段将丢弃，已有会话会保留。',
+  connectionRemoved: '连接已移除。',
+  useDefaultField: '使用默认值',
+  defaultFieldKept: '将使用默认值。',
+  newCollectionHelp: '每行一个模型 ID；模型覆盖与请求体附加配置使用 JSON 对象，null 表示不覆盖。',
+  defaultPrefillFailed: '默认值未能放入编辑器，草稿已保留。',
   editConnection: '编辑连接',
   saveConnection: '保存连接',
   connectionName: '名称',
@@ -292,6 +312,15 @@ const zhCN: Copy = {
 const zhTW: Copy = {
   fieldPlaceholder: '填寫：',
   createConnection: '新增連線',
+  connectionProvider: '供應商',
+  removeConnection: '移除連線',
+  confirmRemoveConnection:
+    '移除此已儲存連線、它的金鑰及預設模型？未儲存欄位將捨棄，已有對話會保留。',
+  connectionRemoved: '連線已移除。',
+  useDefaultField: '使用預設值',
+  defaultFieldKept: '將使用預設值。',
+  newCollectionHelp: '每行一個模型 ID；模型覆寫與請求內容附加設定使用 JSON 物件，null 表示不覆寫。',
+  defaultPrefillFailed: '預設值未能放入編輯器，草稿已保留。',
   editConnection: '編輯連線',
   saveConnection: '儲存連線',
   connectionName: '名稱',

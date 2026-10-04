@@ -277,8 +277,8 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     // Public fields use their original native owners. A schema-invalid but
     // syntactically valid override must remain fixable without retiring them.
     click(&mut presenter, "[ Edit connection ]");
-    await_screen(&mut presenter, "[ Edit / replace ]");
-    click(&mut presenter, "[ Edit / replace ]");
+    await_screen(&mut presenter, "[ Edit / replace: Name ]");
+    click(&mut presenter, "[ Edit / replace: Name ]");
     await_screen(&mut presenter, "Fixture");
     click(&mut presenter, "Fixture");
     presenter
@@ -294,7 +294,7 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         click(&mut presenter, "[ Next field ]");
     }
     await_screen(&mut presenter, "Model overrides");
-    click(&mut presenter, "[ Edit / replace ]");
+    click(&mut presenter, "[ Edit / replace: Model overrides ]");
     await_screen(&mut presenter, "null");
     // The help text also mentions null; the second visible occurrence is the
     // original native editor rather than that noninteractive label.
@@ -543,6 +543,87 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     click(&mut reopened, "[ Keep editing ]");
     await_screen(&mut reopened, "[ Save key ]");
     assert!(!screen(&draw(&mut reopened)).contains(NEW_DRAFT));
+    // Remove through the same ordinary form and physical TUI controls. A
+    // changed saved version requires review and another explicit confirmation.
+    click(&mut reopened, "[ Back ]");
+    await_screen(&mut reopened, "Discard the unsaved key and leave?");
+    click(&mut reopened, "[ Discard and leave ]");
+    await_screen(&mut reopened, "[ Edit connection ]");
+    let before_remove = runtime.block_on(fixture.config.catalog()).unwrap();
+    let removed_id = before_remove.connections[0].connection_id.clone();
+    assert!(matches!(
+        runtime
+            .block_on(
+                fixture.config.set_default_target(
+                    serde_json::from_value(json!({
+                        "expectedCatalogRevision": before_remove.revision,
+                        "target": {"connectionId": removed_id, "modelId":"fixture-model-19"}
+                    }))
+                    .unwrap()
+                )
+            )
+            .unwrap(),
+        CatalogMutationResult::Committed { .. }
+    ));
+    click(&mut reopened, "[ Edit connection ]");
+    await_screen(&mut reopened, "[ Remove connection ]");
+    click(&mut reopened, "[ Remove connection ]");
+    await_screen(&mut reopened, "Remove this saved connection");
+    runtime.block_on(super::selection::edit(&fixture, |changes| {
+        changes.name = Some("Remote removal target".into());
+    }));
+    click(&mut reopened, "[ Remove connection ]");
+    await_screen(&mut reopened, "The saved connection changed.");
+    assert!(
+        runtime
+            .block_on(fixture.config.credential_secret(&locator, None))
+            .unwrap()
+            .is_some()
+    );
+    click(&mut reopened, "Review current connection");
+    await_screen(&mut reopened, "[ Use this connection ]");
+    click(&mut reopened, "[ Use this connection ]");
+    click(&mut reopened, "[ Remove connection ]");
+    await_screen(&mut reopened, "Remove this saved connection");
+    click(&mut reopened, "[ Keep editing ]");
+    assert!(
+        runtime
+            .block_on(fixture.config.catalog())
+            .unwrap()
+            .connections
+            .iter()
+            .any(|row| row.connection_id == removed_id)
+    );
+    click(&mut reopened, "[ Remove connection ]");
+    await_screen(&mut reopened, "Remove this saved connection");
+    click(&mut reopened, "[ Remove connection ]");
+    await_screen(&mut reopened, "[ Refresh connections ]");
+    let after_remove = runtime.block_on(fixture.config.catalog()).unwrap();
+    assert!(
+        !after_remove
+            .connections
+            .iter()
+            .any(|row| row.connection_id == removed_id)
+    );
+    assert!(after_remove.default_target.is_none());
+    // Secret access correctly rejects a removed connection basis. Inspect the
+    // actual vault row to prove cleanup rather than treating denial as absence.
+    let vault = rusqlite::Connection::open_with_flags(
+        fixture.root.join("configuration-rust.sqlite"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let credential_rows: i64 = vault
+        .query_row(
+            "SELECT count(*) FROM credentials WHERE json_extract(locator, '$.connectionId') = ?",
+            [&removed_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(credential_rows, 0);
+    drop(vault);
+    click(&mut reopened, "[ Back ]");
+    await_screen(&mut reopened, "Elegant response");
     for (root, database, sql) in [
         (
             &fixture.root,
