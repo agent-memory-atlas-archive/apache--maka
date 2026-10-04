@@ -28,6 +28,7 @@ import type {
   ConnectionCatalogEntryUpdate,
   ConnectionCredentialTarget,
   SettingsSaveCredential,
+  SettingsCredentialSaveResult,
   SettingsConnectionsPage,
   SettingsProvidersRead,
   CredentialMutationResult,
@@ -313,6 +314,25 @@ const providersRead: SettingsProvidersRead = { offset: 0 };
 // @ts-expect-error Provider paging uses an explicit offset.
 const missingOffset: SettingsProvidersRead = {};
 function settingsObservations(target: ConnectionCredentialTarget) {
+  const rejectedCatalog: CatalogMutationResult = {
+    kind: 'rejected',
+    reason: 'invalid_configuration',
+  };
+  const rejectedCredential: CredentialMutationResult = {
+    kind: 'rejected',
+    reason: 'invalid_input',
+  };
+  const rejectedSave: SettingsCredentialSaveResult = { kind: 'rejected', reason: 'invalid_secret' };
+  // @ts-expect-error Rejections carry a closed reason, never arbitrary diagnostics.
+  const rawError: CatalogMutationResult = { kind: 'rejected', reason: 'user payload' };
+  // @ts-expect-error Confirmed rejection requires an explicit reason.
+  const missingReason: CredentialMutationResult = { kind: 'rejected' };
+  const leakedInput: SettingsCredentialSaveResult = {
+    kind: 'rejected',
+    reason: 'invalid_secret',
+    // @ts-expect-error An original secret never enters the public result.
+    secret: 'private',
+  };
   const absent: SettingsSaveCredential = { expected: target, expectedCredential: null };
   // @ts-expect-error Omission does not prove that no credential was observed.
   const unobserved: SettingsSaveCredential = { expected: target };
@@ -342,6 +362,12 @@ function settingsObservations(target: ConnectionCredentialTarget) {
   // @ts-expect-error A stale catalog result explicitly describes absence.
   const missingCatalogActual: CatalogMutationResult = { kind: 'connection_stale', expected: basis };
   void [
+    rejectedCatalog,
+    rejectedCredential,
+    rejectedSave,
+    rawError,
+    missingReason,
+    leakedInput,
     absent,
     unobserved,
     secretInJson,

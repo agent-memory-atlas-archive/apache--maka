@@ -1217,6 +1217,15 @@ impl App {
                 dialog.error = Some(error);
                 dialog.blocked = blocked;
             }
+            Ok(Updated::Credential(
+                maka_protocol::configuration::CredentialMutationResult::Rejected { .. },
+            ))
+            | Ok(Updated::Catalog(
+                maka_protocol::configuration::CatalogMutationResult::Rejected { .. },
+            )) => {
+                dialog.blocked = false;
+                dialog.error = Some("connection-edit-invalid");
+            }
             Ok(Updated::Credential(_)) => {
                 dialog.blocked = true;
                 dialog.error = Some("credential-conflict");

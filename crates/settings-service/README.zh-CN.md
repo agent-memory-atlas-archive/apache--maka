@@ -29,6 +29,8 @@
 
 `create`、`update`、`remove` 复用原配置 owner 与持久 mutation journal。创建只物化一次 provider 默认值；修改配置校验提交的对象，不重新补默认。部分更新在原连接 CAS 后合并提交字段：省略保留原值，false 与空数组仍是有效更新；null 只清空原 `modelOverrides` 与 `requestBodyOverlay` patch。基本编辑无需把隐藏的大模型集合放进请求。
 
+明确的校验失败返回 `rejected` 和封闭的原因码，表单可以保留草稿并继续修改；单事务中的配置校验必须等确认 rollback 后才返回拒绝。SQL、rollback、commit 和 owner 不确定仍为 Unknown。凭据输入在 enrollment 前校验并拒绝；prepare 或 claim 后的错误保持 Unknown，除非原 enrollment ticket 已确认终态。结果不公开原始错误或输入。
+
 `credentialStatus` 提供公开 vault 元数据，`deleteCredential` 在同一事务核原连接与凭据 generation。`saveCredential` 必须携带原观察 connection target、明确可空的 credential basis 和 `maka.text.utf8` 类型的不可变 `secret` 附件。只有已准入 mutation callback 才读取该 request-local 附件，经 compiled noninteractive API-key provider 认证后完成原 enrollment 事务，不额外取得网络权限。secret 与资源 metadata 不进入公开 operation、caller intent 或 enrollment receipt。attempt identity 来自完整原操作 reference；恢复读取原操作，不重新交换或写入。
 
 默认 Agent 产品目前通过普通模型选择组件绑定此能力；完整连接表单与密码输入工作流仍待产品 UI 接入。

@@ -166,6 +166,35 @@ fn vault_rejects_missing_basis_invalid_locator_and_byte_overflow() {
 }
 #[test]
 fn wire_results_require_metadata_and_operation_specific_shapes() {
+    let rejected = json!({"kind":"rejected","reason":"invalid_input"});
+    for operation in [
+        Operation::ConnectionCatalogCreate,
+        Operation::ConnectionCatalogUpdate,
+        Operation::ConnectionCatalogRemove,
+        Operation::ConnectionCatalogSetDefaultTarget,
+    ] {
+        assert!(decode_catalog_mutation_result(operation, &rejected).is_ok());
+    }
+    assert!(decode_catalog_mutation_result(Operation::CredentialVaultDelete, &rejected).is_err());
+    assert!(decode_credential_mutation_result(Operation::CredentialVaultDelete, &rejected).is_ok());
+    for rejected in [
+        json!({"kind":"rejected","reason":"raw provider error"}),
+        json!({"kind":"rejected","reason":"invalid_input","secret":"CANARY"}),
+    ] {
+        assert!(
+            decode_catalog_mutation_result(Operation::ConnectionCatalogUpdate, &rejected).is_err()
+        );
+        assert!(
+            decode_credential_mutation_result(Operation::CredentialVaultDelete, &rejected).is_err()
+        );
+    }
+    // Deleting a connection credential now compares its connection basis in
+    // the same SQL transaction, so its real conflict is a valid delete result.
+    let stale = json!({"kind":"connection_stale","expected":{"connectionId":ID,"revision":1},"actual":{"connectionId":ID,"revision":2}});
+    assert!(decode_credential_mutation_result(Operation::CredentialVaultDelete, &stale).is_ok());
+    let mut missing = stale;
+    missing.as_object_mut().unwrap().remove("actual");
+    assert!(decode_credential_mutation_result(Operation::CredentialVaultDelete, &missing).is_err());
     let committed = json!({"kind":"committed","catalogRevision":1,"connection":{"connectionId":ID,"revision":1}});
     assert!(decode_catalog_mutation_result(Operation::ConnectionCatalogCreate, &committed).is_ok());
     assert!(

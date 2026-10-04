@@ -144,6 +144,7 @@ pub fn decode_catalog_mutation_result(
 ) -> Result<CatalogMutationResult> {
     let result: CatalogMutationResult = decode(value)?;
     let allowed = match &result {
+        CatalogMutationResult::Rejected { .. } => true,
         CatalogMutationResult::Committed {
             catalog_revision,
             connection,
@@ -232,6 +233,7 @@ pub fn decode_credential_mutation_result(
     }
     let result: CredentialMutationResult = decode(value)?;
     match &result {
+        CredentialMutationResult::Rejected { .. } => {}
         CredentialMutationResult::Committed {
             vault_revision,
             status,
@@ -242,9 +244,6 @@ pub fn decode_credential_mutation_result(
         }
         CredentialMutationResult::ConnectionNotFound => {}
         CredentialMutationResult::ConnectionStale { expected, actual } => {
-            if operation == Operation::CredentialVaultDelete {
-                return Err(ProtocolError::invalid("Unexpected connection conflict"));
-            }
             required(value, &["actual"])?;
             validated(v::basis(expected))?;
             if let Some(a) = actual {

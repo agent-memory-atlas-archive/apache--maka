@@ -188,6 +188,11 @@ pub enum CredentialSaveResult {
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "SettingsCredentialRejection")]
 pub enum CredentialRejection {
+    InvalidInput,
+    InvalidSecret,
+    SecretUnavailable,
+    ProviderUnavailable,
+    AuthenticationUnavailable,
     AttemptConflict,
     ConnectionChanged,
     CredentialChanged,

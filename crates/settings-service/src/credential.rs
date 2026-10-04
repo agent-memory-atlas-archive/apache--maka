@@ -73,33 +73,35 @@ pub(crate) async fn save(
     context: Context,
 ) -> Result<Value, String> {
     let operation = context.operation().ok_or("settings_mutation_required")?;
-    let request: SaveCredential =
-        serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;
-    let definition = connections::definition(&request.expected.provider)?;
+    let Ok(request) = serde_json::from_value::<SaveCredential>(input) else {
+        return rejected(CredentialRejection::InvalidInput);
+    };
+    let Ok(definition) = connections::definition(&request.expected.provider) else {
+        return rejected(CredentialRejection::ProviderUnavailable);
+    };
     if !definition
         .descriptor()
         .authentication
         .iter()
         .any(|method| method.id == "api-key" && !method.interactive)
     {
-        return Err("settings_authentication_unavailable".into());
+        return rejected(CredentialRejection::AuthenticationUnavailable);
     }
-    let resource = context
-        .attachments()
-        .get("secret")
-        .ok_or("settings_secret_required")?;
+    let Some(resource) = context.attachments().get("secret") else {
+        return rejected(CredentialRejection::InvalidSecret);
+    };
     let bytes = resource.bytes();
     if bytes == 0 || bytes > 65536 {
-        return Err("settings_secret_invalid".into());
+        return rejected(CredentialRejection::InvalidSecret);
     }
-    let secret = String::from_utf8(
-        resource
-            .read(0..bytes)
-            .map_err(|_| "settings_secret_unavailable")?,
-    )
-    .map_err(|_| "settings_secret_invalid")?;
+    let Ok(secret) = resource.read(0..bytes) else {
+        return rejected(CredentialRejection::SecretUnavailable);
+    };
+    let Ok(secret) = String::from_utf8(secret) else {
+        return rejected(CredentialRejection::InvalidSecret);
+    };
     if secret.len() != bytes || secret.chars().any(char::is_control) {
-        return Err("settings_secret_invalid".into());
+        return rejected(CredentialRejection::InvalidSecret);
     }
     let attempt_id = format!(
         "settings-{:x}",
@@ -117,6 +119,9 @@ pub(crate) async fn save(
             input: json!({"apiKey":secret}),
         },
     };
+    if input.validate().is_err() {
+        return rejected(CredentialRejection::InvalidInput);
+    }
     let authentication = input.authentication.clone();
     let prepared = store
         .prepare_oauth_login(input)

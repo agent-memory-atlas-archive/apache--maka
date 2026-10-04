@@ -726,6 +726,11 @@ export type SettingsCredentialSaveResult =
       kind: 'rejected';
     };
 export type SettingsCredentialRejection =
+  | 'invalid_input'
+  | 'invalid_secret'
+  | 'secret_unavailable'
+  | 'provider_unavailable'
+  | 'authentication_unavailable'
   | 'attempt_conflict'
   | 'connection_changed'
   | 'credential_changed'
@@ -757,6 +762,10 @@ export type CredentialVaultQueryResult =
     };
 export type CredentialMutationResult =
   | {
+      reason: ConfigurationRejection;
+      kind: 'rejected';
+    }
+  | {
       vaultRevision: number;
       status: CredentialStatus;
       kind: 'committed';
@@ -774,7 +783,18 @@ export type CredentialMutationResult =
       actual: CredentialVersionBasis | null;
       kind: 'credential_stale';
     };
+/**
+ * A confirmed rejection contains no provider diagnostics or user input.
+ */
+export type ConfigurationRejection =
+  | 'invalid_input'
+  | 'invalid_configuration'
+  | 'provider_unavailable';
 export type CatalogMutationResult =
+  | {
+      reason: ConfigurationRejection;
+      kind: 'rejected';
+    }
   | {
       catalogRevision: number;
       connection?: ConnectionVersionBasis | null;

@@ -17,6 +17,14 @@
  * under the License.
  */
 use super::*;
+/// A confirmed rejection contains no provider diagnostics or user input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigurationRejection {
+    InvalidInput,
+    InvalidConfiguration,
+    ProviderUnavailable,
+}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "kind",
@@ -25,6 +33,9 @@ use super::*;
     deny_unknown_fields
 )]
 pub enum CatalogMutationResult {
+    Rejected {
+        reason: ConfigurationRejection,
+    },
     Committed {
         catalog_revision: u64,
         #[serde(skip_serializing_if = "Option::is_none")]

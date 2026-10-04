@@ -211,6 +211,9 @@ pub enum CredentialVaultQueryResult {
     deny_unknown_fields
 )]
 pub enum CredentialMutationResult {
+    Rejected {
+        reason: super::ConfigurationRejection,
+    },
     Committed {
         vault_revision: u64,
         status: CredentialStatus,

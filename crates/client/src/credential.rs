@@ -101,6 +101,7 @@ impl Client {
         let result = decode_credential_mutation_result(operation, &value)
             .map_err(|_| self.credential_invalid())?;
         let valid = match &result {
+            CredentialMutationResult::Rejected { .. } => true,
             CredentialMutationResult::Committed { status, .. } if &status.locator == locator => {
                 match (&status.state, operation) {
                     (CredentialState::Absent, Operation::CredentialVaultDelete) => true,

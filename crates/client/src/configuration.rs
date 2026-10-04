@@ -117,6 +117,7 @@ impl Client {
         )
         .map_err(invalid)?;
         let valid = match &result {
+            CatalogMutationResult::Rejected { .. } => true,
             CatalogMutationResult::Committed {
                 catalog_revision, ..
             } => *catalog_revision == input.expected_catalog_revision + 1,
@@ -176,6 +177,7 @@ impl Client {
             maka_protocol::configuration::decode_catalog_mutation_result(operation, &value)
                 .map_err(invalid)?;
         let valid = match &result {
+            CatalogMutationResult::Rejected { .. } => true,
             CatalogMutationResult::Committed {
                 connection: Some(actual),
                 ..

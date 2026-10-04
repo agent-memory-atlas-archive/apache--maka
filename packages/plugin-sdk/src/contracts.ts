@@ -3089,6 +3089,20 @@ export const contracts = {
               {
                 type: 'object',
                 properties: {
+                  reason: {
+                    $ref: '#/$defs/ConfigurationRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+              {
+                type: 'object',
+                properties: {
                   catalogRevision: {
                     type: 'integer',
                     format: 'uint64',
@@ -3187,6 +3201,12 @@ export const contracts = {
               },
             ],
             $defs: {
+              ConfigurationRejection: {
+                description:
+                  'A confirmed rejection contains no provider diagnostics or user input.',
+                type: 'string',
+                enum: ['invalid_input', 'invalid_configuration', 'provider_unavailable'],
+              },
               ConnectionVersionBasis: {
                 type: 'object',
                 properties: {
@@ -3522,6 +3542,20 @@ export const contracts = {
               {
                 type: 'object',
                 properties: {
+                  reason: {
+                    $ref: '#/$defs/ConfigurationRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+              {
+                type: 'object',
+                properties: {
                   vaultRevision: {
                     type: 'integer',
                     format: 'uint64',
@@ -3606,6 +3640,12 @@ export const contracts = {
               },
             ],
             $defs: {
+              ConfigurationRejection: {
+                description:
+                  'A confirmed rejection contains no provider diagnostics or user input.',
+                type: 'string',
+                enum: ['invalid_input', 'invalid_configuration', 'provider_unavailable'],
+              },
               CredentialStatus: {
                 type: 'object',
                 properties: {
@@ -4069,6 +4109,20 @@ export const contracts = {
               {
                 type: 'object',
                 properties: {
+                  reason: {
+                    $ref: '#/$defs/ConfigurationRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+              {
+                type: 'object',
+                properties: {
                   catalogRevision: {
                     type: 'integer',
                     format: 'uint64',
@@ -4167,6 +4221,12 @@ export const contracts = {
               },
             ],
             $defs: {
+              ConfigurationRejection: {
+                description:
+                  'A confirmed rejection contains no provider diagnostics or user input.',
+                type: 'string',
+                enum: ['invalid_input', 'invalid_configuration', 'provider_unavailable'],
+              },
               ConnectionVersionBasis: {
                 type: 'object',
                 properties: {
@@ -4405,6 +4465,11 @@ export const contracts = {
               SettingsCredentialRejection: {
                 type: 'string',
                 enum: [
+                  'invalid_input',
+                  'invalid_secret',
+                  'secret_unavailable',
+                  'provider_unavailable',
+                  'authentication_unavailable',
                   'attempt_conflict',
                   'connection_changed',
                   'credential_changed',
@@ -4467,6 +4532,20 @@ export const contracts = {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
             title: 'CatalogMutationResult',
             oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/ConfigurationRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
               {
                 type: 'object',
                 properties: {
@@ -4568,6 +4647,12 @@ export const contracts = {
               },
             ],
             $defs: {
+              ConfigurationRejection: {
+                description:
+                  'A confirmed rejection contains no provider diagnostics or user input.',
+                type: 'string',
+                enum: ['invalid_input', 'invalid_configuration', 'provider_unavailable'],
+              },
               ConnectionVersionBasis: {
                 type: 'object',
                 properties: {
@@ -4816,6 +4901,20 @@ export const contracts = {
               {
                 type: 'object',
                 properties: {
+                  reason: {
+                    $ref: '#/$defs/ConfigurationRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+              {
+                type: 'object',
+                properties: {
                   catalogRevision: {
                     type: 'integer',
                     format: 'uint64',
@@ -4914,6 +5013,12 @@ export const contracts = {
               },
             ],
             $defs: {
+              ConfigurationRejection: {
+                description:
+                  'A confirmed rejection contains no provider diagnostics or user input.',
+                type: 'string',
+                enum: ['invalid_input', 'invalid_configuration', 'provider_unavailable'],
+              },
               ConnectionVersionBasis: {
                 type: 'object',
                 properties: {

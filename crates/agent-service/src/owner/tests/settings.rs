@@ -68,6 +68,22 @@ async fn mutate(
     input: Value,
     secret: Option<&str>,
 ) -> (Value, RecoveryRef) {
+    let reply = mutate_reply(fixture, method, input, secret).await;
+    let Receipt::Recorded {
+        outcome: OperationOutcome::Returned { value },
+        ..
+    } = reply.receipt
+    else {
+        panic!("unexpected operation receipt")
+    };
+    (value, reply.reference)
+}
+async fn mutate_reply(
+    fixture: &Fixture,
+    method: &str,
+    input: Value,
+    secret: Option<&str>,
+) -> maka_plugin_core::operation::OperationReply {
     let attachments = secret
         .map(|value| {
             BTreeMap::from([(
@@ -98,20 +114,109 @@ async fn mutate(
         )
         .await
         .unwrap();
-    let reply = client
+    client
         .mutate(prepared, recorded)
         .await
         .unwrap()
         .result()
+        .await
+}
+
+#[tokio::test]
+async fn settings_confirmed_validation_rejections_do_not_downgrade_sql_uncertainty() {
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let original = fixture.config.catalog().await.unwrap();
+    let row = &original.connections[0];
+    let basis = json!({"connectionId":row.connection_id,"revision":row.revision});
+    for (changes, reason) in [
+        (json!({"name":"x".repeat(257)}), "invalid_input"),
+        (
+            json!({"configuration":{"baseUrl":17}}),
+            "invalid_configuration",
+        ),
+        // These individually valid limits are rejected after the original SQL
+        // CAS and merge. The transaction must finish rollback before replying.
+        (
+            json!({"name":"Not committed","modelOverrides":{"fixture-model":{"contextWindow":10,"inputLimit":11}}}),
+            "invalid_input",
+        ),
+    ] {
+        let (result, reference) = mutate(
+            &fixture,
+            "update",
+            json!({"expected":basis,"changes":changes}),
+            None,
+        )
         .await;
-    let Receipt::Recorded {
-        outcome: OperationOutcome::Returned { value },
-        ..
-    } = reply.receipt
-    else {
-        panic!("unexpected operation receipt")
-    };
-    (value, reference)
+        assert_eq!(result, json!({"kind":"rejected","reason":reason}));
+        let observation = fixture
+            .store
+            .operation_observation(&reference)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            observation.outcome,
+            OperationOutcome::Returned { value: result }
+        );
+        assert_eq!(fixture.config.catalog().await.unwrap(), original);
+    }
+    let detail = query(&fixture, "connection", basis.clone()).await;
+    let locator = json!({"scope":"connection","connectionId":row.connection_id,"kind":"provider"});
+    let status = query(&fixture, "credentialStatus", json!({"locator":locator})).await;
+    let status: CredentialStatus = serde_json::from_value(status["status"].clone()).unwrap();
+    for secret in ["", "key-with\ncontrol"] {
+        let (result, _) = mutate(
+            &fixture,
+            "saveCredential",
+            json!({"expected":detail["target"],"expectedCredential":status.basis()}),
+            Some(secret),
+        )
+        .await;
+        assert_eq!(result, json!({"kind":"rejected","reason":"invalid_secret"}));
+        assert_eq!(fixture.config.catalog().await.unwrap(), original);
+    }
+    let (result, _) = mutate(&fixture,"create",json!({"expectedCatalogRevision":original.revision,"connection":{"slug":"unknown","name":"Unknown provider","provider":{"packageId":"maka.providers","entryId":"maka.providers","scope":"profile","name":"not-compiled"},"configuration":{},"enabled":true,"enabledModelIds":[]}}),None).await;
+    assert_eq!(
+        result,
+        json!({"kind":"rejected","reason":"provider_unavailable"})
+    );
+    assert_eq!(fixture.config.catalog().await.unwrap(), original);
+
+    // An actual SQLite failure is never interpreted as a validation rejection.
+    // Recovery observes the same original Unknown rather than retrying a write.
+    let db = rusqlite::Connection::open(fixture.root.join("configuration-rust.sqlite")).unwrap();
+    db.execute_batch("CREATE TRIGGER settings_write_fault BEFORE UPDATE ON connections BEGIN SELECT RAISE(ABORT, 'synthetic SQL fault'); END;").unwrap();
+    let reply = mutate_reply(
+        &fixture,
+        "update",
+        json!({"expected":basis,"changes":{"name":"SQL fault"}}),
+        None,
+    )
+    .await;
+    assert!(matches!(
+        reply.receipt,
+        Receipt::Recorded {
+            outcome: OperationOutcome::Unknown { .. },
+            ..
+        }
+    ));
+    let observation = fixture
+        .store
+        .operation_observation(&reply.reference)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        observation.outcome,
+        OperationOutcome::Unknown { .. }
+    ));
+    assert_eq!(fixture.config.catalog().await.unwrap(), original);
+    db.execute_batch("DROP TRIGGER settings_write_fault;")
+        .unwrap();
+    drop(db);
+    fixture.app.shutdown().await.unwrap();
+    fixture.config.shutdown().await.unwrap();
 }
 #[tokio::test]
 async fn root_settings_create_partial_edit_save_capture_and_stale_vault_basis_use_original_journals()

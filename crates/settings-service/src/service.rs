@@ -24,6 +24,35 @@ use maka_runtime_host::application::{Context, Handler, NativeOwner};
 use serde_json::Value;
 use std::sync::Arc;
 pub(crate) struct Settings(pub Arc<maka_config::ConfigurationStore>);
+
+fn rejected(reason: ConfigurationRejection) -> Result<Value, String> {
+    super::connections::encode(CatalogMutationResult::Rejected { reason })
+}
+
+fn catalog_result(result: maka_config::Result<CatalogMutationResult>) -> Result<Value, String> {
+    match result {
+        Ok(result) => super::connections::encode(result),
+        // ConfigurationStore returns Invalid either before admission to SQL or
+        // after confirmed rollback of its single transaction. Commit, rollback
+        // and owner uncertainty must remain the original operation's Unknown.
+        Err(maka_config::ConfigError::Invalid(_)) => rejected(ConfigurationRejection::InvalidInput),
+        Err(_) => Err("settings_effect_unknown".into()),
+    }
+}
+
+fn credential_result(
+    result: maka_config::Result<CredentialMutationResult>,
+) -> Result<Value, String> {
+    match result {
+        Ok(result) => super::connections::encode(result),
+        Err(maka_config::ConfigError::Invalid(_)) => {
+            super::connections::encode(CredentialMutationResult::Rejected {
+                reason: ConfigurationRejection::InvalidInput,
+            })
+        }
+        Err(_) => Err("settings_effect_unknown".into()),
+    }
+}
 impl Handler for Settings {
     fn call(
         &self,
@@ -39,23 +68,28 @@ impl Handler for Settings {
                 "providers" => super::connections::providers(input),
                 "create" => {
                     context.operation().ok_or("settings_mutation_required")?;
-                    let mut input: CreateCatalogConnectionInput =
-                        serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;
-                    let definition = super::connections::definition(&input.connection.provider)?;
-                    input.connection.configuration = definition
-                        .configure(input.connection.configuration)
-                        .map_err(|_| "settings_configuration_invalid")?;
-                    super::connections::encode(
-                        store
-                            .create_connection(input)
-                            .await
-                            .map_err(|_| "settings_effect_unknown")?,
-                    )
+                    let Ok(mut input) =
+                        serde_json::from_value::<CreateCatalogConnectionInput>(input)
+                    else {
+                        return rejected(ConfigurationRejection::InvalidInput);
+                    };
+                    let Ok(definition) = super::connections::definition(&input.connection.provider)
+                    else {
+                        return rejected(ConfigurationRejection::ProviderUnavailable);
+                    };
+                    let Ok(configuration) = definition.configure(input.connection.configuration)
+                    else {
+                        return rejected(ConfigurationRejection::InvalidConfiguration);
+                    };
+                    input.connection.configuration = configuration;
+                    catalog_result(store.create_connection(input).await)
                 }
                 "update" => {
                     context.operation().ok_or("settings_mutation_required")?;
-                    let input: UpdateCatalogConnectionInput =
-                        serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;
+                    let Ok(input) = serde_json::from_value::<UpdateCatalogConnectionInput>(input)
+                    else {
+                        return rejected(ConfigurationRejection::InvalidInput);
+                    };
                     if let Some(configuration) = &input.changes.configuration {
                         let catalog = store
                             .catalog()
@@ -65,28 +99,23 @@ impl Handler for Settings {
                             row.connection_id == input.expected.connection_id
                                 && row.revision == input.expected.revision
                         }) {
-                            super::connections::definition(&row.provider)?
-                                .validate_configuration(configuration)
-                                .map_err(|_| "settings_configuration_invalid")?;
+                            let Ok(definition) = super::connections::definition(&row.provider)
+                            else {
+                                return rejected(ConfigurationRejection::ProviderUnavailable);
+                            };
+                            if definition.validate_configuration(configuration).is_err() {
+                                return rejected(ConfigurationRejection::InvalidConfiguration);
+                            }
                         }
                     }
-                    super::connections::encode(
-                        store
-                            .update_connection(input)
-                            .await
-                            .map_err(|_| "settings_effect_unknown")?,
-                    )
+                    catalog_result(store.update_connection(input).await)
                 }
                 "remove" => {
                     context.operation().ok_or("settings_mutation_required")?;
-                    let input =
-                        serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;
-                    super::connections::encode(
-                        store
-                            .remove_connection(input)
-                            .await
-                            .map_err(|_| "settings_effect_unknown")?,
-                    )
+                    let Ok(input) = serde_json::from_value(input) else {
+                        return rejected(ConfigurationRejection::InvalidInput);
+                    };
+                    catalog_result(store.remove_connection(input).await)
                 }
                 "credentialStatus" => {
                     let input: CredentialVaultQueryInput =
@@ -100,14 +129,12 @@ impl Handler for Settings {
                 }
                 "deleteCredential" => {
                     context.operation().ok_or("settings_mutation_required")?;
-                    let input =
-                        serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;
-                    super::connections::encode(
-                        store
-                            .delete_credential(input)
-                            .await
-                            .map_err(|_| "settings_effect_unknown")?,
-                    )
+                    let Ok(input) = serde_json::from_value(input) else {
+                        return super::connections::encode(CredentialMutationResult::Rejected {
+                            reason: ConfigurationRejection::InvalidInput,
+                        });
+                    };
+                    credential_result(store.delete_credential(input).await)
                 }
                 "saveCredential" => super::credential::save(&store, input, context).await,
                 "models" => {
@@ -204,13 +231,10 @@ impl Handler for Settings {
                 }
                 "setDefault" => {
                     context.operation().ok_or("settings_mutation_required")?;
-                    let input =
-                        serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;
-                    let result = store
-                        .set_default_target(input)
-                        .await
-                        .map_err(|_| "settings_effect_unknown")?;
-                    serde_json::to_value(result).map_err(|_| "settings_output_invalid".into())
+                    let Ok(input) = serde_json::from_value(input) else {
+                        return rejected(ConfigurationRejection::InvalidInput);
+                    };
+                    catalog_result(store.set_default_target(input).await)
                 }
                 _ => Err("settings_method_unknown".into()),
             }
