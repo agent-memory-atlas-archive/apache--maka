@@ -376,6 +376,8 @@ pub struct InputBaseState<M: InputModeKind> {
     pub(super) searchable: bool,
     pub(super) replaceable: bool,
     pub(super) soft_wrap: bool,
+    /// Plain form inputs delegate Tab navigation to their native window root.
+    pub(super) tab_navigation: bool,
     pub(super) wrapping_indent: WrappingIndent,
     pub(super) scroll_beyond_last_line: Option<usize>,
     pub(super) cursor_surrounding_lines: Option<usize>,
@@ -728,6 +730,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             searchable: false,
             replaceable: true,
             soft_wrap: true,
+            tab_navigation: false,
             wrapping_indent: WrappingIndent::default(),
             scroll_beyond_last_line: None,
             cursor_surrounding_lines: None,
@@ -1171,6 +1174,11 @@ impl<M: InputModeKind> InputBaseState<M> {
     /// APIs (e.g.: [`Self::set_value`], [`Self::insert`]) are not limited by this.
     pub fn is_editable(&self) -> bool {
         !self.disabled && !self.readonly
+    }
+
+    /// Delegate plain Tab to the window without changing the editing identity.
+    pub fn set_tab_navigation(&mut self, navigate: bool) {
+        self.tab_navigation = navigate;
     }
 
     /// Preserve the existing editing focus identity while projecting tab order.
@@ -4594,12 +4602,19 @@ impl<M: InputModeKind> Render for InputBaseState<M> {
                     .on_action(window.listener_for(&entity, InputBaseState::undo))
                     .on_action(window.listener_for(&entity, InputBaseState::redo))
                     .when(self.is_multi_line(), |this| {
-                        this.on_action(window.listener_for(&entity, InputBaseState::indent_inline))
-                            .on_action(window.listener_for(&entity, InputBaseState::outdent_inline))
-                            .on_action(window.listener_for(&entity, InputBaseState::indent_block))
+                        this.on_action(window.listener_for(&entity, InputBaseState::indent_block))
                             .on_action(window.listener_for(&entity, InputBaseState::outdent_block))
                     })
             })
+            // Plain form inputs must also admit Tab while single-line or
+            // read-only: active marked text still belongs to this input.
+            .when(
+                self.tab_navigation || (self.is_editable() && self.is_multi_line()),
+                |this| {
+                    this.on_action(window.listener_for(&entity, InputBaseState::indent_inline))
+                        .on_action(window.listener_for(&entity, InputBaseState::outdent_inline))
+                },
+            )
             .on_action(window.listener_for(&entity, InputBaseState::left))
             .on_action(window.listener_for(&entity, InputBaseState::right))
             .on_action(window.listener_for(&entity, InputBaseState::select_left))

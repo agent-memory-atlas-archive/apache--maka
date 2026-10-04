@@ -58,7 +58,7 @@ export function paint(target: Target, theme: Theme) {
                   },
                   hover: disabled ? {} : { background: primary ? theme.accent : theme.selected },
                   focus: { border: theme.accent, borderWidth: 2 },
-                  active: disabled ? {} : { background: theme.selected },
+                  active: disabled ? {} : { background: primary ? theme.accent : theme.selected },
                 }
               : {}),
           },

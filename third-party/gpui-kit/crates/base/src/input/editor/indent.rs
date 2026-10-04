@@ -201,6 +201,12 @@ impl<M: InputModeKind> InputBaseState<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.tab_navigation {
+            if !self.disabled && self.ime_marked_range.is_none() {
+                cx.propagate();
+            }
+            return;
+        }
         // First, try to accept inline completion if present
         if M::accept_inline_completion(self, window, cx) {
             return;
@@ -218,6 +224,12 @@ impl<M: InputModeKind> InputBaseState<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.tab_navigation {
+            if !self.disabled && self.ime_marked_range.is_none() {
+                cx.propagate();
+            }
+            return;
+        }
         self.outdent(false, window, cx);
     }
 

@@ -32,7 +32,17 @@ struct Scene {
 }
 impl Scene {
     fn new(cx: &mut TestAppContext, timer: &tokio::runtime::Runtime, mode: &str) -> Self {
-        let (input, packages) = support::canvas_fixture();
+        Self::from_packages(cx, timer, mode, support::canvas_fixture())
+    }
+    fn from_packages(
+        cx: &mut TestAppContext,
+        timer: &tokio::runtime::Runtime,
+        mode: &str,
+        (input, packages): (
+            maka_plugin_core::composition::Input,
+            Vec<maka_plugins::package::Package>,
+        ),
+    ) -> Self {
         let mut application = Application::new(
             &input,
             packages,
@@ -324,6 +334,71 @@ fn canvas_failure_preserves_paint_and_only_retirement_closes_native_admission(
         scene.move_to(cx, 380., 200.);
         scene.up(cx, 380., 200.);
         assert_eq!(scene.state()["revision"], 0);
+        scene.close(cx);
+    }
+}
+
+#[gpui::test]
+fn canvas_tab_and_copy_defaults_obey_committed_plugin_veto(cx: &mut TestAppContext) {
+    let timer = timer();
+    for mode in ["tab-veto", "tab-allow"] {
+        let (mut input, mut packages) = support::canvas_fixture();
+        let index = packages
+            .iter()
+            .position(|p| p.manifest().id == "dynamic.canvas")
+            .unwrap();
+        let old = packages.remove(index);
+        let source = std::str::from_utf8(old.file("index.mjs").unwrap()).unwrap()
+            .replace("label: 'Review lane', tabIndex: -1", "label: 'Review lane', tabIndex: 0")
+            .replace("const decision = {};", "const decision = {};if(event.kind==='key_down'&&((event.key==='tab'&&state.mode==='tab-veto')||event.key==='c'))decision.preventDefault=true;");
+        let root = support::package(
+            "dynamic.canvas",
+            old.manifest().application.clone().unwrap(),
+            Some(source),
+        );
+        input.instances.get_mut("app").unwrap().package = root.application_ref().into();
+        packages.push(root);
+        let scene = Scene::from_packages(cx, &timer, mode, (input, packages));
+        scene.down(cx, 60., 180.);
+        scene.draw(cx);
+        let original = cx
+            .update_window(scene.window, |_, window, cx| window.focused(cx).unwrap())
+            .unwrap();
+        let before = scene.state()["calls"].as_u64().unwrap();
+        cx.simulate_keystrokes(scene.window, "tab");
+        assert_eq!(
+            scene.state()["calls"],
+            before + 1,
+            "the actual plugin admits the key first"
+        );
+        assert_eq!(scene.state()["last"]["key"], "tab");
+        assert_eq!(scene.state()["mode"], mode);
+        cx.update_window(scene.window, |_, window, _| {
+            assert_eq!(original.is_focused(window), mode == "tab-veto")
+        })
+        .unwrap();
+        if mode == "tab-allow" {
+            scene.draw(cx);
+            cx.simulate_keystrokes(scene.window, "shift-tab");
+            cx.update_window(scene.window, |_, window, _| {
+                assert!(original.is_focused(window))
+            })
+            .unwrap();
+        }
+        scene.draw(cx);
+        cx.update(|cx| {
+            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(
+                "Original clipboard".into(),
+            ))
+        });
+        let before = scene.state()["calls"].as_u64().unwrap();
+        cx.simulate_keystrokes(scene.window, "cmd-c");
+        assert_eq!(scene.state()["calls"], before + 1);
+        assert_eq!(scene.state()["last"]["key"], "c");
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().as_deref(),
+            Some("Original clipboard")
+        );
         scene.close(cx);
     }
 }

@@ -1801,6 +1801,7 @@ mod composition;
 mod accessibility;
 mod appearance;
 mod menu;
+mod navigation;
 
 #[gpui::test]
 fn dynamic_workspace_layout_changes_preserve_original_editor_draft_focus_and_marked_input(

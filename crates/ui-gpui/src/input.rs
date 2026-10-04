@@ -79,6 +79,7 @@ impl InputOwner {
                 window.blur(cx);
             }
             state.set_disabled(props.disabled, cx);
+            state.set_tab_navigation(true);
             state.set_tab_index(
                 if props.disabled {
                     -1
@@ -764,6 +765,9 @@ impl Widget for InputRecipe {
             // The original LiveInput has already been revoked. Closing the
             // menu clears its own focus without restoring the retired editor.
             owner._keyboard.take();
+            owner
+                .state
+                .update(cx, |state, cx| state.set_tab_index(-1, cx));
             if owner
                 .state
                 .read(cx)

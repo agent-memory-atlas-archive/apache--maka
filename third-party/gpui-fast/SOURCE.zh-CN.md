@@ -30,3 +30,5 @@
 省略无关的上游 example 程序和资源，仅保留 core 测试使用的 JPEG，并关闭 example target 自动发现。
 
 macOS 还必须从 State 取出 AccessKit adapter，在 foreground teardown task 中、native close 之前释放。adapter 强持 content view，其 GPUI 子 view 又持有 State Arc；等到 State 最终析构才释放 adapter 会形成引用环，无法收到真实完成回执。
+
+App 提供原当前事件传播标记的只读查询。原生分发完成观察者能据此排除已消费的输入及此前已停止的观察，不复制事件状态、不新增键盘注册表。Kit 的既有 Root 默认行为可覆盖有焦点和无焦点的窗口，原生绑定及 raw 插件决定仍先执行。

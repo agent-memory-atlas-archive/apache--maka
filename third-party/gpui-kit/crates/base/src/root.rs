@@ -1,26 +1,11 @@
 //! Window roots and presentation-layer plugins.
-use crate::input::Copy;
 use crate::{StyledExt, TextSelectionLayer};
 use gpui::{
     AnyElement, AnyView, App, AppContext, ClipboardItem, Context, Div, Entity, Global,
-    InteractiveElement, IntoElement, KeyBinding, ParentElement, Render, Stateful, StyleRefinement,
-    Styled, Window, actions, div,
+    InteractiveElement, IntoElement, Keystroke, ParentElement, Render, Stateful, StyleRefinement,
+    Styled, Subscription, Window, div,
 };
 use std::{any::TypeId, rc::Rc};
-
-actions!(root, [Tab, TabPrev]);
-const CONTEXT: &str = "Root";
-
-pub(crate) fn init(cx: &mut App) {
-    cx.bind_keys([
-        KeyBinding::new("tab", Tab, Some(CONTEXT)),
-        KeyBinding::new("shift-tab", TabPrev, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-c", Copy, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-c", Copy, Some(CONTEXT)),
-    ]);
-}
 
 /// A presentation layer's retained, per-window facilities.
 ///
@@ -93,6 +78,7 @@ pub struct Root {
     view: AnyView,
     style: StyleRefinement,
     plugins: Vec<Plugin>,
+    _keyboard: Subscription,
 }
 
 impl Root {
@@ -151,8 +137,27 @@ impl Root {
             .try_global::<PluginRegistry>()
             .map(|e| e.0.clone())
             .unwrap_or_default();
+        let window_id = window.window_handle().window_id();
+        let owner = cx.weak_entity();
+        let keyboard = App::observe_keystrokes(cx, move |event, window, cx| {
+            if window.window_handle().window_id() != window_id
+                || event.action.is_some()
+                || !cx.is_propagating()
+                || window.default_prevented()
+                || !window
+                    .root::<Self>()
+                    .flatten()
+                    .is_some_and(|current| current.entity_id() == owner.entity_id())
+            {
+                return;
+            }
+            let _ = owner.update(cx, |root, cx| {
+                root.apply_default(&event.keystroke, window, cx)
+            });
+        });
         Self {
             view: view.into(),
+            _keyboard: keyboard,
             style: StyleRefinement::default(),
             plugins: factories
                 .into_iter()
@@ -191,7 +196,46 @@ impl Root {
             .expect("window must have a Base Root");
         root.update(cx, |root, cx| f(root, window, cx))
     }
-    fn on_action_tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
+    // Native defaults run after component bindings and raw bubble decisions,
+    // including with no focused descendant. A plugin can veto a default while
+    // preserving ancestor observation.
+    fn apply_default(&mut self, key: &Keystroke, window: &mut Window, cx: &mut Context<Self>) {
+        if window.default_prevented() {
+            return;
+        }
+        let modifiers = key.modifiers;
+        let plain_tab = key.key == "tab"
+            && !modifiers.control
+            && !modifiers.alt
+            && !modifiers.platform
+            && !modifiers.function;
+        let copy_modifier = if cfg!(target_os = "macos") {
+            modifiers.platform && !modifiers.control
+        } else {
+            modifiers.control && !modifiers.platform
+        };
+        let copy = key.key == "c"
+            && copy_modifier
+            && !modifiers.alt
+            && !modifiers.shift
+            && !modifiers.function;
+        let consumed = if plain_tab {
+            if modifiers.shift {
+                self.focus_prev(window, cx);
+            } else {
+                self.focus_next(window, cx);
+            }
+            true
+        } else {
+            copy && self.copy_selection(window, cx)
+        };
+        if consumed {
+            window.prevent_default();
+            cx.stop_propagation();
+        }
+    }
+
+    fn focus_next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Check if we're inside a focus trap
         if let Some(container_focus_handle) = crate::active_focus_trap(window, cx) {
             // We're in a focus trap - try to focus next, then check if we're still inside
@@ -226,7 +270,7 @@ impl Root {
         window.focus_next(cx);
     }
 
-    fn on_action_tab_prev(&mut self, _: &TabPrev, window: &mut Window, cx: &mut Context<Self>) {
+    fn focus_prev(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Check if we're inside a focus trap
         if let Some(container_focus_handle) = crate::active_focus_trap(window, cx) {
             // We're in a focus trap - try to focus previous, then check if we're still inside
@@ -261,15 +305,15 @@ impl Root {
         window.focus_prev(cx);
     }
 
-    fn on_action_copy(&mut self, _: &Copy, window: &mut Window, cx: &mut Context<Self>) {
+    fn copy_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let text = crate::TextSelection::selected_text(window, cx)
             .trim()
             .to_string();
         if text.is_empty() {
-            cx.propagate();
-            return;
+            return false;
         }
         cx.write_to_clipboard(ClipboardItem::new_string(text));
+        true
     }
 }
 impl Styled for Root {
@@ -284,10 +328,6 @@ impl Render for Root {
         }
         let mut content = div()
             .id("root")
-            .key_context(CONTEXT)
-            .on_action(cx.listener(Self::on_action_tab))
-            .on_action(cx.listener(Self::on_action_tab_prev))
-            .on_action(cx.listener(Self::on_action_copy))
             .relative()
             .size_full()
             .child(TextSelectionLayer)
@@ -320,6 +360,173 @@ mod tests {
             div()
         }
     }
+    struct SelectableContent;
+    impl Render for SelectableContent {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().child(crate::TextView::markdown(
+                "copy-content",
+                "quick select value",
+            ))
+        }
+    }
+
+    #[gpui::test]
+    fn root_copy_default_preserves_actual_selection_and_obeys_native_veto(cx: &mut TestAppContext) {
+        use gpui::{
+            Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, VisualTestContext, point, px,
+        };
+        cx.update(crate::init);
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let content = cx.new(|_| SelectableContent);
+            Root::new(content, window, cx)
+        });
+        let cx: &mut VisualTestContext = cx;
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let position = point(px(10.), px(16.));
+        cx.simulate_event(MouseDownEvent {
+            position,
+            modifiers: Modifiers::default(),
+            button: MouseButton::Left,
+            click_count: 2,
+            first_mouse: false,
+        });
+        cx.simulate_event(MouseUpEvent {
+            position,
+            modifiers: Modifiers::default(),
+            button: MouseButton::Left,
+            click_count: 2,
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            assert_eq!(
+                crate::TextSelection::selected_text(window, cx).trim(),
+                "quick"
+            );
+            window.blur(cx);
+            cx.write_to_clipboard(ClipboardItem::new_string("Original clipboard".into()));
+        });
+        let veto = Rc::new(std::cell::Cell::new(true));
+        let _intercept = cx.update(|window, cx| {
+            let window_id = window.window_handle().window_id();
+            let veto = veto.clone();
+            cx.intercept_keystrokes(move |event, window, _| {
+                if window.window_handle().window_id() == window_id
+                    && event.keystroke.key == "c"
+                    && veto.get()
+                {
+                    window.prevent_default();
+                }
+            })
+        });
+        let copy = if cfg!(target_os = "macos") {
+            "cmd-c"
+        } else {
+            "ctrl-c"
+        };
+        cx.simulate_keystrokes(copy);
+        cx.update(|window, cx| {
+            assert!(window.focused(cx).is_none());
+            assert_eq!(
+                crate::TextSelection::selected_text(window, cx).trim(),
+                "quick"
+            );
+            assert_eq!(
+                cx.read_from_clipboard().unwrap().text().as_deref(),
+                Some("Original clipboard")
+            );
+        });
+        veto.set(false);
+        cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+            "cmd-c"
+        } else {
+            "ctrl-c"
+        });
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.read_from_clipboard().unwrap().text().as_deref(),
+                Some("quick")
+            )
+        });
+    }
+
+    struct FocusPair {
+        first: gpui::FocusHandle,
+        second: gpui::FocusHandle,
+    }
+    impl FocusPair {
+        fn new(cx: &mut Context<Self>) -> Self {
+            Self {
+                first: cx.focus_handle().tab_stop(true),
+                second: cx.focus_handle().tab_stop(true),
+            }
+        }
+    }
+    impl Render for FocusPair {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().children([
+                div()
+                    .id("first")
+                    .track_focus(&self.first)
+                    .tab_stop(true)
+                    .h(gpui::px(24.)),
+                div()
+                    .id("second")
+                    .track_focus(&self.second)
+                    .tab_stop(true)
+                    .h(gpui::px(24.)),
+            ])
+        }
+    }
+    #[gpui::test]
+    fn root_tab_starts_from_no_focus_and_replaced_root_cannot_apply_defaults(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(crate::init);
+        let (root, cx) = cx.add_window_view(|window, cx| {
+            let content = cx.new(FocusPair::new);
+            Root::new(content, window, cx)
+        });
+        let cx: &mut gpui::VisualTestContext = cx;
+        cx.run_until_parked();
+        let (first, second) = cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let content = root.read(cx).view.clone().downcast::<FocusPair>().unwrap();
+            let pair = content.read(cx);
+            let handles = (pair.first.clone(), pair.second.clone());
+            window.blur(cx);
+            handles
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            assert!(
+                window.focused(cx).is_none(),
+                "blur itself never starts navigation"
+            )
+        });
+        cx.simulate_keystrokes("tab");
+        cx.update(|window, _| assert!(first.is_focused(window)));
+        cx.update(|window, cx| window.blur(cx));
+        cx.simulate_keystrokes("shift-tab");
+        cx.update(|window, _| assert!(second.is_focused(window)));
+        cx.update(|window, cx| {
+            window.replace_root(cx, |_, cx| FocusPair::new(cx));
+            window.blur(cx);
+            window.draw(cx).clear(cx);
+        });
+        cx.simulate_keystrokes("tab");
+        cx.update(|window, cx| {
+            assert!(
+                window.focused(cx).is_none(),
+                "retained old Root cannot act for a replaced native root"
+            );
+            assert!(
+                root.read(cx).view.clone().downcast::<FocusPair>().is_ok(),
+                "old entity is genuinely retained"
+            );
+        });
+    }
+
     struct Layer;
     impl Render for Layer {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {

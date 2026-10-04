@@ -241,7 +241,6 @@ pub fn init(cx: &mut App) {
     input::init(cx);
     tree::init(cx);
     text::init(cx);
-    root::init(cx);
 }
 
 #[cfg(feature = "test-support")]

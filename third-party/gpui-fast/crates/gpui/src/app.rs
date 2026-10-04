@@ -2344,6 +2344,12 @@ impl App {
         self.propagate_event = false;
     }
 
+    /// Whether the current input is still propagating, including while an
+    /// observer is running after a handled binding or another observer.
+    pub fn is_propagating(&self) -> bool {
+        self.propagate_event
+    }
+
     /// Action handlers stop propagation by default during the bubble phase of action dispatch
     /// dispatching to action handlers higher in the element tree. This is the opposite of
     /// [`Self::stop_propagation`]. It's also possible to cancel a call to [`Self::stop_propagation`] by calling
