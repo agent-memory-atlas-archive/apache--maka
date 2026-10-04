@@ -54,7 +54,18 @@ pub struct ModelChoice {
     pub connection_name: String,
     #[schemars(length(max = 512))]
     pub label: String,
-    pub is_default: bool,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "SettingsDefaultModel")]
+pub enum DefaultModel {
+    None,
+    Unavailable {
+        target: maka_runtime::configuration::ConnectionTarget,
+    },
+    Ready {
+        choice: ModelChoice,
+    },
 }
 #[derive(Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -67,6 +78,8 @@ pub enum ModelsPage {
         revision: u64,
         #[schemars(length(max = 16))]
         choices: Vec<ModelChoice>,
+        #[serde(rename = "defaultModel")]
+        default_model: DefaultModel,
         #[schemars(with = "maka_runtime::schema::RequiredNullable<ModelCursor>")]
         next: Option<ModelCursor>,
     },

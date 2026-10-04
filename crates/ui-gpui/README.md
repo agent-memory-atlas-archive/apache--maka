@@ -34,7 +34,7 @@ and may be extended before the trusted launcher receives it.
 `registry()` also installs this platform's pure `scene::compile` under
 `scene::language()` (`maka.desktop.scene`, version 1). Dynamic component entries
 must declare that exact scene language. Dynamic JSON
-scenes provide native flex layout, scoped typography/colors, pointer and keyboard
+scenes provide native flex layout (including explicit `style.wrap` for control reflow), scoped typography/colors, pointer and keyboard
 buttons, focus styling and vertical scrolling. Imported components remain slots
 of the original parent. Local keys retain the same mechanical focus/scroll owners
 across layout changes; removing or changing their kind closes old input admission.

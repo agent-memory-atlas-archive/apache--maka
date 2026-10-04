@@ -37,6 +37,7 @@ export const packageNames = [
   'reader',
   'history',
   'models',
+  'model-default',
   'settings',
   'connections',
   'credential',
@@ -158,7 +159,23 @@ export function composition(configuration: CompositionConfiguration): {
           history: [local('history', 'History')],
         },
       ),
-      models: node('models', {}, { settings: [remote('settings', 'Settings')] }),
+      models: node(
+        'models',
+        {},
+        {
+          settings: [remote('settings', 'Settings')],
+          defaults: [local('model-default', 'ModelDefault')],
+        },
+      ),
+      'model-default': node(
+        'model-default',
+        {},
+        {
+          settings: [remote('settings', 'Settings')],
+          receipts: [remote('receipts', 'Receipts')],
+          history: [local('history', 'History')],
+        },
+      ),
       composer: node('composer', {}, { editor: [local('editor', 'Textarea')] }),
       navigation: node('navigation'),
       timeline: node('timeline'),

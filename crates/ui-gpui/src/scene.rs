@@ -675,6 +675,7 @@ pub struct Style {
     pub grow: Option<f32>,
     #[schemars(range(min = 0, max = 100))]
     pub shrink: Option<f32>,
+    pub wrap: Option<bool>,
     pub align: Option<Align>,
     pub justify: Option<Justify>,
     pub text: Option<maka_ui::appearance::TextAppearance>,
@@ -784,6 +785,13 @@ impl Style {
         }
         if let Some(v) = self.shrink {
             element = element.flex_shrink(v);
+        }
+        if let Some(v) = self.wrap {
+            element = if v {
+                element.flex_wrap()
+            } else {
+                element.flex_nowrap()
+            };
         }
         if let Some(v) = self.align {
             element = match v {

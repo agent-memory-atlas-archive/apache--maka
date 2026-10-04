@@ -274,12 +274,38 @@ const explicitSend: AgentSend = {
 const clearDefault: SetDefaultConnectionTargetInput = { expectedCatalogRevision: 5, target: null };
 // @ts-expect-error Absence is not an explicit clear.
 const missingDefault: SetDefaultConnectionTargetInput = { expectedCatalogRevision: 5 };
-const exhaustedModels: SettingsModelsPage = { kind: 'ready', revision: 5, choices: [], next: null };
+const exhaustedModels: SettingsModelsPage = {
+  kind: 'ready',
+  revision: 5,
+  choices: [],
+  defaultModel: { kind: 'none' },
+  next: null,
+};
 // @ts-expect-error Serialized nullable cursor requires field presence.
-const missingCursor: SettingsModelsPage = { kind: 'ready', revision: 5, choices: [] };
+const missingCursor: SettingsModelsPage = {
+  kind: 'ready',
+  revision: 5,
+  choices: [],
+  defaultModel: { kind: 'none' },
+};
+// @ts-expect-error Every ready page must explicitly observe the saved default.
+const missingDefaultProjection: SettingsModelsPage = {
+  kind: 'ready',
+  revision: 5,
+  choices: [],
+  next: null,
+};
 // @ts-expect-error A send cannot inherit an implicit activation model.
 const implicitSend: AgentSend = { sessionId: 'conversation', message: 'Hello' };
-void [explicitSend, clearDefault, missingDefault, exhaustedModels, missingCursor, implicitSend];
+void [
+  explicitSend,
+  clearDefault,
+  missingDefault,
+  exhaustedModels,
+  missingCursor,
+  missingDefaultProjection,
+  implicitSend,
+];
 
 // Absence is distinct from the explicit no-composition/no-receipt observation.
 function nativeEditorMetadata(snapshot: EditorSnapshot, props: InputProps) {

@@ -3847,6 +3847,9 @@ export const contracts = {
                     },
                     maxItems: 16,
                   },
+                  defaultModel: {
+                    $ref: '#/$defs/SettingsDefaultModel',
+                  },
                   next: {
                     anyOf: [
                       {
@@ -3863,7 +3866,7 @@ export const contracts = {
                   },
                 },
                 additionalProperties: false,
-                required: ['kind', 'revision', 'choices', 'next'],
+                required: ['kind', 'revision', 'choices', 'defaultModel', 'next'],
               },
             ],
             $defs: {
@@ -3881,12 +3884,9 @@ export const contracts = {
                     type: 'string',
                     maxLength: 512,
                   },
-                  isDefault: {
-                    type: 'boolean',
-                  },
                 },
                 additionalProperties: false,
-                required: ['selection', 'connectionName', 'label', 'isDefault'],
+                required: ['selection', 'connectionName', 'label'],
               },
               ModelSelection: {
                 description:
@@ -3912,6 +3912,62 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['connectionId', 'revision', 'modelId'],
+              },
+              SettingsDefaultModel: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'none',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      target: {
+                        $ref: '#/$defs/ConnectionTarget',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'unavailable',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'target'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      choice: {
+                        $ref: '#/$defs/SettingsModelChoice',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'ready',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'choice'],
+                  },
+                ],
+              },
+              ConnectionTarget: {
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                  },
+                  modelId: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'modelId'],
               },
               SettingsModelCursor: {
                 type: 'object',

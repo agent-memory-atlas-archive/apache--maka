@@ -137,7 +137,6 @@ class Client {
         selection: { connectionId: 'fixture', revision: 2, modelId: 'fixture-model' },
         connectionName: 'Fixture',
         label: 'Fixture model',
-        isDefault: false,
       },
     });
     return this;
@@ -539,7 +538,6 @@ const modelChoices = Array.from({ length: 16 }, (_, at) => ({
   selection: { connectionId: 'connection', revision: 5, modelId: `model-${at}` },
   connectionName: 'Account',
   label: `Model ${at}`,
-  isDefault: at === 0,
 }));
 const modelAction = (out, key, reply, p = modelProps) =>
   modelGuest.component.event(
@@ -566,7 +564,13 @@ test('TUI pages expose every original choice, keep controls visible and retain l
   assert.equal(request.method, 'models');
   out = modelAction(out, request.key, {
     status: 'succeeded',
-    value: { kind: 'ready', revision: 5, choices: modelChoices, next: null },
+    value: {
+      kind: 'ready',
+      revision: 5,
+      choices: modelChoices,
+      defaultModel: { kind: 'ready', choice: modelChoices[0] },
+      next: null,
+    },
   });
   assert.deepEqual(out.events, []);
   out = modelGuest.component.update(out.frame.state, { ...modelProps, busy: false }, {});
@@ -602,7 +606,13 @@ test('late query is ignored and catalog changes restart only the observation', (
     'retired-query',
     {
       status: 'succeeded',
-      value: { kind: 'ready', revision: 5, choices: modelChoices, next: null },
+      value: {
+        kind: 'ready',
+        revision: 5,
+        choices: modelChoices,
+        defaultModel: { kind: 'ready', choice: modelChoices[0] },
+        next: null,
+      },
     },
     enabled,
   );
@@ -1042,7 +1052,6 @@ test('changed settings discard late model query and old default before selecting
       selection: { connectionId: 'fixture', revision: 2, modelId: 'fixture-model' },
       connectionName: 'Fixture',
       label: 'Fixture model',
-      isDefault: false,
     },
     busy: false,
     catalogEpoch: 0,
@@ -1055,11 +1064,16 @@ test('changed settings discard late model query and old default before selecting
     selection: { connectionId: 'fixture', revision: 2, modelId: 'fixture-model' },
     connectionName: 'Fixture',
     label: 'Fixture model',
-    isDefault: true,
   };
   form.complete(old, {
     status: 'succeeded',
-    value: { kind: 'ready', revision: 2, choices: [choice], next: null },
+    value: {
+      kind: 'ready',
+      revision: 2,
+      choices: [choice],
+      defaultModel: { kind: 'ready', choice },
+      next: null,
+    },
   });
   assert.equal(form.state.choices.length, 0);
   assert.deepEqual(form.output.events, []);
@@ -1069,6 +1083,10 @@ test('changed settings discard late model query and old default before selecting
       kind: 'ready',
       revision: 3,
       choices: [{ ...choice, selection: { ...choice.selection, revision: 3 } }],
+      defaultModel: {
+        kind: 'ready',
+        choice: { ...choice, selection: { ...choice.selection, revision: 3 } },
+      },
       next: null,
     },
   });
@@ -1155,7 +1173,6 @@ test('a refreshed catalog never replaces a chosen nondefault model with an unrel
     selection: { connectionId: 'chosen', revision: 2, modelId: 'chosen-model' },
     connectionName: 'Chosen',
     label: 'Chosen model',
-    isDefault: false,
   };
   const form = new FormClient(module.component, {
     theme: values.appearance[0],
@@ -1164,22 +1181,39 @@ test('a refreshed catalog never replaces a chosen nondefault model with an unrel
     busy: false,
     catalogEpoch: 0,
   });
-  form.query('models', { kind: 'ready', revision: 2, choices: [chosen], next: null });
+  form.query('models', {
+    kind: 'ready',
+    revision: 2,
+    choices: [chosen],
+    defaultModel: { kind: 'none' },
+    next: null,
+  });
   form.update({ catalogEpoch: 1 });
   const other = {
     selection: { connectionId: 'other', revision: 8, modelId: 'default-model' },
     connectionName: 'Other',
     label: 'Default model',
-    isDefault: true,
   };
-  form.query('models', { kind: 'ready', revision: 8, choices: [other], next: null });
+  form.query('models', {
+    kind: 'ready',
+    revision: 8,
+    choices: [other],
+    defaultModel: { kind: 'ready', choice: other },
+    next: null,
+  });
   assert.deepEqual(form.output.events, []);
   assert.equal(form.state.staleSelection, true);
   form.update({ busy: false });
   assert.deepEqual(form.output.events, []);
   form.raw('refresh');
   const renewed = { ...chosen, selection: { ...chosen.selection, revision: 9 } };
-  form.query('models', { kind: 'ready', revision: 9, choices: [other, renewed], next: null });
+  form.query('models', {
+    kind: 'ready',
+    revision: 9,
+    choices: [other, renewed],
+    defaultModel: { kind: 'ready', choice: other },
+    next: null,
+  });
   assert.equal(form.output.events[0].value.selection.connectionId, 'chosen');
   assert.equal(form.output.events[0].value.selection.revision, 9);
 });
@@ -1845,6 +1879,297 @@ for (const [target, module] of connectionFormModules) {
       });
       assert.deepEqual(form.state.current.reference, publicRef);
       assert.equal(form.output.events.length, 0);
+    },
+  );
+}
+
+const defaultModules = await Promise.all(
+  ['desktop', 'tui'].map(async (target) => [
+    target,
+    await import(pathToFileURL(resolve(root, 'dist/packages/model-default/' + target + '.js'))),
+  ]),
+);
+const defaultChoice = modelChoices[15];
+const defaultReference = { ...credentialRef, method: 'setDefault' };
+for (const [target, module] of defaultModules) {
+  const make = (extra = {}) =>
+    new FormClient(module.component, {
+      theme: values.appearance[0],
+      locale: 'en',
+      selection: defaultChoice,
+      catalogRevision: 5,
+      defaultModel: { kind: 'none' },
+      busy: false,
+      ...extra,
+    });
+  test(
+    target +
+      ' default confirmation freezes its chosen model and catalog basis without selecting it',
+    () => {
+      const form = make();
+      form.raw('default-confirm');
+      assert.equal(form.output.actions.length, 0);
+      form.raw('default-set');
+      assert.equal(form.output.actions.length, 0);
+      form.update({ selection: modelChoices[0] });
+      form.raw('default-confirm');
+      assert.deepEqual(form.find('setDefault').input, {
+        expectedCatalogRevision: 5,
+        target: {
+          connectionId: defaultChoice.selection.connectionId,
+          modelId: defaultChoice.selection.modelId,
+        },
+      });
+      form.complete(
+        form.find('setDefault'),
+        formReply({ kind: 'committed', catalogRevision: 6 }, defaultReference),
+      );
+      assert.deepEqual(form.output.events, [{ name: 'changed', value: {} }]);
+      assert.deepEqual(form.props.selection, modelChoices[0]);
+    },
+  );
+  test(
+    target +
+      ' clearing a ready or unavailable default requires confirmation and preserves the current selection',
+    () => {
+      for (const saved of [
+        { kind: 'ready', choice: modelChoices[0] },
+        { kind: 'unavailable', target: { connectionId: 'unsupported', modelId: 'other-model' } },
+      ]) {
+        const form = make({ defaultModel: saved });
+        form.raw('default-clear');
+        form.raw('default-cancel');
+        assert.equal(form.output.actions.length, 0);
+        assert.equal(form.state.current, null);
+        assert.deepEqual(form.props.defaultModel, saved);
+        form.raw('default-clear');
+        form.raw('default-confirm');
+        assert.deepEqual(form.find('setDefault').input, {
+          expectedCatalogRevision: 5,
+          target: null,
+        });
+        form.complete(
+          form.find('setDefault'),
+          formReply({ kind: 'committed', catalogRevision: 6 }, defaultReference),
+        );
+        assert.equal(form.state.notice, 'defaultCleared');
+        assert.deepEqual(form.output.events, [{ name: 'changed', value: {} }]);
+        assert.deepEqual(form.props.selection, defaultChoice);
+      }
+    },
+  );
+  test(target + ' default CAS conflict needs a fresh observation and a new confirmation', () => {
+    const form = make();
+    form.raw('default-set');
+    form.raw('default-confirm');
+    form.complete(
+      form.find('setDefault'),
+      formReply(
+        { kind: 'revision_conflict', expectedRevision: 5, actualRevision: 8 },
+        defaultReference,
+      ),
+    );
+    assert.equal(form.state.current, null);
+    form.raw('default-set');
+    assert.equal(form.state.confirmation, null);
+    form.update({ catalogRevision: 8 });
+    assert.equal(form.output.actions.length, 0);
+    form.raw('default-set');
+    assert.equal(form.output.actions.length, 0);
+    form.raw('default-confirm');
+    assert.equal(form.find('setDefault').input.expectedCatalogRevision, 8);
+  });
+  test(target + ' an in-flight confirmation cannot accept a refreshed catalog version', () => {
+    const form = make();
+    form.raw('default-set');
+    form.update({ catalogRevision: 6 });
+    form.raw('default-confirm');
+    assert.equal(form.output.actions.length, 0);
+    assert.equal(form.state.confirmation.revision, 5);
+    form.raw('default-cancel');
+    form.raw('default-set');
+    form.raw('default-confirm');
+    assert.equal(form.find('setDefault').input.expectedCatalogRevision, 6);
+  });
+  test(target + ' unknown defaults only read the original receipt across parent updates', () => {
+    const form = make();
+    form.raw('default-set');
+    form.raw('default-confirm');
+    form.complete(form.find('setDefault'), {
+      status: 'operation',
+      reply: { reference: defaultReference, receipt: { kind: 'unavailable' } },
+    });
+    form.update({ catalogRevision: 9, selection: modelChoices[0] });
+    for (const key of ['default-set', 'default-clear', 'default-confirm']) {
+      form.raw(key);
+      assert.equal(form.output.actions.length, 0);
+    }
+    form.raw('default-check');
+    assert.deepEqual(form.find('read').input, defaultReference);
+    form.query(
+      'read',
+      formReply(
+        { kind: 'committed', catalogRevision: 6 },
+        { ...defaultReference, operation: uuid(99) },
+      ).reply,
+    );
+    assert.ok(form.state.current);
+    assert.equal(form.output.events.length, 0);
+    form.raw('default-check');
+    form.query(
+      'read',
+      formReply({ kind: 'committed', catalogRevision: 6 }, defaultReference).reply,
+    );
+    assert.equal(form.state.current, null);
+    assert.deepEqual(form.output.events, [{ name: 'changed', value: {} }]);
+    assert.deepEqual(form.props.selection, modelChoices[0]);
+  });
+  test(
+    target + ' historical default receipts never resolve another current intent or select a model',
+    () => {
+      const form = make();
+      form.raw('default-set');
+      form.raw('default-confirm');
+      form.complete(form.find('setDefault'), {
+        status: 'operation',
+        reply: { reference: defaultReference, receipt: { kind: 'unavailable' } },
+      });
+      const before = structuredClone(form.state.current);
+      form.raw('default-history');
+      assert.equal(form.find('page').input.limit, 2);
+      const earlier = { ...defaultReference, operation: uuid(99) };
+      form.query('page', [
+        { cursor: 1, reference: credentialRef },
+        { cursor: 2, reference: earlier },
+      ]);
+      assert.equal(form.state.earlier.length, 1);
+      assert.equal(form.state.historyNext, 2);
+      form.raw('default-earlier-0');
+      form.query('read', formReply({ kind: 'committed', catalogRevision: 4 }, earlier).reply);
+      assert.deepEqual(form.state.current, before);
+      assert.deepEqual(form.output.events, []);
+      form.raw('default-history-back');
+      assert.deepEqual(form.props.selection, defaultChoice);
+    },
+  );
+  test(
+    target + ' every legal long default identity remains available on bounded confirmation pages',
+    () => {
+      const selected = {
+        selection: { connectionId: 'original-connection', revision: 3, modelId: 'm'.repeat(512) },
+        connectionName: '界'.repeat(255) + '\n',
+        label: '🙂'.repeat(256),
+      };
+      const form = make({ selection: selected });
+      form.raw('default-set');
+      let all = '';
+      let count = 0;
+      while (true) {
+        const pane = form.output.frame.view.children.find((n) => n.key === 'default-confirmation');
+        const lines = pane.children.filter((n) => n.key.startsWith('default-line-'));
+        assert.ok(lines.length <= (target === 'tui' ? 3 : 18));
+        if (target === 'tui') assert.ok(lines.every((n) => [...n.text].length <= 36));
+        all += lines.map((n) => n.text).join('');
+        count++;
+        if (
+          !pane.children
+            .find((n) => n.key === 'default-confirm-actions')
+            .children.some((n) => n.key === 'default-next')
+        )
+          break;
+        form.raw('default-next');
+        assert.ok(count < 100);
+      }
+      assert.equal(
+        all,
+        selected.connectionName.replace(/\r?\n/gu, '') +
+          selected.label +
+          selected.selection.modelId,
+      );
+      form.raw('default-confirm');
+      assert.equal(form.find('setDefault').input.target.modelId, selected.selection.modelId);
+    },
+  );
+}
+function modelSlots(node, result = []) {
+  if (node.kind === 'component') result.push(node);
+  for (const child of node.children ?? []) modelSlots(child, result);
+  return result;
+}
+for (const target of ['desktop', 'tui']) {
+  test(target + ' suggests the exact saved default even beyond the first model page', async () => {
+    const module = await import(
+      pathToFileURL(resolve(root, 'dist/packages/models/' + target + '.js'))
+    );
+    const form = new FormClient(module.component, { ...modelProps, busy: false });
+    const late = {
+      ...modelChoices[15],
+      selection: { ...modelChoices[15].selection, modelId: 'model-19' },
+    };
+    form.query('models', {
+      kind: 'ready',
+      revision: 5,
+      choices: modelChoices,
+      defaultModel: { kind: 'ready', choice: late },
+      next: { connection: 0, model: 16 },
+    });
+    assert.deepEqual(form.output.events, [{ name: 'selected', value: late }]);
+  });
+  test(
+    target +
+      ' default changes retire an older model query while preserving a later-page selection and child identity',
+    async () => {
+      const module = await import(
+        pathToFileURL(resolve(root, 'dist/packages/models/' + target + '.js'))
+      );
+      const form = new FormClient(module.component, {
+        ...modelProps,
+        busy: false,
+        selection: defaultChoice,
+      });
+      const old = form.find('models');
+      const child = modelSlots(form.output.frame.view).find((n) => n.binding === 'defaults');
+      assert.equal(child.key, 'default-settings');
+      form.input({
+        kind: 'component',
+        child: 'default-settings',
+        name: 'changed',
+        key: 'default-changed',
+        event: {},
+      });
+      const fresh = [...form.actions.values()].filter((a) => a.method === 'models').at(-1);
+      assert.notEqual(old.key, fresh.key);
+      form.complete(old, {
+        status: 'succeeded',
+        value: {
+          kind: 'ready',
+          revision: 5,
+          choices: [modelChoices[0]],
+          defaultModel: { kind: 'ready', choice: modelChoices[0] },
+          next: null,
+        },
+      });
+      assert.equal(form.state.catalogRevision, null);
+      form.complete(fresh, {
+        status: 'succeeded',
+        value: {
+          kind: 'ready',
+          revision: 6,
+          choices: modelChoices.slice(0, 3),
+          defaultModel: { kind: 'none' },
+          next: null,
+        },
+      });
+      assert.deepEqual(form.output.events, []);
+      assert.equal(form.state.staleSelection, false);
+      assert.deepEqual(form.props.selection, defaultChoice);
+      form.raw('toggle');
+      form.raw('defaults');
+      form.raw('default-close');
+      assert.equal(
+        modelSlots(form.output.frame.view).find((n) => n.binding === 'defaults').key,
+        child.key,
+      );
     },
   );
 }

@@ -113,6 +113,73 @@ fn replace(
     .unwrap();
 }
 #[gpui::test]
+fn scene_wrapping_reflows_controls_without_replacing_focus(cx: &mut TestAppContext) {
+    let (entity, window, clicks) = harness(cx);
+    let source = |width| {
+        json!({
+            "kind":"stack","key":"root","direction":"row","gap":0,"padding":0,
+            "background":0xffffff,"style":{"width":{"unit":"pixels","value":width},"wrap":true},
+            "children":[
+                {"kind":"button","key":"action","label":"Run","style":{"width":{"unit":"pixels","value":100},"height":{"unit":"pixels","value":40},"shrink":0}},
+                {"kind":"button","key":"other","label":"Other","style":{"width":{"unit":"pixels","value":100},"height":{"unit":"pixels","value":40},"shrink":0}}
+            ]
+        })
+    };
+    replace(cx, window, &entity, source(220));
+    cx.activate_accessibility(window);
+    draw(cx, window);
+    let bounds = |cx: &mut TestAppContext| {
+        let update = cx.accessibility_update(window).unwrap();
+        let find = |label| {
+            update
+                .nodes
+                .iter()
+                .find(|(_, n)| n.label() == Some(label))
+                .unwrap()
+                .1
+                .bounds()
+                .unwrap()
+        };
+        (find("Run"), find("Other"))
+    };
+    let (first, other) = bounds(cx);
+    assert_eq!(first.y0, other.y0);
+    assert!(other.x0 >= first.x1);
+    VisualTestContext::from_window(window, cx)
+        .simulate_click(point(px(10.), px(10.)), Modifiers::default());
+    let focus = cx.update(|cx| entity.read(cx).state().buttons["action"].focus.clone());
+    replace(cx, window, &entity, source(120));
+    draw(cx, window);
+    let (first, other) = bounds(cx);
+    assert!(
+        other.y0 >= first.y1,
+        "second control wraps inside the narrow row"
+    );
+    assert_eq!(other.x0, first.x0);
+    assert_eq!(other.x1, first.x1);
+    cx.update_window(window, |_, w, cx| {
+        assert_eq!(entity.read(cx).state().buttons["action"].focus, focus);
+        assert!(focus.is_focused(w));
+    })
+    .unwrap();
+    // AccessKit bounds use device pixels; pointer simulation uses logical
+    // window coordinates. Read the actually laid-out wrapped control.
+    let scale = (first.x1 - first.x0) / 100.;
+    VisualTestContext::from_window(window, cx).simulate_click(
+        point(
+            px((other.x0 / scale + 5.) as f32),
+            px((other.y0 / scale + 5.) as f32),
+        ),
+        Modifiers::default(),
+    );
+    assert_eq!(
+        clicks.get(),
+        2,
+        "the wrapped control remains physically clickable"
+    );
+}
+
+#[gpui::test]
 fn scene_focus_and_scroll_follow_local_key_across_layout_ancestors(cx: &mut TestAppContext) {
     let (entity, window, clicks) = harness(cx);
     VisualTestContext::from_window(window, cx)

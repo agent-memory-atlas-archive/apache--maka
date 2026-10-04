@@ -25,13 +25,16 @@ import type {
   SettingsModelChoice,
   SettingsModelCursor,
   SettingsModelsPage,
+  SettingsDefaultModel,
 } from '../../plugin-sdk/src/index.js';
 import type { ModelsProps } from './contracts.js';
 import { modelsContract } from './contracts.js';
 import { copy } from './locale.js';
-import { fill, output, paint, type Target } from './view.js';
+import { fill, output, paint, slot, type Target } from './view.js';
 interface State {
   catalogEpoch: number;
+  defaultModel: SettingsDefaultModel | null;
+  defaultsOpen: boolean;
   staleSelection: boolean;
   suggestDefault: boolean;
   revision: number;
@@ -45,15 +48,18 @@ interface State {
   offset: number;
 }
 function candidate(state: State, props: ModelsProps) {
-  if (props.busy || state.pending) return null;
+  if (props.busy || state.pending || state.failed) return null;
   if (state.staleSelection && props.selection)
-    return state.choices.find(
+    return [
+      ...state.choices,
+      ...(state.defaultModel?.kind === 'ready' ? [state.defaultModel.choice] : []),
+    ].find(
       (choice) =>
         choice.selection.connectionId === props.selection!.selection.connectionId &&
         choice.selection.modelId === props.selection!.selection.modelId,
     );
-  return !props.selection && state.suggestDefault
-    ? state.choices.find((choice) => choice.isDefault)
+  return !props.selection && state.suggestDefault && state.defaultModel?.kind === 'ready'
+    ? state.defaultModel.choice
     : null;
 }
 
@@ -92,55 +98,87 @@ function frame(
     'models',
     [
       ui.button('toggle', chosen ? compact(chosen.label) : text.chooseModel, props.busy),
-      ...(state.open
-        ? [
-            ui.box(
-              'model-list',
-              [
-                ui.text('model-heading', text.models, 13, props.theme.muted),
-                ...(state.pending
-                  ? [ui.text('model-loading', text.loadingModels, 13, props.theme.muted)]
-                  : []),
-                ...(state.failed
-                  ? [ui.text('model-error', text.modelsUnavailable, 13, props.theme.muted)]
-                  : []),
-                ...(!state.pending && !state.failed && !state.choices.length
-                  ? [ui.text('no-models', text.noModels, 13, props.theme.muted)]
-                  : []),
-                ui.box(
-                  'model-actions',
-                  [
-                    ...(target === 'tui' && state.offset > 0
-                      ? [ui.button('previous', text.previousModels, props.busy || !!state.pending)]
-                      : []),
-                    ...((target === 'tui' && state.offset + 3 < state.choices.length) || state.next
-                      ? [ui.button('more', text.moreModels, !!state.pending || props.busy)]
-                      : []),
-                    ui.button('refresh', text.refreshModels, !!state.pending || props.busy),
-                    ui.button('close', text.closeModels, false),
-                  ],
-                  { row: true, gap: target === 'desktop' ? 8 : 1 },
+      ui.box(
+        'model-list',
+        [
+          ui.box(
+            'model-choices',
+            [
+              ui.text('model-heading', text.models, 13, props.theme.muted),
+              ...(state.pending
+                ? [ui.text('model-loading', text.loadingModels, 13, props.theme.muted)]
+                : []),
+              ...(state.failed
+                ? [ui.text('model-error', text.modelsUnavailable, 13, props.theme.muted)]
+                : []),
+              ...(!state.pending && !state.failed && !state.choices.length
+                ? [ui.text('no-models', text.noModels, 13, props.theme.muted)]
+                : []),
+              ui.box(
+                'model-actions',
+                [
+                  ...(target === 'tui' && state.offset > 0
+                    ? [ui.button('previous', text.previousModels, props.busy || !!state.pending)]
+                    : []),
+                  ...((target === 'tui' && state.offset + 3 < state.choices.length) || state.next
+                    ? [ui.button('more', text.moreModels, !!state.pending || props.busy)]
+                    : []),
+                  ui.button('refresh', text.refreshModels, !!state.pending || props.busy),
+                  ui.button('defaults', text.defaultModel),
+                  ui.button('close', text.closeModels, false),
+                ],
+                { row: true, gap: target === 'desktop' ? 8 : 1, style: { wrap: true } },
+              ),
+              ...(target === 'desktop'
+                ? state.choices
+                : state.choices.slice(state.offset, state.offset + 3)
+              ).map((choice, index) =>
+                ui.button(
+                  `choose-${index + (target === 'tui' ? state.offset : 0)}`,
+                  `${compact(choice.label)} · ${compact(choice.connectionName)}`,
+                  props.busy || !!state.pending || state.failed,
                 ),
-                ...(target === 'desktop'
-                  ? state.choices
-                  : state.choices.slice(state.offset, state.offset + 3)
-                ).map((choice, index) =>
-                  ui.button(
-                    `choose-${index + (target === 'tui' ? state.offset : 0)}`,
-                    `${compact(choice.label)} · ${compact(choice.connectionName)}`,
-                    props.busy || !!state.pending,
-                  ),
-                ),
-              ],
-              {
-                surface: true,
-                padding: target === 'desktop' ? 12 : 0,
-                scroll: true,
-                style: { width: fill, maxHeight: 320, minWidth: 0 },
-              },
-            ),
-          ]
-        : []),
+              ),
+            ],
+            { visible: !state.defaultsOpen, gap: target === 'desktop' ? 8 : 0 },
+          ),
+          ui.box(
+            'model-default-pane',
+            [
+              ui.box(
+                'default-navigation',
+                [
+                  ui.button('default-back', text.models),
+                  ui.button('default-refresh', text.refreshModels, !!state.pending),
+                  ui.button('default-close', text.closeModels),
+                ],
+                { row: target === 'desktop', gap: 0, style: { wrap: true } },
+              ),
+              slot(
+                'default-settings',
+                'defaults',
+                {
+                  theme: props.theme,
+                  locale: props.locale,
+                  selection: chosen,
+                  defaultModel: state.defaultModel,
+                  catalogRevision: state.catalogRevision,
+                  busy: props.busy || !!state.pending || state.failed,
+                },
+                { changed: 'default-changed' },
+              ),
+            ],
+            { visible: state.defaultsOpen, gap: target === 'desktop' ? 8 : 0 },
+          ),
+        ],
+        {
+          visible: state.open,
+          surface: true,
+          padding: target === 'desktop' ? 12 : 0,
+          scroll: true,
+          style: { width: fill, maxHeight: 320, minWidth: 0 },
+        },
+      ),
     ],
     { gap: target === 'desktop' ? 8 : 0, style: { maxWidth: 480, minWidth: 0 } },
   );
@@ -154,6 +192,8 @@ export function models(target: Target): Component<State, ModelsProps> {
       const state: State = {
         revision: 0,
         catalogEpoch: props.catalogEpoch,
+        defaultModel: null,
+        defaultsOpen: false,
         staleSelection: false,
         suggestDefault: true,
         serial: 0,
@@ -178,6 +218,7 @@ export function models(target: Target): Component<State, ModelsProps> {
           choices: [],
           pending: null,
           catalogRevision: null,
+          defaultModel: null,
           next: null,
           offset: 0,
         };
@@ -208,12 +249,14 @@ export function models(target: Target): Component<State, ModelsProps> {
             state.choices = [];
             state.next = null;
             state.catalogRevision = null;
+            state.defaultModel = null;
             actions.push(...read(state));
           } else {
             state.offset = 0;
             state.choices = page.choices;
             state.next = page.next ?? null;
             state.catalogRevision = page.revision;
+            state.defaultModel = page.defaultModel;
             const initial = candidate(state, props);
             if (initial) {
               state.staleSelection = false;
@@ -221,17 +264,34 @@ export function models(target: Target): Component<State, ModelsProps> {
             }
           }
         }
+      } else if (
+        input.kind === 'component' &&
+        input.child === 'default-settings' &&
+        input.name === 'changed'
+      ) {
+        state.suggestDefault = false;
+        state.pending = null;
+        state.catalogRevision = null;
+        state.defaultModel = null;
+        actions.push(...read(state));
       } else if (input.kind === 'raw') {
-        if (input.key === 'close') state.open = false;
+        if (input.key === 'close' || input.key === 'default-close') state.open = false;
+        else if (input.key === 'defaults') state.defaultsOpen = true;
+        else if (input.key === 'default-back') state.defaultsOpen = false;
         else if (!props.busy) {
           if (input.key === 'toggle') state.open = !state.open;
-          else if (input.key === 'refresh') actions.push(...read(state));
+          else if (input.key === 'refresh' || input.key === 'default-refresh')
+            actions.push(...read(state));
           else if (input.key === 'previous' && target === 'tui' && !state.pending)
             state.offset = Math.max(0, state.offset - 3);
           else if (input.key === 'more' && !state.pending) {
             if (target === 'tui' && state.offset + 3 < state.choices.length) state.offset += 3;
             else if (state.next) actions.push(...read(state, true));
-          } else if (!state.pending && /^choose-(0|[1-9][0-9]*)$/.test(input.key)) {
+          } else if (
+            !state.pending &&
+            !state.failed &&
+            /^choose-(0|[1-9][0-9]*)$/.test(input.key)
+          ) {
             const choice = state.choices[Number(input.key.slice(7))];
             if (choice) {
               state.open = false;

@@ -18,6 +18,26 @@
  */
 
 export const en = {
+  defaultModel: 'Default model',
+  makeDefault: 'Set selected as default',
+  clearDefault: 'Clear default',
+  noDefault: 'No default model.',
+  defaultUnavailable: 'The saved default is unavailable.',
+  defaultHelp: 'Suggested when no model is selected. Your current choice stays unchanged.',
+  confirmDefault: 'Confirm',
+  confirmSetDefault: 'Use this model as the default?',
+  confirmClearDefault: 'Clear this saved default?',
+  defaultSaved: 'Default model saved.',
+  defaultCleared: 'Default model cleared.',
+  defaultRejected: 'The default was not changed.',
+  defaultConflict: 'Saved settings changed. Refresh models and confirm again.',
+  defaultUnknown: 'Result not yet known. Check the original operation.',
+  earlierDefaultOperations: 'Earlier default operations',
+  refreshDefaultOperations: 'Refresh operations',
+  earlierDefaultHelp:
+    'Earlier operations may refer to other models. Checking them never changes your current choice.',
+  defaultHistorySaved: 'Default setting saved.',
+
   fieldPlaceholder: 'Enter: ',
   createConnection: 'Add connection',
   connectionProvider: 'Provider',
@@ -170,6 +190,25 @@ export const en = {
 } as const;
 export type Copy = { [K in keyof typeof en]: string };
 const zhCN: Copy = {
+  defaultModel: '默认模型',
+  makeDefault: '将已选模型设为默认',
+  clearDefault: '清除默认项',
+  noDefault: '尚未设置默认模型。',
+  defaultUnavailable: '已保存的默认模型不可用。',
+  defaultHelp: '未选模型时建议默认项，当前选择保持不变。',
+  confirmDefault: '确认',
+  confirmSetDefault: '将此模型设为默认？',
+  confirmClearDefault: '清除此已保存默认项？',
+  defaultSaved: '默认模型已保存。',
+  defaultCleared: '默认模型已清除。',
+  defaultRejected: '默认项未更改。',
+  defaultConflict: '已保存设置发生变化，请刷新模型并重新确认。',
+  defaultUnknown: '结果尚未确定，请查询原操作。',
+  earlierDefaultOperations: '先前的默认设置操作',
+  refreshDefaultOperations: '刷新操作记录',
+  earlierDefaultHelp: '先前操作可能属于其他模型，查询不会更改当前选择。',
+  defaultHistorySaved: '默认设置已保存。',
+
   fieldPlaceholder: '填写：',
   createConnection: '添加连接',
   connectionProvider: '服务商',
@@ -310,6 +349,25 @@ const zhCN: Copy = {
   connecting: '正在连接…',
 };
 const zhTW: Copy = {
+  defaultModel: '預設模型',
+  makeDefault: '將已選模型設為預設',
+  clearDefault: '清除預設項',
+  noDefault: '尚未設定預設模型。',
+  defaultUnavailable: '已儲存的預設模型無法使用。',
+  defaultHelp: '未選模型時建議預設項，目前選擇維持不變。',
+  confirmDefault: '確認',
+  confirmSetDefault: '將此模型設為預設？',
+  confirmClearDefault: '清除此已儲存預設項？',
+  defaultSaved: '預設模型已儲存。',
+  defaultCleared: '預設模型已清除。',
+  defaultRejected: '預設項未變更。',
+  defaultConflict: '已儲存設定發生變化，請重新整理模型並再次確認。',
+  defaultUnknown: '結果尚未確定，請查詢原操作。',
+  earlierDefaultOperations: '先前的預設設定操作',
+  refreshDefaultOperations: '重新整理操作紀錄',
+  earlierDefaultHelp: '先前操作可能屬於其他模型，查詢不會變更目前選擇。',
+  defaultHistorySaved: '預設設定已儲存。',
+
   fieldPlaceholder: '填寫：',
   createConnection: '新增連線',
   connectionProvider: '供應商',

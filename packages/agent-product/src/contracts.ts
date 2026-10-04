@@ -22,6 +22,7 @@ import {
   type Contract,
   type AgentSession,
   type SettingsModelChoice,
+  type SettingsDefaultModel,
   type TextareaAppearance,
   type InputAppearance,
   type ConnectionCredentialTarget,
@@ -63,6 +64,14 @@ export interface ModelsProps {
   theme: Theme;
   locale: string;
   selection: SettingsModelChoice | null;
+  busy: boolean;
+}
+export interface ModelDefaultProps {
+  theme: Theme;
+  locale: string;
+  selection: SettingsModelChoice | null;
+  defaultModel: SettingsDefaultModel | null;
+  catalogRevision: number | null;
   busy: boolean;
 }
 export interface NavigationProps {
@@ -201,6 +210,29 @@ export const modelsContract: Contract = {
   },
 };
 
+export const modelDefaultContract: Contract = {
+  name: 'maka.agent.ModelDefault',
+  version: 1,
+  transport: 'local',
+  interface: {
+    kind: 'component',
+    props: {
+      ...withDefs(
+        object({
+          theme: { $ref: '#/$defs/Theme' },
+          locale,
+          selection: { anyOf: [{ $ref: '#/$defs/SettingsModelChoice' }, { type: 'null' }] },
+          defaultModel: { anyOf: [{ $ref: '#/$defs/SettingsDefaultModel' }, { type: 'null' }] },
+          catalogRevision: { anyOf: [{ type: 'integer', minimum: 0 }, { type: 'null' }] },
+          busy: { type: 'boolean' },
+        }),
+      ),
+      $defs: { ...defs, Theme: themeSchema, ...modelDefs },
+    },
+    events: { changed: object({}) },
+    captures: {},
+  },
+};
 export interface ConnectionsProps {
   theme: Theme;
   locale: string;

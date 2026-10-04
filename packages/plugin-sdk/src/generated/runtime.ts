@@ -505,7 +505,20 @@ export type SettingsModelsPage =
             SettingsModelChoice,
             SettingsModelChoice,
           ];
+      defaultModel: SettingsDefaultModel;
       next: SettingsModelCursor | null;
+      kind: 'ready';
+    };
+export type SettingsDefaultModel =
+  | {
+      kind: 'none';
+    }
+  | {
+      target: ConnectionTarget;
+      kind: 'unavailable';
+    }
+  | {
+      choice: SettingsModelChoice;
       kind: 'ready';
     };
 export type SettingsConnectionsRead =
@@ -1429,7 +1442,6 @@ export interface SettingsModelChoice {
   selection: ModelSelection;
   connectionName: string;
   label: string;
-  isDefault: boolean;
 }
 export interface ConnectionTarget {
   connectionId: string;

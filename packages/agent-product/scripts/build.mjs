@@ -119,7 +119,17 @@ specifications.models = {
   contract: own.modelsContract,
   export: 'Models',
   module: 'models',
-  imports: { settings: one(sdk.contracts.settings) },
+  imports: { settings: one(sdk.contracts.settings), defaults: one(own.modelDefaultContract) },
+};
+specifications['model-default'] = {
+  contract: own.modelDefaultContract,
+  export: 'ModelDefault',
+  module: 'model-default',
+  imports: {
+    settings: one(sdk.contracts.settings),
+    receipts: one(sdk.contracts.receiptReader),
+    history: one(sdk.contracts.callerHistory),
+  },
 };
 specifications.connections = {
   contract: own.connectionsContract,
@@ -170,6 +180,8 @@ for (const [name, spec] of Object.entries(specifications)) {
       contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace('${target}',configuration.locale);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
     else if (name === 'connection-form')
       contents = `import {connectionForm,activate} from '${resolve(root, 'src/connection-form.ts')}';import * as validation from '${validationPath}';export const component=connectionForm('${target}',validation);export {activate};`;
+    else if (name === 'model-default')
+      contents = `import {modelDefault,activate} from '${resolve(root, 'src/model-default.ts')}';export const component=modelDefault('${target}');export {activate};`;
     else if (['models', 'connections', 'credential'].includes(name))
       contents = `import {${name},activate} from '${resolve(root, 'src/' + name + '.ts')}';export const component=${name}('${target}');export {activate};`;
     else

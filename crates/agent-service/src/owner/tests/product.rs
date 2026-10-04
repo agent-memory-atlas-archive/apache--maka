@@ -156,6 +156,7 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         "workspace",
         "composer",
         "models",
+        "model-default",
         "connections",
         "credential",
         "connection-form",
@@ -503,6 +504,66 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     }
     assert!(screen(&draw(&mut presenter)).contains("Close"));
     click(&mut presenter, "fixture-model-19");
+    assert!(screen(&draw(&mut presenter)).contains("Hello product"));
+    // Defaults are a separate ordinary component. A catalog-only race must
+    // reject its frozen confirmation, without replacing model 19 or the draft.
+    click(&mut presenter, "fixture-model-19");
+    await_screen(&mut presenter, "[ Default model ]");
+    click(&mut presenter, "[ Default model ]");
+    await_screen(&mut presenter, "[ Set selected as default ]");
+    click(&mut presenter, "[ Set selected as default ]");
+    await_screen(&mut presenter, "Use this model as the default?");
+    let catalog = runtime.block_on(fixture.config.catalog()).unwrap();
+    runtime
+        .block_on(
+            fixture.config.set_default_target(
+                serde_json::from_value(
+                    json!({"expectedCatalogRevision":catalog.revision,"target":null}),
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+    click(&mut presenter, "[ Confirm ]");
+    await_screen(&mut presenter, "Saved settings changed.");
+    click(&mut presenter, "[ Refresh models ]");
+    await_screen(&mut presenter, "[ Set selected as default ]");
+    click(&mut presenter, "[ Set selected as default ]");
+    click(&mut presenter, "[ Confirm ]");
+    await_screen(&mut presenter, "Default model saved.");
+    assert_eq!(
+        runtime
+            .block_on(fixture.config.catalog())
+            .unwrap()
+            .default_target
+            .unwrap()
+            .model_id,
+        "fixture-model-19"
+    );
+    await_screen(&mut presenter, "[ Clear default ]");
+    click(&mut presenter, "[ Clear default ]");
+    await_screen(&mut presenter, "Clear this saved default?");
+    click(&mut presenter, "[ Cancel ]");
+    assert!(
+        runtime
+            .block_on(fixture.config.catalog())
+            .unwrap()
+            .default_target
+            .is_some()
+    );
+    await_screen(&mut presenter, "[ Clear default ]");
+    click(&mut presenter, "[ Clear default ]");
+    click(&mut presenter, "[ Confirm ]");
+    await_screen(&mut presenter, "Default model cleared.");
+    assert!(
+        runtime
+            .block_on(fixture.config.catalog())
+            .unwrap()
+            .default_target
+            .is_none()
+    );
+    click(&mut presenter, "[ Models ]");
+    click(&mut presenter, "[ Close ]");
     assert!(screen(&draw(&mut presenter)).contains("Hello product"));
     await_screen(&mut presenter, "[ Send ]");
     click(&mut presenter, "[ Send ]");

@@ -268,6 +268,7 @@ async fn ordinary_settings_pages_keep_root_revision_and_exact_default_cas_withou
     })
     .await;
     let page = models(&first, json!({"kind":"start"})).await.unwrap();
+    assert_eq!(page["defaultModel"], json!({"kind":"none"}));
     assert_eq!(page["choices"].as_array().unwrap().len(), 16);
     assert!(serde_json::to_vec(&page).unwrap().len() < 48 * 1024);
     assert!(!page.to_string().contains("private-fixture-key"));
@@ -284,7 +285,7 @@ async fn ordinary_settings_pages_keep_root_revision_and_exact_default_cas_withou
     );
     let binding = settings(&first).await;
     let operation = Uuid::new_v4();
-    let input = json!({"expectedCatalogRevision":page["revision"],"target":{"connectionId":page["choices"][0]["selection"]["connectionId"],"modelId":"model-00"}});
+    let input = json!({"expectedCatalogRevision":page["revision"],"target":{"connectionId":page["choices"][0]["selection"]["connectionId"],"modelId":"model-19"}});
     let client = first.app.client();
     assert!(
         client
@@ -344,8 +345,66 @@ async fn ordinary_settings_pages_keep_root_revision_and_exact_default_cas_withou
     let changed = models(&first, continuation).await.unwrap();
     assert_eq!(changed["kind"], "changed");
     let new = models(&first, json!({"kind":"start"})).await.unwrap();
-    assert_eq!(new["choices"][0]["isDefault"], true);
+    assert_eq!(new["defaultModel"]["kind"], "ready");
+    assert_eq!(
+        new["defaultModel"]["choice"]["selection"]["modelId"],
+        "model-19"
+    );
+    assert_eq!(
+        new["defaultModel"]["choice"]["selection"]["revision"],
+        new["choices"][0]["selection"]["revision"]
+    );
+    assert!(
+        !new["choices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|choice| choice["selection"]["modelId"] == "model-19")
+    );
+    assert!(new["choices"][0].get("isDefault").is_none());
     assert!(models(&first, json!({"kind":"continue","revision":new["revision"],"cursor":{"connection":0,"model":4000}})).await.is_err());
+    // A valid Root default can belong to a provider outside this capability's
+    // selectable catalog. It must remain visible as unavailable, not disappear
+    // or silently become the first available choice.
+    let CatalogMutationResult::Committed {
+        catalog_revision,
+        connection: Some(unsupported),
+    } = first.config.create_connection(serde_json::from_value(json!({
+        "expectedCatalogRevision":new["revision"],
+        "connection":{
+            "slug":"other-provider","name":"Other provider",
+            "provider":{"packageId":"example.models","entryId":"models","scope":"profile","name":"custom"},
+            "configuration":{},"enabled":true,"enabledModelIds":["other-model"]
+        }
+    })).unwrap()).await.unwrap() else { panic!("other provider commit"); };
+    let target = ConnectionTarget {
+        connection_id: unsupported.connection_id,
+        model_id: "other-model".into(),
+    };
+    assert!(matches!(
+        first
+            .config
+            .set_default_target(SetDefaultConnectionTargetInput {
+                expected_catalog_revision: catalog_revision,
+                target: Some(target.clone()),
+            })
+            .await
+            .unwrap(),
+        CatalogMutationResult::Committed {
+            connection: None,
+            ..
+        }
+    ));
+    let unavailable = models(&first, json!({"kind":"start"})).await.unwrap();
+    assert_eq!(
+        unavailable["defaultModel"],
+        json!({"kind":"unavailable","target":target})
+    );
+    assert_eq!(unavailable["choices"].as_array().unwrap().len(), 16);
+    assert_eq!(
+        first.config.catalog().await.unwrap().default_target,
+        Some(target)
+    );
     first.app.shutdown().await.unwrap();
     second.app.shutdown().await.unwrap();
     first.config.shutdown().await.unwrap();
