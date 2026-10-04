@@ -46,8 +46,11 @@ consumer. No factory or service is automatically activated. Other Rust factories
 are supplied by the trusted launcher; dynamic JavaScript comes from committed
 immutable package bytes.
 
-Mutation resource snapshots require their executor protocol and are currently
-rejected before preparation; authenticated network transport remains pending.
+Mutations carry their original immutable snapshots through preparation, caller
+persistence and final Host admission. The session moves its request resources
+into the original queued/prepared custody, and Scope cleanup waits for actual
+release even if prepare and close run concurrently. Snapshot bytes and metadata
+are never operation-log input. Authenticated network transport remains pending.
 Local subscriptions execute the actual Host `Client.subscribe` with the original
 Binding/Scopes/Policy. UI cancellation cancels the Host execution scope and then
 awaits its original admission observer and actual completion, including scope cleanup.

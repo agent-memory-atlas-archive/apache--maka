@@ -116,7 +116,7 @@ Calls have a 1 MiB JSON limit, with 128-call and 32 MiB in-flight input budgets.
 Attachments allow 16 exact slots and 64 MiB across queued and accepted requests;
 unconfirmed cleanup retains their payloads and capacity. This adapter currently
 executes native and JavaScript queries and subscriptions with attached resources,
-and resource-free durable mutations. Mutation resource snapshots,
+and durable mutations with request-local snapshots.
 trusted Host transport, live composition reconciliation, business recovery hooks,
 and server/TUI/UI integration remain required work. This foundation is not a
 completed Host migration or a compatibility facade for the previous catalog.
@@ -125,15 +125,23 @@ Durable mutations require `Application::start_from_store`, a declared mutation
 method and an explicit non-nil operation UUID. Native callers first use
 `Client::prepare_mutation`, commit its original reference through their own
 `EventLog::record_application_intent`, then pass the prepared invocation and private
-`RecordedIntent` to `Client::mutate`. Preparation holds input capacity but creates
+`RecordedIntent` to `Client::mutate`. Preparation holds the original input and attachment capacity but creates
 no accepted execution or business journal entry. Dispatch rechecks the captured
 binding, Scope, execution domain and policy; it never redirects to a current target.
 `Context::mutate` performs the same caller commit and final admission sequence in
 the original Host caller source. Native and JavaScript mutations share execution
 with queries. JavaScript uses
-`context.invoke({operation:'mutate', import, provider, method, input, operationId})`;
+`context.invoke({operation:'mutate', import, provider, method, input, operationId, attachments})`;
 the callback's actual `HostObservation.operation` contains its original receipt
-reference. Mutation resource attachments still need an executor.
+reference. The `attachments` map explicitly forwards actual current request slots.
+
+`prepare_mutation` takes actual `Attachments` and queues their custody synchronously.
+An original Scope ticket follows the same map and capacity through the queued call,
+prepared reply and executor. Dropping preparation releases actual snapshots before
+acknowledging its ticket; close waits for physical custody, including unreceived
+replies. No resource bytes or metadata enter the operation journal: a private
+Host-minted bundle nonce binds the original fingerprint. A fresh bundle conflicts
+with a prior operation UUID; a recovery reference never grants resource lookup.
 
 Caller history retains the first source and original reference for each stable
 consumer and operation, across source revisions and target changes. A different

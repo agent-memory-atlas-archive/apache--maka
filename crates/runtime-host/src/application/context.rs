@@ -77,6 +77,7 @@ impl Context {
                 .await
         }))
     }
+    #[allow(clippy::too_many_arguments)]
     pub fn mutate(
         &self,
         import: &str,
@@ -84,6 +85,7 @@ impl Context {
         method: String,
         input: Value,
         operation: Uuid,
+        attachments: Attachments,
     ) -> Result<BoxFuture<'static, Result<OperationReply>>> {
         let (reply, result) = oneshot::channel();
         self.enqueue(
@@ -91,7 +93,7 @@ impl Context {
             provider,
             method,
             input,
-            Attachments::new(),
+            attachments,
             CallKind::Mutation {
                 operation,
                 recorded: None,

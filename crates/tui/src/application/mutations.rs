@@ -89,6 +89,7 @@ impl NativeService for Service {
             contract: self.contract.clone(),
             operation: request.source.request_id(),
             input: request.input,
+            capture: None,
             origin: maka_plugins::call::Identity::Remote {
                 request_id: request.source.request_id(),
             },

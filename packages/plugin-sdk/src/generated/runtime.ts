@@ -398,6 +398,9 @@ export type HostRequest =
       method: string;
       input: unknown;
       operationId: string;
+      attachments: {
+        [k: string]: string | undefined;
+      };
       operation: 'mutate';
     }
   | {

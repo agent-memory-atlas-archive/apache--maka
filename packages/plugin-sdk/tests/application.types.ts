@@ -155,6 +155,7 @@ const mutation = {
   method: 'echo',
   input: null,
   operationId: '00000000-0000-4000-8000-000000000001',
+  attachments: {},
 } satisfies HostRequest;
 const incompleteMutation = {
   operation: 'mutate',
@@ -162,12 +163,14 @@ const incompleteMutation = {
   provider: 0,
   method: 'echo',
   input: null,
+  attachments: {},
 } as const;
 // @ts-expect-error An explicit durable operation identity is required.
 const missingOperation: HostRequest = incompleteMutation;
 const fabricatedMutation = {
   ...mutation,
-  // @ts-expect-error Live resource attachments cannot masquerade as durable snapshots.
+  // @ts-expect-error The original bundle identity is private Host custody.
+  capture: '00000000-0000-4000-8000-000000000001',
   attachments: { text: 'text' },
 } satisfies HostRequest;
 void [mutation, missingOperation, fabricatedMutation];

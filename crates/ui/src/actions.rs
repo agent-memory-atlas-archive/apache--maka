@@ -277,6 +277,11 @@ impl<V: ?Sized> Actions<V> {
         self.queue
             .iter()
             .filter_map(|q| q.resources.as_ref())
+            .chain(
+                self.preparing
+                    .values()
+                    .filter_map(|p| p.action.resources.as_ref()),
+            )
             .chain(self.running.values().map(|r| &r.resources))
             .flat_map(|r| r.values())
             .map(|r| r.bytes())
@@ -555,6 +560,29 @@ impl<V: ?Sized + 'static> Application<V> {
                     edges,
                 })
             }
+        }
+    }
+    pub(super) fn invalidate_pending_captures(&mut self) {
+        // Committed source changes permanently revoke pending original captures.
+        // Restoring a slot in a later update cannot revive the old invocation.
+        let invalid: Vec<_> = self
+            .actions
+            .queue
+            .iter()
+            .chain(self.actions.preparing.values().map(|p| &p.action))
+            .filter(|action| {
+                action
+                    .captures
+                    .values()
+                    .any(|target| !self.target_valid(target))
+            })
+            .map(|action| action.id)
+            .collect();
+        for action in &mut self.actions.queue {
+            action.invalidated |= invalid.contains(&action.id);
+        }
+        for preparing in self.actions.preparing.values_mut() {
+            preparing.action.invalidated |= invalid.contains(&preparing.action.id);
         }
     }
     fn target_valid(&self, target: &CaptureTarget) -> bool {

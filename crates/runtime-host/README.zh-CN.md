@@ -82,17 +82,17 @@ reader 可以排空已接受数据。`Subscription::cancel` 和 Drop 仅请求�
 
 调用 JSON 最多 1 MiB，共用 128-call / 32 MiB in-flight 输入预算；附件最多 16 个准确槽位，
 queued 与 accepted 请求共用 64 MiB，清理未确认时保留实际 payload 和容量。当前适配器执行
-原生及 JavaScript query / subscription（支持附件）和无附件的持久 mutation；mutation 资源快照、
+原生及 JavaScript query / subscription 和带请求私有快照的持久 mutation；
 可信 Host transport、live 组合收敛、业务恢复 hook 及 server/TUI/UI 接线仍须实现。这是执行基础，不是完整 Host 迁移或旧 catalog 兼容 facade。
 
 持久 mutation 要求 `Application::start_from_store`、声明 mutation 方法和显式非 nil 操作 UUID。
 原生调用端先 `Client::prepare_mutation`，在自己的 Root 中通过
 `EventLog::record_application_intent` 确认原 Ref，再把准备结果和私有 `RecordedIntent`
-交给 `Client::mutate`。准备持有输入预算，但不接受执行、不写业务 journal；最终准入重新检查
+交给 `Client::mutate`。准备持有原输入和附件预算，但不接受执行、不写业务 journal；最终准入重新检查
 捕获的 binding、Scope、执行域与 Policy，不重定位当前 target。`Context::mutate` 在原 Host caller
 source 中执行同样的记录与最终准入顺序，并与 query 共用真实 native/JS handler。JS 使用
-`context.invoke({operation:'mutate', import, provider, method, input, operationId})`。
-回调实际 `HostObservation.operation` 提供原回执引用；mutation 附件快照与 subscription 执行器仍待实现。
+`context.invoke({operation:'mutate', import, provider, method, input, operationId, attachments})`。
+回调实际 `HostObservation.operation` 提供原回执引用；attachments 显式映射当前请求的真实资源槽。
 
 caller 历史按稳定 consumer 与 operation 保留首次 source 和原 Ref，跨 source 修订或目标变化
 仍读取原记录；不同 Ref 冲突。caller 记录不宣称业务结果，不产生 Host 授权。记录失败或 commit
@@ -116,3 +116,10 @@ SQL 结算不确定也不冒充物理 cleanup failure。丢弃观察者或应用
 `Client::recover` 固定原 Root/Ref，不解析当前 provider。读取前后检查实际 consumer lifetime、
 Issuer、撤销状态和显式 `Policy::recover`；默认拒绝，包括重复请求释放历史结果。
 Ref 不产生授权；替换组合或移除原 provider 后，新 consumer 获得原 Root 的实际恢复 grant 才可读回执。
+
+持久 mutation 的 `Client::prepare_mutation` 接收真实 `Attachments` 并同步排队。
+原 Scope ticket 随同一 map/容量在 queued Call、Prepared reply、executor 之间转移；
+准备 drop 先释放真实快照再确认 ticket，close 等待真实 custody，包括未收取的 reply。
+Host 仅把原 bundle 的私有 nonce 纳入操作 fingerprint，不记录快照字节或 metadata。
+同 operation UUID 的新 bundle 是冲突的新原请求；原 recovery reference 不授予资源读取。
+JavaScript 的 `mutate` 必须显式提供目标槽到当前源槽的 `attachments` map。

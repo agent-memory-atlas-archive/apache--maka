@@ -130,21 +130,18 @@ impl NativeService for LocalService {
         })
     }
     fn mutation(&self, request: ServiceRequest) -> Result<Arc<dyn NativeMutation>> {
-        if !request.resources.is_empty() {
-            return Err("mutation resource snapshots require their executor".into());
-        }
         Ok(Arc::new(Session {
             client: self.client.clone(),
             binding: self.binding.clone(),
             scopes: self.scopes.clone(),
-            request,
+            source: request.source.clone(),
             scope: OnceLock::new(),
-            phase: Mutex::new(Phase::New),
+            phase: Mutex::new(Phase::New(Box::new(request))),
         }))
     }
 }
 enum Phase {
-    New,
+    New(Box<ServiceRequest>),
     Preparing,
     Ready(Box<PreparedMutation>),
     Closed,
@@ -153,37 +150,37 @@ struct Session {
     client: Client,
     binding: Binding,
     scopes: Arc<dyn Scopes>,
-    request: ServiceRequest,
+    source: ServiceSource,
     scope: OnceLock<Scope>,
     phase: Mutex<Phase>,
 }
 impl NativeMutation for Session {
     fn prepare(self: Arc<Self>) -> ReferenceFuture {
         Box::pin(async move {
-            let scope = {
+            let preparation = {
                 let mut phase = self.phase.lock().unwrap();
-                if !matches!(*phase, Phase::New) {
+                let Phase::New(request) = &*phase else {
                     return Err("mutation session is not new".into());
-                }
-                // Publication is atomic with respect to close. The trusted factory
-                // is synchronous and inert; no resource can appear after close.
-                let scope = self.scopes.scope(&self.request.source)?;
+                };
+                // Scope creation and the original queued custody are published
+                // together under the same lock as close.
+                let scope = self.scopes.scope(&request.source)?;
                 self.scope
                     .set(scope.clone())
                     .map_err(|_| "mutation Scope already exists")?;
-                *phase = Phase::Preparing;
-                scope
-            };
-            let prepared = self
-                .client
-                .prepare_mutation(
+                let Phase::New(request) = std::mem::replace(&mut *phase, Phase::Preparing) else {
+                    unreachable!()
+                };
+                self.client.prepare_mutation(
                     self.binding.clone(),
-                    self.request.method.clone(),
-                    self.request.input.clone(),
+                    request.method,
+                    request.input,
                     scope,
-                    self.request.source.request_id(),
+                    request.source.request_id(),
+                    request.resources,
                 )
-                .await?;
+            };
+            let prepared = preparation.await?;
             let reference = prepared.reference().clone();
             let mut phase = self.phase.lock().unwrap();
             if !matches!(*phase, Phase::Preparing) {
@@ -203,8 +200,8 @@ impl NativeMutation for Session {
             };
             let admission = (|| {
                 let prepared = prepared.ok_or("mutation session is not prepared")?;
-                if self.request.source.deployment() != Some(&recorded.intent().caller)
-                    || self.request.source.consumer().instance() != &recorded.intent().consumer
+                if self.source.deployment() != Some(&recorded.intent().caller)
+                    || self.source.consumer().instance() != &recorded.intent().consumer
                     || prepared.reference() != &reference
                 {
                     return Err("caller confirmation differs from the original request".to_string());

@@ -413,6 +413,7 @@ impl Fixture {
                 input,
                 scope(&self.issuer, true),
                 operation,
+                Attachments::new(),
             )
             .await?;
         let recorded = self
@@ -704,7 +705,8 @@ async fn original_operation_conflicts_and_private_namespace_never_cross_sessions
                     "send".into(),
                     json!({"sessionId":first["id"],"message":"Unauthorized"}),
                     scope(&fixture.issuer, false),
-                    Uuid::new_v4()
+                    Uuid::new_v4(),
+                    Attachments::new(),
                 )
                 .await
                 .is_err()

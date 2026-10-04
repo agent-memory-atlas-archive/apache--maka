@@ -17,6 +17,8 @@
  * under the License.
  */
 
+#[path = "local/resource_mutations.rs"]
+mod resource_mutations;
 #[path = "local/subscriptions.rs"]
 mod subscriptions;
 mod support;

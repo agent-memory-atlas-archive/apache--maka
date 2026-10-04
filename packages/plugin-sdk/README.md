@@ -60,13 +60,13 @@ Their bundled modules execute in the real application integration tests. Build t
 workspace before importing its package exports. Bundles must contain no unresolved
 imports or top-level await; they do not embed native extensions or confer authority.
 
-Host application services support queries, subscriptions and durable, resource-free mutations.
+Host application services support queries, subscriptions and durable mutations with request-local resource snapshots.
 Subscription handlers publish with `await context.invoke({operation: 'emit', value})`;
 items and the final return value use the declared output schema. Each stream allows
 16 queued items, 16 pending emits and 64 KiB JSON per item. Await each publish to
 respect reader backpressure. The native Host client owns stream cancellation and
 observes real cleanup separately.
-`context.invoke({ operation: 'mutate', ..., operationId })` returns an `OperationReply`
+`context.invoke({ operation: 'mutate', ..., operationId, attachments: { text: 'text' } })` returns an `OperationReply`
 with the original `reference` even when the result is unknown or cannot be delivered.
 Only `receipt.kind === 'recorded'` describes journal facts; inspect both `outcome`
 and `cleanup`. `recover` takes that exact reference, independently of current imports,
@@ -84,11 +84,17 @@ the next is consumed. Replacement and retirement discard old feedback while the
 original executor still completes actual cleanup. This supports both Desktop and TUI;
 authenticated cross-process transport remains unfinished.
 
-Persisted UI components submit resource-free mutations through their ordinary
+Persisted UI components submit mutations, including declared captured resources, through their ordinary
 `actions`. The kernel generates the operation identity and records the original
 caller intent before dispatch. Feedback uses `ActionOutcome` with
 `status: 'operation'` and the original `OperationReply`; components must handle
 unknown/unavailable receipts without automatically repeating the action.
+Declared resource slots capture their original immutable snapshots before native
+commands. The original bundle stays owned and budgeted through preparation,
+caller persistence, dispatch and actual cleanup. Host persists only a private
+bundle nonce in the operation fingerprint, never snapshot bytes or metadata. A
+new capture with the same operation UUID is a conflicting original request;
+recovery only reads the original receipt and never rebuilds or replays resources.
 An explicitly composed `maka.operations.history` native instance exposes the local
 `contracts.callerHistory` service (`History` export). Its `page` query accepts
 `CallerHistoryPage` (`after`, `limit`) and returns `CallerIntent[]` for the actual
@@ -111,7 +117,7 @@ may still be unknown or unavailable. Transport/query failures use `failed`;
 keep the original reference. Large or inexact journal values produce the same
 reference with `unavailable` for this portable contract, while raw native recovery
 preserves them. Query cleanup does not describe the original operation's cleanup.
-Effectful resource snapshots and business migration remain unfinished.
+Cross-process resource transport and business migration remain unfinished.
 
 Deployment sources can be stored in an owned State Root with
 `maka application commit --root ROOT --deployment UUID --expected-revision 0 --input input.json --package bundle.maka-plugin`.
@@ -120,7 +126,7 @@ validates the persisted source and exact package bytes. The returned `Deployment
 that state domain and source revision; it grants no access and makes no readiness claim.
 The Host executor can start from this snapshot and retains storage ownership through accepted
 work and cleanup. Original receipts survive source replacement and restart. Resolving unknown external effects,
-effectful resource snapshots and live reconciliation remain unfinished.
+cross-process resource transport and live reconciliation remain unfinished.
 
 The `./host` API and the guide below belong to the implementation still awaiting
 migration and removal. They are not an adapter for the application API.

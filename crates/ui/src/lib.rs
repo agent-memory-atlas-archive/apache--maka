@@ -786,12 +786,8 @@ fn service_export<V: ?Sized>(
     };
     let mut compiled = BTreeMap::new();
     for (name, method) in methods {
-        if method.mode == maka_plugin_core::contract::MethodMode::Mutation
-            && !method.resources.is_empty()
-        {
-            return Err(Error::Invalid(
-                "UI resource mutation requires its own executor".into(),
-            ));
+        if method.resources.len() > 16 {
+            return Err(Error::Invalid("maximum 16 resource slots".into()));
         }
         compiled.insert(
             name.clone(),

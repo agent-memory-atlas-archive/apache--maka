@@ -561,6 +561,7 @@ impl Owner {
                     input,
                     scope,
                     attachments,
+                    capture,
                     slot,
                     bytes,
                     resources,
@@ -569,6 +570,7 @@ impl Owner {
                 if kind.closed() && parent.is_none() {
                     return;
                 }
+                let mut descriptor_failed = false;
                 let admission = (|| {
                     if self.closing
                         || !self.issuer.owns(&scope)
@@ -621,6 +623,7 @@ impl Owner {
                                 contract: service.contract.clone(),
                                 operation,
                                 input: input.clone(),
+                                capture,
                                 origin: scope.identity.clone(),
                             })
                         })
@@ -673,9 +676,7 @@ impl Owner {
                         Err(_) => {
                             let error = "Host admission policy or attachment descriptor panicked"
                                 .to_string();
-                            if let Some(ticket) = parent.take() {
-                                ticket.complete(Err(error.clone()));
-                            }
+                            descriptor_failed = true;
                             return Err(error);
                         }
                     };
@@ -695,21 +696,33 @@ impl Owner {
                 })();
                 match admission {
                     Err(error) => {
+                        drop(kind.take_intent());
+                        drop((attachments, resources, slot, bytes, input, scope));
                         if let Some(ticket) = parent.take() {
-                            ticket.complete(Ok(()));
+                            ticket.complete(if descriptor_failed {
+                                Err(error.clone())
+                            } else {
+                                Ok(())
+                            });
                         }
                         kind.reject(error);
                     }
                     Ok((execution, child, request, reference)) => {
                         if let CallKind::PrepareMutation { reply, .. } = kind {
                             let _ = reply.send(Ok(PreparedMutation {
-                                binding,
-                                method,
-                                input,
-                                scope,
                                 reference: reference.expect("mutation reference"),
-                                slot,
-                                bytes,
+                                invocation: Some(PreparedInvocation {
+                                    binding,
+                                    method,
+                                    input,
+                                    scope,
+                                    attachments,
+                                    capture,
+                                    slot,
+                                    bytes,
+                                    resources,
+                                    parent,
+                                }),
                             }));
                             return;
                         }
@@ -732,6 +745,7 @@ impl Owner {
                                 input,
                                 scope,
                                 attachments,
+                                capture,
                                 slot,
                                 bytes,
                                 resources,
@@ -932,10 +946,22 @@ impl Owner {
                     self.command(Command::Call(call));
                 }
                 Err(error) => {
-                    if let Some(ticket) = call.parent.take() {
+                    let parent = call.parent.take();
+                    let Call {
+                        kind,
+                        attachments,
+                        resources,
+                        slot,
+                        bytes,
+                        input,
+                        scope,
+                        ..
+                    } = *call;
+                    drop((attachments, resources, slot, bytes, input, scope));
+                    if let Some(ticket) = parent {
                         ticket.complete(Ok(()));
                     }
-                    call.kind.reject(error);
+                    kind.reject(error);
                 }
             },
             Done::Initialized {
@@ -1005,9 +1031,6 @@ impl Owner {
                 self.runtime
                     .settle(&execution, cleanup.clone())
                     .expect("accepted execution belongs to owner");
-                if let Some(ticket) = parent {
-                    ticket.complete(cleanup.clone());
-                }
                 if failed {
                     self.cleanup_error
                         .get_or_insert_with(|| cleanup_error.unwrap());
@@ -1023,7 +1046,10 @@ impl Owner {
                 } else {
                     // Confirmed physical cleanup releases caller custody before waking
                     // an observer that may immediately reopen the caller Root.
-                    drop(intent);
+                    drop((intent, attachments, _resources, _slot, _bytes, scope));
+                }
+                if let Some(ticket) = parent {
+                    ticket.complete(cleanup.clone());
                 }
                 reply.send(result, cleanup, receipt.map(|receipt| *receipt));
             }

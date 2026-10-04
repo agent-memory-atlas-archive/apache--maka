@@ -739,6 +739,7 @@ impl<V: ?Sized + 'static> Application<V> {
             self.runtime.retire_mount(mount)?;
         }
         self.views.append(&mut update.changed);
+        self.invalidate_pending_captures();
         update.actions.retain(|action| {
             !action.subscription
                 || self.subscription_wanted(&action.consumer, &action.key, action.id)

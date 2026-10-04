@@ -60,6 +60,7 @@ pub enum HostRequest {
         input: Value,
         #[serde(rename = "operationId")]
         operation_id: uuid::Uuid,
+        attachments: BTreeMap<String, String>,
     },
     Recover {
         reference: maka_plugin_core::operation::RecoveryRef,

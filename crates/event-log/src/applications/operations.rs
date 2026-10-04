@@ -22,7 +22,7 @@ use super::{encode, invalid};
 use crate::{EventLog, StoreError, root::RootOwner};
 use maka_plugin_core::{
     composition::InstanceId,
-    contract::Contract,
+    contract::{Contract, Interface},
     deployment::DeploymentRef,
     operation::{
         OperationCleanup, OperationObservation, OperationOutcome, RecoveryProtocol, RecoveryRef,
@@ -53,7 +53,15 @@ pub struct OperationRequest {
     pub contract: Contract,
     pub operation: Uuid,
     pub input: Value,
+    /// Identity of the original private resource bundle; never a lookup grant.
+    #[serde(deserialize_with = "required_capture")]
+    pub capture: Option<Uuid>,
     pub origin: Identity,
+}
+fn required_capture<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Uuid>, D::Error> {
+    Option::<Uuid>::deserialize(deserializer)
 }
 impl OperationRequest {
     pub fn reference(&self) -> Result<RecoveryRef, StoreError> {
@@ -64,6 +72,19 @@ impl OperationRequest {
             || self.consumer.0.iter().any(Uuid::is_nil)
         {
             return Err(invalid("invalid operation consumer"));
+        }
+        let Interface::Service { methods } = &self.contract.interface else {
+            return Err(invalid("operation requires a service contract"));
+        };
+        let method = methods
+            .get(&self.method)
+            .ok_or_else(|| invalid("undeclared operation method"))?;
+        if self.capture.is_some_and(|id| id.is_nil())
+            || self.capture.is_some() == method.resources.is_empty()
+        {
+            return Err(invalid(
+                "operation capture does not match declared resources",
+            ));
         }
         let mut canonical = serde_json::to_value(self)?;
         canonical

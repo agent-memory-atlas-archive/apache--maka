@@ -19,6 +19,8 @@
 
 #[path = "receipts.rs"]
 mod receipts;
+#[path = "resource_mutations.rs"]
+mod resource_mutations;
 
 use super::*;
 use maka_event_log::{
@@ -169,7 +171,7 @@ async fn mutate(
     operation: Uuid,
 ) -> Result<maka_runtime_host::application::Mutation> {
     let prepared = client
-        .prepare_mutation(binding, method, input, scope, operation)
+        .prepare_mutation(binding, method, input, scope, operation, Attachments::new())
         .await?;
     let recorded = store
         .record_application_intent(
@@ -720,7 +722,7 @@ async fn javascript_forwarded_mutation_preserves_original_evidence_and_parent_cl
         forwarder_entry.imports.insert("child".into(), Import {contract:contract(MethodMode::Mutation),cardinality:Cardinality::One});
         let source=format!(r#"
             export const service={{async echo(input,_observation,context) {{
-                const reply=await context.invoke({{operation:'mutate',import:'child',provider:0,method:'echo',input,operationId:'{operation}'}});
+                const reply=await context.invoke({{operation:'mutate',import:'child',provider:0,method:'echo',input,operationId:'{operation}',attachments:{{}}}});
                 if(reply.receipt.kind !== 'recorded' || reply.receipt.outcome.kind !== 'returned') throw Error('child receipt not returned');
                 if(!reply.reference || reply.reference.operation !== '{operation}') throw Error('lost child reference');
                 return reply.receipt.outcome.value+':parent';
@@ -1183,7 +1185,7 @@ async fn javascript_receipts_preserve_child_reference_unknown_and_oversized_reco
                     const missing = {{...reference, operation:'00000000-0000-0000-0000-000000000abc'}};
                     reply = await context.invoke({{ operation:'recover', reference:missing }});
                 }} else {{
-                    reply = await context.invoke({{ operation:'mutate', import:'child', provider:0, method:'echo', input, operationId:input==='large'?'00000000-0000-0000-0000-000000000002':input==='integer'?'00000000-0000-0000-0000-000000000003':'00000000-0000-0000-0000-000000000001' }});
+                    reply = await context.invoke({{ operation:'mutate', import:'child', provider:0, method:'echo', input, attachments:{{}}, operationId:input==='large'?'00000000-0000-0000-0000-000000000002':input==='integer'?'00000000-0000-0000-0000-000000000003':'00000000-0000-0000-0000-000000000001' }});
                     reference = reply.reference;
                 }}
                 return JSON.stringify(reply);
@@ -1386,6 +1388,7 @@ async fn preparation_is_effect_free_does_not_lock_native_root_and_never_redirect
                 json!("prepared"),
                 scope(&issuer, true),
                 Uuid::new_v4(),
+                Attachments::new(),
             )
             .await
             .unwrap();
@@ -1488,6 +1491,7 @@ async fn recorded_intent_does_not_override_revocation_between_prepare_and_dispat
                     json!("effect"),
                     scope,
                     Uuid::new_v4(),
+                    Attachments::new(),
                 )
                 .await
                 .unwrap();
@@ -1647,7 +1651,7 @@ async fn internal_caller_commit_precedes_final_admission_and_failed_record_never
             let operation = Uuid::new_v4();
             let source = format!(r#"
                 export const service={{async echo(input,_observation,context) {{
-                    try {{ await context.invoke({{operation:'mutate',import:'child',provider:0,method:'echo',input,operationId:'{operation}'}}); }}
+                    try {{ await context.invoke({{operation:'mutate',import:'child',provider:0,method:'echo',input,operationId:'{operation}',attachments:{{}}}}); }}
                     catch(error) {{ return String(error); }}
                     throw Error('unexpected accepted child');
                 }}}};
@@ -1792,7 +1796,7 @@ async fn separate_caller_root_stays_owned_through_effect_cleanup_and_keeps_origi
             let host=Application::start_from_store(host_store.clone(),host_deployment,registry_contract(Arc::new(CallerCheckedMutation {caller_database:caller_dir.path().join("root").join(maka_event_log::root::ROOT_DATABASE),started:started.clone(),release:release.clone(),fail_cleanup}),declared.clone()),issuer.clone(),Arc::new(RecoveryGrant {issuer:issuer.clone(),recovery:Arc::new(AtomicBool::new(true))}),Limits::default()).await.unwrap();
             host.ready().await.unwrap();let client=host.client();
             let binding=client.bind(client.activation(&id(2)).unwrap(),"echo".into()).await.unwrap().remove(0);
-            let prepared=client.prepare_mutation(binding,"echo".into(),json!("original"),scope(&issuer,true),Uuid::new_v4()).await.unwrap();
+            let prepared=client.prepare_mutation(binding,"echo".into(),json!("original"),scope(&issuer,true),Uuid::new_v4(),Attachments::new()).await.unwrap();
             let reference=prepared.reference().clone();
             assert!(host_store.operation_observation(&reference).await.unwrap().is_none());
             let recorded=caller_store.record_application_intent(caller_source.clone(),id(41),reference.clone()).await.unwrap();

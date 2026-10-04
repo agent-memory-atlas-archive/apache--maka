@@ -144,13 +144,8 @@ impl Service {
         let compiled = methods
             .iter()
             .map(|(name, method)| {
-                if method.mode == MethodMode::Mutation && !method.resources.is_empty()
-                    || method.resources.len() > 16
-                {
-                    return Err(
-                        "mutation resource snapshots require their executor; maximum 16 resource slots"
-                            .into(),
-                    );
+                if method.resources.len() > 16 {
+                    return Err("maximum 16 resource slots".into());
                 }
                 Ok((
                     name.clone(),
@@ -158,8 +153,7 @@ impl Service {
                         input: jsonschema::validator_for(&method.input)
                             .map_err(|e| e.to_string())?,
                         output: Arc::new(
-                            jsonschema::validator_for(&method.output)
-                                .map_err(|e| e.to_string())?,
+                            jsonschema::validator_for(&method.output).map_err(|e| e.to_string())?,
                         ),
                     },
                 ))
@@ -223,22 +217,46 @@ impl Accepted {
 }
 
 /// Checked original invocation data, not accepted work or effect authority.
-/// Holds input capacity until dispatch/drop; the binding does not own its service value.
+/// Holds original input/resource capacity and a Scope ticket until dispatch/drop;
+/// the binding does not own its service value.
 pub struct PreparedMutation {
+    reference: RecoveryRef,
+    invocation: Option<PreparedInvocation>,
+}
+struct PreparedInvocation {
     binding: Binding,
     method: String,
     input: Value,
     scope: Scope,
-    reference: RecoveryRef,
+    attachments: Attachments,
+    capture: Option<Uuid>,
     slot: OwnedSemaphorePermit,
     bytes: OwnedSemaphorePermit,
+    resources: OwnedSemaphorePermit,
+    // Last: inert drop releases physical custody before acknowledging its Scope.
+    parent: Option<Ticket>,
 }
 impl PreparedMutation {
     pub fn reference(&self) -> &RecoveryRef {
         &self.reference
     }
     pub fn consumer(&self) -> &Activation {
-        self.binding.0.consumer()
+        self.invocation
+            .as_ref()
+            .expect("original invocation")
+            .binding
+            .consumer()
+    }
+}
+impl Drop for PreparedMutation {
+    fn drop(&mut self) {
+        if let Some(mut invocation) = self.invocation.take() {
+            let parent = invocation.parent.take();
+            drop(invocation);
+            if let Some(ticket) = parent {
+                ticket.complete(Ok(()));
+            }
+        }
     }
 }
 
@@ -330,16 +348,17 @@ pub(super) enum Command {
     },
 }
 pub(super) struct Call {
-    parent: Option<Ticket>,
     kind: CallKind,
     binding: Binding,
     method: String,
     input: Value,
     scope: Scope,
     attachments: Attachments,
+    capture: Option<Uuid>,
     slot: OwnedSemaphorePermit,
     bytes: OwnedSemaphorePermit,
     resources: OwnedSemaphorePermit,
+    parent: Option<Ticket>,
 }
 pub(super) enum CallKind {
     PrepareMutation {
@@ -581,11 +600,13 @@ impl Application {
                         return Err("Host service executor requires service exports".into());
                     };
                     if methods.values().any(|m| {
-                        m.mode == MethodMode::Mutation
-                            && (persisted.is_none() || !m.resources.is_empty())
+                        m.mode == MethodMode::Mutation && persisted.is_none()
                             || m.resources.len() > 16
                     }) {
-                        return Err("mutation resource snapshots require their executor; maximum 16 resource slots".into());
+                        return Err(
+                            "durable mutation requires a State Root; maximum 16 resource slots"
+                                .into(),
+                        );
                     }
                 }
                 if let Implementation::Native { implementation } = &entry.implementation
@@ -757,57 +778,65 @@ impl Client {
         Ok(subscriber)
     }
     /// Checks and captures the original invocation without dispatching an effect.
-    pub async fn prepare_mutation(
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_mutation(
         &self,
         binding: Binding,
         method: String,
         input: Value,
         scope: Scope,
         operation: Uuid,
-    ) -> Result<PreparedMutation> {
-        let (reply, result) = oneshot::channel();
-        self.dispatch.enqueue(
-            binding,
-            method,
-            input,
-            scope,
-            Attachments::new(),
-            None,
-            CallKind::PrepareMutation { operation, reply },
-        )?;
-        result
-            .await
-            .map_err(|_| "Host deployment is closed".to_string())?
+        attachments: Attachments,
+    ) -> BoxFuture<'static, Result<PreparedMutation>> {
+        // Queue and reserve original custody synchronously. A concurrent close
+        // cannot acknowledge this request between publication and first poll.
+        let queued = (|| {
+            let ticket = scope.resources.reserve().map_err(|e| e.to_string())?;
+            let (reply, result) = oneshot::channel();
+            self.dispatch.enqueue(
+                binding,
+                method,
+                input,
+                scope,
+                attachments,
+                Some(ticket),
+                CallKind::PrepareMutation { operation, reply },
+            )?;
+            Ok::<_, String>(result)
+        })();
+        Box::pin(async move {
+            queued?
+                .await
+                .map_err(|_| "Host deployment is closed".to_string())?
+        })
     }
     /// Requires caller persistence, then rechecks the original invocation at dispatch.
     pub async fn mutate(
         &self,
-        prepared: PreparedMutation,
+        mut prepared: PreparedMutation,
         recorded: maka_event_log::applications::intents::RecordedIntent,
     ) -> Result<Mutation> {
         if prepared.reference != recorded.intent().reference {
             return Err("caller intent disagrees with original preparation".into());
         }
-        let PreparedMutation {
+        let reference = prepared.reference.clone();
+        let PreparedInvocation {
             binding,
             method,
             input,
             scope,
-            reference,
+            attachments,
+            capture,
             slot,
             bytes,
-        } = prepared;
-        let resources = self
-            .dispatch
-            .resources
-            .clone()
-            .try_acquire_many_owned(0)
-            .map_err(|e| e.to_string())?;
+            resources,
+            parent,
+        } = prepared.invocation.take().expect("original invocation");
         let (reply, result) = oneshot::channel();
         self.dispatch
             .commands
             .try_send(Command::Call(Box::new(Call {
-                parent: None,
+                parent,
                 kind: CallKind::Mutation {
                     operation: reference.operation,
                     recorded: Some(Box::new(recorded)),
@@ -817,7 +846,8 @@ impl Client {
                 method,
                 input,
                 scope,
-                attachments: Attachments::new(),
+                attachments,
+                capture,
                 slot,
                 bytes,
                 resources,
@@ -919,17 +949,21 @@ impl Dispatch {
         input: Value,
         scope: Scope,
         attachments: Attachments,
-        mut parent: Option<Ticket>,
+        parent: Option<Ticket>,
         kind: CallKind,
     ) -> Result<()> {
+        // Tuple field order releases snapshots before the inert ticket on all
+        // early errors, including capacity rejection before enqueue.
+        let mut custody = (attachments, parent);
         let size = check_json(&input)?;
         let resource_bytes = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            check_attachments(&attachments)
+            check_attachments(&custody.0)
         })) {
             Ok(result) => result?,
             Err(_) => {
                 let error = "Host attachment descriptor panicked".to_string();
-                if let Some(ticket) = parent.take() {
+                drop(custody.0);
+                if let Some(ticket) = custody.1.take() {
                     ticket.complete(Err(error.clone()));
                 }
                 return Err(error);
@@ -953,6 +987,8 @@ impl Dispatch {
             .clone()
             .try_acquire_many_owned(resource_bytes as u32)
             .map_err(|_| "Host attachment budget exhausted")?;
+        let (attachments, parent) = custody;
+        let capture = (kind.operation().is_some() && !attachments.is_empty()).then(Uuid::new_v4);
         self.commands
             .try_send(Command::Call(Box::new(Call {
                 parent,
@@ -962,6 +998,7 @@ impl Dispatch {
                 input,
                 scope,
                 attachments,
+                capture,
                 slot,
                 bytes,
                 resources,

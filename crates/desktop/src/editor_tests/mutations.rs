@@ -314,6 +314,7 @@ impl NativeMutation for Session {
                     self.request.input.clone(),
                     self.scope.clone(),
                     self.request.source.request_id(),
+                    self.request.resources.clone(),
                 )
                 .await?;
             let reference = prepared.reference().clone();

@@ -89,16 +89,7 @@ impl maka_js_runtime::plugin::RequestBridge for Context {
                 input,
                 attachments,
             } => {
-                let attachments = attachments
-                    .into_iter()
-                    .map(|(target, source)| {
-                        self.attachments
-                            .get(&source)
-                            .cloned()
-                            .map(|resource| (target, resource))
-                            .ok_or_else(|| "unknown request resource slot".to_string())
-                    })
-                    .collect::<Result<Attachments>>()?;
+                let attachments = self.forward(attachments)?;
                 self.call(&import, provider, method, input, attachments)
             }
             HostRequest::Mutate {
@@ -107,8 +98,16 @@ impl maka_js_runtime::plugin::RequestBridge for Context {
                 method,
                 input,
                 operation_id,
+                attachments,
             } => {
-                let result = self.mutate(&import, provider, method, input, operation_id)?;
+                let result = self.mutate(
+                    &import,
+                    provider,
+                    method,
+                    input,
+                    operation_id,
+                    self.forward(attachments)?,
+                )?;
                 Ok(Box::pin(async move { receipt_value(result.await?) })
                     as BoxFuture<'static, Result<Value>>)
             }
@@ -134,6 +133,18 @@ impl maka_js_runtime::plugin::RequestBridge for Context {
     }
 }
 impl Context {
+    fn forward(&self, attachments: BTreeMap<String, String>) -> Result<Attachments> {
+        attachments
+            .into_iter()
+            .map(|(target, source)| {
+                self.attachments
+                    .get(&source)
+                    .cloned()
+                    .map(|resource| (target, resource))
+                    .ok_or_else(|| "unknown request resource slot".to_string())
+            })
+            .collect()
+    }
     fn read(&self, operation: HostRequest) -> Result<Value> {
         if self.scope.cancellation.is_cancelled() {
             return Err("Host request was revoked".into());

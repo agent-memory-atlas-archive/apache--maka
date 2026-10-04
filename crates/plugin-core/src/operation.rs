@@ -71,11 +71,12 @@ impl RecoveryRef {
                 "operation requires a service contract".into(),
             ));
         };
-        if methods.get(&self.method).is_none_or(|method| {
-            method.mode != MethodMode::Mutation || !method.resources.is_empty()
-        }) {
+        if methods
+            .get(&self.method)
+            .is_none_or(|method| method.mode != MethodMode::Mutation)
+        {
             return Err(crate::Error::Contract(
-                "operation requires a declared resource-free mutation method".into(),
+                "operation requires a declared mutation method".into(),
             ));
         }
         Ok(())

@@ -36,7 +36,9 @@ Host 组合显式选择 `maka.application.gateway` 实现的实例及其 imports
 endpoint，转发到其他 consumer 会拒绝；其他可信 embedding 可以通过 `LocalService`
 提供其独立 Host Policy 与只创建无资源 Scope 的 `Scopes` factory。
 
-Mutation 的 resource snapshots 需要其 executor 协议，目前在准备前拒绝；
+Mutation 的原 immutable snapshots 随准备、caller 持久化、最终 Host 准入转移。
+Session 将请求资源一次转移进原 queued/prepared custody；prepare 与 close 并发时，
+Scope cleanup 仍须等待真实释放。快照字节和 metadata 不进入操作日志；
 认证网络 transport 尚未接入。
 
 配置采用闭合 JSON，上限 1 MiB、16 个 Host、每 Host 128 个 import、每 import 64

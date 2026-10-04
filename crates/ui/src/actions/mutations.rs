@@ -32,7 +32,7 @@ enum Phase {
     Failed,
 }
 pub(super) struct Preparing<V: ?Sized> {
-    action: Prepared<V>,
+    pub(super) action: Prepared<V>,
     resource: Resource,
     session: Option<Session>,
     // A confirmed caller token remains owned through aborted preparation close.
@@ -82,7 +82,7 @@ impl<V: ?Sized + 'static> Application<V> {
             },
             method: action.method.clone(),
             input: action.input.clone(),
-            resources: Attachments::new(),
+            resources: action.resources.as_ref().expect("captured").clone(),
         };
         let owner = std::panic::catch_unwind(AssertUnwindSafe(|| implementation.mutation(request)));
         let owner = match owner {
@@ -233,7 +233,14 @@ impl<V: ?Sized + 'static> Application<V> {
             Ok(recorded) => recorded,
             Err(reason) => return self.close_preparation(id, reason, None),
         };
-        if self.is_retiring(&preparing.action.consumer) || preparing.action.invalidated {
+        if self.is_retiring(&preparing.action.consumer)
+            || preparing.action.invalidated
+            || preparing
+                .action
+                .captures
+                .values()
+                .any(|target| !self.target_valid(target))
+        {
             return self.close_preparation(
                 id,
                 "consumer retired before mutation admission".into(),
@@ -255,7 +262,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 method: preparing.action.method,
                 completed: false,
                 execution,
-                resources: Attachments::new(),
+                resources: preparing.action.resources.expect("captured"),
                 mutation: Some(session),
                 stream: None,
             },

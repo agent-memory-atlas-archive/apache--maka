@@ -53,12 +53,12 @@ node packages/plugin-sdk/scripts/bundle.mjs packages/plugin-sdk/examples/counter
 打包后的模块在实际应用集成测试中执行。使用包导出前先构建 workspace。
 Bundle 必须没有未解析 import 和顶层 await；它不包含原生扩展，也不授予权限。
 
-Host 应用服务支持 query、subscription 和不含资源附件的持久 mutation。
+Host 应用服务支持 query、subscription 和携带请求私有资源快照的持久 mutation。
 Subscription handler 使用 `await context.invoke({operation: 'emit', value})` 发布；
 数据项与最终返回值均使用声明的 output schema。每流允许 16 个队列项、16 个 pending emit，
 每项完整 JSON 最多 64 KiB。等待每次发布以遵守读取端背压；原生 Host 客户端负责取消，
 真实 cleanup 单独观察。
-`context.invoke({ operation: 'mutate', ..., operationId })` 返回 `OperationReply`，
+`context.invoke({ operation: 'mutate', ..., operationId, attachments: { text: 'text' } })` 返回 `OperationReply`，
 即使结果未知或无法交付，也保留原 `reference`。只有 `receipt.kind === 'recorded'`
 描述 journal 中的事实；应分别检查 `outcome` 与 `cleanup`。
 `recover` 使用原引用，不依赖当前 import，并需要独立的恢复授权。
@@ -72,17 +72,21 @@ Query/Mutation 的 `actions` 分开。key 在本组件内唯一；key 与完整�
 下一项。替换或退休会丢弃旧反馈，原执行仍须完成真实 cleanup。Desktop/TUI 共用这套
 机制；认证跨进程 transport 仍待实现。
 
-持久 UI component 通过普通 `actions` 提交无资源附件的 mutation；内核生成 operation
+持久 UI component 通过普通 `actions` 提交 mutation（可携带声明的原捕获资源）；内核生成 operation
 identity，先记录原 caller intent 再派发。feedback 的 `ActionOutcome` 使用
 `status: 'operation'` 和原 `OperationReply`；组件应处理 unknown/unavailable 回执，
 不能自动重复 action。
+声明的资源槽在原生命令之前捕获 immutable snapshot，准备、caller 持久化、派发与
+真实 cleanup 全程保留原 owner 和容量。Host 仅将原 bundle 的私有 nonce 写入操作
+fingerprint，不记录快照字节或 metadata；同 operation UUID 的新捕获是冲突的新原请求。
+恢复只读取原回执，不能重新构造或重放资源。
 显式组合的 `maka.operations.history` 原生实例通过 `History` 导出提供本地
 `contracts.callerHistory` 服务。`page` Query 接收 `CallerHistoryPage`（`after`、`limit`），
 返回实际调用的持久 deployment/instance 的 `CallerIntent[]`，没有 namespace 输入。
 使用最后实际返回的 cursor 继续；count 只是上界，完整数组最多 1 MiB。如果完整回调包装
 超过交付预算，query 返回 `failed`，健康组件可以减小页大小后重试。原引用跨来源替换和
 Root 重开保留；这些观察不授予 Host 权限，也不能代替 confirmed caller 执行 token。
-副作用资源快照和旧业务迁移仍待实现。
+跨进程资源传输和旧业务迁移仍待实现。
 
 持久 Host 组合可选择 `maka.operations.receipts`，通过 `Receipts` 导出提供
 `contracts.receiptReader`。普通 `read` Query 接收原 `RecoveryRef`，返回
@@ -101,7 +105,7 @@ receipt，不能把本次查询成功当成原效果已成功。传输或查询�
 返回的 `DeploymentRef` 只标识数据域与来源修订，不授予权限，也不表示运行就绪。
 Host 可以从该快照启动，并在已接受的工作及资源实际收尾期间保留存储所有权。
 原回执可以跨来源替换和进程重启读取；未知外部副作用的权威恢复、
-副作用资源快照与在线组合收敛仍待实现。
+跨进程资源传输与在线组合收敛仍待实现。
 
 `./host` API 及下方指南属于仍待迁移和删除的旧实现，不是新应用 API 的适配层。
 

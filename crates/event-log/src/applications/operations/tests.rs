@@ -50,6 +50,7 @@ async fn request(store: &EventLog) -> OperationRequest {
             },
         },
         input: serde_json::json!({"outer":{"z":1,"a":2},"text":"original"}),
+        capture: None,
         origin: Identity::Remote {
             request_id: Uuid::new_v4(),
         },
@@ -305,4 +306,41 @@ async fn stored_receipt_bounds_precede_materialization() {
         );
         store.close().await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn original_resource_capture_is_required_nullable_and_part_of_the_fingerprint() {
+    let (_dir, store) = store().await;
+    let mut original = request(&store).await;
+    let mut json = serde_json::to_value(&original).unwrap();
+    json.as_object_mut().unwrap().remove("capture");
+    assert!(serde_json::from_value::<OperationRequest>(json).is_err());
+    let resource_free = original.reference().unwrap();
+    original.capture = Some(Uuid::new_v4());
+    assert!(original.reference().is_err());
+    let Interface::Service { methods } = &mut original.contract.interface else {
+        unreachable!()
+    };
+    methods.get_mut("change").unwrap().resources.insert(
+        "secret".into(),
+        maka_plugin_core::contract::ResourceType {
+            name: "example.Secret".into(),
+            version: 1,
+        },
+    );
+    let captured = original.reference().unwrap();
+    assert_ne!(captured.fingerprint, resource_free.fingerprint);
+    let first_capture = original.capture;
+    original.capture = Some(Uuid::new_v4());
+    assert_ne!(
+        original.reference().unwrap().fingerprint,
+        captured.fingerprint
+    );
+    original.capture = first_capture;
+    assert_eq!(original.reference().unwrap(), captured);
+    original.capture = None;
+    assert!(original.reference().is_err());
+    original.capture = Some(Uuid::nil());
+    assert!(original.reference().is_err());
+    store.close().await.unwrap();
 }
