@@ -90,3 +90,14 @@ requires separate platform verification.
 A rejected metadata transaction stays pending in the original native owner.
 The next application synchronization republishes it even when the component
 frame is unchanged, without replaying an already executed command.
+
+Retained presentation is an immutable projection of the original frame. A scene
+Stack may set `visible: false`; native parents use `NativeView::with_hidden_slots`
+with declared exact slot keys. All declared children remain mounted. Hidden
+children measure zero and publish no focus stops or input targets; scene stacks
+exclude them from layout gaps. Their original editor buffers, selections, undo
+history, capture capabilities and command receipts remain owned and can settle. Showing restores current props on the same owner.
+Desktop invalidates mechanical admission before the next paint and rejects retained
+child renders; TUI applies geometry admission only after a successful flush.
+Custom native layouts use the same public Slots boundary and cannot paint a hidden
+child. This projection does not retire resources or create a second writable draft.

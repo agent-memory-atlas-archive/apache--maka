@@ -72,3 +72,12 @@ OS 输入法与屏幕阅读器仍需逐平台验收。
 
 元数据事务被拒绝后，原 native owner 保留待发布观察。后续应用同步即使
 component frame 未变也会重新发布，不重执行已完成的原生命令。
+
+保留式呈现是原 frame 的不可变投影。场景 Stack 可设置 `visible: false`；原生父组件
+通过 `NativeView::with_hidden_slots` 指定已声明的精确 slot key。全部子组件保持挂载，
+隐藏子组件测量尺寸为零，不发布焦点顺序和输入目标；场景 Stack 也排除它们的间距。
+原输入 buffer、选区、撤销历史、
+capture 能力与 command receipt 继续由同一 owner 持有并结算。显示时在原 owner 上
+恢复当前 props。Desktop 在下次 paint 前失效机械输入准入，并拒绝保留的子组件 render；
+TUI 仅在成功 flush 后切换几何准入。自定义原生布局也通过公共 Slots 边界执行隐藏规则。
+这一投影不退役资源，也不增加第二份可写草稿。

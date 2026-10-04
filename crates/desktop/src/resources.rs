@@ -92,6 +92,7 @@ pub(super) struct NativeInstance {
     pub kind: TypeId,
     pub identity: Rc<()>,
     pub revision: Option<u64>,
+    pub visible: bool,
     pub state: Box<dyn Any>,
     pub input: LiveInput,
 }

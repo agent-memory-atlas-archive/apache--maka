@@ -319,6 +319,11 @@ fn native_scene_deactivation_blurs_only_its_focus_with_old_listeners_retained(
 }
 #[test]
 fn desktop_styles_reject_source_overflow_and_native_nonfinite_values() {
+    let hidden = json!({"kind":"stack","key":"root","direction":"column","padding":0,"gap":0,"background":0,"visible":false,"children":(0..65).map(|n| json!({"kind":"button","key":format!("button-{n}"),"label":"Hidden"})).collect::<Vec<_>>()});
+    assert!(
+        compile(&hidden, Instant::now() + std::time::Duration::from_secs(1)).is_err(),
+        "hidden controls still count against the original input quota"
+    );
     for value in [1e300, -1e300, 16000.0001] {
         let mut scene = source(false, false, false);
         scene["style"]["minWidth"] = json!(value);
@@ -334,4 +339,92 @@ fn desktop_styles_reject_source_overflow_and_native_nonfinite_values() {
             .is_err()
         );
     }
+}
+
+#[gpui::test]
+fn retained_presentation_hides_scene_controls_before_paint_and_restores_original_focus_owner(
+    cx: &mut TestAppContext,
+) {
+    let (entity, window, clicks) = harness(cx);
+    cx.activate_accessibility(window);
+    draw(cx, window);
+    VisualTestContext::from_window(window, cx)
+        .simulate_click(point(px(10.), px(10.)), Modifiers::default());
+    let focus = cx.update(|cx| entity.read(cx).state().buttons["action"].focus.clone());
+    let target = cx
+        .accessibility_update(window)
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|(_, node)| node.role() == Role::Button && node.label() == Some("Run"))
+        .unwrap()
+        .0;
+    cx.with_paused_automatic_drawing(|cx| {
+        let mut hidden = source(false, false, false);
+        hidden["children"][0]["visible"] = json!(false);
+        replace(cx, window, &entity, hidden);
+        VisualTestContext::from_window(window, cx)
+            .simulate_click(point(px(10.), px(10.)), Modifiers::default());
+        for action in [AccessibleAction::Focus, AccessibleAction::Click] {
+            cx.simulate_accessibility_action(
+                window,
+                accesskit::ActionRequest {
+                    action,
+                    target_tree: accesskit::TreeId::ROOT,
+                    target_node: target,
+                    data: None,
+                },
+            );
+        }
+        cx.simulate_keystrokes(window, "tab enter space");
+        assert_eq!(clicks.get(), 1);
+        cx.update_window(window, |_, window, cx| {
+            let state = entity.read(cx).state();
+            assert_eq!(state.buttons["action"].focus, focus);
+            assert!(!state.buttons["action"].admitted.get());
+            assert!(
+                state.input.0.borrow().is_some(),
+                "hiding does not retire the capability"
+            );
+            assert!(window.focused(cx).is_none());
+        })
+        .unwrap();
+    });
+    draw(cx, window);
+    assert!(
+        !cx.accessibility_update(window)
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|(_, node)| node.label() == Some("Run"))
+    );
+    replace(cx, window, &entity, source(false, false, false));
+    draw(cx, window);
+    VisualTestContext::from_window(window, cx)
+        .simulate_click(point(px(10.), px(10.)), Modifiers::default());
+    assert_eq!(clicks.get(), 2);
+    cx.with_paused_automatic_drawing(|cx| {
+        // The ancestor scope can hide this unchanged native recipe as well.
+        cx.update_window(window, |_, window, cx| {
+            entity.update(cx, |h, cx| {
+                h.recipe.presentation(h.state.as_mut(), false, window, cx)
+            })
+        })
+        .unwrap();
+        VisualTestContext::from_window(window, cx)
+            .simulate_click(point(px(10.), px(10.)), Modifiers::default());
+        cx.simulate_keystrokes(window, "tab enter space");
+        assert_eq!(clicks.get(), 2);
+    });
+    cx.update_window(window, |_, window, cx| {
+        entity.update(cx, |h, cx| {
+            h.recipe.presentation(h.state.as_mut(), true, window, cx)
+        })
+    })
+    .unwrap();
+    draw(cx, window);
+    VisualTestContext::from_window(window, cx)
+        .simulate_click(point(px(10.), px(10.)), Modifiers::default());
+    assert_eq!(clicks.get(), 3);
+    cx.update(|cx| assert_eq!(entity.read(cx).state().buttons["action"].focus, focus));
 }

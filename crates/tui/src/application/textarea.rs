@@ -177,8 +177,15 @@ impl Widget for Recipe {
         let owner = state
             .downcast_mut::<Owner>()
             .expect("terminal editor owner");
-        owner.editor.invalidate_geometry();
-        owner.presented = None;
+        owner.invalidate_geometry();
+    }
+    fn presentation(&self, state: &mut dyn Any, visible: bool) {
+        if !visible {
+            state
+                .downcast_mut::<Owner>()
+                .expect("terminal editor owner")
+                .invalidate_geometry();
+        }
     }
 }
 struct Component;

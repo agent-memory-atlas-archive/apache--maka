@@ -303,3 +303,139 @@ fn initial_prefill_receipts_invalid_reset_and_retirement_keep_original_owner(
     cx.update(|cx| assert!(owner.read(cx).state.read(cx).value().is_empty()));
     assert_eq!(events.borrow().len(), before);
 }
+
+#[gpui::test]
+fn retained_secret_presentation_preserves_custody_and_settles_hidden_reset(
+    cx: &mut TestAppContext,
+) {
+    use crate::Widget;
+    let MountedInput {
+        owner,
+        window,
+        live,
+        events,
+        ..
+    } = harness(cx, true);
+    cx.activate_accessibility(window);
+    cx.update_window(window, |_, window, cx| {
+        owner
+            .read(cx)
+            .state
+            .clone()
+            .update(cx, |state, cx| state.focus(window, cx));
+    })
+    .unwrap();
+    draw(cx, window);
+    cx.simulate_input(window, "Retained密钥🙂");
+    draw(cx, window);
+    let original = cx.update(|cx| owner.read(cx).observation_snapshot());
+    let original_entity = owner.entity_id();
+    let mut recipe = super::InputRecipe {
+        props: props(),
+        secret: true,
+    };
+    let mut resource: Box<dyn std::any::Any> = Box::new(owner.clone());
+    cx.with_paused_automatic_drawing(|cx| {
+        cx.update_window(window, |_, window, cx| {
+            recipe.presentation(resource.as_mut(), false, window, cx);
+            assert!(owner.read(cx).state.read(cx).presentation().is_disabled());
+            assert!(
+                !owner
+                    .read(cx)
+                    .state
+                    .read(cx)
+                    .presentation()
+                    .focus_handle()
+                    .is_focused(window)
+            );
+            assert!(live.0.borrow().is_some());
+            owner.update(cx, |owner, cx| {
+                owner.replace_text_in_range(
+                    Some(0.."Retained密钥🙂".encode_utf16().count()),
+                    "Stale platform input",
+                    window,
+                    cx,
+                );
+                owner.replace_and_mark_text_in_range(
+                    None,
+                    "Stale marked input",
+                    Some(0..1),
+                    window,
+                    cx,
+                );
+            });
+        })
+        .unwrap();
+        cx.simulate_input(window, "Hidden ingress");
+        cx.update(|cx| {
+            assert_eq!(
+                owner.read(cx).state.read(cx).value().as_ref(),
+                "Retained密钥🙂"
+            );
+            assert!(
+                !owner.read(cx).state.read(cx).can_undo(),
+                "hidden editing actions are unavailable"
+            );
+        });
+    });
+    draw(cx, window);
+    assert!(
+        !cx.accessibility_update(window)
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|(_, node)| node.role() == Role::PasswordInput)
+    );
+    recipe.props.command = Some(EditorCommand {
+        owner: original.text.owner.clone(),
+        sequence: 1,
+        based_on: original.text.revision,
+        edit: EditorEdit::Reset {
+            text: String::new(),
+        },
+    });
+    cx.update_window(window, |_, window, cx| {
+        recipe.presentation(resource.as_mut(), true, window, cx);
+        assert!(
+            owner.read(cx).state.read(cx).can_undo(),
+            "show restores the retained history"
+        );
+        recipe.presentation(resource.as_mut(), false, window, cx);
+        recipe.commit(resource.as_mut(), window, cx);
+        recipe.publish_pending(resource.as_mut(), window, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(
+        events
+            .borrow()
+            .iter()
+            .any(|(key, value)| key == "observe" && value["receipt"]["sequence"] == 1)
+    );
+    cx.update(|cx| {
+        assert!(owner.read(cx).state.read(cx).value().is_empty());
+        assert!(!owner.read(cx).state.read(cx).can_undo());
+    });
+    cx.update_window(window, |_, window, cx| {
+        recipe.presentation(resource.as_mut(), true, window, cx);
+        assert!(!owner.read(cx).state.read(cx).presentation().is_disabled());
+        owner
+            .read(cx)
+            .state
+            .clone()
+            .update(cx, |state, cx| state.focus(window, cx));
+    })
+    .unwrap();
+    draw(cx, window);
+    cx.simulate_input(window, "Shown🙂");
+    draw(cx, window);
+    assert_eq!(owner.entity_id(), original_entity);
+    cx.update(|cx| assert_eq!(owner.read(cx).state.read(cx).value().as_ref(), "Shown🙂"));
+    assert!(
+        cx.accessibility_update(window)
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|(_, node)| node.role() == Role::PasswordInput && node.value().is_none())
+    );
+}

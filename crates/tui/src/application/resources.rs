@@ -32,6 +32,7 @@ pub(super) struct Owner {
     kind: TypeId,
     revision: Option<u64>,
     pub live: bool,
+    presented: bool,
     pending: Option<NativeInput>,
 }
 #[derive(Default)]
@@ -69,6 +70,7 @@ impl Resources {
                             kind,
                             revision: None,
                             live: true,
+                            presented: false,
                             pending: None,
                         });
                     }
@@ -177,11 +179,9 @@ impl Resources {
         target: &paint::Target,
         event: &Event,
     ) -> maka_ui::Result<Option<WidgetInput>> {
-        let Some(owner) = self
-            .owners
-            .get_mut(&target.mount.id())
-            .filter(|owner| owner.live && Rc::ptr_eq(&owner.identity, &target.owner))
-        else {
+        let Some(owner) = self.owners.get_mut(&target.mount.id()).filter(|owner| {
+            owner.live && owner.presented && Rc::ptr_eq(&owner.identity, &target.owner)
+        }) else {
             return Ok(None);
         };
         match catch_unwind(AssertUnwindSafe(|| {
@@ -210,6 +210,26 @@ impl Resources {
                 mount.id(),
                 "terminal native presentation cleanup unconfirmed".into(),
             );
+        }
+    }
+    pub fn presentation(&mut self, placed: &std::collections::BTreeSet<Uuid>) {
+        for (id, owner) in &mut self.owners {
+            let visible = placed.contains(id);
+            if !owner.live || owner.presented == visible {
+                continue;
+            }
+            owner.presented = visible;
+            if catch_unwind(AssertUnwindSafe(|| {
+                owner.recipe.presentation(owner.state.as_mut(), visible)
+            }))
+            .is_err()
+            {
+                owner.live = false;
+                self.failed.insert(
+                    *id,
+                    "terminal native presentation cleanup unconfirmed".into(),
+                );
+            }
         }
     }
     pub fn capture(

@@ -238,3 +238,12 @@ UTF-8 bytes；掩码不会撤销显式授予的 Reader 能力。普通设置组�
 绑定给可信 setter，并不绑定 Reader。原生 Enter 在 keybinding 前 consume，随后发布
 `submitted` 业务事件，不返回同步原生 decision。TUI 将它与可重试的观察/回执分开发送。
 OS 输入法与屏幕阅读器仍需逐平台验收。
+
+保留式呈现是原 frame 的不可变投影。场景 Stack 可设置 `visible: false`；原生父组件
+通过 `NativeView::with_hidden_slots` 指定已声明的精确 slot key。全部子组件保持挂载，
+隐藏子组件测量尺寸为零，不发布焦点顺序和输入目标；场景 Stack 也排除它们的间距。
+原输入 buffer、选区、撤销历史、
+capture 能力与 command receipt 继续由同一 owner 持有并结算。显示时在原 owner 上
+恢复当前 props。Desktop 在下次 paint 前失效机械输入准入，并拒绝保留的子组件 render；
+TUI 仅在成功 flush 后切换几何准入。自定义原生布局也通过公共 Slots 边界执行隐藏规则。
+这一投影不退役资源，也不增加第二份可写草稿。

@@ -68,6 +68,9 @@ pub trait Widget: std::any::Any {
         Err(Error::Invalid("terminal widget capture unavailable".into()))
     }
     fn present(&self, _: &mut dyn std::any::Any, _: Box<dyn std::any::Any>) {}
+    /// Successful presentation may suspend physical input and geometry while
+    /// retaining the editor, capture and pending command observations.
+    fn presentation(&self, _: &mut dyn std::any::Any, _: bool) {}
     fn deactivate(&self, _: &mut dyn std::any::Any) {}
     fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u16)>;
     fn paint(&self, slots: &mut Slots<'_>, area: Rect, buffer: &mut Buffer) -> maka_ui::Result<()>;

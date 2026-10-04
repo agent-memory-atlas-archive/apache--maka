@@ -392,6 +392,7 @@ struct Shared {
     window: WindowId,
     live: LiveInput,
     alive: Cell<bool>,
+    visible: Cell<bool>,
     sequence: Cell<u32>,
     regions: RefCell<BTreeMap<String, Rc<RegionOwner>>>,
     painted: RefCell<Option<Painted>>,
@@ -400,6 +401,7 @@ struct Shared {
 impl Shared {
     fn enabled(&self, window: &Window) -> bool {
         self.alive.get()
+            && self.visible.get()
             && self.window == window.window_handle().window_id()
             && self.live.0.borrow().is_some()
     }
@@ -615,6 +617,7 @@ impl State {
             window: window.window_handle().window_id(),
             live,
             alive: Cell::new(true),
+            visible: Cell::new(true),
             sequence: Cell::new(0),
             regions: RefCell::new(BTreeMap::new()),
             painted: RefCell::new(None),
@@ -731,17 +734,17 @@ impl State {
             *owner.config.borrow_mut() = region.clone();
             owner
                 .admitted
-                .set(!region.disabled && self.shared.alive.get());
+                .set(!region.disabled && self.shared.alive.get() && self.shared.visible.get());
             let _ = owner
                 .focus
                 .clone()
-                .tab_stop(!region.disabled && region.tab_index >= 0)
-                .tab_index(if region.disabled {
+                .tab_stop(!region.disabled && self.shared.visible.get() && region.tab_index >= 0)
+                .tab_index(if region.disabled || !self.shared.visible.get() {
                     -1
                 } else {
                     region.tab_index as isize
                 });
-            if region.disabled && owner.focus.is_focused(window) {
+            if (region.disabled || !self.shared.visible.get()) && owner.focus.is_focused(window) {
                 window.blur(cx);
             }
             current.insert(region.key.clone(), owner);
@@ -762,6 +765,34 @@ impl State {
             .is_some_and(|g| !g.region.admitted())
         {
             self.shared.gesture.borrow_mut().take();
+        }
+    }
+    pub(super) fn presentation(&mut self, visible: bool, window: &mut Window, cx: &mut App) {
+        if self.shared.visible.replace(visible) == visible {
+            return;
+        }
+        self.shared.gesture.borrow_mut().take();
+        self.shared.painted.borrow_mut().take();
+        for owner in self.shared.regions.borrow().values() {
+            let route = owner.route.get().checked_add(1);
+            if let Some(route) = route {
+                owner.route.set(route);
+            }
+            let region = owner.config.borrow();
+            let enabled = visible && !region.disabled && route.is_some() && self.shared.alive.get();
+            owner.admitted.set(enabled);
+            let _ = owner
+                .focus
+                .clone()
+                .tab_stop(enabled && region.tab_index >= 0)
+                .tab_index(if enabled {
+                    region.tab_index as isize
+                } else {
+                    -1
+                });
+            if !enabled && owner.focus.is_focused(window) {
+                window.blur(cx);
+            }
         }
     }
     pub(super) fn deactivate(&mut self, window: &mut Window, cx: &mut App) {

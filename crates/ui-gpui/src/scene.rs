@@ -51,6 +51,8 @@ pub enum Node {
         padding: u16,
         background: u32,
         children: Vec<Node>,
+        #[serde(default = "visible")]
+        visible: bool,
         #[serde(default)]
         style: Style,
         #[serde(default)]
@@ -86,6 +88,9 @@ pub enum Node {
         style: Style,
     },
     Component(ComponentSlot),
+}
+fn visible() -> bool {
+    true
 }
 impl Node {
     pub(crate) fn validate_root(&self, deadline: Instant) -> Result<(), String> {
@@ -174,6 +179,9 @@ impl Node {
         &self,
         slots: &mut Vec<ComponentSlot>,
         inputs: &mut BTreeMap<String, Value>,
+        hidden_slots: &mut BTreeSet<String>,
+        input_count: &mut usize,
+        visible: bool,
         deadline: Instant,
     ) -> Result<(), String> {
         if Instant::now() >= deadline {
@@ -185,26 +193,46 @@ impl Node {
                     return Err("scene slot limit".into());
                 }
                 slots.push(slot.clone());
+                if !visible {
+                    hidden_slots.insert(slot.key.clone());
+                }
             }
             Self::Button { key, .. } => {
-                if inputs.len() >= 64 {
+                *input_count += 1;
+                if *input_count > 64 {
                     return Err("scene input limit".into());
                 }
-                inputs.insert(key.clone(), json!(true));
+                if visible {
+                    inputs.insert(key.clone(), json!(true));
+                }
             }
             Self::Canvas { key, .. } => {
-                if inputs.len() >= 64 {
+                *input_count += 1;
+                if *input_count > 64 {
                     return Err("scene input limit".into());
                 }
-                inputs.insert(
-                    key.clone(),
-                    serde_json::to_value(schemars::schema_for!(canvas::CanvasInput))
-                        .expect("canvas input schema"),
-                );
+                if visible {
+                    inputs.insert(
+                        key.clone(),
+                        serde_json::to_value(schemars::schema_for!(canvas::CanvasInput))
+                            .expect("canvas input schema"),
+                    );
+                }
             }
-            Self::Stack { children, .. } => {
+            Self::Stack {
+                children,
+                visible: local,
+                ..
+            } => {
                 for child in children {
-                    child.metadata(slots, inputs, deadline)?;
+                    child.metadata(
+                        slots,
+                        inputs,
+                        hidden_slots,
+                        input_count,
+                        visible && *local,
+                        deadline,
+                    )?;
                 }
             }
             _ => {}
@@ -259,9 +287,18 @@ pub fn compile(
         .map_err(maka_ui::Error::Invalid)?;
     let mut slots = vec![];
     let mut inputs = BTreeMap::new();
-    node.metadata(&mut slots, &mut inputs, deadline)
-        .map_err(maka_ui::Error::Invalid)?;
-    NativeView::new(Rc::new(node) as Rc<dyn super::Widget>, inputs, slots)
+    let mut hidden_slots = BTreeSet::new();
+    node.metadata(
+        &mut slots,
+        &mut inputs,
+        &mut hidden_slots,
+        &mut 0,
+        true,
+        deadline,
+    )
+    .map_err(maka_ui::Error::Invalid)?;
+    NativeView::new(Rc::new(node) as Rc<dyn super::Widget>, inputs, slots)?
+        .with_hidden_slots(hidden_slots)
 }
 // The mount owns mechanical state. Layout ancestry is not focus/scroll identity.
 // Cached listeners retain only this node's admission, never the whole scene owner.
@@ -276,6 +313,7 @@ impl Drop for ButtonState {
     }
 }
 struct SceneState {
+    visible: bool,
     input: super::LiveInput,
     buttons: BTreeMap<String, ButtonState>,
     scrolls: BTreeMap<String, gpui_kit::ScrollHandle>,
@@ -286,6 +324,8 @@ impl SceneState {
         let mut buttons = std::mem::take(&mut self.buttons);
         let mut scrolls = std::mem::take(&mut self.scrolls);
         let mut canvases = std::mem::take(&mut self.canvases);
+        // Original mechanical owners and native context remain separate.
+        #[allow(clippy::too_many_arguments)]
         fn visit(
             node: &Node,
             current: &mut SceneState,
@@ -294,6 +334,7 @@ impl SceneState {
             canvases: &mut BTreeMap<String, canvas::State>,
             window: &mut gpui_kit::Window,
             cx: &mut gpui_kit::App,
+            visible: bool,
         ) {
             match node {
                 Node::Button {
@@ -306,13 +347,14 @@ impl SceneState {
                         focus: cx.focus_handle(),
                         admitted: Rc::new(std::cell::Cell::new(false)),
                     });
-                    button.admitted.set(!disabled);
+                    let enabled = visible && !disabled;
+                    button.admitted.set(enabled);
                     button.focus = button
                         .focus
                         .clone()
-                        .tab_stop(!disabled && *tab_index >= 0)
-                        .tab_index(if *disabled { -1 } else { *tab_index as isize });
-                    if *disabled && button.focus.is_focused(window) {
+                        .tab_stop(enabled && *tab_index >= 0)
+                        .tab_index(if enabled { *tab_index as isize } else { -1 });
+                    if !enabled && button.focus.is_focused(window) {
                         window.blur(cx);
                     }
                     current.buttons.insert(key.clone(), button);
@@ -322,12 +364,14 @@ impl SceneState {
                         canvas::State::new(key.clone(), contents, current.input.clone(), window, cx)
                     });
                     canvas.reconcile(contents, window, cx);
+                    canvas.presentation(visible, window, cx);
                     current.canvases.insert(key.clone(), canvas);
                 }
                 Node::Stack {
                     key,
                     scroll,
                     children,
+                    visible: local,
                     ..
                 } => {
                     if *scroll {
@@ -336,12 +380,22 @@ impl SceneState {
                             .insert(key.clone(), scrolls.remove(key).unwrap_or_default());
                     }
                     for child in children {
-                        visit(child, current, buttons, scrolls, canvases, window, cx);
+                        visit(
+                            child,
+                            current,
+                            buttons,
+                            scrolls,
+                            canvases,
+                            window,
+                            cx,
+                            visible && *local,
+                        );
                     }
                 }
                 _ => {}
             }
         }
+        let visible = self.visible;
         visit(
             root,
             self,
@@ -350,6 +404,7 @@ impl SceneState {
             &mut canvases,
             window,
             cx,
+            visible,
         );
         for canvas in canvases.values_mut() {
             canvas.deactivate(window, cx);
@@ -369,6 +424,7 @@ impl super::Widget for Node {
         cx: &mut gpui_kit::App,
     ) -> Box<dyn std::any::Any> {
         let mut state = SceneState {
+            visible: true,
             input,
             buttons: BTreeMap::new(),
             scrolls: BTreeMap::new(),
@@ -376,6 +432,19 @@ impl super::Widget for Node {
         };
         state.reconcile(self, window, cx);
         Box::new(state)
+    }
+    fn presentation(
+        &self,
+        state: &mut dyn std::any::Any,
+        visible: bool,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) {
+        let state = state.downcast_mut::<SceneState>().expect("scene owner");
+        if state.visible != visible {
+            state.visible = visible;
+            state.reconcile(self, window, cx);
+        }
     }
     fn commit(
         &self,
@@ -413,12 +482,12 @@ impl super::Widget for Node {
         window: &mut gpui_kit::Window,
         cx: &mut gpui_kit::App,
     ) -> maka_ui::Result<gpui_kit::AnyElement> {
-        self.element(
-            state.downcast_ref::<SceneState>().expect("scene owner"),
-            slots,
-            window,
-            cx,
-        )
+        let state = state.downcast_ref::<SceneState>().expect("scene owner");
+        if !state.visible {
+            use gpui_kit::{IntoElement, Styled};
+            return Ok(gpui_kit::div().hidden().into_any_element());
+        }
+        self.element(state, slots, window, cx)
     }
 }
 impl Node {
@@ -474,6 +543,9 @@ impl Node {
                 let key_down = admission.clone();
                 let key_up = admission.clone();
                 let a11y = admission.clone();
+                let click_admission = admission.clone();
+                let click_alive = alive.clone();
+                let click = slots.input.bind(key.clone(), |_| json!({"kind":"click"}));
                 let enabled = button.admitted.get() && alive.0.borrow().is_some();
                 let handle = button.focus.clone();
                 let focus_action = handle.clone();
@@ -522,7 +594,11 @@ impl Node {
                     .active(move |s| active.apply(s))
                     .focus_visible(move |s| focus.apply(s))
                     .child(SharedString::from(label.clone()))
-                    .on_click(slots.input.bind(key.clone(), |_| json!({"kind":"click"})))
+                    .on_click(move |event, window, cx| {
+                        if click_admission.get() && click_alive.0.borrow().is_some() {
+                            click(event, window, cx);
+                        }
+                    })
                     .into_any_element()
             }
             Self::Canvas {
@@ -546,6 +622,7 @@ impl Node {
                 children,
                 style,
                 scroll,
+                visible,
             } => {
                 let element = div()
                     .id(SharedString::from(format!(
@@ -561,6 +638,9 @@ impl Node {
                     Direction::Column => element.flex_col(),
                 };
                 let mut element = style.apply(element);
+                if !visible {
+                    return Ok(element.hidden().into_any_element());
+                }
                 if *scroll {
                     let handle = state.scrolls.get(key).ok_or_else(|| {
                         maka_ui::Error::Invalid("scene scroll owner replaced".into())

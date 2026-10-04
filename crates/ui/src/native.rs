@@ -23,7 +23,10 @@ use maka_plugin_core::{
     contract::{Contract, Interface},
 };
 use serde_json::Value;
-use std::{collections::BTreeMap, rc::Rc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    rc::Rc,
+};
 
 /// Native render payload stays on the presenter thread and is never serialized.
 /// The embedding chooses V (e.g. a GPUI view recipe or a terminal renderer).
@@ -35,6 +38,7 @@ pub struct NativeView<V: ?Sized> {
     pub view: Rc<V>,
     schemas: Rc<BTreeMap<String, Value>>,
     slots: Rc<Vec<ComponentSlot>>,
+    hidden_slots: Rc<BTreeSet<String>>,
     inputs: Rc<BTreeMap<String, jsonschema::Validator>>,
     declaration: Option<Rc<Value>>,
 }
@@ -73,6 +77,7 @@ impl<V: ?Sized> NativeView<V> {
             view,
             schemas: Rc::new(schemas),
             slots: Rc::new(slots),
+            hidden_slots: Rc::new(BTreeSet::new()),
             inputs: Rc::new(inputs),
             declaration: None,
         })
@@ -90,8 +95,31 @@ impl<V: ?Sized> NativeView<V> {
     pub fn slots(&self) -> &[ComponentSlot] {
         &self.slots
     }
+    /// Immutable layout projection. Hidden children remain mounted, retain their
+    /// capabilities and settle observations; only mechanical presentation stops.
+    pub fn with_hidden_slots(mut self, hidden: BTreeSet<String>) -> Result<Self> {
+        if hidden
+            .iter()
+            .any(|key| !self.slots.iter().any(|slot| &slot.key == key))
+        {
+            return Err(Error::Invalid("hidden slot is not declared".into()));
+        }
+        self.hidden_slots = Rc::new(hidden);
+        super::tree::check_call_bytes(&self.metadata())?;
+        Ok(self)
+    }
+    pub fn visible_slots(&self) -> impl Iterator<Item = &ComponentSlot> {
+        self.slots
+            .iter()
+            .filter(|slot| !self.hidden_slots.contains(&slot.key))
+    }
     pub(crate) fn metadata(&self) -> impl serde::Serialize + '_ {
-        (&*self.schemas, &*self.slots, self.declaration.as_deref())
+        (
+            &*self.schemas,
+            &*self.slots,
+            &*self.hidden_slots,
+            self.declaration.as_deref(),
+        )
     }
     pub(crate) fn validate_input(&self, key: &str, input: &Value) -> Result<()> {
         self.inputs
@@ -108,6 +136,7 @@ impl<V: ?Sized> Clone for NativeView<V> {
             view: self.view.clone(),
             schemas: self.schemas.clone(),
             slots: self.slots.clone(),
+            hidden_slots: self.hidden_slots.clone(),
             inputs: self.inputs.clone(),
             declaration: self.declaration.clone(),
         }
@@ -306,5 +335,37 @@ pub fn label_contract() -> Contract {
             events: BTreeMap::new(),
             captures: BTreeMap::new(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn hidden_slot_projection_retains_exact_declarations_and_rejects_unbound_keys() {
+        let slots = ["one", "two"].map(|key| ComponentSlot {
+            key: key.into(),
+            binding: "component".into(),
+            member: 0,
+            props: serde_json::json!({}),
+            on: BTreeMap::new(),
+        });
+        let view = NativeView::new(Rc::new(()), BTreeMap::new(), slots.to_vec())
+            .unwrap()
+            .with_hidden_slots(BTreeSet::from(["one".into()]))
+            .unwrap();
+        assert_eq!(view.slots().len(), 2);
+        assert_eq!(
+            view.visible_slots()
+                .map(|slot| slot.key.as_str())
+                .collect::<Vec<_>>(),
+            ["two"]
+        );
+        assert!(
+            view.clone()
+                .with_hidden_slots(BTreeSet::from(["unbound".into()]))
+                .is_err()
+        );
+        assert_eq!(view.clone().visible_slots().count(), 1);
     }
 }

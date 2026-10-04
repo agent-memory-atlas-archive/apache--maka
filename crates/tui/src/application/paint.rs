@@ -193,10 +193,30 @@ impl Slots<'_> {
     }
     pub fn measure(&self, key: &str, width: u16) -> maka_ui::Result<(u16, u16)> {
         let child = self.presenter.application.child_mount(self.parent, key)?;
+        if !self
+            .presenter
+            .application
+            .frame(self.parent)?
+            .view
+            .visible_slots()
+            .any(|slot| slot.key == key)
+        {
+            return Ok((0, 0));
+        }
         self.presenter.measure_mount(child, width)
     }
     pub fn paint(&mut self, key: &str, area: Rect, buffer: &mut Buffer) -> maka_ui::Result<()> {
         let child = self.presenter.application.child_mount(self.parent, key)?;
+        if !self
+            .presenter
+            .application
+            .frame(self.parent)?
+            .view
+            .visible_slots()
+            .any(|slot| slot.key == key)
+        {
+            return Ok(());
+        }
         let scene = self
             .scene
             .as_deref_mut()
@@ -233,6 +253,7 @@ impl Presenter {
         if self.closing {
             return;
         }
+        self.resources.presentation(&scene.placed);
         for pending in scene.geometries {
             self.resources
                 .present(&pending.mount, &pending.owner, pending.geometry);
@@ -272,6 +293,9 @@ impl Presenter {
         node: &Node,
         width: u16,
     ) -> maka_ui::Result<(u16, u16)> {
+        if !node.visible() {
+            return Ok((0, 0));
+        }
         Ok(match node {
             Node::Text { text, .. } => text_size(text, width),
             Node::Button { label, .. } => (
@@ -295,6 +319,7 @@ impl Presenter {
                 let inset = padding.saturating_mul(2);
                 let available = width.saturating_sub(inset);
                 let (mut w, mut h) = (0u16, 0u16);
+                let children: Vec<_> = children.iter().filter(|child| child.visible()).collect();
                 for (index, child) in children.iter().enumerate() {
                     let remaining = match direction {
                         Direction::Row => available.saturating_sub(w),
@@ -363,7 +388,7 @@ impl Presenter {
         buffer: &mut Buffer,
         scene: &mut PaintedScene,
     ) -> maka_ui::Result<()> {
-        if area.width == 0 || area.height == 0 {
+        if !node.visible() || area.width == 0 || area.height == 0 {
             return Ok(());
         }
         match node {
@@ -424,7 +449,7 @@ impl Presenter {
                     area.height - py * 2,
                 );
                 let mut offset = 0u16;
-                for child in children {
+                for child in children.iter().filter(|child| child.visible()) {
                     let width = match direction {
                         Direction::Row => inner.width.saturating_sub(offset),
                         Direction::Column => inner.width,

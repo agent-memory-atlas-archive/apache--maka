@@ -49,6 +49,8 @@ pub enum Node {
         padding: u16,
         background: u32,
         children: Vec<Node>,
+        #[serde(default = "visible")]
+        visible: bool,
     },
     Text {
         key: String,
@@ -61,7 +63,13 @@ pub enum Node {
     },
     Component(ComponentSlot),
 }
+fn visible() -> bool {
+    true
+}
 impl Node {
+    pub(super) fn visible(&self) -> bool {
+        !matches!(self, Self::Stack { visible: false, .. })
+    }
     pub(crate) fn validate_root(&self, deadline: Instant) -> Result<(), String> {
         self.validate(0, &mut BTreeSet::new(), deadline)
     }
@@ -123,6 +131,9 @@ impl Node {
         &self,
         slots: &mut Vec<ComponentSlot>,
         inputs: &mut BTreeMap<String, Value>,
+        hidden_slots: &mut BTreeSet<String>,
+        input_count: &mut usize,
+        visible: bool,
         deadline: Instant,
     ) -> Result<(), String> {
         if Instant::now() >= deadline {
@@ -134,16 +145,33 @@ impl Node {
                     return Err("scene slot limit".into());
                 }
                 slots.push(slot.clone());
+                if !visible {
+                    hidden_slots.insert(slot.key.clone());
+                }
             }
             Self::Button { key, .. } => {
-                if inputs.len() >= 64 {
+                *input_count += 1;
+                if *input_count > 64 {
                     return Err("scene input limit".into());
                 }
-                inputs.insert(key.clone(), json!(true));
+                if visible {
+                    inputs.insert(key.clone(), json!(true));
+                }
             }
-            Self::Stack { children, .. } => {
+            Self::Stack {
+                children,
+                visible: local,
+                ..
+            } => {
                 for child in children {
-                    child.metadata(slots, inputs, deadline)?;
+                    child.metadata(
+                        slots,
+                        inputs,
+                        hidden_slots,
+                        input_count,
+                        visible && *local,
+                        deadline,
+                    )?;
                 }
             }
             _ => {}
@@ -185,9 +213,18 @@ pub(super) fn compile(
         .map_err(maka_ui::Error::Invalid)?;
     let mut slots = vec![];
     let mut inputs = BTreeMap::new();
-    node.metadata(&mut slots, &mut inputs, deadline)
-        .map_err(maka_ui::Error::Invalid)?;
-    NativeView::new(Rc::new(node) as Rc<dyn super::Widget>, inputs, slots)
+    let mut hidden_slots = BTreeSet::new();
+    node.metadata(
+        &mut slots,
+        &mut inputs,
+        &mut hidden_slots,
+        &mut 0,
+        true,
+        deadline,
+    )
+    .map_err(maka_ui::Error::Invalid)?;
+    NativeView::new(Rc::new(node) as Rc<dyn super::Widget>, inputs, slots)?
+        .with_hidden_slots(hidden_slots)
 }
 impl super::Widget for Node {
     fn measure(&self, slots: &super::Slots<'_>, width: u16) -> maka_ui::Result<(u16, u16)> {

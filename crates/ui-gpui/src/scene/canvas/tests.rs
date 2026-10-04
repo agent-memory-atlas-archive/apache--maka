@@ -385,6 +385,74 @@ fn original_region_tokens_reject_before_paint_recreation_route_changes_and_ax(
     assert_eq!(seen.borrow().len(), before + 1);
     assert!(shared.painted.borrow().is_none());
 }
+
+#[gpui::test]
+fn retained_presentation_cancels_canvas_gesture_and_rejects_old_routes_before_paint(
+    cx: &mut TestAppContext,
+) {
+    let (entity, window, seen, _, _) = harness(cx, true);
+    cx.activate_accessibility(window);
+    draw(cx, window);
+    down(cx, window, 20., 20.);
+    let shared = cx.update(|cx| entity.read(cx).shared());
+    let region = shared.regions.borrow()["card"].clone();
+    let target = cx
+        .accessibility_update(window)
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|(_, node)| node.label() == Some("Card") && node.role() == gpui_kit::Role::Button)
+        .unwrap()
+        .0;
+    let before = seen.borrow().len();
+    cx.with_paused_automatic_drawing(|cx| {
+        cx.update_window(window, |_, window, cx| {
+            entity.update(cx, |h, cx| {
+                h.recipe.presentation(h.state.as_mut(), false, window, cx)
+            })
+        })
+        .unwrap();
+        assert!(shared.gesture.borrow().is_none());
+        assert!(!region.admitted.get());
+        assert!(shared.live.0.borrow().is_some());
+        down(cx, window, 20., 20.);
+        movement(cx, window, 40., 40.);
+        up(cx, window, 160., 20.);
+        for action in [
+            gpui_kit::AccessibleAction::Focus,
+            gpui_kit::AccessibleAction::Click,
+        ] {
+            cx.simulate_accessibility_action(
+                window,
+                gpui_kit::accesskit::ActionRequest {
+                    action,
+                    target_tree: gpui_kit::accesskit::TreeId::ROOT,
+                    target_node: target,
+                    data: None,
+                },
+            );
+        }
+        cx.simulate_keystrokes(window, "tab enter");
+        assert_eq!(seen.borrow().len(), before);
+        cx.update_window(window, |_, window, cx| {
+            assert!(window.focused(cx).is_none());
+            entity.update(cx, |h, cx| {
+                h.recipe.presentation(h.state.as_mut(), true, window, cx)
+            });
+        })
+        .unwrap();
+        assert!(Rc::ptr_eq(&region, &shared.regions.borrow()["card"]));
+        down(cx, window, 20., 20.);
+        assert_eq!(
+            seen.borrow().len(),
+            before,
+            "pre-hide paint route cannot revive after show"
+        );
+    });
+    draw(cx, window);
+    down(cx, window, 20., 20.);
+    assert_eq!(seen.borrow().len(), before + 1);
+}
 #[test]
 fn bounded_canvas_rejects_source_precision_and_work_before_native_conversion() {
     let deadline = || Instant::now() + std::time::Duration::from_secs(1);

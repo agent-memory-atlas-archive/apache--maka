@@ -56,6 +56,9 @@ pub trait Widget: Any {
         Err(maka_ui::Error::Invalid("widget capture unavailable".into()))
     }
     fn commit(&self, _: &mut dyn Any, _: &mut Window, _: &mut App) {}
+    /// Reversible mechanical visibility. This does not retire the owner, revoke
+    /// capture, or stop native observation and command receipt settlement.
+    fn presentation(&self, _: &mut dyn Any, _: bool, _: &mut Window, _: &mut App) {}
     /// Attempt retained native observations after a real synchronization,
     /// including when the committed child frame is unchanged. No effects replay.
     fn publish_pending(&self, _: &mut dyn Any, _: &mut Window, _: &mut App) {}

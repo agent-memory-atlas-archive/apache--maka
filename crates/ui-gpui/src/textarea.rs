@@ -42,6 +42,7 @@ pub struct TextareaOwner {
     pub receipt: Option<EditorReceipt>,
     pending: bool,
     needs_publication: bool,
+    visible: bool,
     _observation: Subscription,
     projection: super::appearance::TextareaProjection,
     label: String,
@@ -113,6 +114,7 @@ impl TextareaOwner {
                 receipt: None,
                 pending: false,
                 needs_publication: true,
+                visible: true,
                 _observation: observation,
                 projection,
                 label: props.accessibility_label.clone(),
@@ -260,7 +262,7 @@ impl TextareaOwner {
             self.menu = props.menu.clone();
             cx.notify();
         }
-        if props.disabled || props.menu.is_none() {
+        if props.disabled || !self.visible || props.menu.is_none() {
             self.close_menu(true, window, cx);
         }
         self.state.update(cx, |state, cx| {
@@ -269,20 +271,14 @@ impl TextareaOwner {
                 cx.notify();
             }
             state.set_readonly(props.read_only, cx);
-            if props.disabled && state.presentation().focus_handle().is_focused(window) {
+            let disabled = props.disabled || !self.visible;
+            if disabled && state.presentation().focus_handle().is_focused(window) {
                 window.blur(cx);
             }
-            state.set_disabled(props.disabled, cx);
-            state.set_context_menu_enabled(props.menu.is_some());
+            state.set_disabled(disabled, cx);
+            state.set_context_menu_enabled(self.visible && props.menu.is_some());
             state.set_soft_wrap(props.soft_wrap, window, cx);
-            state.set_tab_index(
-                if props.disabled {
-                    -1
-                } else {
-                    props.tab_index.into()
-                },
-                cx,
-            );
+            state.set_tab_index(if disabled { -1 } else { props.tab_index.into() }, cx);
             state.set_placeholder(props.placeholder.clone(), window, cx);
         });
         let Some(command) = &props.command else {
@@ -331,6 +327,9 @@ impl TextareaOwner {
 }
 impl Render for TextareaOwner {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.visible {
+            return div().hidden().into_any_element();
+        }
         let menu = self.render_menu(window, cx);
         let state = self.state.read(cx);
         let presentation = state.presentation();
@@ -436,6 +435,7 @@ impl Render for TextareaOwner {
                 .into_any_element(),
             owner: cx.entity(),
         }
+        .into_any_element()
     }
 }
 
@@ -699,6 +699,34 @@ impl Widget for TextareaRecipe {
             .downcast_ref::<Entity<TextareaOwner>>()
             .expect("editor owner")
             .update(cx, |owner, cx| owner.schedule(window, cx));
+    }
+    fn presentation(&self, state: &mut dyn Any, visible: bool, window: &mut Window, cx: &mut App) {
+        state
+            .downcast_ref::<Entity<TextareaOwner>>()
+            .expect("editor owner")
+            .update(cx, |owner, cx| {
+                owner.visible = visible;
+                cx.notify();
+                owner.state.update(cx, |state, cx| {
+                    let disabled = self.props.disabled || !visible;
+                    if disabled && state.presentation().focus_handle().is_focused(window) {
+                        window.blur(cx);
+                    }
+                    state.set_disabled(disabled, cx);
+                    state.set_tab_index(
+                        if disabled {
+                            -1
+                        } else {
+                            self.props.tab_index.into()
+                        },
+                        cx,
+                    );
+                    state.set_context_menu_enabled(visible && self.props.menu.is_some());
+                });
+                if !visible {
+                    owner.close_menu(true, window, cx);
+                }
+            });
     }
     fn deactivate(&self, state: &mut dyn Any, window: &mut Window, cx: &mut App) {
         let owner = state

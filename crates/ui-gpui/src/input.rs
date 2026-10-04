@@ -43,6 +43,7 @@ pub struct InputOwner {
     _observation: Subscription,
     projection: super::appearance::InputProjection,
     secret: bool,
+    visible: bool,
     _keyboard: Option<Subscription>,
     label: String,
 }
@@ -116,6 +117,7 @@ impl InputOwner {
                 projection,
                 label: props.accessibility_label.clone(),
                 secret,
+                visible: true,
                 _keyboard: None,
             }
         });
@@ -284,19 +286,13 @@ impl InputOwner {
                 cx.notify();
             }
             state.set_readonly(props.read_only, cx);
-            if props.disabled && state.presentation().focus_handle().is_focused(window) {
+            let disabled = props.disabled || !self.visible;
+            if disabled && state.presentation().focus_handle().is_focused(window) {
                 window.blur(cx);
             }
-            state.set_disabled(props.disabled, cx);
+            state.set_disabled(disabled, cx);
             state.set_context_menu_enabled(false);
-            state.set_tab_index(
-                if props.disabled {
-                    -1
-                } else {
-                    props.tab_index.into()
-                },
-                cx,
-            );
+            state.set_tab_index(if disabled { -1 } else { props.tab_index.into() }, cx);
             state.set_placeholder(props.placeholder.clone(), window, cx);
         });
         let Some(command) = &props.command else {
@@ -351,6 +347,9 @@ impl InputOwner {
 }
 impl Render for InputOwner {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.visible {
+            return div().hidden().into_any_element();
+        }
         let state = self.state.read(cx);
         let presentation = state.presentation();
         let focused = presentation.focus_handle().is_focused(window);
@@ -457,6 +456,7 @@ impl Render for InputOwner {
                 .into_any_element(),
             owner: cx.entity(),
         }
+        .into_any_element()
     }
 }
 
@@ -731,6 +731,30 @@ impl Widget for InputRecipe {
             .downcast_ref::<Entity<InputOwner>>()
             .expect("editor owner")
             .update(cx, |owner, cx| owner.schedule(window, cx));
+    }
+    fn presentation(&self, state: &mut dyn Any, visible: bool, window: &mut Window, cx: &mut App) {
+        state
+            .downcast_ref::<Entity<InputOwner>>()
+            .expect("editor owner")
+            .update(cx, |owner, cx| {
+                owner.visible = visible;
+                cx.notify();
+                owner.state.update(cx, |state, cx| {
+                    let disabled = self.props.disabled || !visible;
+                    if disabled && state.presentation().focus_handle().is_focused(window) {
+                        window.blur(cx);
+                    }
+                    state.set_disabled(disabled, cx);
+                    state.set_tab_index(
+                        if disabled {
+                            -1
+                        } else {
+                            self.props.tab_index.into()
+                        },
+                        cx,
+                    );
+                });
+            });
     }
     fn deactivate(&self, state: &mut dyn Any, window: &mut Window, cx: &mut App) {
         let owner = state

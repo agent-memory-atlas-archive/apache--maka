@@ -605,6 +605,7 @@ struct SlotRow {
 }
 impl Widget for SlotRow {
     fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u16)> {
+        assert!(slots.measure("undeclared", width).is_err());
         let first = slots.measure("right", width / 2)?;
         let second = slots.measure("left", width / 2)?;
         // Repeated measurement is permitted and has no guest effects.
@@ -667,7 +668,12 @@ impl maka_ui::NativeComponent<dyn Widget> for SlotRoot {
                 }) as std::rc::Rc<dyn Widget>,
                 [("parent".into(), json!(true))].into(),
                 slots,
-            )?,
+            )?
+            .with_hidden_slots(if revision % 2 == 1 {
+                ["left".into()].into()
+            } else {
+                Default::default()
+            })?,
         }
         .output(vec![]))
     }
@@ -780,6 +786,78 @@ fn native_terminal_slots_measure_and_paint_js_children_with_original_input_mount
         tui.application.frame(&left).unwrap().state["label"],
         "left 1"
     );
+    tui.surface_closed(Ok(())).unwrap();
+    tui.shutdown().unwrap();
+}
+#[test]
+fn native_terminal_hidden_slots_override_custom_parent_measurement_and_paint() {
+    let hidden = json!({"kind":"stack","key":"root","direction":"column","padding":0,"gap":0,"background":0,"visible":false,"children":(0..65).map(|n| json!({"kind":"button","key":format!("button-{n}"),"label":"Hidden"})).collect::<Vec<_>>()});
+    assert!(
+        super::scene::compile(
+            &hidden,
+            std::time::Instant::now() + std::time::Duration::from_secs(1)
+        )
+        .is_err(),
+        "hidden controls still consume the original input quota"
+    );
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_time()
+        .build()
+        .unwrap();
+    let mut tui = native_slots_fixture(&runtime, false);
+    let root = tui.root.clone();
+    let left = tui.application.child_mount(&root, "left").unwrap().clone();
+    draw(&mut tui, 80, 40);
+    let original = tui
+        .scene
+        .iter()
+        .find(|target| target.mount == left && target.key == "inc")
+        .unwrap()
+        .clone();
+    let owner = tui.resources.owners[&left.id()].identity.clone();
+    tui.application
+        .dispatch(&root, 0, "parent", Value::Null)
+        .unwrap();
+    let frame = tui.application.frame(&root).unwrap();
+    assert_eq!(frame.view.slots().len(), 2);
+    assert_eq!(
+        frame
+            .view
+            .visible_slots()
+            .map(|slot| slot.key.as_str())
+            .collect::<Vec<_>>(),
+        ["right"]
+    );
+    let right = tui.application.child_mount(&root, "right").unwrap();
+    assert_eq!(
+        tui.measure_mount(&root, 80).unwrap(),
+        tui.measure_mount(right, 40).unwrap(),
+        "custom parent measurement excludes hidden left slot"
+    );
+    let mut pending_buffer = Buffer::empty(Rect::new(0, 0, 80, 40));
+    let pending = tui.paint(pending_buffer.area, &mut pending_buffer).unwrap();
+    assert!(!pending.targets.iter().any(|target| target.mount == left));
+    let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(
+        tui.resources.input(&original, &event).unwrap().is_some(),
+        "unflushed projection does not change last presented facts"
+    );
+    tui.present(pending);
+    assert!(tui.resources.input(&original, &event).unwrap().is_none());
+    tui.application
+        .dispatch(&root, 1, "parent", Value::Null)
+        .unwrap();
+    draw(&mut tui, 80, 40);
+    assert!(
+        tui.scene
+            .iter()
+            .any(|target| target.mount == left && target.key == "inc")
+    );
+    assert!(std::rc::Rc::ptr_eq(
+        &owner,
+        &tui.resources.owners[&left.id()].identity
+    ));
     tui.surface_closed(Ok(())).unwrap();
     tui.shutdown().unwrap();
 }

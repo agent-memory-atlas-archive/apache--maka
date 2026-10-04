@@ -72,6 +72,7 @@ export function paint(target: Target, theme: Theme) {
         surface?: boolean;
         style?: Node;
         scroll?: boolean;
+        visible?: boolean;
       } = {},
     ): Node => ({
       kind: 'stack',
@@ -81,6 +82,7 @@ export function paint(target: Target, theme: Theme) {
       padding: options.padding ?? 0,
       background: rgba(options.surface ? theme.surface : theme.background),
       children,
+      visible: options.visible ?? true,
       ...(desktop ? { style: options.style ?? {}, scroll: options.scroll ?? false } : {}),
     }),
   };

@@ -22,7 +22,7 @@ use maka_plugin_core::{
     composition::Target,
     package::{EntryTarget, Implementation},
 };
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, rc::Rc};
 fn input_presenter(secret: bool) -> (tokio::runtime::Runtime, Presenter) {
     let (runtime, mut input, packages) = textarea::editor_fixture();
     let contract = if secret {
@@ -94,6 +94,145 @@ fn close(tui: &mut Presenter) {
     tui.surface_closed(Ok(())).unwrap();
     assert!(tui.can_shutdown());
     tui.shutdown().unwrap();
+}
+#[test]
+fn retained_presentation_preserves_input_custody_and_only_successful_flush_hides_geometry() {
+    for secret in [false, true] {
+        let (_runtime, mut tui) = input_presenter(secret);
+        draw(&mut tui, 80, 24);
+        tui.input(Event::Paste("Draft🙂".into())).unwrap();
+        draw(&mut tui, 80, 24);
+        let original = observation(&tui);
+        let outer = tui
+            .application
+            .child_mount(&tui.root, "editor")
+            .unwrap()
+            .clone();
+        let mount = tui
+            .application
+            .child_mount(&outer, "draft")
+            .unwrap()
+            .clone();
+        let identity = tui.resources.owners[&mount.id()].identity.clone();
+        let child_revision = tui.application.frame(&mount).unwrap().revision;
+        let old_target = tui
+            .scene
+            .iter()
+            .find(|target| target.mount == mount)
+            .unwrap()
+            .clone();
+        let before = tui.measure_mount(&tui.root, 80).unwrap().1;
+        let editor_height = tui.measure_mount(&outer, 78).unwrap().1;
+        dispatch(&mut tui, "configure", json!({"visible":false}));
+        assert_eq!(
+            tui.application.frame(&mount).unwrap().revision,
+            child_revision
+        );
+        assert_eq!(
+            tui.application.frame(&tui.root).unwrap().view.slots().len(),
+            1
+        );
+        assert_eq!(
+            tui.application
+                .frame(&tui.root)
+                .unwrap()
+                .view
+                .visible_slots()
+                .count(),
+            0
+        );
+        assert_eq!(
+            before,
+            tui.measure_mount(&tui.root, 80).unwrap().1 + editor_height + 1,
+            "hidden child occupies neither space nor gap"
+        );
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buffer = Buffer::empty(area);
+        let pending = tui.paint(area, &mut buffer).unwrap();
+        assert!(
+            tui.resources.owners[&mount.id()]
+                .state
+                .downcast_ref::<super::super::editor::Owner>()
+                .unwrap()
+                .presented
+                .is_some(),
+            "unflushed hiding cannot revoke the last presented geometry"
+        );
+        tui.present(pending);
+        assert!(
+            tui.resources.owners[&mount.id()]
+                .state
+                .downcast_ref::<super::super::editor::Owner>()
+                .unwrap()
+                .presented
+                .is_none()
+        );
+        assert!(
+            tui.resources
+                .input(&old_target, &Event::Paste("stale".into()))
+                .unwrap()
+                .is_none()
+        );
+        tui.input(Event::Paste("hidden".into())).unwrap();
+        assert_eq!(observation(&tui), original);
+        dispatch(&mut tui, "configure", json!({"visible":true}));
+        draw(&mut tui, 80, 24);
+        assert!(Rc::ptr_eq(
+            &identity,
+            &tui.resources.owners[&mount.id()].identity
+        ));
+        let restored = tui
+            .scene
+            .iter()
+            .find(|target| target.mount == mount)
+            .unwrap()
+            .clone();
+        tui.input(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: restored.area.x + 1,
+            row: restored.area.y + 1,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+        // Undo is still owned by the original editor after hide/show.
+        tui.input(Event::Key(KeyEvent::new(
+            KeyCode::Char('z'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+        assert_eq!(observation(&tui)["snapshot"]["text"]["bytes"], 0);
+        tui.input(Event::Paste("Captured while hidden🙂".into()))
+            .unwrap();
+        let captured = observation(&tui);
+        dispatch(&mut tui, "configure", json!({"visible":false}));
+        draw(&mut tui, 80, 24);
+        dispatch(
+            &mut tui,
+            "read",
+            json!({"end":captured["snapshot"]["text"]["bytes"],"capture":{"kind":"at_revision","owner":captured["snapshot"]["text"]["owner"],"revision":captured["revision"]},"command":{"owner":captured["snapshot"]["text"]["owner"],"sequence":1,"basedOn":captured["revision"],"edit":{"kind":"reset","text":""}}}),
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while tui.application.frame(&tui.root).unwrap().state["outcome"].is_null() {
+            assert!(std::time::Instant::now() < deadline);
+            tui.pump().unwrap();
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            tui.application.frame(&tui.root).unwrap().state["outcome"]["value"]["text"],
+            "Captured while hidden🙂"
+        );
+        assert_eq!(observation(&tui)["receipt"]["sequence"], 1);
+        assert_eq!(observation(&tui)["snapshot"]["text"]["bytes"], 0);
+        assert_eq!(
+            observation(&tui)["snapshot"]["text"]["owner"],
+            original["snapshot"]["text"]["owner"]
+        );
+        assert!(Rc::ptr_eq(
+            &identity,
+            &tui.resources.owners[&mount.id()].identity
+        ));
+        close(&mut tui);
+    }
 }
 #[test]
 fn native_single_line_filters_raw_paste_masks_and_captures_original_utf8_before_reset() {

@@ -35,6 +35,10 @@ pub(super) struct Owner {
     pub announced: bool,
 }
 impl Owner {
+    pub fn invalidate_geometry(&mut self) {
+        self.editor.invalidate_geometry();
+        self.presented = None;
+    }
     pub fn new(mut editor: Editor, initial_text: &str) -> Self {
         editor.insert(initial_text);
         editor.clear_history();

@@ -146,6 +146,7 @@ impl Surface {
                     identity: Rc::new(()),
                     recipe: native.view.clone(),
                     revision: None,
+                    visible: true,
                     state: native.view.create(input.clone(), window, cx),
                     input,
                 }
@@ -178,17 +179,30 @@ impl Surface {
                 recipe.capture(owner.state.as_mut(), target, window, cx)
             })?;
         let application = self.application.borrow();
+        let mut visible_mounts = std::collections::BTreeSet::from([self.mount.id()]);
         for mount in application.mounted_subtree(&self.mount)? {
             if application.is_retiring(&mount) {
                 continue;
             }
             let frame = application.frame(&mount)?;
             let native = &frame.view;
+            let visible = visible_mounts.contains(&mount.id());
+            if visible {
+                for slot in native.visible_slots() {
+                    visible_mounts.insert(application.child_mount(&mount, &slot.key)?.id());
+                }
+            }
             let mut resources = self.resources.borrow_mut();
             let owner = resources
                 .owners
                 .get_mut(&mount.id().to_string())
                 .expect("prepared native owner");
+            if owner.visible != visible {
+                owner.visible = visible;
+                native
+                    .view
+                    .presentation(owner.state.as_mut(), visible, window, cx);
+            }
             if owner.revision != Some(frame.revision) {
                 // A consumed scene revision is not a successful native command:
                 // widgets retain explicit applied/conflict receipts separately.
@@ -311,6 +325,11 @@ impl RenderScene {
             return Err(maka_ui::Error::Invalid(
                 "captured scene revision replaced".into(),
             ));
+        }
+        // An ancestor can hide this retained owner without changing its frame.
+        // Old local Slots must obey the same current presentation admission.
+        if !owner.visible {
+            return Ok(gpui_kit::div().hidden().into_any_element());
         }
         let slots = self.slots();
         let content = entry

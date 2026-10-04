@@ -36,7 +36,9 @@ impl NativeComponent<dyn widgets::Widget> for Parent {
         values: &maka_ui::abi::ValueBindings,
     ) -> maka_ui::Result<ComponentOutput<NativeView<dyn widgets::Widget>>> {
         let (mut state, revision) = match call {
-            ComponentCall::Mount { .. } => (json!({"command":null,"observation":null}), 0),
+            ComponentCall::Mount { .. } => {
+                (json!({"command":null,"observation":null,"visible":true}), 0)
+            }
             ComponentCall::Update { state, .. } => {
                 (state.clone(), state["revision"].as_u64().unwrap() + 1)
             }
@@ -51,8 +53,13 @@ impl NativeComponent<dyn widgets::Widget> for Parent {
                         ));
                     }
                     next["observation"] = input.clone();
-                } else if let Some(command) = input.get("command") {
-                    next["command"] = command.clone();
+                } else {
+                    if let Some(command) = input.get("command") {
+                        next["command"] = command.clone();
+                    }
+                    if let Some(visible) = input.get("visible") {
+                        next["visible"] = visible.clone();
+                    }
                 }
                 (next, state["revision"].as_u64().unwrap() + 1)
             }
@@ -60,7 +67,7 @@ impl NativeComponent<dyn widgets::Widget> for Parent {
         state["revision"] = json!(revision);
         let view = widgets::scene::compile(
             &json!({"kind":"stack","key":"root","direction":"column","padding":16,"gap":12,"background":0x101010,"children":[
-             {"kind":"component","key":"editor","binding":"editor","member":0,"on":{"changed":"changed"},"props":{"appearance":values.get("brand").unwrap()[0]["textarea"],"accessibilityLabel":"Read-only draft","readOnly":true,"disabled":true,"softWrap":true,"tabIndex":-1,"initialText":"Start","command":state["command"]}},
+             {"kind":"stack","key":"presentation","direction":"column","gap":0,"padding":0,"background":0x101010,"visible":state["visible"],"children":[{"kind":"component","key":"nativeLabel","binding":"label","member":0,"on":{},"props":{"text":"Retained marker","appearance":values.get("brand").unwrap()[0]["label"]}},{"kind":"component","key":"editor","binding":"editor","member":0,"on":{"changed":"changed"},"props":{"appearance":values.get("brand").unwrap()[0]["textarea"],"accessibilityLabel":"Read-only draft","readOnly":true,"disabled":true,"softWrap":true,"tabIndex":-1,"initialText":"Start","command":state["command"]}}]},
              {"kind":"button","key":"parent","label":"Next parent transaction"}
             ]}),
             Instant::now() + Duration::from_secs(1),
@@ -185,5 +192,145 @@ fn healthy_parent_failure_republishes_receipt_with_unchanged_readonly_child(
             "publication does not replay Reset"
         )
     });
+    scene.close(cx);
+}
+
+#[gpui::test]
+fn retained_presentation_blocks_old_child_slots_but_settles_hidden_editor_receipts(
+    cx: &mut TestAppContext,
+) {
+    let timer = timer();
+    let scene = scene(cx, &timer, Rc::new(Cell::new(false)));
+    cx.activate_accessibility(scene.window);
+    scene.draw(cx);
+    let owner = scene.owner();
+    let entity = owner.entity_id();
+    let child_revision = scene.app.borrow().frame(&scene.editor).unwrap().revision;
+    let old_child = cx
+        .update_window(scene.window, |_, window, cx| {
+            scene.surface.update(cx, |surface, cx| {
+                surface.scene(window, cx).unwrap().entry.children["nativeLabel"].clone()
+            })
+        })
+        .unwrap();
+    // Label has no presentation hook: this exercises the framework gate itself,
+    // rather than an editor or scene recipe independently hiding its own render.
+    cx.with_paused_automatic_drawing(|cx| {
+        cx.update_window(scene.window, |_, window, cx| {
+            let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
+            scene
+                .app
+                .borrow_mut()
+                .dispatch(&scene.root, revision, "parent", json!({"visible":false}))
+                .unwrap();
+            scene
+                .surface
+                .update(cx, |surface, cx| surface.sync_native(window, cx).unwrap());
+            assert_eq!(
+                scene.app.borrow().frame(&scene.editor).unwrap().revision,
+                child_revision
+            );
+            assert!(!scene.resources.borrow().owners[&scene.editor.id().to_string()].visible);
+            assert_eq!(owner.entity_id(), entity);
+        })
+        .unwrap();
+        gpui_kit::VisualTestContext::from_window(scene.window, cx).draw(
+            point(px(0.), px(0.)),
+            size(px(640.), px(400.)),
+            |window, cx| {
+                let resources = scene.resources.borrow();
+                let native = &resources.owners[&old_child.entry.lease.mount().id().to_string()];
+                let raw = old_child
+                    .entry
+                    .frame
+                    .view
+                    .view
+                    .render(native.state.as_ref(), &old_child.slots(), window, cx)
+                    .unwrap();
+                gpui_kit::div()
+                    .child(raw)
+                    .child(old_child.render(window, cx).unwrap())
+                    .on_children_prepainted(|bounds, _, _| {
+                        assert_eq!(bounds.len(), 2);
+                        assert!(
+                            bounds[0].size.width > px(0.) && bounds[0].size.height > px(0.),
+                            "the native Label itself has no hidden-render hook"
+                        );
+                        assert_eq!(
+                            bounds[1].size,
+                            size(px(0.), px(0.)),
+                            "a retained child render obeys current ancestor presentation"
+                        );
+                    })
+                    .into_any_element()
+            },
+        );
+    });
+    scene.draw(cx);
+    assert!(
+        !cx.accessibility_update(scene.window)
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|(_, node)| node.label() == Some("Read-only draft"))
+    );
+    cx.update_window(scene.window, |_, window, cx| {
+        scene
+            .command(
+                EditorCommand {
+                    owner: scene.editor_owner(cx),
+                    sequence: 1,
+                    based_on: owner.read(cx).revision,
+                    edit: EditorEdit::Reset {
+                        text: "Hidden reset".into(),
+                    },
+                },
+                window,
+                cx,
+            )
+            .unwrap();
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        scene.app.borrow().frame(&scene.root).unwrap().state["observation"]["receipt"]["sequence"],
+        1
+    );
+    cx.update(|cx| {
+        assert_eq!(
+            owner.read(cx).state.read(cx).value().as_ref(),
+            "Hidden reset"
+        );
+        assert!(!owner.read(cx).state.read(cx).can_undo());
+    });
+    cx.update_window(scene.window, |_, window, cx| {
+        let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
+        scene
+            .app
+            .borrow_mut()
+            .dispatch(&scene.root, revision, "parent", json!({"visible":true}))
+            .unwrap();
+        scene
+            .surface
+            .update(cx, |surface, cx| surface.sync_native(window, cx).unwrap());
+    })
+    .unwrap();
+    scene.draw(cx);
+    assert_eq!(scene.owner().entity_id(), entity);
+    cx.update(|cx| {
+        let state = owner.read(cx).state.read(cx);
+        assert!(
+            state.presentation().is_disabled(),
+            "show restores the original disabled props"
+        );
+        assert!(state.presentation().is_readonly());
+    });
+    assert!(
+        cx.accessibility_update(scene.window)
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|(_, node)| node.label() == Some("Read-only draft"))
+    );
     scene.close(cx);
 }
