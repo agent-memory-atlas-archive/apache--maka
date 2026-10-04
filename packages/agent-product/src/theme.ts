@@ -46,6 +46,18 @@ export function appearance(scheme: 'light' | 'dark'): Theme {
     accent,
     border,
     selected,
+    input: {
+      text: { ...textStyle, font: { ...font, size: 14 } },
+      mutedForeground: muted,
+      background,
+      selection: dark ? 0xa7c4b040 : 0x41665340,
+      caret: text,
+      border,
+      focusedBorder: accent,
+      borderWidth: 1,
+      radius: 8,
+      padding: { top: 10, right: 12, bottom: 10, left: 12 },
+    },
     textarea: {
       text: textStyle,
       mutedForeground: muted,

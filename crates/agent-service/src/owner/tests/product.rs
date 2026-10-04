@@ -18,7 +18,9 @@
  */
 
 use super::*;
-use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use maka_plugin_core::deployment::RemoteObservation;
 use maka_ui::actions::{RemoteService, ServiceSource};
 use ratatui::{buffer::Buffer, layout::Rect};
@@ -49,15 +51,19 @@ fn screen(buffer: &Buffer) -> String {
         .join("\n")
 }
 fn click(presenter: &mut maka_tui::application::Presenter, label: &str) {
+    click_nth(presenter, label, 0);
+}
+fn click_nth(presenter: &mut maka_tui::application::Presenter, label: &str, nth: usize) {
     let buffer = draw(presenter);
     let (x, y) = (0..buffer.area.height)
-        .find_map(|y| {
+        .filter_map(|y| {
             let row = (0..buffer.area.width)
                 .map(|x| buffer[(x, y)].symbol())
                 .collect::<String>();
             row.find(label).map(|x| (x as u16, y))
         })
-        .unwrap_or_else(|| panic!("missing {label} in {}", screen(&buffer)));
+        .nth(nth)
+        .unwrap_or_else(|| panic!("missing {label} #{nth} in {}", screen(&buffer)));
     presenter
         .input(Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
@@ -102,11 +108,12 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         "{}",
         String::from_utf8_lossy(&build.stderr)
     );
+    const KEY: &str = "native-product-key-378f4a";
     let listener = runtime.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
     let server = runtime.spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
-        let body = request(&mut socket).await;
+        let body = request_with_key(&mut socket, KEY).await;
         assert_eq!(body["model"], "fixture-model-19");
         assert!(body.to_string().contains("Hello product"));
         response(&mut socket).await;
@@ -116,6 +123,31 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         changes.enabled_model_ids =
             Some((0..20).map(|at| format!("fixture-model-{at:02}")).collect());
     }));
+    for (at, name) in [
+        "W".repeat(256),
+        format!("{}X", "\n".repeat(255)),
+        "界".repeat(256),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let catalog = runtime.block_on(fixture.config.catalog()).unwrap();
+        let connection = &catalog.connections[0];
+        let result = runtime
+            .block_on(
+                fixture.config.create_connection(
+                    serde_json::from_value(json!({
+                        "expectedCatalogRevision":catalog.revision,
+                        "connection": {"slug":format!("long-label-{at}"),"name":name,
+                            "provider":connection.provider,"configuration":connection.configuration,
+                            "enabled":false,"enabledModelIds":[]}
+                    }))
+                    .unwrap(),
+                ),
+            )
+            .unwrap();
+        assert!(matches!(result, CatalogMutationResult::Committed { .. }));
+    }
     let ui_owner =
         Arc::new(RootOwner::create(&fixture._dir.path().join("ui"), &fixture.namespaces).unwrap());
     let caller = Arc::new(runtime.block_on(EventLog::for_root(ui_owner)).unwrap());
@@ -124,6 +156,9 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         "workspace",
         "composer",
         "models",
+        "connections",
+        "credential",
+        "input",
         "navigation",
         "timeline",
         "appearance",
@@ -234,6 +269,92 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     presenter
         .input(Event::Paste("Hello product".into()))
         .unwrap();
+    // Ordinary settings owns the route; the original conversation editor is
+    // retained while a distinct native SecretInput is captured by Settings.
+    click(&mut presenter, "[ Connections ]");
+    await_screen(&mut presenter, "[ API key ]");
+    // Every original local page item is physically reachable at 80x24,
+    // even for the full legal label length and embedded line breaks.
+    click_nth(&mut presenter, "[ API key ]", 2);
+    await_screen(&mut presenter, "No API key is saved.");
+    click(&mut presenter, "[ Back ]");
+    await_screen(&mut presenter, "[ More connections ]");
+    click(&mut presenter, "[ More connections ]");
+    await_screen(&mut presenter, "[ Previous connections ]");
+    click(&mut presenter, "[ API key ]");
+    await_screen(&mut presenter, "No API key is saved.");
+    click(&mut presenter, "[ Back ]");
+    await_screen(&mut presenter, "[ API key ]");
+    click(&mut presenter, "[ API key ]");
+    await_screen(&mut presenter, "An API key is saved.");
+    click(&mut presenter, "Enter an API key");
+    presenter.input(Event::Paste(KEY.into())).unwrap();
+    assert!(!screen(&draw(&mut presenter)).contains(KEY));
+    // Another actor deletes only the vault generation. Connection revision
+    // stays unchanged, so the form must rely on its observed credential CAS.
+    let row = runtime
+        .block_on(fixture.config.catalog())
+        .unwrap()
+        .connections
+        .remove(0);
+    let locator: CredentialLocator = serde_json::from_value(json!({
+        "scope":"connection", "connectionId":row.connection_id, "kind":"provider"
+    }))
+    .unwrap();
+    let status = runtime
+        .block_on(fixture.config.credential_status(locator.clone()))
+        .unwrap();
+    let CredentialVaultQueryResult::Status { status } = status else {
+        panic!("status");
+    };
+    let target = ConnectionCredentialTarget {
+        connection_id: row.connection_id,
+        revision: row.revision,
+        slug: row.slug,
+        provider: row.provider,
+        configuration: row.configuration,
+    };
+    assert!(matches!(
+        runtime
+            .block_on(fixture.config.delete_credential(DeleteCredentialInput {
+                expected: status.basis().unwrap(),
+                expected_connection: Some(target),
+            }))
+            .unwrap(),
+        CredentialMutationResult::Committed { .. }
+    ));
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    await_screen(&mut presenter, "The connection or saved key changed.");
+    assert!(!screen(&draw(&mut presenter)).contains(KEY));
+    click(&mut presenter, "Review current connection");
+    await_screen(&mut presenter, "[ Use this connection ]");
+    click(&mut presenter, "[ Use this connection ]");
+    click(&mut presenter, "•••");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    await_screen(&mut presenter, "API key saved.");
+    await_screen(&mut presenter, "Enter an API key");
+    let envelope: maka_runtime::provider::Credential = serde_json::from_str(
+        &runtime
+            .block_on(fixture.config.credential_secret(&locator, None))
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(envelope.secret, KEY);
+    click(&mut presenter, "[ Back ]");
+    await_screen(&mut presenter, "[ Refresh connections ]");
+    click(&mut presenter, "[ Back ]");
+    await_screen(&mut presenter, "Hello product");
     await_screen(&mut presenter, "[ Choose model ]");
     click(&mut presenter, "[ Choose model ]");
     await_screen(&mut presenter, "fixture-model-00");
@@ -263,6 +384,63 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     await_screen(&mut reopened, "Elegant response");
     await_screen(&mut reopened, "[ New conversation ]");
     assert!(screen(&draw(&mut reopened)).contains("What would you like to work on?"));
+    click(&mut reopened, "[ Connections ]");
+    await_screen(&mut reopened, "[ API key ]");
+    click(&mut reopened, "[ API key ]");
+    await_screen(&mut reopened, "An API key is saved.");
+    click(&mut reopened, "Enter an API key");
+    const NEW_DRAFT: &str = "retained-new-native-key-draft";
+    reopened.input(Event::Paste(NEW_DRAFT.into())).unwrap();
+    click(&mut reopened, "Earlier key operations");
+    await_screen(&mut reopened, "[ Check result ]");
+    click_nth(&mut reopened, "[ Check result ]", 1);
+    await_screen(&mut reopened, "Key saved for fixture");
+    assert!(!screen(&draw(&mut reopened)).contains(NEW_DRAFT));
+    click(&mut reopened, "[ Back ]");
+    // The original secret remained live under the history projection. Its
+    // physical native input still has content, so leaving requires discard.
+    click(&mut reopened, "[ Back ]");
+    await_screen(&mut reopened, "Discard the unsaved key and leave?");
+    click(&mut reopened, "[ Keep editing ]");
+    await_screen(&mut reopened, "[ Save key ]");
+    assert!(!screen(&draw(&mut reopened)).contains(NEW_DRAFT));
+    for (root, database, sql) in [
+        (
+            &fixture.root,
+            "runtime-rust.sqlite",
+            "SELECT request_json || outcome_json || cleanup_json FROM application_operations",
+        ),
+        (
+            &fixture._dir.path().join("ui"),
+            "runtime-rust.sqlite",
+            "SELECT reference_json FROM application_intents",
+        ),
+        (
+            &fixture.root,
+            "configuration-rust.sqlite",
+            "SELECT target || request_fingerprint || phase FROM oauth_login_receipts",
+        ),
+    ] {
+        let db = rusqlite::Connection::open_with_flags(
+            root.join(database),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let mut statement = db.prepare(sql).unwrap();
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap();
+        let mut count = 0;
+        for row in rows {
+            count += 1;
+            let row = row.unwrap();
+            assert!(
+                !row.contains(KEY) && !row.contains(NEW_DRAFT),
+                "native secret entered public operation history"
+            );
+        }
+        assert!(count > 0, "actual journal must contain persisted facts");
+    }
     reopened.surface_closed(Ok(())).unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while !reopened.can_shutdown() {

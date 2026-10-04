@@ -42,6 +42,7 @@ import type {
   TextChunk,
 } from '../../plugin-sdk/src/index.js';
 import type { Message, Theme } from './contracts.js';
+import { sameValue } from './value.js';
 import { copy, type Copy } from './locale.js';
 import { fill, output, paint, pixels, slot, type Target } from './view.js';
 
@@ -82,6 +83,9 @@ export interface State {
   listCursor: string | null;
   selected: string | null;
   model: SettingsModelChoice | null;
+  catalogEpoch: number;
+  modelRefreshing: boolean;
+  settingsOpen: boolean;
   messages: Message[];
   through: number | null;
   cursor: Cursor | null;
@@ -241,22 +245,7 @@ function executionPending(state: State) {
     (request) => request.kind === 'observe' && request.epoch === state.epoch,
   );
 }
-function sameReference(a: RecoveryRef, b: RecoveryRef): boolean {
-  function canonical(value: unknown): string {
-    if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
-    if (value && typeof value === 'object')
-      return (
-        '{' +
-        Object.entries(value)
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([key, value]) => JSON.stringify(key) + ':' + canonical(value))
-          .join(',') +
-        '}'
-      );
-    return JSON.stringify(value);
-  }
-  return canonical(a) === canonical(b);
-}
+
 function settled(state: State, actions: Action[], request: Mutation, value: unknown) {
   state.uncertain = null;
   if (request.kind === 'restored') {
@@ -490,7 +479,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
     }
     case 'restoreReceipt': {
       const reply = value as OperationReply;
-      if (!sameReference(request.reference, reply.reference)) {
+      if (!sameValue(request.reference, reply.reference)) {
         state.uncertain = { reference: request.reference, request: { kind: 'restored' } };
         state.notice = 'unknown';
         state.restoring = false;
@@ -511,7 +500,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
     case 'receipt': {
       const original = state.uncertain;
       const reply = value as OperationReply;
-      if (!original || !sameReference(original.reference, reply.reference)) {
+      if (!original || !sameValue(original.reference, reply.reference)) {
         state.notice = 'unknown';
         break;
       }
@@ -638,7 +627,11 @@ function frame(
       busy: busy || executionPending(state),
       running: !!state.run,
       enabled:
-        !!state.selected && !!state.model && !state.loading && state.notice !== 'unavailable',
+        !!state.selected &&
+        !!state.model &&
+        !state.modelRefreshing &&
+        !state.loading &&
+        state.notice !== 'unavailable',
       command: state.command,
     },
     { send: 'send', stop: 'stop', changed: 'draft' },
@@ -666,9 +659,16 @@ function frame(
           slot(
             'models',
             'models',
-            { theme, locale, selection: state.model, busy: busy || executionPending(state) },
+            {
+              theme,
+              locale,
+              selection: state.model,
+              catalogEpoch: state.catalogEpoch,
+              busy: busy || executionPending(state),
+            },
             { selected: 'model' },
           ),
+          ui.button('settings', text.settings),
           ...(status ? [ui.text('status', status, 13, theme.muted)] : []),
           ...(state.uncertain
             ? [
@@ -707,19 +707,41 @@ function frame(
     ],
     { style: { width: fill, height: fill, align: 'center', minWidth: 0 } },
   );
+  const conversation = ui.box(
+    'workspace',
+    target === 'desktop'
+      ? [
+          ui.box('sidebar', [navigation], {
+            style: { width: pixels(240), height: fill, shrink: 0 },
+          }),
+          main,
+        ]
+      : [main, navigation],
+    {
+      row: target === 'desktop',
+      gap: 0,
+      visible: !state.settingsOpen,
+      style: { width: fill, height: fill },
+    },
+  );
   const out = output(
     state,
     ui.box(
-      'workspace',
-      target === 'desktop'
-        ? [
-            ui.box('sidebar', [navigation], {
-              style: { width: pixels(240), height: fill, shrink: 0 },
-            }),
-            main,
-          ]
-        : [main, navigation],
-      { row: target === 'desktop', gap: 0, style: { width: fill, height: fill } },
+      'product',
+      [
+        conversation,
+        ...(state.settingsOpen
+          ? [
+              slot(
+                'connections',
+                'connections',
+                { theme, locale },
+                { closed: 'settings-closed', changed: 'settings-changed' },
+              ),
+            ]
+          : []),
+      ],
+      { gap: 0, style: { width: fill, height: fill, align: 'center' } },
     ),
   );
   out.frame.surface =
@@ -753,6 +775,9 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         listCursor: null,
         selected: null,
         model: null,
+        catalogEpoch: 0,
+        modelRefreshing: false,
+        settingsOpen: false,
         messages: [],
         through: null,
         cursor: null,
@@ -810,7 +835,11 @@ export function workspace(target: Target, locale: string): Component<State, Reco
           }
         }
       } else if (input.kind === 'component') {
-        if (input.name === 'draft') {
+        if (input.child === 'connections' && input.name === 'closed') state.settingsOpen = false;
+        else if (input.child === 'connections' && input.name === 'changed') {
+          state.catalogEpoch++;
+          state.modelRefreshing = !!state.model;
+        } else if (input.child === 'composer' && input.name === 'changed') {
           const observation = input.event as EditorObservation;
           if (
             state.command &&
@@ -827,6 +856,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
           !mutationPending(state) &&
           state.selected &&
           state.model &&
+          !state.modelRefreshing &&
           !state.loading &&
           !state.run &&
           !state.command
@@ -872,6 +902,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
           !executionPending(state)
         ) {
           state.model = input.event as SettingsModelChoice;
+          state.modelRefreshing = false;
         } else if (input.name === 'create' && !mutationPending(state))
           intent(state, actions, { kind: 'create' }, 'agent', 'create', {
             title: copy(locale).new,
@@ -881,7 +912,8 @@ export function workspace(target: Target, locale: string): Component<State, Reco
           if (state.sessions.some((session) => session.id === sessionId))
             select(state, actions, sessionId);
         } else if (
-          input.name === 'sessions' &&
+          input.child === 'navigation' &&
+          input.name === 'more' &&
           state.listCursor &&
           !Object.values(state.pending).some((request) => request.kind === 'list')
         )
@@ -889,13 +921,20 @@ export function workspace(target: Target, locale: string): Component<State, Reco
             revision: state.listRevision,
             cursor: state.listCursor,
           });
-        else if (input.name === 'history' && state.cursor && !state.loading && !state.run) {
+        else if (
+          input.child === 'timeline' &&
+          input.name === 'more' &&
+          state.cursor &&
+          !state.loading &&
+          !state.run
+        ) {
           state.messages = [];
           state.loading = true;
           history(state, actions);
         }
       } else if (input.kind === 'raw') {
-        if (
+        if (input.key === 'settings') state.settingsOpen = true;
+        else if (
           input.key === 'check' &&
           state.uncertain &&
           !Object.values(state.pending).some((request) => request.kind === 'receipt')

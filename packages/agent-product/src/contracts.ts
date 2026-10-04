@@ -23,6 +23,8 @@ import {
   type AgentSession,
   type SettingsModelChoice,
   type TextareaAppearance,
+  type InputAppearance,
+  type ConnectionCredentialTarget,
   type TextareaMenuAppearance,
   type EditorCommand,
   type EditorObservation,
@@ -46,6 +48,7 @@ export interface Theme {
   border: number;
   selected: number;
   textarea: TextareaAppearance;
+  input: InputAppearance;
   menu: TextareaMenuAppearance;
 }
 export interface Message {
@@ -55,6 +58,7 @@ export interface Message {
   continued: boolean;
 }
 export interface ModelsProps {
+  catalogEpoch: number;
   theme: Theme;
   locale: string;
   selection: SettingsModelChoice | null;
@@ -87,7 +91,11 @@ export interface ComposerProps {
 // Reuse the exact native schemas; this package defines only its own interfaces.
 const editor = native.textarea.interface;
 const session = native.agent.interface.methods.list.output;
-const defs = { ...editor.props.$defs, ...session.$defs };
+const defs = {
+  ...editor.props.$defs,
+  ...native.secretInput.interface.props.$defs,
+  ...session.$defs,
+};
 const themeSchema = object({
   background: { type: 'integer', minimum: 0, maximum: 4294967295 },
   surface: { type: 'integer', minimum: 0, maximum: 4294967295 },
@@ -97,6 +105,7 @@ const themeSchema = object({
   border: { type: 'integer', minimum: 0, maximum: 4294967295 },
   selected: { type: 'integer', minimum: 0, maximum: 4294967295 },
   textarea: editor.props.properties.appearance,
+  input: native.secretInput.interface.props.properties.appearance,
   menu: { $ref: '#/$defs/TextareaMenuAppearance' },
 });
 const messageSchema = object({
@@ -177,6 +186,7 @@ export const modelsContract: Contract = {
     props: {
       ...withDefs(
         object({
+          catalogEpoch: { type: 'integer', minimum: 0 },
           theme: { $ref: '#/$defs/Theme' },
           locale,
           selection: { anyOf: [{ $ref: '#/$defs/SettingsModelChoice' }, { type: 'null' }] },
@@ -189,3 +199,38 @@ export const modelsContract: Contract = {
     captures: {},
   },
 };
+
+export interface ConnectionsProps {
+  theme: Theme;
+  locale: string;
+}
+export interface CredentialProps extends ConnectionsProps {
+  target: ConnectionCredentialTarget;
+}
+export const credentialContract: Contract = {
+  name: 'maka.agent.Credential',
+  version: 1,
+  transport: 'local',
+  interface: {
+    kind: 'component',
+    props: {
+      ...object({
+        theme: { $ref: '#/$defs/Theme' },
+        locale,
+        target: { $ref: '#/$defs/ConnectionCredentialTarget' },
+      }),
+      $defs: {
+        ...defs,
+        ...native.settings.interface.methods.saveCredential.input.$defs,
+        Theme: themeSchema,
+      },
+    },
+    events: { closed: object({}), changed: object({}) },
+    captures: {},
+  },
+};
+export const connectionsContract = component(
+  'maka.agent.Connections',
+  object({ theme: { $ref: '#/$defs/Theme' }, locale }),
+  { closed: object({}), changed: object({}) },
+);

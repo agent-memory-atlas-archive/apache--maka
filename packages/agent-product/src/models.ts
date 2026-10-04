@@ -31,6 +31,9 @@ import { modelsContract } from './contracts.js';
 import { copy } from './locale.js';
 import { fill, output, paint, type Target } from './view.js';
 interface State {
+  catalogEpoch: number;
+  staleSelection: boolean;
+  suggestDefault: boolean;
   revision: number;
   serial: number;
   pending: string | null;
@@ -41,6 +44,19 @@ interface State {
   failed: boolean;
   offset: number;
 }
+function candidate(state: State, props: ModelsProps) {
+  if (props.busy || state.pending) return null;
+  if (state.staleSelection && props.selection)
+    return state.choices.find(
+      (choice) =>
+        choice.selection.connectionId === props.selection!.selection.connectionId &&
+        choice.selection.modelId === props.selection!.selection.modelId,
+    );
+  return !props.selection && state.suggestDefault
+    ? state.choices.find((choice) => choice.isDefault)
+    : null;
+}
+
 function read(state: State, more = false): Action[] {
   if (state.pending) return [];
   const key = `models-${++state.serial}`;
@@ -69,7 +85,7 @@ function frame(
 ) {
   const ui = paint(target, props.theme);
   const text = copy(props.locale);
-  const chosen = props.selection;
+  const chosen = state.staleSelection ? null : props.selection;
   const compact = (label: string) =>
     [...label].length > 44 ? [...label].slice(0, 43).join('') + '…' : label;
   const view = ui.box(
@@ -137,6 +153,9 @@ export function models(target: Target): Component<State, ModelsProps> {
     mount(props) {
       const state: State = {
         revision: 0,
+        catalogEpoch: props.catalogEpoch,
+        staleSelection: false,
+        suggestDefault: true,
         serial: 0,
         pending: null,
         open: false,
@@ -149,10 +168,24 @@ export function models(target: Target): Component<State, ModelsProps> {
       return frame(target, state, props, read(state));
     },
     update(previous, props) {
-      const initial =
-        !props.busy && !props.selection
-          ? previous.choices.find((choice) => choice.isDefault)
-          : null;
+      if (previous.catalogEpoch !== props.catalogEpoch) {
+        const state = {
+          ...previous,
+          revision: previous.revision + 1,
+          catalogEpoch: props.catalogEpoch,
+          staleSelection: true,
+          suggestDefault: false,
+          choices: [],
+          pending: null,
+          catalogRevision: null,
+          next: null,
+          offset: 0,
+        };
+        return frame(target, state, props, read(state));
+      }
+      if (props.selection && !previous.staleSelection) previous.suggestDefault = false;
+      const initial = candidate(previous, props);
+      if (initial && previous.staleSelection) previous.staleSelection = false;
       return frame(
         target,
         { ...previous, revision: previous.revision + 1 },
@@ -181,9 +214,10 @@ export function models(target: Target): Component<State, ModelsProps> {
             state.choices = page.choices;
             state.next = page.next ?? null;
             state.catalogRevision = page.revision;
-            if (!props.selection) {
-              const initial = page.choices.find((choice) => choice.isDefault);
-              if (initial) events.push({ name: 'selected', value: initial });
+            const initial = candidate(state, props);
+            if (initial) {
+              state.staleSelection = false;
+              events.push({ name: 'selected', value: initial });
             }
           }
         }
@@ -201,6 +235,8 @@ export function models(target: Target): Component<State, ModelsProps> {
             const choice = state.choices[Number(input.key.slice(7))];
             if (choice) {
               state.open = false;
+              state.staleSelection = false;
+              state.suggestDefault = false;
               events.push({ name: 'selected', value: choice });
             }
           }

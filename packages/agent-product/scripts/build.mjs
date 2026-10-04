@@ -62,6 +62,7 @@ const specifications = {
     imports: {
       agent: one(sdk.contracts.agent),
       models: one(own.modelsContract),
+      connections: one(own.connectionsContract),
       receipts: one(sdk.contracts.receiptReader),
       history: one(sdk.contracts.callerHistory),
       reader: one(sdk.contracts.textReader),
@@ -104,6 +105,23 @@ specifications.models = {
   module: 'models',
   imports: { settings: one(sdk.contracts.settings) },
 };
+specifications.connections = {
+  contract: own.connectionsContract,
+  export: 'Connections',
+  module: 'connections',
+  imports: { settings: one(sdk.contracts.settings), credential: one(own.credentialContract) },
+};
+specifications.credential = {
+  contract: own.credentialContract,
+  export: 'Credential',
+  module: 'credential',
+  imports: {
+    settings: one(sdk.contracts.settings),
+    secret: one(sdk.contracts.secretInput),
+    receipts: one(sdk.contracts.receiptReader),
+    history: one(sdk.contracts.callerHistory),
+  },
+};
 const packages = [];
 for (const [name, spec] of Object.entries(specifications)) {
   const directory = resolve(destination, 'packages', name);
@@ -116,8 +134,8 @@ for (const [name, spec] of Object.entries(specifications)) {
       contents = `export {activate} from '${resolve(root, 'src/theme.ts')}';`;
     else if (name === 'workspace')
       contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace('${target}',configuration.locale);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
-    else if (name === 'models')
-      contents = `import {models,activate} from '${resolve(root, 'src/models.ts')}';export const component=models('${target}');export {activate};`;
+    else if (['models', 'connections', 'credential'].includes(name))
+      contents = `import {${name},activate} from '${resolve(root, 'src/' + name + '.ts')}';export const component=${name}('${target}');export {activate};`;
     else
       contents = `import {components,exports} from '${resolve(root, 'src/components.ts')}';export const component=components('${target}').${name};export function activate(){const declaration=exports().${spec.export};return {${spec.export}:{...declaration,component:['component']}};}`;
     await build({
@@ -158,6 +176,17 @@ for (const [name, spec] of Object.entries(specifications)) {
   packages.push(name);
 }
 const mechanical = {
+  input: {
+    entries: Object.fromEntries(
+      ['desktop', 'tui'].map((target) => [
+        target,
+        native('maka.ui.input', {
+          TextInput: required(sdk.contracts.textInput),
+          SecretInput: required(sdk.contracts.secretInput),
+        }),
+      ]),
+    ),
+  },
   settings: {
     entries: { host: native('maka.settings', { Settings: required(sdk.contracts.settings) }) },
   },

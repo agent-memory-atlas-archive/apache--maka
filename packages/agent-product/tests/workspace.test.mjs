@@ -108,8 +108,12 @@ class Client {
     return this.input({
       kind: 'component',
       key: name,
-      child: name === 'send' ? 'composer' : 'navigation',
-      name,
+      child: ['send', 'draft', 'stop'].includes(name)
+        ? 'composer'
+        : name === 'history'
+          ? 'timeline'
+          : 'navigation',
+      name: name === 'draft' ? 'changed' : ['history', 'sessions'].includes(name) ? 'more' : name,
       event,
     });
   }
@@ -401,6 +405,25 @@ test('both product compositions use actual immutable package refs and check in t
       assert.equal(host.instances.agent.key, keys.agent);
       assert.deepEqual(connections.hosts[0].consumer, [keys.gateway]);
       assert.equal(connections.hosts[0].deployment, configuration.hostDeployment);
+      assert.deepEqual(
+        connections.hosts[0].imports.settings.methods,
+        Object.keys(sdk.contracts.settings.interface.methods),
+      );
+      assert.equal(connections.hosts[0].imports.settings.recovery, true);
+      const secret = JSON.parse(
+        readFileSync(resolve(root, 'dist/packages/credential/maka.extension.json')),
+      );
+      assert.equal('reader' in secret.application.entries[presentation].imports, false);
+      assert.deepEqual(
+        secret.application.entries[presentation].exports.Credential.contract.interface.captures,
+        {},
+      );
+      assert.deepEqual(Object.keys(ui.instances.credential.bindings).sort(), [
+        'history',
+        'receipts',
+        'secret',
+        'settings',
+      ]);
     }
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -508,6 +531,7 @@ const modelProps = {
   locale: 'en',
   selection: null,
   busy: true,
+  catalogEpoch: 0,
 };
 const modelGuest = await import(new URL('dist/packages/models/tui.js', modelRoot));
 modelGuest.activate();
@@ -544,7 +568,7 @@ test('TUI pages expose every original choice, keep controls visible and retain l
     status: 'succeeded',
     value: { kind: 'ready', revision: 5, choices: modelChoices, next: null },
   });
-  assert.equal(out.events[0].value.selection.modelId, 'model-0');
+  assert.deepEqual(out.events, []);
   out = modelGuest.component.update(out.frame.state, { ...modelProps, busy: false }, {});
   assert.equal(out.events[0].value.selection.modelId, 'model-0');
   const enabled = { ...modelProps, busy: false, selection: modelChoices[0] };
@@ -595,3 +619,646 @@ test('late query is ignored and catalog changes restart only the observation', (
   assert.equal(out.events.length, 0);
   assert.equal(out.actions[0].method, 'models');
 });
+
+const connectionTarget = {
+  connectionId: 'connection-A',
+  revision: 12,
+  slug: 'connection-a',
+  provider: {
+    packageId: 'maka.providers',
+    entryId: 'maka.providers',
+    scope: 'profile',
+    name: 'openai',
+  },
+  configuration: { baseUrl: 'https://example.invalid/v1' },
+};
+const credentialStatus = {
+  locator: { scope: 'connection', connectionId: connectionTarget.connectionId, kind: 'provider' },
+  configured: true,
+  credentialId: 'saved-key',
+  revision: 8,
+  updatedAt: 1,
+};
+const credentialRef = {
+  ...reference,
+  export: 'Settings',
+  method: 'saveCredential',
+  contract: sdk.contracts.settings,
+};
+class FormClient {
+  constructor(component, props) {
+    this.component = component;
+    this.props = props;
+    this.actions = new Map();
+    this.save(component.mount(props, {}));
+  }
+  save(out) {
+    this.output = out;
+    for (const action of out.actions) this.actions.set(action.key, action);
+    return out;
+  }
+  input(input) {
+    return this.save(this.component.event(structuredClone(this.state), input, this.props, {}));
+  }
+  raw(key) {
+    return this.input({ kind: 'raw', key, event: {} });
+  }
+  native(observation = draft) {
+    return this.input({
+      kind: 'component',
+      child: 'secret',
+      name: 'changed',
+      key: 'changed',
+      event: observation,
+    });
+  }
+  find(method) {
+    const action = [...this.actions.values()].find((a) => a.method === method);
+    assert.ok(action, 'expected ' + method);
+    return action;
+  }
+  complete(action, result) {
+    this.actions.delete(action.key);
+    return this.input({ kind: 'action', key: action.key, event: result });
+  }
+  query(method, value) {
+    return this.complete(this.find(method), { status: 'succeeded', value });
+  }
+  update(changes) {
+    this.props = { ...this.props, ...changes };
+    return this.save(this.component.update(structuredClone(this.state), this.props, {}));
+  }
+  get state() {
+    return this.output.frame.state;
+  }
+}
+const credentialModules = await Promise.all(
+  ['desktop', 'tui'].map(async (target) => [
+    target,
+    await import(pathToFileURL(resolve(root, 'dist/packages/credential/' + target + '.js'))),
+  ]),
+);
+const formReply = (value, ref = credentialRef) => ({
+  status: 'operation',
+  reply: {
+    reference: ref,
+    receipt: {
+      kind: 'recorded',
+      outcome: { kind: 'returned', value },
+      cleanup: { kind: 'confirmed' },
+    },
+  },
+});
+const unknownReply = (ref = credentialRef) => ({
+  status: 'operation',
+  reply: {
+    reference: ref,
+    receipt: {
+      kind: 'recorded',
+      outcome: { kind: 'unknown', diagnostic: 'lost' },
+      cleanup: { kind: 'confirmed' },
+    },
+  },
+});
+for (const [target, module] of credentialModules) {
+  const make = (targetProps = connectionTarget) =>
+    new FormClient(module.component, {
+      theme: values.appearance[0],
+      locale: 'en',
+      target: targetProps,
+    });
+  const ready = () => {
+    const form = make();
+    form.query('credentialStatus', { kind: 'status', status: credentialStatus });
+    form.native();
+    return form;
+  };
+  test(
+    target + ' credential captures original native version and resets only confirmed saved input',
+    () => {
+      const form = ready();
+      form.raw('save');
+      const action = form.find('saveCredential');
+      assert.deepEqual(action.input, {
+        expected: connectionTarget,
+        expectedCredential: {
+          locator: credentialStatus.locator,
+          credentialId: 'saved-key',
+          revision: 8,
+        },
+      });
+      assert.deepEqual(action.resources, {
+        secret: {
+          child: 'secret',
+          method: 'snapshot',
+          input: { kind: 'at_revision', owner: draft.snapshot.text.owner, revision: 4 },
+        },
+      });
+      assert.equal(
+        'read' in Object.fromEntries([...form.actions.values()].map((a) => [a.method, a])),
+        false,
+      );
+      const newer = structuredClone(draft);
+      newer.revision = newer.snapshot.text.revision = 5;
+      form.native(newer);
+      form.complete(
+        action,
+        formReply({
+          kind: 'saved',
+          connection: {
+            connectionId: connectionTarget.connectionId,
+            slug: connectionTarget.slug,
+            provider: connectionTarget.provider,
+          },
+        }),
+      );
+      assert.deepEqual(form.state.command, {
+        owner: draft.snapshot.text.owner,
+        basedOn: 4,
+        sequence: 1,
+        edit: { kind: 'reset', text: '' },
+      });
+      assert.equal(form.state.finished, true);
+      const conflict = structuredClone(newer);
+      conflict.receipt = {
+        owner: draft.snapshot.text.owner,
+        sequence: 1,
+        revision: 5,
+        outcome: { status: 'conflict', reason: 'revision' },
+      };
+      form.native(conflict);
+      assert.equal(form.state.command, null);
+      assert.equal(form.state.notice, 'draftKept');
+      assert.equal(form.state.observation.snapshot.text.revision, 5);
+      form.raw('save');
+      assert.equal(form.output.actions.length, 0);
+      form.raw('back');
+      assert.equal(form.state.confirmation, 'leave');
+      assert.deepEqual(form.output.events, []);
+      form.raw('cancel');
+      assert.equal(form.state.confirmation, null);
+    },
+  );
+  test(
+    target + ' unknown only checks original reference; mismatched receipts keep draft and intent',
+    () => {
+      const form = ready();
+      form.raw('save');
+      form.complete(form.find('saveCredential'), unknownReply());
+      form.raw('save');
+      assert.equal(form.output.actions.length, 0);
+      form.raw('check');
+      const check = form.find('read');
+      assert.deepEqual(check.input, credentialRef);
+      const wrong = { ...credentialRef, operation: uuid(99) };
+      form.complete(check, {
+        status: 'succeeded',
+        value: formReply(
+          {
+            kind: 'saved',
+            connection: {
+              connectionId: connectionTarget.connectionId,
+              slug: connectionTarget.slug,
+              provider: connectionTarget.provider,
+            },
+          },
+          wrong,
+        ).reply,
+      });
+      assert.equal(form.state.command, null);
+      assert.deepEqual(form.state.current.reference, credentialRef);
+      form.raw('check');
+      form.query('read', formReply({ kind: 'rejected', reason: 'invalid_secret' }).reply);
+      assert.equal(form.state.current, null);
+      assert.equal(form.state.notice, 'keyRejected');
+      assert.equal(form.state.command, null);
+      form.raw('save');
+      assert.equal(form.output.actions[0].method, 'saveCredential');
+    },
+  );
+  test(target + ' known CAS rejection keeps input and frozen target despite parent changes', () => {
+    const form = ready();
+    form.raw('save');
+    form.complete(
+      form.find('saveCredential'),
+      formReply({ kind: 'rejected', reason: 'credential_changed' }),
+    );
+    assert.equal(form.state.notice, 'keyConflict');
+    assert.equal(form.state.command, null);
+    form.raw('save');
+    assert.equal(form.output.actions.length, 0);
+    const other = {
+      ...connectionTarget,
+      connectionId: 'connection-B',
+      slug: 'connection-b',
+      revision: 19,
+    };
+    form.update({ target: other });
+    assert.deepEqual(form.state.target, connectionTarget);
+    assert.deepEqual(form.state.observation, draft);
+    form.raw('save');
+    assert.equal(form.output.actions.length, 0);
+  });
+  test(
+    target +
+      ' earlier operations from another mount never change current draft or credential basis',
+    () => {
+      const other = { ...connectionTarget, connectionId: 'connection-B', slug: 'connection-b' };
+      const form = make(other);
+      const status = {
+        ...credentialStatus,
+        locator: { ...credentialStatus.locator, connectionId: other.connectionId },
+      };
+      form.query('credentialStatus', { kind: 'status', status });
+      form.native();
+      form.raw('history');
+      const entries = [1, 2, 3, 4].map((cursor) => ({
+        cursor,
+        reference: credentialRef,
+        caller: credentialRef.source,
+        consumer: credentialRef.namespace,
+      }));
+      form.query('page', entries);
+      form.raw('earlier-0');
+      form.query('read', unknownReply().reply);
+      assert.equal(form.state.current, null);
+      assert.equal(form.state.notice, null);
+      assert.deepEqual(form.state.status, status);
+      assert.deepEqual(form.state.observation, draft);
+      form.raw('earlier-0');
+      form.query(
+        'read',
+        formReply({
+          kind: 'saved',
+          connection: {
+            connectionId: connectionTarget.connectionId,
+            slug: connectionTarget.slug,
+            provider: connectionTarget.provider,
+          },
+        }).reply,
+      );
+      assert.equal(form.state.command, null);
+      assert.equal(form.state.finished, false);
+      assert.equal(form.state.current, null);
+      assert.deepEqual(form.state.status, status);
+      form.raw('history-back');
+      form.raw('save');
+      assert.deepEqual(form.find('saveCredential').input.expected, other);
+      // A second mount of the same provider has independent candidate state, same caller history.
+      const second = ready();
+      second.raw('history');
+      second.query('page', entries);
+      second.raw('earlier-0');
+      second.query(
+        'read',
+        formReply({
+          kind: 'saved',
+          connection: {
+            connectionId: other.connectionId,
+            slug: other.slug,
+            provider: other.provider,
+          },
+        }).reply,
+      );
+      assert.equal(second.state.command, null);
+      assert.deepEqual(second.state.observation, draft);
+    },
+  );
+  test(
+    target +
+      ' credential removal requires confirmation and both original bases, never resets draft',
+    () => {
+      const form = ready();
+      form.raw('remove');
+      assert.equal(form.state.confirmation, 'remove');
+      assert.equal(form.output.actions.length, 0);
+      form.raw('cancel');
+      assert.equal(form.output.actions.length, 0);
+      form.raw('remove');
+      form.raw('confirm');
+      const action = form.find('deleteCredential');
+      assert.deepEqual(action.input, {
+        expectedConnection: connectionTarget,
+        expected: { locator: credentialStatus.locator, credentialId: 'saved-key', revision: 8 },
+      });
+      assert.deepEqual(action.resources, {});
+      const absent = {
+        ...credentialStatus,
+        configured: false,
+        credentialId: null,
+        revision: null,
+        updatedAt: null,
+      };
+      form.complete(
+        action,
+        formReply(
+          { kind: 'committed', vaultRevision: 9, status: absent },
+          { ...credentialRef, method: 'deleteCredential' },
+        ),
+      );
+      assert.deepEqual(form.state.status, absent);
+      assert.equal(form.state.command, null);
+      assert.deepEqual(form.state.observation, draft);
+      form.raw('save');
+      assert.equal(form.find('saveCredential').input.expectedCredential, null);
+    },
+  );
+  test(target + ' credential status failures and marked input cannot dispatch a save', () => {
+    const form = make();
+    form.native();
+    form.raw('save');
+    assert.equal(form.output.actions.length, 0);
+    form.complete(form.find('credentialStatus'), { status: 'failed', reason: 'offline' });
+    assert.equal(form.state.statusFailed, true);
+    form.raw('save');
+    assert.equal(form.output.actions.length, 0);
+    form.raw('refresh-status');
+    form.query('credentialStatus', { kind: 'status', status: credentialStatus });
+    const marked = structuredClone(draft);
+    marked.snapshot.marked = { start: 0, end: 5 };
+    form.native(marked);
+    form.input({
+      kind: 'component',
+      key: 'submitted',
+      child: 'secret',
+      name: 'submitted',
+      event: {},
+    });
+    assert.equal(form.output.actions.length, 0);
+    const large = structuredClone(draft);
+    large.snapshot.text.bytes = 65537;
+    form.native(large);
+    form.raw('save');
+    assert.equal(form.state.notice, 'keyTooLarge');
+    assert.equal(form.output.actions.length, 0);
+  });
+}
+test('settings routing keeps original composer key and commands while invalidating model observations', () => {
+  const client = new Client().start();
+  const slots = (node) => [
+    ...(node.kind === 'component' ? [node] : []),
+    ...(node.children ?? []).flatMap(slots),
+  ];
+  const original = slots(client.output.frame.view).find((n) => n.binding === 'composer');
+  client.raw('settings');
+  assert.equal(client.state.settingsOpen, true);
+  const hidden = client.output.frame.view.children[0];
+  assert.equal(hidden.visible, false);
+  assert.deepEqual(
+    slots(hidden).find((n) => n.binding === 'composer'),
+    original,
+  );
+  assert.ok(slots(client.output.frame.view).some((n) => n.binding === 'connections'));
+  client.input({
+    kind: 'component',
+    key: 'settings-changed',
+    child: 'connections',
+    name: 'changed',
+    event: {},
+  });
+  assert.equal(client.state.catalogEpoch, 1);
+  assert.equal(client.state.model.selection.modelId, 'fixture-model');
+  assert.equal(client.state.modelRefreshing, true);
+  client.input({
+    kind: 'component',
+    key: 'settings-closed',
+    child: 'connections',
+    name: 'closed',
+    event: {},
+  });
+  assert.equal(client.state.settingsOpen, false);
+  assert.equal(client.output.frame.view.children[0].visible, true);
+  assert.equal(
+    slots(client.output.frame.view).find((n) => n.binding === 'composer').key,
+    original.key,
+  );
+});
+test('changed settings discard late model query and old default before selecting a fresh basis', async () => {
+  const module = await import(pathToFileURL(resolve(root, 'dist/packages/models/desktop.js')));
+  const form = new FormClient(module.component, {
+    theme: values.appearance[0],
+    locale: 'en',
+    selection: {
+      selection: { connectionId: 'fixture', revision: 2, modelId: 'fixture-model' },
+      connectionName: 'Fixture',
+      label: 'Fixture model',
+      isDefault: false,
+    },
+    busy: false,
+    catalogEpoch: 0,
+  });
+  const old = form.find('models');
+  form.update({ catalogEpoch: 1 });
+  const current = [...form.actions.values()].filter((a) => a.method === 'models').at(-1);
+  assert.notEqual(old.key, current.key);
+  const choice = {
+    selection: { connectionId: 'fixture', revision: 2, modelId: 'fixture-model' },
+    connectionName: 'Fixture',
+    label: 'Fixture model',
+    isDefault: true,
+  };
+  form.complete(old, {
+    status: 'succeeded',
+    value: { kind: 'ready', revision: 2, choices: [choice], next: null },
+  });
+  assert.equal(form.state.choices.length, 0);
+  assert.deepEqual(form.output.events, []);
+  form.complete(current, {
+    status: 'succeeded',
+    value: {
+      kind: 'ready',
+      revision: 3,
+      choices: [{ ...choice, selection: { ...choice.selection, revision: 3 } }],
+      next: null,
+    },
+  });
+  assert.equal(form.output.events[0].value.selection.revision, 3);
+});
+
+for (const [target, module] of credentialModules) {
+  test(
+    target +
+      ' preserved newer native draft can be saved after explicit fresh connection and vault review',
+    () => {
+      const form = new FormClient(module.component, {
+        theme: values.appearance[0],
+        locale: 'en',
+        target: connectionTarget,
+      });
+      form.query('credentialStatus', { kind: 'status', status: credentialStatus });
+      form.native();
+      form.raw('save');
+      const save = form.find('saveCredential');
+      const newer = structuredClone(draft);
+      newer.revision = newer.snapshot.text.revision = 5;
+      form.native(newer);
+      form.complete(
+        save,
+        formReply({
+          kind: 'saved',
+          connection: {
+            connectionId: connectionTarget.connectionId,
+            slug: connectionTarget.slug,
+            provider: connectionTarget.provider,
+          },
+        }),
+      );
+      newer.receipt = {
+        owner: draft.snapshot.text.owner,
+        sequence: 1,
+        revision: 5,
+        outcome: { status: 'conflict', reason: 'revision' },
+      };
+      form.native(newer);
+      form.raw('review');
+      const fresh = {
+        ...connectionTarget,
+        revision: 13,
+        configuration: { baseUrl: 'https://changed.example.invalid/v1' },
+      };
+      form.query('connection', {
+        kind: 'stale',
+        actual: { connectionId: fresh.connectionId, revision: 13 },
+      });
+      form.query('connection', {
+        kind: 'ready',
+        target: fresh,
+        name: 'Connection',
+        enabled: true,
+        enabledModelCount: 1,
+      });
+      const updated = { ...credentialStatus, credentialId: 'new-saved-key', revision: 9 };
+      form.query('credentialStatus', { kind: 'status', status: updated });
+      assert.equal(form.state.confirmation, 'rebase');
+      assert.deepEqual(form.state.target, connectionTarget);
+      assert.deepEqual(form.state.observation, newer);
+      form.raw('save');
+      assert.equal(form.output.actions.length, 0);
+      form.raw('review-confirm');
+      assert.deepEqual(form.state.target, fresh);
+      assert.deepEqual(form.state.status, updated);
+      assert.deepEqual(form.state.observation, newer);
+      assert.equal(form.state.command, null);
+      form.raw('save');
+      assert.deepEqual(form.find('saveCredential').input.expected, fresh);
+      assert.deepEqual(form.find('saveCredential').resources.secret.input, {
+        kind: 'at_revision',
+        owner: draft.snapshot.text.owner,
+        revision: 5,
+      });
+    },
+  );
+}
+test('a refreshed catalog never replaces a chosen nondefault model with an unrelated default', async () => {
+  const module = await import(pathToFileURL(resolve(root, 'dist/packages/models/desktop.js')));
+  const chosen = {
+    selection: { connectionId: 'chosen', revision: 2, modelId: 'chosen-model' },
+    connectionName: 'Chosen',
+    label: 'Chosen model',
+    isDefault: false,
+  };
+  const form = new FormClient(module.component, {
+    theme: values.appearance[0],
+    locale: 'en',
+    selection: chosen,
+    busy: false,
+    catalogEpoch: 0,
+  });
+  form.query('models', { kind: 'ready', revision: 2, choices: [chosen], next: null });
+  form.update({ catalogEpoch: 1 });
+  const other = {
+    selection: { connectionId: 'other', revision: 8, modelId: 'default-model' },
+    connectionName: 'Other',
+    label: 'Default model',
+    isDefault: true,
+  };
+  form.query('models', { kind: 'ready', revision: 8, choices: [other], next: null });
+  assert.deepEqual(form.output.events, []);
+  assert.equal(form.state.staleSelection, true);
+  form.update({ busy: false });
+  assert.deepEqual(form.output.events, []);
+  form.raw('refresh');
+  const renewed = { ...chosen, selection: { ...chosen.selection, revision: 9 } };
+  form.query('models', { kind: 'ready', revision: 9, choices: [other, renewed], next: null });
+  assert.equal(form.output.events[0].value.selection.connectionId, 'chosen');
+  assert.equal(form.output.events[0].value.selection.revision, 9);
+});
+
+for (const [target, module] of credentialModules) {
+  test(
+    target +
+      ' connection review exposes every receiver and configuration character through bounded pages',
+    () => {
+      const form = new FormClient(module.component, {
+        theme: values.appearance[0],
+        locale: 'en',
+        target: connectionTarget,
+      });
+      form.query('credentialStatus', { kind: 'status', status: credentialStatus });
+      form.native();
+      form.raw('save');
+      form.complete(
+        form.find('saveCredential'),
+        formReply({ kind: 'rejected', reason: 'connection_changed' }),
+      );
+      const endpoint = 'https://' + ('a'.repeat(52) + '.').repeat(3) + 'receiver-b.test/v1';
+      const fresh = {
+        ...connectionTarget,
+        revision: 13,
+        configuration: { baseUrl: endpoint, extra: '界'.repeat(300) },
+      };
+      form.raw('review');
+      form.query('connection', {
+        kind: 'stale',
+        actual: { connectionId: fresh.connectionId, revision: 13 },
+      });
+      form.query('connection', {
+        kind: 'ready',
+        target: fresh,
+        name: 'Connection',
+        enabled: true,
+        enabledModelCount: 1,
+      });
+      form.query('credentialStatus', { kind: 'status', status: credentialStatus });
+      const originalEditor = form.output.frame.view.children[0].children.find(
+        (n) => n.key === 'key-input',
+      ).children[0];
+      let complete = '';
+      let pages = 0;
+      do {
+        const review = form.output.frame.view.children.find((n) => n.key === 'review-target');
+        assert.equal(review.visible, true);
+        const lines = review.children.filter((n) => n.key.startsWith('target-line-'));
+        assert.ok(lines.length <= (target === 'tui' ? 8 : 24));
+        assert.ok(lines.every((n) => [...n.text].length <= 36));
+        complete += lines.map((n) => n.text).join('');
+        assert.deepEqual(
+          form.output.frame.view.children[0].children.find((n) => n.key === 'key-input')
+            .children[0],
+          originalEditor,
+        );
+        pages++;
+        if (
+          !review.children
+            .find((n) => n.key === 'review-actions')
+            .children.some((n) => n.key === 'review-next')
+        )
+          break;
+        form.raw('review-next');
+      } while (pages < 100);
+      assert.ok(pages > 1 && pages < 100);
+      assert.equal(
+        complete,
+        endpoint +
+          JSON.stringify(fresh.provider) +
+          fresh.slug +
+          JSON.stringify(fresh.configuration),
+      );
+      assert.deepEqual(form.state.observation, draft);
+      assert.deepEqual(form.state.target, connectionTarget);
+      form.raw('review-confirm');
+      form.raw('save');
+      assert.equal(form.find('saveCredential').input.expected.configuration.baseUrl, endpoint);
+    },
+  );
+}

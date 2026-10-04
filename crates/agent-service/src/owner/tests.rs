@@ -557,6 +557,9 @@ impl Fixture {
     }
 }
 async fn request(socket: &mut TcpStream) -> Value {
+    request_with_key(socket, "private-fixture-key").await
+}
+async fn request_with_key(socket: &mut TcpStream, key: &str) -> Value {
     let mut bytes = Vec::new();
     let boundary = loop {
         let mut buffer = [0; 4096];
@@ -572,7 +575,7 @@ async fn request(socket: &mut TcpStream) -> Value {
     assert!(
         headers
             .to_ascii_lowercase()
-            .contains("authorization: bearer private-fixture-key")
+            .contains(&format!("authorization: bearer {key}"))
     );
     let length: usize = headers
         .lines()

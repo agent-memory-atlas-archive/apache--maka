@@ -109,3 +109,12 @@ export function output<S extends { revision: number }>(
 }
 export const fill = { unit: 'fraction', value: 1 };
 export const pixels = (value: number) => ({ unit: 'pixels', value });
+
+// Disposable labels must not turn one catalog entry into an unbounded terminal
+// layout. The full immutable identity/configuration remains in the domain DTO.
+export function compactLabel(value: string, limit: number): string {
+  const characters = [...value.replace(/\s+/gu, ' ').trim()];
+  return characters.length > limit
+    ? characters.slice(0, limit - 1).join('') + '…'
+    : characters.join('');
+}

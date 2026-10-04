@@ -23,7 +23,7 @@
 
 This is an ordinary plugin composition for a text agent, with separate desktop and terminal entries. The launchers contain no product pages. Workspace, composer, navigation, timeline and appearance are individually replaceable packages, connected through explicit public contracts. Native packages provide surfaces, the editor, bounded text capture, operation history and the Host agent service.
 
-The initial product supports conversation creation, selection, canonical transcript pages, streaming replies, exact-run stop and recovery of original mutation receipts. It uses typed English, Simplified Chinese and Traditional Chinese catalogs. The desktop design uses scoped light/dark appearance, system typography, quiet navigation and a native multiline composer. Full tool workflows, settings, attachments, history virtualization and platform visual/IME/accessibility acceptance remain unfinished.
+The initial product supports conversation creation, selection, canonical transcript pages, streaming replies, exact-run stop and recovery of original mutation receipts. It uses typed English, Simplified Chinese and Traditional Chinese catalogs. The desktop design uses scoped light/dark appearance, system typography, quiet navigation and a native multiline composer. Connection browsing and native API-key saving/removal are ordinary plugins. Full connection creation/editing, tool workflows, attachments, history virtualization and platform visual/IME/accessibility acceptance remain unfinished.
 
 ## Build and author
 
@@ -39,7 +39,7 @@ node packages/agent-product/scripts/compose.mjs \
 
 `installation.json` supplies `presentation` (`desktop` or `tui`), the full `locale` tag, `scheme` (`light` or `dark`), `hostRoot`, `hostDeployment`, `agent` and `keys`. `agent` is the SDK's generated `AgentConfiguration`: finite `maxActiveRuns`/`maxSteps`. Credentials and endpoint settings belong to that Host Root; they do not belong in the product source.
 
-`keys` maps all twelve names exported by `src/composition.ts` (`workspace`, `composer`, `navigation`, `timeline`, `appearance`, `surface`, `editor`, `reader`, `history`, `agent`, `receipts`, `gateway`) to nonnil UUIDs. Allocate these once for an installation and keep them across rebuilds. Deployment UUIDs are likewise stable installation identities. New package revisions do not imply new data namespaces.
+`keys` maps all seventeen names exported by `src/composition.ts` (`workspace`, `composer`, `navigation`, `timeline`, `appearance`, `surface`, `editor`, `reader`, `history`, `models`, `settings`, `connections`, `credential`, `input`, `agent`, `receipts`, `gateway`) to nonnil UUIDs. Allocate these once for an installation and keep them across rebuilds. Deployment UUIDs are likewise stable installation identities. New package revisions do not imply new data namespaces.
 
 The authoring command asks the actual Rust CLI to validate every package and compute its pinned reference. It writes and checks `host.json`, `ui.json`, `remote-exports.json`, `connections.json` and `packages.json`. It does not initialize a Root, commit a deployment or start execution. `connections.json` is trusted launcher configuration; inspect its explicit method and recovery grants before use.
 
@@ -53,7 +53,7 @@ maka-desktop --root UI_ROOT --deployment UI_DEPLOYMENT \
   --connections product-source/connections.json
 ```
 
-The selected Host Root must already contain an authenticated, enabled connection matching `agent.model`. The existing [trusted local connection](../../crates/application-bridge/README.md) owns Host startup and cleanup. Product code neither chooses a fallback model nor imports private execution objects.
+Sending requires an authenticated, enabled connection and an explicitly selected model from the selected Host Root. The existing [trusted local connection](../../crates/application-bridge/README.md) owns Host startup and cleanup. Product code neither chooses a fallback model nor imports private execution objects.
 
 ## State and verification
 
@@ -73,4 +73,9 @@ cargo nextest run -p maka-agent-service --run-ignored only \
 
 The opt-in Rust integration uses the actual packaged guest, native TUI editor, persisted caller intents, authenticated native service and a local HTTP provider. It exercises creation, input, send, canonical response and reopening the same deployment. Passing protocol tests does not establish the final desktop visual or three-platform input quality.
 
-The ordinary `models` component reads bounded choices from the explicitly bound Root settings capability. It offers the saved default only when no model is selected; choosing another model captures its observed connection revision for that send. Desktop presents a scrollable list; TUI pages three choices at a time with visible navigation. No host-selected model fallback or unknown-result resend is performed. Connection creation and secure credential editing remain product work.
+The ordinary `models` component reads bounded choices from the explicitly bound Root settings capability. It offers the saved default only when no model is selected; choosing another model captures its observed connection revision for that send. Desktop presents a scrollable list; TUI pages three choices at a time with visible navigation. No host-selected model fallback or unknown-result resend is performed. Catalog refresh preserves the chosen connection/model identity and rechecks its actual revision; it never switches to an unrelated default. Connection creation and public field editing remain product work.
+
+
+The ordinary `connections` component presents bounded catalog pages and opens a separate `credential` component. Credential has no Reader import and exposes no capture to its parent. It sends the original native SecretInput resource directly to Settings, together with the observed connection and credential versions. Confirmed saving resets only that captured editor version; unknown results query the original reference, and conflicts keep the native draft. An explicit connection/key review lets a retained draft use newly observed versions only after confirmation. Removing a saved key also requires confirmation and both versions; it leaves the draft untouched.
+
+Earlier operations have a separate bounded pane because caller history is shared by mounts of the same consumer instance and its references do not contain original connection inputs. Checking those facts never adopts a current target or clears a new draft. The settings route hides the conversation presentation while retaining its native composer owner.
