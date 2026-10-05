@@ -868,17 +868,29 @@ export type AgentDeliveryFact =
     };
 export type AgentContentKind = 'text' | 'thinking';
 export type AgentRunState = 'admitted' | 'running' | 'waiting_for_user';
-export type AgentHistoryPosition =
+/**
+ * Cursor sequence addresses a sparse transcript row; Event addresses the raw
+ * event log. Before excludes its end and After includes its start. Returned
+ * chunks always retain ascending source order, including a reverse window.
+ */
+export type HistoryPosition =
   | {
       kind: 'start';
     }
   | {
-      sequence: number;
-      kind: 'event';
+      kind: 'tail';
     }
   | {
       cursor: Cursor;
-      kind: 'cursor';
+      kind: 'before';
+    }
+  | {
+      cursor: Cursor;
+      kind: 'after';
+    }
+  | {
+      sequence: number;
+      kind: 'event';
     };
 /**
  * Text visible in the durable conversation; reasoning and runtime metadata are
@@ -893,7 +905,8 @@ export type AgentHistoryPage =
   | {
       through: number;
       chunks: AgentHistoryChunk[];
-      next?: Cursor | null;
+      before: Cursor | null;
+      after: Cursor | null;
       kind: 'ready';
     };
 /**
@@ -1789,7 +1802,7 @@ export interface AgentSessionRead {
 export interface AgentHistoryRead {
   sessionId: string;
   through?: number | null;
-  position: AgentHistoryPosition;
+  position: HistoryPosition;
 }
 /**
  * Byte offset in one message's UTF-8 text, not a bearer capability.
@@ -1814,12 +1827,12 @@ export interface AgentHistoryChunk {
   text: string;
 }
 /**
- * A stable log fence prevents a scan from chasing newly appended messages.
+ * A stable raw-event fence prevents a window from chasing appended messages.
  */
 export interface Read {
   sessionId: string;
   through?: number | null;
-  cursor?: Cursor | null;
+  position: HistoryPosition;
 }
 export interface HostActivation {
   contract: Contract;

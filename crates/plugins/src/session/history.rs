@@ -109,34 +109,72 @@ impl CopyMaterial {
 }
 
 /// Byte offset in one message's UTF-8 text, not a bearer capability.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Cursor {
+    #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
     pub sequence: u64,
+    #[schemars(range(max = 9_007_199_254_740_991u64))]
     pub offset: u64,
 }
 
-/// A stable log fence prevents a scan from chasing newly appended messages.
+/// Cursor sequence addresses a sparse transcript row; Event addresses the raw
+/// event log. Before excludes its end and After includes its start. Returned
+/// chunks always retain ascending source order, including a reverse window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "HistoryPosition")]
+pub enum Position {
+    Start,
+    Tail,
+    Before {
+        cursor: Cursor,
+    },
+    After {
+        cursor: Cursor,
+    },
+    /// Locate canonical output at an execution event, including sparse rows.
+    Event {
+        #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
+        sequence: u64,
+    },
+}
+
+/// A stable raw-event fence prevents a window from chasing appended messages.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Read {
     pub session_id: String,
+    #[schemars(range(max = 9_007_199_254_740_991u64))]
     pub through: Option<u64>,
-    pub cursor: Option<Cursor>,
+    pub position: Position,
 }
 impl Read {
     pub fn validate(&self) -> Result<(), CommandError> {
         let invalid = || CommandError::Invalid("invalid history read".into());
         crate::name(&self.session_id).map_err(|_| invalid())?;
         const MAX: u64 = 9_007_199_254_740_991;
-        if self.through.is_some_and(|value| value > MAX)
-            || self.cursor.is_some_and(|cursor| {
-                self.through.is_none() || cursor.sequence > MAX || cursor.offset > MAX
-            })
-        {
+        if self.through.is_some_and(|value| value > MAX) {
             return Err(invalid());
         }
-        Ok(())
+        match self.position {
+            Position::Before { cursor } | Position::After { cursor }
+                if self.through.is_none()
+                    || cursor.sequence == 0
+                    || cursor.sequence > MAX
+                    || cursor.offset > MAX =>
+            {
+                Err(invalid())
+            }
+            Position::Event { sequence }
+                if sequence == 0
+                    || sequence > MAX
+                    || self.through.is_some_and(|through| sequence > through) =>
+            {
+                Err(invalid())
+            }
+            _ => Ok(()),
+        }
     }
 }
 
@@ -166,12 +204,13 @@ pub struct Chunk {
 }
 
 /// Index preparation is bounded too. Repeat with the returned fence and the
-/// same cursor. Ready pages never silently truncate: next resumes exact bytes.
+/// same position. Ready windows expose exact byte boundaries in both directions.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
     rename_all = "snake_case",
-    rename_all_fields = "camelCase"
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
 )]
 pub enum Page {
     Preparing {
@@ -180,7 +219,8 @@ pub enum Page {
     Ready {
         through: u64,
         chunks: Vec<Chunk>,
-        next: Option<Cursor>,
+        before: Option<Cursor>,
+        after: Option<Cursor>,
     },
 }
 
@@ -215,4 +255,86 @@ pub trait History: Send + Sync {
         target: Arc<dyn crate::execution::Commands>,
         input: CopyMaterial,
     ) -> BoxFuture<'_, Result<AttachmentRef, CommandError>>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn history_positions_require_fixed_cursor_fences_and_distinguish_raw_events() {
+        let cursor = Cursor {
+            sequence: 4096,
+            offset: 0,
+        };
+        for position in [Position::Before { cursor }, Position::After { cursor }] {
+            let mut read = Read {
+                session_id: "session".into(),
+                through: None,
+                position,
+            };
+            assert!(read.validate().is_err());
+            read.through = Some(16);
+            assert!(
+                read.validate().is_ok(),
+                "row sequence is not compared to raw fence"
+            );
+        }
+        for position in [
+            Position::Start,
+            Position::Tail,
+            Position::Event { sequence: 16 },
+        ] {
+            assert!(
+                Read {
+                    session_id: "session".into(),
+                    through: None,
+                    position
+                }
+                .validate()
+                .is_ok()
+            );
+        }
+        assert!(
+            Read {
+                session_id: "session".into(),
+                through: Some(15),
+                position: Position::Event { sequence: 16 }
+            }
+            .validate()
+            .is_err()
+        );
+        for position in [
+            Position::Before {
+                cursor: Cursor {
+                    sequence: 0,
+                    offset: 0,
+                },
+            },
+            Position::Event { sequence: 0 },
+        ] {
+            assert!(
+                Read {
+                    session_id: "session".into(),
+                    through: Some(16),
+                    position
+                }
+                .validate()
+                .is_err()
+            );
+        }
+        assert!(
+            serde_json::from_value::<Read>(
+                serde_json::json!({"sessionId":"session","cursor":null})
+            )
+            .is_err()
+        );
+        assert!(serde_json::from_value::<Read>(serde_json::json!({"sessionId":"session","through":16,"position":{"kind":"cursor","cursor":cursor}})).is_err());
+        assert!(
+            serde_json::from_value::<Page>(
+                serde_json::json!({"kind":"ready","through":16,"chunks":[],"next":null})
+            )
+            .is_err()
+        );
+    }
 }

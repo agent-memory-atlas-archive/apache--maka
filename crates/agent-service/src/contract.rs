@@ -242,20 +242,7 @@ pub struct History {
     pub through: Option<u64>,
     pub position: HistoryPosition,
 }
-#[derive(Clone, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-#[schemars(rename = "AgentHistoryPosition")]
-pub enum HistoryPosition {
-    Start,
-    /// Inclusive event-log sequence. The service maps to its sparse transcript rows.
-    Event {
-        #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
-        sequence: u64,
-    },
-    Cursor {
-        cursor: Cursor,
-    },
-}
+pub use maka_plugins::session::history::Position as HistoryPosition;
 
 #[derive(Serialize, JsonSchema)]
 #[serde(
@@ -272,7 +259,10 @@ pub enum HistoryPage {
     Ready {
         through: u64,
         chunks: Vec<HistoryChunk>,
-        next: Option<Cursor>,
+        #[schemars(with = "maka_runtime::schema::RequiredNullable<Cursor>")]
+        before: Option<Cursor>,
+        #[schemars(with = "maka_runtime::schema::RequiredNullable<Cursor>")]
+        after: Option<Cursor>,
     },
 }
 
@@ -317,5 +307,42 @@ pub fn contract() -> Contract {
                 ),
             ]),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn history_window_contract_distinguishes_end_from_missing_boundaries() {
+        let Interface::Service { methods } = contract().interface else {
+            panic!("service contract");
+        };
+        let validator = jsonschema::validator_for(&methods["history"].output).unwrap();
+        let mut page = serde_json::to_value(HistoryPage::Ready {
+            through: 16,
+            chunks: Vec::new(),
+            before: None,
+            after: Some(Cursor {
+                sequence: 4096,
+                offset: 0,
+            }),
+        })
+        .unwrap();
+        assert!(validator.is_valid(&page));
+        for field in ["before", "after"] {
+            let value = page.as_object_mut().unwrap().remove(field).unwrap();
+            assert!(!validator.is_valid(&page), "missing {field} is not EOF");
+            page.as_object_mut().unwrap().insert(field.into(), value);
+        }
+        page["after"] = json!(null);
+        assert!(validator.is_valid(&page));
+        page["next"] = json!(null);
+        assert!(
+            !validator.is_valid(&page),
+            "removed one-way API is rejected"
+        );
     }
 }

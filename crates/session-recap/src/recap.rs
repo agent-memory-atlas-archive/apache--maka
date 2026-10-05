@@ -118,7 +118,7 @@ impl Recaps {
         history::Read {
             session_id: session.into(),
             through: Some(0),
-            cursor: None,
+            position: history::Position::Start,
         }
         .validate()
         .map_err(|_| Error::Input)?;
@@ -139,7 +139,7 @@ impl Recaps {
                 history::Read {
                     session_id: session.into(),
                     through: Some(0),
-                    cursor: None,
+                    position: history::Position::Start,
                 },
             )
             .await
@@ -309,7 +309,9 @@ impl Recaps {
                     history::Read {
                         session_id: session.into(),
                         through,
-                        cursor,
+                        position: cursor.map_or(history::Position::Start, |cursor| {
+                            history::Position::After { cursor }
+                        }),
                     },
                 )
                 .await
@@ -322,7 +324,8 @@ impl Recaps {
                 history::Page::Ready {
                     through: fence,
                     chunks,
-                    next,
+                    after,
+                    ..
                 } => {
                     through = Some(fence);
                     for chunk in chunks {
@@ -336,7 +339,7 @@ impl Recaps {
                             text.drain(..offset);
                         }
                     }
-                    cursor = next;
+                    cursor = after;
                     if cursor.is_none() {
                         return if text.trim().is_empty() {
                             Err(Error::Empty)
@@ -483,11 +486,12 @@ mod tests {
                     return Ok(history::Page::Ready {
                         through: 0,
                         chunks: vec![],
-                        next: None,
+                        before: None,
+                        after: None,
                     });
                 }
                 assert!(input.through.is_none() || input.through == Some(7));
-                let second = input.cursor.is_some();
+                let second = matches!(input.position, history::Position::After { .. });
                 let text = if second {
                     "Recent result: tests passed; deployment still pending.".into()
                 } else {
@@ -506,7 +510,8 @@ mod tests {
                         text,
                         attachments: vec![],
                     }],
-                    next: (!second || self.endless.load(Ordering::SeqCst)).then_some(
+                    before: None,
+                    after: (!second || self.endless.load(Ordering::SeqCst)).then_some(
                         history::Cursor {
                             sequence: 2,
                             offset: 0,

@@ -18,7 +18,7 @@
  */
 
 use super::*;
-use maka_plugins::session::history::{Page, Role};
+use maka_plugins::session::history::{Page, Position, Role};
 use std::collections::BTreeMap;
 
 #[tokio::test]
@@ -118,16 +118,16 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
         .await
         .unwrap();
     assert!(archived.sessions[0].archived);
-    let mut cursor = None;
+    let mut position = Position::Start;
     let mut messages: BTreeMap<String, (Role, String)> = BTreeMap::new();
     let mut pages = 0;
     loop {
         let page = log
-            .history_text("a", through, cursor, 16 * 1024, 8)
+            .history_text("a", through, position, 16 * 1024, 8, 1024 * 1024)
             .await
             .unwrap();
         assert!(serde_json::to_vec(&page).unwrap().len() < 256 * 1024);
-        let Page::Ready { chunks, next, .. } = page else {
+        let Page::Ready { chunks, after, .. } = page else {
             panic!("prepared")
         };
         for chunk in chunks {
@@ -140,10 +140,10 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
         }
         pages += 1;
         assert!(pages < 20, "continuation must advance");
-        cursor = next;
-        if cursor.is_none() {
+        let Some(cursor) = after else {
             break;
-        }
+        };
+        position = Position::After { cursor };
     }
     assert!(pages >= 3, "large message must be split, not clipped");
     assert_eq!(
@@ -163,14 +163,14 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
         format!("{text}\nsecond\nline"),
         "JSON string values stay multiline; property names and non-text leaves are not searchable"
     );
-    let Page::Ready { chunks, next, .. } = log
-        .history_text("a", old, None, 16 * 1024, 8)
+    let Page::Ready { chunks, after, .. } = log
+        .history_text("a", old, Position::Start, 16 * 1024, 8, 1024 * 1024)
         .await
         .unwrap()
     else {
         panic!("prepared")
     };
-    assert!(next.is_none());
+    assert!(after.is_none());
     assert!(
         chunks.iter().all(|chunk| chunk.role == Role::User),
         "old fence excludes unfinished answer"
@@ -199,7 +199,7 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
     cache
         .execute(
             "INSERT INTO transcript_text
-         SELECT 'b', sequence, timestamp, role, CAST('destination cache' AS BLOB)
+         SELECT 'b', sequence, timestamp, role, CASE WHEN role IN ('user', 'assistant', 'tool_call', 'tool_result') THEN CAST('destination cache' AS BLOB) ELSE body END
          FROM transcript_text WHERE session_id = 'a'",
             [],
         )
@@ -208,7 +208,7 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
         chunks: destination,
         ..
     } = log
-        .history_text("b", old, None, 16 * 1024, 8)
+        .history_text("b", old, Position::Start, 16 * 1024, 8, 1024 * 1024)
         .await
         .unwrap()
     else {
@@ -221,7 +221,7 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
             .all(|chunk| chunk.text == "destination cache")
     );
     let Page::Ready { chunks: source, .. } = log
-        .history_text("a", old, None, 16 * 1024, 8)
+        .history_text("a", old, Position::Start, 16 * 1024, 8, 1024 * 1024)
         .await
         .unwrap()
     else {
@@ -235,13 +235,13 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
         .execute("DELETE FROM transcript_text WHERE session_id = 'b'", [])
         .unwrap();
     let rebuilt = log
-        .history_text("b", old, None, 16 * 1024, 8)
+        .history_text("b", old, Position::Start, 16 * 1024, 8, 1024 * 1024)
         .await
         .unwrap();
     assert_eq!(
         serde_json::to_value(rebuilt).unwrap(),
         serde_json::to_value(
-            log.history_text("a", old, None, 16 * 1024, 8)
+            log.history_text("a", old, Position::Start, 16 * 1024, 8, 1024 * 1024)
                 .await
                 .unwrap()
         )
@@ -251,12 +251,409 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
     log.close().await.unwrap();
     let log = EventLog::open(&path).await.unwrap();
     let Page::Ready { chunks, .. } = log
-        .history_text("a", through, None, 16 * 1024, 8)
+        .history_text("a", through, Position::Start, 16 * 1024, 8, 1024 * 1024)
         .await
         .unwrap()
     else {
         panic!("prepared")
     };
     assert!(!chunks.is_empty(), "restart retains readable archive");
+    log.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn bounded_history_windows_cover_sparse_rows_both_directions_and_validate_real_positions() {
+    use maka_plugins::session::history::Cursor;
+    use maka_plugins::{composition::Scope, storage::Namespace};
+    use maka_runtime::import::{Content, Record, Source};
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("windows.sqlite");
+    let log = EventLog::open(&path).await.unwrap();
+    let owner = maka_event_log::sessions::PluginSession {
+        session_id: "window".into(),
+        creator: Namespace::new("history.fixture", Scope::Profile).unwrap(),
+        fingerprint: "window-import".into(),
+        managed: false,
+        authority_session_id: None,
+    };
+    log.begin_session_import(
+        &owner,
+        &Source {
+            adapter: "fixture".into(),
+            session_id: "foreign".into(),
+        },
+        &serde_json::json!({}),
+        1,
+    )
+    .await
+    .unwrap();
+    let mut records = Vec::new();
+    let mut expected = Vec::new();
+    for index in 0..24 {
+        let content = if index % 4 == 2 {
+            let text = format!("{index} a🦀中é\0tail\r\n{}", "🌏".repeat(index % 5 + 1));
+            expected.push(text.clone());
+            Content::Assistant {
+                text,
+                model: None,
+                thinking: None,
+            }
+        } else if index % 4 == 1 {
+            Content::User {
+                text: String::new(),
+            }
+        } else {
+            Content::Note {
+                text: "bookkeeping is not conversation text".into(),
+            }
+        };
+        records.push(Record {
+            source_message_id: format!("m{index}"),
+            source_turn_id: "turn".into(),
+            timestamp: Some(1),
+            content,
+        });
+    }
+    let count = records.len() as u64;
+    for (batch, records) in records.chunks(8).enumerate() {
+        log.append_session_import("window", (batch * 8) as u64, records.to_vec())
+            .await
+            .unwrap();
+    }
+    log.publish_session_import("window", count).await.unwrap();
+    let through = *log.subscribe_commits().borrow();
+    while !log.prepare_transcript("window", through, 32).await.unwrap() {}
+    let mut canonical = None;
+    for budget in [4, 5, 7, 13, 128 * 1024] {
+        for reverse in [false, true] {
+            let db = Connection::open(&path).unwrap();
+            db.execute("DELETE FROM transcript_text", []).unwrap();
+            drop(db);
+            let mut position = if reverse {
+                Position::Tail
+            } else {
+                Position::Start
+            };
+            let mut collected: BTreeMap<u64, (u64, String)> = BTreeMap::new();
+            let mut previous = None;
+            let mut done = false;
+            for _ in 0..512 {
+                let Page::Ready {
+                    chunks,
+                    before,
+                    after,
+                    through: actual,
+                } = log
+                    .history_text("window", through, position, budget, 2, 1024 * 1024)
+                    .await
+                    .unwrap()
+                else {
+                    panic!("prepared");
+                };
+                assert_eq!(actual, through);
+                assert!(chunks.len() <= 2);
+                assert!(chunks.iter().map(|chunk| chunk.text.len()).sum::<usize>() <= budget);
+                assert!(
+                    chunks
+                        .windows(2)
+                        .all(|pair| pair[0].sequence < pair[1].sequence)
+                );
+                for chunk in chunks {
+                    let entry = collected.entry(chunk.sequence).or_insert_with(|| {
+                        (if reverse { chunk.total_bytes } else { 0 }, String::new())
+                    });
+                    if reverse {
+                        assert_eq!(chunk.offset + chunk.text.len() as u64, entry.0);
+                        entry.1.insert_str(0, &chunk.text);
+                        entry.0 = chunk.offset;
+                    } else {
+                        assert_eq!(chunk.offset, entry.0);
+                        entry.1.push_str(&chunk.text);
+                        entry.0 += chunk.text.len() as u64;
+                    }
+                    assert!(
+                        chunk.sequence > through,
+                        "sparse row positions differ from raw event fence"
+                    );
+                }
+                let cursor = if reverse { before } else { after };
+                let Some(cursor) = cursor else {
+                    done = true;
+                    break;
+                };
+                assert_ne!(
+                    previous,
+                    Some(cursor),
+                    "empty pages and cache rebuilding must progress"
+                );
+                previous = Some(cursor);
+                position = if reverse {
+                    Position::Before { cursor }
+                } else {
+                    Position::After { cursor }
+                };
+            }
+            assert!(done, "budget {budget}, reverse {reverse}");
+            let texts = collected
+                .values()
+                .map(|(_, text)| text.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(texts, expected);
+            let sequences = collected.keys().copied().collect::<Vec<_>>();
+            assert!(sequences.windows(2).all(|pair| pair[1] - pair[0] > 1));
+            canonical.get_or_insert(collected);
+        }
+    }
+    let first = *canonical.as_ref().unwrap().keys().next().unwrap();
+    // The first message starts with two ASCII digits plus a space and then 'a'.
+    // Find every exact byte boundary rather than deriving one from a JS index.
+    let text = &canonical.as_ref().unwrap()[&first].1;
+    for offset in 0..=text.len() {
+        for reverse in [false, true] {
+            let cursor = Cursor {
+                sequence: first,
+                offset: offset as u64,
+            };
+            let result = log
+                .history_text(
+                    "window",
+                    through,
+                    if reverse {
+                        Position::Before { cursor }
+                    } else {
+                        Position::After { cursor }
+                    },
+                    7,
+                    2,
+                    1024 * 1024,
+                )
+                .await;
+            assert_eq!(
+                result.is_ok(),
+                text.is_char_boundary(offset),
+                "offset {offset}, reverse {reverse}"
+            );
+        }
+    }
+    for cursor in [
+        Cursor {
+            sequence: first + 1,
+            offset: 0,
+        },
+        Cursor {
+            sequence: first,
+            offset: text.len() as u64 + 1,
+        },
+        Cursor {
+            sequence: 0,
+            offset: 0,
+        },
+    ] {
+        assert!(
+            log.history_text(
+                "window",
+                through,
+                Position::After { cursor },
+                7,
+                2,
+                1024 * 1024
+            )
+            .await
+            .is_err()
+        );
+    }
+    log.create_session("other", "other", &serde_json::json!({}), 1)
+        .await
+        .unwrap();
+    let high = *log.subscribe_commits().borrow();
+    assert!(log.prepare_transcript("other", high, 32).await.unwrap());
+    assert!(
+        log.history_text(
+            "other",
+            high,
+            Position::After {
+                cursor: Cursor {
+                    sequence: first,
+                    offset: 0
+                }
+            },
+            7,
+            2,
+            1024 * 1024
+        )
+        .await
+        .is_err()
+    );
+    let Page::Ready { chunks, after, .. } = log
+        .history_text(
+            "window",
+            through,
+            Position::Event { sequence: through },
+            7,
+            2,
+            1024 * 1024,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("prepared");
+    };
+    assert!(chunks.is_empty());
+    assert!(after.is_none());
+    log.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn history_text_requires_the_actual_prepared_raw_fence() {
+    let temp = tempfile::tempdir().unwrap();
+    let log = EventLog::open(&temp.path().join("fence.sqlite"))
+        .await
+        .unwrap();
+    log.create_session("a", "create", &serde_json::json!({}), 1)
+        .await
+        .unwrap();
+    let (_, through) = partial(&log, "a", "answer").await;
+    assert!(log.prepare_transcript("a", through, 32).await.unwrap());
+    let later = interrupt(&log, "a").await;
+    assert!(later > through);
+    assert!(
+        log.history_text("a", later, Position::Start, 16, 2, 1024 * 1024)
+            .await
+            .is_err(),
+        "raw fence must not be compared directly with a prepared row watermark"
+    );
+    assert!(log.prepare_transcript("a", later, 32).await.unwrap());
+    let Page::Ready { chunks, .. } = log
+        .history_text("a", later, Position::Tail, 16, 2, 1024 * 1024)
+        .await
+        .unwrap()
+    else {
+        panic!("prepared");
+    };
+    assert!(chunks.iter().any(|chunk| chunk.role == Role::Assistant));
+    log.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn empty_projection_boundaries_obey_the_exact_json_window_budget() {
+    use maka_runtime::{
+        attachment::{AttachmentKind, AttachmentRef, StorageRef},
+        input::DeliveredMessage,
+        message::{MessageDisposition, Placement, RootSourceMessage},
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let log = EventLog::open(&temp.path().join("wire.sqlite"))
+        .await
+        .unwrap();
+    log.create_session("a", "create", &serde_json::json!({}), 1)
+        .await
+        .unwrap();
+    log.append(&event("a", opening())).await.unwrap();
+    let mut target = 0;
+    for index in 0..55 {
+        let mut content: maka_runtime::input::MessageInput = "".into();
+        if index == 37 {
+            content.attachments = Some(vec![AttachmentRef {
+                kind: AttachmentKind::Other,
+                name: "a".into(),
+                mime_type: "application/octet-stream".into(),
+                bytes: 1,
+                storage_ref: StorageRef::WorkspaceFile {
+                    relative_path: "a".repeat(1100),
+                },
+            }]);
+        }
+        let message = DeliveredMessage {
+            message_id: format!("empty-{index}"),
+            submitted_content_digest: content.content_digest().unwrap(),
+            content: content.clone(),
+        };
+        let source = RootSourceMessage {
+            message: message.clone(),
+            unprepared_content: content,
+            submitted_placement: Placement::CurrentTurn,
+            disposition: MessageDisposition::Steering,
+            submitted_intent: None,
+        };
+        source.validate().unwrap();
+        let sequence = log
+            .append(&event(
+                "a",
+                Fact::MessageSteered {
+                    message: Box::new(message),
+                    source: Some(Box::new(source)),
+                },
+            ))
+            .await
+            .unwrap();
+        if index == 37 {
+            target = sequence;
+        }
+    }
+    let through = end(&log, "a", InvocationOutcome::Completed).await;
+    while !log.prepare_transcript("a", through, 32).await.unwrap() {}
+    let Page::Ready { chunks, .. } = log
+        .history_text(
+            "a",
+            through,
+            Position::Event { sequence: target },
+            4,
+            1,
+            1024 * 1024,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("prepared");
+    };
+    let cursor = maka_plugins::session::history::Cursor {
+        sequence: chunks[0].sequence,
+        offset: 0,
+    };
+    assert!(cursor.sequence < 10000);
+    let baseline = log
+        .history_text("a", through, Position::After { cursor }, 4, 1, 1024 * 1024)
+        .await
+        .unwrap();
+    let budget = serde_json::to_vec(&baseline).unwrap().len();
+    assert!(budget >= 1024);
+    let page = log
+        .history_text("a", through, Position::After { cursor }, 4, 8, budget)
+        .await
+        .unwrap();
+    assert_eq!(serde_json::to_vec(&page).unwrap().len(), budget);
+    let Page::Ready {
+        after: Some(cursor),
+        chunks,
+        ..
+    } = page
+    else {
+        panic!("boundary retained");
+    };
+    assert_eq!(chunks.len(), 1);
+    assert!(
+        cursor.sequence < 10000,
+        "oversized empty-row boundary was not consumed"
+    );
+    let mut cursor = cursor;
+    let mut ended = false;
+    for _ in 0..4 {
+        let next = log
+            .history_text("a", through, Position::After { cursor }, 4, 8, budget)
+            .await
+            .unwrap();
+        assert!(serde_json::to_vec(&next).unwrap().len() <= budget);
+        let Page::Ready { chunks, after, .. } = next else {
+            panic!("prepared");
+        };
+        assert!(chunks.is_empty());
+        let Some(after) = after else {
+            ended = true;
+            break;
+        };
+        assert!(after.sequence > cursor.sequence);
+        cursor = after;
+    }
+    assert!(ended, "empty projection windows reach the actual end");
     log.close().await.unwrap();
 }

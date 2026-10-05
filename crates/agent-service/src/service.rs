@@ -148,30 +148,10 @@ impl Handler for Agent {
                     if through > high_water {
                         return Err("agent_cursor_invalid".into());
                     }
-                    let cursor = match input.position {
-                        HistoryPosition::Start => None,
-                        HistoryPosition::Cursor { cursor } => {
-                            if input.through.is_none() {
-                                return Err("agent_cursor_invalid".into());
-                            }
-                            Some(cursor)
-                        }
-                        HistoryPosition::Event { sequence } => {
-                            if sequence == 0 || sequence > through {
-                                return Err("agent_cursor_invalid".into());
-                            }
-                            Some(maka_plugins::session::history::Cursor {
-                                sequence: maka_presentation::watermark(sequence - 1)
-                                    .map_err(|_| "agent_cursor_invalid")?
-                                    + 1,
-                                offset: 0,
-                            })
-                        }
-                    };
                     Read {
                         session_id: input.session_id.clone(),
-                        through: Some(through),
-                        cursor,
+                        through: input.through,
+                        position: input.position,
                     }
                     .validate()
                     .map_err(|_| "agent_cursor_invalid")?;
@@ -186,10 +166,18 @@ impl Handler for Agent {
                         let Page::Ready {
                             through,
                             chunks,
-                            next,
+                            before,
+                            after,
                         } = owner
                             .store
-                            .history_text(&input.session_id, through, cursor, 4096, 2)
+                            .history_text(
+                                &input.session_id,
+                                through,
+                                input.position,
+                                8192,
+                                2,
+                                1024 * 1024,
+                            )
                             .await
                             .map_err(|_| "agent_history_unavailable")?
                         else {
@@ -197,7 +185,8 @@ impl Handler for Agent {
                         };
                         HistoryPage::Ready {
                             through,
-                            next,
+                            before,
+                            after,
                             chunks: chunks
                                 .into_iter()
                                 .map(|chunk| HistoryChunk {
@@ -217,7 +206,10 @@ impl Handler for Agent {
                     if context.scope().cancellation.is_cancelled() {
                         return Err("agent_observation_cancelled".into());
                     }
-                    encode(result)
+                    let result = encode(result)?;
+                    maka_js_runtime::plugin::check_json_delivery(&result, 64 * 1024)
+                        .map_err(|_| "agent_history_unavailable")?;
+                    Ok(result)
                 }
                 "send" => {
                     let input: Send = decode(input)?;

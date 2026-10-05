@@ -24,7 +24,7 @@ import type {
   SettingsModelChoice,
   AgentDeliveryPage,
   AgentHistoryPage,
-  AgentHistoryPosition,
+  HistoryPosition,
   AgentObservation,
   AgentPart,
   AgentRun,
@@ -55,7 +55,7 @@ type Request =
       epoch: number;
       through: number;
       refresh: boolean;
-      position: AgentHistoryPosition;
+      position: HistoryPosition;
     }
   | { kind: 'read'; draft: EditorObservation; sessionId: string; model: ModelSelection }
   | { kind: 'create' }
@@ -172,14 +172,14 @@ function history(state: State, actions: Action[]) {
         epoch: state.epoch,
         through: state.through,
         refresh: false,
-        position: state.cursor ? { kind: 'cursor', cursor: state.cursor } : { kind: 'start' },
+        position: state.cursor ? { kind: 'after', cursor: state.cursor } : { kind: 'start' },
       },
       'agent',
       'history',
       {
         sessionId: state.selected,
         through: state.through,
-        position: state.cursor ? { kind: 'cursor', cursor: state.cursor } : { kind: 'start' },
+        position: state.cursor ? { kind: 'after', cursor: state.cursor } : { kind: 'start' },
       },
     );
 }
@@ -387,17 +387,17 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
       for (const id of Object.keys(state.refreshed))
         if (!state.messages.some((message) => message.id === id)) delete state.refreshed[id];
       if (request.refresh) {
-        if (page.next)
+        if (page.after)
           intent(
             state,
             actions,
-            { ...request, position: { kind: 'cursor', cursor: page.next } },
+            { ...request, position: { kind: 'after', cursor: page.after } },
             'agent',
             'history',
             {
               sessionId: state.selected,
               through: request.through,
-              position: { kind: 'cursor', cursor: page.next },
+              position: { kind: 'after', cursor: page.after },
             },
           );
         else {
@@ -409,7 +409,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         }
         break;
       }
-      state.cursor = page.next ?? null;
+      state.cursor = page.after ?? null;
       if (
         state.cursor &&
         state.messages.length < WINDOW_MESSAGES &&

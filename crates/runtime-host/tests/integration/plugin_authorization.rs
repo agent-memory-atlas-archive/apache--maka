@@ -24,6 +24,7 @@ use maka_runtime_host::server::Host;
 use serde_json::{Value, json};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
+mod history_wire;
 mod native;
 mod pricing;
 mod usage;
@@ -105,6 +106,7 @@ async fn scenario() {
         .unwrap(),
     )
     .unwrap();
+    let mut wire_attachment = Value::Null;
     let mut grant = Value::Null;
     let mut accepted = Value::Null;
     let mut root_grant = Value::Null;
@@ -162,6 +164,7 @@ async fn scenario() {
             success(peer.rpc("artifact.ingest", json!({"kind":"begin","sessionId":"background-session","uploadId":"history-material","name":"evidence.txt","mimeType":"text/plain","totalBytes":1,"contentSha256":maka_runtime::artifact::content_digest(b"x")})).await);
             success(peer.rpc("artifact.ingest", json!({"kind":"chunk","sessionId":"background-session","uploadId":"history-material","offset":0,"chunkBase64":"eA=="})).await);
             success(peer.rpc("artifact.ingest", json!({"kind":"commit","sessionId":"background-session","uploadId":"history-material"})).await);
+            wire_attachment = history_wire::create(&mut peer, &fixture.workspace).await;
         }
         let mut publication = super::plugin_clients::publication("desktop", "inspect");
         let mut scoped = publication.clone();
@@ -516,6 +519,9 @@ async fn scenario() {
         } else {
             accepted = result["receipt"].clone();
         }
+        if reopened {
+            history_wire::verify(&mut peer, &client, &document).await;
+        }
         usage.check(&mut peer, &client, &document, reopened).await;
         pricing
             .check(&host, &mut peer, &client, &document, &usage.grant, reopened)
@@ -525,6 +531,9 @@ async fn scenario() {
         server.await.unwrap().unwrap();
         cleanup.disarm();
         drop(host);
+        if !reopened {
+            history_wire::seed(&fixture, &wire_attachment).await;
+        }
     }
     let log = fixture.log().await;
     assert!(!fixture.workspace.parent().unwrap().join("outside").exists());

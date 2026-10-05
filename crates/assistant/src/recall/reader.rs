@@ -21,7 +21,7 @@ use maka_plugins::{
     call::Scope,
     session::{
         catalog,
-        history::{Chunk, History, Page, Read},
+        history::{Chunk, History, Page, Position, Read},
     },
 };
 use maka_runtime::tools::ToolError;
@@ -48,7 +48,7 @@ impl Reader {
             input: Read {
                 session_id: session,
                 through,
-                cursor: None,
+                position: Position::Start,
             },
             chunks: VecDeque::new(),
             done: false,
@@ -109,11 +109,14 @@ impl Reader {
                 Page::Ready {
                     through,
                     chunks,
-                    next,
+                    after,
+                    ..
                 } => {
                     self.input.through = Some(through);
-                    self.input.cursor = next;
-                    self.done = next.is_none();
+                    if let Some(cursor) = after {
+                        self.input.position = Position::After { cursor };
+                    }
+                    self.done = after.is_none();
                     self.chunks = chunks.into();
                 }
             }

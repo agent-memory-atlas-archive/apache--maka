@@ -127,7 +127,7 @@ class Client {
     this.query('page', []);
     this.query('list', { revision: 'catalog', sessions: [session], nextCursor: null });
     this.query('observe', { session, through, run, parts });
-    this.query('history', { kind: 'ready', through, chunks, next: null });
+    this.query('history', { kind: 'ready', through, chunks, before: null, after: null });
     this.input({
       kind: 'component',
       key: 'model',
@@ -289,7 +289,8 @@ test('bootstrap replays the original active prefix and does not render thinking 
         text: 'prefix suffix',
       },
     ],
-    next: null,
+    before: null,
+    after: null,
   });
   assert.equal(client.state.messages[0].text, 'prefix suffix');
   assert.equal(client.state.liveMessages.length, 0);
@@ -318,7 +319,8 @@ test('opening a run refreshes the canonical user message without restarting its 
     chunks: [
       { messageId: 'user', role: 'user', sequence: 1, offset: 0, totalBytes: 5, text: 'Hello' },
     ],
-    next: null,
+    before: null,
+    after: null,
   });
   assert.equal(client.state.messages[0].text, 'Hello');
   assert.equal(client.state.liveMessages[0].text, 'First response');
@@ -446,7 +448,13 @@ test('reconnect rebuilds its display dedupe with the same canonical page', () =>
   });
   client.raw('reload');
   client.query('observe', { session, through: 5, run: null, parts: [] });
-  client.query('history', { kind: 'ready', through: 5, chunks: [chunk], next: null });
+  client.query('history', {
+    kind: 'ready',
+    through: 5,
+    chunks: [chunk],
+    before: null,
+    after: null,
+  });
   assert.equal(client.state.messages[0].text, 'Hello');
   assert.equal(client.state.messages.length, 1);
 });
@@ -510,7 +518,7 @@ test('reconnect isolates late reads before building the new active-prefix watch'
   assert.equal(client.state.parts[0].startSequence, 30);
   client.complete(currentHistory, {
     status: 'succeeded',
-    value: { kind: 'ready', through: 40, chunks: [], next: null },
+    value: { kind: 'ready', through: 40, chunks: [], before: null, after: null },
   });
   assert.equal(client.state.watch.input.after, 29);
   client.page(

@@ -650,9 +650,10 @@ async fn canonical_history_is_bounded_utf8_and_keeps_its_original_fence() {
             if page["kind"] == "preparing" { continue; }
             let chunks = page["chunks"].as_array().unwrap();
             assert!(chunks.len() <= 2);
+            assert!(chunks.iter().map(|chunk| chunk["text"].as_str().unwrap().len()).sum::<usize>() <= 8192);
             for chunk in chunks {
                 let text = chunk["text"].as_str().unwrap();
-                assert!(text.len() <= 4096);
+                assert!(text.len() <= 8192);
                 match chunk["role"].as_str().unwrap() {
                     "user" => user.push_str(text),
                     "assistant" => assistant.push_str(text),
@@ -665,8 +666,8 @@ async fn canonical_history_is_bounded_utf8_and_keeps_its_original_fence() {
                 fixture.drained().await;
                 later = true;
             }
-            if page["next"].is_null() { finished = true; break; }
-            input["position"] = json!({"kind":"cursor","cursor":page["next"]});
+            if page["after"].is_null() { finished = true; break; }
+            input["position"] = json!({"kind":"after","cursor":page["after"]});
         }
         assert!(finished);
         assert_eq!(user, message);
@@ -691,13 +692,41 @@ async fn canonical_history_is_bounded_utf8_and_keeps_its_original_fence() {
                     role => panic!("unexpected conversation role {role}"),
                 }
             }
-            if page["next"].is_null() { finished = true; break; }
-            input["position"] = json!({"kind":"cursor","cursor":page["next"]});
+            if page["after"].is_null() { finished = true; break; }
+            input["position"] = json!({"kind":"after","cursor":page["after"]});
         }
         assert!(finished);
         assert_eq!(newer_user, "Hello");
         assert_eq!(newer_assistant, "Later response");
-        assert!(fixture.query("history", json!({"sessionId":session,"position":{"kind":"cursor","cursor":{"sequence":0,"offset":0}}})).await.is_err());
+        let tail = fixture.query("history", json!({"sessionId":session,"through":event_fence,"position":{"kind":"tail"}})).await.unwrap();
+        let cursor = tail["before"].clone();
+        assert!(cursor.is_object());
+        for kind in ["before", "after"] {
+            assert!(fixture.query("history", json!({"sessionId":session,"position":{"kind":kind,"cursor":cursor}})).await.is_err(), "cursor navigation must carry its captured fence");
+        }
+        let mut reverse_input = json!({"sessionId":session,"through":event_fence,"position":{"kind":"tail"}});
+        let (mut reverse_user, mut reverse_assistant) = (String::new(), String::new());
+        let mut reverse_done = false;
+        for _ in 0..128 {
+            let page = fixture.query("history", reverse_input.clone()).await.unwrap();
+            assert_eq!(page["through"], event_fence);
+            assert!(serde_json::to_vec(&page).unwrap().len() < 64 * 1024);
+            if page["kind"] == "preparing" { continue; }
+            for chunk in page["chunks"].as_array().unwrap().iter().rev() {
+                let text = chunk["text"].as_str().unwrap();
+                match chunk["role"].as_str().unwrap() {
+                    "user" => reverse_user.insert_str(0, text),
+                    "assistant" => reverse_assistant.insert_str(0, text),
+                    role => panic!("unexpected role {role}"),
+                }
+            }
+            if page["before"].is_null() { reverse_done = true; break; }
+            reverse_input["position"] = json!({"kind":"before","cursor":page["before"]});
+        }
+        assert!(reverse_done);
+        assert_eq!(reverse_user, message);
+        assert_eq!(reverse_assistant, reply);
+        assert!(fixture.query("history", json!({"sessionId":session,"position":{"kind":"after","cursor":{"sequence":0,"offset":0}}})).await.is_err());
         assert!(fixture.query("history", json!({"sessionId":"foreign_session","position":{"kind":"start"}})).await.is_err());
         server.await.unwrap();
         fixture.app.shutdown().await.unwrap();

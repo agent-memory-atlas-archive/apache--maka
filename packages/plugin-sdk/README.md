@@ -28,6 +28,19 @@ uses actual invocation-local slots and returns `unknown` for service results.
 Validate those results against the service contract; a TypeScript generic is not
 validation. Numeric bounds, JSON limits and authority are checked by Rust.
 
+Public Session history uses `HistoryPosition`: `start`, `tail`, `before`, `after`,
+and raw execution `event` bookmarks. A first read captures an immutable raw-event
+`through` fence; repeat preparation with the same position and returned fence.
+`before` excludes its end, `after` includes its start, and both require that original
+fence. Ready windows always supply `before` and `after` as a real sparse-row/UTF-8
+byte cursor or `null`; chunks retain ascending source order in either direction.
+The Session Host budgets each window to 128 KiB of text and eight fragments,
+with a 1 MiB complete JSON limit including all attachment descriptors. The
+native Agent service uses two fragments and 8192 bytes in total, and checks its
+complete JSON response against 64 KiB. A fragment's offset and `totalBytes` identify
+whether it is a complete message; a partial message is source, not standalone
+Markdown. Position and fence locate content and never grant access.
+
 `configurations.agent` is the generated native agent configuration schema for
 package declarations. Use it alongside `contracts.agent`; product builders do
 not maintain a second copy of the native configuration or service protocol.

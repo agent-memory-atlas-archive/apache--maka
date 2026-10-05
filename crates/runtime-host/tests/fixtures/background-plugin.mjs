@@ -91,6 +91,50 @@ export default async function (ctx) {
         throw error;
       });
   });
+  await ctx.remote.method('history-window', async (request) => {
+    const intent = parseIntent(request);
+    return ctx.withAuthorization(intent.grant, async (call) => {
+      /** @type {number | undefined} */
+      let through;
+      /** @param {boolean} reverse */
+      async function scan(reverse) {
+        /** @type {Parameters<typeof call.history.read>[0]} */
+        const input = { sessionId: 'h', through, position: { kind: reverse ? 'tail' : 'start' } };
+        /** @type {{id:string, attachments:number, text:string}[]} */
+        let messages = [];
+        let pages = 0;
+        for (let attempts = 0; attempts < 64; attempts++) {
+          const page = await call.history.read(input);
+          input.through = page.through;
+          through = page.through;
+          if (page.kind === 'preparing') continue;
+          if (new TextEncoder().encode(JSON.stringify(page)).length > 1024 * 1024)
+            throw new Error('history escaped its complete JSON budget');
+          pages++;
+          const current = page.chunks
+            .filter((chunk) => chunk.messageId.startsWith('wire-message-'))
+            .map((chunk) => ({
+              id: chunk.messageId,
+              attachments: chunk.attachments.length,
+              text: chunk.text,
+            }));
+          messages = reverse ? [...current, ...messages] : [...messages, ...current];
+          const cursor = reverse ? page.before : page.after;
+          if (!cursor) return { messages, pages };
+          input.position = { kind: reverse ? 'before' : 'after', cursor };
+        }
+        throw new Error('history window stopped progressing');
+      }
+      const forward = await scan(false),
+        reverse = await scan(true);
+      return {
+        forward: forward.messages,
+        reverse: reverse.messages,
+        forwardPages: forward.pages,
+        reversePages: reverse.pages,
+      };
+    });
+  });
   await ctx.remote.method('history', async (request, caller) =>
     caller.views.authorize(
       {
@@ -104,7 +148,7 @@ export default async function (ctx) {
         if (!catalog.entries.some((entry) => entry.session.sessionId === 'background-session'))
           throw new Error('History catalog omitted its source');
         /** @type {Parameters<typeof call.history.read>[0]} */
-        const input = { sessionId: 'background-session' };
+        const input = { sessionId: 'background-session', position: { kind: 'start' } };
         let text = '';
         let original = '';
         for (;;) {
@@ -125,8 +169,8 @@ export default async function (ctx) {
             if ((await call.history.sources({ ...locator, turnId: 'not-this-turn' })).length)
               throw new Error('source lookup ignored its Turn');
           }
-          if (!page.next) break;
-          input.cursor = page.next;
+          if (!page.after) break;
+          input.position = { kind: 'after', cursor: page.after };
         }
         const intent = parseIntent(request);
         const material = await ctx.withAuthorization(intent.grant, async (target) => {
@@ -173,7 +217,7 @@ export default async function (ctx) {
       if (!catalog.entries.some((entry) => entry.session.sessionId === 'background-session'))
         throw new Error('Profile catalog did not include authorized Session metadata');
       try {
-        await call.history.read({ sessionId: 'background-session' });
+        await call.history.read({ sessionId: 'background-session', position: { kind: 'start' } });
         throw new Error('metadata-only consent became history authority');
       } catch (error) {
         if (error.code !== 'revoked') throw error;

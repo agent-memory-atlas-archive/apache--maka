@@ -23,6 +23,8 @@ import type {
   InputProps,
   ModelSelection,
   AgentSend,
+  AgentHistoryPage,
+  HistoryPosition,
   SetDefaultConnectionTargetInput,
   SettingsModelsPage,
   ConnectionCatalogEntryUpdate,
@@ -415,3 +417,24 @@ void [
   missingOffset,
   settingsObservations,
 ];
+
+const historyWindow = {
+  kind: 'ready',
+  through: 16,
+  chunks: [],
+  before: null,
+  after: { sequence: 4096, offset: 0 },
+} satisfies AgentHistoryPage;
+// @ts-expect-error Missing boundaries are not end-of-history receipts.
+const missingHistoryBoundary: AgentHistoryPage = {
+  kind: 'ready',
+  through: 16,
+  chunks: [],
+  after: null,
+};
+const removedHistoryPosition = {
+  // @ts-expect-error The removed one-way cursor position is not an alias.
+  kind: 'cursor',
+  cursor: { sequence: 4096, offset: 0 },
+} satisfies HistoryPosition;
+void [historyWindow, missingHistoryBoundary, removedHistoryPosition];

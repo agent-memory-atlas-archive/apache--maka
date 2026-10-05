@@ -2009,13 +2009,15 @@ export const contracts = {
                 maximum: 9007199254740991,
               },
               position: {
-                $ref: '#/$defs/AgentHistoryPosition',
+                $ref: '#/$defs/HistoryPosition',
               },
             },
             additionalProperties: false,
             required: ['sessionId', 'position'],
             $defs: {
-              AgentHistoryPosition: {
+              HistoryPosition: {
+                description:
+                  'Cursor sequence addresses a sparse transcript row; Event addresses the raw\nevent log. Before excludes its end and After includes its start. Returned\nchunks always retain ascending source order, including a reverse window.',
                 oneOf: [
                   {
                     type: 'object',
@@ -2029,8 +2031,47 @@ export const contracts = {
                     additionalProperties: false,
                   },
                   {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'tail',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      cursor: {
+                        $ref: '#/$defs/Cursor',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'before',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'cursor'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      cursor: {
+                        $ref: '#/$defs/Cursor',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'after',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'cursor'],
+                  },
+                  {
                     description:
-                      'Inclusive event-log sequence. The service maps to its sparse transcript rows.',
+                      'Locate canonical output at an execution event, including sparse rows.',
                     type: 'object',
                     properties: {
                       sequence: {
@@ -2047,20 +2088,6 @@ export const contracts = {
                     additionalProperties: false,
                     required: ['kind', 'sequence'],
                   },
-                  {
-                    type: 'object',
-                    properties: {
-                      cursor: {
-                        $ref: '#/$defs/Cursor',
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'cursor',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'cursor'],
-                  },
                 ],
               },
               Cursor: {
@@ -2070,12 +2097,14 @@ export const contracts = {
                   sequence: {
                     type: 'integer',
                     format: 'uint64',
-                    minimum: 0,
+                    minimum: 1,
+                    maximum: 9007199254740991,
                   },
                   offset: {
                     type: 'integer',
                     format: 'uint64',
                     minimum: 0,
+                    maximum: 9007199254740991,
                   },
                 },
                 additionalProperties: false,
@@ -2117,7 +2146,17 @@ export const contracts = {
                       $ref: '#/$defs/AgentHistoryChunk',
                     },
                   },
-                  next: {
+                  before: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Cursor',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  after: {
                     anyOf: [
                       {
                         $ref: '#/$defs/Cursor',
@@ -2133,7 +2172,7 @@ export const contracts = {
                   },
                 },
                 additionalProperties: false,
-                required: ['kind', 'through', 'chunks'],
+                required: ['kind', 'through', 'chunks', 'before', 'after'],
               },
             ],
             $defs: {
@@ -2198,12 +2237,14 @@ export const contracts = {
                   sequence: {
                     type: 'integer',
                     format: 'uint64',
-                    minimum: 0,
+                    minimum: 1,
+                    maximum: 9007199254740991,
                   },
                   offset: {
                     type: 'integer',
                     format: 'uint64',
                     minimum: 0,
+                    maximum: 9007199254740991,
                   },
                 },
                 additionalProperties: false,

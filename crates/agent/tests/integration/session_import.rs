@@ -226,7 +226,14 @@ async fn import_is_retryable_history_not_an_execution_and_survives_copy_and_rest
         .unwrap()
     {}
     let read = log
-        .history_text("imported", prefix.high_water, None, 16 * 1024, 8)
+        .history_text(
+            "imported",
+            prefix.high_water,
+            maka_plugins::session::history::Position::Start,
+            16 * 1024,
+            8,
+            1024 * 1024,
+        )
         .await
         .unwrap();
     let text = serde_json::to_string(&read).unwrap();

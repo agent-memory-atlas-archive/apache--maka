@@ -27,6 +27,16 @@ Wire 类型和内置契约由 Host/UI 实际执行所用的 Rust 类型生成。
 `unknown`，作者需要按服务契约检查结果。TypeScript 泛型不能代替验证；
 数值范围、JSON 限制和权限由 Rust 检查。
 
+公开 Session history 使用 `HistoryPosition`：`start`、`tail`、`before`、`after`
+以及原始执行事件 `event` 书签。首次读取固定原始事件 `through` 水位；准备重试保留
+同一 position 与返回的水位。`before` 排他结束，`after` 包含开始，两者必须携带原水位。
+Ready 始终返回 `before`、`after`，其值为真实 sparse row/UTF-8 字节游标或 `null`；
+双向窗口都按源顺序返回。Session Host 每个窗口最多 128 KiB 文本、八块节选，
+包括全部附件描述的完整 JSON 最多 1 MiB；原生
+Agent 服务合计最多 8192 字节、两块节选，实际完整 JSON 还须通过 64 KiB 检查。
+节选的 offset 与 `totalBytes` 表明是否为完整消息；部分消息不能冒称独立 Markdown。
+位置与水位只定位内容，不授予读取权限。
+
 `configurations.agent` 是从原生 agent 类型生成的配置 schema，供包声明使用。
 与 `contracts.agent` 配合，不在产品构建器中维护第二份原生配置或服务协议。
 

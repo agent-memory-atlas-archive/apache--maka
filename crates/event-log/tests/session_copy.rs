@@ -672,13 +672,20 @@ async fn copies_own_history_and_files_without_replaying_execution_across_retries
             1
         );
         let history = log
-            .history_text(session, root.high_water, None, 16 * 1024, 8)
+            .history_text(
+                session,
+                root.high_water,
+                maka_plugins::session::history::Position::Start,
+                16 * 1024,
+                8,
+                1024 * 1024,
+            )
             .await
             .unwrap();
-        let maka_plugins::session::history::Page::Ready { chunks, next, .. } = &history else {
+        let maka_plugins::session::history::Page::Ready { chunks, after, .. } = &history else {
             panic!("prepared history");
         };
-        assert!(next.is_none());
+        assert!(after.is_none());
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].text, "first\ninput.txt");
         assert_eq!(
@@ -705,9 +712,16 @@ async fn copies_own_history_and_files_without_replaying_execution_across_retries
         );
         assert_eq!(
             serde_json::to_value(
-                log.history_text(session, root.high_water, None, 16 * 1024, 8)
-                    .await
-                    .unwrap()
+                log.history_text(
+                    session,
+                    root.high_water,
+                    maka_plugins::session::history::Position::Start,
+                    16 * 1024,
+                    8,
+                    1024 * 1024
+                )
+                .await
+                .unwrap()
             )
             .unwrap(),
             serde_json::to_value(history).unwrap(),

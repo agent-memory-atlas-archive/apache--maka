@@ -27,6 +27,6 @@
 
 会话归实际 Root、deployment 与插件 instance 所有，包版本和 activation 变化不创建新的数据所有者。会话保留对话元数据，每次 canonical invocation 记录实际选中的 binding；同一会话后续发送可以换模型。单次运行固定 provider 身份、原配置与真正执行参数，改名、测试、目录描述与其它模型不会中断它；endpoint、协议、预算或所选模型成员变化则拒绝后续步骤。凭据、请求头与网络策略继续由原配置 owner 提供。业务 ID 由原始 operation reference 派生；Host journal 内的 UUID 冲突仍然拒绝执行。卸载会请求停止并等待原始任务和配置 SQL 所有者清理；清理未确认时继续持有容量，NativeOwner close 返回失败，应用继续保留 Root fence。
 
-`history` 首次选择已提交的 `through` 位置，后续准备、轮询和 UTF-8 字节游标继续使用该位置。每页最多两块各 4096 字节的文本，为 JSON 转义保留空间；不发布附件或 provider 请求体。`start` 从头扫描；`event` 为 inclusive 原始事件编号，由 Host 转换成 sparse transcript row；返回的 `cursor` 必须带原固定 `through` 继续。活动 part 提供原 start sequence，用于完整重放前缀，thinking 不当作回答。规范历史变化有显式 delivery invalidation。每次读取重新检查私有会话范围。公开 Rust 协议类型直接生成插件 SDK。
+`history` 首次固定已提交的原始事件 `through` 水位。准备工作有界；重试保留同一 position 和返回的水位。`start` 从头向前扫描，`tail` 读取末尾；`before` 在真实 sparse transcript row 的 UTF-8 字节游标处排他结束，`after` 从该游标处包含开始，两者必须携带原固定水位。Ready 始终返回 `before`、`after`，只有 `null` 表示该方向结束。反向窗口也按源顺序返回，每个窗口合计最多 8192 UTF-8 字节、两块节选；实际序列化结果还必须通过 64 KiB 检查。不发布附件或 provider 请求体。`event` 用 inclusive 原始事件编号定位执行书签，不伪造 transcript cursor。活动 part 提供原 start sequence，用于完整重放前缀，thinking 不当作回答。规范历史变化有显式 delivery invalidation。每次读取重新检查私有会话范围。公开 Rust 协议类型直接生成插件 SDK。
 
 初版产品组合见 [agent-product](../../packages/agent-product/README.zh-CN.md)。完整工具与连接设置流程仍需继续实现；本 crate 是执行服务，尚不是完整 agent 产品。
