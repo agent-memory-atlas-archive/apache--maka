@@ -1,6 +1,6 @@
 use crate::{
-    AnyElement, App, Bounds, Element, GlobalElementId, InspectorElementId, IntoElement, LayoutId,
-    Pixels, Window,
+    AnyElement, App, Bounds, DeferredPaint, Element, GlobalElementId, InspectorElementId,
+    IntoElement, LayoutId, Pixels, Window,
 };
 
 /// Builds a `Deferred` element, which delays the layout and paint of its child.
@@ -21,7 +21,8 @@ pub struct Deferred {
 impl Deferred {
     /// Sets the `priority` value of the `deferred` element, which
     /// determines the drawing order relative to other deferred elements,
-    /// with higher values being drawn on top.
+    /// with higher values being drawn on top among admitted draws. A nested
+    /// child first needs its ancestor to paint, regardless of their priorities.
     pub fn with_priority(mut self, priority: usize) -> Self {
         self.priority = priority;
         self
@@ -30,7 +31,7 @@ impl Deferred {
 
 impl Element for Deferred {
     type RequestLayoutState = ();
-    type PrepaintState = ();
+    type PrepaintState = DeferredPaint;
 
     fn id(&self) -> Option<crate::ElementId> {
         None
@@ -59,7 +60,7 @@ impl Element for Deferred {
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
         _cx: &mut App,
-    ) {
+    ) -> Self::PrepaintState {
         let child = self.child.take().unwrap();
         let element_offset = window.element_offset();
         window.defer_draw(child, element_offset, self.priority, None)
@@ -71,10 +72,11 @@ impl Element for Deferred {
         _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        _prepaint: &mut Self::PrepaintState,
-        _window: &mut Window,
+        prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
         _cx: &mut App,
     ) {
+        prepaint.paint(window);
     }
 }
 
@@ -88,7 +90,8 @@ impl IntoElement for Deferred {
 
 impl Deferred {
     /// Sets a priority for the element. A higher priority conceptually means painting the element
-    /// on top of deferred draws with a lower priority (i.e. closer to the viewer).
+    /// on top of admitted deferred draws with a lower priority. Ancestors always
+    /// paint before their nested deferred children.
     pub fn priority(mut self, priority: usize) -> Self {
         self.priority = priority;
         self

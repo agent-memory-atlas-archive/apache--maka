@@ -71,7 +71,7 @@ export function paint(target: Target, theme: Theme) {
         padding?: number;
         surface?: boolean;
         style?: Node;
-        scroll?: boolean;
+        scroll?: 'none' | 'manual' | 'anchor' | 'follow_end';
         visible?: boolean;
       } = {},
     ): Node => ({
@@ -83,7 +83,7 @@ export function paint(target: Target, theme: Theme) {
       background: rgba(options.surface ? theme.surface : theme.background),
       children,
       visible: options.visible ?? true,
-      ...(desktop ? { style: options.style ?? {}, scroll: options.scroll ?? false } : {}),
+      ...(desktop ? { style: options.style ?? {}, scroll: options.scroll ?? 'none' } : {}),
     }),
   };
 }

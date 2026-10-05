@@ -41,6 +41,16 @@ pub enum Direction {
     Row,
     Column,
 }
+/// A scroll policy belongs to native presentation, never a plugin pixel mirror.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Scroll {
+    #[default]
+    None,
+    Manual,
+    Anchor,
+    FollowEnd,
+}
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "DesktopScene")]
@@ -71,7 +81,7 @@ pub enum Node {
         #[serde(default)]
         style: Style,
         #[serde(default)]
-        scroll: bool,
+        scroll: Scroll,
     },
     Text {
         key: String,
@@ -510,7 +520,7 @@ impl SceneState {
                     visible: local,
                     ..
                 } => {
-                    if *scroll {
+                    if *scroll != Scroll::None {
                         current
                             .scrolls
                             .insert(key.clone(), scrolls.remove(key).unwrap_or_default());
@@ -810,7 +820,11 @@ impl Node {
                 let element = div()
                     .id(SharedString::from(format!(
                         "stack:{key}:{}",
-                        if *scroll { "scroll" } else { "layout" }
+                        if *scroll != Scroll::None {
+                            "scroll"
+                        } else {
+                            "layout"
+                        }
                     )))
                     .flex()
                     .gap(px(*gap as f32))
@@ -824,11 +838,18 @@ impl Node {
                 if !visible {
                     return Ok(element.hidden().into_any_element());
                 }
-                if *scroll {
+                if *scroll != Scroll::None {
                     let handle = state.scrolls.get(key).ok_or_else(|| {
                         maka_ui::Error::Invalid("scene scroll owner replaced".into())
                     })?;
-                    element = element.overflow_y_scroll().track_scroll(handle);
+                    element = element
+                        .overflow_y_scroll()
+                        .track_scroll(handle)
+                        .retain_scroll(match scroll {
+                            Scroll::None | Scroll::Manual => gpui_kit::ScrollRetention::None,
+                            Scroll::Anchor => gpui_kit::ScrollRetention::Anchor,
+                            Scroll::FollowEnd => gpui_kit::ScrollRetention::FollowEnd,
+                        });
                 }
                 for node in children {
                     element = element.child(node.element(state, slots, window, cx)?);

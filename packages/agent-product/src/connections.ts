@@ -189,7 +189,7 @@ function frame(
             {
               gap: target === 'desktop' ? 16 : 0,
               padding: target === 'desktop' ? 24 : 0,
-              scroll: true,
+              scroll: 'anchor',
               style: { width: fill, height: fill, maxWidth: 760, minWidth: 0, minHeight: 0 },
             },
           );

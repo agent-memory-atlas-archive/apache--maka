@@ -41,6 +41,14 @@ across layout changes; removing or changing their kind closes old input admissio
 The compiler validates bounded shapes, styles and numeric values against the
 original JSON before narrowing to native floats, within the callback deadline.
 
+`Stack.scroll` selects `none`, `manual`, `anchor` or `follow_end`; booleans are
+not accepted. The original native scroll handle owns the offset. Anchor mode
+keeps a surviving identified direct child at its viewport position; follow-end
+mode follows growth only while at the previous painted end. Real wheel, explicit
+scroll and focus reveal supersede an unpainted automatic adjustment. Explicitly
+hidden containers skip automatic adjustment and request resolution; skipped paint
+never acknowledges requests. Layout retries resolve against the last painted geometry; no plugin pixel mirror is required. The native
+presenter does not choose a product's reading policy.
 
 `Canvas` adds bounded Rect/Line/Text commands and explicit button-like regions
 under `contents`. Plugins supply drawing and synchronous pointer/key/drop rules;

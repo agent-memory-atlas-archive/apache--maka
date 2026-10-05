@@ -146,7 +146,7 @@ export function components(target: Target): {
           surface: true,
           padding: target === 'desktop' ? 20 : 1,
           style: { height: fill, width: fill },
-          scroll: target === 'desktop',
+          scroll: 'anchor',
         },
       ),
     );
@@ -188,7 +188,7 @@ export function components(target: Target): {
         ],
         {
           gap: target === 'desktop' ? 8 : 0,
-          style: { width: fill, maxWidth: 760 },
+          style: { width: fill, maxWidth: 760, shrink: 0 },
           surface: message.role === 'user',
           padding: target === 'desktop' && message.role === 'user' ? 16 : 0,
         },
@@ -215,7 +215,7 @@ export function components(target: Target): {
             height: fill,
             padding: { top: 24, right: 24, bottom: 24, left: 24 },
           },
-          scroll: true,
+          scroll: 'follow_end',
         },
       ),
     );

@@ -60,7 +60,7 @@ impl Harness {
 fn source(disabled: bool, moved: bool, removed: bool) -> Value {
     let children = vec![
         json!({"kind":"button","key":"action","label":"Run","disabled":disabled,"style":{"width":{"unit":"pixels","value":100},"height":{"unit":"pixels","value":40},"background":0x416653ffu32}}),
-        json!({"kind":"stack","key":"scroll","direction":"column","gap":0,"padding":0,"background":0xffffff,"scroll":true,"style":{"width":{"unit":"pixels","value":100},"height":{"unit":"pixels","value":40},"shrink":0},"children":[{"kind":"text","key":"long","text":"Long document","color":0,"style":{"height":{"unit":"pixels","value":400},"shrink":0}}]}),
+        json!({"kind":"stack","key":"scroll","direction":"column","gap":0,"padding":0,"background":0xffffff,"scroll":"manual","style":{"width":{"unit":"pixels","value":100},"height":{"unit":"pixels","value":40},"shrink":0},"children":[{"kind":"text","key":"long","text":"Long document","color":0,"style":{"height":{"unit":"pixels","value":400},"shrink":0}}]}),
     ];
     json!({"kind":"stack","key":"root","direction":"row","gap":0,"padding":0,"background":0xffffff,"style":{"width":{"unit":"pixels","value":200},"height":{"unit":"pixels","value":200}},"children":[
         {"kind":"stack","key":"a","direction":"column","gap":0,"padding":0,"background":0xffffff,"children":if !moved && !removed { children.clone() } else { vec![] }},

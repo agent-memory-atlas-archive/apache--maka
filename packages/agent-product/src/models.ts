@@ -184,7 +184,6 @@ function frame(
       visible: target === 'desktop' || state.open,
       surface: true,
       padding: target === 'desktop' ? 12 : 0,
-      scroll: target === 'tui',
       style: { width: fill, minWidth: 0, background: 0 },
     },
   );

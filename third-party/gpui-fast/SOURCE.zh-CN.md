@@ -43,3 +43,8 @@ App 提供原当前事件传播标记的只读查询。原生分发完成观察�
 仅恢复 pinned 上游 core 单元测试所需的 IBM Plex Sans 与 Lilex Regular 两份字体及相邻原始 OFL 1.1 许可；upstream.json 记录有限原始哈希。它们只由 cfg(test) 嵌入，不作为产品字体；演示程序及其他资产继续省略。
 
 自定义 canvas 可以安装原 focused IME handler 而不提供 tracked reveal 几何。提交帧在 handler 确实存在、其 focus 没有 dispatch-tree 几何时完成该 focus generation，允许 retained reuse 恢复；原 focus/generation 与滚动 guard 保留，未挂载且没有 input handler 的 focus 继续 pending。dispatcher 取消测试改为实际 `dispatch_after` runnable 持有 completion sender，并保留等待 sender 取消的 executor。owned async-io timer 仍由既有 Drop 契约管理。
+
+
+原 ScrollHandle 唯一拥有实时 offset 与最后实际绘制的直接子元素几何。Tracked Div 可选择 Anchor 或 FollowEnd；未绘制的自动调整保留相对于 immutable painted geometry 的阅读原点，每次 retry 重选原 element IDs 中仍存在的元素。真实 wheel、set_offset 和 focus reveal 转为绝对目标；plain clamp 同样参与重试处理。原 Window 的继承式 prepaint visibility 作用域阻止隐藏后代的自动 retention、显式请求解析与焦点显露，不 blur 或替换 owner；隔离外部显露请求并在 unwind 时恢复。DeferredDraw 捕获同一 eligibility，延迟 prepaint 恢复它；retained context 比较它再决定复用，隐藏几何不确认 focus generation。实际 Deferred::paint 通过原 Frame paint stream 准入子树，普通 retained 与 splice 重放同一事实；priority 只排序当前已准入记录，低 priority 的嵌套子树也须先经过祖先实际 paint，hover-hidden 祖先不能独立绘制 ghost 子树。只有实际 Div 内容 paint 才提交 baseline，覆盖 retained children；不增加第二棵树、全局滚动注册或插件像素镜像。
+
+Bottom 与 item 合为一个带 tag 的 pending target，按当前 overflow、bounds 和 child geometry 解析，仅匹配的实际 paint 确认；hidden、discarded 和新 hover-hidden 的跳过绘制不能消费。新请求覆盖旧请求，真实原生移动取消请求。invalidate() 只推进原 dependency version，不冒充输入或安排 frame，Kit VirtualList 继续使用同一机械 owner。原 retained splice 检查纳入 rebuilt gap root 的 location/size；外框变化重建父元素，外框相同的内部内容改变仍可 splice。原生回归使用实际 wheel、focus、layout retry、显式请求与 partial child 更新，不作为 OS 或成品验收。

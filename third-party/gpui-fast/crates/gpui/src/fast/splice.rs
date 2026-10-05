@@ -204,6 +204,9 @@ pub(crate) struct Splice {
     /// layout the same for it to be drawn around the gap. See
     /// [`Window::splice_layout_holds`].
     held: Vec<(LayoutId, taffy::Layout)>,
+    // A rebuilt child's box is geometry consumed by its parent's prepaint,
+    // even when the other kept nodes and the parent's own box do not change.
+    gap_boxes: Vec<(LayoutId, taffy::Layout)>,
 }
 
 impl Splice {
@@ -347,6 +350,24 @@ impl Window {
         // changes only what is inside it unless the view's own nodes come out
         // of layout differently too, which is checked once layout is
         // computed. A gap at another node changes the view's own tree.
+        let gap_boxes = gaps
+            .iter()
+            .map(|&gap| {
+                let id = self.rendered_frame.retained.records[gap]
+                    .layout
+                    .as_ref()
+                    .unwrap()
+                    .root;
+                let layout = *self
+                    .layout_engine
+                    .as_ref()
+                    .unwrap()
+                    .taffy
+                    .layout(id.into())
+                    .ok()?;
+                Some((id, layout))
+            })
+            .collect::<Option<Vec<_>>>()?;
         let mut built = Vec::with_capacity(gaps.len());
         let mut unchanged = true;
         let mut same_roots = true;
@@ -383,6 +404,7 @@ impl Window {
             previous,
             gaps: built,
             held,
+            gap_boxes,
         })
     }
 
@@ -395,6 +417,14 @@ impl Window {
             .as_ref()
             .unwrap()
             .layouts_unchanged(&splice.held)
+            && splice.gap_boxes.iter().all(|(id, old)| {
+                self.layout_engine
+                    .as_ref()
+                    .unwrap()
+                    .taffy
+                    .layout((*id).into())
+                    .is_ok_and(|now| now.location == old.location && now.size == old.size)
+            })
     }
 
     /// Builds the view last frame's record `record` stands for again, where
@@ -718,10 +748,12 @@ impl Window {
             [range.start.deferred_draws_index..range.end.deferred_draws_index]
         {
             self.next_frame.deferred_draws.push(DeferredDraw {
+                admission: deferred_draw.admission.reuse(),
                 current_view: deferred_draw.current_view,
                 parent_node: dispatch.refresh(deferred_draw.parent_node),
                 element_id_stack: deferred_draw.element_id_stack.clone(),
                 text_style_stack: deferred_draw.text_style_stack.clone(),
+                prepaint_visible: deferred_draw.prepaint_visible,
                 content_mask: deferred_draw.content_mask,
                 rem_size: deferred_draw.rem_size,
                 priority: deferred_draw.priority,

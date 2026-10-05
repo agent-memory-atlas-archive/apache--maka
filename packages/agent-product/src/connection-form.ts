@@ -795,7 +795,7 @@ function frame(
     ui.box('connection-form', [form, confirmation, earlier], {
       gap: 0,
       padding: target === 'desktop' ? 24 : 0,
-      scroll: true,
+      scroll: 'anchor',
       style: { width: fill, height: fill, maxWidth: 760, minWidth: 0, minHeight: 0 },
     }),
     events,

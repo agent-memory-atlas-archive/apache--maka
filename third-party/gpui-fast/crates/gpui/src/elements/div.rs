@@ -43,6 +43,10 @@ use std::{
     time::Duration,
 };
 
+mod scroll;
+pub use scroll::ScrollRetention;
+use scroll::{Attempt, ScrollLayout};
+
 use super::ImageCacheProvider;
 
 #[cfg(feature = "stacker")]
@@ -1571,6 +1575,12 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Retain a reading position across layout changes. Requires `track_scroll`.
+    fn retain_scroll(mut self, policy: ScrollRetention) -> Self {
+        self.interactivity().scroll_retention = policy;
+        self
+    }
+
     /// Track the scroll state of this element with the given handle.
     fn anchor_scroll(mut self, scroll_anchor: Option<ScrollAnchor>) -> Self {
         self.interactivity().scroll_anchor = crate::fast::interactivity::rare_option(scroll_anchor);
@@ -1871,6 +1881,9 @@ impl Div {
 /// bounds of the children after the layout phase is complete.
 pub struct DivFrameState {
     child_layout_ids: SmallVec<[LayoutId; 2]>,
+    // Outer None: not presented; Some(None): commit plain mode.
+    scroll_layout: Option<Option<ScrollLayout>>,
+    scroll_request: Option<u64>,
 }
 
 /// Interactivity state displayed an manipulated in the inspector.
@@ -1976,7 +1989,14 @@ impl Element for Div {
             )
         });
 
-        (layout_id, DivFrameState { child_layout_ids })
+        (
+            layout_id,
+            DivFrameState {
+                child_layout_ids,
+                scroll_layout: None,
+                scroll_request: None,
+            },
+        )
     }
 
     #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
@@ -2006,33 +2026,37 @@ impl Element for Div {
         if let Some(handle) = self.interactivity.scroll_anchor.as_ref() {
             *handle.last_origin.borrow_mut() = bounds.origin - window.element_offset();
         }
+        if let Some(handle) = self.interactivity.tracked_scroll_handle.as_ref() {
+            crate::fast::layers::input::track_handle(window, &handle.0);
+            // Empty layouts must clear the previous children's geometry too.
+            let mut state = handle.0.borrow_mut();
+            state.child_bounds.clear();
+        }
         let content_size = if request_layout.child_layout_ids.is_empty() {
             bounds.size
-        } else if let Some(scroll_handle) = self.interactivity.tracked_scroll_handle.as_ref() {
-            crate::fast::layers::input::track_handle(window, &scroll_handle.0);
-            let mut state = scroll_handle.0.borrow_mut();
-            state.child_bounds = Vec::with_capacity(request_layout.child_layout_ids.len());
-            for child_layout_id in &request_layout.child_layout_ids {
-                let child_bounds = window.layout_bounds(*child_layout_id);
-                child_min = child_min.min(&child_bounds.origin);
-                child_max = child_max.max(&child_bounds.bottom_right());
-                state.child_bounds.push(child_bounds);
-            }
-            (child_max - child_min).into()
         } else {
             for child_layout_id in &request_layout.child_layout_ids {
                 let child_bounds = window.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
                 child_max = child_max.max(&child_bounds.bottom_right());
-
+                if let Some(handle) = self.interactivity.tracked_scroll_handle.as_ref() {
+                    handle.0.borrow_mut().child_bounds.push(child_bounds);
+                }
                 if has_prepaint_listener {
                     children_bounds.push(child_bounds);
                 }
             }
             (child_max - child_min).into()
         };
+        if self.interactivity.scroll_retention != ScrollRetention::None {
+            self.interactivity.scroll_child_ids = self
+                .children
+                .iter()
+                .map(|child| child.0.fast_element_id())
+                .collect();
+        }
 
-        self.interactivity.prepaint(
+        let hitbox = self.interactivity.prepaint(
             global_id,
             inspector_id,
             bounds,
@@ -2080,7 +2104,10 @@ impl Element for Div {
 
                 hitbox
             },
-        )
+        );
+        request_layout.scroll_layout = self.interactivity.pending_scroll_layout.take();
+        request_layout.scroll_request = self.interactivity.pending_scroll_request.take();
+        hitbox
     }
 
     #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
@@ -2089,7 +2116,7 @@ impl Element for Div {
         global_id: Option<&GlobalElementId>,
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
+        request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
         window: &mut Window,
         cx: &mut App,
@@ -2099,6 +2126,7 @@ impl Element for Div {
             .as_mut()
             .map(|provider| provider.provide(window, cx));
 
+        let mut did_paint = false;
         window.with_image_cache(image_cache, |window| {
             self.interactivity.paint(
                 global_id,
@@ -2113,6 +2141,7 @@ impl Element for Div {
                         return;
                     }
 
+                    did_paint = true;
                     crate::fast::layers::paint::paint_children(
                         window,
                         cx,
@@ -2126,6 +2155,27 @@ impl Element for Div {
                 },
             )
         });
+        if !did_paint {
+            return;
+        }
+        if let Some(handle) = self.interactivity.tracked_scroll_handle.as_ref()
+            && let Some(layout) = request_layout.scroll_layout.take()
+        {
+            let mut state = handle.0.borrow_mut();
+            state.painted_layout = layout;
+            state.retention_attempt = None;
+        }
+        if let Some(handle) = self.interactivity.tracked_scroll_handle.as_ref()
+            && request_layout.scroll_request.is_some()
+        {
+            let mut state = handle.0.borrow_mut();
+            if state
+                .scroll_request
+                .is_some_and(|request| Some(request.generation) == request_layout.scroll_request)
+            {
+                state.scroll_request = None;
+            }
+        }
     }
 }
 
@@ -2181,6 +2231,10 @@ pub struct Interactivity {
     pub(crate) focusable: bool,
     pub(crate) tracked_focus_handle: Option<FocusHandle>,
     pub(crate) tracked_scroll_handle: Option<ScrollHandle>,
+    pub(crate) scroll_retention: ScrollRetention,
+    pub(crate) scroll_child_ids: Vec<Option<ElementId>>,
+    pub(crate) pending_scroll_layout: Option<Option<ScrollLayout>>,
+    pub(crate) pending_scroll_request: Option<u64>,
     pub(crate) scroll_anchor: crate::fast::interactivity::Rare<ScrollAnchor>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     pub(crate) ongoing_scroll: Option<Rc<RefCell<OngoingScroll>>>,
@@ -2447,97 +2501,115 @@ impl Interactivity {
                     }
                 }
 
-                let opacity = crate::fast::retained::push_element_opacity(window, style.opacity);
-                let result = window.with_text_style(style.text_style().cloned(), |window| {
-                    window.with_content_mask(
-                        style.overflow_mask(bounds, window.rem_size()),
-                        |window| {
-                            let hitbox = if self.should_insert_hitbox(&style, window, cx) {
-                                Some(match &self.hitbox_regions {
-                                    Some(regions) => window.insert_hitbox_regions(
-                                        bounds,
-                                        self.hitbox_behavior,
-                                        regions.clone(),
-                                    ),
-                                    None => window.insert_hitbox(bounds, self.hitbox_behavior),
-                                })
-                            } else {
-                                None
-                            };
-
-                            let scroll_offset =
-                                self.clamp_scroll_position(bounds, &style, window, cx);
-                            // Isolate this subtree's request from siblings.
-                            let scrolls = style.overflow.x == Overflow::Scroll
-                                || style.overflow.y == Overflow::Scroll;
-                            let owns_focus = style.display != Display::None
-                                && self
-                                    .tracked_focus_handle
-                                    .as_ref()
-                                    .is_some_and(|h| h.is_focused(window));
-                            let scoped = scrolls || owns_focus;
-                            let outside_request =
-                                scoped.then(|| window.requested_autoscroll.take()).flatten();
-                            let outside_focus = window.autoscroll_focus_generation;
-                            if owns_focus && window.focus_reveal_pending() {
-                                window.autoscroll_focus_generation = Some(window.focus_generation);
-                            }
-                            let result = f(&style, scroll_offset, hitbox, window, cx);
-                            if scoped {
-                                let mut request = window.requested_autoscroll.take();
-                                if owns_focus
-                                    && window.focus_reveal_pending()
-                                    && self
-                                        .tracked_focus_handle
-                                        .as_ref()
-                                        .is_some_and(|handle| handle.is_focused(window))
-                                {
-                                    window.focus_reveal_seen = true;
-                                    // A child's explicit caret/line request is
-                                    // more precise than the whole control.
-                                    match request.as_mut() {
-                                        Some(request)
-                                            if !request.precise
-                                                && request.focus_generation
-                                                    == Some(window.focus_generation) =>
+                window.with_prepaint_visibility(
+                    style.display != Display::None && style.visibility != Visibility::Hidden,
+                    |window| {
+                        let opacity =
+                            crate::fast::retained::push_element_opacity(window, style.opacity);
+                        let result =
+                            window.with_text_style(style.text_style().cloned(), |window| {
+                                window.with_content_mask(
+                                    style.overflow_mask(bounds, window.rem_size()),
+                                    |window| {
+                                        let hitbox = if self
+                                            .should_insert_hitbox(&style, window, cx)
                                         {
-                                            // A control can track the same handle at
-                                            // its editor and outer border. Preserve
-                                            // the entire control's derived bounds.
-                                            request.bounds = request.bounds.union(&bounds);
-                                        }
-                                        None => {
-                                            request = Some(crate::window::AutoscrollRequest {
-                                                bounds,
-                                                focus_generation: Some(window.focus_generation),
-                                                precise: false,
+                                            Some(match &self.hitbox_regions {
+                                                Some(regions) => window.insert_hitbox_regions(
+                                                    bounds,
+                                                    self.hitbox_behavior,
+                                                    regions.clone(),
+                                                ),
+                                                None => window
+                                                    .insert_hitbox(bounds, self.hitbox_behavior),
                                             })
+                                        } else {
+                                            None
+                                        };
+
+                                        let scroll_offset =
+                                            self.clamp_scroll_position(bounds, &style, window, cx);
+                                        // Isolate this subtree's request from siblings.
+                                        let scrolls = style.overflow.x == Overflow::Scroll
+                                            || style.overflow.y == Overflow::Scroll;
+                                        let owns_focus = style.display != Display::None
+                                            && self
+                                                .tracked_focus_handle
+                                                .as_ref()
+                                                .is_some_and(|h| h.is_focused(window));
+                                        let scoped = scrolls || owns_focus;
+                                        let outside_request = scoped
+                                            .then(|| window.requested_autoscroll.take())
+                                            .flatten();
+                                        let outside_focus = window.autoscroll_focus_generation;
+                                        if owns_focus && window.focus_reveal_pending() {
+                                            window.autoscroll_focus_generation =
+                                                Some(window.focus_generation);
                                         }
-                                        _ => {}
-                                    }
-                                }
-                                if scrolls {
-                                    request = request.map(|mut request| {
-                                        request.bounds = self.reveal_bounds(
-                                            request.bounds,
-                                            bounds,
-                                            &style,
-                                            scroll_offset,
-                                            window,
-                                        );
-                                        request
-                                    });
-                                }
-                                window.requested_autoscroll =
-                                    window.prioritize_autoscroll(request, outside_request);
-                            }
-                            window.autoscroll_focus_generation = outside_focus;
-                            (result, element_state)
-                        },
-                    )
-                });
-                crate::fast::retained::pop_element_opacity(window, opacity);
-                result
+                                        let result = f(&style, scroll_offset, hitbox, window, cx);
+                                        if scoped {
+                                            let mut request = window.requested_autoscroll.take();
+                                            if owns_focus
+                                                && window.focus_reveal_pending()
+                                                && self
+                                                    .tracked_focus_handle
+                                                    .as_ref()
+                                                    .is_some_and(|handle| handle.is_focused(window))
+                                            {
+                                                window.focus_reveal_seen = true;
+                                                // A child's explicit caret/line request is
+                                                // more precise than the whole control.
+                                                match request.as_mut() {
+                                                    Some(request)
+                                                        if !request.precise
+                                                            && request.focus_generation
+                                                                == Some(
+                                                                    window.focus_generation,
+                                                                ) =>
+                                                    {
+                                                        // A control can track the same handle at
+                                                        // its editor and outer border. Preserve
+                                                        // the entire control's derived bounds.
+                                                        request.bounds =
+                                                            request.bounds.union(&bounds);
+                                                    }
+                                                    None => {
+                                                        request =
+                                                            Some(crate::window::AutoscrollRequest {
+                                                                bounds,
+                                                                focus_generation: Some(
+                                                                    window.focus_generation,
+                                                                ),
+                                                                precise: false,
+                                                            })
+                                                    }
+                                                    _ => {}
+                                                }
+                                            }
+                                            if scrolls {
+                                                request = request.map(|mut request| {
+                                                    request.bounds = self.reveal_bounds(
+                                                        request.bounds,
+                                                        bounds,
+                                                        &style,
+                                                        scroll_offset,
+                                                        window,
+                                                    );
+                                                    request
+                                                });
+                                            }
+                                            window.requested_autoscroll = window
+                                                .prioritize_autoscroll(request, outside_request);
+                                        }
+                                        window.autoscroll_focus_generation = outside_focus;
+                                        (result, element_state)
+                                    },
+                                )
+                            });
+                        crate::fast::retained::pop_element_opacity(window, opacity);
+                        result
+                    },
+                )
             },
         )
     }
@@ -2570,42 +2642,58 @@ impl Interactivity {
     }
 
     fn clamp_scroll_position(
-        &self,
+        &mut self,
         bounds: Bounds<Pixels>,
         style: &Style,
         window: &mut Window,
         _cx: &mut App,
     ) -> Point<Pixels> {
-        if let Some(scroll_offset) = self.scroll_offset.as_ref() {
-            let mut scroll_to_bottom = false;
-            let scroll_max = self.max_scroll_offset(bounds, style, window);
-            if let Some(handle) = self.tracked_scroll_handle.as_ref() {
-                {
-                    let mut state = handle.0.borrow_mut();
-                    state.overflow = style.overflow;
-                    state.bounds = bounds;
-                    state.max_offset = scroll_max;
-                    scroll_to_bottom = mem::take(&mut state.scroll_to_bottom);
-                }
-                // Resolve against this prepaint's bounds and overflow, before
-                // children and input geometry use the resulting offset.
-                handle.scroll_to_active_item();
-            }
-            // Clamp scroll offset in case scroll max is smaller now (e.g., if children
-            // were removed or the bounds became larger).
-            let mut scroll_offset = scroll_offset.borrow_mut();
-
-            scroll_offset.x = scroll_offset.x.clamp(-scroll_max.x, px(0.));
-            if scroll_to_bottom {
-                scroll_offset.y = -scroll_max.y;
-            } else {
-                scroll_offset.y = scroll_offset.y.clamp(-scroll_max.y, px(0.));
-            }
-
-            *scroll_offset
-        } else {
-            Point::default()
+        let Some(scroll_offset) = self.scroll_offset.as_ref() else {
+            return Point::default();
+        };
+        self.pending_scroll_layout = None;
+        self.pending_scroll_request = None;
+        if !window.prepaint_visible {
+            return *scroll_offset.borrow();
         }
+        let scroll_max = self.max_scroll_offset(bounds, style, window);
+        if let Some(handle) = self.tracked_scroll_handle.as_ref() {
+            {
+                let mut state = handle.0.borrow_mut();
+                let layout = ScrollLayout {
+                    max_y: scroll_max.y,
+                    height: bounds.size.height,
+                    children: self
+                        .scroll_child_ids
+                        .iter()
+                        .cloned()
+                        .zip(state.child_bounds.iter().map(|child| Bounds {
+                            origin: child.origin - bounds.origin,
+                            size: child.size,
+                        }))
+                        .collect(),
+                };
+                // Plain clamping is automatic layout work too. Stage its
+                // origin so a discarded smaller plain box cannot look like
+                // native input when the next candidate restores anchoring.
+                state.retain_position(
+                    self.scroll_retention,
+                    &layout,
+                    px(1. / window.scale_factor()),
+                );
+                self.pending_scroll_layout =
+                    Some((self.scroll_retention != ScrollRetention::None).then_some(layout));
+                state.overflow = style.overflow;
+                state.bounds = bounds;
+                state.max_offset = scroll_max;
+            }
+            // Explicit targets resolve after automatic retention.
+            self.pending_scroll_request = handle.resolve_scroll_request();
+        }
+        let mut scroll_offset = scroll_offset.borrow_mut();
+        scroll_offset.x = scroll_offset.x.clamp(-scroll_max.x, px(0.));
+        scroll_offset.y = scroll_offset.y.clamp(-scroll_max.y, px(0.));
+        *scroll_offset
     }
 
     fn max_scroll_offset(
@@ -3592,6 +3680,10 @@ impl Interactivity {
     ) {
         if let Some(scroll_offset) = self.scroll_offset.clone() {
             let ongoing_scroll = self.ongoing_scroll.clone();
+            let scroll_handle = self
+                .tracked_scroll_handle
+                .as_ref()
+                .map(|h| Rc::downgrade(&h.0));
             let overflow = style.overflow;
             let allow_concurrent_scroll = style.allow_concurrent_scroll;
             let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
@@ -3643,6 +3735,11 @@ impl Interactivity {
                     scroll_offset.y += delta_y;
                     scroll_offset.x += delta_x;
                     if *scroll_offset != old_scroll_offset {
+                        if let Some(handle) = scroll_handle.as_ref().and_then(Weak::upgrade) {
+                            let mut state = handle.borrow_mut();
+                            state.scroll_request = None;
+                            state.explicit_scroll(scroll_offset.y);
+                        }
                         crate::fast::retained::invalidate_retained_subtrees(window, &subtrees);
                         crate::fast::layers::invalidate::note_scrolled(window, &fast_container);
                         cx.notify(current_view);
@@ -4564,7 +4661,7 @@ where
 }
 
 /// Represents an element that can be scrolled *to* in its parent element.
-/// Contrary to [ScrollHandle::scroll_to_active_item], an anchored element does not have to be an immediate child of the parent.
+/// Contrary to [ScrollHandle::scroll_to_item], an anchored element does not have to be an immediate child of the parent.
 #[derive(Clone)]
 pub struct ScrollAnchor {
     handle: ScrollHandle,
@@ -4598,16 +4695,25 @@ pub(crate) struct ScrollHandleState {
     bounds: Bounds<Pixels>,
     max_offset: Point<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
-    scroll_to_bottom: bool,
+    scroll_request: Option<ScrollRequest>,
+    painted_layout: Option<ScrollLayout>,
+    retention_attempt: Option<Attempt>,
     overflow: Point<Overflow>,
-    active_item: Option<ScrollActiveItem>,
     pub(crate) version: crate::fast::dependencies::StateVersion,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
-struct ScrollActiveItem {
-    index: usize,
-    strategy: ScrollStrategy,
+#[derive(Debug, Clone, Copy)]
+struct ScrollRequest {
+    generation: u64,
+    target: ScrollTarget,
+}
+#[derive(Debug, Clone, Copy)]
+enum ScrollTarget {
+    End,
+    Item {
+        index: usize,
+        strategy: ScrollStrategy,
+    },
 }
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -4708,95 +4814,87 @@ impl ScrollHandle {
         crate::fast::layers::input::moved(&self.0, self.0.borrow().child_bounds.get(ix).cloned())
     }
 
-    /// Update [ScrollHandleState]'s active item for scrolling to in prepaint
+    /// Scroll the minimal distance to reveal a direct child after layout.
     pub fn scroll_to_item(&self, ix: usize) {
-        let mut state = self.0.borrow_mut();
-        crate::fast::dependencies::StateVersion::bump(&state.version);
-        state.active_item = Some(ScrollActiveItem {
+        self.request_scroll(ScrollTarget::Item {
             index: ix,
-            strategy: ScrollStrategy::default(),
+            strategy: ScrollStrategy::FirstVisible,
         });
     }
 
-    /// Update [ScrollHandleState]'s active item for scrolling to in prepaint
-    /// This scrolls the minimal amount to ensure that the child is the first visible element
+    /// Align a direct child to the viewport top after layout.
     pub fn scroll_to_top_of_item(&self, ix: usize) {
-        let mut state = self.0.borrow_mut();
-        crate::fast::dependencies::StateVersion::bump(&state.version);
-        state.active_item = Some(ScrollActiveItem {
+        self.request_scroll(ScrollTarget::Item {
             index: ix,
             strategy: ScrollStrategy::Top,
         });
     }
 
-    /// Scrolls the minimal amount to either ensure that the child is
-    /// fully visible or the top element of the view depends on the
-    /// scroll strategy
-    fn scroll_to_active_item(&self) {
-        let mut state = self.0.borrow_mut();
-
-        let Some(active_item) = state.active_item else {
-            return;
-        };
-
-        let active_item = match state.child_bounds.get(active_item.index) {
-            Some(bounds) => {
-                let mut scroll_offset = state.offset.borrow_mut();
-
-                match active_item.strategy {
-                    ScrollStrategy::FirstVisible => {
-                        if state.overflow.y == Overflow::Scroll {
-                            let child_height = bounds.size.height;
-                            let viewport_height = state.bounds.size.height;
-                            if child_height > viewport_height {
-                                scroll_offset.y = state.bounds.top() - bounds.top();
-                            } else if bounds.top() + scroll_offset.y < state.bounds.top() {
-                                scroll_offset.y = state.bounds.top() - bounds.top();
-                            } else if bounds.bottom() + scroll_offset.y > state.bounds.bottom() {
-                                scroll_offset.y = state.bounds.bottom() - bounds.bottom();
-                            }
-                        }
-                    }
-                    ScrollStrategy::Top => {
-                        scroll_offset.y = state.bounds.top() - bounds.top();
-                    }
-                }
-
-                if state.overflow.x == Overflow::Scroll {
-                    let child_width = bounds.size.width;
-                    let viewport_width = state.bounds.size.width;
-                    if child_width > viewport_width {
-                        scroll_offset.x = state.bounds.left() - bounds.left();
-                    } else if bounds.left() + scroll_offset.x < state.bounds.left() {
-                        scroll_offset.x = state.bounds.left() - bounds.left();
-                    } else if bounds.right() + scroll_offset.x > state.bounds.right() {
-                        scroll_offset.x = state.bounds.right() - bounds.right();
-                    }
-                }
-                None
-            }
-            None => Some(active_item),
-        };
-        state.active_item = active_item;
+    /// Scroll to the bottom after layout. Requests remain pending until the
+    /// container really paints; a discarded or hidden candidate cannot consume them.
+    pub fn scroll_to_bottom(&self) {
+        self.request_scroll(ScrollTarget::End);
     }
 
-    /// Scrolls to the bottom.
-    pub fn scroll_to_bottom(&self) {
+    fn request_scroll(&self, target: ScrollTarget) {
         let mut state = self.0.borrow_mut();
-        crate::fast::dependencies::StateVersion::bump(&state.version);
-        state.scroll_to_bottom = true;
+        state.version.bump();
+        state.scroll_request = Some(ScrollRequest {
+            generation: state.version.get(),
+            target,
+        });
+    }
+
+    fn resolve_scroll_request(&self) -> Option<u64> {
+        let mut state = self.0.borrow_mut();
+        let request = state.scroll_request?;
+        match request.target {
+            ScrollTarget::End => state.offset.borrow_mut().y = -state.max_offset.y,
+            ScrollTarget::Item { index, strategy } => {
+                let bounds = state.child_bounds.get(index)?;
+                let mut offset = state.offset.borrow_mut();
+                if state.overflow.y == Overflow::Scroll {
+                    match strategy {
+                        ScrollStrategy::FirstVisible => {
+                            if bounds.size.height > state.bounds.size.height
+                                || bounds.top() + offset.y < state.bounds.top()
+                            {
+                                offset.y = state.bounds.top() - bounds.top();
+                            } else if bounds.bottom() + offset.y > state.bounds.bottom() {
+                                offset.y = state.bounds.bottom() - bounds.bottom();
+                            }
+                        }
+                        ScrollStrategy::Top => offset.y = state.bounds.top() - bounds.top(),
+                    }
+                }
+                if state.overflow.x == Overflow::Scroll {
+                    if bounds.size.width > state.bounds.size.width
+                        || bounds.left() + offset.x < state.bounds.left()
+                    {
+                        offset.x = state.bounds.left() - bounds.left();
+                    } else if bounds.right() + offset.x > state.bounds.right() {
+                        offset.x = state.bounds.right() - bounds.right();
+                    }
+                }
+            }
+        }
+        let y = state.offset.borrow().y;
+        state.explicit_scroll(y);
+        Some(request.generation)
     }
 
     /// Set the offset explicitly. The offset is the distance from the top left of the
     /// parent container to the top left of the first child.
     /// As you scroll further down the offset becomes more negative.
     pub fn set_offset(&self, mut position: Point<Pixels>) {
-        let state = self.0.borrow();
+        let mut state = self.0.borrow_mut();
+        state.scroll_request = None;
         crate::fast::layers::invalidate::offset_set(
             &state.version,
             *state.offset.borrow() != position,
         );
         *state.offset.borrow_mut() = position;
+        state.explicit_scroll(position.y);
     }
 
     /// Get the logical scroll top, based on a child index and a pixel offset.
@@ -5293,13 +5391,10 @@ mod tests {
             state.bounds = Bounds::new(point(px(0.), px(0.)), size(px(80.), px(20.)));
             state.child_bounds = vec![Bounds::new(point(px(25.), px(0.)), size(px(200.), px(20.)))];
             state.overflow.x = Overflow::Scroll;
-            state.active_item = Some(ScrollActiveItem {
-                index: 0,
-                strategy: ScrollStrategy::default(),
-            });
         }
 
-        handle.scroll_to_active_item();
+        handle.scroll_to_item(0);
+        handle.resolve_scroll_request();
 
         assert_eq!(handle.offset().x, px(-25.));
     }
@@ -5312,13 +5407,10 @@ mod tests {
             state.bounds = Bounds::new(point(px(0.), px(0.)), size(px(20.), px(80.)));
             state.child_bounds = vec![Bounds::new(point(px(0.), px(25.)), size(px(20.), px(200.)))];
             state.overflow.y = Overflow::Scroll;
-            state.active_item = Some(ScrollActiveItem {
-                index: 0,
-                strategy: ScrollStrategy::default(),
-            });
         }
 
-        handle.scroll_to_active_item();
+        handle.scroll_to_item(0);
+        handle.resolve_scroll_request();
 
         assert_eq!(handle.offset().y, px(-25.));
     }

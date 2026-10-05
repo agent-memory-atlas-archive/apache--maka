@@ -54,6 +54,8 @@ mod reduce_motion;
 mod resizable;
 mod root;
 mod scroll_bounce;
+#[cfg(test)]
+mod scroll_retention;
 mod scrollable_mask;
 mod scrollbar;
 mod select;

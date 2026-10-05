@@ -1012,12 +1012,37 @@ pub(crate) struct TooltipRequest {
     tooltip: AnyTooltip,
 }
 
+/// The original element's admission to paint a deferred child in this frame.
+///
+/// Keep this in the element's prepaint state and call [`Self::paint`] only when
+/// that element actually paints. Registration during prepaint is not admission.
+#[must_use = "a deferred child needs its original element's actual paint admission"]
+#[derive(Clone)]
+pub struct DeferredPaint(Rc<Cell<bool>>);
+
+impl DeferredPaint {
+    /// Admit the child from the original element's paint, recording the same
+    /// operation for retained and partial-subtree paint replay.
+    pub fn paint(&self, window: &mut Window) {
+        window.invalidator.debug_assert_paint();
+        self.0.set(true);
+        window.next_frame.deferred_paints.push(self.clone());
+    }
+
+    pub(crate) fn reuse(&self) -> Self {
+        self.0.set(false);
+        self.clone()
+    }
+}
+
 pub(crate) struct DeferredDraw {
+    pub(crate) admission: DeferredPaint,
     pub(crate) current_view: EntityId,
     pub(crate) priority: usize,
     pub(crate) parent_node: DispatchNodeId,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(crate) text_style_stack: crate::fast::text_style::TextStyleStack,
+    pub(crate) prepaint_visible: bool,
     pub(crate) content_mask: Option<ContentMask<Pixels>>,
     pub(crate) rem_size: Pixels,
     pub(crate) element: Option<AnyElement>,
@@ -1041,6 +1066,7 @@ pub(crate) struct Frame {
     placed: FxHashSet<ElementId>,
     pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
+    deferred_paints: Vec<DeferredPaint>,
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
@@ -1067,6 +1093,7 @@ pub(crate) struct PrepaintStateIndex {
 
 #[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
+    pub(crate) deferred_paints_index: usize,
     pub(crate) scene_index: usize,
     pub(crate) fast_window_control_hitboxes_index: usize,
     pub(crate) mouse_listeners_index: usize,
@@ -1093,6 +1120,7 @@ impl Frame {
             placed: FxHashSet::default(),
             window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
+            deferred_paints: Vec::new(),
             input_handlers: Vec::new(),
             tooltip_requests: Vec::new(),
             cursor_styles: Vec::new(),
@@ -1125,6 +1153,7 @@ impl Frame {
         self.placed.clear();
         self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
+        self.deferred_paints.clear();
         self.tab_stops.clear();
         crate::fast::retained::RetainedSubtrees::clear(&mut self.retained);
         self.focus = None;
@@ -1295,6 +1324,7 @@ pub struct Window {
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<AutoscrollRequest>,
     pub(crate) autoscroll_focus_generation: Option<u64>,
+    pub(crate) prepaint_visible: bool,
     /// The [`TextInputConfiguration`] most recently forwarded to the platform
     /// window, so that only actual changes are forwarded (reconfiguring a live
     /// input session can restart the IME connection).
@@ -2177,6 +2207,7 @@ impl Window {
             element_opacity: 1.0,
             requested_autoscroll: None,
             autoscroll_focus_generation: None,
+            prepaint_visible: true,
             last_text_input_configuration: None,
             focused_text_input_active: false,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
@@ -2450,7 +2481,32 @@ impl Window {
     }
 
     pub(crate) fn focus_reveal_pending(&self) -> bool {
-        self.focus.is_some() && self.focus_generation != self.revealed_focus_generation
+        self.prepaint_visible
+            && self.focus.is_some()
+            && self.focus_generation != self.revealed_focus_generation
+    }
+
+    /// Inherited prepaint eligibility. Hidden descendants retain layout and
+    /// custody but cannot reveal focus, adjust scroll owners, or emit requests
+    /// into a visible ancestor. Restore this temporary context on unwind too.
+    pub(crate) fn with_prepaint_visibility<R>(
+        &mut self,
+        visible: bool,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.invalidator.debug_assert_prepaint();
+        let previous = self.prepaint_visible;
+        self.prepaint_visible = previous && visible;
+        let outside = (!self.prepaint_visible).then(|| self.requested_autoscroll.take());
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self)));
+        if let Some(outside) = outside {
+            self.requested_autoscroll = outside;
+        }
+        self.prepaint_visible = previous;
+        match result {
+            Ok(result) => result,
+            Err(error) => std::panic::resume_unwind(error),
+        }
     }
 
     /// Remove focus from all elements within this context's window.
@@ -3800,7 +3856,15 @@ impl Window {
             traversal_order.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
 
             for deferred_draw_ix in traversal_order {
-                let (element, parent_node, current_view, rem_size, absolute_offset, prepaint_range) = {
+                let (
+                    element,
+                    parent_node,
+                    current_view,
+                    rem_size,
+                    absolute_offset,
+                    prepaint_range,
+                    visible,
+                ) = {
                     let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
                     self.element_id_stack
                         .clone_from(&deferred_draw.element_id_stack);
@@ -3813,26 +3877,32 @@ impl Window {
                         deferred_draw.rem_size,
                         deferred_draw.absolute_offset,
                         deferred_draw.prepaint_range.clone(),
+                        deferred_draw.prepaint_visible,
                     )
                 };
                 self.next_frame.dispatch_tree.set_active_node(parent_node);
 
                 let prepaint_start = self.prepaint_index();
-                if let Some(mut element) = element {
-                    let recording =
-                        crate::fast::retained::begin_deferred_prepaint(self, deferred_draw_ix, cx);
-                    self.with_rendered_view(current_view, |window| {
-                        window.with_rem_size(Some(rem_size), |window| {
-                            window.with_absolute_element_offset(absolute_offset, |window| {
-                                element.prepaint(window, cx);
+                self.with_prepaint_visibility(visible, |window| {
+                    if let Some(mut element) = element {
+                        let recording = crate::fast::retained::begin_deferred_prepaint(
+                            window,
+                            deferred_draw_ix,
+                            cx,
+                        );
+                        window.with_rendered_view(current_view, |window| {
+                            window.with_rem_size(Some(rem_size), |window| {
+                                window.with_absolute_element_offset(absolute_offset, |window| {
+                                    element.prepaint(window, cx);
+                                });
                             });
                         });
-                    });
-                    crate::fast::retained::finish_deferred(self, recording, cx);
-                    self.next_frame.deferred_draws[deferred_draw_ix].element = Some(element);
-                } else {
-                    self.reuse_prepaint(prepaint_range);
-                }
+                        crate::fast::retained::finish_deferred(window, recording, cx);
+                        window.next_frame.deferred_draws[deferred_draw_ix].element = Some(element);
+                    } else {
+                        window.reuse_prepaint(prepaint_range);
+                    }
+                });
                 let prepaint_end = self.prepaint_index();
                 self.next_frame.deferred_draws[deferred_draw_ix].prepaint_range =
                     prepaint_start..prepaint_end;
@@ -3847,16 +3917,21 @@ impl Window {
     fn paint_deferred_draws(&mut self, cx: &mut App) {
         assert_eq!(self.element_id_stack.len(), 0);
 
-        // Paint all deferred draws in priority order.
-        // Since prepaint has already processed nested deferreds, we just paint them all.
+        // Priority orders admitted draws. A nested draw first needs its
+        // original Deferred element to paint, even with a lower priority than
+        // its ancestor. Hidden ancestors never admit their descendants.
         if self.next_frame.deferred_draws.len() == 0 {
             return;
         }
 
-        let traversal_order = self.deferred_draw_traversal_order();
+        let mut traversal_order = self.deferred_draw_traversal_order();
         let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
-        for deferred_draw_ix in traversal_order {
-            let mut deferred_draw = &mut deferred_draws[deferred_draw_ix];
+        while let Some(ready) = traversal_order
+            .iter()
+            .position(|ix| deferred_draws[*ix].admission.0.get())
+        {
+            let deferred_draw_ix = traversal_order.remove(ready);
+            let deferred_draw = &mut deferred_draws[deferred_draw_ix];
             self.element_id_stack
                 .clone_from(&deferred_draw.element_id_stack);
             self.next_frame
@@ -3881,6 +3956,10 @@ impl Window {
             }
             let paint_end = self.paint_index();
             deferred_draw.paint_range = paint_start..paint_end;
+        }
+        for ix in traversal_order {
+            let index = self.paint_index();
+            deferred_draws[ix].paint_range = index.clone()..index;
         }
         self.next_frame.deferred_draws = deferred_draws;
         self.element_id_stack.clear();
@@ -3977,10 +4056,12 @@ impl Window {
                 [range.start.deferred_draws_index..range.end.deferred_draws_index]
                 .iter()
                 .map(|deferred_draw| DeferredDraw {
+                    admission: deferred_draw.admission.reuse(),
                     current_view: deferred_draw.current_view,
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
+                    prepaint_visible: deferred_draw.prepaint_visible,
                     content_mask: deferred_draw.content_mask,
                     rem_size: deferred_draw.rem_size,
                     priority: deferred_draw.priority,
@@ -3995,6 +4076,7 @@ impl Window {
 
     pub(crate) fn paint_index(&self) -> PaintIndex {
         PaintIndex {
+            deferred_paints_index: self.next_frame.deferred_paints.len(),
             scene_index: self.next_frame.scene.len(),
             fast_window_control_hitboxes_index: self.next_frame.window_control_hitboxes.len(),
             mouse_listeners_index: self.next_frame.mouse_listeners.len(),
@@ -4007,6 +4089,15 @@ impl Window {
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
+        self.next_frame.deferred_paints.extend(
+            self.rendered_frame.deferred_paints
+                [range.start.deferred_paints_index..range.end.deferred_paints_index]
+                .iter()
+                .map(|admission| {
+                    admission.0.set(true);
+                    admission.clone()
+                }),
+        );
         crate::fast::retained::reuse_window_control_hitboxes(self, &range);
         crate::fast::composition::reuse_starts(self, &range);
         self.next_frame.cursor_styles.extend(
@@ -4219,6 +4310,9 @@ impl Window {
     /// called during the prepaint phase of element drawing.
     pub fn request_autoscroll(&mut self, bounds: Bounds<Pixels>) {
         self.invalidator.debug_assert_prepaint();
+        if !self.prepaint_visible {
+            return;
+        }
         let request = AutoscrollRequest {
             bounds,
             focus_generation: self.autoscroll_focus_generation,
@@ -4483,27 +4577,32 @@ impl Window {
     }
 
     /// Defers the drawing of the given element, scheduling it to be painted on top of the currently-drawn tree
-    /// at a later time. The `priority` parameter determines the drawing order relative to other deferred elements,
-    /// with higher values being drawn on top.
+    /// at a later time. Priority orders currently admitted draws, with higher
+    /// values on top. A nested draw must first be admitted by its ancestor's paint.
     ///
     /// When `content_mask` is provided, the deferred element will be clipped to that region during
     /// both prepaint and paint. When `None`, no additional clipping is applied.
     ///
-    /// This method should only be called as part of the prepaint phase of element drawing.
+    /// Call during prepaint and keep the returned admission in the original
+    /// element's prepaint state. Call [`DeferredPaint::paint`] during its actual
+    /// paint; hidden ancestors then suppress this child, including paint replay.
     pub fn defer_draw(
         &mut self,
         element: AnyElement,
         absolute_offset: Point<Pixels>,
         priority: usize,
         content_mask: Option<ContentMask<Pixels>>,
-    ) {
+    ) -> DeferredPaint {
         self.invalidator.debug_assert_prepaint();
         let parent_node = self.next_frame.dispatch_tree.active_node_id().unwrap();
+        let admission = DeferredPaint(Rc::new(Cell::new(false)));
         self.next_frame.deferred_draws.push(DeferredDraw {
+            admission: admission.clone(),
             current_view: self.current_view(),
             parent_node,
             element_id_stack: self.element_id_stack.clone(),
             text_style_stack: self.text_style_stack.clone(),
+            prepaint_visible: self.prepaint_visible,
             content_mask,
             rem_size: self.rem_size(),
             priority,
@@ -4513,6 +4612,7 @@ impl Window {
             paint_range: PaintIndex::default()..PaintIndex::default(),
             enclosing_retained: crate::fast::retained::enclosing_retained(self),
         });
+        admission
     }
 
     /// Creates a new painting layer for the specified bounds. A "layer" is a batch

@@ -118,6 +118,7 @@ pub(crate) struct RetainedContext {
     pub(crate) content_mask: ContentMask<Pixels>,
     pub(crate) text_style: TextStyle,
     pub(crate) opacity: f32,
+    pub(crate) prepaint_visible: bool,
 }
 
 /// What it takes to lay a view out as it was laid out last frame without
@@ -301,6 +302,7 @@ impl PartialEq for PrepaintStateIndex {
 impl PartialEq for PaintIndex {
     fn eq(&self, other: &Self) -> bool {
         let PaintIndex {
+            deferred_paints_index,
             scene_index,
             fast_window_control_hitboxes_index,
             mouse_listeners_index,
@@ -310,7 +312,8 @@ impl PartialEq for PaintIndex {
             tab_handle_index,
             line_layout_index,
         } = self;
-        *scene_index == other.scene_index
+        *deferred_paints_index == other.deferred_paints_index
+            && *scene_index == other.scene_index
             && *fast_window_control_hitboxes_index == other.fast_window_control_hitboxes_index
             && *mouse_listeners_index == other.mouse_listeners_index
             && *input_handlers_index == other.input_handlers_index
@@ -325,6 +328,8 @@ impl PaintIndex {
     /// See [`PrepaintStateIndex::shifted`].
     pub(crate) fn shifted(&self, from: &Self, to: &Self) -> Self {
         PaintIndex {
+            deferred_paints_index: self.deferred_paints_index - from.deferred_paints_index
+                + to.deferred_paints_index,
             scene_index: self.scene_index - from.scene_index + to.scene_index,
             fast_window_control_hitboxes_index: self.fast_window_control_hitboxes_index
                 - from.fast_window_control_hitboxes_index
@@ -529,6 +534,7 @@ impl Window {
         let context = &self.rendered_frame.retained.records[previous].context;
         !crate::fast::layers::paint::inside_layer(self)
             && context.bounds == bounds
+            && context.prepaint_visible == self.prepaint_visible
             && context.opacity == self.element_opacity
             && context.content_mask == self.content_mask()
             && context.text_style == self.text_style()
@@ -799,6 +805,7 @@ impl Window {
                     content_mask: ContentMask::default(),
                     text_style: TextStyle::default(),
                     opacity: 1.,
+                    prepaint_visible: true,
                 }),
                 dependencies: RenderDependencies::default(),
                 own_dependencies: RenderDependencies::default(),
@@ -866,6 +873,7 @@ impl Window {
             content_mask: self.content_mask(),
             text_style: self.text_style(),
             opacity: self.element_opacity,
+            prepaint_visible: self.prepaint_visible,
         };
         let end = self.prepaint_index();
         let retained = &mut self.next_frame.retained;

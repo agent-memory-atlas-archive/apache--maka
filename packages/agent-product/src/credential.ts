@@ -496,7 +496,7 @@ function frame(
   const view = ui.box('credential', [form, earlier, reviewPane], {
     gap: 0,
     padding: target === 'desktop' ? 24 : 0,
-    scroll: true,
+    scroll: 'anchor',
     style: { width: fill, height: fill, maxWidth: 680, minWidth: 0, minHeight: 0 },
   });
   const out = output(state, view, events);
