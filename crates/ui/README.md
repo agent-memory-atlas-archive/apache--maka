@@ -366,3 +366,10 @@ publication or native effect. Hidden slots still mount and settle observations,
 but consume no drawing depth. Rejection preserves the original frames, mounts
 and resource custody. These numbers describe renderer work; the kernel neither
 interprets layout nor lets guest code choose its budget.
+
+`maka.ui.Markdown` is a local read-only component contract. Source, selectable /
+disabled state and complete typography/color inputs are explicit. Link events
+participate in the original synchronous component batch; their committed input
+decision controls native defaults. Literal image URLs grant no resource access.
+Desktop provides this implementation; other presentations declare their own
+implementation or compose an explicit alternative.

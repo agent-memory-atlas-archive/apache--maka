@@ -21,6 +21,7 @@ import type {
   Component,
   EditorObservation,
   TextareaProps,
+  MarkdownProps,
   UiExport,
 } from '../../plugin-sdk/src/index.js';
 import {
@@ -120,7 +121,7 @@ export function components(target: Target): {
           ui.text('brand', 'maka', 24, props.theme.text, 650),
           ui.button('new', text.new, props.busy),
           ui.text('heading', text.conversations, 12, props.theme.muted, 550),
-          ...props.sessions.map((session, index) => {
+          ...props.sessions.map((session) => {
             const button = ui.button(
               session.id,
               target === 'desktop' ? session.title : compactLabel(session.title, 48),
@@ -134,7 +135,7 @@ export function components(target: Target): {
                 justify: 'start',
                 truncate: true,
               };
-            return ui.box('session-' + index, [button], {
+            return ui.box('session-' + session.id, [button], {
               surface: session.id === props.selected,
               style: { width: fill, minWidth: 0, radius: 8, shrink: 0 },
             });
@@ -153,12 +154,12 @@ export function components(target: Target): {
   const timelineFrame = (state: Revision, props: TimelineProps) => {
     const ui = paint(target, props.theme),
       text = copy(props.locale);
-    const messages: Node[] = props.messages.map((message, index) =>
+    const messages: Node[] = props.messages.map((message) =>
       ui.box(
-        'message-' + index,
+        'message-' + message.id,
         [
           ui.text(
-            'role-' + index,
+            'role-' + message.id,
             message.role === 'user'
               ? text.you
               : message.role === 'assistant'
@@ -169,9 +170,21 @@ export function components(target: Target): {
             550,
           ),
           ...(message.continued
-            ? [ui.text('continued-' + index, text.partial, 12, props.theme.muted)]
+            ? [ui.text('continued-' + message.id, text.partial, 12, props.theme.muted)]
             : []),
-          ui.text('text-' + index, message.text, 16),
+          target === 'desktop' && message.role === 'assistant'
+            ? slot(
+                'text-' + message.id,
+                'markdown',
+                {
+                  source: message.text,
+                  appearance: props.theme.markdown,
+                  selectable: true,
+                  disabled: false,
+                } satisfies MarkdownProps,
+                {},
+              )
+            : ui.text('text-' + message.id, message.text, 16),
         ],
         {
           gap: target === 'desktop' ? 8 : 0,

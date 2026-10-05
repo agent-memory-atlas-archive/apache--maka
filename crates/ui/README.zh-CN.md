@@ -254,3 +254,7 @@ Scene compiler 和受信原生工厂使用 `NativeView::with_render_depth` 报�
 保留的祖先/子节点，检查整棵拟提交可见 surface 路径。隐藏 slot 仍挂载并结算
 观察，但不消耗绘制深度；拒绝保留原 frame、mount 和资源 custody。数字仅描述
 renderer 工作，内核不解释布局，也不允许 guest 决定配额。
+
+`maka.ui.Markdown` 是本地只读组件契约；source、可选择/禁用状态及排版颜色均显式提供。
+链接事件进入原同步组件批次，已提交的输入决定控制原生默认行为。图片地址不授予资源
+读取权。Desktop 提供实现；其他呈现端声明自己的实现或显式组合替代组件。

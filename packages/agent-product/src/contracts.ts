@@ -24,6 +24,7 @@ import {
   type SettingsModelChoice,
   type SettingsDefaultModel,
   type TextareaAppearance,
+  type MarkdownAppearance,
   type InputAppearance,
   type ConnectionCredentialTarget,
   type SettingsConnectionDetail,
@@ -52,6 +53,7 @@ export interface Theme {
   textarea: TextareaAppearance;
   input: InputAppearance;
   menu: TextareaMenuAppearance;
+  markdown: MarkdownAppearance;
 }
 export interface Message {
   id: string;
@@ -103,6 +105,7 @@ const editor = native.textarea.interface;
 const session = native.agent.interface.methods.list.output;
 const defs = {
   ...editor.props.$defs,
+  ...native.markdown.interface.props.$defs,
   ...native.secretInput.interface.props.$defs,
   ...session.$defs,
 };
@@ -117,6 +120,7 @@ const themeSchema = object({
   textarea: editor.props.properties.appearance,
   input: native.secretInput.interface.props.properties.appearance,
   menu: { $ref: '#/$defs/TextareaMenuAppearance' },
+  markdown: { $ref: '#/$defs/MarkdownAppearance' },
 });
 const messageSchema = object({
   id: string,

@@ -23,6 +23,7 @@ extern crate gpui_kit as gpui;
 mod appearance;
 mod editing;
 pub mod input;
+mod markdown;
 pub mod scene;
 pub mod textarea;
 
@@ -226,6 +227,7 @@ pub fn registry() -> NativeRegistry<dyn Widget> {
         })
         .expect("unique native label implementation");
     textarea::register(&mut registry);
+    markdown::register(&mut registry);
     input::register(&mut registry);
     registry
 }

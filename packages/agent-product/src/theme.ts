@@ -36,6 +36,10 @@ export function appearance(scheme: 'light' | 'dark'): Theme {
     weight: 400,
   };
   const textStyle = { font, foreground: text };
+  const heading = (scale: number) => ({
+    font: { ...font, size: font.size * scale, weight: 650 },
+    foreground: text,
+  });
   const thumb = { color: muted, width: 8, inset: 3, radius: 3, minLength: 40 };
   const insets = (n: number) => ({ top: n, right: n, bottom: n, left: n });
   return {
@@ -46,6 +50,34 @@ export function appearance(scheme: 'light' | 'dark'): Theme {
     accent,
     border,
     selected,
+    markdown: {
+      body: textStyle,
+      headings: [
+        heading(1.75),
+        heading(1.5),
+        heading(1.25),
+        heading(1.1),
+        heading(1.1),
+        heading(1.1),
+      ],
+      code: {
+        font: {
+          ...font,
+          family: 'monospace',
+          fallbacks: ['Menlo', 'Consolas', 'DejaVu Sans Mono'],
+          size: 14,
+        },
+        foreground: text,
+      },
+      muted,
+      link: accent,
+      selection: dark ? 0xa7c4b040 : 0x41665340,
+      codeBackground: surface,
+      tableBackground: background,
+      border,
+      dark,
+      paragraphGap: 16,
+    },
     input: {
       text: { ...textStyle, font: { ...font, size: 14 } },
       mutedForeground: muted,

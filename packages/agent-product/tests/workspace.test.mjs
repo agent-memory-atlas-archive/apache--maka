@@ -2242,3 +2242,40 @@ test('desktop model popup dismissal preserves the retained default workflow and 
   assert.equal(form.state.defaultsOpen, true);
   assert.equal(form.output.actions.length, 0);
 });
+
+test('prepending history preserves the streamed message presentation identity', async () => {
+  const { component: timeline } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/timeline/desktop.js'))
+  );
+  const message = { id: uuid(400), role: 'assistant', text: '**流式** café 😀', continued: false };
+  const props = {
+    theme: values.appearance[0],
+    locale: 'en',
+    messages: [message],
+    loading: false,
+    more: true,
+    live: true,
+  };
+  const initial = timeline.mount(props, {});
+  const oldRow = initial.frame.view.children[0];
+  const oldBody = oldRow.children.find((node) => node.kind === 'component');
+  assert.ok(oldBody);
+  const next = timeline.update(
+    initial.frame.state,
+    {
+      ...props,
+      messages: [
+        { id: uuid(399), role: 'user', text: 'earlier', continued: false },
+        { ...message, text: message.text + ' continued' },
+      ],
+    },
+    {},
+  );
+  const row = next.frame.view.children[1];
+  const body = row.children.find((node) => node.kind === 'component');
+  assert.equal(row.key, oldRow.key);
+  assert.equal(body.key, oldBody.key);
+  assert.equal(body.binding, oldBody.binding);
+  assert.equal(body.props.source, message.text + ' continued');
+  assert.notEqual(next.frame.view.children[0].key, row.key);
+});

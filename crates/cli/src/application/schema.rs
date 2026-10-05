@@ -21,7 +21,7 @@ use maka_plugin_core::{composition, contract, package};
 use maka_runtime_host::application::abi::{
     HostActivation, HostObservation, HostRequest, ResourceMetadata,
 };
-use maka_ui::{abi, actions, editor, input, text, textarea};
+use maka_ui::{abi, actions, editor, input, markdown, text, textarea};
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde_json::{Value, json};
 
@@ -51,6 +51,8 @@ pub(super) fn catalog() -> Value {
         root::<maka_event_log::applications::intents::CallerIntent>(&mut g),
         root::<maka_ui::LabelProps>(&mut g),
         root::<textarea::TextareaProps>(&mut g),
+        root::<markdown::MarkdownProps>(&mut g),
+        root::<markdown::MarkdownLink>(&mut g),
         root::<input::InputProps>(&mut g),
         root::<editor::EditorObservation>(&mut g),
         root::<editor::EditorCapture>(&mut g),
@@ -111,6 +113,7 @@ pub(super) fn catalog() -> Value {
         },
         "configurations": { "agent": maka_agent_service::configuration_schema() },
         "contracts": {
+            "markdown": markdown::markdown_contract(),
             "label": maka_ui::label_contract(), "textarea": textarea::textarea_contract(),
             "textInput": input::text_input_contract(), "secretInput": input::secret_input_contract(),
             // Bundled availability is data, never an activated service or grant.

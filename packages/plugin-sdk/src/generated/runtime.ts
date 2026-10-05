@@ -38,6 +38,8 @@ export type RuntimeProtocol =
   | CallerIntent
   | LabelProps
   | TextareaProps
+  | MarkdownProps
+  | MarkdownLink
   | InputProps
   | EditorObservation
   | EditorCapture
@@ -1366,6 +1368,44 @@ export interface EditorCommand {
   sequence: number;
   basedOn: number;
   edit: EditorEdit;
+}
+export interface MarkdownProps {
+  source: string;
+  appearance: MarkdownAppearance;
+  selectable: boolean;
+  disabled: boolean;
+}
+export interface MarkdownAppearance {
+  body: TextAppearance;
+  code: TextAppearance;
+  /**
+   * Typography for heading levels 1 through 6, in source order.
+   *
+   * @minItems 6
+   * @maxItems 6
+   */
+  headings: [
+    TextAppearance,
+    TextAppearance,
+    TextAppearance,
+    TextAppearance,
+    TextAppearance,
+    TextAppearance,
+  ];
+  muted: Color;
+  link: Color;
+  selection: Color;
+  codeBackground: Color;
+  tableBackground: Color;
+  border: Color;
+  dark: boolean;
+  /**
+   * Paragraph spacing in logical pixels.
+   */
+  paragraphGap: number;
+}
+export interface MarkdownLink {
+  url: string;
 }
 export interface InputProps {
   appearance: InputAppearance;

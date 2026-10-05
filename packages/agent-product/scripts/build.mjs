@@ -210,6 +210,7 @@ for (const [name, spec] of Object.entries(specifications)) {
       ...(name === 'appearance' ? {} : { scene: { name: `maka.${target}.scene`, version: 1 } }),
     };
   }
+  if (name === 'timeline') entries.desktop.imports.markdown = one(sdk.contracts.markdown);
   // A surface is an explicit capability in the root's checked plan.
   if (name === 'workspace')
     for (const target of ['desktop', 'tui'])
@@ -228,6 +229,11 @@ for (const [name, spec] of Object.entries(specifications)) {
   packages.push(name);
 }
 const mechanical = {
+  markdown: {
+    entries: {
+      desktop: native('maka.ui.markdown', { Markdown: required(sdk.contracts.markdown) }),
+    },
+  },
   input: {
     entries: Object.fromEntries(
       ['desktop', 'tui'].map((target) => [

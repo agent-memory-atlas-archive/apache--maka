@@ -102,3 +102,10 @@ Embedding 通过 `NativeRegistry::with_render_depth_limit` 声明 GPUI 的实际
 绘制深度。这是 renderer 派生元数据，不是内核布局词汇或插件可写配额。
 
 Scene 文本使用稳定的可访问文本节点，保留完整 value。`Style.truncate: true` 按原生测量显示单行省略号，不截断可访问文本或按钮名称；可用空间由宽度与 flex 约束决定，不由 JavaScript 估算 Desktop 字形宽度。
+
+`maka.ui.markdown` 通过普通 registry 导出 `Markdown`。原 Kit TextViewState 唯一拥有
+解析、选区、链接 occurrence 与焦点；不可变 recipe 不持原生资源。source 扩展及主题
+变化保留原 owner，主题显式提供六级标题、正文/代码字体、颜色与 logical px 段距。
+隐藏、禁用、退休在下一帧前撤销输入并释放内部焦点；原 surface BaseRoot 提供窗口选区层。
+链接批次先于原 Kit 默认行为，失败拒绝；用户激活仅允许 HTTP(S) 打开。文档图片提供明确
+失败 source，不能隐式读取网络或文件；带资源图片需显式能力实现。

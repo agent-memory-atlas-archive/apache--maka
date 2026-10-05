@@ -21,6 +21,176 @@
 import type { Contract } from './generated/runtime.js';
 
 export const contracts = {
+  markdown: {
+    name: 'maka.ui.Markdown',
+    version: 1,
+    transport: 'local',
+    interface: {
+      kind: 'component',
+      props: {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        title: 'MarkdownProps',
+        type: 'object',
+        properties: {
+          source: {
+            type: 'string',
+            maxLength: 65536,
+          },
+          appearance: {
+            $ref: '#/$defs/MarkdownAppearance',
+          },
+          selectable: {
+            type: 'boolean',
+          },
+          disabled: {
+            type: 'boolean',
+          },
+        },
+        additionalProperties: false,
+        required: ['source', 'appearance', 'selectable', 'disabled'],
+        $defs: {
+          MarkdownAppearance: {
+            type: 'object',
+            properties: {
+              body: {
+                $ref: '#/$defs/TextAppearance',
+              },
+              code: {
+                $ref: '#/$defs/TextAppearance',
+              },
+              headings: {
+                description: 'Typography for heading levels 1 through 6, in source order.',
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/TextAppearance',
+                },
+                minItems: 6,
+                maxItems: 6,
+              },
+              muted: {
+                $ref: '#/$defs/Color',
+              },
+              link: {
+                $ref: '#/$defs/Color',
+              },
+              selection: {
+                $ref: '#/$defs/Color',
+              },
+              codeBackground: {
+                $ref: '#/$defs/Color',
+              },
+              tableBackground: {
+                $ref: '#/$defs/Color',
+              },
+              border: {
+                $ref: '#/$defs/Color',
+              },
+              dark: {
+                type: 'boolean',
+              },
+              paragraphGap: {
+                description: 'Paragraph spacing in logical pixels.',
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'body',
+              'code',
+              'headings',
+              'muted',
+              'link',
+              'selection',
+              'codeBackground',
+              'tableBackground',
+              'border',
+              'dark',
+              'paragraphGap',
+            ],
+          },
+          TextAppearance: {
+            type: 'object',
+            properties: {
+              font: {
+                $ref: '#/$defs/FontAppearance',
+              },
+              foreground: {
+                $ref: '#/$defs/Color',
+              },
+            },
+            additionalProperties: false,
+            required: ['font', 'foreground'],
+          },
+          FontAppearance: {
+            type: 'object',
+            properties: {
+              family: {
+                $ref: '#/$defs/FontFamily',
+              },
+              fallbacks: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/FontFamily',
+                },
+                maxItems: 8,
+              },
+              size: {
+                type: 'number',
+                format: 'float',
+                minimum: 6,
+                maximum: 96,
+              },
+              lineHeight: {
+                description: 'Line height relative to this font size.',
+                type: 'number',
+                format: 'float',
+                minimum: 1,
+                maximum: 3,
+              },
+              weight: {
+                type: 'integer',
+                format: 'uint16',
+                minimum: 1,
+                maximum: 1000,
+              },
+            },
+            additionalProperties: false,
+            required: ['family', 'fallbacks', 'size', 'lineHeight', 'weight'],
+          },
+          FontFamily: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+          },
+          Color: {
+            description: 'Packed RGBA, including explicit alpha zero.',
+            type: 'integer',
+            format: 'uint32',
+            minimum: 0,
+          },
+        },
+      },
+      events: {
+        link: {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          title: 'MarkdownLink',
+          type: 'object',
+          properties: {
+            url: {
+              type: 'string',
+              maxLength: 65536,
+            },
+          },
+          additionalProperties: false,
+          required: ['url'],
+        },
+      },
+      captures: {},
+    },
+  },
   label: {
     name: 'maka.ui.Label',
     version: 1,

@@ -25,6 +25,7 @@ pub mod appearance;
 pub mod editor;
 mod frame;
 pub mod input;
+pub mod markdown;
 mod native;
 pub mod operations;
 pub mod text;

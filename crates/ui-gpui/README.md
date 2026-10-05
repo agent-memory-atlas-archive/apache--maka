@@ -130,3 +130,15 @@ without consuming drawing depth. This is renderer metadata, not a kernel layout
 vocabulary or plugin-writable budget.
 
 Scene text uses stable accessible text nodes with the complete value. `Style.truncate: true` draws one measured line with an ellipsis while preserving that value and a button’s complete accessible label. Layout widths and flex constraints determine available space; JavaScript does not estimate desktop glyph widths.
+
+`maka.ui.markdown` exports `Markdown` through the ordinary component registry.
+Its original Kit TextViewState owns parsing, selection, link occurrences and
+focus; the immutable recipe owns no native resources. Commits preserve that
+owner across source extension and appearance changes. Theme inputs include six
+heading levels, body/code typography and paragraph spacing in logical pixels.
+Hidden, disabled and retired documents revoke native input and release contained
+focus before another paint. The surface's original BaseRoot supplies the window
+selection layer. Link batches run before original Kit defaults and fail closed;
+only user-activated HTTP(S) targets may open. Document images use an explicit
+failed source instead of implicit network/filesystem reads. Resource-backed
+images require a separate explicit capability implementation.

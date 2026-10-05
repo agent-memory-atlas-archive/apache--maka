@@ -31,6 +31,7 @@ export const packageNames = [
   'composer',
   'navigation',
   'timeline',
+  'markdown',
   'appearance',
   'surface',
   'editor',
@@ -178,7 +179,14 @@ export function composition(configuration: CompositionConfiguration): {
       ),
       composer: node('composer', {}, { editor: [local('editor', 'Textarea')] }),
       navigation: node('navigation'),
-      timeline: node('timeline'),
+      timeline: node(
+        'timeline',
+        {},
+        configuration.presentation === 'desktop'
+          ? { markdown: [local('markdown', 'Markdown')] }
+          : {},
+      ),
+      ...(configuration.presentation === 'desktop' ? { markdown: node('markdown') } : {}),
       appearance: node('appearance', { scheme: configuration.scheme }),
       surface: node('surface'),
       editor: node('editor'),
