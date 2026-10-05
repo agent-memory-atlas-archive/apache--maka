@@ -85,7 +85,7 @@ pub struct Capture {
     pub resource: ResourceType,
 }
 impl ResourceType {
-    fn validate(&self) -> Result<(), Error> {
+    pub fn validate(&self) -> Result<(), Error> {
         crate::name(&self.name)?;
         if self.version == 0 {
             return Err(Error::Declaration(

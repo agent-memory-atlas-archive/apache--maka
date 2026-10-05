@@ -118,7 +118,7 @@ async fn stored_source_and_lease_survive_abandoned_query_resources_and_native_cl
                 "echo".into(),
                 json!("held"),
                 scope(&issuer, true),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await
             .unwrap();

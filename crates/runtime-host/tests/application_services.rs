@@ -23,6 +23,8 @@ mod native_context;
 mod operations;
 #[path = "application_services/persistence.rs"]
 mod persistence;
+#[path = "application_services/resource_ingress.rs"]
+mod resource_ingress;
 #[path = "application_services/subscriptions.rs"]
 mod subscriptions;
 
@@ -229,12 +231,12 @@ async fn javascript_exports_use_shared_core_exact_binding_and_private_realms() {
             let second = client.bind(b, "echo".into()).await.unwrap().remove(0);
             assert_eq!(first.registration_epoch(), second.registration_epoch());
             for (binding, text, count) in [(first.clone(), "one", 1), (first.clone(), "two", 2)] {
-                let value = client.start(binding, "echo".into(), json!(text), scope(&issuer, true), Attachments::new()).await.unwrap().result().await.unwrap();
+                let value = client.start(binding, "echo".into(), json!(text), scope(&issuer, true), Attachments::new().into()).await.unwrap().result().await.unwrap();
                 assert_eq!(value, json!(format!("original:{text}:{count}")));
             }
             client.retire(a).await.unwrap();
-            assert!(client.start(first, "echo".into(), json!("late"), scope(&issuer, true), Attachments::new()).await.is_err());
-            assert_eq!(client.start(second, "echo".into(), json!("other"), scope(&issuer, true), Attachments::new()).await.unwrap().result().await.unwrap(), json!("original:other:3"));
+            assert!(client.start(first, "echo".into(), json!("late"), scope(&issuer, true), Attachments::new().into()).await.is_err());
+            assert_eq!(client.start(second, "echo".into(), json!("other"), scope(&issuer, true), Attachments::new().into()).await.unwrap().result().await.unwrap(), json!("original:other:3"));
             app.shutdown().await.unwrap();
             assert!(client.snapshot().closed);
         }
@@ -351,7 +353,7 @@ async fn authority_and_validation_reject_before_work_and_business_errors_settle_
                         "echo".into(),
                         json!("input"),
                         denied,
-                        Attachments::new()
+                        Attachments::new().into()
                     )
                     .await
                     .is_err()
@@ -366,7 +368,7 @@ async fn authority_and_validation_reject_before_work_and_business_errors_settle_
                     "echo".into(),
                     json!("input"),
                     revoked,
-                    Attachments::new()
+                    Attachments::new().into()
                 )
                 .await
                 .is_err()
@@ -383,7 +385,7 @@ async fn authority_and_validation_reject_before_work_and_business_errors_settle_
                         method.into(),
                         input,
                         scope(&issuer, true),
-                        Attachments::new()
+                        Attachments::new().into()
                     )
                     .await
                     .is_err()
@@ -398,7 +400,7 @@ async fn authority_and_validation_reject_before_work_and_business_errors_settle_
                         "echo".into(),
                         json!(value),
                         scope(&issuer, true),
-                        Attachments::new()
+                        Attachments::new().into()
                     )
                     .await
                     .unwrap()
@@ -423,7 +425,7 @@ async fn authority_and_validation_reject_before_work_and_business_errors_settle_
                     "echo".into(),
                     json!("healthy"),
                     scope(&issuer, true),
-                    Attachments::new()
+                    Attachments::new().into()
                 )
                 .await
                 .unwrap()
@@ -534,7 +536,7 @@ async fn abandoned_observer_and_root_keep_actual_query_resource_and_native_close
                 "echo".into(),
                 json!("held"),
                 scope(&issuer, true),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await
             .unwrap();
@@ -684,7 +686,7 @@ async fn cleanup_failure_or_executor_panic_keeps_work_and_owner_after_every_clie
                     "echo".into(),
                     json!(value),
                     scope(&issuer, true),
-                    Attachments::new(),
+                    Attachments::new().into(),
                 )
                 .await
                 .unwrap()
@@ -1008,7 +1010,7 @@ async fn shared_vm_failure_revokes_its_actual_registrations_but_preserves_unrela
                     "echo".into(),
                     json!("throw"),
                     scope(&issuer, true),
-                    Attachments::new()
+                    Attachments::new().into()
                 )
                 .await
                 .unwrap()
@@ -1023,7 +1025,7 @@ async fn shared_vm_failure_revokes_its_actual_registrations_but_preserves_unrela
                     "echo".into(),
                     json!("still-live"),
                     scope(&issuer, true),
-                    Attachments::new()
+                    Attachments::new().into()
                 )
                 .await
                 .unwrap()
@@ -1039,7 +1041,7 @@ async fn shared_vm_failure_revokes_its_actual_registrations_but_preserves_unrela
                     "echo".into(),
                     json!("stall"),
                     scope(&issuer, true),
-                    Attachments::new()
+                    Attachments::new().into()
                 )
                 .await
                 .unwrap()
@@ -1054,7 +1056,7 @@ async fn shared_vm_failure_revokes_its_actual_registrations_but_preserves_unrela
                     "echo".into(),
                     json!("retired-domain"),
                     scope(&issuer, true),
-                    Attachments::new()
+                    Attachments::new().into()
                 )
                 .await
                 .is_err()
@@ -1066,7 +1068,7 @@ async fn shared_vm_failure_revokes_its_actual_registrations_but_preserves_unrela
                     "echo".into(),
                     json!("unrelated"),
                     scope(&issuer, true),
-                    Attachments::new()
+                    Attachments::new().into()
                 )
                 .await
                 .unwrap()
@@ -1191,7 +1193,7 @@ async fn forwarding_preserves_private_evidence_and_never_substitutes_wrapper_aut
                 "echo".into(),
                 json!("narrow"),
                 scope(&issuer, false),
-                bytes(5).0,
+                bytes(5).0.into(),
             )
             .await
             .unwrap()
@@ -1207,7 +1209,7 @@ async fn forwarding_preserves_private_evidence_and_never_substitutes_wrapper_aut
                     "echo".into(),
                     json!("allowed"),
                     scope(&issuer, true),
-                    bytes(5).0
+                    bytes(5).0.into()
                 )
                 .await
                 .unwrap()
@@ -1343,7 +1345,7 @@ async fn resource_timeout_keeps_input_quota_until_actual_cleanup_is_confirmed() 
                     "echo".into(),
                     large.clone(),
                     scope(&issuer, true),
-                    Attachments::new()
+                    Attachments::new().into()
                 )
                 .await
                 .unwrap()
@@ -1368,7 +1370,7 @@ async fn resource_timeout_keeps_input_quota_until_actual_cleanup_is_confirmed() 
                         "echo".into(),
                         large.clone(),
                         scope(&issuer, true),
-                        Attachments::new(),
+                        Attachments::new().into(),
                     )
                     .await
                     .unwrap(),
@@ -1384,7 +1386,7 @@ async fn resource_timeout_keeps_input_quota_until_actual_cleanup_is_confirmed() 
                     "echo".into(),
                     large,
                     scope(&issuer, true),
-                    Attachments::new()
+                    Attachments::new().into()
                 )
                 .await
                 .err()
@@ -1524,16 +1526,37 @@ impl Handler for ReadAttachment {
         })
     }
 }
-struct BadDescriptor(bool);
+struct BadDescriptor {
+    before_enqueue: bool,
+    type_reads: AtomicUsize,
+}
+impl BadDescriptor {
+    fn new(before_enqueue: bool) -> Self {
+        Self {
+            before_enqueue,
+            type_reads: AtomicUsize::new(0),
+        }
+    }
+}
 impl ReadResource for BadDescriptor {
     fn resource_type(&self) -> ResourceType {
-        panic!("type descriptor panicked during final admission")
+        assert!(
+            self.before_enqueue || self.type_reads.fetch_add(1, Ordering::SeqCst) == 0,
+            "type descriptor panicked during final admission"
+        );
+        ResourceType {
+            name: "example.Bytes".into(),
+            version: 1,
+        }
     }
     fn bytes(&self) -> usize {
         5
     }
     fn metadata(&self) -> Value {
-        assert!(!self.0, "metadata descriptor panicked before enqueue");
+        assert!(
+            !self.before_enqueue,
+            "metadata descriptor panicked before enqueue"
+        );
         Value::Null
     }
     fn read(&self, _: std::ops::Range<usize>) -> Result<Vec<u8>> {
@@ -1578,7 +1601,7 @@ async fn attachment_validation_and_descriptor_panics_do_not_cancel_other_accepte
                 "echo".into(),
                 json!("held"),
                 scope(&issuer, true),
-                attachments,
+                attachments.into(),
             )
             .await
             .unwrap();
@@ -1591,7 +1614,7 @@ async fn attachment_validation_and_descriptor_panics_do_not_cancel_other_accepte
                     "echo".into(),
                     json!("text:{bytes:5}"),
                     scope(&issuer, true),
-                    Attachments::new()
+                    Attachments::new().into()
                 )
                 .await
                 .err()
@@ -1607,7 +1630,7 @@ async fn attachment_validation_and_descriptor_panics_do_not_cancel_other_accepte
                     "echo".into(),
                     json!("extra"),
                     scope(&issuer, true),
-                    extra
+                    extra.into()
                 )
                 .await
                 .is_err()
@@ -1626,7 +1649,7 @@ async fn attachment_validation_and_descriptor_panics_do_not_cancel_other_accepte
                     "echo".into(),
                     json!("wrong-type"),
                     scope(&issuer, true),
-                    wrong
+                    wrong.into()
                 )
                 .await
                 .err()
@@ -1636,7 +1659,7 @@ async fn attachment_validation_and_descriptor_panics_do_not_cancel_other_accepte
         for before_enqueue in [true, false] {
             let bad = Attachments::from([(
                 "text".into(),
-                Arc::new(BadDescriptor(before_enqueue)) as Arc<dyn ReadResource>,
+                Arc::new(BadDescriptor::new(before_enqueue)) as Arc<dyn ReadResource>,
             )]);
             assert!(
                 client
@@ -1645,7 +1668,7 @@ async fn attachment_validation_and_descriptor_panics_do_not_cancel_other_accepte
                         "echo".into(),
                         json!("panic-descriptor"),
                         scope(&issuer, true),
-                        bad
+                        bad.into()
                     )
                     .await
                     .err()
@@ -1673,7 +1696,7 @@ async fn attachment_validation_and_descriptor_panics_do_not_cancel_other_accepte
                     "echo".into(),
                     json!("denied"),
                     scope(&issuer, false),
-                    attachments
+                    attachments.into()
                 )
                 .await
                 .is_err()
@@ -1690,7 +1713,7 @@ async fn attachment_validation_and_descriptor_panics_do_not_cancel_other_accepte
                     "echo".into(),
                     json!("healthy"),
                     scope(&issuer, true),
-                    attachments
+                    attachments.into()
                 )
                 .await
                 .unwrap()
@@ -1792,7 +1815,7 @@ async fn failed_cleanup_retains_actual_attachments_and_the_shared_64_mib_capacit
                     "echo".into(),
                     json!("fail-cleanup"),
                     scope(&issuer, true),
-                    attachments
+                    attachments.into()
                 )
                 .await
                 .unwrap()
@@ -1816,7 +1839,7 @@ async fn failed_cleanup_retains_actual_attachments_and_the_shared_64_mib_capacit
                 "echo".into(),
                 json!("held"),
                 scope(&issuer, true),
-                attachments,
+                attachments.into(),
             )
             .await
             .unwrap();
@@ -1829,7 +1852,7 @@ async fn failed_cleanup_retains_actual_attachments_and_the_shared_64_mib_capacit
                     "echo".into(),
                     json!("over-quota"),
                     scope(&issuer, true),
-                    attachments
+                    attachments.into()
                 )
                 .await
                 .err()
@@ -1940,7 +1963,7 @@ async fn javascript_resource_contexts_use_actual_slots_and_release_saved_snapsho
                 "echo".into(),
                 json!("read"),
                 scope(&issuer, true),
-                first,
+                first.into(),
             )
             .await
             .unwrap();
@@ -1950,7 +1973,7 @@ async fn javascript_resource_contexts_use_actual_slots_and_release_saved_snapsho
                 "echo".into(),
                 json!("read"),
                 scope(&issuer, true),
-                BTreeMap::from([("text".into(), second as Arc<dyn ReadResource>)]),
+                BTreeMap::from([("text".into(), second as Arc<dyn ReadResource>)]).into(),
             )
             .await
             .unwrap();
@@ -1976,7 +1999,7 @@ async fn javascript_resource_contexts_use_actual_slots_and_release_saved_snapsho
                         "echo".into(),
                         json!(mode),
                         scope(&issuer, true),
-                        attachments
+                        attachments.into()
                     )
                     .await
                     .unwrap()
@@ -2062,7 +2085,7 @@ async fn javascript_cannot_catch_away_native_resource_cleanup_failure_or_release
                 "echo".into(),
                 json!("panic"),
                 scope(&issuer, true),
-                BTreeMap::from([("text".into(), payload as Arc<dyn ReadResource>)]),
+                BTreeMap::from([("text".into(), payload as Arc<dyn ReadResource>)]).into(),
             )
             .await
             .unwrap()
@@ -2098,7 +2121,7 @@ async fn javascript_cannot_catch_away_native_resource_cleanup_failure_or_release
                     "echo".into(),
                     json!("read"),
                     scope(&issuer, true),
-                    full
+                    full.into()
                 )
                 .await
                 .err()
@@ -2114,7 +2137,7 @@ async fn javascript_cannot_catch_away_native_resource_cleanup_failure_or_release
                     "echo".into(),
                     json!("read"),
                     scope(&issuer, true),
-                    small
+                    small.into()
                 )
                 .await
                 .unwrap()
@@ -2267,7 +2290,7 @@ async fn javascript_forwarding_uses_exact_local_imports_original_evidence_and_ac
                     "echo".into(),
                     json!("narrow"),
                     narrow,
-                    attachments,
+                    attachments.into(),
                 )
                 .await
                 .unwrap()
@@ -2295,7 +2318,7 @@ async fn javascript_forwarding_uses_exact_local_imports_original_evidence_and_ac
                             "echo".into(),
                             json!(mode),
                             scope(&issuer, true),
-                            attachments
+                            attachments.into()
                         )
                         .await
                         .unwrap()
@@ -2316,7 +2339,7 @@ async fn javascript_forwarding_uses_exact_local_imports_original_evidence_and_ac
                             "echo".into(),
                             json!("business-fail"),
                             scope(&issuer, true),
-                            attachments
+                            attachments.into()
                         )
                         .await
                         .unwrap()
@@ -2379,7 +2402,7 @@ async fn javascript_catch_cannot_acknowledge_child_cleanup_or_release_parent_and
                     "echo".into(),
                     json!("fail-cleanup-error"),
                     scope(&issuer, true),
-                    attachments
+                    attachments.into()
                 )
                 .await
                 .unwrap()
@@ -2413,7 +2436,7 @@ async fn javascript_catch_cannot_acknowledge_child_cleanup_or_release_parent_and
                     "echo".into(),
                     json!("healthy"),
                     scope(&issuer, true),
-                    attachments
+                    attachments.into()
                 )
                 .await
                 .err()
@@ -2502,7 +2525,7 @@ async fn unobserved_accepted_child_keeps_parent_work_until_actual_cleanup_after_
                     "echo".into(),
                     json!(mode),
                     scope(&issuer, true),
-                    attachments,
+                    attachments.into(),
                 )
                 .await
                 .unwrap();
@@ -2520,7 +2543,7 @@ async fn unobserved_accepted_child_keeps_parent_work_until_actual_cleanup_after_
                         "echo".into(),
                         json!("late"),
                         scope(&issuer, true),
-                        bytes(5).0,
+                        bytes(5).0.into(),
                     )
                     .await
                     .err()
@@ -2555,7 +2578,7 @@ impl Handler for DescriptorForward {
         } else {
             Attachments::from([(
                 "text".into(),
-                Arc::new(BadDescriptor(input == "enqueue-panic")) as Arc<dyn ReadResource>,
+                Arc::new(BadDescriptor::new(input == "enqueue-panic")) as Arc<dyn ReadResource>,
             )])
         };
         let result = context.call("echo", 0, "echo".into(), json!("healthy"), attachments);
@@ -2634,7 +2657,7 @@ async fn accepted_parent_descriptor_panics_are_cleanup_failure_but_ordinary_chil
                         "echo".into(),
                         json!(mode),
                         scope(&issuer, true),
-                        attachments
+                        attachments.into()
                     )
                     .await
                     .unwrap()

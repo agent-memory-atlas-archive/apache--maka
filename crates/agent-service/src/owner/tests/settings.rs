@@ -54,7 +54,7 @@ async fn query(fixture: &Fixture, method: &str, input: Value) -> Value {
             method.into(),
             input,
             scope(&fixture.issuer, true),
-            Attachments::new(),
+            Attachments::new().into(),
         )
         .await
         .unwrap()
@@ -100,7 +100,7 @@ async fn mutate_reply(
             input,
             scope(&fixture.issuer, true),
             Uuid::new_v4(),
-            attachments,
+            attachments.into(),
         )
         .await
         .unwrap();
@@ -273,7 +273,7 @@ async fn root_settings_create_partial_edit_save_capture_and_stale_vault_basis_us
                 missing_input,
                 scope(&fixture.issuer, true),
                 Uuid::new_v4(),
-                BTreeMap::from([("secret".into(), resource)])
+                BTreeMap::from([("secret".into(), resource)]).into()
             )
             .await
             .is_err()
@@ -332,7 +332,7 @@ async fn root_settings_create_partial_edit_save_capture_and_stale_vault_basis_us
                     json!({"expected":basis,"changes":changes}),
                     scope(&fixture.issuer, true),
                     Uuid::new_v4(),
-                    Attachments::new()
+                    Attachments::new().into()
                 )
                 .await
                 .is_err()
@@ -351,7 +351,7 @@ async fn root_settings_create_partial_edit_save_capture_and_stale_vault_basis_us
     assert!(!providers["providers"].as_array().unwrap().is_empty());
     assert!(serde_json::to_vec(&providers).unwrap().len() <= 128 * 1024);
     let revision = fixture.config.catalog().await.unwrap().revision;
-    assert!(fixture.app.client().prepare_mutation(binding(&fixture).await,"create".into(),json!({"expectedCatalogRevision":revision,"connection":{"slug":"invalid","name":"Invalid null","provider":row.provider,"configuration":{},"enabled":true,"enabledModelIds":[],"modelOverrides":null}}),scope(&fixture.issuer,true),Uuid::new_v4(),Attachments::new()).await.is_err());
+    assert!(fixture.app.client().prepare_mutation(binding(&fixture).await,"create".into(),json!({"expectedCatalogRevision":revision,"connection":{"slug":"invalid","name":"Invalid null","provider":row.provider,"configuration":{},"enabled":true,"enabledModelIds":[],"modelOverrides":null}}),scope(&fixture.issuer,true),Uuid::new_v4(),Attachments::new().into()).await.is_err());
     let (created,_) = mutate(&fixture,"create",json!({"expectedCatalogRevision":revision,"connection":{"slug":"created","name":"Created through settings","provider":{"packageId":"maka.providers","entryId":"maka.providers","scope":"profile","name":"openai"},"configuration":{},"enabled":true,"enabledModelIds":["manual-model"]}}),None).await;
     assert_eq!(created["kind"], "committed");
     let catalog = fixture.config.catalog().await.unwrap();

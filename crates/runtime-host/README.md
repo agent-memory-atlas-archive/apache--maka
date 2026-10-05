@@ -112,14 +112,30 @@ before awaiting the original owner's separate business and cleanup results.
 Cancellation never propagates to the caller's parent Scope or sibling streams;
 failed cleanup still retains the original execution and its resources.
 
-Calls have a 1 MiB JSON limit, with 128-call and 32 MiB in-flight input budgets.
-Attachments allow 16 exact slots and 64 MiB across queued and accepted requests;
-unconfirmed cleanup retains their payloads and capacity. This adapter currently
-executes native and JavaScript queries and subscriptions with attached resources,
-and durable mutations with request-local snapshots.
-trusted Host transport, live composition reconciliation, business recovery hooks,
-and server/TUI/UI integration remain required work. This foundation is not a
-completed Host migration or a compatibility facade for the previous catalog.
+Calls have a 1 MiB JSON limit, with 128-call and 32 MiB in-flight input/descriptor
+budgets. `Client::start`, `subscribe` and `prepare_mutation` consume `CallResources`;
+native attachment maps enter through `From<Attachments>`. Attachments allow 16 exact
+slots and 64 MiB across queued and accepted requests; unconfirmed cleanup retains
+payloads and capacity. The final owner rechecks actual descriptors against the
+original reservations before policy admission.
+
+`Client::capture_resources` reserves these same call, JSON and payload budgets
+before allocating immutable transport snapshots. Descriptors preserve nominal
+type, length, metadata and byte/UTF-8 encoding; these facts grant no authority.
+Zero-byte receptions still own a call slot. `ResourceCapture::write` accepts only
+contiguous chunks of at most 64 KiB. `finish` requires exact completion, validates
+UTF-8 where declared, and moves the original buffers without a whole-payload copy.
+The private frozen input transfers the same permits and original Scope ticket into
+the existing executor; another Application or request Scope cannot consume it.
+UTF-8 snapshots preserve character-boundary reads. The receiving adapter owns
+partial/frozen input before dispatch and must drain it before server shutdown;
+`Application::shutdown` alone does not acknowledge external reception cleanup.
+An EOF or timeout cannot acknowledge accepted work or failed physical cleanup.
+
+This adapter executes native and JavaScript queries/subscriptions with resources,
+and durable mutations with request-local snapshots. Authenticated network ingress,
+live composition reconciliation and complete product integration remain required
+work. The receiving seam is not a completed transport or a compatibility facade.
 
 Durable mutations require `Application::start_from_store`, a declared mutation
 method and an explicit non-nil operation UUID. Native callers first use

@@ -173,7 +173,14 @@ async fn mutate(
     operation: Uuid,
 ) -> Result<maka_runtime_host::application::Mutation> {
     let prepared = client
-        .prepare_mutation(binding, method, input, scope, operation, Attachments::new())
+        .prepare_mutation(
+            binding,
+            method,
+            input,
+            scope,
+            operation,
+            Attachments::new().into(),
+        )
         .await?;
     let recorded = store
         .record_application_intent(
@@ -226,7 +233,7 @@ async fn real_mutation_commits_before_effect_and_duplicate_requires_recovery_gra
                     "echo".into(),
                     json!("original"),
                     scope(&issuer, true),
-                    Attachments::new()
+                    Attachments::new().into()
                 )
                 .await
                 .is_err()
@@ -737,7 +744,7 @@ async fn javascript_forwarded_mutation_preserves_original_evidence_and_parent_cl
         let deployment=Uuid::new_v4();store.commit_application(deployment,0,input,vec![],vec![sink,forwarder,consumer]).await.unwrap();
         let app=Application::start_from_store(store.clone(),deployment,registry_contract(Arc::new(VerifiedEcho {caller:id(4),store:store.clone(),calls:calls.clone()}),contract(MethodMode::Mutation)),issuer.clone(),Arc::new(RecoveryGrant {issuer:issuer.clone(),recovery:Arc::new(AtomicBool::new(true))}),Limits::default()).await.unwrap();app.ready().await.unwrap();
         let client=app.client();let binding=client.bind(client.activation(&id(2)).unwrap(),"echo".into()).await.unwrap().remove(0);
-        for _ in 0..2 {assert_eq!(client.start(binding.clone(),"echo".into(),json!("child"),scope(&issuer,true),Attachments::new()).await.unwrap().result().await.unwrap(),json!("child:parent"));}
+        for _ in 0..2 {assert_eq!(client.start(binding.clone(),"echo".into(),json!("child"),scope(&issuer,true),Attachments::new().into()).await.unwrap().result().await.unwrap(),json!("child:parent"));}
         assert_eq!(calls.load(Ordering::SeqCst),1);
         app.shutdown().await.unwrap();drop(binding);drop(app);drop(client);close(store).await;
     }).await.unwrap();
@@ -1220,7 +1227,7 @@ async fn javascript_receipts_preserve_child_reference_unknown_and_oversized_reco
         let read = |input: &'static str| {
             let client = client.clone(); let binding = binding.clone(); let issued = scope(&issuer,true);
             async move {
-                let value = client.start(binding,"echo".into(),json!(input),issued,Attachments::new()).await.unwrap().result().await.unwrap();
+                let value = client.start(binding,"echo".into(),json!(input),issued,Attachments::new().into()).await.unwrap().result().await.unwrap();
                 serde_json::from_str::<OperationReply>(value.as_str().unwrap()).unwrap()
             }
         };
@@ -1248,7 +1255,7 @@ async fn javascript_receipts_preserve_child_reference_unknown_and_oversized_reco
         let recover = |reference: maka_plugin_core::operation::RecoveryRef| {
             let client = client.clone(); let binding = reader_binding.clone(); let issued = scope(&issuer,true);
             async move {
-                let value = client.start(binding,"echo".into(),json!(serde_json::to_string(&reference).unwrap()),issued,Attachments::new()).await.unwrap().result().await.unwrap();
+                let value = client.start(binding,"echo".into(),json!(serde_json::to_string(&reference).unwrap()),issued,Attachments::new().into()).await.unwrap().result().await.unwrap();
                 serde_json::from_str::<OperationReply>(value.as_str().unwrap()).unwrap()
             }
         };
@@ -1390,7 +1397,7 @@ async fn preparation_is_effect_free_does_not_lock_native_root_and_never_redirect
                 json!("prepared"),
                 scope(&issuer, true),
                 Uuid::new_v4(),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await
             .unwrap();
@@ -1493,7 +1500,7 @@ async fn recorded_intent_does_not_override_revocation_between_prepare_and_dispat
                     json!("effect"),
                     scope,
                     Uuid::new_v4(),
-                    Attachments::new(),
+                    Attachments::new().into(),
                 )
                 .await
                 .unwrap();
@@ -1685,7 +1692,7 @@ async fn internal_caller_commit_precedes_final_admission_and_failed_record_never
             }
             // A real competing SQLite writer keeps the caller commit pending.
             connection.execute_batch("BEGIN IMMEDIATE;").unwrap();
-            let parent = client.start(binding, "echo".into(), json!("no-effect"), scope(&issuer, true), Attachments::new()).await.unwrap();
+            let parent = client.start(binding, "echo".into(), json!("no-effect"), scope(&issuer, true), Attachments::new().into()).await.unwrap();
             prepared.acquire().await.unwrap().forget();
             match mode {
                 "retire" => client.retire(client.activation(&id(1)).unwrap()).await.unwrap(),
@@ -1798,7 +1805,7 @@ async fn separate_caller_root_stays_owned_through_effect_cleanup_and_keeps_origi
             let host=Application::start_from_store(host_store.clone(),host_deployment,registry_contract(Arc::new(CallerCheckedMutation {caller_database:caller_dir.path().join("root").join(maka_event_log::root::ROOT_DATABASE),started:started.clone(),release:release.clone(),fail_cleanup}),declared.clone()),issuer.clone(),Arc::new(RecoveryGrant {issuer:issuer.clone(),recovery:Arc::new(AtomicBool::new(true))}),Limits::default()).await.unwrap();
             host.ready().await.unwrap();let client=host.client();
             let binding=client.bind(client.activation(&id(2)).unwrap(),"echo".into()).await.unwrap().remove(0);
-            let prepared=client.prepare_mutation(binding,"echo".into(),json!("original"),scope(&issuer,true),Uuid::new_v4(),Attachments::new()).await.unwrap();
+            let prepared=client.prepare_mutation(binding,"echo".into(),json!("original"),scope(&issuer,true),Uuid::new_v4(),Attachments::new().into()).await.unwrap();
             let reference=prepared.reference().clone();
             assert!(host_store.operation_observation(&reference).await.unwrap().is_none());
             let recorded=caller_store.record_application_intent(caller_source.clone(),id(41),reference.clone()).await.unwrap();

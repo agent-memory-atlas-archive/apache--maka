@@ -485,7 +485,7 @@ impl Fixture {
                 input,
                 scope(&self.issuer, true),
                 operation,
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await?;
         let recorded = self
@@ -544,7 +544,7 @@ impl Fixture {
                 method.into(),
                 input,
                 scope(&self.issuer, true),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await?
             .result()
@@ -712,7 +712,7 @@ async fn actual_http_runs_are_bounded_and_observer_loss_does_not_release_capacit
         assert_eq!(active["run"]["invocationId"], started["invocationId"]);
         assert_eq!(active["run"]["state"], "running");
         assert!(!active.to_string().contains("private-fixture-key"));
-        let mut watch = fixture.app.client().subscribe(fixture.binding(2).await,"watch".into(),json!({"sessionId":first,"after":0}),scope(&fixture.issuer,true),Attachments::new()).await.unwrap();
+        let mut watch = fixture.app.client().subscribe(fixture.binding(2).await,"watch".into(),json!({"sessionId":first,"after":0}),scope(&fixture.issuer,true),Attachments::new().into()).await.unwrap();
         let page = watch.recv().await.unwrap(); assert!(!page.to_string().contains("private-fixture-key"));
         drop(watch);
         fixture.send(&second).await.unwrap();
@@ -763,7 +763,7 @@ async fn original_operation_conflicts_and_private_namespace_never_cross_sessions
                 "list".into(),
                 json!({}),
                 scope(&fixture.issuer, true),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await
             .unwrap()
@@ -789,7 +789,7 @@ async fn original_operation_conflicts_and_private_namespace_never_cross_sessions
                     json!({"sessionId":first["id"],"message":"Unauthorized","model":fixture.selection().await}),
                     scope(&fixture.issuer, false),
                     Uuid::new_v4(),
-                    Attachments::new(),
+                    Attachments::new().into(),
                 )
                 .await
                 .is_err()
@@ -1026,7 +1026,7 @@ async fn public_availability_resumes_stable_sessions_and_separates_deployments()
                 "list".into(),
                 json!({}),
                 scope(&fixture.issuer, true),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await
             .unwrap()
@@ -1067,7 +1067,7 @@ async fn public_availability_resumes_stable_sessions_and_separates_deployments()
                 "list".into(),
                 json!({}),
                 scope(&fixture.issuer, true),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await
             .unwrap()
@@ -1081,7 +1081,7 @@ async fn public_availability_resumes_stable_sessions_and_separates_deployments()
                 "watch".into(),
                 json!({"sessionId":session,"after":0}),
                 scope(&fixture.issuer, true),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await
             .unwrap();

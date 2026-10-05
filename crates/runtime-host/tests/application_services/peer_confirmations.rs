@@ -303,7 +303,7 @@ impl Fixture {
                 json!("original"),
                 scope.clone(),
                 operation,
-                attachments,
+                attachments.into(),
             )
             .await
             .unwrap();
@@ -402,7 +402,7 @@ async fn peer_observations_cannot_substitute_caller_identity_reference_or_shape(
                         json!("original"),
                         scope.clone(),
                         Uuid::new_v4(),
-                        attachments,
+                        attachments.into(),
                     )
                     .await
                     .unwrap();
@@ -592,7 +592,7 @@ async fn lost_peer_observer_does_not_settle_or_release_failed_executor_resources
                         json!("original"),
                         f.scope(Uuid::new_v4()),
                         Uuid::new_v4(),
-                        extra,
+                        extra.into(),
                     )
                     .await
                     .err()
@@ -626,7 +626,7 @@ async fn peer_duplicate_cannot_read_historical_value_without_independent_recover
         let operation = Uuid::new_v4();
         let original_scope = f.scope(operation);
         let prepared = f.client.prepare_mutation(f.binding.clone(), "echo".into(), json!("original"),
-            original_scope.clone(), operation, Attachments::new()).await.unwrap();
+            original_scope.clone(), operation, Attachments::new().into()).await.unwrap();
         let reference = prepared.reference().clone();
         let (token, intent) = f.record(&prepared).await;
         let accepted = f.client.mutate_from_peer(prepared, intent).await.unwrap();
@@ -638,7 +638,7 @@ async fn peer_duplicate_cannot_read_historical_value_without_independent_recover
             f.policy.recovery.store(recovery, Ordering::SeqCst);
             let scope = f.scope(operation);
             let prepared = f.client.prepare_mutation(f.binding.clone(), "echo".into(), json!("original"),
-                scope.clone(), operation, Attachments::new()).await.unwrap();
+                scope.clone(), operation, Attachments::new().into()).await.unwrap();
             assert_eq!(prepared.reference(), &reference);
             let (token, intent) = f.record(&prepared).await;
             let completion = f.client.mutate_from_peer(prepared, intent).await.unwrap().completion().await;

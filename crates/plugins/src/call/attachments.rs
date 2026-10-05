@@ -23,10 +23,32 @@ use maka_plugin_core::contract::ResourceType;
 use serde_json::Value;
 use std::{collections::BTreeMap, ops::Range, sync::Arc};
 
+/// Byte interpretation preserved by immutable transport snapshots.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceEncoding {
+    #[default]
+    Bytes,
+    Utf8,
+}
+
 /// Trusted immutable payload. Its owner must not retain a native UI entity,
 /// live input, mount lease or a writable buffer. Descriptors remain immutable.
 /// Reads use byte ranges; text implementations check UTF-8 boundaries and chunk limits.
 pub trait ReadResource: Send + Sync + 'static {
+    fn encoding(&self) -> ResourceEncoding {
+        ResourceEncoding::Bytes
+    }
     fn resource_type(&self) -> ResourceType;
     fn bytes(&self) -> usize;
     fn metadata(&self) -> Value;

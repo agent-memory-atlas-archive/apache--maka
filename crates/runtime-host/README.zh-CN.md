@@ -80,10 +80,22 @@ reader 可以排空已接受数据。`Subscription::cancel` 和 Drop 仅请求�
 先关闭需求，再等待原 owner 分别报告业务结果和真实清理。取消不回传父 Scope 或兄弟订阅；
 清理失败仍保留原 execution、资源与 fence。
 
-调用 JSON 最多 1 MiB，共用 128-call / 32 MiB in-flight 输入预算；附件最多 16 个准确槽位，
-queued 与 accepted 请求共用 64 MiB，清理未确认时保留实际 payload 和容量。当前适配器执行
-原生及 JavaScript query / subscription 和带请求私有快照的持久 mutation；
-可信 Host transport、live 组合收敛、业务恢复 hook 及 server/TUI/UI 接线仍须实现。这是执行基础，不是完整 Host 迁移或旧 catalog 兼容 facade。
+调用 JSON 最多 1 MiB，共用 128-call / 32 MiB in-flight 输入与 descriptor 预算。
+`Client::start`、`subscribe`、`prepare_mutation` 消费 `CallResources`；原生附件 map
+通过 `From<Attachments>` 进入同一路径。附件最多 16 个准确槽位，queued 与 accepted
+请求共用 64 MiB；清理未确认保留实际 payload 和容量。最终 owner 在 Policy 准入前
+复核实际 descriptor 不得超过原预约。
+
+`Client::capture_resources` 在分配接收快照前预约同一份 call、JSON、payload 容量。
+Descriptor 保留 type、长度、metadata 与 Bytes/Utf8 编码，这些事实不授予权限；零字节
+接收仍占原 call slot。`write` 只接受准确连续、最多 64 KiB 的分块；`finish` 要求完整长度、
+验证声明的 UTF-8，移动原 buffer 而不另复制整包。私有冻结输入把同 permit 与原 Scope
+Ticket 转入原 executor，不能跨 Application 或请求 Scope 使用。UTF-8 快照保留字符边界
+检查。派发前接收 adapter 必须实际持有并清理 partial/frozen 输入；单独
+`Application::shutdown` 不能证明外部接收清空。EOF、timeout 不能确认已接受工作或失败清理。
+
+当前适配器执行 native/JavaScript query、subscription 及持久 mutation；认证网络 ingress、
+live 组合收敛和完整产品接线仍须实现。接收接缝不是完整 transport 或兼容 facade。
 
 持久 mutation 要求 `Application::start_from_store`、声明 mutation 方法和显式非 nil 操作 UUID。
 原生调用端先 `Client::prepare_mutation`，在自己的 Root 中通过

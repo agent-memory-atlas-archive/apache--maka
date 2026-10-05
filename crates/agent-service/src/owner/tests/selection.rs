@@ -72,7 +72,7 @@ async fn models(fixture: &Fixture, input: Value) -> Result<Value, String> {
             "models".into(),
             input,
             scope(&fixture.issuer, true),
-            Attachments::new(),
+            Attachments::new().into(),
         )
         .await?
         .result()
@@ -295,7 +295,7 @@ async fn ordinary_settings_pages_keep_root_revision_and_exact_default_cas_withou
                 input.clone(),
                 scope(&first.issuer, false),
                 operation,
-                Attachments::new()
+                Attachments::new().into()
             )
             .await
             .is_err()
@@ -308,7 +308,7 @@ async fn ordinary_settings_pages_keep_root_revision_and_exact_default_cas_withou
                 json!({"expectedCatalogRevision":page["revision"]}),
                 scope(&first.issuer, true),
                 operation,
-                Attachments::new()
+                Attachments::new().into()
             )
             .await
             .is_err()
@@ -320,7 +320,7 @@ async fn ordinary_settings_pages_keep_root_revision_and_exact_default_cas_withou
             input,
             scope(&first.issuer, true),
             operation,
-            Attachments::new(),
+            Attachments::new().into(),
         )
         .await
         .unwrap();

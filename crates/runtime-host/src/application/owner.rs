@@ -656,7 +656,10 @@ impl Owner {
                         {
                             return Err("Host attachment slots or types mismatch".into());
                         }
-                        if check_attachments(&attachments)? != resources.num_permits() {
+                        let size = resource_ingress::attachment_size(&attachments)?;
+                        if size.payload != resources.num_permits()
+                            || size.descriptors + check_json(&input)?.max(1) > bytes.num_permits()
+                        {
                             return Err(
                                 "Host attachment descriptor changed before admission".into()
                             );

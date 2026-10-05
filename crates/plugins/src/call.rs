@@ -21,7 +21,7 @@
 
 mod attachments;
 mod resources;
-pub use attachments::{Attachments, ReadResource};
+pub use attachments::{Attachments, ReadResource, ResourceEncoding};
 pub use resources::{Resources, Ticket};
 
 use maka_runtime::{event::Invocation, tools::ToolError};

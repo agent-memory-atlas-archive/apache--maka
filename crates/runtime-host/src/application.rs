@@ -23,8 +23,12 @@ mod context;
 mod native_context;
 pub mod operations;
 mod owner;
+mod resource_ingress;
 pub use context::Context;
 pub use native_context::{NativeContext, NativePersistence};
+pub use resource_ingress::{
+    CallResources, RESOURCE_CHUNK_LIMIT, ResourceCapture, ResourceDescriptor,
+};
 mod script;
 mod subscriptions;
 pub use subscriptions::Subscription;
@@ -761,8 +765,9 @@ impl Client {
         method: String,
         input: Value,
         scope: Scope,
-        attachments: Attachments,
+        attachments: CallResources,
     ) -> Result<Accepted> {
+        attachments.check_scope(&scope)?;
         let (reply, result) = oneshot::channel();
         self.dispatch.enqueue(
             binding,
@@ -785,8 +790,9 @@ impl Client {
         method: String,
         input: Value,
         scope: Scope,
-        attachments: Attachments,
+        attachments: CallResources,
     ) -> Result<Subscription> {
+        attachments.check_scope(&scope)?;
         let scope = scope.child().map_err(|e| e.to_string())?;
         let guard = scope.cancellation.clone().drop_guard();
         let buffer = self
@@ -820,12 +826,17 @@ impl Client {
         input: Value,
         scope: Scope,
         operation: Uuid,
-        attachments: Attachments,
+        attachments: CallResources,
     ) -> BoxFuture<'static, Result<PreparedMutation>> {
         // Queue and reserve original custody synchronously. A concurrent close
         // cannot acknowledge this request between publication and first poll.
         let queued = (|| {
-            let ticket = scope.resources.reserve().map_err(|e| e.to_string())?;
+            attachments.check_scope(&scope)?;
+            let ticket = if attachments.captured() {
+                None
+            } else {
+                Some(scope.resources.reserve().map_err(|e| e.to_string())?)
+            };
             let (reply, result) = oneshot::channel();
             self.dispatch.enqueue(
                 binding,
@@ -833,7 +844,7 @@ impl Client {
                 input,
                 scope,
                 attachments,
-                Some(ticket),
+                ticket,
                 CallKind::PrepareMutation { operation, reply },
             )?;
             Ok::<_, String>(result)
@@ -947,24 +958,6 @@ impl Client {
     }
 }
 
-fn check_attachments(attachments: &Attachments) -> Result<usize> {
-    if attachments.len() > 16 {
-        return Err("maximum 16 resource slots".into());
-    }
-    let mut bytes = 0usize;
-    for (slot, resource) in attachments {
-        if slot.is_empty() || slot.len() > 128 {
-            return Err("invalid resource slot".into());
-        }
-        check_json(&resource.metadata())?;
-        bytes = bytes
-            .checked_add(resource.bytes())
-            .filter(|&n| n <= 64 * 1024 * 1024)
-            .ok_or("Host attachments exceed 64 MiB")?;
-    }
-    Ok(bytes)
-}
-
 fn check_json(value: &Value) -> Result<usize> {
     check_json_limit(value, 1024 * 1024)
 }
@@ -978,7 +971,7 @@ fn check_reference(reference: &RecoveryRef) -> Result<usize> {
     .map_err(|e| e.to_string())
 }
 
-fn check_json_limit(value: &Value, limit: usize) -> Result<usize> {
+fn check_json_limit<T: serde::Serialize + ?Sized>(value: &T, limit: usize) -> Result<usize> {
     struct Count(usize, usize);
     impl Write for Count {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -1006,46 +999,24 @@ impl Dispatch {
         method: String,
         input: Value,
         scope: Scope,
-        attachments: Attachments,
+        attachments: CallResources,
         parent: Option<Ticket>,
         kind: CallKind,
     ) -> Result<()> {
-        // Tuple field order releases snapshots before the inert ticket on all
-        // early errors, including capacity rejection before enqueue.
-        let mut custody = (attachments, parent);
+        // Early validation also drops physical input before its inert ticket.
+        let custody = (attachments, parent);
         let size = check_json(&input)?;
-        let resource_bytes = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            check_attachments(&custody.0)
-        })) {
-            Ok(result) => result?,
-            Err(_) => {
-                let error = "Host attachment descriptor panicked".to_string();
-                drop(custody.0);
-                if let Some(ticket) = custody.1.take() {
-                    ticket.complete(Err(error.clone()));
-                }
-                return Err(error);
-            }
-        };
         if method.is_empty() || method.len() > 128 {
             return Err("invalid service method".into());
         }
-        let slot = self
-            .slots
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| "Host call capacity exhausted")?;
-        let bytes = self
-            .bytes
-            .clone()
-            .try_acquire_many_owned(size.max(1) as u32)
-            .map_err(|_| "Host input budget exhausted")?;
-        let resources = self
-            .resources
-            .clone()
-            .try_acquire_many_owned(resource_bytes as u32)
-            .map_err(|_| "Host attachment budget exhausted")?;
-        let (attachments, parent) = custody;
+        let resource_ingress::Reserved {
+            attachments,
+            slot,
+            bytes,
+            resources,
+            parent,
+            ..
+        } = self.resources(custody.0, &scope, size, custody.1)?;
         let capture = (kind.operation().is_some() && !attachments.is_empty()).then(Uuid::new_v4);
         self.commands
             .try_send(Command::Call(Box::new(Call {

@@ -68,7 +68,7 @@ impl NativeService for LocalService {
                     request.method,
                     request.input,
                     scope.clone(),
-                    request.resources,
+                    request.resources.into(),
                 )
                 .await
             {
@@ -110,7 +110,7 @@ impl NativeService for LocalService {
                 request.method,
                 request.input,
                 scope.clone(),
-                request.resources,
+                request.resources.into(),
             );
             tokio::pin!(admission);
             // Cancellation requests revocation but never drops the admission
@@ -177,7 +177,7 @@ impl NativeMutation for Session {
                     request.input,
                     scope,
                     request.source.request_id(),
-                    request.resources,
+                    request.resources.into(),
                 )
             };
             let prepared = preparation.await?;

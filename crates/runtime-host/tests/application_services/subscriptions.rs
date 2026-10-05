@@ -101,7 +101,7 @@ async fn javascript_streams_ordered_items_and_final_result_in_both_realms() {
             app.ready().await.unwrap();
             let client=app.client();
             let binding=client.bind(client.activation(&id(2)).unwrap(),"echo".into()).await.unwrap().remove(0);
-            let mut stream=client.subscribe(binding,"echo".into(),json!("item"),scope(&issuer,true),Attachments::new()).await.unwrap();
+            let mut stream=client.subscribe(binding,"echo".into(),json!("item"),scope(&issuer,true),Attachments::new().into()).await.unwrap();
             for i in 0..35 { assert_eq!(stream.recv().await,Some(json!(format!("item:{i}")))); }
             assert_eq!(stream.recv().await,None);
             let completion=stream.completion().await;
@@ -129,7 +129,7 @@ async fn stream_admission_preserves_mode_issuer_policy_and_revocation() {
                     "echo".into(),
                     json!("x"),
                     scope(&issuer, true),
-                    Attachments::new()
+                    Attachments::new().into()
                 )
                 .await
                 .is_err()
@@ -148,7 +148,7 @@ async fn stream_admission_preserves_mode_issuer_policy_and_revocation() {
                         "echo".into(),
                         json!("x"),
                         denied,
-                        Attachments::new()
+                        Attachments::new().into()
                     )
                     .await
                     .is_err()
@@ -161,7 +161,7 @@ async fn stream_admission_preserves_mode_issuer_policy_and_revocation() {
                 "echo".into(),
                 json!("ok"),
                 scope(&issuer, true),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await
             .unwrap();
@@ -199,7 +199,7 @@ async fn stream_admission_preserves_mode_issuer_policy_and_revocation() {
                     "echo".into(),
                     json!("x"),
                     scope(&issuer, true),
-                    Attachments::new()
+                    Attachments::new().into()
                 )
                 .await
                 .is_err()
@@ -231,7 +231,7 @@ async fn retained_context_cannot_publish_after_producer_end_or_block_eof() {
                 "echo".into(),
                 json!("x"),
                 scope(&issuer, true),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await
             .unwrap();
@@ -278,7 +278,7 @@ async fn item_schema_json_budget_and_unpolled_pending_emits_are_bounded() {
                 "echo".into(),
                 json!("x"),
                 scope(&issuer, true),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await
             .unwrap();
@@ -324,7 +324,7 @@ async fn backpressure_completion_and_drop_cancel_only_their_subscription() {
                 "echo".into(),
                 json!("x"),
                 parent.clone(),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await
             .unwrap();
@@ -334,7 +334,7 @@ async fn backpressure_completion_and_drop_cancel_only_their_subscription() {
                 "echo".into(),
                 json!("x"),
                 parent.clone(),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await
             .unwrap();
@@ -361,7 +361,7 @@ async fn backpressure_completion_and_drop_cancel_only_their_subscription() {
                 "echo".into(),
                 json!("x"),
                 parent.clone(),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await
             .unwrap();
@@ -398,7 +398,7 @@ async fn completed_unread_streams_keep_host_buffer_capacity_until_reader_drop() 
                         "echo".into(),
                         json!("x"),
                         scope(&issuer, true),
-                        Attachments::new(),
+                        Attachments::new().into(),
                     )
                     .await
                     .unwrap(),
@@ -412,7 +412,7 @@ async fn completed_unread_streams_keep_host_buffer_capacity_until_reader_drop() 
                     "echo".into(),
                     json!("x"),
                     scope(&issuer, true),
-                    Attachments::new()
+                    Attachments::new().into()
                 )
                 .await
                 .err()
@@ -430,7 +430,7 @@ async fn completed_unread_streams_keep_host_buffer_capacity_until_reader_drop() 
                 "echo".into(),
                 json!("x"),
                 scope(&issuer, true),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await
             .unwrap();
@@ -470,7 +470,7 @@ async fn eof_precedes_actual_resource_cleanup_and_never_acknowledges_it() {
                 "echo".into(),
                 json!("x"),
                 scope(&issuer, true),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await
             .unwrap();
@@ -523,7 +523,7 @@ async fn retained_polled_send_cannot_hold_eof_open_or_insert_after_close() {
                 "echo".into(),
                 json!("x"),
                 scope(&issuer, true),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await
             .unwrap();
@@ -558,7 +558,7 @@ async fn dropping_admission_future_revokes_queued_work_without_cancelling_parent
             "echo".into(),
             json!("x"),
             parent.clone(),
-            Attachments::new(),
+            Attachments::new().into(),
         ));
         assert!(futures_util::poll!(&mut pending).is_pending());
         drop(pending);
@@ -593,7 +593,7 @@ async fn failed_cleanup_or_panic_closes_data_but_preserves_actual_execution_fenc
                     "echo".into(),
                     json!("x"),
                     scope(&issuer, true),
-                    Attachments::new(),
+                    Attachments::new().into(),
                 )
                 .await
                 .unwrap();
@@ -646,7 +646,7 @@ async fn execution_scope_cancellation_wakes_backpressure_and_revokes_new_emits()
                 "echo".into(),
                 json!("x"),
                 parent.clone(),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await
             .unwrap();
@@ -680,7 +680,7 @@ async fn terminal_result_schema_and_query_emit_rejection_share_existing_owner() 
                 "echo".into(),
                 json!("x"),
                 scope(&issuer, true),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await
             .unwrap();
@@ -727,7 +727,7 @@ async fn terminal_result_schema_and_query_emit_rejection_share_existing_owner() 
                 "echo".into(),
                 json!("query"),
                 scope(&issuer, true),
-                Attachments::new(),
+                Attachments::new().into(),
             )
             .await
             .unwrap()

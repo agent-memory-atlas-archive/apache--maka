@@ -180,6 +180,9 @@ pub(super) struct Snapshot {
     pub revision: u64,
 }
 impl maka_plugins::call::ReadResource for Snapshot {
+    fn encoding(&self) -> maka_plugins::call::ResourceEncoding {
+        maka_plugins::call::ResourceEncoding::Utf8
+    }
     fn resource_type(&self) -> maka_plugin_core::contract::ResourceType {
         text_resource_type()
     }

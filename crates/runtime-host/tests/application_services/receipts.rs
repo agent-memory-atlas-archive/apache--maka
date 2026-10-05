@@ -139,7 +139,7 @@ async fn read(
             "read".into(),
             serde_json::to_value(reference).unwrap(),
             scope(issuer, true),
-            Attachments::new(),
+            Attachments::new().into(),
         )
         .await
         .unwrap()
@@ -162,7 +162,7 @@ async fn script_read(client: &Client, reference: &RecoveryRef, issuer: &Issuer) 
             "echo".into(),
             json!(serde_json::to_string(reference).unwrap()),
             scope(issuer, true),
-            Attachments::new(),
+            Attachments::new().into(),
         )
         .await
         .unwrap()
@@ -278,7 +278,7 @@ async fn composed_receipt_reader_reopens_original_root_without_old_provider_and_
                     "read".into(),
                     serde_json::to_value(&reference).unwrap(),
                     scope(&issuer, false),
-                    Attachments::new()
+                    Attachments::new().into()
                 )
                 .await
                 .is_err()
@@ -312,7 +312,7 @@ async fn composed_receipt_reader_reopens_original_root_without_old_provider_and_
                     "read".into(),
                     serde_json::to_value(&reference).unwrap(),
                     scope(&issuer, true),
-                    Attachments::new()
+                    Attachments::new().into()
                 )
                 .await
                 .is_err()

@@ -158,7 +158,7 @@ impl Context {
             method,
             input,
             self.scope.clone(),
-            attachments,
+            attachments.into(),
             Some(ticket),
             kind,
         )?;

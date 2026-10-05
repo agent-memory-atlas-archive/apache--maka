@@ -152,7 +152,7 @@ async fn original_bundle_survives_prepare_dispatch_and_new_capture_cannot_replay
                 json!("public"),
                 scope(&issuer, true),
                 operation,
-                resources,
+                resources.into(),
             )
             .await
             .unwrap();
@@ -173,7 +173,7 @@ async fn original_bundle_survives_prepare_dispatch_and_new_capture_cannot_replay
                     json!("public"),
                     scope(&issuer, true),
                     Uuid::new_v4(),
-                    too_many
+                    too_many.into()
                 )
                 .await
                 .err()
@@ -206,7 +206,7 @@ async fn original_bundle_survives_prepare_dispatch_and_new_capture_cannot_replay
                 json!("public"),
                 scope(&issuer, true),
                 operation,
-                resources,
+                resources.into(),
             )
             .await
             .unwrap();
@@ -292,7 +292,7 @@ async fn queued_unreceived_and_ready_preparations_keep_scope_open_until_actual_b
                 json!("public"),
                 original_scope.clone(),
                 Uuid::new_v4(),
-                resources,
+                resources.into(),
             );
             match phase {
                 0 => {
@@ -344,7 +344,7 @@ async fn queued_unreceived_and_ready_preparations_keep_scope_open_until_actual_b
                     json!("public"),
                     scope(&issuer, true),
                     Uuid::new_v4(),
-                    resources,
+                    resources.into(),
                 )
                 .await
                 .unwrap();
@@ -389,7 +389,7 @@ async fn javascript_delegated_mutation_forwards_actual_current_slots_and_never_r
         let client=app.client();let binding=binding(&client).await;
         for attempt in 0..2 {
             let (resources,weak)=bytes(32*1024*1024);
-            let result=client.start(binding.clone(),"echo".into(),json!("public"),scope(&issuer,true),resources).await.unwrap().completion().await;
+            let result=client.start(binding.clone(),"echo".into(),json!("public"),scope(&issuer,true),resources.into()).await.unwrap().completion().await;
             assert!(result.cleanup.is_ok());assert_eq!(result.result.unwrap(),if attempt==0 {json!("effect-1")} else {json!("blocked")});
             assert!(weak.upgrade().is_none(),"completed parent releases the actual forwarded bundle");
         }
@@ -405,7 +405,7 @@ async fn failed_resource_mutation_keeps_original_snapshot_and_capacity_after_bus
         let app=application(store.clone(),&issuer,Arc::new(ReadAttachment {calls:calls.clone(),started:Arc::new(Semaphore::new(0)),release:Arc::new(Semaphore::new(0))})).await;
         let client=app.client();let binding=binding(&client).await;let original_scope=scope(&issuer,true);
         let (resources,weak)=bytes(64*1024*1024);
-        let prepared=client.prepare_mutation(binding.clone(),"echo".into(),json!("fail-cleanup"),original_scope.clone(),Uuid::new_v4(),resources).await.unwrap();
+        let prepared=client.prepare_mutation(binding.clone(),"echo".into(),json!("fail-cleanup"),original_scope.clone(),Uuid::new_v4(),resources.into()).await.unwrap();
         let reference=prepared.reference().clone();
         let recorded=store.record_application_intent(reference.source.clone(),id(2),reference.clone()).await.unwrap();
         let completed=client.mutate(prepared,recorded).await.unwrap().completion().await;
@@ -413,7 +413,7 @@ async fn failed_resource_mutation_keeps_original_snapshot_and_capacity_after_bus
         assert!(matches!(completed.reply.receipt,Receipt::Recorded {outcome:OperationOutcome::Returned {ref value},cleanup:OperationCleanup::Failed {..}} if value==&json!("xxxxx")));
         assert!(original_scope.finish().await.is_err());assert!(weak.upgrade().is_some());
         let (resources,rejected)=bytes(1);
-        let failure=client.prepare_mutation(binding,"echo".into(),json!("public"),scope(&issuer,true),Uuid::new_v4(),resources).await.err().unwrap();
+        let failure=client.prepare_mutation(binding,"echo".into(),json!("public"),scope(&issuer,true),Uuid::new_v4(),resources.into()).await.err().unwrap();
         assert!(failure.contains("budget"));assert!(rejected.upgrade().is_none());
         assert_eq!(calls.load(Ordering::SeqCst),1);
         assert!(matches!(store.operation_observation(&reference).await.unwrap().unwrap().cleanup,OperationCleanup::Failed {..}));
@@ -421,4 +421,130 @@ async fn failed_resource_mutation_keeps_original_snapshot_and_capacity_after_bus
         // This fixture deliberately leaves failed physical custody with its real
         // owner; dropping the caller/observers does not manufacture recovery.
     }).await.unwrap();
+}
+
+#[tokio::test]
+async fn received_original_payload_reservation_survives_prepare_and_real_caller_commit() {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        use maka_plugins::call::ResourceEncoding;
+        use maka_runtime_host::application::{RESOURCE_CHUNK_LIMIT, ResourceDescriptor};
+        let (_dir, _, store) = store().await;
+        let issuer = Issuer::default();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = application(
+            store.clone(),
+            &issuer,
+            Arc::new(Effect {
+                caller: id(2),
+                store: store.clone(),
+                calls: calls.clone(),
+            }),
+        )
+        .await;
+        let client = app.client();
+        let binding = binding(&client).await;
+        for abort in [true, false] {
+            let source = scope(&issuer, true);
+            let descriptor = BTreeMap::from([(
+                "text".into(),
+                ResourceDescriptor {
+                    resource: ResourceType {
+                        name: "example.Bytes".into(),
+                        version: 1,
+                    },
+                    length: 64 * 1024 * 1024,
+                    metadata: json!({"owner":"original receiver"}),
+                    encoding: ResourceEncoding::Bytes,
+                },
+            )]);
+            let mut capture = client
+                .capture_resources(source.clone(), descriptor)
+                .unwrap();
+            let chunk = vec![b'x'; RESOURCE_CHUNK_LIMIT];
+            for offset in (0..64 * 1024 * 1024).step_by(RESOURCE_CHUNK_LIMIT) {
+                capture.write("text", offset as u64, &chunk).unwrap();
+            }
+            let prepared = client
+                .prepare_mutation(
+                    binding.clone(),
+                    "echo".into(),
+                    json!("public"),
+                    source.clone(),
+                    Uuid::new_v4(),
+                    capture.finish().unwrap(),
+                )
+                .await
+                .unwrap();
+            let reference = prepared.reference().clone();
+            assert!(
+                store
+                    .operation_observation(&reference)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+            let rejected = scope(&issuer, true);
+            let descriptor = BTreeMap::from([(
+                "text".into(),
+                ResourceDescriptor {
+                    resource: ResourceType {
+                        name: "example.Bytes".into(),
+                        version: 1,
+                    },
+                    length: 1,
+                    metadata: json!(null),
+                    encoding: ResourceEncoding::Bytes,
+                },
+            )]);
+            assert!(
+                client
+                    .capture_resources(rejected.clone(), descriptor)
+                    .err()
+                    .unwrap()
+                    .contains("attachment budget")
+            );
+            rejected.finish().await.unwrap();
+            if abort {
+                drop(prepared);
+            } else {
+                let token = store
+                    .record_application_intent(reference.source.clone(), id(2), reference.clone())
+                    .await
+                    .unwrap();
+                let completed = client
+                    .mutate(prepared, token)
+                    .await
+                    .unwrap()
+                    .completion()
+                    .await;
+                completed.cleanup.unwrap();
+                assert_eq!(completed.reply.reference, reference);
+                assert_eq!(returned(completed.reply), json!("effect-1"));
+            }
+            source.finish().await.unwrap();
+            // The original physical release precedes its Scope and completion acknowledgement.
+            let probe = scope(&issuer, true);
+            let descriptor = BTreeMap::from([(
+                "text".into(),
+                ResourceDescriptor {
+                    resource: ResourceType {
+                        name: "example.Bytes".into(),
+                        version: 1,
+                    },
+                    length: 64 * 1024 * 1024,
+                    metadata: json!(null),
+                    encoding: ResourceEncoding::Bytes,
+                },
+            )]);
+            let capture = client.capture_resources(probe.clone(), descriptor).unwrap();
+            drop(capture);
+            probe.finish().await.unwrap();
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        app.shutdown().await.unwrap();
+        store.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
 }
