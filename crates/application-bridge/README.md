@@ -106,7 +106,9 @@ Cancellation/EOF revokes the original Scope while the connection task keeps the
 same admission and completion observers. Terminal messages report business and
 actual Scope cleanup separately. Server shutdown drains reception/connections
 before the embedding shuts down Application and SQL; failed or panicking cleanup
-retains its original fence. Interrupted frame writes poison the channel.
+retains its original fence. Interrupted control writes forbid further frames;
+half-close may still observe a complete terminal acknowledgement on the same
+original channel. Cancel delivery failure does not erase an already sent reply.
 
 `transport::Call` owns the caller's immutable inputs and actual `RecordedIntent`.
 I/O failure retains this custody. `disconnect()` closes both physical halves while
@@ -114,4 +116,22 @@ retaining unconfirmed inputs/token; EOF is a cancellation request, not a remote
 cleanup acknowledgement. A successful fresh original-receipt query never
 settles a lost dispatch; no mutation is automatically resent. The default
 Desktop/TUI `--connections` path still uses `LocalService`. Shared authenticated
-listeners, its NativeService connector and native platform acceptance remain work.
+listeners, the default launcher connector and native platform acceptance remain work.
+
+Before accepting the invocation, the CLI publishes a bounded `Catalogue` from its
+actual captured Bindings. A `Selection` freezes the endpoint alias and registration
+epoch. Every Open carries that epoch; another Host incarnation cannot retarget an
+old selection, even if it publishes the same alias. Provider/contract descriptions
+are read-only facts, not grants or constructors of Host Bindings. A fresh recovery
+query selects the new Host registration and reads only the original operation Ref.
+
+`transport::native::{Connection, Service}` adapts this channel to the original UI
+kernel's query, subscription and prepared-mutation interfaces. The trusted
+`Connector` opens channels to the same authenticated Host incarnation that supplied
+the catalogue. Cancellation awaits that original opening's explicit completion;
+constructor, poll or destructor panic retains its opening fence. The adapter
+checks the UI kernel's private source against the approved caller and transfers
+actual SQL tokens synchronously when dispatch observers are created. Stop requests
+precede the session mutex; cleanup waits for the same invocation and actual local
+resource destructors before releasing capacity. Failed custody stays in its
+original Connection. This adapter is not yet the default Desktop/TUI connector.

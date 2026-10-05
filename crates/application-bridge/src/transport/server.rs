@@ -19,6 +19,7 @@
 
 //! The connection owns reception and observations; Application owns execution.
 use super::{
+    catalogue::Catalogue,
     policy::{Endpoint, Peer, PolicyOwner},
     wire::{self, Control, Open, Reader, Reply},
 };
@@ -80,6 +81,9 @@ impl Server {
             failed: Mutex::new(Vec::new()),
             admission: Mutex::new(false),
         }))
+    }
+    pub fn catalogue(&self) -> Catalogue {
+        Catalogue::captured(&self.endpoints)
     }
     /// The embedding authenticates the actual private channel and chooses Peer.
     /// No incoming JSON or endpoint name constructs that approval.
@@ -313,6 +317,11 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Session<R, W> {
                 .abort("Application endpoint is not granted".into())
                 .await;
         };
+        if endpoint.binding.registration_epoch() != open.registration_epoch {
+            return self
+                .abort("original Host registration is no longer available".into())
+                .await;
+        }
         let scope = match server.policy.scope(
             &peer,
             open.source.clone(),

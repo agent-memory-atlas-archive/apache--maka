@@ -20,10 +20,13 @@
 //! Private, single-invocation channels across independent Application owners.
 //! The trusted embedding authenticates each channel before selecting its Peer;
 //! this module never treats caller observations or credentials in JSON as trust.
+mod catalogue;
 mod client;
+pub mod native;
 mod policy;
 mod server;
 mod wire;
+pub use catalogue::{Catalogue, Description, Selection};
 pub use client::Call;
 pub use policy::{Endpoint, Peer, PeerPolicy};
 pub use server::Server;

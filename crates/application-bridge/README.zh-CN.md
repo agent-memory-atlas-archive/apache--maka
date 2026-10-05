@@ -75,10 +75,24 @@ Input 与完整 resource descriptors 分别使用有界 JSON frame，raw chunk �
 
 取消/EOF 撤销原 Scope，连接 task 继续保留同一准入与 completion observers。
 终态分别报告业务结果和实际 Scope cleanup。启动器先 drain 接收/连接，再关闭原
-Application 和 SQL；清理失败或 panic 保原 fence。半帧写入被中断后，禁止追加新帧。
+Application 和 SQL；清理失败或 panic 保原 fence。控制帧写入被中断后禁止追加新帧，
+但仍可半关闭写端并读取同一原通道完整的终态确认；取消交付失败不抹掉已发出的回执。
 
 `transport::Call` 保持 caller immutable inputs 与实际 `RecordedIntent`；I/O 失败不释放。
 `disconnect()` 只关闭物理两端，保留未确认的资源/token；EOF 请求取消，不是远端清理确认。
 新的原回执查询不结算丢失 dispatch，不自动重发 mutation。默认 Desktop/TUI
-`--connections` 仍用 `LocalService`；共享认证 listener、NativeService connector 和
+`--connections` 仍用 `LocalService`；共享认证 listener、默认启动器 connector 和
 原生平台完整验收仍需继续。
+
+CLI 在接受调用前，从原捕获 Bindings 发布有界 `Catalogue`。`Selection` 固定 endpoint
+alias 与 registration epoch；每个 Open 携带原 epoch，另一 Host incarnation 即使发布
+同名 alias 也不能接管旧选择。Provider/contract 描述只读，不授予权限、不构造 Binding。
+新的恢复查询选择新 Host registration，只读取原 operation Ref。
+
+`transport::native::{Connection, Service}` 把通道接入原 UI kernel 的 query、subscription
+和 prepared mutation 接口。可信 `Connector` 只连接发布 catalogue 的同一认证 Host
+incarnation。取消等待原 opening 明确完成；构造、poll、future 析构 panic 均保原建立
+屏障。适配器核 UI kernel 私有来源与已批准 caller，在创建 dispatch observer 时同步
+接收实际 SQL token。Stop 在 session mutex 之前发出，cleanup 等同一调用及实际本地
+资源析构完成才释放容量。失败 custody 保留在原 Connection；适配器尚未成为默认
+Desktop/TUI connector。

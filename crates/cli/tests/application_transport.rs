@@ -21,7 +21,7 @@
 #[allow(dead_code)]
 #[path = "../../application-bridge/tests/support/mod.rs"]
 mod support;
-use maka_application_bridge::transport::{Call, Reply, Source};
+use maka_application_bridge::transport::{Call, Catalogue, Reply, Source};
 use maka_event_log::{
     EventLog,
     root::{RootNamespaces, RootOwner},
@@ -168,7 +168,7 @@ impl Fixture {
         input: Value,
         resources: Attachments,
         source: Source,
-    ) -> (Child, Call<ChildStdout, ChildStdin>) {
+    ) -> (Child, Call<tokio::io::BufReader<ChildStdout>, ChildStdin>) {
         let _entered = self.timer.enter();
         let mut child = Command::new(env!("CARGO_BIN_EXE_maka"))
             .args(["application", "serve", "--root"])
@@ -183,10 +183,14 @@ impl Fixture {
             .kill_on_drop(true)
             .spawn()
             .unwrap();
+        let (catalogue, channel_input) = self
+            .timer
+            .block_on(Catalogue::read(child.stdout.take().unwrap()))
+            .unwrap();
         let call = Call::new(
-            child.stdout.take().unwrap(),
+            channel_input,
             child.stdin.take().unwrap(),
-            endpoint.into(),
+            catalogue.select(endpoint).unwrap(),
             source,
             method.into(),
             input,

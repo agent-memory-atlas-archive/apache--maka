@@ -57,6 +57,7 @@ impl TryFrom<&maka_ui::actions::ServiceSource> for Source {
 #[serde(deny_unknown_fields)]
 pub(super) struct Open {
     pub endpoint: String,
+    pub registration_epoch: Uuid,
     pub source: Source,
     pub method: String,
     pub input: Value,
@@ -228,6 +229,7 @@ mod tests {
         use std::collections::BTreeMap;
         let open = Open {
             endpoint: "business".into(),
+            registration_epoch: Uuid::new_v4(),
             source: Source {
                 deployment: DeploymentRef {
                     state_domain: "original-root-domain".into(),

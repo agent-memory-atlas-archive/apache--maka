@@ -67,7 +67,7 @@ pub(super) async fn run(args: Serve) -> Result<(), HostError> {
     let policy = Arc::new(PeerPolicy::default());
     let crate::stdio::Stdio {
         input,
-        output,
+        mut output,
         output_done,
     } = crate::stdio::Stdio::open()?;
     let store = Arc::new(open_store(args.root).await?);
@@ -102,6 +102,7 @@ pub(super) async fn run(args: Serve) -> Result<(), HostError> {
             endpoints.insert(name, Endpoint::new(bindings.pop().unwrap(), grant)?);
         }
         let server = Server::new(client, policy, endpoints)?;
+        server.catalogue().write(&mut output).await?;
         let observer = server.serve(input, output, peer)?;
         let result = observer.await;
         // Preserve all failed physical custody. EOF is not a cleanup receipt.

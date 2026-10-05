@@ -18,7 +18,10 @@
  */
 
 //! Caller-side physical custody. Errors never imply remote cleanup.
-use super::wire::{self, Control, Open, Reader, Reply, Source};
+use super::{
+    Selection,
+    wire::{self, Control, Open, Reader, Reply, Source},
+};
 use crate::Result;
 use maka_event_log::applications::intents::RecordedIntent;
 use maka_plugin_core::operation::RecoveryRef;
@@ -39,12 +42,14 @@ pub struct Call<R, W> {
     reference: Option<RecoveryRef>,
     recorded: Option<RecordedIntent>,
     phase: Phase,
+    cancel_sent: bool,
+    settlement_phase: Option<Phase>,
 }
 struct Channel<R, W> {
     reader: Reader<R>,
     writer: W,
 }
-#[derive(PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
     New,
     Open,
@@ -61,14 +66,15 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Call<R, W> {
     pub fn new(
         reader: R,
         writer: W,
-        endpoint: String,
+        endpoint: Selection,
         source: Source,
         method: String,
         input: Value,
         resources: Attachments,
     ) -> Self {
         let open = Open {
-            endpoint,
+            registration_epoch: endpoint.description.registration_epoch,
+            endpoint: endpoint.endpoint,
             source: source.clone(),
             method,
             input,
@@ -84,6 +90,8 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Call<R, W> {
             reference: None,
             recorded: None,
             phase: Phase::New,
+            cancel_sent: false,
+            settlement_phase: None,
         }
     }
     pub fn reference(&self) -> Option<&RecoveryRef> {
@@ -101,6 +109,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Call<R, W> {
     pub fn disconnect(&mut self) {
         if self.phase != Phase::Closed {
             self.phase = Phase::Lost;
+            self.settlement_phase = None;
         }
         if let Some(Channel { reader, writer }) = self.channel.take() {
             // Drop both halves even if an embedding's destructor panics. Keep
@@ -209,56 +218,143 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Call<R, W> {
     }
     /// One demand successor; no background socket reader prefetches items.
     pub async fn pull(&mut self) -> Result<Reply> {
-        if self.phase != Phase::Streaming {
+        if self.phase != Phase::Streaming || self.cancel_sent {
             return Err("remote call cannot pull in this phase".into());
         }
         self.phase = Phase::Lost;
+        self.settlement_phase = Some(Phase::Streaming);
         let channel = self.channel.as_mut().expect("streaming channel");
         if let Err(e) = wire::write(&mut channel.writer, &Control::Pull).await {
             self.phase = Phase::Lost;
             return Err(e);
         }
         self.phase = Phase::Streaming;
+        self.settlement_phase = None;
         self.receive().await
     }
-    pub async fn commit(&mut self, recorded: RecordedIntent) -> Result<Reply> {
-        if self.phase != Phase::Prepared || self.recorded.is_some() {
-            return Err("remote mutation is not awaiting caller confirmation".into());
-        }
-        // Retain even a mismatching confirmed token through preparation abort.
-        // The caller must cancel/drain this same original owner after rejection.
-        self.recorded = Some(recorded);
-        let intent = self.recorded.as_ref().unwrap().intent();
-        if intent.caller != self.source.deployment
-            || intent.consumer != self.source.consumer
-            || self.reference.as_ref() != Some(&intent.reference)
-        {
-            return Err("caller token differs from the original remote preparation".into());
-        }
-        let control = Control::Commit {
-            intent: Box::new(intent.clone()),
+    /// Transfers real caller custody synchronously, before the dispatch observer
+    /// is first polled. Dropping that observer cannot drop the confirmed token.
+    pub fn commit(&mut self, recorded: RecordedIntent) -> impl Future<Output = Result<Reply>> + '_ {
+        let validation = if self.phase == Phase::Closed || self.recorded.is_some() {
+            Err("remote mutation is not awaiting caller confirmation".to_string())
+        } else {
+            // A concurrent close can lose this channel before an already
+            // confirmed dispatch observer is polled. Rejection must retain its
+            // real token until original cleanup, even when no write is allowed.
+            self.recorded = Some(recorded);
+            let intent = self.recorded.as_ref().unwrap().intent();
+            if self.phase != Phase::Prepared
+                || self.cancel_sent
+                || intent.caller != self.source.deployment
+                || intent.consumer != self.source.consumer
+                || self.reference.as_ref() != Some(&intent.reference)
+            {
+                Err("caller token differs from the original remote preparation".to_string())
+            } else {
+                Ok(Control::Commit {
+                    intent: Box::new(intent.clone()),
+                })
+            }
         };
-        // A cancelled partial write poisons this channel. No later frame may
-        // append to it, while the actual token remains in this owner.
-        self.phase = Phase::Lost;
-        let channel = self.channel.as_mut().expect("prepared channel");
-        wire::write(&mut channel.writer, &control).await?;
-        self.phase = Phase::Dispatched;
-        self.receive().await
+        async move {
+            let control = validation?;
+            self.phase = Phase::Lost;
+            self.settlement_phase = Some(Phase::Dispatched);
+            let channel = self.channel.as_mut().expect("prepared channel");
+            wire::write(&mut channel.writer, &control).await?;
+            self.phase = Phase::Dispatched;
+            self.settlement_phase = None;
+            self.receive().await
+        }
+    }
+    /// Drain cancellation on this same channel. A reply item or preparation is
+    /// not terminal cleanup; retain it and await the original terminal reply.
+    pub async fn close(&mut self) -> Result<()> {
+        match self.drain().await? {
+            Some(reply) => reply.cleanup().expect("terminal reply").clone(),
+            None => Ok(()),
+        }
+    }
+    pub(super) async fn drain(&mut self) -> Result<Option<Reply>> {
+        match self.phase {
+            Phase::Closed => return Ok(None),
+            Phase::New => {
+                self.resources.clear();
+                self.recorded.take();
+                self.phase = Phase::Closed;
+                return Ok(None);
+            }
+            Phase::Lost if self.settlement_phase.is_none() => {
+                return Err("remote cleanup remains unconfirmed".into());
+            }
+            _ => {}
+        }
+        let mut reply = if self.phase == Phase::Lost {
+            self.read_settlement().await?
+        } else {
+            self.cancel().await?
+        };
+        loop {
+            if reply.cleanup().is_some() {
+                return Ok(Some(reply));
+            }
+            reply = if self.phase == Phase::Lost {
+                self.read_settlement().await?
+            } else {
+                self.receive().await?
+            };
+        }
     }
     /// Cancel asks the same owner to settle. EOF/error retains unconfirmed custody.
     pub async fn cancel(&mut self) -> Result<Reply> {
         if matches!(self.phase, Phase::New | Phase::Closed | Phase::Lost) {
             return Err("remote call cannot cancel in this phase".into());
         }
+        if self.cancel_sent {
+            return self.receive().await;
+        }
         let phase = std::mem::replace(&mut self.phase, Phase::Lost);
+        self.settlement_phase = Some(phase);
         let channel = self.channel.as_mut().expect("active channel");
-        if let Err(e) = wire::write(&mut channel.writer, &Control::Cancel).await {
-            self.phase = Phase::Lost;
-            return Err(e);
+        if wire::write(&mut channel.writer, &Control::Cancel)
+            .await
+            .is_err()
+        {
+            // The original Host may have already sent its terminal reply and
+            // closed its reader. Delivery failure cannot erase that evidence.
+            // Poison further writes, half-close and read only this same channel.
+            return self.read_settlement().await;
         }
         self.phase = phase;
+        self.settlement_phase = None;
+        self.cancel_sent = true;
         self.receive().await
+    }
+    async fn read_settlement(&mut self) -> Result<Reply> {
+        let expected = self
+            .settlement_phase
+            .ok_or("remote cleanup remains unconfirmed")?;
+        let channel = self
+            .channel
+            .as_mut()
+            .ok_or("original physical channel is gone")?;
+        let reply = tokio::select! {
+            reply = channel.reader.read::<Reply>() => reply?,
+            _ = channel.writer.shutdown() => channel.reader.read::<Reply>().await?,
+        };
+        self.phase = expected;
+        if let Err(reason) = self.accept_reply(&reply) {
+            self.phase = Phase::Lost;
+            self.settlement_phase = None;
+            return Err(reason);
+        }
+        if reply.cleanup().is_some() {
+            self.settlement_phase = None;
+        } else {
+            self.settlement_phase = Some(self.phase);
+            self.phase = Phase::Lost;
+        }
+        Ok(reply)
     }
     fn accept_reply(&mut self, reply: &Reply) -> Result<()> {
         match reply {
@@ -363,7 +459,15 @@ mod tests {
                     written: written.clone(),
                     released: released.clone(),
                 },
-                "endpoint".into(),
+                Selection {
+                    endpoint: "endpoint".into(),
+                    description: super::super::Description {
+                        provider: source().consumer,
+                        export: "Service".into(),
+                        registration_epoch: uuid::Uuid::new_v4(),
+                        contract: maka_plugin_core::operation::receipt_reader_contract(),
+                    },
+                },
                 source(),
                 "method".into(),
                 Value::Null,
