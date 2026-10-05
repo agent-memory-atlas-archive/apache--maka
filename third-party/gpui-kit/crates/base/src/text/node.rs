@@ -1183,7 +1183,11 @@ impl Paragraph {
         Vec<(Range<usize>, InlineHighlight)>,
         Vec<(Range<usize>, LinkMark)>,
     ) {
-        let mono_font = cx.theme().tokens.typography.mono.clone();
+        let mono_font = node_cx
+            .style
+            .code_font_family()
+            .cloned()
+            .unwrap_or_else(|| cx.theme().tokens.typography.mono.clone());
         if let Ok(cache) = self.render_cache.0.lock()
             && let Some(cached) = cache.as_ref()
             && (Arc::ptr_eq(&cached.style, &node_cx.style) || *cached.style == *node_cx.style)
@@ -1969,8 +1973,17 @@ impl CodeBlock {
             .min_w_0()
             .p_3()
             .bg(style.code_background())
-            .font_family(cx.theme().tokens.typography.mono.clone())
-            .text_size(cx.theme().tokens.typography.mono_md.size)
+            .font_family(
+                style
+                    .code_font_family()
+                    .cloned()
+                    .unwrap_or_else(|| cx.theme().tokens.typography.mono.clone()),
+            )
+            .text_size(
+                style
+                    .code_font_size()
+                    .unwrap_or_else(|| cx.theme().tokens.typography.mono_md.size),
+            )
             .relative()
             .refine_style(&style.code_block())
             .child(
@@ -2146,7 +2159,13 @@ fn mark_highlight(mark: &TextMark, node_cx: &NodeContext, cx: &App) -> InlineHig
     let mut font_family = None;
     if mark.code {
         highlight = highlight.highlight(node_cx.style.inline_code_highlight());
-        font_family = Some(cx.theme().tokens.typography.mono.clone());
+        font_family = Some(
+            node_cx
+                .style
+                .code_font_family()
+                .cloned()
+                .unwrap_or_else(|| cx.theme().tokens.typography.mono.clone()),
+        );
     }
     if let Some(color) = mark.highlight {
         highlight.background_color = Some(color);
@@ -2626,7 +2645,11 @@ fn measure_table_columns(
 ) -> Vec<f32> {
     let text_style = window.text_style();
     let rem_size = window.rem_size();
-    let mono_family = cx.theme().tokens.typography.mono.clone();
+    let mono_family = node_cx
+        .style
+        .code_font_family()
+        .cloned()
+        .unwrap_or_else(|| cx.theme().tokens.typography.mono.clone());
     let inline_code = node_cx.style.inline_code_highlight();
     let cached = table.column_widths_cache.0.lock().ok().and_then(|cache| {
         cache
@@ -3309,7 +3332,7 @@ impl BlockNode {
                     &StyleRefinement::default()
                         .bg(style
                             .table_background()
-                            .unwrap_or(cx.theme().tokens.colors.surface))
+                            .unwrap_or_else(|| cx.theme().tokens.colors.surface))
                         .border_1()
                         .border_color(style.border())
                         .refine_style(style.table()),
@@ -3411,7 +3434,7 @@ impl BlockNode {
                     .w_full()
                     .bg(style
                         .table_background()
-                        .unwrap_or(cx.theme().tokens.colors.surface))
+                        .unwrap_or_else(|| cx.theme().tokens.colors.surface))
                     .border_1()
                     .border_color(style.border())
                     .overflow_hidden()
@@ -4845,5 +4868,51 @@ mod tests {
         let second = CodeBlock::new("let value = 2;".into(), Some("rust".into()), None::<Span>);
 
         assert_ne!(first, second);
+    }
+    #[test]
+    fn local_code_family_controls_inline_table_measurement_and_cache() {
+        use crate::text::inline::test_draw::in_prepaint;
+        use crate::text::inline::test_fonts::{BODY, MONO, WideMonoTextSystem};
+        use gpui::TestApp;
+        let code = "method_name()";
+        let mut paragraph = Paragraph::default();
+        paragraph
+            .push(InlineNode::new(code).marks(vec![(0..code.len(), TextMark::default().code())]));
+        let table = Table {
+            children: vec![TableRow {
+                children: vec![TableCell {
+                    children: paragraph,
+                    width: None,
+                }],
+            }],
+            ..Default::default()
+        };
+        let mut app = TestApp::with_text_system(Arc::new(WideMonoTextSystem));
+        in_prepaint(&mut app, move |window, cx| {
+            let mut theme = crate::Theme::default();
+            theme.tokens.typography.mono = BODY.into();
+            cx.set_global(theme);
+            let mut node_cx = NodeContext {
+                style: Arc::new(TextViewStyle::default().with_code_font_family(MONO)),
+                ..Default::default()
+            };
+            let widths = measure_table_columns(&table, 1, &node_cx, window, cx);
+            let font_size = window.text_style().font_size.to_pixels(window.rem_size());
+            let expected = f32::from(WideMonoTextSystem::width_of(code, MONO, font_size * 0.875))
+                + CELL_PAD_PX
+                + crate::text::inline_flow::INLINE_CODE_PADDING * 2.;
+            assert!((widths[0] - expected).abs() < 0.01);
+            let first = cached_column_widths(&table);
+            crate::Theme::global_mut(cx).tokens.typography.mono = MONO.into();
+            assert_eq!(
+                measure_table_columns(&table, 1, &node_cx, window, cx),
+                widths
+            );
+            assert!(Arc::ptr_eq(&first, &cached_column_widths(&table)));
+            node_cx.style = Arc::new(TextViewStyle::default().with_code_font_family(BODY));
+            let narrower = measure_table_columns(&table, 1, &node_cx, window, cx);
+            assert!(narrower[0] < widths[0]);
+            assert!(!Arc::ptr_eq(&first, &cached_column_widths(&table)));
+        });
     }
 }

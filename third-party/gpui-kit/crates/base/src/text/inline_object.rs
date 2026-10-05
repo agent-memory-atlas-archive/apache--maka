@@ -374,11 +374,23 @@ impl Element for InlineObject {
             let text = self.text.to_string();
             let current_view = window.current_view();
             let line_bounds = self.line_bounds;
+            let admission = view
+                .as_ref()
+                .map(|view| view.read(cx).selection_adapter.admission(cx));
             window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                 if !phase.bubble()
                     || !hitbox.is_hovered(window)
                     || event.button != MouseButton::Left
                     || !(2..=3).contains(&event.click_count)
+                {
+                    return;
+                }
+                if admission
+                    .as_ref()
+                    .is_some_and(|admission| admission.upgrade().is_none())
+                    || view
+                        .as_ref()
+                        .is_some_and(|view| !view.read(cx).is_selectable())
                 {
                     return;
                 }

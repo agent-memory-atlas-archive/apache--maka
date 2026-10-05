@@ -2,7 +2,10 @@ use std::{
     collections::HashMap,
     ops::Range,
     rc::Rc,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc, Weak,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use gpui::{
@@ -641,6 +644,8 @@ fn dispatch_clear_handlers(handlers: Vec<ClearHandler>, cx: &mut App) {
 }
 
 struct SelectableTextState {
+    enabled: bool,
+    admission: Arc<()>,
     fallback_copy_text: String,
     projected_copy_text: Option<String>,
     runs: Vec<TextSelectionRun>,
@@ -657,6 +662,8 @@ impl EventEmitter<TextSelectionEvent> for SelectableTextState {}
 impl SelectableTextState {
     fn new(fallback_copy_text: impl Into<String>) -> Self {
         Self {
+            enabled: true,
+            admission: Arc::new(()),
             fallback_copy_text: fallback_copy_text.into(),
             projected_copy_text: None,
             runs: Vec::new(),
@@ -739,6 +746,7 @@ impl SelectableTextState {
     }
 
     fn set_snapshot(&mut self, snapshot: Option<TextSelectionSnapshot>, cx: &mut Context<Self>) {
+        let snapshot = snapshot.filter(|_| self.enabled);
         if self.snapshot == snapshot {
             return;
         }
@@ -753,21 +761,42 @@ impl SelectableTextState {
         self.local_selection = false;
         cx.emit(TextSelectionEvent::Cleared);
         cx.emit(TextSelectionEvent::SelectionChanged(None));
-        self.clear.clone()
+        let callback = self.clear.clone()?;
+        let owner = cx.entity().downgrade();
+        Some(Rc::new(move |cx| {
+            // A deferred old clear cannot erase a newer participant selection.
+            if owner.upgrade().is_some_and(|owner| {
+                let owner = owner.read(cx);
+                owner.snapshot.is_none() && !owner.local_selection
+            }) {
+                callback(cx);
+            }
+        }))
     }
 
     fn set_auto_scroll(&self, delta: Option<Pixels>, cx: &mut Context<Self>) {
+        let delta = delta.filter(|_| self.enabled);
         cx.emit(TextSelectionEvent::AutoScroll(delta));
     }
 
-    fn focus(&self, window: &mut Window, cx: &mut App) {
-        if let Some(callback) = self.on_focus.clone() {
-            window.defer(cx, move |window, cx| callback(window, cx));
+    fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.enabled
+            && let Some(callback) = self.on_focus.clone()
+        {
+            let owner = cx.entity().downgrade();
+            let admission = Arc::downgrade(&self.admission);
+            window.defer(cx, move |window, cx| {
+                if admission.upgrade().is_some()
+                    && owner.upgrade().is_some_and(|owner| owner.read(cx).enabled)
+                {
+                    callback(window, cx);
+                }
+            });
         }
     }
 
     fn copy_item(&self, document_order: u64) -> Option<CopyItem> {
-        (self.snapshot.is_some() || self.local_selection).then(|| CopyItem {
+        (self.enabled && (self.snapshot.is_some() || self.local_selection)).then(|| CopyItem {
             document_order,
             callback: self.copy.clone(),
             fallback: self
@@ -804,6 +833,47 @@ impl TextSelectionHandle {
         self.0.read(cx).snapshot()
     }
 
+    /// Revoke original participant admission synchronously, before another paint.
+    pub fn set_enabled(&self, enabled: bool, cx: &mut App) {
+        let revoked = self.0.update(cx, |state, cx| {
+            if state.enabled == enabled {
+                return false;
+            }
+            state.enabled = enabled;
+            if !enabled {
+                state.admission = Arc::new(());
+                state.local_selection = false;
+                state.set_snapshot(None, cx);
+                state.set_auto_scroll(None, cx);
+            }
+            !enabled
+        });
+        if revoked {
+            // Use the original native window locators, never another owner.
+            let windows: Vec<_> = cx
+                .try_global::<SelectionStateRegistry>()
+                .map(|registry| {
+                    registry
+                        .0
+                        .values()
+                        .filter_map(WeakEntity::upgrade)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut handlers = Vec::new();
+            for window in windows {
+                handlers
+                    .extend(window.update(cx, |window, cx| window.withdraw(self.entity_id(), cx)));
+            }
+            // The caller may still be borrowing the original TextViewState.
+            cx.defer(move |cx| dispatch_clear_handlers(handlers, cx));
+        }
+    }
+
+    pub(crate) fn admission(&self, cx: &App) -> Weak<()> {
+        Arc::downgrade(&self.0.read(cx).admission)
+    }
+
     /// Sets the fallback text copied while this participant participates.
     pub fn set_fallback_copy_text(&self, text: impl Into<String>, cx: &mut App) {
         self.0
@@ -828,6 +898,9 @@ impl TextSelectionHandle {
         window: &mut Window,
         cx: &mut App,
     ) {
+        if !self.0.read(cx).enabled {
+            return;
+        }
         if let Some(scope) = current_text_selection_scope(window.window_handle().window_id(), cx) {
             registration.scope = scope;
         }
@@ -1287,6 +1360,9 @@ impl WindowSelectionState {
         registration: TextSelectionRegistration,
         cx: &mut App,
     ) {
+        if !selection.0.read(cx).enabled {
+            return;
+        }
         self.prune_dead_participants();
         if self.is_selecting
             && registration.self_scroll
@@ -1374,6 +1450,26 @@ impl WindowSelectionState {
             .filter_map(|registration| registration.participant.upgrade())
             .filter_map(|participant| participant.update(cx, |state, cx| state.clear_state(cx)))
             .collect()
+    }
+
+    fn withdraw(&mut self, participant: EntityId, cx: &mut App) -> Vec<ClearHandler> {
+        if !self.participants.contains_key(&participant) {
+            return Vec::new();
+        }
+        let depends = [&self.anchor, &self.cursor, &self.pending_extension_anchor]
+            .into_iter()
+            .flatten()
+            .any(|endpoint| endpoint.entity_id() == Some(participant));
+        let handlers = if depends {
+            self.clear_state(cx)
+        } else {
+            Vec::new()
+        };
+        self.participants.remove(&participant);
+        if let Some(entity_id) = self.entity_id {
+            cx.notify(entity_id);
+        }
+        handlers
     }
 
     /// Tells whoever draws the handles and the menu that they changed.
@@ -1935,6 +2031,13 @@ impl WindowSelectionState {
         )> = None;
 
         for registration in self.participants.values() {
+            if registration
+                .participant
+                .upgrade()
+                .is_none_or(|participant| !participant.read(cx).enabled)
+            {
+                continue;
+            }
             if registration.registration.scope != self.active_scope
                 || registration.participant.upgrade().is_none()
             {
@@ -2148,7 +2251,14 @@ impl WindowSelectionState {
         self.auto_scroll.last_drag_position = Some(event_position);
         self.auto_scroll_stall = (None, 0);
         let window = window.window_handle();
+        let Some(anchor) = self.anchor_participant() else {
+            return;
+        };
+        let admission = Arc::downgrade(&anchor.read(cx).admission);
         self.auto_scroll.set(delta, cx, move |delta, state, cx| {
+            if admission.upgrade().is_none() || !state.is_selecting {
+                return;
+            }
             let Some(position) = state.auto_scroll.last_drag_position else {
                 return;
             };
@@ -2170,7 +2280,16 @@ impl WindowSelectionState {
                 *stalled = 0;
             }
             let window = window;
+            let admission = admission.clone();
+            let gesture = cx.entity().downgrade();
             cx.defer(move |cx| {
+                if admission.upgrade().is_none()
+                    || gesture
+                        .upgrade()
+                        .is_none_or(|gesture| !gesture.read(cx).is_selecting)
+                {
+                    return;
+                }
                 _ = window.update(cx, |_, window, cx| {
                     window.dispatch_event(
                         ScrollWheelEvent {
@@ -3326,6 +3445,80 @@ mod tests {
             );
         });
         assert!(!selected.get());
+    }
+
+    #[gpui::test]
+    fn disabling_original_participant_withdraws_gesture_geometry_and_queued_focus(
+        cx: &mut TestAppContext,
+    ) {
+        let focused = Rc::new(Cell::new(0));
+        let cleared = Rc::new(Cell::new(0));
+        let initial_clear = Rc::new(Cell::new(0));
+        let (view, cx) = cx.add_window_view(|_, cx| WindowOwnedSelectionView {
+            selection: TextSelectionHandle::new("first", cx),
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|window, cx| {
+            let first = view.read(cx).selection.clone();
+            let seen = focused.clone();
+            first.focus_with(move |_, _| seen.set(seen.get() + 1), cx);
+            let seen = cleared.clone();
+            first.clear_with(move |_| seen.set(seen.get() + 1), cx);
+            let second = FakeParticipant::new("second", cx);
+            let state = WindowSelectionState::ensure(window, cx);
+            state.update(cx, |state, cx| {
+                FakeParticipant {
+                    selection: first.clone(),
+                }
+                .register(state, 0., TextSelectionScopeId::default(), 0, cx);
+                second.register(state, 20., TextSelectionScopeId::default(), 1, cx);
+                state.begin(point(px(1.), px(1.)), false, cx);
+                state.update(point(px(8.), px(1.)), cx);
+            });
+            assert!(state.read(cx).is_selecting);
+            initial_clear.set(cleared.get());
+            first.0.update(cx, |state, cx| state.focus(window, cx));
+            first.set_enabled(false, cx);
+            first.set_enabled(true, cx);
+            state.update(cx, |state, cx| {
+                assert!(!state.is_selecting);
+                assert!(state.anchor.is_none());
+                assert!(state.cursor.is_none());
+                assert!(!state.participants.contains_key(&first.entity_id()));
+                state.update(point(px(8.), px(21.)), cx);
+                assert_eq!(state.selected_text(cx), "");
+            });
+            assert!(second.selection.snapshot(cx).is_none());
+            // Explicit new selection survives the old deferred clear.
+            first.set_local_selection(true, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(focused.get(), 0, "a revoked deferred focus cannot revive");
+        assert_eq!(
+            cleared.get(),
+            initial_clear.get(),
+            "old clear cannot erase a newer local selection"
+        );
+        cx.update(|window, cx| {
+            let first = view.read(cx).selection.clone();
+            let state = WindowSelectionState::existing(window, cx).unwrap();
+            state.update(cx, |state, cx| {
+                FakeParticipant {
+                    selection: first.clone(),
+                }
+                .register(state, 0., TextSelectionScopeId::default(), 0, cx);
+                state.begin(point(px(1.), px(1.)), false, cx);
+                state.update(point(px(8.), px(1.)), cx);
+                assert_eq!(state.selected_text(cx), "first");
+            });
+            first.0.update(cx, |state, cx| state.focus(window, cx));
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            focused.get(),
+            1,
+            "a newly registered original owner can focus"
+        );
     }
 
     #[gpui::test]

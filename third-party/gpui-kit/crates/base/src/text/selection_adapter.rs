@@ -106,7 +106,7 @@ impl TextViewSelectionAdapter {
                     TextSelectionEvent::AutoScroll(delta) => {
                         let delta = *delta;
                         let _ = view_for_events.update(cx, |state, cx| {
-                            if state.scrollable {
+                            if state.selectable && state.scrollable {
                                 state.set_auto_scroll(delta, cx);
                             } else if delta.is_none() {
                                 state.stop_auto_scroll();
@@ -143,6 +143,9 @@ impl TextViewSelectionAdapter {
                     return String::new();
                 };
                 let state = view.read(cx);
+                if !state.selectable {
+                    return String::new();
+                }
                 let last = state.parsed_content.document.blocks.len().saturating_sub(1);
                 let blocks = blocks_for_copy.borrow().block_range(selection_id, last);
                 state.selected_text_in(blocks)
@@ -166,6 +169,9 @@ impl TextViewSelectionAdapter {
                 let Some(view) = view.upgrade() else {
                     return;
                 };
+                if !view.read(cx).selectable {
+                    return;
+                }
                 let focus_handle = view.read(cx).focus_handle.clone();
                 view.update(cx, |state, _| state.is_selecting = true);
                 focus_handle.focus(window, cx);
@@ -200,6 +206,14 @@ impl TextViewSelectionAdapter {
 
     /// Records one inline's painted selection ends. Inlines paint in document
     /// order, so the first start and the last end are the view's.
+    pub(super) fn admission(&self, cx: &App) -> std::sync::Weak<()> {
+        self.selection.admission(cx)
+    }
+
+    pub(super) fn set_enabled(&self, enabled: bool, cx: &mut App) {
+        self.selection.set_enabled(enabled, cx);
+    }
+
     pub(super) fn register_selection_edges(&mut self, start: Bounds<Pixels>, end: Bounds<Pixels>) {
         let first = self.selection_edges.map_or(start, |(first, _)| first);
         self.selection_edges = Some((first, end));

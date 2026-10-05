@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{HighlightStyle, Hsla, Rems, StyleRefinement, rems};
+use gpui::{HighlightStyle, Hsla, Pixels, Rems, SharedString, StyleRefinement, rems};
 
 use crate::ColorTokens;
 
@@ -25,9 +25,11 @@ pub struct TextViewStyle {
     table_head: StyleRefinement,
     table_cell: StyleRefinement,
     inline_code: HighlightStyle,
+    code_font_family: Option<SharedString>,
+    code_font_size: Option<Pixels>,
     /// The table body background, or the theme surface when `None`. Only
-    /// [`Self::on_text_color`] sets it, to let a table on an inverted surface
-    /// show that surface.
+    /// [`Self::on_text_color`] sets it for an inverted surface;
+    /// [`Self::with_table_background`] projects an explicit local surface.
     table_background: Option<Hsla>,
     is_dark: bool,
 }
@@ -47,6 +49,8 @@ impl PartialEq for TextViewStyle {
             && self.table_head == other.table_head
             && self.table_cell == other.table_cell
             && self.inline_code == other.inline_code
+            && self.code_font_family == other.code_font_family
+            && self.code_font_size == other.code_font_size
             && self.table_background == other.table_background
             && self.is_dark == other.is_dark
     }
@@ -90,6 +94,8 @@ impl TextViewStyle {
                 background_color: Some(colors.accent),
                 ..Default::default()
             },
+            code_font_family: None,
+            code_font_size: None,
             table_background: None,
             is_dark,
         }
@@ -196,6 +202,33 @@ impl TextViewStyle {
     pub fn with_table_cell(mut self, style: StyleRefinement) -> Self {
         self.table_cell = style;
         self
+    }
+
+    /// Projects the font family used by inline code, code blocks and table measurement.
+    /// Without an override, the original Base theme fallback remains available.
+    pub fn with_code_font_family(mut self, family: impl Into<SharedString>) -> Self {
+        self.code_font_family = Some(family.into());
+        self
+    }
+
+    /// Projects the base size of fenced code before its explicit block refinement.
+    pub fn with_code_font_size(mut self, size: Pixels) -> Self {
+        self.code_font_size = Some(size);
+        self
+    }
+
+    /// Projects the actual table surface, including explicit transparency.
+    pub fn with_table_background(mut self, background: Hsla) -> Self {
+        self.table_background = Some(background);
+        self
+    }
+
+    pub fn code_font_family(&self) -> Option<&SharedString> {
+        self.code_font_family.as_ref()
+    }
+
+    pub fn code_font_size(&self) -> Option<Pixels> {
+        self.code_font_size
     }
 
     /// Sets whether content-specific assets should use their dark variant.

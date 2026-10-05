@@ -1028,10 +1028,23 @@ impl Element for Inline {
                 let text = self.text.clone();
                 let text_view_state = GlobalState::global(cx).text_view_state().cloned();
                 let line_bounds = self.selection_bounds;
+                let admission = text_view_state
+                    .as_ref()
+                    .map(|view| view.read(cx).selection_adapter.admission(cx));
                 move |event: &MouseDownEvent, phase, window, cx| {
                     if !phase.bubble()
                         || !hitbox.is_hovered(window)
                         || event.button != MouseButton::Left
+                    {
+                        return;
+                    }
+
+                    if admission
+                        .as_ref()
+                        .is_some_and(|admission| admission.upgrade().is_none())
+                        || text_view_state
+                            .as_ref()
+                            .is_some_and(|view| !view.read(cx).selectable)
                     {
                         return;
                     }

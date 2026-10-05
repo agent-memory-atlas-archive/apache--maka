@@ -298,6 +298,10 @@ impl TextViewState {
     /// Set whether the text is selectable, default false.
     pub fn set_selectable(&mut self, selectable: bool, cx: &mut Context<Self>) {
         self.selectable = selectable;
+        self.selection_adapter.set_enabled(selectable, cx);
+        if !selectable {
+            self.reset_selection();
+        }
         cx.notify();
     }
 
@@ -850,6 +854,9 @@ impl TextViewState {
         selected_text: String,
         cx: &mut App,
     ) {
+        if !self.selectable {
+            return;
+        }
         self.preserve_inline_selection = false;
         let scroll_offset = self.scroll_offset();
         let pos = pos - self.bounds.origin - scroll_offset;
@@ -866,6 +873,9 @@ impl TextViewState {
     }
 
     pub(crate) fn set_multi_click_line(&mut self, bounds: Bounds<Pixels>, cx: &mut App) {
+        if !self.selectable {
+            return;
+        }
         self.set_multi_click_selection(
             bounds.center(),
             TextViewMultiClickKind::Line,

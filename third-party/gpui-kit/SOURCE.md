@@ -55,3 +55,15 @@ InputBaseState 可以让普通 Tab/Shift-Tab 交给所在窗口导航，焦点�
 Added native scheduled-frame focus-reveal tests at `crates/base/src/root/focus_reveal.rs`: normal nested scroll, oversized controls, exact caret requests, sibling and same-list request competition, pointer click stability, AccessKit device bounds and failed prepaint recovery. They pause automatic drawing and deliver actual scheduled test-platform frames.
 
 新增 `crates/base/src/root/focus_reveal.rs` 原生 scheduled-frame 测试，覆盖嵌套滚动、超大控件、精确 caret、兄弟及同 List 请求竞争、pointer 点击稳定、AccessKit device bounds 与失败 prepaint 恢复；暂停自动绘制并实际交付 test-platform 已安排的帧。
+
+
+TextViewStyle projects local code font family, fenced-code base size and table background, preserving explicit transparency and using lazy native theme fallbacks only when omitted. Inline code shaping, paragraph cache keys and table width measurement use the same local family. Explicit TextView styles do not inherit an App Global code highlighter; inherited neutral styles retain the original default, while inverted surfaces retain their original suppression.
+
+The original TextSelectionHandle synchronously withdraws a disabled participant from the existing native window selection state, stops its gesture and scrolling, and invalidates weak admission held by painted callbacks and deferred focus/wheel requests. A later enable does not revive old geometry or listeners. The original TextViewState clears inline selection immediately; root pointer/default focus, native SelectAll/Copy actions and both text/object multi-click listeners reject revoked admission. Deferred clearing cannot erase a newer local selection. Fresh paint registers the same owner again; trusted programmatic selection remains available. No second document, selection owner or registry is introduced. Native tests cover withdrawal, queued focus, original old-frame action/clipboard and pointer dispatch, fresh-paint recovery, and actual local code/table glyph measurement. Keyboard dispatch refreshes a dirty frame in Fast and is tested as the positive current-frame path. These prerequisites do not deliver product Markdown integration, decision-aware links, link keyboard/accessibility, or OS acceptance.
+
+TextViewStyle 投影局部代码字体、fenced-code 字号和表格底色，保留显式透明，仅在未提供值时延迟读取原生主题。inline shaping、段落缓存和表格测量使用同一局部字体；显式样式不继承 App Global 高亮器，普通继承和反色表面的既有行为保留。原 TextSelectionHandle 同步从既有窗口选区撤销禁用参与者、停止手势与滚动，并使已绘制回调和延迟焦点/wheel 的弱准入失效；重新启用不会恢复旧几何和监听器。原 TextViewState 同步清除 inline 选择，pointer 默认焦点、SelectAll/Copy 和文字/对象多击均核准入。延迟清除不覆盖更新的局部选择，fresh paint 重新注册同一 owner，可信程序选择保留。不新增文档、选区 owner 或 registry；本片不是产品 Markdown、链接决定/键盘/可访问性或 OS 验收。
+
+
+The imported inline-flow width-change test now notifies its original Answer after changing width, requesting the new root layout rather than depending on incidental dirty state. Its layout-count growth assertion is unchanged. The unmodified local baseline passed this test; the new selection lifecycle exposed its missing notification, so this is a fixture correction, not a claim of a pre-existing failing test.
+
+导入的 inline-flow 宽度测试在修改原 Answer.width 后显式 notify，请求该 root 的新布局，不依赖偶然残留的 dirty 状态；布局计数增长断言保留。未修改的本地基线实际通过此测试，新选区生命周期暴露缺失的通知，因此只记录为测试修正，不声称基线原本失败。

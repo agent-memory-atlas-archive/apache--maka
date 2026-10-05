@@ -667,7 +667,7 @@ impl Element for TextView {
             .then(|| Arc::new(text_view_style.clone()));
         let code_block_highlighter = self.code_block_highlighter.clone().or_else(|| {
             defaults
-                .filter(|_| !on_inverted_surface)
+                .filter(|_| self.text_view_style.is_none() && !on_inverted_surface)
                 .and_then(|d| d.code_block_highlighter.clone())
         });
 
@@ -681,7 +681,9 @@ impl Element for TextView {
             if let Some(motion) = &self.motion {
                 state.set_motion(motion.clone());
             }
-            state.selectable = self.selectable;
+            if state.selectable != self.selectable {
+                state.set_selectable(self.selectable, cx);
+            }
             state.selection_format = self.selection_format;
             state.scrollable = self.scrollable;
             state.max_lines = max_lines;
@@ -696,6 +698,13 @@ impl Element for TextView {
         });
 
         let focus_handle = state.read(cx).focus_handle.clone();
+        let admission = state.read(cx).selection_adapter.admission(cx);
+        let down = admission.clone();
+        let up = admission.clone();
+        let key_down = admission.clone();
+        let key_up = admission.clone();
+        let copy = admission.clone();
+        let select_all = admission;
         let list_state = state.read(cx).list_state.clone();
         // Cap the box at `n` body-text lines (the effective text style may be
         // refined by this view's own style, e.g. `.text_sm()`); hidden
@@ -710,11 +719,39 @@ impl Element for TextView {
             .id(("text-view-scroll", state.entity_id()))
             .key_context("TextView")
             .track_focus(&focus_handle)
+            .capture_any_mouse_down(move |_, window, cx| {
+                if down.upgrade().is_none() {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                }
+            })
+            .capture_any_mouse_up(move |_, window, cx| {
+                if up.upgrade().is_none() {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                }
+            })
+            .capture_key_down(move |_, window, cx| {
+                if key_down.upgrade().is_none() {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                }
+            })
+            .capture_key_up(move |_, window, cx| {
+                if key_up.upgrade().is_none() {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                }
+            })
             .when(self.scrollable, |this| this.size_full())
             .when_some(max_lines_cap, |this, cap| this.max_h(cap).overflow_hidden())
             .relative()
             .text_color(foreground)
             .on_action(move |_: &crate::input::Copy, window, cx| {
+                if copy.upgrade().is_none() {
+                    cx.propagate();
+                    return;
+                }
                 let text = TextSelection::selected_text(window, cx).trim().to_string();
                 if text.is_empty() {
                     cx.propagate();
@@ -722,7 +759,16 @@ impl Element for TextView {
                 }
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
             })
-            .on_action(window.listener_for(&state, TextViewState::on_action_select_all))
+            .on_action(window.listener_for(
+                &state,
+                move |state, action: &crate::input::SelectAll, window, cx| {
+                    if select_all.upgrade().is_none() {
+                        cx.propagate();
+                        return;
+                    }
+                    state.on_action_select_all(action, window, cx);
+                },
+            ))
             .child(state.clone())
             // Overlay controls must paint after the document, otherwise rich
             // content and selection backgrounds cover the thumb and hitbox.
@@ -978,6 +1024,7 @@ mod tests {
         struct Root {
             inherited: Entity<TextViewState>,
             explicit: Entity<TextViewState>,
+            neutral: Entity<TextViewState>,
             surface_text: gpui::Hsla,
         }
         impl Render for Root {
@@ -985,6 +1032,7 @@ mod tests {
                 div()
                     .w(px(300.))
                     .text_color(crate::ColorTokens::light().foreground)
+                    .child(TextView::new(&self.neutral))
                     .child(
                         div()
                             .text_color(self.surface_text)
@@ -1000,11 +1048,13 @@ mod tests {
             super::TextViewDefaults::new()
                 .with_style(TextViewStyle::default())
                 .with_inherit_text_color(true)
+                .with_code_block_highlighter(|_| Vec::new())
                 .install(cx);
         });
         let (root, cx) = cx.add_window_view(|_, cx| Root {
             inherited: cx.new(|cx| TextViewState::markdown("[link](https://a.b) `code`", cx)),
             explicit: cx.new(|cx| TextViewState::markdown("text", cx)),
+            neutral: cx.new(|cx| TextViewState::markdown("neutral", cx)),
             surface_text: colors.primary_foreground,
         });
         cx.run_until_parked();
@@ -1017,6 +1067,9 @@ mod tests {
             assert_eq!(inherited.foreground(), colors.primary_foreground);
             assert_eq!(inherited.link(), colors.primary_foreground);
             assert!(inherited.is_dark());
+            assert!(root.inherited.read(cx).code_block_highlighter.is_none());
+            assert!(root.neutral.read(cx).code_block_highlighter.is_some());
+            assert!(root.explicit.read(cx).code_block_highlighter.is_none());
 
             let explicit = &root.explicit.read(cx).text_view_style;
             assert_eq!(explicit.foreground(), colors.foreground);
@@ -1341,6 +1394,119 @@ mod tests {
                 .trim(),
             "before $x$ after"
         );
+    }
+
+    #[gpui::test]
+    fn old_inline_multiclick_does_not_revive_after_disable_and_reenable_before_paint(
+        cx: &mut TestAppContext,
+    ) {
+        use gpui::InputEvent as _;
+        cx.update(crate::init);
+        for (source, region) in [("alpha beta", 0), ("before $x$ after", 1)] {
+            let (root, cx) = cx.add_window_view(|_, cx| InlinePluginTestRoot {
+                text_view: cx.new(|cx| TextViewState::markdown(source, cx)),
+                width: px(420.),
+                font_size: px(16.),
+                source_format: false,
+                prepared_size: None,
+            });
+            let cx: &mut VisualTestContext = cx;
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            let view = root.read_with(cx, |root, _| root.text_view.clone());
+            let position = view.read_with(cx, |view, _| {
+                view.selection_adapter.text_bounds()[region].center()
+            });
+            let event = || MouseDownEvent {
+                position,
+                modifiers: Modifiers::default(),
+                button: MouseButton::Left,
+                click_count: 2,
+                first_mouse: false,
+            };
+            cx.update(|window, cx| {
+                view.update(cx, |state, cx| {
+                    state.set_selectable(false, cx);
+                    state.set_selectable(true, cx);
+                });
+                // Dispatch against original painted listeners, without a draw between.
+                window.dispatch_event(event().to_platform_input(), cx);
+                assert_eq!(view.read(cx).selected_text(), "");
+                assert!(!view.read(cx).focus_handle().is_focused(window));
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.update(|window, cx| {
+                window.dispatch_event(event().to_platform_input(), cx);
+                assert!(!view.read(cx).selected_text().is_empty());
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn old_selection_actions_do_not_revive_before_fresh_paint(cx: &mut TestAppContext) {
+        use gpui::InputEvent as _;
+        cx.update(crate::init);
+        for keyboard in [false, true] {
+            let (root, cx) = cx.add_window_view(|_, cx| InlinePluginTestRoot {
+                text_view: cx.new(|cx| TextViewState::markdown("alpha beta", cx)),
+                width: px(420.),
+                font_size: px(16.),
+                source_format: false,
+                prepared_size: None,
+            });
+            let cx: &mut VisualTestContext = cx;
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            let view = root.read_with(cx, |root, _| root.text_view.clone());
+            cx.update(|window, cx| {
+                let focus = view.read(cx).focus_handle().clone();
+                focus.focus(window, cx);
+                view.update(cx, |state, cx| {
+                    state.set_selectable(false, cx);
+                    state.set_selectable(true, cx);
+                });
+                focus.dispatch_action(&crate::input::SelectAll, window, cx);
+                assert_eq!(view.read(cx).selected_text(), "");
+                // Trusted owner intent remains valid; it must not make an old physical
+                // Copy handler current again before its next paint.
+                view.update(cx, |state, cx| state.select_all(cx));
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string("sentinel".into()));
+                focus.dispatch_action(&crate::input::Copy, window, cx);
+                assert_eq!(
+                    cx.read_from_clipboard().unwrap().text().as_deref(),
+                    Some("sentinel")
+                );
+                view.update(cx, |state, cx| state.clear_selection(cx));
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.update(|window, cx| {
+                let focus = view.read(cx).focus_handle().clone();
+                if keyboard {
+                    let key = if cfg!(target_os = "macos") {
+                        "cmd-a"
+                    } else {
+                        "ctrl-a"
+                    };
+                    window.dispatch_event(
+                        gpui::KeyDownEvent {
+                            keystroke: gpui::Keystroke::parse(key).unwrap(),
+                            is_held: false,
+                            prefer_character_input: false,
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                } else {
+                    focus.dispatch_action(&crate::input::SelectAll, window, cx);
+                }
+                assert_eq!(view.read(cx).selected_text().trim(), "alpha beta");
+                focus.dispatch_action(&crate::input::Copy, window, cx);
+                assert_eq!(
+                    cx.read_from_clipboard().unwrap().text().as_deref(),
+                    Some("alpha beta")
+                );
+            });
+        }
     }
 
     #[gpui::test]
