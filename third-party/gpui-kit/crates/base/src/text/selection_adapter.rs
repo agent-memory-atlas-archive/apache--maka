@@ -1,10 +1,18 @@
-use std::{cell::RefCell, ops::RangeInclusive, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    ops::RangeInclusive,
+    rc::Rc,
+};
 
 use crate::{
     TextSelectionContentKey, TextSelectionCoverage, TextSelectionEndpoint, TextSelectionEvent,
-    TextSelectionHandle, TextSelectionRegistration, TextSelectionRun, TextSelectionSnapshot,
+    TextSelectionHandle, TextSelectionRegistration, TextSelectionRun, TextSelectionScopeId,
+    TextSelectionSnapshot,
 };
-use gpui::{App, Bounds, EntityId, Hitbox, Pixels, Point, WeakEntity, Window};
+use gpui::{
+    App, Bounds, EntityId, FocusHandle, Hitbox, HitboxId, Pixels, Point, WeakEntity, Window,
+};
 
 use super::TextViewState;
 
@@ -68,10 +76,20 @@ impl VirtualBlockSelection {
     }
 }
 
+struct InlineContribution {
+    origin: Point<Pixels>,
+    // Unclipped original geometry; retained movement never accumulates here.
+    text_bounds: Vec<Bounds<Pixels>>,
+    run: Option<TextSelectionRun>,
+    selection_edges: Option<(Bounds<Pixels>, Bounds<Pixels>)>,
+}
+
 /// TextView's renderer-specific bridge to base-owned window selection.
-#[derive(Clone)]
 pub(super) struct TextViewSelectionAdapter {
     selection: TextSelectionHandle,
+    scope: TextSelectionScopeId,
+    contributions: HashMap<HitboxId, InlineContribution>,
+    // Derived projection of those original reports into the current native frame.
     text_bounds: Vec<Bounds<Pixels>>,
     text_runs: Vec<TextSelectionRun>,
     /// The caret boxes at the first and last selected character painted this
@@ -181,6 +199,8 @@ impl TextViewSelectionAdapter {
 
         Self {
             selection,
+            scope: TextSelectionScopeId::default(),
+            contributions: HashMap::new(),
             text_bounds: Vec::new(),
             text_runs: Vec::new(),
             selection_edges: None,
@@ -198,14 +218,10 @@ impl TextViewSelectionAdapter {
         changed && !is_selecting
     }
 
-    pub(super) fn begin_frame(&mut self) {
-        self.text_bounds.clear();
-        self.text_runs.clear();
-        self.selection_edges = None;
+    pub(super) fn capture_scope(&mut self, scope: TextSelectionScopeId) {
+        self.scope = scope;
     }
 
-    /// Records one inline's painted selection ends. Inlines paint in document
-    /// order, so the first start and the last end are the view's.
     pub(super) fn admission(&self, cx: &App) -> std::sync::Weak<()> {
         self.selection.admission(cx)
     }
@@ -214,42 +230,84 @@ impl TextViewSelectionAdapter {
         self.selection.set_enabled(enabled, cx);
     }
 
-    pub(super) fn register_selection_edges(&mut self, start: Bounds<Pixels>, end: Bounds<Pixels>) {
-        let first = self.selection_edges.map_or(start, |(first, _)| first);
-        self.selection_edges = Some((first, end));
+    pub(super) fn report_inline(
+        &mut self,
+        hitbox: &Hitbox,
+        text_bounds: Vec<Bounds<Pixels>>,
+        run: Option<TextSelectionRun>,
+        selection_edges: Option<(Bounds<Pixels>, Bounds<Pixels>)>,
+    ) {
+        self.contributions.insert(
+            hitbox.id,
+            InlineContribution {
+                origin: hitbox.bounds.origin,
+                text_bounds,
+                run,
+                selection_edges,
+            },
+        );
     }
 
-    pub(super) fn register_text_run(&mut self, run: TextSelectionRun) {
-        self.text_runs.push(run);
+    /// Reconcile original reports with the native frame, including kept rows
+    /// whose paint did not run. Native prepaint order is the source leaf order.
+    pub(super) fn project_frame(&mut self, window: &Window) {
+        self.text_bounds.clear();
+        self.text_runs.clear();
+        self.selection_edges = None;
+        let mut live = HashSet::new();
+        for (order, hitbox) in window.prepainted_hitboxes().iter().enumerate() {
+            let Some(report) = self.contributions.get(&hitbox.id) else {
+                continue;
+            };
+            live.insert(hitbox.id);
+            let delta = hitbox.bounds.origin - report.origin;
+            let mask = hitbox.content_mask.bounds;
+            for bounds in &report.text_bounds {
+                let visible = Bounds::new(bounds.origin + delta, bounds.size).intersect(&mask);
+                if visible.size.width > Pixels::ZERO && visible.size.height > Pixels::ZERO {
+                    self.text_bounds.push(visible);
+                }
+            }
+            if let Some(run) = &report.run {
+                self.text_runs.push(
+                    run.reprojected(delta, mask)
+                        .with_document_order(order as u64),
+                );
+            }
+            if let Some((start, end)) = report.selection_edges {
+                let start = Bounds::new(start.origin + delta, start.size);
+                let end = Bounds::new(end.origin + delta, end.size);
+                let first = self.selection_edges.map_or(start, |(first, _)| first);
+                self.selection_edges = Some((first, end));
+            }
+        }
+        self.contributions.retain(|id, _| live.contains(id));
     }
 
-    pub(super) fn register_inline(&mut self, bounds: Vec<Bounds<Pixels>>) {
-        self.text_bounds.extend(bounds);
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn register(
+    pub(super) fn publication(
         &self,
         hitbox: Hitbox,
         bounds: Bounds<Pixels>,
         scroll_offset: Point<Pixels>,
-        document_order: u64,
+        focus: FocusHandle,
         self_scroll: bool,
-        window: &mut Window,
-        cx: &mut App,
+        window: &Window,
+    ) -> (
+        TextSelectionHandle,
+        TextSelectionRegistration,
+        Vec<TextSelectionRun>,
     ) {
-        self.selection.set_hit_test_runs(&self.text_runs, cx);
         let registration = TextSelectionRegistration::new(hitbox, bounds)
+            .with_scope(self.scope)
             .with_scroll_offset(scroll_offset)
-            .with_document_order(document_order)
+            .with_native_focus(focus, window)
             .with_text_bounds(self.text_bounds.clone())
-            .with_self_scroll(self_scroll)
-            .with_rendered_element(&self.selection, window, cx);
+            .with_self_scroll(self_scroll);
         let registration = match self.selection_edges {
             Some((start, end)) => registration.with_selection_edges(start, end),
             None => registration,
         };
-        self.selection.register(registration, window, cx);
+        (self.selection.clone(), registration, self.text_runs.clone())
     }
 
     /// Lays out the touch handles this view owns; see
@@ -260,19 +318,6 @@ impl TextViewSelectionAdapter {
         cx: &App,
     ) -> crate::TouchHandleLayout {
         self.selection.prepaint_touch_handles(window, cx)
-    }
-
-    /// Paints the touch handles this view owns, after its content for the
-    /// frame; see [`TextSelectionHandle::paint_touch_handles`].
-    pub(super) fn paint_touch_handles(
-        &self,
-        layout: &crate::TouchHandleLayout,
-        color: gpui::Hsla,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        self.selection
-            .paint_touch_handles(layout, color, window, cx);
     }
 
     pub(super) fn selection_points(&self, cx: &App) -> Option<(Point<Pixels>, Point<Pixels>)> {

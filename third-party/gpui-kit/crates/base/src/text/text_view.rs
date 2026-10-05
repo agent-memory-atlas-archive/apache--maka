@@ -4,7 +4,7 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, Element, ElementId, Entity, Global, GlobalElementId,
     Hitbox, HitboxBehavior, InspectorElementId, InteractiveElement, IntoElement, LayoutId,
-    MouseButton, ParentElement, Pixels, SharedString, StyleRefinement, Styled, Window, div,
+    ParentElement, Pixels, SharedString, StyleRefinement, Styled, WeakEntity, Window, div,
 };
 
 use crate::StyledExt;
@@ -14,7 +14,7 @@ use crate::text::node::{CodeBlock, TableData};
 use crate::text::range_highlight::{PendingReveal, RevealProgress};
 use crate::text::state::{SelectionFormat, TextViewState};
 use crate::text::stream_fade::TextViewMotion;
-use crate::{GlobalState, TextSelection, text::TextViewStyle};
+use crate::{TextSelection, text::TextViewStyle};
 
 /// Type for code block actions generator function.
 pub(crate) type CodeBlockActionsFn =
@@ -108,37 +108,6 @@ pub(crate) type LinkActivationFn =
 /// Kept by the element only, so unlike the handlers the state carries, it
 /// may hold a `ScrollHandle`.
 pub(crate) type RevealHandlerFn = dyn Fn(Bounds<Pixels>, &mut Window, &mut App);
-
-pub(crate) fn handle_link_activation(
-    handler: &Option<Arc<LinkActivationFn>>,
-    url: SharedString,
-    event: ClickEvent,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let decision = handler
-        .as_ref()
-        .map(|handler| handler(&url, &event, window, cx))
-        .unwrap_or_default();
-    if decision.prevent_default {
-        window.prevent_default();
-    }
-    if decision.stop_propagation {
-        cx.stop_propagation();
-    }
-    if !window.default_prevented()
-        && match &event {
-            ClickEvent::Mouse(click) => {
-                matches!(click.up.button, MouseButton::Left | MouseButton::Middle)
-            }
-            ClickEvent::Keyboard(_) | ClickEvent::Accessibility(_) => true,
-            ClickEvent::Touch(click) => !click.long_press,
-        }
-    {
-        crate::TextSelection::end(window, cx);
-        cx.open_url(&url);
-    }
-}
 
 /// A text view that can render Markdown or HTML.
 ///
@@ -487,11 +456,10 @@ impl IntoElement for TextView {
 }
 
 pub struct TextViewLayoutState {
-    state: Entity<TextViewState>,
     element: AnyElement,
 }
 
-pub struct TextViewPrepaintState {
+pub(super) struct DocumentPrepaintState {
     hitbox: Hitbox,
     /// The touch handles this view owns, with their hitboxes.
     touch_handles: crate::TouchHandleLayout,
@@ -499,7 +467,7 @@ pub struct TextViewPrepaintState {
 
 impl Element for TextView {
     type RequestLayoutState = TextViewLayoutState;
-    type PrepaintState = TextViewPrepaintState;
+    type PrepaintState = ();
 
     fn id(&self) -> Option<ElementId> {
         Some(self.id.clone())
@@ -576,12 +544,19 @@ impl Element for TextView {
                 .and_then(|d| d.code_block_highlighter.clone())
         });
 
+        let scope = crate::text_selection::current_text_selection_scope(
+            window.window_handle().window_id(),
+            cx,
+        )
+        .unwrap_or_default();
         state.update(cx, |state, cx| {
+            state.selection_adapter.capture_scope(scope);
             state.code_block_actions = self.code_block_actions.clone();
             state.code_block_highlighter = code_block_highlighter;
             state.table_actions = self.table_actions.clone();
             state.link_activation_handler = self.link_activation_handler.clone();
             state.image_source = self.image_source.clone();
+            state.reveal_handler = self.reveal_handler.as_ref().map(Rc::downgrade);
             state.set_markdown_extensions(self.markdown_extensions.clone(), cx);
             if let Some(motion) = &self.motion {
                 state.set_motion(motion.clone());
@@ -601,14 +576,16 @@ impl Element for TextView {
             }
         });
 
+        state.update(cx, |state, cx| state.prepare_interaction(cx));
         let focus_handle = state.read(cx).focus_handle.clone();
-        let admission = state.read(cx).selection_adapter.admission(cx);
-        let down = admission.clone();
-        let up = admission.clone();
-        let key_down = admission.clone();
-        let key_up = admission.clone();
-        let copy = admission.clone();
-        let select_all = admission;
+        let input = state.read(cx).interaction_admission();
+        let down = input.clone();
+        let up = input.clone();
+        let key_down = input.clone();
+        let key_up = input;
+        let selection = state.read(cx).selection_adapter.admission(cx);
+        let copy = selection.clone();
+        let select_all = selection;
         let list_state = state.read(cx).list_state.clone();
         let mut el = div()
             .id(("text-view-scroll", state.entity_id()))
@@ -678,56 +655,119 @@ impl Element for TextView {
             .refine_style(&self.style)
             .into_any_element();
         let layout_id = el.request_layout(window, cx);
-        (layout_id, TextViewLayoutState { state, element: el })
+        (layout_id, TextViewLayoutState { element: el })
     }
 
     fn prepaint(
         &mut self,
-        _: Option<&GlobalElementId>,
+        id: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
-        bounds: Bounds<Pixels>,
+        _: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        let state = request_layout.state.clone();
+        // This callback can hold a container ScrollHandle. Keep its existing
+        // Rc in native frame custody; State only retains the weak locator.
+        window.with_element_state(
+            id.expect("TextView has an element id"),
+            |_: Option<Option<Rc<RevealHandlerFn>>>, _| ((), self.reveal_handler.clone()),
+        );
         request_layout.element.prepaint(window, cx);
-        let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-        // Over the text, so after its hitbox.
-        let touch_handles = if self.selectable {
-            state
-                .read(cx)
-                .selection_adapter
-                .prepaint_touch_handles(window, cx)
-        } else {
-            crate::TouchHandleLayout::default()
-        };
-        TextViewPrepaintState {
-            hitbox,
-            touch_handles,
-        }
     }
 
     fn paint(
         &mut self,
         _: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
-        _bounds: Bounds<Pixels>,
+        _: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
+        _: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        request_layout.element.paint(window, cx);
+    }
+}
+
+/// Collection and publication belong to the document's actual native paint,
+/// including when Fast redraws this State without repainting its parent.
+/// The state and reveal callback remain the existing owners' weak references.
+pub(super) struct DocumentElement {
+    pub(super) state: WeakEntity<TextViewState>,
+    pub(super) content: AnyElement,
+    pub(super) reveal_handler: Option<Rc<RevealHandlerFn>>,
+}
+
+impl IntoElement for DocumentElement {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for DocumentElement {
+    type RequestLayoutState = ();
+    type PrepaintState = DocumentPrepaintState;
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        (self.content.request_layout(window, cx), ())
+    }
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        self.content.prepaint(window, cx);
+        let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+        // Keep the preceding paint's selection edges until touch prepaint.
+        let touch_handles =
+            self.state
+                .upgrade()
+                .map_or_else(crate::TouchHandleLayout::default, |state| {
+                    let state = state.read(cx);
+                    if state.is_selectable() {
+                        state.selection_adapter.prepaint_touch_handles(window, cx)
+                    } else {
+                        crate::TouchHandleLayout::default()
+                    }
+                });
+        DocumentPrepaintState {
+            hitbox,
+            touch_handles,
+        }
+    }
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
-        let state = &request_layout.state;
-        if self.selectable {
-            state.update(cx, |state, _| state.selection_adapter.begin_frame());
-        }
-
-        GlobalState::global_mut(cx)
-            .text_view_state_stack
-            .push(state.clone());
-        request_layout.element.paint(window, cx);
-        GlobalState::global_mut(cx).text_view_state_stack.pop();
+        let Some(state) = self.state.upgrade() else {
+            return;
+        };
+        self.content.paint(window, cx);
+        state.query(cx, |state, _| state.selection_adapter.project_frame(window));
 
         // Every list has scrolled by now, so the line of a reveal is where
         // it ends up this frame.
@@ -748,30 +788,25 @@ impl Element for TextView {
             }
         }
 
-        if self.selectable {
-            let (adapter, scroll_offset, content_bounds, self_scroll, handle_color) = {
+        if state.read(cx).is_selectable() {
+            let ((selection, registration, runs), handle_color) = {
                 let state = state.read(cx);
                 (
-                    state.selection_adapter.clone(),
-                    state.scroll_offset(),
-                    state.bounds(),
-                    state.scrollable,
+                    state.selection_adapter.publication(
+                        prepaint.hitbox.clone(),
+                        state.bounds(),
+                        state.scroll_offset(),
+                        state.focus_handle.clone(),
+                        state.scrollable,
+                        window,
+                    ),
                     state.text_view_style.selection().alpha(1.),
                 )
             };
-            let document_order = GlobalState::global_mut(cx).next_selection_document_order();
-            adapter.register(
-                prepaint.hitbox.clone(),
-                content_bounds,
-                scroll_offset,
-                document_order,
-                self_scroll,
-                window,
-                cx,
-            );
-            // The handles of a touch selection go over the text, and under
-            // whatever is painted over the text after it.
-            adapter.paint_touch_handles(&prepaint.touch_handles, handle_color, window, cx);
+            selection.set_hit_test_runs(&runs, cx);
+            let registration = registration.with_rendered_element(&selection, window, cx);
+            selection.register_exact(registration, window, cx);
+            selection.paint_touch_handles(&prepaint.touch_handles, handle_color, window, cx);
         }
     }
 }
@@ -1234,7 +1269,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn old_inline_multiclick_does_not_revive_after_disable_and_reenable_before_paint(
+    fn old_inline_multiclick_does_not_revive_after_selection_reenable_before_paint(
         cx: &mut TestAppContext,
     ) {
         use gpui::InputEvent as _;
@@ -1269,7 +1304,6 @@ mod tests {
                 // Dispatch against original painted listeners, without a draw between.
                 window.dispatch_event(event().to_platform_input(), cx);
                 assert_eq!(view.read(cx).selected_text(), "");
-                assert!(!view.read(cx).focus_handle().is_focused(window));
             });
             cx.update(|window, cx| window.draw(cx).clear(cx));
             cx.update(|window, cx| {
@@ -1696,6 +1730,399 @@ mod tests {
             inline_bounds[1].left() - inline_bounds[0].right() < px(40.),
             "unloaded inline image fallback should stay generic and compact"
         );
+    }
+
+    struct ReflowSelectionRoot {
+        states: [Entity<TextViewState>; 2],
+        extensions: crate::text::MarkdownExtensions,
+        root_renders: Arc<AtomicUsize>,
+        scope: crate::TextSelectionScopeId,
+        menu: Entity<RetainedSelectionMenu>,
+    }
+
+    struct RetainedSelectionMenu(Arc<AtomicUsize>);
+    impl Render for RetainedSelectionMenu {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let paints = self.0.clone();
+            div()
+                .absolute()
+                .left(px(300.))
+                .top(px(90.))
+                .w(px(100.))
+                .h(px(28.))
+                .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                    crate::TextSelection::select_all(window, cx);
+                    cx.stop_propagation();
+                })
+                .child(
+                    gpui::canvas(
+                        |bounds, window, _| {
+                            window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal)
+                        },
+                        move |_, hitbox, window, cx| {
+                            paints.fetch_add(1, Ordering::SeqCst);
+                            crate::TextSelection::register_touch_ui(&hitbox, window, cx);
+                        },
+                    )
+                    .size_full(),
+                )
+        }
+    }
+
+    impl Render for ReflowSelectionRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.root_renders.fetch_add(1, Ordering::SeqCst);
+            crate::v_flex()
+                .w(px(500.))
+                .h(px(120.))
+                .child(crate::TextSelectionLayer)
+                .child(crate::text_selection::text_selection_scope(
+                    self.scope,
+                    crate::v_flex().children(self.states.iter().map(|state| {
+                        TextView::new(state)
+                            .markdown_extensions(self.extensions.clone())
+                            .motion(
+                                crate::text::TextViewMotion::default()
+                                    .with_stream_fade(std::time::Duration::ZERO),
+                            )
+                    })),
+                ))
+                .child(self.menu.clone())
+        }
+    }
+
+    #[gpui::test]
+    fn state_only_reflow_publishes_window_word_hits_and_cross_document_copy(
+        cx: &mut TestAppContext,
+    ) {
+        cx.with_paused_automatic_drawing(|cx| {
+            cx.update(crate::init);
+            let extent = Arc::new(AtomicUsize::new(16));
+            let prepaints: [Arc<AtomicUsize>; 2] = std::array::from_fn(|_| Arc::default());
+            let renders = Arc::new(AtomicUsize::new(0));
+            let menu_paints = Arc::new(AtomicUsize::new(0));
+            let scope = crate::TextSelectionScopeId::new();
+            let extensions = crate::text::MarkdownExtensions::default().plugin(
+                crate::text::markdown_ext::TestInlinePlugin::new("math")
+                    .parse_with(|node, _| {
+                        let markdown::mdast::Node::InlineMath(math) = node else {
+                            return None;
+                        };
+                        Some(
+                            crate::text::MarkdownNode::new("math", math.value.clone())
+                                .text(math.value.clone()),
+                        )
+                    })
+                    .render_with({
+                        let extent = extent.clone();
+                        let prepaints = prepaints.clone();
+                        move |node, _, _, _| {
+                            let first = node.data::<String>().unwrap() == "x";
+                            let probe = prepaints[usize::from(!first)].clone();
+                            let width = if first {
+                                extent.load(Ordering::SeqCst)
+                            } else {
+                                16
+                            };
+                            Some(crate::text::InlineElement::new(
+                                div().w(px(width as f32)).h(px(16.)).child(
+                                    gpui::canvas(
+                                        move |_, _, _| {
+                                            probe.fetch_add(1, Ordering::SeqCst);
+                                        },
+                                        |_, _, _, _| {},
+                                    )
+                                    .absolute()
+                                    .size_full(),
+                                ),
+                            ))
+                        }
+                    }),
+            );
+            let (root, cx) = cx.add_window_view(|_, cx| ReflowSelectionRoot {
+                states: [
+                    cx.new(|cx| TextViewState::markdown("left $x$ afterword", cx)),
+                    cx.new(|cx| TextViewState::markdown("second $y$ lastword", cx)),
+                ],
+                extensions,
+                root_renders: renders.clone(),
+                scope,
+                menu: cx.new(|_| RetainedSelectionMenu(menu_paints.clone())),
+            });
+            let draw =
+                |cx: &mut VisualTestContext| cx.update(|window, cx| window.draw(cx).clear(cx));
+            let cx: &mut VisualTestContext = cx;
+            cx.run_until_parked();
+            draw(cx);
+            cx.run_until_parked();
+            draw(cx);
+            cx.run_until_parked();
+            draw(cx);
+            cx.update(|window, cx| crate::TextSelection::activate_scope(scope, window, cx));
+            draw(cx);
+            let states = root.read_with(cx, |root, _| root.states.clone());
+            let old = states[0].read_with(cx, |state, _| state.selection_adapter.text_bounds());
+            let before = (
+                renders.load(Ordering::SeqCst),
+                prepaints[0].load(Ordering::SeqCst),
+                prepaints[1].load(Ordering::SeqCst),
+            );
+            extent.store(116, Ordering::SeqCst);
+            // Native asset completion notifies the consuming view directly;
+            // the prepared width changes without replacing source or height.
+            cx.update(|_, cx| cx.notify(states[0].entity_id()));
+            draw(cx);
+            assert_eq!(
+                renders.load(Ordering::SeqCst),
+                before.0,
+                "outer product must actually remain retained"
+            );
+            assert!(
+                prepaints[0].load(Ordering::SeqCst) > before.1,
+                "original State must actually reflow"
+            );
+            assert_eq!(
+                prepaints[1].load(Ordering::SeqCst),
+                before.2,
+                "other document must actually remain retained"
+            );
+            let fresh = states[0].read_with(cx, |state, _| state.selection_adapter.text_bounds());
+            assert_eq!(fresh.len(), old.len());
+            let word = fresh.last().unwrap();
+            assert!(
+                word.left() > old.last().unwrap().right(),
+                "new word position must lie beyond all its old glyphs"
+            );
+            let position = word.center();
+            for phase in [gpui::TouchPhase::Started, gpui::TouchPhase::Ended] {
+                cx.simulate_event(gpui::LongPressEvent {
+                    phase,
+                    start_position: position,
+                    position,
+                });
+                draw(cx);
+            }
+            assert_eq!(
+                cx.update(|window, cx| crate::TextSelection::selected_text(window, cx))
+                    .trim(),
+                "afterword",
+                "window word hit testing must use the fresh registration, not Inline double-click"
+            );
+            cx.dispatch_action(crate::input::Copy);
+            assert_eq!(
+                cx.update(|_, cx| cx.read_from_clipboard().unwrap().text().unwrap()),
+                "afterword"
+            );
+            // A real native menu stays retained while a different participant
+            // independently reports two consecutive frames. It must still
+            // protect the touch selection at capture before its action runs.
+            draw(cx);
+            let menu_before = menu_paints.load(Ordering::SeqCst);
+            let root_before = renders.load(Ordering::SeqCst);
+            for _ in 0..2 {
+                cx.update(|_, cx| cx.notify(states[1].entity_id()));
+                draw(cx);
+            }
+            assert_eq!(renders.load(Ordering::SeqCst), root_before);
+            assert_eq!(
+                menu_paints.load(Ordering::SeqCst),
+                menu_before,
+                "menu must actually stay retained"
+            );
+            let menu_position = point(px(350.), px(104.));
+            cx.simulate_mouse_down(menu_position, MouseButton::Left, Modifiers::default());
+            draw(cx);
+            cx.simulate_mouse_up(menu_position, MouseButton::Left, Modifiers::default());
+            draw(cx);
+            assert_eq!(
+                cx.update(|window, cx| crate::TextSelection::selected_text(window, cx))
+                    .trim(),
+                "left x afterword",
+                "retained menu must keep the original touch owner"
+            );
+            cx.update(|window, cx| crate::TextSelection::clear(window, cx));
+            draw(cx);
+            // The gap report must preserve the explicit scope, and cannot be
+            // selected after switching the window to the default scope.
+            cx.update(|window, cx| {
+                crate::TextSelection::activate_scope(
+                    crate::TextSelectionScopeId::default(),
+                    window,
+                    cx,
+                )
+            });
+            for phase in [gpui::TouchPhase::Started, gpui::TouchPhase::Ended] {
+                cx.simulate_event(gpui::LongPressEvent {
+                    phase,
+                    start_position: position,
+                    position,
+                });
+                draw(cx);
+            }
+            assert!(
+                cx.update(|window, cx| crate::TextSelection::selected_text(window, cx))
+                    .is_empty()
+            );
+            cx.update(|window, cx| crate::TextSelection::activate_scope(scope, window, cx));
+            draw(cx);
+            let first = states[0].read_with(cx, |state, _| state.selection_adapter.text_bounds());
+            let second = states[1].read_with(cx, |state, _| state.selection_adapter.text_bounds());
+            let start = point(
+                first.first().unwrap().left() + px(0.1),
+                first.first().unwrap().center().y,
+            );
+            let end = point(
+                second.last().unwrap().right() - px(0.1),
+                second.last().unwrap().center().y,
+            );
+            cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+            draw(cx);
+            cx.simulate_mouse_move(end, MouseButton::Left, Modifiers::default());
+            draw(cx);
+            cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+            draw(cx);
+            cx.dispatch_action(crate::input::Copy);
+            assert_eq!(
+                cx.update(|_, cx| cx.read_from_clipboard().unwrap().text().unwrap()),
+                "left x afterword\n\nsecond y lastword"
+            );
+            draw(cx);
+            let before = (renders.load(Ordering::SeqCst), prepaints[1].load(Ordering::SeqCst));
+            extent.store(126, Ordering::SeqCst);
+            cx.update(|_, cx| cx.notify(states[0].entity_id()));
+            draw(cx);
+            assert_eq!(renders.load(Ordering::SeqCst), before.0, "active cross-document selection must retain its parent");
+            assert_eq!(prepaints[1].load(Ordering::SeqCst), before.1, "the second selected document must stay retained");
+            cx.dispatch_action(crate::input::Copy);
+            assert_eq!(cx.update(|_, cx| cx.read_from_clipboard().unwrap().text().unwrap()),
+                "left x afterword\n\nsecond y lastword", "partial publication must preserve native document order and both original selection owners");
+        });
+    }
+
+    #[gpui::test]
+    fn internal_list_retained_row_keeps_window_selection_and_copy(cx: &mut TestAppContext) {
+        struct ListSelectionRoot {
+            state: Entity<TextViewState>,
+            extensions: crate::text::MarkdownExtensions,
+        }
+        impl Render for ListSelectionRoot {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .w(px(240.))
+                    .h(px(100.))
+                    .bg(gpui::white())
+                    .child(crate::TextSelectionLayer)
+                    .child(
+                        TextView::new(&self.state)
+                            .scrollable(true)
+                            .markdown_extensions(self.extensions.clone())
+                            .motion(
+                                crate::text::TextViewMotion::default()
+                                    .with_stream_fade(std::time::Duration::ZERO),
+                            ),
+                    )
+            }
+        }
+        cx.with_paused_automatic_drawing(|cx| {
+            cx.update(crate::init);
+            let prepaints = Arc::new(AtomicUsize::new(0));
+            let probe = prepaints.clone();
+            let extensions = crate::text::MarkdownExtensions::default().plugin(
+                crate::text::markdown_ext::TestInlinePlugin::new("math")
+                    .parse_with(|node, _| {
+                        matches!(node, markdown::mdast::Node::InlineMath(_))
+                            .then(|| crate::text::MarkdownNode::new("math", ()).text("x"))
+                    })
+                    .render_with(move |_, _, _, _| {
+                        let probe = probe.clone();
+                        Some(crate::text::InlineElement::new(
+                            div().w(px(16.)).h(px(16.)).child(
+                                gpui::canvas(
+                                    move |_, _, _| {
+                                        probe.fetch_add(1, Ordering::SeqCst);
+                                    },
+                                    |_, _, _, _| {},
+                                )
+                                .absolute()
+                                .size_full(),
+                            ),
+                        ))
+                    }),
+            );
+            let source = format!("$x$ {}", "lineword ".repeat(120));
+            let (root, cx) = cx.add_window_view(|_, cx| ListSelectionRoot {
+                state: cx.new(|cx| TextViewState::markdown(&source, cx)),
+                extensions,
+            });
+            let cx: &mut VisualTestContext = cx;
+            let draw =
+                |cx: &mut VisualTestContext| cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.run_until_parked();
+            draw(cx);
+            cx.run_until_parked();
+            draw(cx);
+            let state = root.read_with(cx, |root, _| root.state.clone());
+            let wheel = |cx: &mut VisualTestContext| {
+                let frame = cx.update(|window, _| window.layout_stats().frames);
+                cx.simulate_event(gpui::ScrollWheelEvent {
+                    position: point(px(235.), px(50.)),
+                    delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-5.))),
+                    modifiers: Modifiers::default(),
+                    touch_phase: gpui::TouchPhase::Moved,
+                });
+                if cx.update(|window, _| window.layout_stats().frames) == frame {
+                    draw(cx);
+                }
+            };
+            wheel(cx);
+            wheel(cx);
+            let old_bounds = state.read_with(cx, |state, _| state.selection_adapter.text_bounds());
+            let old_row = old_bounds
+                .iter()
+                .find(|row| row.top() >= px(20.) && row.bottom() <= px(80.))
+                .copied();
+            let before = prepaints.load(Ordering::SeqCst);
+            wheel(cx);
+            assert_eq!(
+                prepaints.load(Ordering::SeqCst),
+                before,
+                "must actually keep the original internal List row: {:?}",
+                cx.update(|window, _| window.layout_stats())
+            );
+            let bounds = state.read_with(cx, |state, _| state.selection_adapter.text_bounds());
+            assert!(
+                !bounds.is_empty(),
+                "retained row must still report selectable text"
+            );
+            let old_row =
+                old_row.expect("the prior scroll frame must report a visible original row");
+            assert!(
+                bounds.contains(&Bounds::new(
+                    old_row.origin - point(px(0.), px(5.)),
+                    old_row.size
+                )),
+                "retained glyphs must follow exactly the native scroll translation"
+            );
+            let position = point(px(55.), px(30.));
+            for phase in [gpui::TouchPhase::Started, gpui::TouchPhase::Ended] {
+                cx.simulate_event(gpui::LongPressEvent {
+                    phase,
+                    start_position: position,
+                    position,
+                });
+                draw(cx);
+            }
+            assert_eq!(
+                cx.update(|window, cx| crate::TextSelection::selected_text(window, cx))
+                    .trim(),
+                "lineword"
+            );
+            cx.dispatch_action(crate::input::Copy);
+            assert_eq!(
+                cx.update(|_, cx| cx.read_from_clipboard().unwrap().text().unwrap()),
+                "lineword"
+            );
+        });
     }
 
     #[gpui::test]
@@ -3056,6 +3483,21 @@ mod tests {
                     .w(px(300.))
                     .child(crate::TextSelectionLayer)
                     .child(TextView::new(&self.text_view).selectable(true))
+                    .child(
+                        gpui::canvas(
+                            |bounds, window, _| {
+                                window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal)
+                            },
+                            |_, hitbox, window, cx| {
+                                TextSelection::register_touch_ui(&hitbox, window, cx)
+                            },
+                        )
+                        .absolute()
+                        .left_0()
+                        .top(px(200.))
+                        .w(px(120.))
+                        .h(px(32.)),
+                    )
             }
         }
         cx.update(crate::init);
@@ -3142,8 +3584,6 @@ mod tests {
 
         // A press on the menu leaves the selection alone; one on the text
         // clears it.
-        let menu = gpui::Bounds::new(point(px(0.), px(200.)), gpui::size(px(120.), px(32.)));
-        cx.update(|window, cx| TextSelection::register_touch_ui(menu, window, cx));
         cx.simulate_event(MouseDownEvent {
             position: point(px(10.), px(210.)),
             modifiers: Modifiers::default(),

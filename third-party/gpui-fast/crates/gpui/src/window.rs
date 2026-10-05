@@ -4177,10 +4177,12 @@ impl Window {
     pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
         self.invalidator.debug_assert_prepaint();
         let index = self.prepaint_index();
+        let a11y_checkpoint = self.a11y.prepaint_checkpoint();
         let reveal_seen = self.focus_reveal_seen;
         let autoscroll = self.requested_autoscroll;
         let result = f(self);
         if result.is_err() {
+            self.a11y.restore_prepaint(a11y_checkpoint);
             // These describe discarded geometry. Actual native offset plans
             // are not rolled back, so keep focus_reveal_scrolled to redraw.
             self.focus_reveal_seen = reveal_seen;
@@ -6841,6 +6843,40 @@ impl Window {
         self.rendered_frame
             .dispatch_tree
             .possible_next_bindings_for_input(input, &self.context_stack())
+    }
+
+    /// Original hitboxes prepared for the frame currently being painted,
+    /// including records replayed from retained subtrees. Call during paint,
+    /// after prepaint has completed; the slice is owned by the native frame.
+    pub fn prepainted_hitboxes(&self) -> &[Hitbox] {
+        &self.next_frame.hitboxes
+    }
+
+    /// Original hitboxes in the completed native frame, including retained
+    /// translation and current masks. Call outside drawing, such as in a
+    /// deferred frame finalizer or an input listener.
+    pub fn rendered_hitboxes(&self) -> &[Hitbox] {
+        &self.rendered_frame.hitboxes
+    }
+
+    /// Geometry membership of an original hitbox in the completed frame,
+    /// including retained translation, fragments and its current content mask.
+    pub fn hitbox_contains(&self, id: HitboxId, position: &Point<Pixels>) -> bool {
+        self.rendered_frame
+            .hitboxes
+            .iter()
+            .find(|hitbox| hitbox.id == id)
+            .is_some_and(|hitbox| hitbox.contains(position))
+    }
+
+    /// The handle's position in the completed native dispatch tree's insertion
+    /// order. Unlike a paint counter, this includes retained subtrees.
+    /// The value belongs to the current rendered frame, not the handle identity.
+    pub fn focus_document_order(&self, focus: &FocusHandle) -> Option<u64> {
+        self.rendered_frame
+            .dispatch_tree
+            .focusable_node_id(focus.id)
+            .map(|node| node.0 as u64)
     }
 
     fn context_stack_for_focus_handle(

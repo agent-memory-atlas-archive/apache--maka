@@ -17,8 +17,8 @@ use crate::{
     ScrollableMask, Scrollbar, StyledExt, h_flex,
     scrollable_mask::horizontal_scroll_area,
     text::{
-        CodeBlockActionsFn, CodeBlockHighlighterFn, LinkActivationFn, MarkdownExtensions,
-        MarkdownNode, TableActionsFn,
+        CodeBlockActionsFn, CodeBlockHighlighterFn, MarkdownExtensions, MarkdownNode,
+        TableActionsFn,
         document::NodeRenderOptions,
         inline::{
             Inline, InlineHighlight, InlineState, combine_highlights, fade_highlights, text_runs,
@@ -27,7 +27,6 @@ use crate::{
         inline_flow::{InlineFlow, InlineFlowItem, slice_ranges},
         range_highlight::{RangeHighlightFrame, RevealAt, RevealRequest},
         stream_fade::{StreamFadeFrame, TextLeafKey},
-        text_view::handle_link_activation,
     },
     theme::ActiveTheme as _,
 };
@@ -2027,8 +2026,8 @@ impl CodeBlock {
                             .collect(),
                         node_cx.stream_fades(leaf_key),
                     ),
-                    node_cx.link_activation_handler.clone(),
                 )
+                .text_view(node_cx.text_view.clone())
                 .range_backgrounds(node_cx.range_backgrounds(leaf_key).to_vec())
                 .reveal(node_cx.reveal_at(leaf_key, 0, self.code().len())),
             );
@@ -2106,7 +2105,8 @@ pub(crate) struct NodeContext {
     pub(crate) code_block_highlighter: Option<Arc<CodeBlockHighlighterFn>>,
     pub(crate) table_actions: Option<Arc<TableActionsFn>>,
     pub(crate) image_source: Option<Arc<super::text_view::ImageSourceFn>>,
-    pub(crate) link_activation_handler: Option<Arc<LinkActivationFn>>,
+    pub(crate) text_view: Option<gpui::WeakEntity<super::TextViewState>>,
+    pub(crate) row_focus: Arc<Vec<gpui::FocusHandle>>,
     pub(crate) markdown_extensions: Arc<MarkdownExtensions>,
     /// This frame's streamed fade-in, when any text is still fading.
     pub(crate) stream_fade: Option<Arc<StreamFadeFrame>>,
@@ -2249,8 +2249,8 @@ impl Paragraph {
             return InlineFlow::new(
                 leaf_element_id(fade_key),
                 self.inline_flow_items(fade_key, fades, backgrounds, node_cx, cx),
-                node_cx.link_activation_handler.clone(),
             )
+            .text_view(node_cx.text_view.clone())
             .into_any_element();
         }
 
@@ -2271,15 +2271,12 @@ impl Paragraph {
             if let Ok(mut state) = self.state.lock() {
                 state.set_text(text);
             }
-            return Inline::new(
-                self.state.clone(),
-                links,
-                highlights,
-                node_cx.link_activation_handler.clone(),
-            )
-            .range_backgrounds(backgrounds)
-            .reveal(reveal)
-            .into_any_element();
+            return Inline::new(self.state.clone(), links, highlights)
+                .text_view(node_cx.text_view.clone())
+                .element_id(leaf_element_id(fade_key))
+                .range_backgrounds(backgrounds)
+                .reveal(reveal)
+                .into_any_element();
         }
 
         let mut child_nodes: Vec<AnyElement> = vec![];
@@ -2309,8 +2306,8 @@ impl Paragraph {
                                 highlights.clone(),
                                 &slice_fades(fades, consumed, consumed + text.len()),
                             ),
-                            node_cx.link_activation_handler.clone(),
                         )
+                        .text_view(node_cx.text_view.clone())
                         .range_backgrounds(slice_backgrounds(
                             backgrounds,
                             consumed,
@@ -2320,7 +2317,6 @@ impl Paragraph {
                         .into_any_element(),
                     );
                 }
-                let link_activation_handler = node_cx.link_activation_handler.clone();
                 child_nodes.push(
                     img(node_cx.image_source(image))
                         .id(ix)
@@ -2328,31 +2324,6 @@ impl Paragraph {
                         .max_w(relative(1.))
                         .when_some(image.width, |this, width| this.w(width))
                         .when_some(image.height, |this, height| this.h(height))
-                        .when_some(image.link.clone(), |this, mut link| {
-                            link.resolve(&node_cx.link_refs);
-                            let link_activation_handler = link_activation_handler.clone();
-                            let aux_link = link.clone();
-                            let aux_link_activation_handler = link_activation_handler.clone();
-                            this.cursor_pointer()
-                                .on_click(move |event, window, cx| {
-                                    handle_link_activation(
-                                        &link_activation_handler,
-                                        link.url.clone(),
-                                        event.clone(),
-                                        window,
-                                        cx,
-                                    );
-                                })
-                                .on_aux_click(move |event, window, cx| {
-                                    handle_link_activation(
-                                        &aux_link_activation_handler,
-                                        aux_link.url.clone(),
-                                        event.clone(),
-                                        window,
-                                        cx,
-                                    );
-                                })
-                        })
                         .into_any_element(),
                 );
 
@@ -2395,15 +2366,11 @@ impl Paragraph {
                 state.set_text(text.into());
             }
             child_nodes.push(
-                Inline::new(
-                    self.state.clone(),
-                    links,
-                    highlights,
-                    node_cx.link_activation_handler.clone(),
-                )
-                .range_backgrounds(slice_backgrounds(backgrounds, consumed, text_end))
-                .reveal(node_cx.reveal_at(fade_key, consumed, text_end))
-                .into_any_element(),
+                Inline::new(self.state.clone(), links, highlights)
+                    .text_view(node_cx.text_view.clone())
+                    .range_backgrounds(slice_backgrounds(backgrounds, consumed, text_end))
+                    .reveal(node_cx.reveal_at(fade_key, consumed, text_end))
+                    .into_any_element(),
             );
         }
 
@@ -2426,7 +2393,14 @@ impl Paragraph {
         let has_image = self.children.iter().any(|child| child.image.is_some());
         let has_text = self.children.iter().any(|child| !child.text.is_empty());
         self.children.iter().any(|child| child.custom.is_some())
-            || (has_image && has_text)
+            || (has_image
+                && (has_text
+                    || self.children.iter().any(|child| {
+                        child
+                            .image
+                            .as_ref()
+                            .is_some_and(|image| image.link.is_some())
+                    })))
             || self
                 .children
                 .iter()
@@ -2533,7 +2507,6 @@ impl Paragraph {
                         link.resolve(&node_cx.link_refs);
                         link
                     }),
-                    title: image.title(),
                     width: image.width,
                     height: image.height,
                 });

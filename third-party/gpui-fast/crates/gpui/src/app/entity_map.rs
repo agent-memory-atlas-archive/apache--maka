@@ -481,6 +481,15 @@ impl<T: 'static> Entity<T> {
         cx.update_entity(self, update)
     }
 
+    /// Queries this owner, optionally updating derived caches. Reads remain
+    /// reactive dependencies; an unnotified cache write is not a model change.
+    /// If the query changes observable model state it must notify, just as an
+    /// update does. Notifications retain their normal invalidation semantics.
+    #[inline]
+    pub fn query<R>(&self, cx: &mut App, query: impl FnOnce(&mut T, &mut Context<T>) -> R) -> R {
+        crate::fast::dependencies::query(self, cx, query)
+    }
+
     /// Updates the entity referenced by this handle with the given function.
     #[inline]
     pub fn as_mut<'a, C: AppContext>(&self, cx: &'a mut C) -> GpuiBorrow<'a, T> {

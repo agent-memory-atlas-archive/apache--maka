@@ -10,11 +10,9 @@ use gpui::{
     AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, DefiniteLength, Element, ElementId,
     GlobalElementId, Hsla, ImageSource, InspectorElementId, InteractiveElement as _, IntoElement,
     LayoutId, LineFragment as WrapLineFragment, ObjectFit, Pixels, Refineable as _, ShapedLine,
-    SharedString, Size, StatefulInteractiveElement as _, Styled, StyledImage as _, TextRun,
-    TextStyle, WhiteSpace, Window, img, point, prelude::FluentBuilder as _, px, relative, size,
+    SharedString, Size, Styled, StyledImage as _, TextRun, TextStyle, WhiteSpace, Window, img,
+    point, prelude::FluentBuilder as _, px, relative, size,
 };
-
-use crate::text::text_view::{LinkActivationFn, handle_link_activation};
 
 use super::{
     inline::{Inline, InlineHighlight, InlineState, text_runs, text_size_ranges},
@@ -29,7 +27,7 @@ pub(super) const INLINE_CODE_PADDING: f32 = 2.;
 pub(super) struct InlineFlow {
     id: ElementId,
     items: Vec<InlineFlowItem>,
-    link_activation_handler: Option<Arc<LinkActivationFn>>,
+    text_view: Option<gpui::WeakEntity<super::TextViewState>>,
 }
 
 pub(super) type InlineRenderer = dyn Fn(&super::InlineRenderContext, &mut Window, &mut App) -> Option<super::InlineElement>
@@ -60,7 +58,6 @@ pub(super) enum InlineFlowItem {
     Image {
         source: ImageSource,
         link: Option<LinkMark>,
-        title: String,
         width: Option<DefiniteLength>,
         height: Option<DefiniteLength>,
     },
@@ -242,55 +239,29 @@ enum LineFragmentKind {
 }
 
 impl InlineFlow {
-    pub(super) fn new(
-        id: impl Into<ElementId>,
-        items: Vec<InlineFlowItem>,
-        link_activation_handler: Option<Arc<LinkActivationFn>>,
-    ) -> Self {
+    pub(super) fn new(id: impl Into<ElementId>, items: Vec<InlineFlowItem>) -> Self {
         Self {
             id: id.into(),
             items,
-            link_activation_handler,
+            text_view: None,
         }
     }
 
-    fn image_element(
-        ix: usize,
-        source: &ImageSource,
-        link: &Option<LinkMark>,
-        _title: &str,
-        size: Size<Pixels>,
-        link_activation_handler: Option<Arc<LinkActivationFn>>,
-    ) -> AnyElement {
+    pub(super) fn text_view(
+        mut self,
+        view: Option<gpui::WeakEntity<super::TextViewState>>,
+    ) -> Self {
+        self.text_view = view;
+        self
+    }
+
+    fn image_element(ix: usize, source: &ImageSource, size: Size<Pixels>) -> AnyElement {
         img(source.clone())
             .id(ix)
             .object_fit(ObjectFit::Contain)
             .max_w(relative(1.))
             .w(size.width)
             .h(size.height)
-            .when_some(link.clone(), |this, link| {
-                let aux_link = link.clone();
-                let aux_link_activation_handler = link_activation_handler.clone();
-                this.cursor_pointer()
-                    .on_click(move |event, window, cx| {
-                        handle_link_activation(
-                            &link_activation_handler,
-                            link.url.clone(),
-                            event.clone(),
-                            window,
-                            cx,
-                        );
-                    })
-                    .on_aux_click(move |event, window, cx| {
-                        handle_link_activation(
-                            &aux_link_activation_handler,
-                            aux_link.url.clone(),
-                            event.clone(),
-                            window,
-                            cx,
-                        );
-                    })
-            })
             .into_any_element()
     }
 }
@@ -303,9 +274,15 @@ impl IntoElement for InlineFlow {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct InlineFlowPrepaintState {
+    elements: Vec<(AnyElement, Option<(Bounds<Pixels>, gpui::Hsla)>)>,
+    links: Vec<AnyElement>,
+}
+
 impl Element for InlineFlow {
     type RequestLayoutState = InlineFlowLayoutState;
-    type PrepaintState = Vec<(AnyElement, Option<(Bounds<Pixels>, gpui::Hsla)>)>;
+    type PrepaintState = InlineFlowPrepaintState;
 
     fn id(&self) -> Option<ElementId> {
         Some(self.id.clone())
@@ -425,8 +402,9 @@ impl Element for InlineFlow {
     ) -> Self::PrepaintState {
         let frame_state = request_layout.frame_state.clone();
         let Some(layout) = request_layout.current.borrow().clone() else {
-            return Vec::new();
+            return InlineFlowPrepaintState::default();
         };
+        let fragments = super::link::Fragments::default();
         let typography = request_layout.typography.clone();
         let text_style = &typography.text_style;
         let mut elements = Vec::with_capacity(layout.fragments.len());
@@ -495,7 +473,7 @@ impl Element for InlineFlow {
                             size(bounds.size.width, selection_bounds.size.height),
                         ),
                     )
-                    .link(link.clone(), self.link_activation_handler.clone())
+                    .text_view(self.text_view.clone())
                     .into_any_element();
                     element.prepaint_as_root(
                         bounds.origin + *origin,
@@ -506,6 +484,11 @@ impl Element for InlineFlow {
                         window,
                         cx,
                     );
+                    if let Some(id) = link.as_ref().and_then(|link| link.occurrence) {
+                        fragments
+                            .borrow_mut()
+                            .push((id, Bounds::new(bounds.origin + *origin, object_size)));
+                    }
                     elements.push((element, None));
                 }
                 PositionedFragment::Text {
@@ -555,32 +538,29 @@ impl Element for InlineFlow {
                     fragment_style.font_size = font_size.into();
                     fragment_style.line_height = fragment_size.height.into();
                     fragment_style.white_space = WhiteSpace::Nowrap;
-                    let mut element = Inline::new(
-                        state,
-                        links.clone(),
-                        highlights.clone(),
-                        self.link_activation_handler.clone(),
-                    )
-                    .selection_source(source_state.clone(), source_range.clone())
-                    .range_backgrounds(slice_ranges(
-                        backgrounds,
-                        source_range.start,
-                        source_range.end,
-                        |range, color| (range, *color),
-                    ))
-                    .reveal(
-                        reveal
-                            .as_ref()
-                            .filter(|_| reveal_fragment == Some(fragment_ix))
-                            .map(|reveal| reveal.clamp(source_range.start, source_range.end)),
-                    )
-                    .text_style(fragment_style.clone())
-                    .selection_bounds(Bounds::new(
-                        point(bounds.left(), bounds.top() + selection_bounds.top()),
-                        size(bounds.size.width, selection_bounds.size.height),
-                    ))
-                    .paint_origin(bounds.origin + origin + point(padding, Pixels::ZERO))
-                    .into_any_element();
+                    let mut element = Inline::new(state, links.clone(), highlights.clone())
+                        .text_view(self.text_view.clone())
+                        .link_fragments(fragments.clone())
+                        .selection_source(source_state.clone(), source_range.clone())
+                        .range_backgrounds(slice_ranges(
+                            backgrounds,
+                            source_range.start,
+                            source_range.end,
+                            |range, color| (range, *color),
+                        ))
+                        .reveal(
+                            reveal
+                                .as_ref()
+                                .filter(|_| reveal_fragment == Some(fragment_ix))
+                                .map(|reveal| reveal.clamp(source_range.start, source_range.end)),
+                        )
+                        .text_style(fragment_style.clone())
+                        .selection_bounds(Bounds::new(
+                            point(bounds.left(), bounds.top() + selection_bounds.top()),
+                            size(bounds.size.width, selection_bounds.size.height),
+                        ))
+                        .paint_origin(bounds.origin + origin + point(padding, Pixels::ZERO))
+                        .into_any_element();
                     // The `Inline` is its own layout root, with no box around
                     // it: its text measures with the window's text style, so
                     // the fragment's style is pushed for the layout.
@@ -609,24 +589,11 @@ impl Element for InlineFlow {
                     origin,
                     size: fragment_size,
                 } => {
-                    let InlineFlowItem::Image {
-                        source,
-                        link,
-                        title,
-                        ..
-                    } = &self.items[*item_ix]
-                    else {
+                    let InlineFlowItem::Image { source, link, .. } = &self.items[*item_ix] else {
                         continue;
                     };
                     let (origin, fragment_size) = (*origin, *fragment_size);
-                    let mut element = Self::image_element(
-                        elements.len(),
-                        source,
-                        link,
-                        title.as_str(),
-                        fragment_size,
-                        self.link_activation_handler.clone(),
-                    );
+                    let mut element = Self::image_element(elements.len(), source, fragment_size);
                     element.prepaint_as_root(
                         bounds.origin + origin,
                         size(
@@ -636,6 +603,11 @@ impl Element for InlineFlow {
                         window,
                         cx,
                     );
+                    if let Some(id) = link.as_ref().and_then(|link| link.occurrence) {
+                        fragments
+                            .borrow_mut()
+                            .push((id, Bounds::new(bounds.origin + origin, fragment_size)));
+                    }
                     elements.push((element, None));
                 }
             }
@@ -646,7 +618,9 @@ impl Element for InlineFlow {
             .fragment_states
             .truncate(text_fragment_count);
 
-        elements
+        let fragments = std::mem::take(&mut *fragments.borrow_mut());
+        let links = super::link::targets(fragments, &self.text_view, window, cx);
+        InlineFlowPrepaintState { elements, links }
     }
 
     fn paint(
@@ -659,8 +633,10 @@ impl Element for InlineFlow {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let preserve_selection = crate::GlobalState::global(cx)
-            .text_view_state()
+        let preserve_selection = self
+            .text_view
+            .as_ref()
+            .and_then(gpui::WeakEntity::upgrade)
             .is_some_and(|view| view.read(cx).preserve_inline_selection);
         for item in &self.items {
             if !preserve_selection
@@ -671,11 +647,14 @@ impl Element for InlineFlow {
             }
         }
         let radius = crate::Theme::global(cx).tokens.radius.sm;
-        for (element, background) in prepaint {
+        for (element, background) in &mut prepaint.elements {
             if let Some((bounds, color)) = background {
                 window.paint_quad(gpui::fill(*bounds, *color).corner_radii(radius));
             }
             element.paint(window, cx);
+        }
+        for link in &mut prepaint.links {
+            link.paint(window, cx);
         }
     }
 }

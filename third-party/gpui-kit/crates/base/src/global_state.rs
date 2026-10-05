@@ -1,12 +1,29 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 use std::rc::{Rc, Weak};
 #[cfg(not(target_family = "wasm"))]
 use std::time::Instant;
 #[cfg(target_family = "wasm")]
 use web_time::Instant;
 
-use gpui::{App, Entity, Global, OwnedMenu};
-
-use crate::text::TextViewState;
+use gpui::{App, Global, OwnedMenu};
 
 /// Holds the deferred interaction context open for as long as it is alive.
 ///
@@ -20,8 +37,6 @@ pub struct GlobalState {
     app_menus: Vec<OwnedMenu>,
     deferred_popovers: Vec<Weak<()>>,
     suppress_text_selection: bool,
-    pub(crate) text_view_state_stack: Vec<Entity<TextViewState>>,
-    selection_document_order: u64,
     /// When a finger last went down. A tap reaches controls as a mouse press;
     /// this is how they tell it from one.
     last_touch: Option<Instant>,
@@ -35,8 +50,6 @@ impl GlobalState {
             app_menus: Vec::new(),
             deferred_popovers: Vec::new(),
             suppress_text_selection: false,
-            text_view_state_stack: Vec::new(),
-            selection_document_order: 1,
             last_touch: None,
         }
     }
@@ -91,21 +104,6 @@ impl GlobalState {
 
     pub fn global_mut(cx: &mut App) -> &mut Self {
         cx.global_mut::<Self>()
-    }
-
-    pub(crate) fn text_view_state(&self) -> Option<&Entity<TextViewState>> {
-        self.text_view_state_stack.last()
-    }
-
-    #[doc(hidden)]
-    pub fn begin_selection_frame(&mut self) {
-        self.selection_document_order = 1;
-    }
-
-    pub(crate) fn next_selection_document_order(&mut self) -> u64 {
-        let order = self.selection_document_order;
-        self.selection_document_order = self.selection_document_order.wrapping_add(1);
-        order
     }
 
     /// Returns the application menus.

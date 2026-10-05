@@ -6,6 +6,7 @@ mod inline_flow;
 mod inline_object;
 #[cfg(test)]
 mod inline_virtual_tests;
+mod link;
 mod markdown_ext;
 mod node;
 mod range_highlight;

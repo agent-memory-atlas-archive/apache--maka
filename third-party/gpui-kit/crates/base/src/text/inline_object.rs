@@ -148,6 +148,7 @@ impl MeasuredInlineObject {
 
 /// Atomic selection wrapper that leaves child styling and interaction to GPUI.
 pub(super) struct InlineObject {
+    text_view: Option<gpui::WeakEntity<super::TextViewState>>,
     id: ElementId,
     text: SharedString,
     accessibility_label: SharedString,
@@ -157,21 +158,9 @@ pub(super) struct InlineObject {
     line_bounds: Bounds<Pixels>,
     content: AnyElement,
     content_measured: bool,
-    link: Option<super::node::LinkMark>,
-    link_activation_handler: Option<Arc<super::text_view::LinkActivationFn>>,
 }
 
 impl InlineObject {
-    pub fn link(
-        mut self,
-        link: Option<super::node::LinkMark>,
-        handler: Option<Arc<super::text_view::LinkActivationFn>>,
-    ) -> Self {
-        self.link = link;
-        self.link_activation_handler = handler;
-        self
-    }
-
     pub fn new(
         id: impl Into<ElementId>,
         text: SharedString,
@@ -183,6 +172,7 @@ impl InlineObject {
     ) -> Self {
         let (content, content_measured) = object.element();
         Self {
+            text_view: None,
             id: id.into(),
             text,
             accessibility_label,
@@ -192,8 +182,6 @@ impl InlineObject {
             line_bounds,
             content,
             content_measured,
-            link: None,
-            link_activation_handler: None,
         }
     }
 }
@@ -201,6 +189,16 @@ impl InlineObject {
 impl IntoElement for InlineObject {
     type Element = Self;
     fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl InlineObject {
+    pub(super) fn text_view(
+        mut self,
+        view: Option<gpui::WeakEntity<super::TextViewState>>,
+    ) -> Self {
+        self.text_view = view;
         self
     }
 }
@@ -282,7 +280,7 @@ impl Element for InlineObject {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let view = GlobalState::global(cx).text_view_state().cloned();
+        let view = self.text_view.as_ref().and_then(gpui::WeakEntity::upgrade);
         let selectable = view
             .as_ref()
             .is_some_and(|view| view.read(cx).is_selectable());
@@ -316,49 +314,13 @@ impl Element for InlineObject {
             let color = view.as_ref().unwrap().read(cx).text_view_style.selection();
             window.paint_quad(gpui::fill(bounds, color));
         }
-        if let Some(link) = self.link.clone() {
-            window.set_cursor_style(CursorStyle::PointingHand, hitbox);
-            let link_hitbox = hitbox.clone();
-            let link_view = view.clone();
-            let handler = self.link_activation_handler.clone();
-            window.on_mouse_event(move |event: &gpui::MouseUpEvent, phase, window, cx| {
-                if !phase.bubble()
-                    || !link_hitbox.is_hovered(window)
-                    || link_view
-                        .as_ref()
-                        .is_some_and(|view| view.read(cx).has_selection(cx))
-                {
-                    return;
-                }
-                let click = gpui::ClickEvent::Mouse(gpui::MouseClickEvent {
-                    down: MouseDownEvent {
-                        button: event.button,
-                        position: event.position,
-                        modifiers: event.modifiers,
-                        click_count: event.click_count,
-                        first_mouse: false,
-                    },
-                    up: event.clone(),
-                });
-                super::text_view::handle_link_activation(
-                    &handler,
-                    link.url.clone(),
-                    click,
-                    window,
-                    cx,
-                );
-            });
-        }
         if selectable {
-            if self.link.is_none() {
-                window.set_cursor_style(CursorStyle::IBeam, hitbox);
-            }
-            let visible = bounds.intersect(&window.content_mask().bounds);
-            if visible.size.width > Pixels::ZERO && visible.size.height > Pixels::ZERO {
-                view.as_ref().unwrap().update(cx, |state, _| {
-                    state.selection_adapter.register_inline(vec![visible]);
-                });
-            }
+            window.set_cursor_style(CursorStyle::IBeam, hitbox);
+            view.as_ref().unwrap().query(cx, |state, _| {
+                state
+                    .selection_adapter
+                    .report_inline(hitbox, vec![bounds], None, None);
+            });
             let hitbox = hitbox.clone();
             let selected_state = self.selected.clone();
             let text = self.text.to_string();
@@ -367,6 +329,7 @@ impl Element for InlineObject {
             let admission = view
                 .as_ref()
                 .map(|view| view.read(cx).selection_adapter.admission(cx));
+            let owner = self.text_view.clone();
             window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                 if !phase.bubble()
                     || !hitbox.is_hovered(window)
@@ -375,12 +338,13 @@ impl Element for InlineObject {
                 {
                     return;
                 }
+                let Some(view) = owner.as_ref().and_then(gpui::WeakEntity::upgrade) else {
+                    return;
+                };
                 if admission
                     .as_ref()
                     .is_some_and(|admission| admission.upgrade().is_none())
-                    || view
-                        .as_ref()
-                        .is_some_and(|view| !view.read(cx).is_selectable())
+                    || !view.read(cx).is_selectable()
                 {
                     return;
                 }
@@ -388,20 +352,18 @@ impl Element for InlineObject {
                 if let Ok(mut value) = selected_state.lock() {
                     *value = true;
                 }
-                if let Some(view) = &view {
-                    view.update(cx, |state, cx| {
-                        if event.click_count == 3 {
-                            state.set_multi_click_line(line_bounds, cx);
-                        } else {
-                            state.set_multi_click_selection(
-                                event.position,
-                                TextViewMultiClickKind::Word,
-                                text.clone(),
-                                cx,
-                            );
-                        }
-                    });
-                }
+                view.update(cx, |state, cx| {
+                    if event.click_count == 3 {
+                        state.set_multi_click_line(line_bounds, cx);
+                    } else {
+                        state.set_multi_click_selection(
+                            event.position,
+                            TextViewMultiClickKind::Word,
+                            text.clone(),
+                            cx,
+                        );
+                    }
+                });
                 cx.notify(current_view);
             });
         }

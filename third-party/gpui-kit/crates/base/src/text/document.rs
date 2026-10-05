@@ -1,5 +1,6 @@
 use gpui::{
-    App, IntoElement, ListState, ParentElement as _, SharedString, Styled as _, Window, div,
+    App, InteractiveElement as _, IntoElement, ListState, ParentElement as _, SharedString,
+    Styled as _, Window, div,
 };
 
 use std::{
@@ -216,9 +217,8 @@ impl ParsedDocument {
         };
 
         let blocks = &self.blocks;
-        if list_state.item_count() != blocks.len() {
-            list_state.reset(blocks.len());
-        }
+        debug_assert_eq!(list_state.item_count(), blocks.len());
+        debug_assert_eq!(node_cx.row_focus.len(), blocks.len());
 
         div().size_full().child(
             gpui::list(list_state, {
@@ -226,8 +226,11 @@ impl ParsedDocument {
                 let blocks = blocks.clone();
                 move |ix, window, cx| {
                     let is_last = ix + 1 == blocks.len();
-                    blocks[ix]
-                        .render_block(
+                    div()
+                        .id(("text-view-row", ix))
+                        .track_focus(&node_cx.row_focus[ix])
+                        .tab_stop(false)
+                        .child(blocks[ix].render_block(
                             NodeRenderOptions {
                                 ix,
                                 is_last,
@@ -236,7 +239,7 @@ impl ParsedDocument {
                             &node_cx,
                             window,
                             cx,
-                        )
+                        ))
                         .into_any_element()
                 }
             })

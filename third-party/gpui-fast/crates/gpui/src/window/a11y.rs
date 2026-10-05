@@ -119,6 +119,13 @@ pub(crate) const ROOT_NODE_ID: NodeId = NodeId(0);
 pub(crate) type A11yActionListener =
     Box<dyn FnMut(Option<&accesskit::ActionData>, &mut Window, &mut App) + 'static>;
 
+/// Temporary facts of the original prepaint transaction, never a published tree.
+pub(crate) struct PrepaintCheckpoint {
+    nodes: A11yNodeBuilder,
+    focus_ids: FxHashMap<NodeId, FocusId>,
+    node_bounds: FxHashMap<NodeId, Bounds<Pixels>>,
+}
+
 /// Per-window accessibility state.
 ///
 /// Manages the AccessKit tree that is built each frame and the mappings
@@ -164,6 +171,21 @@ pub(crate) struct A11y {
 }
 
 impl A11y {
+    pub(crate) fn prepaint_checkpoint(&self) -> Option<PrepaintCheckpoint> {
+        self.is_active().then(|| PrepaintCheckpoint {
+            nodes: self.nodes.clone(),
+            focus_ids: self.focus_ids.clone(),
+            node_bounds: self.node_bounds.clone(),
+        })
+    }
+    pub(crate) fn restore_prepaint(&mut self, checkpoint: Option<PrepaintCheckpoint>) {
+        if let Some(checkpoint) = checkpoint {
+            self.nodes = checkpoint.nodes;
+            self.focus_ids = checkpoint.focus_ids;
+            self.node_bounds = checkpoint.node_bounds;
+        }
+    }
+
     pub(crate) fn new(
         active_flag: Arc<AtomicBool>,
         force_disabled: bool,
@@ -364,6 +386,7 @@ impl<'a> A11ySubtreeBuilder<'a> {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct A11yNodeBuilder {
     ids_stack: SmallVec<[NodeId; 16]>,
     nodes_stack: SmallVec<[accesskit::Node; 16]>,

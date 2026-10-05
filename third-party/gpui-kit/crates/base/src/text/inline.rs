@@ -9,21 +9,15 @@ use std::{
 };
 
 use gpui::{
-    App, BorderStyle, Bounds, ClickEvent, CursorStyle, Edges, Element, ElementId, GlobalElementId,
-    Half, HighlightStyle, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
-    MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    SharedString, StyledText, TextAlign, TextLayout, TextRun, TextStyle, Window, point, px, quad,
-    size,
+    App, BorderStyle, Bounds, CursorStyle, Edges, Element, ElementId, GlobalElementId, Half,
+    HighlightStyle, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
+    MouseButton, MouseDownEvent, Pixels, Point, SharedString, StyledText, TextAlign, TextLayout,
+    TextRun, TextStyle, Window, point, px, quad, size,
 };
 
 use crate::{
-    GlobalState,
-    input::Selection,
-    text::TextViewMultiClickKind,
-    text::node::LinkMark,
-    text::range_highlight::RevealAt,
-    text::selection::word_range_at,
-    text::text_view::{LinkActivationFn, handle_link_activation},
+    GlobalState, input::Selection, text::TextViewMultiClickKind, text::node::LinkMark,
+    text::range_highlight::RevealAt, text::selection::word_range_at,
     text_selection::text_rows_extent,
 };
 
@@ -209,7 +203,9 @@ pub(super) struct Inline {
     range_backgrounds: Vec<(Range<usize>, Hsla)>,
     /// The start of a pending reveal, when it is in this text.
     reveal: Option<RevealAt>,
-    link_activation_handler: Option<Arc<LinkActivationFn>>,
+    text_view: Option<gpui::WeakEntity<super::TextViewState>>,
+    link_fragments: Option<super::link::Fragments>,
+    element_id: Option<ElementId>,
     /// What this frame's layout was shaped with, to hand the shaped text to
     /// the next frame (see [`RetainedLayout`]).
     retained_key: Option<(Vec<TextRun>, TextStyle)>,
@@ -352,7 +348,6 @@ impl Inline {
         state: Arc<Mutex<InlineState>>,
         links: Vec<(Range<usize>, LinkMark)>,
         highlights: Vec<(Range<usize>, InlineHighlight)>,
-        link_activation_handler: Option<Arc<LinkActivationFn>>,
     ) -> Self {
         let text = state
             .lock()
@@ -370,7 +365,9 @@ impl Inline {
             selection_source: None,
             range_backgrounds: Vec::new(),
             reveal: None,
-            link_activation_handler,
+            text_view: None,
+            link_fragments: None,
+            element_id: None,
             retained_key: None,
             handed_over: false,
             state,
@@ -465,33 +462,52 @@ impl Inline {
         );
     }
 
-    /// Get link at given mouse position.
-    fn link_for_position(
-        layout: &TextLayout,
-        links: &Vec<(Range<usize>, LinkMark)>,
-        position: Point<Pixels>,
-    ) -> Option<LinkMark> {
-        let offset = layout.index_for_position(position).ok()?;
-        for (range, link) in links.iter() {
-            if range.contains(&offset) {
-                return Some(link.clone());
-            }
-        }
-
-        None
+    pub(super) fn text_view(
+        mut self,
+        view: Option<gpui::WeakEntity<super::TextViewState>>,
+    ) -> Self {
+        self.text_view = view;
+        self
+    }
+    pub(super) fn link_fragments(mut self, fragments: super::link::Fragments) -> Self {
+        self.link_fragments = Some(fragments);
+        self
+    }
+    pub(super) fn element_id(mut self, id: ElementId) -> Self {
+        self.element_id = Some(id);
+        self
     }
 
-    /// Get the range of the link at given mouse position.
-    fn link_range_for_position(
-        layout: &TextLayout,
-        links: &[(Range<usize>, LinkMark)],
-        position: Point<Pixels>,
-    ) -> Option<Range<usize>> {
-        let offset = layout.index_for_position(position).ok()?;
-        links
+    fn link_regions(&self, window: &Window) -> Vec<(super::node::LinkOccurrence, Bounds<Pixels>)> {
+        let layout = self.styled_text.layout();
+        let bounds = layout.bounds();
+        let line_height = layout.line_height();
+        let glyphs = glyph_boxes(layout, window.text_style().text_align, bounds.size.width);
+        self.links
             .iter()
-            .find(|(range, _)| range.contains(&offset))
-            .map(|(range, _)| range.clone())
+            .flat_map(|(range, mark)| {
+                let occurrence = mark.occurrence;
+                range_boxes(&glyphs, range.clone()).into_iter().filter_map(
+                    move |(row, left, right)| {
+                        occurrence.map(|id| {
+                            (
+                                id,
+                                Bounds::from_corners(
+                                    point(
+                                        bounds.left() + left,
+                                        bounds.top() + line_height * row as f32,
+                                    ),
+                                    point(
+                                        bounds.left() + right,
+                                        bounds.top() + line_height * (row + 1) as f32,
+                                    ),
+                                ),
+                            )
+                        })
+                    },
+                )
+            })
+            .collect()
     }
 
     /// Paint selected bounds for debug.
@@ -514,7 +530,8 @@ impl Inline {
         window: &mut Window,
         cx: &mut App,
     ) -> (bool, bool, Option<Selection>) {
-        let Some(text_view_state) = GlobalState::global(cx).text_view_state() else {
+        let Some(text_view_state) = self.text_view.as_ref().and_then(gpui::WeakEntity::upgrade)
+        else {
             return (false, false, None);
         };
 
@@ -667,8 +684,8 @@ impl Inline {
         (true, true, selection)
     }
 
-    /// One box per laid-out row, from the row's start to its last character,
-    /// clipped to `mask_bounds`.
+    /// One unclipped box per laid-out row, from its start to its last
+    /// character. The selection adapter applies the current native mask.
     ///
     /// Walks the wrapped line layouts rather than every character:
     /// [`TextLayout::position_for_index`] scans a line's rows and glyphs on
@@ -680,11 +697,7 @@ impl Inline {
     /// a line height past its last glyph: the character walk gave that width
     /// to a character whose successor sits on the next row, and the selection
     /// geometry was tuned against it.
-    fn text_line_bounds(
-        text_layout: &TextLayout,
-        line_height: Pixels,
-        mask_bounds: Bounds<Pixels>,
-    ) -> Vec<Bounds<Pixels>> {
+    fn text_line_bounds(text_layout: &TextLayout, line_height: Pixels) -> Vec<Bounds<Pixels>> {
         let origin = text_layout.bounds().origin;
         let lines = text_layout.line_layouts();
         let row_count: usize = lines
@@ -708,8 +721,7 @@ impl Inline {
                 if row_ix < row_count {
                     width += line_height.half();
                 }
-                let bounds = Bounds::new(point(origin.x, y), size(width, line_height))
-                    .intersect(&mask_bounds);
+                let bounds = Bounds::new(point(origin.x, y), size(width, line_height));
                 if bounds.size.width > px(0.) && bounds.size.height > px(0.) {
                     line_bounds.push(bounds);
                 }
@@ -848,12 +860,17 @@ impl IntoElement for Inline {
     }
 }
 
+pub(super) struct InlinePrepaintState {
+    hitbox: Hitbox,
+    links: Vec<gpui::AnyElement>,
+}
+
 impl Element for Inline {
     type RequestLayoutState = ();
-    type PrepaintState = Hitbox;
+    type PrepaintState = InlinePrepaintState;
 
     fn id(&self) -> Option<ElementId> {
-        None
+        self.element_id.clone()
     }
 
     fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
@@ -907,8 +924,15 @@ impl Element for Inline {
         self.request_reveal(window);
 
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+        let fragments = self.link_regions(window);
+        let links = if let Some(sink) = &self.link_fragments {
+            sink.borrow_mut().extend(fragments);
+            Vec::new()
+        } else {
+            super::link::targets(fragments, &self.text_view, window, cx)
+        };
         self.retain_styled_text();
-        hitbox
+        InlinePrepaintState { hitbox, links }
     }
 
     fn paint(
@@ -923,7 +947,7 @@ impl Element for Inline {
     ) {
         let bounds = Bounds::new(self.paint_origin.unwrap_or(bounds.origin), bounds.size);
         let current_view = window.current_view();
-        let hitbox = prepaint;
+        let hitbox = &prepaint.hitbox;
         if !self.reclaim_styled_text() {
             // Cannot happen (only this element takes what it handed over,
             // and a live state is never swept); skip the frame rather than
@@ -962,44 +986,36 @@ impl Element for Inline {
             window.set_cursor_style(CursorStyle::IBeam, &hitbox);
         }
 
-        // link cursor pointer
-        let hovered_link =
-            Self::link_range_for_position(&text_layout, &self.links, window.mouse_position());
-        if hovered_link.is_some() {
-            window.set_cursor_style(CursorStyle::PointingHand, &hitbox);
-        }
-
         if let Some(selection) = &state.selection {
-            let color = GlobalState::global(cx)
-                .text_view_state()
+            let color = self
+                .text_view
+                .as_ref()
+                .and_then(gpui::WeakEntity::upgrade)
                 .map(|state| state.read(cx).text_view_style.selection())
                 .unwrap_or_else(|| crate::Theme::global(cx).tokens.colors.selection);
             Self::paint_selection(selection, &text_layout, &bounds, window, color);
-            if let Some((start, end)) = Self::selection_edges(selection, &text_layout)
-                && let Some(text_view_state) = GlobalState::global(cx).text_view_state().cloned()
-            {
-                text_view_state.update(cx, |state, _| {
-                    state.selection_adapter.register_selection_edges(start, end);
-                });
-            }
         }
 
         if is_selectable {
-            if let Some(text_view_state) = GlobalState::global(cx).text_view_state().cloned() {
-                let text_bounds = Self::text_line_bounds(
-                    &text_layout,
-                    text_layout.line_height(),
-                    window.content_mask().bounds,
-                );
-                text_view_state.update(cx, |state, _| {
-                    state.selection_adapter.register_inline(text_bounds);
-                    state
-                        .selection_adapter
-                        .register_text_run(crate::TextSelectionRun::new(
+            if let Some(text_view_state) =
+                self.text_view.as_ref().and_then(gpui::WeakEntity::upgrade)
+            {
+                let text_bounds = Self::text_line_bounds(&text_layout, text_layout.line_height());
+                let edges = state
+                    .selection
+                    .as_ref()
+                    .and_then(|selection| Self::selection_edges(selection, &text_layout));
+                text_view_state.query(cx, |state, _| {
+                    state.selection_adapter.report_inline(
+                        hitbox,
+                        text_bounds,
+                        Some(crate::TextSelectionRun::new(
                             self.text.clone(),
                             text_layout.clone(),
                             hitbox.bounds,
-                        ));
+                        )),
+                        edges,
+                    );
                 });
             }
 
@@ -1008,10 +1024,11 @@ impl Element for Inline {
                 let text_layout = text_layout.clone();
                 let inline_state = self.state.clone();
                 let text = self.text.clone();
-                let text_view_state = GlobalState::global(cx).text_view_state().cloned();
+                let owner = self.text_view.clone();
                 let line_bounds = self.selection_bounds;
-                let admission = text_view_state
+                let admission = owner
                     .as_ref()
+                    .and_then(gpui::WeakEntity::upgrade)
                     .map(|view| view.read(cx).selection_adapter.admission(cx));
                 move |event: &MouseDownEvent, phase, window, cx| {
                     if !phase.bubble()
@@ -1021,12 +1038,14 @@ impl Element for Inline {
                         return;
                     }
 
+                    let Some(text_view_state) = owner.as_ref().and_then(gpui::WeakEntity::upgrade)
+                    else {
+                        return;
+                    };
                     if admission
                         .as_ref()
                         .is_some_and(|admission| admission.upgrade().is_none())
-                        || text_view_state
-                            .as_ref()
-                            .is_some_and(|view| !view.read(cx).selectable)
+                        || !text_view_state.read(cx).is_selectable()
                     {
                         return;
                     }
@@ -1035,11 +1054,8 @@ impl Element for Inline {
                         && let Some(line_bounds) = line_bounds
                     {
                         GlobalState::suppress_text_selection(cx);
-                        if let Some(view) = &text_view_state {
-                            view.update(cx, |state, cx| {
-                                state.set_multi_click_line(line_bounds, cx)
-                            });
-                        }
+                        text_view_state
+                            .update(cx, |state, cx| state.set_multi_click_line(line_bounds, cx));
                         cx.notify(current_view);
                         return;
                     }
@@ -1078,92 +1094,19 @@ impl Element for Inline {
                     if let Ok(mut inline_state) = inline_state.lock() {
                         inline_state.selection = Some(range.into());
                     }
-                    if let Some(text_view_state) = &text_view_state {
-                        text_view_state.update(cx, |state, cx| {
-                            state.set_multi_click_selection(
-                                event.position,
-                                kind,
-                                selected_text,
-                                cx,
-                            );
-                        });
-                    }
+                    text_view_state.update(cx, |state, cx| {
+                        state.set_multi_click_selection(event.position, kind, selected_text, cx);
+                    });
                     cx.notify(current_view);
-                }
-            });
-        }
-
-        // Mouse move: repaint only when the pointer enters, leaves or moves
-        // between links, so the link cursor follows it. Hovering plain text
-        // changes nothing painted.
-        if !self.links.is_empty() {
-            window.on_mouse_event({
-                let hitbox = hitbox.clone();
-                let text_layout = text_layout.clone();
-                let links = self.links.clone();
-                let mut hovered_link = hovered_link;
-                move |event: &MouseMoveEvent, phase, window, cx| {
-                    if !phase.bubble() || !hitbox.is_hovered(window) {
-                        return;
-                    }
-
-                    let updated =
-                        Self::link_range_for_position(&text_layout, &links, event.position);
-                    if hovered_link != updated {
-                        hovered_link = updated;
-                        cx.notify(current_view);
-                    }
-                }
-            });
-        }
-
-        if !is_selection {
-            // click to open link
-            window.on_mouse_event({
-                let links = self.links.clone();
-                let text_layout = text_layout.clone();
-                let hitbox = hitbox.clone();
-                let text_view_state = GlobalState::global(cx).text_view_state().cloned();
-                let link_activation_handler = self.link_activation_handler.clone();
-
-                move |event: &MouseUpEvent, phase, window, cx| {
-                    if !phase.bubble() || !hitbox.is_hovered(window) {
-                        return;
-                    }
-                    if text_view_state
-                        .as_ref()
-                        .is_some_and(|state| state.read(cx).has_selection(cx))
-                    {
-                        return;
-                    }
-
-                    if let Some(link) =
-                        Self::link_for_position(&text_layout, &links, event.position)
-                    {
-                        let click = ClickEvent::Mouse(MouseClickEvent {
-                            down: MouseDownEvent {
-                                button: event.button,
-                                position: event.position,
-                                modifiers: event.modifiers,
-                                click_count: event.click_count,
-                                first_mouse: false,
-                            },
-                            up: event.clone(),
-                        });
-                        handle_link_activation(
-                            &link_activation_handler,
-                            link.url,
-                            click,
-                            window,
-                            cx,
-                        );
-                    }
                 }
             });
         }
 
         drop(state);
         self.retain_styled_text();
+        for link in &mut prepaint.links {
+            link.paint(window, cx);
+        }
     }
 }
 
@@ -1493,7 +1436,14 @@ mod line_bounds_tests {
                     let line_height = layout.line_height();
                     for mask in [mask, clipped] {
                         let expected = by_character(text, &layout, line_height, mask);
-                        let actual = Inline::text_line_bounds(&layout, line_height, mask);
+                        let actual: Vec<_> = Inline::text_line_bounds(&layout, line_height)
+                            .into_iter()
+                            .map(|bounds| bounds.intersect(&mask))
+                            .filter(|bounds| {
+                                bounds.size.width > Pixels::ZERO
+                                    && bounds.size.height > Pixels::ZERO
+                            })
+                            .collect();
                         let context = format!("{text:?} at {wrap_width}px in {mask:?}");
                         // The character walk placed a wrapped row's first
                         // character at the end of the row before it: that row's

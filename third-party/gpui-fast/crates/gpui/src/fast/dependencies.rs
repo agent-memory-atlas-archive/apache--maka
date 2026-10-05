@@ -690,9 +690,13 @@ pub(crate) fn query<T: 'static, R>(
     query: impl FnOnce(&mut T, &mut Context<T>) -> R,
 ) -> R {
     let outer = cx.entities.access_log.queried.replace(entity.entity_id());
-    let result = entity.update(cx, query);
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| entity.update(cx, query)));
     cx.entities.access_log.queried = outer;
-    result
+    match result {
+        Ok(value) => value,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
 }
 
 /// Where a recording started by [`App::begin_recording_dependencies`] begins.

@@ -75,3 +75,29 @@ fn a_subtree_built_again_reading_the_same_takes_the_list_it_had() {
         );
     }
 }
+
+#[test]
+fn query_unwind_restores_outer_classification_and_normal_writes() {
+    use crate::{AppContext as _, TestAppContext};
+    let mut cx = TestAppContext::single();
+    cx.update(|cx| {
+        let model = cx.new(|_| 0u32);
+        let other = cx.new(|_| 0u32);
+        model.update(cx, |_, cx| {
+            // A same-owner query fails before taking its double lease; the
+            // still-valid outer lease returns normally after catching it.
+            let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                model.query(cx, |_, _| {});
+            }));
+            assert!(panic.is_err());
+            other.query(cx, |_, _| {});
+        });
+        let recording = cx.begin_recording_dependencies();
+        let _ = model.read(cx);
+        let dependencies = cx.finish_recording_dependencies(recording).all;
+        // A real unnotified source update must be visible to a notified
+        // ancestor even after the query unwound and nested a second owner.
+        model.update(cx, |value, _| *value += 1);
+        assert!(cx.dependencies_changed(&dependencies, true));
+    });
+}

@@ -88,6 +88,7 @@ pub struct TextViewState {
     entity_id: EntityId,
     pub(super) focus_handle: FocusHandle,
     pub(super) list_state: ListState,
+    row_focus: Arc<Vec<FocusHandle>>,
 
     /// The bounds of the text view
     bounds: Bounds<Pixels>,
@@ -99,6 +100,8 @@ pub struct TextViewState {
     pub(super) code_block_actions: Option<std::sync::Arc<CodeBlockActionsFn>>,
     pub(super) code_block_highlighter: Option<std::sync::Arc<CodeBlockHighlighterFn>>,
     pub(super) table_actions: Option<std::sync::Arc<TableActionsFn>>,
+    // Derived weak reference to the element-owned callback (which may hold a ScrollHandle).
+    pub(super) reveal_handler: Option<std::rc::Weak<super::text_view::RevealHandlerFn>>,
     pub(super) image_source: Option<std::sync::Arc<super::text_view::ImageSourceFn>>,
     pub(super) link_activation_handler: Option<std::sync::Arc<LinkActivationFn>>,
     pub(super) markdown_extensions: Arc<MarkdownExtensions>,
@@ -135,7 +138,10 @@ pub struct TextViewState {
     pub(super) selection_revision: usize,
     compatible_layout_update: bool,
     layout_text_style: Option<(gpui::TextStyle, Pixels)>,
-    parsed_error: Option<SharedString>,
+    pub(super) parsed_error: Option<SharedString>,
+    pub(super) links: super::link::Links,
+    pub(super) interaction_enabled: bool,
+    interaction_admission: Option<Arc<()>>,
     tx: Sender<UpdateOptions>,
     _parse_task: Task<()>,
     _receive_task: Task<()>,
@@ -162,15 +168,17 @@ impl TextViewState {
         let _receive_task = cx.spawn({
             async move |weak_self, cx| {
                 while let Ok(parsed_update) = rx_result.recv().await {
+                    // The synchronous owner already committed this document.
+                    // An acknowledgement changes no State facts; do not leave
+                    // a mutable native lease that contaminates a later asset notify.
+                    if parsed_update.baseline_ack {
+                        debug_assert!(parsed_update.full_parse);
+                        continue;
+                    }
                     _ = weak_self.update(cx, |state, cx| {
                         if parsed_update.revision != state.revision {
                             return;
                         }
-                        if parsed_update.baseline_ack {
-                            debug_assert!(parsed_update.full_parse);
-                            return;
-                        }
-
                         // The worker's preceding parse may never have reached
                         // this owner. Compatibility belongs to the actually
                         // committed document, before advancing its revision.
@@ -182,6 +190,13 @@ impl TextViewState {
                             });
                         match parsed_update.result {
                             Ok(content) => {
+                                state.links.reconcile(&content, cx);
+                                state.reconcile_row_focus(
+                                    &content.document,
+                                    parsed_update.appended
+                                        && state.full_update_revision <= state.committed_revision,
+                                    cx,
+                                );
                                 let append = selection_compatible && !parsed_update.full_parse;
                                 if parsed_update.appended
                                     && state.full_update_revision <= state.committed_revision
@@ -208,6 +223,7 @@ impl TextViewState {
                             Err(err) => {
                                 state.stream_fade.discard_pending();
                                 state.parsed_error = Some(err);
+                                state.withdraw_interaction(cx);
                             }
                         }
                         // Only a compatible source append preserves the current
@@ -239,12 +255,14 @@ impl TextViewState {
             // as zero height until scrolled into view, which makes the
             // scrollbar jitter as more blocks get measured during scrolling.
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(1000.)).measure_all(),
+            row_focus: Arc::default(),
             text_view_style: Arc::default(),
             code_block_actions: None,
             code_block_highlighter: None,
             table_actions: None,
             link_activation_handler: None,
             image_source: None,
+            reveal_handler: None,
             markdown_extensions: Arc::default(),
             is_selecting: false,
             preserve_inline_selection: false,
@@ -255,6 +273,9 @@ impl TextViewState {
             fade_tick: None,
             format,
             parsed_error: None,
+            links: Default::default(),
+            interaction_enabled: true,
+            interaction_admission: Some(Arc::new(())),
             text: text.to_string(),
             element_text: None,
             revision: 0,
@@ -288,7 +309,7 @@ impl TextViewState {
     /// Set whether the text is selectable, default false.
     pub fn set_selectable(&mut self, selectable: bool, cx: &mut Context<Self>) {
         self.selectable = selectable;
-        self.selection_adapter.set_enabled(selectable, cx);
+        self.selection_adapter.set_enabled(self.is_selectable(), cx);
         if !selectable {
             self.reset_selection();
         }
@@ -349,7 +370,6 @@ impl TextViewState {
 
         self.text.clear();
         self.text.push_str(text);
-        self.parsed_error = None;
         self.increment_update(text, false, cx);
     }
 
@@ -482,7 +502,7 @@ impl TextViewState {
     /// Force a full re-measure of the block list after the document has been
     /// replaced.
     ///
-    /// `Document::render_root` only calls `ListState::reset` when the block
+    /// Parsed commit only resets the original List when the block
     /// *count* changes, and the full-measure pass enabled by `measure_all` is
     /// a one-shot latch that only `reset`, `remeasure_items`, or a width
     /// change re-arms. Replacing a document with one that happens to have the
@@ -540,6 +560,8 @@ impl TextViewState {
         if parse_synchronously {
             match parse_content(self.format, ParsedContent::default(), &update_options) {
                 Ok(content) => {
+                    self.links.reconcile(&content, cx);
+                    self.reconcile_row_focus(&content.document, false, cx);
                     self.reconcile_range_highlights(&content.document, self.revision, false);
                     self.stream_fade.record(
                         &self.parsed_content.document,
@@ -553,6 +575,7 @@ impl TextViewState {
                 Err(err) => {
                     self.stream_fade.discard_pending();
                     self.parsed_error = Some(err);
+                    self.withdraw_interaction(cx);
                 }
             }
             // A failed replacement also withdraws the old visible document's
@@ -687,20 +710,33 @@ impl TextViewState {
         }
     }
 
-    /// Tell the scrollable list which blocks an append replaced, before `new`,
-    /// the appended document, replaces the current one.
-    ///
-    /// Ordinary appends parse only the current document's last block, keeping
-    /// earlier measured heights. Reference appends reparse the complete syntax
-    /// and the caller invalidates every height after preserving the offset. Without
-    /// this, `render_root` resets the list whenever the block count changes,
-    /// which scrolled a streaming view back to the top and measured every
-    /// block again on each new block. Only a grown block count is handled
-    /// here; anything else is left to that reset.
+    /// Commit the original row focus ancestry and List metadata together.
+    /// An append grows the native list without discarding its scroll anchor.
+    fn reconcile_row_focus(&mut self, new: &ParsedDocument, append: bool, cx: &mut Context<Self>) {
+        let count = new.blocks.len();
+        let rows = Arc::make_mut(&mut self.row_focus);
+        rows.resize_with(count, || cx.focus_handle().tab_stop(false));
+        rows.truncate(count);
+        let old_count = self.list_state.item_count();
+        if old_count != count {
+            if append && count > old_count {
+                self.list_state.splice_focusable(
+                    old_count..old_count,
+                    rows[old_count..].iter().cloned().map(Some),
+                );
+            } else {
+                self.list_state.reset(count);
+                self.list_state
+                    .splice_focusable(0..count, rows.iter().cloned().map(Some));
+            }
+        }
+    }
+
+    /// Remeasure replaced append blocks, preserving earlier heights and offset.
     fn splice_appended_blocks(&self, new: &ParsedDocument) {
         let old = &self.parsed_content.document.blocks;
         let (old_count, new_count) = (old.len(), new.blocks.len());
-        if old_count == 0 || new_count <= old_count || self.list_state.item_count() != old_count {
+        if old_count == 0 || new_count <= old_count || self.list_state.item_count() != new_count {
             return;
         }
 
@@ -720,13 +756,6 @@ impl TextViewState {
         // inside them, and has the next layout measure only the blocks that
         // are not measured.
         self.list_state.remeasure_items(unchanged..old_count);
-        self.list_state
-            .splice(old_count..old_count, new_count - old_count);
-    }
-
-    /// Save bounds and unselect if bounds changed.
-    pub(super) fn update_bounds(&mut self, bounds: Bounds<Pixels>, _cx: &mut App) {
-        self.bounds = bounds;
     }
 
     /// The index of the top-level block at `content_y`, in this view's content
@@ -911,7 +940,41 @@ impl TextViewState {
     }
 
     pub(crate) fn is_selectable(&self) -> bool {
-        self.selectable
+        self.selectable && self.interaction_enabled && self.parsed_error.is_none()
+    }
+
+    /// Enable document input independently of whether text can be selected.
+    pub fn set_interaction_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.interaction_enabled == enabled {
+            return;
+        }
+        self.interaction_enabled = enabled;
+        if !enabled {
+            self.withdraw_interaction(cx);
+        }
+        cx.notify();
+    }
+
+    fn withdraw_interaction(&mut self, cx: &mut App) {
+        self.interaction_admission.take();
+        self.links.revoke();
+        self.selection_adapter.set_enabled(false, cx);
+        self.reset_selection_and_adapter(cx);
+    }
+
+    pub(super) fn prepare_interaction(&mut self, cx: &mut App) {
+        if self.interaction_enabled && self.parsed_error.is_none() {
+            self.interaction_admission
+                .get_or_insert_with(|| Arc::new(()));
+            self.selection_adapter.set_enabled(self.selectable, cx);
+        }
+    }
+
+    pub(super) fn interaction_admission(&self) -> std::sync::Weak<()> {
+        self.interaction_admission
+            .as_ref()
+            .map(Arc::downgrade)
+            .unwrap_or_default()
     }
 
     pub(crate) fn is_all_selected(&self) -> bool {
@@ -919,8 +982,9 @@ impl TextViewState {
     }
 
     pub(crate) fn multi_click_selection(&self) -> Option<TextViewMultiClickSelection> {
+        let selection = self.multi_click_selection?;
         let scroll_offset = self.scroll_offset();
-        self.multi_click_selection.map(|selection| {
+        Some({
             let pos = selection.pos + scroll_offset + self.bounds.origin;
             let line_bounds = selection.line_bounds.map(|bounds| {
                 Bounds::new(
@@ -1030,7 +1094,8 @@ impl Render for TextViewState {
             code_block_actions: self.code_block_actions.clone(),
             code_block_highlighter: self.code_block_highlighter.clone(),
             table_actions: self.table_actions.clone(),
-            link_activation_handler: self.link_activation_handler.clone(),
+            text_view: Some(cx.entity().downgrade()),
+            row_focus: self.row_focus.clone(),
             image_source: self.image_source.clone(),
             markdown_extensions: self.markdown_extensions.clone(),
             stream_fade,
@@ -1077,11 +1142,11 @@ impl Render for TextViewState {
                     )
                 };
                 let mut revision_changed = false;
-                state.update(cx, |state, cx| {
+                state.query(cx, |state, _| {
                     revision_changed = state
                         .selection_adapter
                         .update_layout_revision(state.selection_revision, state.is_selecting);
-                    state.update_bounds(bounds, cx);
+                    state.bounds = bounds;
                     state.compatible_layout_update = false;
                 });
                 if !is_selecting
@@ -1091,12 +1156,19 @@ impl Render for TextViewState {
                     TextSelection::clear(window, cx);
                 }
             });
-        // After `render_root`, which resets the list when the block count
-        // changed other than by an append, and with it the scroll position.
+        // Parsed commit has already reconciled the original list. Reveal
+        // the requested block after rendering its current document facts.
         if let Some(block_ix) = reveal_block {
             self.list_state.scroll_to_reveal_item(block_ix);
         }
-        content
+        super::text_view::DocumentElement {
+            state: cx.entity().downgrade(),
+            content: content.into_any_element(),
+            reveal_handler: self
+                .reveal_handler
+                .as_ref()
+                .and_then(std::rc::Weak::upgrade),
+        }
     }
 }
 
