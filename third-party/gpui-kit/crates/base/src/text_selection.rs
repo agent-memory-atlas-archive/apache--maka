@@ -3194,6 +3194,7 @@ mod tests {
                 TextSelectionRegistration::new(
                     Hitbox {
                         dispatch_node: None,
+                        regions: None,
                         id: HitboxId::placeholder(),
                         bounds,
                         content_mask: ContentMask { bounds },
@@ -3354,6 +3355,7 @@ mod tests {
         let bounds = Bounds::new(point(px(1.), px(2.)), size(px(30.), px(10.)));
         let hitbox = Hitbox {
             dispatch_node: None,
+            regions: None,
             id: HitboxId::placeholder(),
             bounds,
             content_mask: ContentMask { bounds },
@@ -4240,6 +4242,7 @@ mod tests {
                         TextSelectionRegistration::new(
                             Hitbox {
                                 dispatch_node: None,
+                                regions: None,
                                 id: HitboxId::placeholder(),
                                 bounds: collapsed,
                                 content_mask: ContentMask { bounds: collapsed },
@@ -4403,6 +4406,7 @@ mod tests {
             let bounds = Bounds::new(point(px(0.), px(0.)), size(px(100.), px(20.)));
             let hitbox = Hitbox {
                 dispatch_node: None,
+                regions: None,
                 id: HitboxId::placeholder(),
                 bounds,
                 content_mask: ContentMask { bounds },

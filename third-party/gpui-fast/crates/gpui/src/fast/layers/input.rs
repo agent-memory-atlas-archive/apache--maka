@@ -103,6 +103,7 @@ impl LayerInput {
                 }
                 .intersect(&viewport),
             },
+            regions: hitbox.regions.clone(),
             behavior: hitbox.behavior,
             dispatch_node: hitbox.dispatch_node,
         })

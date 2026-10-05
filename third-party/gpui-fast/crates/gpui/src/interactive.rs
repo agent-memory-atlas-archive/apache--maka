@@ -284,8 +284,16 @@ pub struct TouchClickEvent {
     pub long_press: bool,
 }
 
+/// Activation requested by assistive technology on the actual native target.
+/// It has no physical pointer or fabricated down/up pair.
+#[derive(Clone, Debug, Default)]
+pub struct AccessibilityClickEvent {
+    /// The target's original native bounds.
+    pub bounds: Bounds<Pixels>,
+}
+
 /// A click event, generated when a mouse button or keyboard button is pressed and released,
-/// or when a tap gesture is recognized on a touch screen.
+/// when a tap gesture is recognized, or when assistive technology activates a target.
 #[derive(Clone, Debug)]
 pub enum ClickEvent {
     /// A click event trigger by a mouse button being pressed and released.
@@ -294,6 +302,8 @@ pub enum ClickEvent {
     Keyboard(KeyboardClickEvent),
     /// A click event triggered by a recognized tap gesture on a touch screen.
     Touch(TouchClickEvent),
+    /// An activation requested through the native accessibility action channel.
+    Accessibility(AccessibilityClickEvent),
 }
 
 impl Default for ClickEvent {
@@ -310,7 +320,7 @@ impl ClickEvent {
     pub fn modifiers(&self) -> Modifiers {
         match self {
             // Click events are only generated from keyboard events _without any modifiers_, so we know the modifiers are always Default
-            ClickEvent::Keyboard(_) => Modifiers::default(),
+            ClickEvent::Keyboard(_) | ClickEvent::Accessibility(_) => Modifiers::default(),
             // Click events on the web only reflect the modifiers for the keyup event,
             // tested via observing the behavior of the `ClickEvent.shiftKey` field in Chrome 138
             // under various combinations of modifiers and keyUp / keyDown events.
@@ -328,6 +338,7 @@ impl ClickEvent {
     pub fn position(&self) -> Point<Pixels> {
         match self {
             ClickEvent::Keyboard(event) => event.bounds.bottom_left(),
+            ClickEvent::Accessibility(event) => event.bounds.bottom_left(),
             ClickEvent::Mouse(event) => event.up.position,
             ClickEvent::Touch(event) => event.position,
         }
@@ -340,7 +351,7 @@ impl ClickEvent {
     /// `Touch`: None, touches are not mouse input and there is no cursor.
     pub fn mouse_position(&self) -> Option<Point<Pixels>> {
         match self {
-            ClickEvent::Keyboard(_) => None,
+            ClickEvent::Keyboard(_) | ClickEvent::Accessibility(_) => None,
             ClickEvent::Mouse(event) => Some(event.up.position),
             ClickEvent::Touch(_) => None,
         }
@@ -352,7 +363,7 @@ impl ClickEvent {
     /// `Mouse`: Whether the right button was pressed and released
     pub fn is_right_click(&self) -> bool {
         match self {
-            ClickEvent::Keyboard(_) => false,
+            ClickEvent::Keyboard(_) | ClickEvent::Accessibility(_) => false,
             ClickEvent::Mouse(event) => {
                 event.down.button == MouseButton::Right && event.up.button == MouseButton::Right
             }
@@ -366,7 +377,7 @@ impl ClickEvent {
     /// `Mouse`: Whether the middle button was pressed and released
     pub fn is_middle_click(&self) -> bool {
         match self {
-            ClickEvent::Keyboard(_) => false,
+            ClickEvent::Keyboard(_) | ClickEvent::Accessibility(_) => false,
             ClickEvent::Mouse(event) => {
                 event.down.button == MouseButton::Middle && event.up.button == MouseButton::Middle
             }
@@ -380,7 +391,7 @@ impl ClickEvent {
     /// press on a touch screen.
     pub fn is_secondary(&self) -> bool {
         match self {
-            ClickEvent::Keyboard(_) => false,
+            ClickEvent::Keyboard(_) | ClickEvent::Accessibility(_) => false,
             ClickEvent::Mouse(event) => {
                 event.down.button == MouseButton::Right && event.up.button == MouseButton::Right
             }
@@ -395,7 +406,7 @@ impl ClickEvent {
     /// `Touch`: A tap, but not a long press
     pub fn standard_click(&self) -> bool {
         match self {
-            ClickEvent::Keyboard(_) => true,
+            ClickEvent::Keyboard(_) | ClickEvent::Accessibility(_) => true,
             ClickEvent::Mouse(event) => {
                 event.down.button == MouseButton::Left && event.up.button == MouseButton::Left
             }
@@ -410,7 +421,7 @@ impl ClickEvent {
     /// `Touch`: false, mobile windows are already active when tappable
     pub fn first_focus(&self) -> bool {
         match self {
-            ClickEvent::Keyboard(_) => false,
+            ClickEvent::Keyboard(_) | ClickEvent::Accessibility(_) => false,
             ClickEvent::Mouse(event) => event.down.first_mouse,
             ClickEvent::Touch(_) => false,
         }
@@ -423,7 +434,7 @@ impl ClickEvent {
     /// `Touch`: Count of consecutive taps
     pub fn click_count(&self) -> usize {
         match self {
-            ClickEvent::Keyboard(_) => 1,
+            ClickEvent::Keyboard(_) | ClickEvent::Accessibility(_) => 1,
             ClickEvent::Mouse(event) => event.up.click_count,
             ClickEvent::Touch(event) => event.tap_count,
         }
@@ -432,7 +443,7 @@ impl ClickEvent {
     /// Returns whether the click event is generated by a keyboard event
     pub fn is_keyboard(&self) -> bool {
         match self {
-            ClickEvent::Mouse(_) | ClickEvent::Touch(_) => false,
+            ClickEvent::Mouse(_) | ClickEvent::Touch(_) | ClickEvent::Accessibility(_) => false,
             ClickEvent::Keyboard(_) => true,
         }
     }

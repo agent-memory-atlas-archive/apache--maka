@@ -10,16 +10,16 @@ use crate::{
     Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
-    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
-    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, ScaledPixels,
-    Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet,
-    Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
-    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
-    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, KeyUpEvent,
+    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
+    MonochromeSprite, MouseButton, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Path,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
+    Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
+    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
+    TaffyLayoutEngine, Task, TextInputConfiguration, TextInputStateChange, TextRenderingMode,
+    TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
     WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point, prelude::*, px, rems,
     size, transparent_black,
@@ -846,7 +846,7 @@ impl HitboxId {
     }
 }
 
-/// A rectangular region that potentially blocks hitboxes inserted prior.
+/// A native region, optionally fragmented, that can block earlier hitboxes.
 /// See [Window::insert_hitbox] for more details.
 #[derive(Clone, Debug, Deref)]
 pub struct Hitbox {
@@ -857,6 +857,9 @@ pub struct Hitbox {
     pub bounds: Bounds<Pixels>,
     /// The content mask when the hitbox was inserted.
     pub content_mask: ContentMask<Pixels>,
+    /// Optional exact fragments, relative to this hitbox's original bounds.
+    /// `None` uses the rectangle; an empty set never hits.
+    pub regions: Option<Arc<[Bounds<Pixels>]>>,
     /// Flags that specify hitbox behavior.
     pub behavior: HitboxBehavior,
     /// Original dispatch scope; remapped with retained prepaint records.
@@ -864,6 +867,22 @@ pub struct Hitbox {
 }
 
 impl Hitbox {
+    /// Read-only geometry membership, including the original content mask.
+    /// This does not claim occlusion or input modality, which belong to hit testing.
+    pub fn contains(&self, position: &Point<Pixels>) -> bool {
+        self.bounds
+            .intersect(&self.content_mask.bounds)
+            .contains(position)
+            && self.regions.as_ref().is_none_or(|regions| {
+                let relative = *position - self.bounds.origin;
+                regions.iter().any(|region| {
+                    region.size.width > Pixels::ZERO
+                        && region.size.height > Pixels::ZERO
+                        && region.contains(&relative)
+                })
+            })
+    }
+
     /// Checks if the hitbox is currently hovered. Returns `false` during keyboard input modality
     /// so that keyboard navigation suppresses hover highlights. Except when handling
     /// `ScrollWheelEvent`, this is typically what you want when determining whether to handle mouse
@@ -1141,8 +1160,7 @@ impl Frame {
         let mut set_hover_hitbox_count = false;
         let mut hit_test = HitTest::default();
         for hitbox in self.hitboxes.iter().rev() {
-            let bounds = hitbox.bounds.intersect(&hitbox.content_mask.bounds);
-            if bounds.contains(&position) {
+            if hitbox.contains(&position) {
                 hit_test.ids.push(hitbox.id);
                 if !set_hover_hitbox_count
                     && hitbox.behavior == HitboxBehavior::BlockMouseExceptScroll
@@ -1192,6 +1210,54 @@ pub(crate) struct AutoscrollRequest {
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) focus_generation: Option<u64>,
     pub(crate) precise: bool,
+}
+
+// Causal marks for the original window's clean activation input. Move and
+// modifiers do not advance them; nested dispatch restores the enclosing event.
+#[derive(Default)]
+pub(crate) struct ClickInputState {
+    sequence: Cell<u64>,
+    current: Cell<Option<u64>>,
+}
+impl ClickInputState {
+    fn enter(self: &Rc<Self>, replay: bool) -> ClickInputScope {
+        let serial = if replay {
+            0
+        } else {
+            let serial = self.sequence.get().wrapping_add(1);
+            self.sequence.set(serial);
+            serial
+        };
+        let previous = self.current.replace(Some(serial));
+        ClickInputScope {
+            state: self.clone(),
+            previous,
+        }
+    }
+    pub(crate) fn serial(&self) -> u64 {
+        self.current.get().unwrap_or(0)
+    }
+    pub(crate) fn is_dispatching(&self) -> bool {
+        self.current.get().is_some()
+    }
+    fn interrupt(&self) {
+        self.sequence.set(self.sequence.get().wrapping_add(1));
+    }
+    pub(crate) fn is_pending(&self, serial: u64) -> bool {
+        serial != 0 && self.sequence.get() == serial
+    }
+    pub(crate) fn is_current(&self, serial: u64) -> bool {
+        serial != 0 && self.current.get() == Some(serial) && self.sequence.get() == serial
+    }
+}
+struct ClickInputScope {
+    state: Rc<ClickInputState>,
+    previous: Option<u64>,
+}
+impl Drop for ClickInputScope {
+    fn drop(&mut self) {
+        self.state.current.set(self.previous);
+    }
 }
 
 /// Holds the state for a specific window.
@@ -1279,6 +1345,7 @@ pub struct Window {
     /// Incremented every time focus moves. Used to invalidate a
     /// pending keyboard activation state when focus changes.
     pub(crate) focus_generation: u64,
+    pub(crate) click_input: Rc<ClickInputState>,
     // A focus movement is revealed once, using actual prepaint geometry. These
     // are frame facts, not an independent focus or geometry registry.
     revealed_focus_generation: u64,
@@ -1951,6 +2018,9 @@ impl Window {
                 handle
                     .update(&mut cx, |_, window, cx| {
                         window.active.set(active);
+                        if !active {
+                            window.click_input.interrupt();
+                        }
                         window.modifiers = window.platform_window.modifiers();
                         window.capslock = window.platform_window.capslock();
                         window
@@ -2152,6 +2222,7 @@ impl Window {
             focus_enabled: true,
             dispatching_pointer: false,
             focus_generation: 0,
+            click_input: Rc::default(),
             revealed_focus_generation: 0,
             focus_reveal_seen: false,
             focus_reveal_scrolled: false,
@@ -3297,7 +3368,7 @@ impl Window {
         // paint_range indices remain valid for reuse_paint on the next frame.
         // Search backwards to find the last Some entry, since reuse_paint may
         // have copied None slots from the previous frame. (Fixes #50456)
-        let focused_text_input_active = if let Some(mut input_handler) = self
+        let (focused_text_input_active, has_focused_input) = if let Some(mut input_handler) = self
             .next_frame
             .input_handlers
             .iter_mut()
@@ -3306,9 +3377,9 @@ impl Window {
         {
             let accepts_text_input = input_handler.accepts_text_input(self, cx);
             self.platform_window.set_input_handler(input_handler);
-            accepts_text_input
+            (accepts_text_input, true)
         } else {
-            false
+            (false, false)
         };
         self.apply_text_input_configuration(cx);
         if focused_text_input_active != self.focused_text_input_active {
@@ -3379,7 +3450,17 @@ impl Window {
         // panel). `Window::focus` suppresses `refresh` while a draw is in progress, so
         // schedule another frame here to render the new focus state and dispatch the
         // resulting focus events.
-        if self.focus_reveal_seen
+        // Custom canvas IME owners can install a real focused handler without
+        // a tracked geometry node. That completed frame has nothing to reveal;
+        // do not disable retention indefinitely. Unmounted focus stays pending.
+        let input_without_reveal_geometry = has_focused_input
+            && self.focus.is_some_and(|focus| {
+                self.rendered_frame
+                    .dispatch_tree
+                    .focusable_node_id(focus)
+                    .is_none()
+            });
+        if (self.focus_reveal_seen || input_without_reveal_geometry)
             && !self.focus_reveal_scrolled
             && reveal_focus == (self.focus, self.focus_generation)
         {
@@ -5212,6 +5293,26 @@ impl Window {
     ///
     /// This method should only be called as part of the prepaint phase of element drawing.
     pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, behavior: HitboxBehavior) -> Hitbox {
+        self.insert_hitbox_with_regions(bounds, behavior, None)
+    }
+
+    /// Insert one logical target with exact relative fragments from original layout.
+    /// Its single identity and dispatch scope are preserved across all fragments.
+    pub fn insert_hitbox_regions(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        behavior: HitboxBehavior,
+        regions: Arc<[Bounds<Pixels>]>,
+    ) -> Hitbox {
+        self.insert_hitbox_with_regions(bounds, behavior, Some(regions))
+    }
+
+    fn insert_hitbox_with_regions(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        behavior: HitboxBehavior,
+        regions: Option<Arc<[Bounds<Pixels>]>>,
+    ) -> Hitbox {
         self.invalidator.debug_assert_prepaint();
 
         let content_mask = crate::fast::layers::input::hitbox_mask(self);
@@ -5221,6 +5322,7 @@ impl Window {
             id,
             bounds,
             content_mask,
+            regions,
             behavior,
             dispatch_node: self.next_frame.dispatch_tree.active_node_id(),
         };
@@ -5665,7 +5767,11 @@ impl Window {
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
         crate::fast::dependencies::AmbientInput::stamp_changes(ambient, self, cx);
-        crate::fast::layers::input::before_dispatch(self, cx, &event);
+        // Nested dispatch must finish against the same committed listener frame.
+        // The original scheduled draw handles dirtiness after its outer input.
+        if !self.dispatching_pointer && !self.click_input.is_dispatching() {
+            crate::fast::layers::input::before_dispatch(self, cx, &event);
+        }
 
         if let Some(any_mouse_event) = event.mouse_event() {
             self.dispatch_mouse_event(any_mouse_event, cx);
@@ -5871,6 +5977,8 @@ impl Window {
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
+        let _click_input = (event.is::<MouseDownEvent>() || event.is::<MouseUpEvent>())
+            .then(|| self.click_input.enter(false));
         let hit_test = self.rendered_frame.hit_test(self.mouse_position());
         if hit_test != self.mouse_hit_test {
             self.mouse_hit_test = hit_test;
@@ -5931,7 +6039,10 @@ impl Window {
     }
 
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
-        if self.invalidator.is_dirty() {
+        let may_draw = !self.dispatching_pointer && !self.click_input.is_dispatching();
+        let _click_input = (event.is::<KeyDownEvent>() || event.is::<KeyUpEvent>())
+            .then(|| self.click_input.enter(false));
+        if may_draw && self.invalidator.is_dirty() {
             self.draw(cx).clear(cx);
         }
 
@@ -6331,6 +6442,7 @@ impl Window {
         let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
         'replay: for replay in replays {
+            let _click_input = self.click_input.enter(true);
             let event = KeyDownEvent {
                 keystroke: replay.keystroke.clone(),
                 is_held: false,
@@ -6926,6 +7038,11 @@ impl Window {
 
     #[cfg(not(target_family = "wasm"))]
     pub(crate) fn handle_a11y_action(&mut self, request: accesskit::ActionRequest, cx: &mut App) {
+        // Assistive-technology actions are fresh inputs, including direct click
+        // activation that intentionally does not dispatch physical pointer events.
+        let _input = self.click_input.enter(false);
+        cx.propagate_event = true;
+        self.default_prevented = false;
         // Take listeners out temporarily so the closures can borrow Window
         // mutably, then restore them afterward.
         if let Some(mut listeners) = self.a11y.action_listeners.remove(&request.target_node) {

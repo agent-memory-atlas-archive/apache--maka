@@ -720,19 +720,37 @@ mod tests {
     #[test]
     fn cancel_pending_timers_wakes_waiters_without_waiting_for_deadline() {
         let dispatcher = Arc::new(ThreadedDispatcher::new());
-        let background = BackgroundExecutor::new(dispatcher.clone());
-
         let fired = Arc::new(AtomicBool::new(false));
-        let timer = background.timer(Duration::from_secs(10));
+        let (sender, receiver) = futures::channel::oneshot::channel::<()>();
+        let background = BackgroundExecutor::new(dispatcher.clone());
         background
             .spawn({
                 let fired = fired.clone();
                 async move {
-                    timer.await;
+                    let _ = receiver.await;
                     fired.store(true, Ordering::SeqCst);
                 }
             })
             .detach();
+        // This API drains dispatch_after's actual queue. Owned executor timers
+        // use async-io and are canceled by dropping their owner, not this queue.
+        let (runnable, task) = async_task::Builder::new()
+            .metadata(crate::RunnableMeta::new_with_callers_location())
+            .spawn(
+                move |_| async move {
+                    let _ = sender.send(());
+                },
+                {
+                    let dispatcher = Arc::downgrade(&dispatcher);
+                    move |runnable| {
+                        if let Some(dispatcher) = dispatcher.upgrade() {
+                            dispatcher.dispatch(runnable, Priority::default());
+                        }
+                    }
+                },
+            );
+        task.detach();
+        dispatcher.dispatch_after(Duration::from_secs(10), runnable);
 
         dispatcher.run_until_idle();
         assert_eq!(dispatcher.cancel_pending_timers(), 1);

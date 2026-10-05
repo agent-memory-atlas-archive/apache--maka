@@ -1,12 +1,12 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
-    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
-    Decorations, Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Platform, Point, Render, ResizeEdge, Result, SharedString, Size, SystemNotification,
-    SystemNotificationResponse, Task, TestDispatcher, TestPlatform, TestScreenCaptureSource,
-    TestWindow, TextSystem, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
-    WindowVisibility, app::GpuiMode, window::ElementArenaScope,
+    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, Decorations, DrawPhase,
+    Drawable, Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Platform, Point, Render, ResizeEdge, Result, SharedString, Size,
+    SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform,
+    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
+    WindowHandle, WindowOptions, WindowVisibility, app::GpuiMode, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -457,7 +457,11 @@ impl TestAppContext {
 
     /// Resize requests delivered to this original platform window, in order.
     pub fn window_resize_requests(&self, window_handle: AnyWindowHandle) -> Vec<ResizeEdge> {
-        self.test_window(window_handle).0.lock().resize_requests.clone()
+        self.test_window(window_handle)
+            .0
+            .lock()
+            .resize_requests
+            .clone()
     }
 
     /// The client inset last delivered to this original platform window.
@@ -626,6 +630,13 @@ impl TestAppContext {
         let delivered = self.test_window(window).simulate_scheduled_frame();
         self.run_until_parked();
         delivered
+    }
+
+    /// Deliver activation changes through the original native platform callback.
+    pub fn simulate_window_activation(&mut self, window: AnyWindowHandle, active: bool) {
+        self.test_window(window)
+            .simulate_active_status_change(active);
+        self.run_until_parked();
     }
 
     /// Activate the actual platform accessibility callbacks on the test backend.

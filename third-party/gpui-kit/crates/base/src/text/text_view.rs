@@ -132,7 +132,7 @@ pub(crate) fn handle_link_activation(
             ClickEvent::Mouse(click) => {
                 matches!(click.up.button, MouseButton::Left | MouseButton::Middle)
             }
-            ClickEvent::Keyboard(_) => true,
+            ClickEvent::Keyboard(_) | ClickEvent::Accessibility(_) => true,
             ClickEvent::Touch(click) => !click.long_press,
         }
     {

@@ -36,3 +36,10 @@ App 提供原当前事件传播标记的只读查询。原生分发完成观察�
 原生焦点显露派生自原 Window focus generation 与已提交的 prepaint 几何。焦点子树只给原 autoscroll request 标注 generation，精确 child caret 优先于整个控件的 fallback，无关兄弟请求不能覆盖焦点目标。滚动容器计划最小且被原 native limits 钳制的 offset，仅按自身 viewport 裁剪目标向祖先传递；正常后续 frame 一起重建 paint、hitbox 与 accessibility。一次 generation 完成后不抢回用户手动滚动；pointer 移焦保持 down/up 与拖选几何。List 完整 prepaint 可见 pass 后才选 retry 请求；失败事务撤回显露几何事实，保留已经写入的 offset 计划以安排重绘。pending 时绕过 retained/layer replay。
 
 原 TestWindow 记录 platform decoration facts、resize requests 和 client insets；TestAppContext 可改变原平台事实并请求原生重画，再观察实际平台调用。该有限 harness 接缝验证 Base Root 客户端 frame 行为，不增加第二窗口或 frame owner，不宣称 Linux OS 验收。
+
+
+原生 Hitbox 支持相对原 bounds 的精确片段：同一原生交互 id 和 dispatch scope 覆盖不连续 glyph 区域，retained layer 只平移 bounds/mask，片段保持相对坐标；空片段不命中。tooltip prepaint 读取同一裁剪几何，不冒称 occlusion。弱 ClickHandle 取消原元素 pending press 与 active 样式，不创建第二个手势 owner。真实 mouse/key press 记录按钮/按键、焦点代数、原 Window 输入序号与取消标记；实际 down/up 在 capture/binding 之前推进序号，replay 屏蔽 scope 且不能 arm。可选 current 区分派发外与 replay，RAII 恢复嵌套上下文，但嵌套输入仍打断外层 clean press。原 Window 失活回调在 observer 之前常数时间撤销准入，原 refresh 后正常 layout 清理视觉状态；不增加每控件 activation 订阅。移动在 drag/hover 前清理旧 press，dirty layout 不消费在途 release；嵌套派发保持外层已提交监听器帧，由既有调度重绘处理 dirty。原生 AX 请求进入同一因果输入 scope，打断其他目标的 pending 或 captured press，并初始化新的传播/default flags；默认 Div 直接经原 click listeners 发出 Accessibility 激活，不伪造中心鼠标事件，显式 AX Click 优先。它们只是通用前置，TextView occurrence 身份、原 glyph 精确片段及产品 Markdown 链接仍须接入；headless 测试不代表 OS 可访问性验收。
+
+仅恢复 pinned 上游 core 单元测试所需的 IBM Plex Sans 与 Lilex Regular 两份字体及相邻原始 OFL 1.1 许可；upstream.json 记录有限原始哈希。它们只由 cfg(test) 嵌入，不作为产品字体；演示程序及其他资产继续省略。
+
+自定义 canvas 可以安装原 focused IME handler 而不提供 tracked reveal 几何。提交帧在 handler 确实存在、其 focus 没有 dispatch-tree 几何时完成该 focus generation，允许 retained reuse 恢复；原 focus/generation 与滚动 guard 保留，未挂载且没有 input handler 的 focus 继续 pending。dispatcher 取消测试改为实际 `dispatch_after` runnable 持有 completion sender，并保留等待 sender 取消的 executor。owned async-io timer 仍由既有 Drop 契约管理。

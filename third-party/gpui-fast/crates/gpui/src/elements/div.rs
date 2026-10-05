@@ -16,15 +16,16 @@
 //! constructed by combining these two systems into an all-in-one element.
 
 use crate::{
-    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
-    Display, Element, ElementId, Entity, EntityId, ExternalDragPayload, ExternalDragPayloadSource,
-    FileDropEvent, FocusHandle, Global, GlobalElementId, Hitbox, HitboxBehavior, HitboxId,
-    InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton,
-    KeyboardClickEvent, LayoutId, LongPressEvent, ModifiersChangedEvent, MouseButton,
-    MouseClickEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MousePressureEvent,
-    MouseUpEvent, OngoingScroll, Overflow, ParentElement, PinchEvent, Pixels, Point, Render,
-    ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId,
-    TouchPhase, Visibility, Window, WindowControlArea, point, px, size,
+    AccessibilityClickEvent, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds,
+    ClickEvent, DispatchPhase, Display, Element, ElementId, Entity, EntityId, ExternalDragPayload,
+    ExternalDragPayloadSource, FileDropEvent, FocusHandle, Global, GlobalElementId, Hitbox,
+    HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
+    KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, LongPressEvent,
+    ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
+    MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement,
+    PinchEvent, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
+    StyleRefinement, Styled, Task, TooltipId, TouchPhase, Visibility, Window, WindowControlArea,
+    point, px, size,
 };
 use collections::HashMap;
 use gpui_util::ResultExt;
@@ -37,7 +38,7 @@ use std::{
     fmt::Debug,
     marker::PhantomData,
     mem,
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::Arc,
     time::Duration,
 };
@@ -774,6 +775,16 @@ impl Interactivity {
 pub trait InteractiveElement: Sized {
     /// Retrieve the interactivity state associated with this element
     fn interactivity(&mut self) -> &mut Interactivity;
+
+    /// Restrict this logical target to exact fragments relative to its bounds.
+    /// One native focus, dispatch and press owner covers the entire set.
+    fn hitbox_regions(mut self, regions: impl Into<Arc<[Bounds<Pixels>]>>) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().hitbox_regions = Some(regions.into());
+        self
+    }
 
     /// Assign this element to a group of elements that can be styled together
     fn group(mut self, group: impl Into<SharedString>) -> Self {
@@ -2214,6 +2225,7 @@ pub struct Interactivity {
     pub(crate) tooltip_show_delay: Option<Duration>,
     pub(crate) window_control: Option<WindowControlArea>,
     pub(crate) hitbox_behavior: HitboxBehavior,
+    pub(crate) hitbox_regions: Option<Arc<[Bounds<Pixels>]>>,
     pub(crate) tab_index: Option<isize>,
     pub(crate) tab_group: bool,
     pub(crate) tab_stop: bool,
@@ -2236,6 +2248,20 @@ pub struct Interactivity {
 }
 
 impl Interactivity {
+    /// A weak handle to this original element's press state, after request_layout.
+    /// Cancellation needs no window borrow and does not keep the element alive.
+    pub fn click_handle(
+        &self,
+        global_id: Option<&GlobalElementId>,
+        window: &mut Window,
+    ) -> Option<ClickHandle> {
+        window.with_optional_element_state::<InteractiveElementState, _>(global_id, |state, _| {
+            let mut state = state.map(|state| state.unwrap_or_default());
+            let handle = state.as_mut().map(InteractiveElementState::click_handle);
+            (handle, state)
+        })
+    }
+
     /// Layout this element according to this interactivity state's configured styles
     pub fn request_layout(
         &mut self,
@@ -2268,6 +2294,10 @@ impl Interactivity {
             |element_state, window| {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
+
+                if let Some(state) = element_state.as_ref() {
+                    state.discard_stale_presses(window);
+                }
 
                 if let Some(element_state) = element_state.as_ref()
                     && cx.has_active_drag()
@@ -2423,7 +2453,14 @@ impl Interactivity {
                         style.overflow_mask(bounds, window.rem_size()),
                         |window| {
                             let hitbox = if self.should_insert_hitbox(&style, window, cx) {
-                                Some(window.insert_hitbox(bounds, self.hitbox_behavior))
+                                Some(match &self.hitbox_regions {
+                                    Some(regions) => window.insert_hitbox_regions(
+                                        bounds,
+                                        self.hitbox_behavior,
+                                        regions.clone(),
+                                    ),
+                                    None => window.insert_hitbox(bounds, self.hitbox_behavior),
+                                })
                             } else {
                                 None
                             };
@@ -2690,6 +2727,16 @@ impl Interactivity {
         f: impl FnOnce(&Style, &mut Window, &mut App),
     ) {
         self.hovered = hitbox.map(|hitbox| hitbox.is_hovered(window));
+        let accessibility_clicks = if window.is_a11y_active()
+            && !self
+                .a11y_action_listeners
+                .iter()
+                .any(|(action, _)| *action == accesskit::Action::Click)
+        {
+            self.click_listeners.iter().cloned().collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         window.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
             |element_state, window| {
@@ -2775,6 +2822,28 @@ impl Interactivity {
 
                                         if window.a11y.is_active() {
                                             if let Some(global_id) = global_id {
+                                                if !accessibility_clicks.is_empty() {
+                                                    let node_id = global_id.accesskit_node_id();
+                                                    let listeners = accessibility_clicks.clone();
+                                                    let handle = element_state
+                                                        .as_mut()
+                                                        .map(InteractiveElementState::click_handle);
+                                                    window.on_a11y_action(
+                                                        node_id,
+                                                        accesskit::Action::Click,
+                                                        move |_, window, cx| {
+                                                            if let Some(handle) = &handle {
+                                                                handle.cancel();
+                                                            }
+                                                            let click = ClickEvent::Accessibility(
+                                                                AccessibilityClickEvent { bounds },
+                                                            );
+                                                            for listener in &listeners {
+                                                                listener(&click, window, cx);
+                                                            }
+                                                        },
+                                                    );
+                                                }
                                                 if !self.a11y_action_listeners.is_empty() {
                                                     let node_id = global_id.accesskit_node_id();
                                                     for (action, listener) in
@@ -3122,6 +3191,10 @@ impl Interactivity {
                 || !aux_click_listeners.is_empty()
                 || drag_listener.is_some()
             {
+                let generation = element_state
+                    .click_generation
+                    .get_or_insert_with(Default::default)
+                    .clone();
                 let pending_mouse_down = element_state
                     .pending_mouse_down
                     .get_or_insert_with(Default::default)
@@ -3141,12 +3214,21 @@ impl Interactivity {
                     let pending_mouse_down = pending_mouse_down.clone();
                     let hitbox = hitbox.clone();
                     let has_aux_click_listeners = !aux_click_listeners.is_empty();
+                    let generation = generation.clone();
                     move |event: &MouseDownEvent, phase, window, _cx| {
                         if phase == DispatchPhase::Bubble
                             && (event.button == MouseButton::Left || has_aux_click_listeners)
                             && hitbox.is_hovered(window)
                         {
-                            *pending_mouse_down.borrow_mut() = Some(event.clone());
+                            let serial = window.click_input.serial();
+                            *pending_mouse_down.borrow_mut() = window
+                                .click_input
+                                .is_current(serial)
+                                .then(|| MouseClickPress {
+                                    down: event.clone(),
+                                    serial,
+                                    generation: generation.get(),
+                                });
                             window.refresh();
                         }
                     }
@@ -3155,12 +3237,22 @@ impl Interactivity {
                 window.on_mouse_event({
                     let pending_mouse_down = pending_mouse_down.clone();
                     let hitbox = hitbox.clone();
+                    let generation = generation.clone();
                     move |event: &MouseMoveEvent, phase, window, cx| {
+                        let mut pending_mouse_down = pending_mouse_down.borrow_mut();
+                        if pending_mouse_down.as_ref().is_some_and(|press| {
+                            event.pressed_button != Some(press.down.button)
+                                || !window.click_input.is_pending(press.serial)
+                                || press.generation != generation.get()
+                        }) {
+                            pending_mouse_down.take();
+                            *clicked_state.borrow_mut() = ElementClickedState::default();
+                            window.refresh();
+                        }
                         if phase == DispatchPhase::Capture {
                             return;
                         }
 
-                        let mut pending_mouse_down = pending_mouse_down.borrow_mut();
                         if let Some(mouse_down) = pending_mouse_down.clone()
                             && !cx.has_active_drag()
                             && (event.position - mouse_down.position).magnitude() > DRAG_THRESHOLD
@@ -3168,6 +3260,8 @@ impl Interactivity {
                             && mouse_down.button == MouseButton::Left
                         {
                             *clicked_state.borrow_mut() = ElementClickedState::default();
+                            pending_mouse_down.take();
+                            drop(pending_mouse_down);
                             let cursor_offset = event.position - hitbox.origin;
                             let drag = (listener.render)(
                                 listener.value.as_ref(),
@@ -3190,7 +3284,6 @@ impl Interactivity {
                                 cursor_style: drag_cursor_style,
                                 external_payload_source,
                             });
-                            pending_mouse_down.take();
                             window.refresh();
                             cx.stop_propagation();
                         }
@@ -3198,66 +3291,55 @@ impl Interactivity {
                 });
 
                 if is_focused {
-                    // Record the focus generation at which an enter/space key
-                    // down event happened on this element. The next key up
-                    // event will be mapped to a click event if both of the
-                    // following are true:
-                    // - no other key events happen in between
-                    // - the focus generation is the same (implying focus did not move)
-                    //
-                    // This design avoids an ABA problem that happens if you
-                    // store the focus handle that registered the keypress.
                     window.on_key_event({
-                        let pending_keyboard_down = pending_keyboard_down.clone();
-                        move |event: &KeyDownEvent, phase, window, _cx| {
+                        let pending = pending_keyboard_down.clone();
+                        let generation = generation.clone();
+                        move |event: &KeyDownEvent, phase, window, _| {
+                            if phase.capture() {
+                                pending.borrow_mut().take();
+                            }
                             if phase.bubble() && !window.default_prevented() {
-                                let stroke = &event.keystroke;
-                                let is_activation_key = (stroke.key.eq("enter")
-                                    || stroke.key.eq("space"))
-                                    && !stroke.modifiers.modified();
-                                *pending_keyboard_down.borrow_mut() =
-                                    is_activation_key.then_some(window.focus_generation);
+                                let serial = window.click_input.serial();
+                                *pending.borrow_mut() = activation_key(&event.keystroke.key)
+                                    .filter(|_| {
+                                        !event.keystroke.modifiers.modified()
+                                            && window.click_input.is_current(serial)
+                                    })
+                                    .map(|button| KeyboardClickPress {
+                                        button,
+                                        focus_generation: window.focus_generation,
+                                        serial,
+                                        generation: generation.get(),
+                                    });
                             }
                         }
                     });
-
-                    // Press enter, space to trigger click, when the element is focused.
                     window.on_key_event({
-                        let click_listeners = click_listeners.clone();
+                        let captured = Cell::new(None);
+                        let generation = generation.clone();
+                        let listeners = click_listeners.clone();
                         let hitbox = hitbox.clone();
                         move |event: &KeyUpEvent, phase, window, cx| {
-                            if phase.bubble() && !window.default_prevented() {
-                                let stroke = &event.keystroke;
-                                let keyboard_button = if stroke.key.eq("enter") {
-                                    Some(KeyboardButton::Enter)
-                                } else if stroke.key.eq("space") {
-                                    Some(KeyboardButton::Space)
-                                } else {
-                                    None
-                                };
-
-                                if let Some(button) = keyboard_button
-                                    && !stroke.modifiers.modified()
+                            if phase.capture() {
+                                captured.set(pending_keyboard_down.borrow_mut().take());
+                            } else if let Some(press) = captured.take() {
+                                let serial = window.click_input.serial();
+                                if window.default_prevented()
+                                    || event.keystroke.modifiers.modified()
+                                    || activation_key(&event.keystroke.key) != Some(press.button)
+                                    || press.focus_generation != window.focus_generation
+                                    || press.generation != generation.get()
+                                    || serial != press.serial.wrapping_add(1)
+                                    || !window.click_input.is_current(serial)
                                 {
-                                    let pending =
-                                        std::mem::take(&mut *pending_keyboard_down.borrow_mut());
-                                    if pending != Some(window.focus_generation) {
-                                        return;
-                                    }
-
-                                    let click_event = ClickEvent::Keyboard(KeyboardClickEvent {
-                                        button,
-                                        bounds: hitbox.bounds,
-                                    });
-
-                                    for listener in &click_listeners {
-                                        listener(&click_event, window, cx);
-                                    }
-                                } else {
-                                    // Releasing any other key mid-press means
-                                    // this isn't a clean activation, so cancel
-                                    // the pending keydown.
-                                    *pending_keyboard_down.borrow_mut() = None;
+                                    return;
+                                }
+                                let click = ClickEvent::Keyboard(KeyboardClickEvent {
+                                    button: press.button,
+                                    bounds: hitbox.bounds,
+                                });
+                                for listener in &listeners {
+                                    listener(&click, window, cx);
                                 }
                             }
                         }
@@ -3268,45 +3350,39 @@ impl Interactivity {
                     let mut captured_mouse_down = None;
                     let hitbox = hitbox.clone();
                     move |event: &MouseUpEvent, phase, window, cx| match phase {
-                        // Clear the pending mouse down during the capture phase,
-                        // so that it happens even if another event handler stops
-                        // propagation.
                         DispatchPhase::Capture => {
-                            let mut pending_mouse_down = pending_mouse_down.borrow_mut();
-                            if pending_mouse_down.is_some() && hitbox.is_hovered(window) {
-                                captured_mouse_down = pending_mouse_down.take();
-                                window.refresh();
-                            } else if pending_mouse_down.is_some() {
-                                // Clear the pending mouse down event (without firing click handlers)
-                                // if the hitbox is not being hovered.
-                                // This avoids dragging elements that changed their position
-                                // immediately after being clicked.
-                                // See https://github.com/zed-industries/zed/issues/24600 for more details
-                                pending_mouse_down.take();
+                            captured_mouse_down = None;
+                            if let Some(press) = pending_mouse_down.borrow_mut().take() {
+                                let serial = window.click_input.serial();
+                                if hitbox.is_hovered(window)
+                                    && press.down.button == event.button
+                                    && serial == press.serial.wrapping_add(1)
+                                    && window.click_input.is_current(serial)
+                                {
+                                    captured_mouse_down = Some(press);
+                                }
                                 window.refresh();
                             }
                         }
-                        // Fire click handlers during the bubble phase.
                         DispatchPhase::Bubble => {
-                            if let Some(mouse_down) = captured_mouse_down.take() {
-                                let btn = mouse_down.button;
-
-                                let mouse_click = ClickEvent::Mouse(MouseClickEvent {
-                                    down: mouse_down,
+                            if let Some(press) = captured_mouse_down.take() {
+                                if press.generation != generation.get()
+                                    || !window.click_input.is_current(window.click_input.serial())
+                                {
+                                    return;
+                                }
+                                let button = press.down.button;
+                                let click = ClickEvent::Mouse(MouseClickEvent {
+                                    down: press.down,
                                     up: event.clone(),
                                 });
-
-                                match btn {
-                                    MouseButton::Left => {
-                                        for listener in &click_listeners {
-                                            listener(&mouse_click, window, cx);
-                                        }
-                                    }
-                                    _ => {
-                                        for listener in &aux_click_listeners {
-                                            listener(&mouse_click, window, cx);
-                                        }
-                                    }
+                                let listeners = if button == MouseButton::Left {
+                                    &click_listeners
+                                } else {
+                                    &aux_click_listeners
+                                };
+                                for listener in listeners {
+                                    listener(&click, window, cx);
                                 }
                             }
                         }
@@ -3386,14 +3462,14 @@ impl Interactivity {
                 let build_tooltip = Rc::new(move |window: &mut Window, cx: &mut App| {
                     Some(((tooltip_builder.build)(window, cx), tooltip_is_hoverable))
                 });
-                // Use bounds instead of testing hitbox since this is called during prepaint.
+                // Prepaint checks geometry, including fragments and mask, without claiming occlusion.
                 let check_is_hovered_during_prepaint = Rc::new({
                     let pending_mouse_down = pending_mouse_down.clone();
-                    let source_bounds = hitbox.bounds;
+                    let source_hitbox = hitbox.clone();
                     move |window: &Window| {
                         !window.last_input_was_keyboard()
                             && pending_mouse_down.borrow().is_none()
-                            && source_bounds.contains(&window.mouse_position())
+                            && source_hitbox.contains(&window.mouse_position())
                     }
                 });
                 let check_is_hovered = Rc::new({
@@ -3815,19 +3891,113 @@ pub struct InteractiveElementState {
     pub(crate) clicked_state: Option<Rc<RefCell<ElementClickedState>>>,
     pub(crate) hover_state: Option<Rc<RefCell<ElementHoverState>>>,
     pub(crate) hover_listener_state: Option<Rc<RefCell<bool>>>,
-    pub(crate) pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
-    /// Set to the window's [`focus_generation`](crate::Window::focus_generation)
-    /// when an Enter/Space keydown is received while this element is focused,
-    /// recording that we are waiting for the matching keyup to fire a keyboard
-    /// click. On keyup the click only fires if the stored generation still
-    /// matches the window's current one, i.e. focus never moved during the
-    /// press (mirroring the browser clearing a control's pressed state on
-    /// blur). `None` means no activation key is pending.
-    pub(crate) pending_keyboard_down: Option<Rc<RefCell<Option<u64>>>>,
+    pub(crate) pending_mouse_down: Option<Rc<RefCell<Option<MouseClickPress>>>>,
+    /// Original key, focus generation, input serial and cancellation mark.
+    /// A release activates only the same uninterrupted physical press.
+    pub(crate) pending_keyboard_down: Option<Rc<RefCell<Option<KeyboardClickPress>>>>,
+    click_generation: Option<Rc<Cell<u64>>>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     ongoing_scroll: Option<Rc<RefCell<OngoingScroll>>>,
     pub(crate) active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,
     long_press_tooltip_active: Option<Rc<Cell<bool>>>,
+}
+
+/// A weak locator for cancellation of the original native press state.
+/// The state owner should notify its view after cancellation if visuals changed.
+#[derive(Clone)]
+pub struct ClickHandle {
+    mouse: Weak<RefCell<Option<MouseClickPress>>>,
+    keyboard: Weak<RefCell<Option<KeyboardClickPress>>>,
+    clicked: Weak<RefCell<ElementClickedState>>,
+    generation: Weak<Cell<u64>>,
+}
+impl ClickHandle {
+    /// Withdraw pending mouse/keyboard and active styling synchronously.
+    /// Returns false after the original native state has been released.
+    pub fn cancel(&self) -> bool {
+        let Some(generation) = self.generation.upgrade() else {
+            return false;
+        };
+        generation.set(generation.get().wrapping_add(1));
+        if let Some(mouse) = self.mouse.upgrade() {
+            mouse.borrow_mut().take();
+        }
+        if let Some(keyboard) = self.keyboard.upgrade() {
+            keyboard.borrow_mut().take();
+        }
+        if let Some(clicked) = self.clicked.upgrade() {
+            *clicked.borrow_mut() = ElementClickedState::default();
+        }
+        true
+    }
+}
+impl InteractiveElementState {
+    fn discard_stale_presses(&self, window: &Window) {
+        // A synchronous dirty draw may precede this input's capture phase.
+        // The actual release listener must consume its press, not layout.
+        if window.click_input.is_dispatching() {
+            return;
+        }
+        if let Some(pending) = &self.pending_mouse_down {
+            let mut pending = pending.borrow_mut();
+            if pending
+                .as_ref()
+                .is_some_and(|press| !window.click_input.is_pending(press.serial))
+            {
+                pending.take();
+                if let Some(clicked) = &self.clicked_state {
+                    *clicked.borrow_mut() = ElementClickedState::default();
+                }
+            }
+        }
+        if let Some(pending) = &self.pending_keyboard_down {
+            let mut pending = pending.borrow_mut();
+            if pending.as_ref().is_some_and(|press| {
+                !window.click_input.is_pending(press.serial)
+                    || press.focus_generation != window.focus_generation
+            }) {
+                pending.take();
+            }
+        }
+    }
+
+    fn click_handle(&mut self) -> ClickHandle {
+        ClickHandle {
+            mouse: Rc::downgrade(self.pending_mouse_down.get_or_insert_with(Default::default)),
+            keyboard: Rc::downgrade(
+                self.pending_keyboard_down
+                    .get_or_insert_with(Default::default),
+            ),
+            clicked: Rc::downgrade(self.clicked_state.get_or_insert_with(Default::default)),
+            generation: Rc::downgrade(self.click_generation.get_or_insert_with(Default::default)),
+        }
+    }
+}
+#[derive(Clone)]
+pub(crate) struct MouseClickPress {
+    down: MouseDownEvent,
+    serial: u64,
+    generation: u64,
+}
+impl std::ops::Deref for MouseClickPress {
+    type Target = MouseDownEvent;
+    fn deref(&self) -> &Self::Target {
+        &self.down
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct KeyboardClickPress {
+    button: KeyboardButton,
+    focus_generation: u64,
+    serial: u64,
+    generation: u64,
+}
+fn activation_key(key: &str) -> Option<KeyboardButton> {
+    match key {
+        "enter" => Some(KeyboardButton::Enter),
+        "space" => Some(KeyboardButton::Space),
+        _ => None,
+    }
 }
 
 /// Whether or not the element or a group that contains it is clicked by the mouse.
@@ -4669,8 +4839,9 @@ impl ScrollHandle {
 mod tests {
     use super::*;
     use crate::{
-        AnyWindowHandle, AppContext as _, Context, GestureTuning, InputEvent, Keystroke,
-        MouseMoveEvent, TestAppContext, TouchEvent, TouchId, canvas, util::FluentBuilder as _,
+        AccessibleAction, AnyWindowHandle, AppContext as _, Context, GestureTuning, InputEvent,
+        Keystroke, MouseMoveEvent, Role, TestAppContext, TouchEvent, TouchId, canvas,
+        util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
 
@@ -5084,6 +5255,7 @@ mod tests {
     struct TooltipOwner {
         captured_active_tooltip: CapturedActiveTooltip,
         show_delay_override: Option<Duration>,
+        fragmented: bool,
     }
 
     impl Render for TooltipOwner {
@@ -5096,6 +5268,12 @@ mod tests {
                             .id("target")
                             .w(px(50.))
                             .h(px(50.))
+                            .when(self.fragmented, |this| {
+                                this.hitbox_regions(Arc::<[Bounds<Pixels>]>::from([
+                                    Bounds::new(point(px(0.), px(0.)), size(px(10.), px(10.))),
+                                    Bounds::new(point(px(40.), px(40.)), size(px(10.), px(10.))),
+                                ]))
+                            })
                             .tooltip(|_, cx| cx.new(|_| TestTooltipView).into())
                             .when_some(self.show_delay_override, |this, delay| {
                                 this.tooltip_show_delay(delay)
@@ -5263,6 +5441,17 @@ mod tests {
         crate::AnyWindowHandle,
         CapturedActiveTooltip,
     ) {
+        create_tooltip_owner_test_with_fragments(show_delay_override, false)
+    }
+
+    fn create_tooltip_owner_test_with_fragments(
+        show_delay_override: Option<Duration>,
+        fragmented: bool,
+    ) -> (
+        TestAppContext,
+        crate::AnyWindowHandle,
+        CapturedActiveTooltip,
+    ) {
         let mut test_app = TestAppContext::single();
         let captured_active_tooltip: CapturedActiveTooltip = Rc::new(RefCell::new(None));
         let window = test_app.add_window({
@@ -5270,6 +5459,7 @@ mod tests {
             move |_, _| TooltipOwner {
                 captured_active_tooltip,
                 show_delay_override,
+                fragmented,
             }
         });
         let any_window = window.into();
@@ -5396,6 +5586,48 @@ mod tests {
         assert!(active_tooltip.borrow().is_none());
     }
 
+    #[test]
+    fn fragmented_tooltip_does_not_survive_blank_union_prepaint() {
+        let (mut cx, window, captured) = create_tooltip_owner_test_with_fragments(None, true);
+        let active = captured.borrow().as_ref().unwrap().upgrade().unwrap();
+        cx.update_window(window, |_, window, cx| {
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: point(px(5.), px(5.)),
+                    modifiers: Default::default(),
+                    pressed_button: None,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        cx.dispatcher.advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        cx.run_until_parked();
+        assert!(matches!(
+            active.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+        cx.update_window(window, |_, window, cx| {
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: point(px(25.), px(25.)),
+                    modifiers: Default::default(),
+                    pressed_button: None,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        assert!(
+            active.borrow().is_none(),
+            "blank union cannot retain tooltip during native prepaint"
+        );
+    }
+
     struct MouseDownOutOwner {
         mouse_down_out_count: Rc<RefCell<usize>>,
     }
@@ -5516,21 +5748,29 @@ mod tests {
 
     /// Two focusable, clickable elements ("a" and "b") used to exercise the
     /// Enter/Space -> synthesized click press/release pairing.
+    crate::actions!(native_click_replay_test, [ReplayChord]);
+
     struct KeyboardActivationTest {
         focus_a: FocusHandle,
         focus_b: FocusHandle,
         clicks: Rc<RefCell<Vec<&'static str>>>,
+        nested_ax: Rc<RefCell<Option<accesskit::ActionRequest>>>,
     }
 
     impl Render for KeyboardActivationTest {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             let clicks_a = self.clicks.clone();
             let clicks_b = self.clicks.clone();
+            let nested_ax = self.nested_ax.clone();
             div()
                 .size_full()
+                .on_action(|_: &ReplayChord, _, _| {})
                 .child(
                     div()
                         .id("a")
+                        .debug_selector(|| "a".into())
+                        .role(Role::Button)
+                        .aria_label("a")
                         .w(px(50.))
                         .h(px(50.))
                         .track_focus(&self.focus_a)
@@ -5539,11 +5779,29 @@ mod tests {
                 .child(
                     div()
                         .id("b")
+                        .role(Role::Button)
+                        .aria_label("b")
                         .w(px(50.))
                         .h(px(50.))
                         .track_focus(&self.focus_b)
                         .on_click(move |_, _, _| clicks_b.borrow_mut().push("b")),
                 )
+                .child(canvas(
+                    |_, _, _| {},
+                    move |_, _, window, _| {
+                        let nested_ax = nested_ax.clone();
+                        window.on_mouse_event(move |_: &MouseUpEvent, phase, window, cx| {
+                            if phase.capture() {
+                                let request = nested_ax.borrow_mut().take();
+                                if let Some(request) = request {
+                                    // The actual Window entrance is synchronous;
+                                    // the platform action channel is asynchronous.
+                                    window.handle_a11y_action(request, cx);
+                                }
+                            }
+                        });
+                    },
+                ))
         }
     }
 
@@ -5565,6 +5823,7 @@ mod tests {
                 focus_a,
                 focus_b,
                 clicks,
+                nested_ax: Rc::default(),
             }
         });
         (cx, window.into(), clicks, focus_a, focus_b)
@@ -5604,6 +5863,119 @@ mod tests {
             window.dispatch_event(KeyUpEvent { keystroke }.to_platform_input(), cx);
         })
         .unwrap();
+    }
+
+    fn a11y_click_request(
+        cx: &mut TestAppContext,
+        window: AnyWindowHandle,
+        label: &str,
+    ) -> accesskit::ActionRequest {
+        cx.activate_accessibility(window);
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        let tree = cx.accessibility_update(window).unwrap();
+        let (target_node, node) = tree
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some(label))
+            .unwrap();
+        assert!(node.supports_action(AccessibleAction::Click));
+        accesskit::ActionRequest {
+            action: AccessibleAction::Click,
+            target_node: *target_node,
+            target_tree: accesskit::TreeId::ROOT,
+            data: None,
+        }
+    }
+
+    fn click_a_event(cx: &mut TestAppContext, window: AnyWindowHandle, down: bool) {
+        cx.update_window(window, |_, window, cx| {
+            let position = window.rendered_frame.debug_bounds["a"].center();
+            let event = if down {
+                MouseDownEvent {
+                    button: MouseButton::Left,
+                    position,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }
+                .to_platform_input()
+            } else {
+                MouseUpEvent {
+                    button: MouseButton::Left,
+                    position,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                }
+                .to_platform_input()
+            };
+            window.dispatch_event(event, cx);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn a11y_channel_click_interrupts_another_targets_original_press() {
+        let (mut cx, window, clicks, focus_a, _) = setup_keyboard_activation_test();
+        focus_and_draw(&mut cx, window, &focus_a);
+        let request = a11y_click_request(&mut cx, window, "b");
+        click_a_event(&mut cx, window, true);
+        cx.simulate_accessibility_action(window, request.clone());
+        click_a_event(&mut cx, window, false);
+        assert_eq!(*clicks.borrow(), vec!["b"]);
+        key_down(&mut cx, window, "enter");
+        cx.simulate_accessibility_action(window, request);
+        key_up(&mut cx, window, "enter");
+        assert_eq!(*clicks.borrow(), vec!["b", "b"]);
+        click_a_event(&mut cx, window, true);
+        click_a_event(&mut cx, window, false);
+        assert_eq!(*clicks.borrow(), vec!["b", "b", "a"]);
+    }
+
+    #[test]
+    fn nested_a11y_entry_invalidates_another_targets_captured_release() {
+        let (mut cx, window, clicks, focus_a, _) = setup_keyboard_activation_test();
+        focus_and_draw(&mut cx, window, &focus_a);
+        let request = a11y_click_request(&mut cx, window, "b");
+        cx.update_window(window, |root, _, cx| {
+            root.clone()
+                .downcast::<KeyboardActivationTest>()
+                .unwrap()
+                .update(cx, |view, _| {
+                    *view.nested_ax.borrow_mut() = Some(request);
+                });
+        })
+        .unwrap();
+        click_a_event(&mut cx, window, true);
+        cx.with_paused_automatic_drawing(|cx| {
+            click_a_event(cx, window, false);
+            assert_eq!(*clicks.borrow(), vec!["b"]);
+        });
+        click_a_event(&mut cx, window, true);
+        click_a_event(&mut cx, window, false);
+        assert_eq!(*clicks.borrow(), vec!["b", "a"]);
+    }
+
+    #[test]
+    fn keyboard_replayed_chord_prefix_does_not_arm_native_press() {
+        let (mut cx, window, clicks, focus_a, _) = setup_keyboard_activation_test();
+        cx.update(|cx| cx.bind_keys([crate::KeyBinding::new("enter x", ReplayChord, None)]));
+        focus_and_draw(&mut cx, window, &focus_a);
+        key_down(&mut cx, window, "enter");
+        cx.update_window(window, |_, window, _| {
+            assert!(window.pending_input_keystrokes().is_some())
+        })
+        .unwrap();
+        key_up(&mut cx, window, "enter");
+        // The second physical prefix replays the first inside an actual input
+        // scope, then remains withheld by the same binding. Replay cannot arm it.
+        key_down(&mut cx, window, "enter");
+        key_up(&mut cx, window, "enter");
+        assert!(clicks.borrow().is_empty());
+        cx.dispatcher.advance_clock(Duration::from_secs(2));
+        cx.run_until_parked();
+        key_up(&mut cx, window, "enter");
+        assert!(clicks.borrow().is_empty());
     }
 
     /// Pressing and releasing Enter on the same focused element fires a click.
@@ -5678,17 +6050,17 @@ mod tests {
         assert!(clicks.borrow().is_empty(), "clicks: {:?}", clicks.borrow());
     }
 
-    /// The flag is a single activation marker, not keyed by which activation
-    /// key was used, so a Space down paired with an Enter up on the same
-    /// element still fires a click.
+    /// A clean activation requires the same actual key for down and up.
     #[test]
-    fn keyboard_activation_does_not_distinguish_space_and_enter() {
+    fn keyboard_activation_requires_matching_space_or_enter() {
         let (mut cx, window, clicks, focus_a, _focus_b) = setup_keyboard_activation_test();
 
         focus_and_draw(&mut cx, window, &focus_a);
         key_down(&mut cx, window, "space");
         key_up(&mut cx, window, "enter");
-
+        assert!(clicks.borrow().is_empty());
+        key_down(&mut cx, window, "space");
+        key_up(&mut cx, window, "space");
         assert_eq!(*clicks.borrow(), vec!["a"]);
     }
 

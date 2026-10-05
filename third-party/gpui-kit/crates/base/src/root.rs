@@ -582,3 +582,6 @@ mod tests {
 
 #[cfg(test)]
 mod focus_reveal;
+
+#[cfg(test)]
+mod click_target;
