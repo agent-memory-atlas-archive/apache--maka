@@ -19290,9 +19290,9 @@ Copyright notices are retained in src/* files where relevant.
 
 ================================================================================
 
-libsqlite3-sys@0.36.0 (MIT); authors declared by package: The rusqlite developers
+libsqlite3-sys@0.37.0 (MIT); authors declared by package: The rusqlite developers
 
-https://crates.io/api/v1/crates/libsqlite3-sys/0.36.0/download :: sqlcipher/LICENSE
+https://crates.io/api/v1/crates/libsqlite3-sys/0.37.0/download :: sqlcipher/LICENSE
 
 Copyright (c) 2008-2020 Zetetic LLC
 All rights reserved.
@@ -19321,11 +19321,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
 
-libsqlite3-sys@0.36.0 (MIT); authors declared by package: The rusqlite developers
-rusqlite@0.38.0 (MIT); authors declared by package: The rusqlite developers
+libsqlite3-sys@0.37.0 (MIT); authors declared by package: The rusqlite developers
+rusqlite@0.39.0 (MIT); authors declared by package: The rusqlite developers
 
-https://crates.io/api/v1/crates/libsqlite3-sys/0.36.0/download :: LICENSE
-https://crates.io/api/v1/crates/rusqlite/0.38.0/download :: LICENSE
+https://crates.io/api/v1/crates/libsqlite3-sys/0.37.0/download :: LICENSE
+https://crates.io/api/v1/crates/rusqlite/0.39.0/download :: LICENSE
 
 Copyright (c) 2014 The rusqlite developers
 
