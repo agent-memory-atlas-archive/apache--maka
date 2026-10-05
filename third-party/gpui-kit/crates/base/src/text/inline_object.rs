@@ -11,9 +11,7 @@ use gpui::{
     TextStyle, Window, div, px, size,
 };
 
-use super::{
-    InlineElement, TextViewMultiClickKind, inline::point_in_text_selection, state::LineSpan,
-};
+use super::{InlineElement, TextViewMultiClickKind, inline::point_in_text_selection};
 use crate::GlobalState;
 
 #[derive(Clone, Copy, Debug)]
@@ -270,18 +268,6 @@ impl Element for InlineObject {
                 window,
                 cx,
             );
-        }
-        if let Some(view) = GlobalState::global(cx).text_view_state() {
-            let state = view.read(cx);
-            if state.max_lines.is_some()
-                && let Ok(mut spans) = state.line_spans.lock()
-            {
-                spans.push(LineSpan {
-                    top: bounds.top(),
-                    bottom: bounds.bottom(),
-                    line_height: bounds.size.height,
-                });
-            }
         }
         hitbox
     }

@@ -11,8 +11,8 @@ use markup5ever_rcdom::{Node, NodeData, RcDom};
 
 use crate::text::document::ParsedDocument;
 use crate::text::node::{
-    self, BlockNode, ImageNode, InlineNode, LinkMark, NodeContext, Paragraph, Table, TableRow,
-    TextMark,
+    self, BlockNode, ImageNode, InlineNode, LinkMark, LinkOccurrence, NodeContext, Paragraph,
+    Table, TableRow, TextMark,
 };
 
 const BLOCK_ELEMENTS: [&str; 35] = [
@@ -54,7 +54,11 @@ const BLOCK_ELEMENTS: [&str; 35] = [
 ];
 
 /// Parse HTML into AST Node.
-pub(crate) fn parse(source: &str, cx: &mut NodeContext) -> Result<ParsedDocument, SharedString> {
+pub(crate) fn parse(
+    source: &str,
+    fragment_start: usize,
+    cx: &mut NodeContext,
+) -> Result<ParsedDocument, SharedString> {
     let opts = ParseOpts {
         ..Default::default()
     };
@@ -68,16 +72,38 @@ pub(crate) fn parse(source: &str, cx: &mut NodeContext) -> Result<ParsedDocument
         .read_from(&mut cursor)
         .map_err(|e| SharedString::from(format!("{:?}", e)))?;
 
+    let mut links = HtmlLinks {
+        fragment_start,
+        next_anchor: 0,
+    };
     let mut paragraph = Paragraph::default();
     // NOTE: The outer paragraph is not used.
     let node: BlockNode =
-        parse_node(&dom.document, &mut paragraph, cx).unwrap_or(BlockNode::Unknown);
+        parse_node(&dom.document, &mut paragraph, cx, &mut links).unwrap_or(BlockNode::Unknown);
     let node = node.compact();
 
     Ok(ParsedDocument {
         source: source.to_string().into(),
         blocks: Arc::new(vec![node]),
     })
+}
+
+/// HTML has no source offsets. Number anchors in the original DOM traversal,
+/// before merging inline children, and namespace them by the source fragment.
+struct HtmlLinks {
+    fragment_start: usize,
+    next_anchor: usize,
+}
+
+impl HtmlLinks {
+    fn next(&mut self) -> LinkOccurrence {
+        let occurrence = LinkOccurrence::Html {
+            fragment_start: self.fragment_start,
+            anchor: self.next_anchor,
+        };
+        self.next_anchor += 1;
+        occurrence
+    }
 }
 
 fn cleanup_html(source: &str) -> Vec<u8> {
@@ -208,7 +234,7 @@ fn attr_width_height(
     (width, height)
 }
 
-fn parse_table_row(table: &mut Table, node: &Rc<Node>) {
+fn parse_table_row(table: &mut Table, node: &Rc<Node>, links: &mut HtmlLinks) {
     let mut row = TableRow::default();
     let mut count = 0;
     for child in node.children.borrow().iter() {
@@ -223,7 +249,7 @@ fn parse_table_row(table: &mut Table, node: &Rc<Node>) {
                 }
 
                 count += 1;
-                parse_table_cell(&mut row, child, attrs);
+                parse_table_cell(&mut row, child, attrs, links);
             }
             _ => {}
         }
@@ -238,10 +264,11 @@ fn parse_table_cell(
     row: &mut node::TableRow,
     node: &Rc<Node>,
     attrs: &RefCell<Vec<html5ever::Attribute>>,
+    links: &mut HtmlLinks,
 ) {
     let mut paragraph = Paragraph::default();
     for child in node.children.borrow().iter() {
-        parse_paragraph(&mut paragraph, child);
+        parse_paragraph(&mut paragraph, child, links);
     }
     let width = attr_width_height(attrs).0;
     let table_cell = node::TableCell {
@@ -271,7 +298,7 @@ fn trim_text(text: &str) -> String {
     out
 }
 
-fn parse_paragraph(paragraph: &mut Paragraph, node: &Rc<Node>) {
+fn parse_paragraph(paragraph: &mut Paragraph, node: &Rc<Node>, links: &mut HtmlLinks) {
     fn push_merged(
         paragraph: &mut Paragraph,
         text: String,
@@ -300,13 +327,14 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &Rc<Node>) {
         node: &Node,
         paragraph: &mut Paragraph,
         new_mark: Option<TextMark>,
+        links: &mut HtmlLinks,
     ) {
         let mut merged_text = String::new();
         let mut merged_marks = Vec::new();
 
         for child in node.children.borrow().iter() {
             let mut child_paragraph = Paragraph::default();
-            parse_paragraph(&mut child_paragraph, &child);
+            parse_paragraph(&mut child_paragraph, &child, links);
 
             for node in child_paragraph.children {
                 let offset = merged_text.len();
@@ -342,23 +370,34 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &Rc<Node>) {
         }
         NodeData::Element { name, attrs, .. } => match name.local {
             local_name!("em") | local_name!("i") => {
-                merge_children_with_mark(node, paragraph, Some(TextMark::default().italic()));
+                merge_children_with_mark(
+                    node,
+                    paragraph,
+                    Some(TextMark::default().italic()),
+                    links,
+                );
             }
             local_name!("strong") | local_name!("b") => {
-                merge_children_with_mark(node, paragraph, Some(TextMark::default().bold()));
+                merge_children_with_mark(node, paragraph, Some(TextMark::default().bold()), links);
             }
             local_name!("del") | local_name!("s") => {
                 merge_children_with_mark(
                     node,
                     paragraph,
                     Some(TextMark::default().strikethrough()),
+                    links,
                 );
             }
             local_name!("u") => {
-                merge_children_with_mark(node, paragraph, Some(TextMark::default().underline()));
+                merge_children_with_mark(
+                    node,
+                    paragraph,
+                    Some(TextMark::default().underline()),
+                    links,
+                );
             }
             local_name!("code") => {
-                merge_children_with_mark(node, paragraph, Some(TextMark::default().code()));
+                merge_children_with_mark(node, paragraph, Some(TextMark::default().code()), links);
             }
             local_name!("mark") => {
                 let color = mark_color(&attrs).unwrap_or_else(|| gpui::rgb(0xfef08a).into());
@@ -366,10 +405,12 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &Rc<Node>) {
                     node,
                     paragraph,
                     Some(TextMark::default().highlight(color)),
+                    links,
                 );
             }
             local_name!("a") => {
                 let link_mark = LinkMark {
+                    occurrence: Some(links.next()),
                     url: attr_value(&attrs, local_name!("href"))
                         .unwrap_or_default()
                         .into(),
@@ -381,6 +422,7 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &Rc<Node>) {
                     node,
                     paragraph,
                     Some(TextMark::default().link(link_mark)),
+                    links,
                 );
             }
             local_name!("img") => {
@@ -405,11 +447,11 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &Rc<Node>) {
                 });
             }
             _ => {
-                merge_children_with_mark(node, paragraph, None);
+                merge_children_with_mark(node, paragraph, None, links);
             }
         },
         _ => {
-            merge_children_with_mark(node, paragraph, None);
+            merge_children_with_mark(node, paragraph, None, links);
         }
     }
 }
@@ -418,6 +460,7 @@ fn parse_node(
     node: &Rc<Node>,
     paragraph: &mut Paragraph,
     cx: &mut NodeContext,
+    links: &mut HtmlLinks,
 ) -> Option<BlockNode> {
     match node.data {
         NodeData::Text { ref contents } => {
@@ -456,7 +499,7 @@ fn parse_node(
 
                 let mut paragraph = Paragraph::default();
                 for child in node.children.borrow().iter() {
-                    parse_paragraph(&mut paragraph, child);
+                    parse_paragraph(&mut paragraph, child, links);
                 }
 
                 let heading = BlockNode::Heading {
@@ -512,7 +555,7 @@ fn parse_node(
             }
             local_name!("ul") | local_name!("ol") => {
                 let ordered = name.local == local_name!("ol");
-                let children = consume_children_nodes(node, paragraph, cx);
+                let children = consume_children_nodes(node, paragraph, cx, links);
                 Some(BlockNode::List {
                     children,
                     ordered,
@@ -526,7 +569,7 @@ fn parse_node(
 
                 for child in node.children.borrow().iter() {
                     let mut child_paragraph = Paragraph::default();
-                    if let Some(child_node) = parse_node(child, &mut child_paragraph, cx) {
+                    if let Some(child_node) = parse_node(child, &mut child_paragraph, cx, links) {
                         children.push(child_node);
                     }
                     if child_paragraph.text_len() > 0 {
@@ -563,11 +606,11 @@ fn parse_node(
                                 || name.local == local_name!("thead") =>
                         {
                             for sub_child in child.children.borrow().iter() {
-                                parse_table_row(&mut table, &sub_child);
+                                parse_table_row(&mut table, &sub_child, links);
                             }
                         }
                         _ => {
-                            parse_table_row(&mut table, &child);
+                            parse_table_row(&mut table, &child, links);
                         }
                     }
                 }
@@ -585,7 +628,7 @@ fn parse_node(
                 }
             }
             local_name!("blockquote") => {
-                let children = consume_children_nodes(node, paragraph, cx);
+                let children = consume_children_nodes(node, paragraph, cx, links);
                 Some(BlockNode::Blockquote {
                     children,
                     span: None,
@@ -605,7 +648,7 @@ fn parse_node(
 
                     // Inner of the block element -- The "Inner text of block element"
                     for child in node.children.borrow().iter() {
-                        if let Some(child_node) = parse_node(child, paragraph, cx) {
+                        if let Some(child_node) = parse_node(child, paragraph, cx, links) {
                             children.push(child_node);
                         }
                     }
@@ -621,7 +664,7 @@ fn parse_node(
                     }
                 } else {
                     // Others to as Inline
-                    parse_paragraph(paragraph, node);
+                    parse_paragraph(paragraph, node, links);
 
                     if paragraph.is_image() {
                         Some(BlockNode::Paragraph(paragraph.take()))
@@ -632,7 +675,7 @@ fn parse_node(
             }
         },
         NodeData::Document => {
-            let children = consume_children_nodes(node, paragraph, cx);
+            let children = consume_children_nodes(node, paragraph, cx, links);
             Some(BlockNode::Root {
                 children,
                 span: None,
@@ -648,11 +691,12 @@ fn consume_children_nodes(
     node: &Node,
     paragraph: &mut Paragraph,
     cx: &mut NodeContext,
+    links: &mut HtmlLinks,
 ) -> Vec<BlockNode> {
     let mut children = vec![];
     consume_paragraph(&mut children, paragraph);
     for child in node.children.borrow().iter() {
-        if let Some(child_node) = parse_node(child, paragraph, cx) {
+        if let Some(child_node) = parse_node(child, paragraph, cx, links) {
             children.push(child_node);
         }
         consume_paragraph(&mut children, paragraph);
@@ -717,11 +761,11 @@ mod tests {
 
         // `<mark>` is rendered as a highlight, kept as `==...==` in markdown.
         let html = r#"<p>Hello <mark>world</mark></p>"#;
-        let node = super::parse(html, &mut cx).unwrap();
+        let node = super::parse(html, 0, &mut cx).unwrap();
         assert_eq!(node.to_markdown(), "Hello ==world==");
 
         let html = r#"<p><mark color="blue">blue</mark> and <mark style="background-color: #336699">hex</mark></p>"#;
-        let node = super::parse(html, &mut cx).unwrap();
+        let node = super::parse(html, 0, &mut cx).unwrap();
         assert_eq!(node.to_markdown(), "==blue== and ==hex==");
     }
 
@@ -729,7 +773,7 @@ mod tests {
     fn test_keep_spaces() {
         let html = r#"<p>and <code>code</code> text</p>"#;
         let mut cx = NodeContext::default();
-        let node = super::parse(html, &mut cx).unwrap();
+        let node = super::parse(html, 0, &mut cx).unwrap();
         assert_eq!(node.to_markdown(), "and `code` text");
 
         let html = r#"
@@ -749,7 +793,7 @@ mod tests {
             </ul>
             </div>
         "#;
-        let node = super::parse(html, &mut cx).unwrap();
+        let node = super::parse(html, 0, &mut cx).unwrap();
         assert_eq!(
             node.to_markdown(),
             indoc::indoc! {r#"
@@ -776,7 +820,7 @@ mod tests {
     fn test_image() {
         let html = r#"<img src="https://example.com/image.png" alt="Example" width="100" height="200" title="Example Image" />"#;
         let mut cx = NodeContext::default();
-        let node = super::parse(html, &mut cx).unwrap();
+        let node = super::parse(html, 0, &mut cx).unwrap();
         assert_eq!(
             node,
             ParsedDocument {
@@ -797,7 +841,7 @@ mod tests {
         );
 
         let html = r#"<img src="https://example.com/image.png" alt="Example" style="width: 80%" title="Example Image" />"#;
-        let node = super::parse(html, &mut cx).unwrap();
+        let node = super::parse(html, 0, &mut cx).unwrap();
         assert_eq!(
             node,
             ParsedDocument {
@@ -816,5 +860,60 @@ mod tests {
                 })])
             }
         );
+    }
+
+    #[test]
+    fn anchor_occurrences_share_fragments_but_never_share_urls() {
+        use crate::text::node::{LinkMark, LinkOccurrence};
+        fn collect(block: &BlockNode, links: &mut Vec<LinkMark>) {
+            match block {
+                BlockNode::Root { children, .. } => {
+                    for child in children {
+                        collect(child, links);
+                    }
+                }
+                BlockNode::Paragraph(paragraph) => {
+                    for inline in &paragraph.children {
+                        links.extend(
+                            inline
+                                .marks
+                                .iter()
+                                .filter_map(|(_, mark)| mark.link.clone()),
+                        );
+                        links.extend(inline.image.iter().filter_map(|image| image.link.clone()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let parse_links = |anchor| {
+            let document = super::parse(
+                r#"<p><a href="u"><b>one</b><img src="x"><img src="y">tail</a><a href="u">two</a></p>"#,
+                anchor, &mut NodeContext::default()).unwrap();
+            let mut links = Vec::new();
+            for block in document.blocks.iter() {
+                collect(block, &mut links);
+            }
+            links
+        };
+        let links = parse_links(47);
+        let first = Some(LinkOccurrence::Html {
+            fragment_start: 47,
+            anchor: 0,
+        });
+        let second = Some(LinkOccurrence::Html {
+            fragment_start: 47,
+            anchor: 1,
+        });
+        assert!(links.iter().filter(|link| link.occurrence == first).count() >= 4);
+        assert_eq!(
+            links
+                .iter()
+                .filter(|link| link.occurrence == second)
+                .count(),
+            1
+        );
+        assert!(links.iter().all(|link| link.url.as_ref() == "u"));
+        assert_ne!(parse_links(83)[0].occurrence, links[0].occurrence);
     }
 }

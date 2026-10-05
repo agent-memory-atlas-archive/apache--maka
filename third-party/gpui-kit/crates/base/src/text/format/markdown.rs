@@ -11,8 +11,8 @@ use crate::text::{
     document::ParsedDocument,
     markdown_ext::MarkdownParseContext,
     node::{
-        self, BlockNode, CodeBlock, ImageNode, InlineNode, LinkMark, NodeContext, Paragraph,
-        SourceSegment, Span, Table, TableRow, TextMark,
+        self, BlockNode, CodeBlock, ImageNode, InlineNode, LinkMark, LinkOccurrence, NodeContext,
+        Paragraph, SourceSegment, Span, Table, TableRow, TextMark,
     },
 };
 
@@ -780,6 +780,12 @@ fn parse_paragraph(
         }
         Node::Link(val) => {
             let link_mark = Some(LinkMark {
+                occurrence: val
+                    .position
+                    .as_ref()
+                    .map(|position| LinkOccurrence::Markdown {
+                        start: cx.offset + position.start.offset,
+                    }),
                 url: val.url.clone().into(),
                 title: val.title.clone().map(|s| s.into()),
                 ..Default::default()
@@ -840,7 +846,15 @@ fn parse_paragraph(
                     .marks(vec![(0..text.len(), TextMark::default())]),
             );
         }
-        Node::Html(val) => match super::html::parse(&val.value, cx) {
+        Node::Html(val) => match super::html::parse(
+            &val.value,
+            cx.offset
+                + val
+                    .position
+                    .as_ref()
+                    .map_or(0, |position| position.start.offset),
+            cx,
+        ) {
             Ok(el) => {
                 if let Some(inline_text) =
                     append_inline_html_blocks(paragraph, Arc::unwrap_or_clone(el.blocks))
@@ -872,6 +886,12 @@ fn parse_paragraph(
         }
         Node::LinkReference(link) => {
             let link_mark = LinkMark {
+                occurrence: link
+                    .position
+                    .as_ref()
+                    .map(|position| LinkOccurrence::Markdown {
+                        start: cx.offset + position.start.offset,
+                    }),
                 url: "".into(),
                 title: link.label.clone().map(Into::into),
                 identifier: Some(link.identifier.clone().into()),
@@ -1006,7 +1026,15 @@ fn ast_to_node(source: &str, value: mdast::Node, cx: &mut NodeContext) -> BlockN
                 CodeBlock::new(val.value.into(), None, span).source_segments(segments),
             )
         }
-        Node::Html(val) => match super::html::parse(&val.value, cx) {
+        Node::Html(val) => match super::html::parse(
+            &val.value,
+            cx.offset
+                + val
+                    .position
+                    .as_ref()
+                    .map_or(0, |position| position.start.offset),
+            cx,
+        ) {
             Ok(el) => BlockNode::Root {
                 children: Arc::unwrap_or_clone(el.blocks),
                 span: new_span(val.position, cx),
@@ -1091,6 +1119,7 @@ fn ast_to_node(source: &str, value: mdast::Node, cx: &mut NodeContext) -> BlockN
                     url: def.url.clone().into(),
                     identifier: Some(def.identifier.clone().into()),
                     title: def.title.clone().map(Into::into),
+                    occurrence: None,
                 },
             );
 
@@ -2409,6 +2438,86 @@ mod tests {
             Some(&Ticker {
                 symbol: "TSLA.US".to_string()
             })
+        );
+    }
+
+    #[test]
+    fn link_occurrences_survive_flattening_offsets_and_stream_growth() {
+        let source = "[**one** `code` ![image](x)](u)[two](u)";
+        let parse_links = |source: &str| {
+            let mut cx = NodeContext {
+                offset: 37,
+                ..Default::default()
+            };
+            let document = parse(source, &mut cx).unwrap();
+            let paragraph = document.blocks.iter().find_map(first_paragraph).unwrap();
+            paragraph
+                .children
+                .iter()
+                .flat_map(|inline| {
+                    inline
+                        .marks
+                        .iter()
+                        .filter_map(|(_, mark)| mark.link.clone())
+                        .chain(inline.image.iter().filter_map(|image| image.link.clone()))
+                })
+                .collect::<Vec<_>>()
+        };
+        let links = parse_links(source);
+        let first = LinkOccurrence::Markdown { start: 37 };
+        let second = LinkOccurrence::Markdown {
+            start: 37 + source.find("[two]").unwrap(),
+        };
+        assert!(links.iter().all(|link| link.url.as_ref() == "u"));
+        assert!(
+            links
+                .iter()
+                .filter(|link| link.occurrence == Some(first))
+                .count()
+                >= 2,
+            "styled text and image retain the original anchor"
+        );
+        assert!(links.iter().any(|link| link.occurrence == Some(second)));
+        assert!(
+            links
+                .iter()
+                .all(|link| matches!(link.occurrence, Some(key) if key == first || key == second))
+        );
+        let grown = parse_links("[**one** `code` ![image](x) more](u)[two](u)");
+        assert_eq!(grown[0].occurrence, Some(first));
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn reference_definition_never_replaces_its_activation_occurrence() {
+        let source = "[one][ref] [two][ref]\n\n[ref]: u \"title\"";
+        let mut cx = NodeContext::default();
+        let document = parse(source, &mut cx).unwrap();
+        let paragraph = document.blocks.iter().find_map(first_paragraph).unwrap();
+        let mut links = paragraph
+            .children
+            .iter()
+            .flat_map(|inline| {
+                inline
+                    .marks
+                    .iter()
+                    .filter_map(|(_, mark)| mark.link.clone())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(links.len(), 2);
+        assert_eq!(cx.link_refs["ref"].occurrence, None);
+        for link in &mut links {
+            link.resolve(&cx.link_refs);
+            assert_eq!(link.url.as_ref(), "u");
+            assert_eq!(link.title.as_deref(), Some("title"));
+        }
+        assert_eq!(
+            links[0].occurrence,
+            Some(LinkOccurrence::Markdown { start: 0 })
+        );
+        assert_eq!(
+            links[1].occurrence,
+            Some(LinkOccurrence::Markdown { start: 11 })
         );
     }
 }

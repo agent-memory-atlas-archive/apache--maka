@@ -1221,7 +1221,8 @@ mod tests {
     #[test]
     fn html_text_converts_nothing() {
         let html = "<p>one <b>two</b></p>";
-        let document = format::html::parse(html, &mut NodeContext::default()).expect("parse HTML");
+        let document =
+            format::html::parse(html, 0, &mut NodeContext::default()).expect("parse HTML");
         let text = rendered(document);
         assert_eq!(text.source(), html);
         assert!(!text.is_empty());

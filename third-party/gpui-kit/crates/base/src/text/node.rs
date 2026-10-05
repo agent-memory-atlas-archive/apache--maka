@@ -394,13 +394,39 @@ impl BlockNode {
     }
 }
 
+/// Identity of an activation occurrence, assigned before inline flattening.
+/// Definitions supply targets, but never acquire an activation identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum LinkOccurrence {
+    Markdown {
+        start: usize,
+    },
+    Html {
+        fragment_start: usize,
+        anchor: usize,
+    },
+}
+
 #[allow(unused)]
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct LinkMark {
+    pub(crate) occurrence: Option<LinkOccurrence>,
     pub url: SharedString,
     /// Optional identifier for footnotes.
     pub identifier: Option<SharedString>,
     pub title: Option<SharedString>,
+}
+
+impl LinkMark {
+    /// Resolve target facts while retaining the source occurrence and reference.
+    pub(super) fn resolve(&mut self, references: &HashMap<SharedString, LinkMark>) {
+        if let Some(identifier) = &self.identifier
+            && let Some(definition) = references.get(identifier)
+        {
+            self.url = definition.url.clone();
+            self.title = definition.title.clone();
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -2099,7 +2125,7 @@ impl NodeContext {
     }
 
     pub(super) fn add_ref(&mut self, identifier: SharedString, link: LinkMark) {
-        self.link_refs.insert(identifier, link);
+        self.link_refs.entry(identifier).or_insert(link);
     }
 
     /// The fade ranges of the text leaf `key`, in its rendered byte space.
@@ -2237,11 +2263,7 @@ impl Paragraph {
                 return div().into_any_element();
             }
             for (_, link_mark) in &mut links {
-                if let Some(identifier) = link_mark.identifier.as_ref()
-                    && let Some(mark) = node_cx.link_refs.get(identifier)
-                {
-                    *link_mark = mark.clone();
-                }
+                link_mark.resolve(&node_cx.link_refs);
             }
             let highlights = fade_highlights(highlights, &slice_fades(fades, 0, text.len()));
             let backgrounds = slice_backgrounds(backgrounds, 0, text.len());
@@ -2305,7 +2327,9 @@ impl Paragraph {
                         .object_fit(ObjectFit::Contain)
                         .max_w(relative(1.))
                         .when_some(image.width, |this, width| this.w(width))
-                        .when_some(image.link.clone(), |this, link| {
+                        .when_some(image.height, |this, height| this.h(height))
+                        .when_some(image.link.clone(), |this, mut link| {
+                            link.resolve(&node_cx.link_refs);
                             let link_activation_handler = link_activation_handler.clone();
                             let aux_link = link.clone();
                             let aux_link_activation_handler = link_activation_handler.clone();
@@ -2350,12 +2374,7 @@ impl Paragraph {
                             ..Default::default()
                         });
 
-                        // convert link references, replace link
-                        if let Some(identifier) = link_mark.identifier.as_ref() {
-                            if let Some(mark) = node_cx.link_refs.get(identifier) {
-                                link_mark = mark.clone();
-                            }
-                        }
+                        link_mark.resolve(&node_cx.link_refs);
 
                         links.push((inner_range.clone(), link_mark));
                     }
@@ -2456,13 +2475,9 @@ impl Paragraph {
                 for (_, mark) in &inline_node.marks {
                     object_style = object_style.highlight(mark_highlight(mark, node_cx, cx).style);
                     if let Some(link) = &mark.link {
-                        object_link = Some(
-                            link.identifier
-                                .as_ref()
-                                .and_then(|id| node_cx.link_refs.get(id))
-                                .unwrap_or(link)
-                                .clone(),
-                        );
+                        let mut link = link.clone();
+                        link.resolve(&node_cx.link_refs);
+                        object_link = Some(link);
                         object_style.color = Some(node_cx.style.link());
                         object_style.underline = Some(gpui::UnderlineStyle {
                             thickness: px(1.),
@@ -2514,7 +2529,10 @@ impl Paragraph {
 
                 items.push(InlineFlowItem::Image {
                     source: node_cx.image_source(image),
-                    link: image.link.clone(),
+                    link: image.link.clone().map(|mut link| {
+                        link.resolve(&node_cx.link_refs);
+                        link
+                    }),
                     title: image.title(),
                     width: image.width,
                     height: image.height,
@@ -2538,11 +2556,7 @@ impl Paragraph {
                             ..Default::default()
                         });
 
-                        if let Some(identifier) = link_mark.identifier.as_ref()
-                            && let Some(mark) = node_cx.link_refs.get(identifier)
-                        {
-                            link_mark = mark.clone();
-                        }
+                        link_mark.resolve(&node_cx.link_refs);
 
                         links.push((inner_range.clone(), link_mark));
                     }
@@ -3690,6 +3704,7 @@ mod tests {
             mark.strikethrough = true;
             mark.link = Some(LinkMark {
                 identifier: Some("ref".into()),
+                occurrence: Some(LinkOccurrence::Markdown { start: 29 }),
                 ..Default::default()
             });
             node_cx.link_refs.insert(
@@ -3714,6 +3729,11 @@ mod tests {
             assert_eq!(style.font_style, Some(FontStyle::Italic));
             assert!(style.strikethrough.is_some());
             assert_eq!(link.as_ref().unwrap().url.as_ref(), "https://example.com");
+            assert_eq!(
+                link.as_ref().unwrap().occurrence,
+                Some(LinkOccurrence::Markdown { start: 29 })
+            );
+            assert_eq!(link.as_ref().unwrap().identifier.as_deref(), Some("ref"));
         });
     }
 

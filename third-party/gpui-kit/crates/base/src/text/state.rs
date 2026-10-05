@@ -4,7 +4,7 @@ use std::time::Instant;
 use std::{
     ops::{Range, RangeInclusive},
     pin::Pin,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, OnceLock},
     task::Poll,
     time::Duration,
 };
@@ -83,16 +83,6 @@ pub enum SelectionFormat {
     Source,
 }
 
-/// One text element's laid-out vertical extent, reported by `Inline` during
-/// prepaint so `TextView` can snap its `max_lines` clip to a whole-line
-/// boundary.
-#[derive(Clone, Copy)]
-pub(super) struct LineSpan {
-    pub(super) top: Pixels,
-    pub(super) bottom: Pixels,
-    pub(super) line_height: Pixels,
-}
-
 /// The state of a TextView.
 pub struct TextViewState {
     entity_id: EntityId,
@@ -105,12 +95,6 @@ pub struct TextViewState {
     pub(super) selectable: bool,
     pub(super) selection_format: SelectionFormat,
     pub(super) scrollable: bool,
-    pub(super) max_lines: Option<usize>,
-    /// Line spans reported by `Inline` during prepaint (collected only while
-    /// [`Self::max_lines`] is set); cleared by `TextView` at each frame start.
-    pub(super) line_spans: Arc<Mutex<Vec<LineSpan>>>,
-    /// Whether the last painted frame clipped content due to `max_lines`.
-    pub(super) clamped: bool,
     pub(super) text_view_style: Arc<TextViewStyle>,
     pub(super) code_block_actions: Option<std::sync::Arc<CodeBlockActionsFn>>,
     pub(super) code_block_highlighter: Option<std::sync::Arc<CodeBlockHighlighterFn>>,
@@ -187,11 +171,20 @@ impl TextViewState {
                             return;
                         }
 
+                        // The worker's preceding parse may never have reached
+                        // this owner. Compatibility belongs to the actually
+                        // committed document, before advancing its revision.
+                        let selection_compatible = parsed_update.selection_compatible
+                            && state.parsed_error.is_none()
+                            && state.full_update_revision <= state.committed_revision
+                            && parsed_update.result.as_ref().is_ok_and(|content| {
+                                content.node_cx.link_refs == state.parsed_content.node_cx.link_refs
+                            });
                         match parsed_update.result {
                             Ok(content) => {
-                                let append =
-                                    parsed_update.selection_compatible && !parsed_update.full_parse;
-                                if append && state.full_update_revision <= state.committed_revision
+                                let append = selection_compatible && !parsed_update.full_parse;
+                                if parsed_update.appended
+                                    && state.full_update_revision <= state.committed_revision
                                 {
                                     state.splice_appended_blocks(&content.document);
                                 }
@@ -207,7 +200,7 @@ impl TextViewState {
                                 );
                                 state.parsed_content = content;
                                 state.parsed_error = None;
-                                state.compatible_layout_update = parsed_update.selection_compatible;
+                                state.compatible_layout_update = selection_compatible;
                                 if parsed_update.full_parse {
                                     state.invalidate_measured_heights();
                                 }
@@ -217,10 +210,10 @@ impl TextViewState {
                                 state.parsed_error = Some(err);
                             }
                         }
-                        // Don't interrupt an active drag-selection; the stored
-                        // positions remain valid for append-only updates and will
-                        // self-correct on the next mouse-move event.
-                        if !parsed_update.selection_compatible && !state.is_selecting {
+                        // Only a compatible source append preserves the current
+                        // selection. Reparsed structure can invalidate an active
+                        // drag's byte endpoints as well as a settled selection.
+                        if !selection_compatible {
                             state.reset_selection_and_adapter(cx);
                         }
                         cx.notify();
@@ -241,9 +234,6 @@ impl TextViewState {
             selectable: false,
             selection_format: SelectionFormat::default(),
             scrollable: false,
-            max_lines: None,
-            line_spans: Arc::default(),
-            clamped: false,
             // Measure all blocks (not just visible ones) so the scrollbar
             // thumb size stays stable. Without this, off-screen blocks count
             // as zero height until scrolled into view, which makes the
@@ -334,12 +324,6 @@ impl TextViewState {
         }
         self.scrollable = scrollable;
         cx.notify();
-    }
-
-    /// Whether the last painted frame clipped content because of
-    /// [`TextView::max_lines`](crate::text::TextView::max_lines).
-    pub fn is_clamped(&self) -> bool {
-        self.clamped
     }
 
     /// Set the text content.
@@ -567,9 +551,7 @@ impl TextViewState {
                     self.parsed_content = content;
                     self.parsed_error = None;
                     self.invalidate_measured_heights();
-                    if !self.is_selecting {
-                        self.reset_selection_and_adapter(cx);
-                    }
+                    self.reset_selection_and_adapter(cx);
                 }
                 Err(err) => {
                     self.stream_fade.discard_pending();
@@ -708,8 +690,9 @@ impl TextViewState {
     /// Tell the scrollable list which blocks an append replaced, before `new`,
     /// the appended document, replaces the current one.
     ///
-    /// An append parses only the current document's last block again, so the
-    /// blocks before it keep their spans and their measured heights. Without
+    /// Ordinary appends parse only the current document's last block, keeping
+    /// earlier measured heights. Reference appends reparse the complete syntax
+    /// and the caller invalidates every height after preserving the offset. Without
     /// this, `render_root` resets the list whenever the block count changes,
     /// which scrolled a streaming view back to the top and measured every
     /// block again on each new block. Only a grown block count is handled
@@ -977,11 +960,10 @@ impl TextViewState {
         now: Instant,
         window: &mut Window,
     ) -> (Option<RevealRequest>, Option<usize>) {
-        if self.max_lines.is_some()
-            || self
-                .pending_reveal
-                .as_ref()
-                .is_some_and(|reveal| reveal.is_expired(now))
+        if self
+            .pending_reveal
+            .as_ref()
+            .is_some_and(|reveal| reveal.is_expired(now))
         {
             self.pending_reveal = None;
         }
@@ -1058,9 +1040,7 @@ impl Render for TextViewState {
 
         let content = v_flex()
             .w_full()
-            // Clamped content must keep its natural height: stretching it to
-            // the capped box would hide the overflow the clamp has to measure.
-            .when(self.max_lines.is_none(), |this| this.h_full())
+            .h_full()
             .map(|this| match &self.parsed_error {
                 None => this.child(self.parsed_content.document.render_root(
                     if self.scrollable {
@@ -1158,14 +1138,23 @@ impl Future for UpdateFuture {
                     let hit_coalesce_budget =
                         merge_pending_options(&mut options, self.rx.as_ref().get_ref());
 
+                    let previous_references = &self.content.node_cx.link_refs;
                     let res = parse_content(self.format, self.content.clone(), &options);
+                    let reference_parse = self.format == TextViewFormat::Markdown
+                        && res.as_ref().is_ok_and(|content| {
+                            !previous_references.is_empty() || !content.node_cx.link_refs.is_empty()
+                        });
                     if let Ok(content) = &res {
                         self.content = content.clone();
                     }
                     _ = self.tx_result.try_send(ParsedUpdate {
                         revision: options.revision,
-                        full_parse: !options.append,
-                        selection_compatible: options.mode == ParseMode::Compatible,
+                        appended: options.append,
+                        full_parse: !options.append
+                            || self.format == TextViewFormat::Html
+                            || reference_parse,
+                        selection_compatible: options.mode == ParseMode::Compatible
+                            && self.format == TextViewFormat::Markdown,
                         baseline_ack: options.mode == ParseMode::BaselineAck,
                         result: res,
                     });
@@ -1207,6 +1196,8 @@ impl UpdateOptions {
 
 struct ParsedUpdate {
     revision: usize,
+    /// Source extension is independent of how much syntax had to be parsed.
+    appended: bool,
     full_parse: bool,
     selection_compatible: bool,
     baseline_ack: bool,
@@ -1246,13 +1237,12 @@ fn parse_content(
         ..NodeContext::default()
     };
 
-    // Re-parse the last block together with the appended text, so a block the
-    // new text continues (an unclosed list, a fenced code block) is not split
-    // in two. A block without a span cannot be located in `source` — the HTML
-    // parser never records spans — so it is left in place and only the
-    // appended text is parsed, positioned at the end of the current source.
-    let last_span = options
-        .append
+    // HTML is one DOM, including HTML5 repair across chunk boundaries.
+    // Markdown references can classify text anywhere in the complete source.
+    // Only ordinary Markdown prose admits the original tail-only parse.
+    let mut complete_parse =
+        !options.append || format == TextViewFormat::Html || !content.node_cx.link_refs.is_empty();
+    let last_span = (!complete_parse)
         .then(|| {
             content
                 .document
@@ -1261,33 +1251,47 @@ fn parse_content(
                 .and_then(|block| block.span())
         })
         .flatten();
-
-    let mut source = String::new();
-    if let Some(span) = last_span {
+    let source = if complete_parse {
+        if options.append {
+            format!("{}{}", content.document.source, options.pending_text)
+        } else {
+            options.pending_text.clone()
+        }
+    } else if let Some(span) = last_span {
         Arc::make_mut(&mut content.document.blocks).pop();
         node_cx.offset = span.start;
-        source.push_str(&content.document.source[span.start..]);
-        source.push_str(&options.pending_text);
+        format!(
+            "{}{}",
+            &content.document.source[span.start..],
+            options.pending_text
+        )
     } else {
-        if options.append {
-            node_cx.offset = content.document.source.len();
-        }
-        source.push_str(&options.pending_text);
+        node_cx.offset = content.document.source.len();
+        options.pending_text.clone()
+    };
+
+    let mut new_document = match format {
+        TextViewFormat::Markdown => format::markdown::parse(&source, &mut node_cx),
+        TextViewFormat::Html => format::html::parse(&source, 0, &mut node_cx),
+    }?;
+    // A newly arrived definition may turn earlier literal syntax into a link.
+    if !complete_parse && !node_cx.link_refs.is_empty() {
+        node_cx.offset = 0;
+        node_cx.link_refs.clear();
+        let source = format!("{}{}", content.document.source, options.pending_text);
+        new_document = format::markdown::parse(&source, &mut node_cx)?;
+        complete_parse = true;
     }
 
-    let new_document = match format {
-        TextViewFormat::Markdown => format::markdown::parse(&source, &mut node_cx),
-        TextViewFormat::Html => format::html::parse(&source, &mut node_cx),
-    }?;
-
-    if options.append {
+    if complete_parse {
+        content.document = new_document;
+    } else {
         content.document.source =
             format!("{}{}", content.document.source, options.pending_text).into();
         Arc::make_mut(&mut content.document.blocks)
             .extend(Arc::unwrap_or_clone(new_document.blocks));
-    } else {
-        content.document = new_document;
     }
+    content.node_cx = node_cx;
 
     Ok(content)
 }
@@ -1665,16 +1669,18 @@ mod tests {
     #[gpui::test]
     fn html_push_str_keeps_earlier_blocks(cx: &mut TestAppContext) {
         cx.update(crate::init);
-        let state = cx.update(|cx| cx.new(|cx| TextViewState::html("<p>first</p>", cx)));
+        let first = "<p><a href='u'>first</a></p>";
+        let second = "<p><a href='u'>second</a></p>";
+        let state = cx.update(|cx| cx.new(|cx| TextViewState::html(first, cx)));
         cx.run_until_parked();
 
         state.update(cx, |state, cx| {
-            state.push_str("<p>second</p>", cx);
+            state.push_str(second, cx);
         });
         cx.run_until_parked();
 
         state.read_with(cx, |state, _| {
-            assert_eq!(state.source().as_str(), "<p>first</p><p>second</p>");
+            assert_eq!(state.source().as_str(), format!("{first}{second}"));
             let text = state
                 .parsed_content
                 .document
@@ -1684,6 +1690,22 @@ mod tests {
                 .collect::<String>();
             assert!(text.contains("first"), "lost the first block: {text:?}");
             assert!(text.contains("second"), "lost the appended block: {text:?}");
+            let links = document_links(&state.parsed_content.document);
+            assert_eq!(links.len(), 2);
+            assert_eq!(
+                links[0].occurrence,
+                Some(node::LinkOccurrence::Html {
+                    fragment_start: 0,
+                    anchor: 0
+                })
+            );
+            assert_eq!(
+                links[1].occurrence,
+                Some(node::LinkOccurrence::Html {
+                    fragment_start: 0,
+                    anchor: 1
+                })
+            );
         });
     }
 
@@ -2931,8 +2953,6 @@ mod tests {
             /// A fit-content view in a scrolling `div`, which follows reveals
             /// through `on_reveal`.
             Div(ScrollHandle),
-            /// A fit-content view clamped to two lines, second row of a list.
-            Clamped(ListState),
             /// A fit-content view in nothing that scrolls.
             Fixed,
         }
@@ -2946,13 +2966,11 @@ mod tests {
             fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
                 let state = self.state.clone();
                 let frame = div().w(px(200.)).h(px(100.));
-                let row = |list_state: &ListState, clamp: bool| {
+                let row = |list_state: &ListState| {
                     let state = state.clone();
                     list(list_state.clone(), move |ix, _, _| match ix {
                         0 => div().h(px(40.)).into_any_element(),
-                        _ => TextView::new(&state)
-                            .when(clamp, |view| view.max_lines(2))
-                            .into_any_element(),
+                        _ => TextView::new(&state).into_any_element(),
                     })
                     .size_full()
                 };
@@ -2960,12 +2978,7 @@ mod tests {
                     Container::Scrollable => frame
                         .child(TextView::new(&state).scrollable(true))
                         .into_any_element(),
-                    Container::List(list_state) => {
-                        frame.child(row(list_state, false)).into_any_element()
-                    }
-                    Container::Clamped(list_state) => {
-                        frame.child(row(list_state, true)).into_any_element()
-                    }
+                    Container::List(list_state) => frame.child(row(list_state)).into_any_element(),
                     Container::Div(handle) => {
                         let scroll = handle.clone();
                         frame
@@ -3077,19 +3090,38 @@ mod tests {
 
         #[gpui::test]
         fn an_append_adding_blocks_keeps_the_scroll_position(cx: &mut TestAppContext) {
-            let (state, cx) = window(&paragraphs(200), Container::Scrollable, cx);
-            reveal(&state, "paragraph 100", cx);
-            let top = scroll_top(&state, cx);
-            assert!(top.item_ix > 0, "{top:?}");
+            for with_references in [false, true] {
+                let source = if with_references {
+                    format!("{}\n\n[r]: u", paragraphs(200))
+                } else {
+                    paragraphs(200)
+                };
+                let (state, cx) = window(&source, Container::Scrollable, cx);
+                reveal(&state, "paragraph 100", cx);
+                let top = scroll_top(&state, cx);
+                assert!(top.item_ix > 0, "{top:?}");
 
-            state.update(cx, |state, cx| state.push_str("\n\nparagraph 200", cx));
-            cx.run_until_parked();
-            draw(cx);
+                state.update(cx, |state, cx| {
+                    state.push_str(
+                        if with_references {
+                            "\n\n[paragraph 200][r]"
+                        } else {
+                            "\n\nparagraph 200"
+                        },
+                        cx,
+                    )
+                });
+                cx.run_until_parked();
+                draw(cx);
 
-            state.read_with(cx, |state, _| {
-                assert_eq!(state.list_state.item_count(), 201);
-            });
-            assert_unmoved(&state, top, cx);
+                state.read_with(cx, |state, _| {
+                    assert_eq!(
+                        state.list_state.item_count(),
+                        if with_references { 202 } else { 201 }
+                    );
+                });
+                assert_unmoved(&state, top, cx);
+            }
         }
 
         #[gpui::test]
@@ -3387,15 +3419,6 @@ mod tests {
         }
 
         #[gpui::test]
-        fn a_clamped_view_does_not_reveal(cx: &mut TestAppContext) {
-            let outer = ListState::new(2, ListAlignment::Top, px(1000.));
-            let (state, cx) = window(&words(400), Container::Clamped(outer.clone()), cx);
-            reveal(&state, "w390", cx);
-            assert!(!is_pending(&state, cx));
-            assert_eq!(outer.logical_scroll_top().item_ix, 0);
-        }
-
-        #[gpui::test]
         fn text_outside_every_block_reveals_its_block(cx: &mut TestAppContext) {
             let markdown = format!("{}\n\n<div>html text</div>", paragraphs(100));
             let (state, cx) = window(&markdown, Container::Scrollable, cx);
@@ -3453,6 +3476,153 @@ mod tests {
                 assert_eq!(
                     html.reveal_range(0..3, cx),
                     Err(RangeHighlightError::Unsupported)
+                );
+            });
+        }
+    }
+
+    fn document_links(document: &ParsedDocument) -> Vec<node::LinkMark> {
+        fn collect(block: &BlockNode, links: &mut Vec<node::LinkMark>) {
+            match block {
+                BlockNode::Root { children, .. }
+                | BlockNode::Blockquote { children, .. }
+                | BlockNode::List { children, .. }
+                | BlockNode::ListItem { children, .. } => {
+                    for child in children {
+                        collect(child, links);
+                    }
+                }
+                BlockNode::Paragraph(paragraph)
+                | BlockNode::Heading {
+                    children: paragraph,
+                    ..
+                } => {
+                    for inline in &paragraph.children {
+                        links.extend(
+                            inline
+                                .marks
+                                .iter()
+                                .filter_map(|(_, mark)| mark.link.clone()),
+                        );
+                        links.extend(inline.image.iter().filter_map(|image| image.link.clone()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut links = Vec::new();
+        for block in document.blocks.iter() {
+            collect(block, &mut links);
+        }
+        links
+    }
+
+    #[gpui::test]
+    fn reference_links_commit_complete_facts_across_append_and_replace(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let initial = "[one][r] [![alt](x)][r]\n\n[r]: u \"first\"";
+        let state = cx.update(|cx| cx.new(|cx| TextViewState::markdown(initial, cx)));
+        cx.run_until_parked();
+        let read_links = |cx: &mut TestAppContext| {
+            state.read_with(cx, |state, _| {
+                let mut links = document_links(&state.parsed_content.document);
+                for link in &mut links {
+                    link.resolve(&state.parsed_content.node_cx.link_refs);
+                }
+                links
+            })
+        };
+        let before = read_links(cx);
+        assert_eq!(before.len(), 2);
+        assert!(
+            before
+                .iter()
+                .all(|link| link.url.as_ref() == "u" && link.title.as_deref() == Some("first"))
+        );
+        state.update(cx, |state, cx| state.push_str("\n\n[two][r]", cx));
+        cx.run_until_parked();
+        let appended = read_links(cx);
+        assert_eq!(
+            appended.len(),
+            3,
+            "a new reference sees an earlier definition"
+        );
+        assert_eq!(appended[..2], before);
+        assert!(appended.iter().all(|link| link.url.as_ref() == "u"));
+        state.update(cx, |state, cx| state.push_str("\n\n[r]: ignored", cx));
+        cx.run_until_parked();
+        assert_eq!(
+            read_links(cx),
+            appended,
+            "the first definition wins without replacing occurrence facts"
+        );
+        state.update(cx, |state, cx| {
+            state.set_text(
+                &format!("{initial}\n\n[two][r]").replace("u \"first\"", "v \"other\""),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        let replaced = read_links(cx);
+        assert_eq!(
+            replaced
+                .iter()
+                .map(|link| link.occurrence)
+                .collect::<Vec<_>>(),
+            appended
+                .iter()
+                .map(|link| link.occurrence)
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            replaced
+                .iter()
+                .all(|link| link.url.as_ref() == "v" && link.title.as_deref() == Some("other"))
+        );
+        state.update(cx, |state, cx| state.set_text("[one][r]", cx));
+        cx.run_until_parked();
+        assert!(read_links(cx).is_empty());
+        state.read_with(cx, |state, _| {
+            assert!(state.parsed_content.node_cx.link_refs.is_empty())
+        });
+        state.update(cx, |state, cx| state.push_str("\n\n[r]: restored", cx));
+        cx.run_until_parked();
+        let restored = read_links(cx);
+        assert_eq!(
+            restored.len(),
+            1,
+            "a late definition reclassifies earlier literal syntax"
+        );
+        assert_eq!(restored[0].url.as_ref(), "restored");
+        assert_eq!(
+            restored[0].occurrence,
+            Some(node::LinkOccurrence::Markdown { start: 0 })
+        );
+    }
+
+    #[gpui::test]
+    fn html_append_uses_the_same_dom_and_link_identity_as_a_fresh_parse(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        for (initial, delta) in [
+            ("<p><a href='u'>one</a></p>", "<p><a href='u'>two</a></p>"),
+            ("<p><a href='u'>one", "two</a><a href='v'>three</a></p>"),
+            (
+                "<table><tr><td><a href='u'>cell</a></td></tr>",
+                "outside <a href='v'>late</a></table>",
+            ),
+        ] {
+            let state = cx.update(|cx| cx.new(|cx| TextViewState::html(initial, cx)));
+            cx.run_until_parked();
+            state.update(cx, |state, cx| state.push_str(delta, cx));
+            cx.run_until_parked();
+            let fresh =
+                cx.update(|cx| cx.new(|cx| TextViewState::html(&format!("{initial}{delta}"), cx)));
+            cx.run_until_parked();
+            state.read_with(cx, |state, cx| {
+                assert_eq!(
+                    state.parsed_content.document,
+                    fresh.read(cx).parsed_content.document,
+                    "same source has the same DOM and occurrences regardless of chunk history"
                 );
             });
         }

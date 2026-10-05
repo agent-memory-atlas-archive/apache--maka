@@ -2,10 +2,9 @@ use std::{ops::Range, rc::Rc, sync::Arc};
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, ContentMask, Element, ElementId, Entity, Global,
-    GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, InteractiveElement, IntoElement,
-    LayoutId, MouseButton, ParentElement, Pixels, Refineable as _, SharedString, StyleRefinement,
-    Styled, Window, div, point, px,
+    AnyElement, App, Bounds, ClickEvent, Element, ElementId, Entity, Global, GlobalElementId,
+    Hitbox, HitboxBehavior, InspectorElementId, InteractiveElement, IntoElement, LayoutId,
+    MouseButton, ParentElement, Pixels, SharedString, StyleRefinement, Styled, Window, div,
 };
 
 use crate::StyledExt;
@@ -13,7 +12,7 @@ use crate::text::TextViewFormat;
 use crate::text::markdown_ext::{MarkdownExtensions, MarkdownNode, MarkdownPlugin};
 use crate::text::node::{CodeBlock, TableData};
 use crate::text::range_highlight::{PendingReveal, RevealProgress};
-use crate::text::state::{LineSpan, SelectionFormat, TextViewState};
+use crate::text::state::{SelectionFormat, TextViewState};
 use crate::text::stream_fade::TextViewMotion;
 use crate::{GlobalState, TextSelection, text::TextViewStyle};
 
@@ -168,7 +167,6 @@ pub struct TextView {
     selectable: bool,
     selection_format: SelectionFormat,
     scrollable: bool,
-    max_lines: Option<usize>,
     code_block_actions: Option<Arc<CodeBlockActionsFn>>,
     code_block_highlighter: Option<Arc<CodeBlockHighlighterFn>>,
     table_actions: Option<Arc<TableActionsFn>>,
@@ -215,7 +213,6 @@ impl TextView {
             selectable: true,
             selection_format: SelectionFormat::default(),
             scrollable: false,
-            max_lines: None,
             code_block_actions: None,
             code_block_highlighter: None,
             table_actions: None,
@@ -239,7 +236,6 @@ impl TextView {
             selectable: true,
             selection_format: SelectionFormat::default(),
             scrollable: false,
-            max_lines: None,
             code_block_actions: None,
             code_block_highlighter: None,
             table_actions: None,
@@ -263,7 +259,6 @@ impl TextView {
             selectable: true,
             selection_format: SelectionFormat::default(),
             scrollable: false,
-            max_lines: None,
             code_block_actions: None,
             code_block_highlighter: None,
             table_actions: None,
@@ -323,29 +318,6 @@ impl TextView {
     /// This mode is suitable for small content, such as a few lines of text, a label, etc.
     pub fn scrollable(mut self, scrollable: bool) -> Self {
         self.scrollable = scrollable;
-        self
-    }
-
-    /// Clamp the rendered content to at most `n` lines of body text.
-    ///
-    /// The view's height is capped at `n` × the base line height, and a line
-    /// of glyphs is never cut in half: a line that would straddle the bottom
-    /// of the box is left out whole, across paragraphs, lists, headings, code
-    /// blocks and tables. Nothing is shown with less than a line of itself to
-    /// show, so the border and padding a table row leads with never strands at
-    /// the bottom; whatever has more than that is cut on the box edge and keeps
-    /// the part that fits, rather than disappearing and leaving blank space
-    /// behind.
-    ///
-    /// Check [`TextViewState::is_clamped`] (which answers for the frame that
-    /// was last painted) to decide whether to show an "expand" affordance.
-    ///
-    /// `n` counts lines of body text, so paragraph spacing and taller lines
-    /// mean fewer of them fit inside the capped height. A line taller than the
-    /// whole budget keeps the part that fits rather than emptying the box.
-    /// Ignored when [`Self::scrollable`] is set.
-    pub fn max_lines(mut self, max_lines: usize) -> Self {
-        self.max_lines = Some(max_lines);
         self
     }
 
@@ -521,94 +493,8 @@ pub struct TextViewLayoutState {
 
 pub struct TextViewPrepaintState {
     hitbox: Hitbox,
-    /// Where paint has to pull the `max_lines` clip up to, because a glyph line
-    /// straddles the bottom of the box. `None` leaves the clip at the box edge,
-    /// where the container's hidden overflow already applies it.
-    clip_bottom: Option<Pixels>,
     /// The touch handles this view owns, with their hitboxes.
     touch_handles: crate::TouchHandleLayout,
-}
-
-/// Absorbs sub-pixel layout jitter: a line ending within a pixel of the box
-/// bottom counts as fitting inside it.
-const CLIP_EPSILON: Pixels = px(1.);
-
-/// The bottom of the last whole line at or above `y`, with the height of a line
-/// where it sits.
-fn last_line_bottom_above(spans: &[LineSpan], y: Pixels) -> Option<(Pixels, Pixels)> {
-    let mut last: Option<(Pixels, Pixels)> = None;
-    let mut keep = |bottom: Pixels, line_height: Pixels| {
-        if bottom <= y + CLIP_EPSILON && last.is_none_or(|(last, _)| bottom > last) {
-            last = Some((bottom, line_height));
-        }
-    };
-
-    for span in spans {
-        if span.line_height <= px(0.) {
-            continue;
-        }
-        let mut bottom = span.top + span.line_height;
-        while bottom <= span.bottom + CLIP_EPSILON {
-            keep(bottom, span.line_height);
-            bottom += span.line_height;
-        }
-        // The span's own bottom covers a last line taller than the rest.
-        keep(span.bottom, span.line_height);
-    }
-
-    last
-}
-
-/// Where to clip, given the lines a descendant `Inline` reported. `None` leaves
-/// the clip on the box edge.
-///
-/// Two things are never shown: half a line of glyphs, and anything with less
-/// than a line of itself to show. A line straddling `box_bottom` is left out
-/// whole, and so is the strip between it and the line before — the border and
-/// padding a table row leads with reads as a rendering fault rather than as a
-/// row. Whatever has more than a line to show is cut on the edge and keeps the
-/// part that fits, so the box holds no blank space it could have filled.
-fn line_safe_clip_bottom(
-    spans: &[LineSpan],
-    box_bottom: Pixels,
-    content_bottom: Pixels,
-) -> Option<Pixels> {
-    let mut clip = box_bottom;
-
-    for span in spans {
-        if span.line_height <= px(0.)
-            || span.top >= box_bottom
-            || span.bottom <= box_bottom + CLIP_EPSILON
-        {
-            continue;
-        }
-        let whole_lines = ((box_bottom - span.top) / span.line_height).floor();
-        let line_top = span.top + span.line_height * whole_lines;
-        // A line starting on the box edge is not straddling it.
-        if line_top < box_bottom - CLIP_EPSILON {
-            clip = clip.min(line_top);
-        }
-    }
-
-    let Some((last_line_bottom, line_height)) = last_line_bottom_above(spans, clip) else {
-        // Leaving the straddling line out would leave nothing at all — a first
-        // line taller than the whole budget, a heading in a one-line box. It
-        // keeps the part that fits instead, because an empty clamp reads as
-        // broken where a cut one reads as more to come.
-        return None;
-    };
-
-    // Snap away a scrap. Only content that continues past the box can leave
-    // one: the space under the last line of a document that fits is the box's
-    // own, not a piece of something below.
-    if content_bottom > box_bottom + CLIP_EPSILON {
-        let strip = clip - last_line_bottom;
-        if strip > CLIP_EPSILON && strip < line_height {
-            clip = last_line_bottom;
-        }
-    }
-
-    (clip < box_bottom - CLIP_EPSILON).then_some(clip)
 }
 
 impl Element for TextView {
@@ -650,10 +536,6 @@ impl Element for TextView {
             self.state = Some(state.clone());
             state
         };
-
-        // `max_lines` needs the whole document laid out to snap the clip to a
-        // whole line, so it only applies to the fit-content mode.
-        let max_lines = self.max_lines.filter(|_| !self.scrollable);
 
         // Resolve the style by reference: this runs every frame, and the
         // style only reaches the state when it changed.
@@ -709,7 +591,6 @@ impl Element for TextView {
             }
             state.selection_format = self.selection_format;
             state.scrollable = self.scrollable;
-            state.max_lines = max_lines;
             if let Some(text_view_style) = text_view_style {
                 state.selection_revision = state.selection_revision.wrapping_add(1);
                 state.text_view_style = text_view_style;
@@ -729,15 +610,6 @@ impl Element for TextView {
         let copy = admission.clone();
         let select_all = admission;
         let list_state = state.read(cx).list_state.clone();
-        // Cap the box at `n` body-text lines (the effective text style may be
-        // refined by this view's own style, e.g. `.text_sm()`); hidden
-        // overflow also clips descendant hitboxes to the box during prepaint.
-        let max_lines_cap = max_lines.map(|max_lines| {
-            let mut text_style = window.text_style();
-            text_style.refine(&self.style.text);
-            text_style.line_height_in_pixels(window.rem_size()) * max_lines as f32
-        });
-
         let mut el = div()
             .id(("text-view-scroll", state.entity_id()))
             .key_context("TextView")
@@ -767,7 +639,6 @@ impl Element for TextView {
                 }
             })
             .when(self.scrollable, |this| this.size_full())
-            .when_some(max_lines_cap, |this, cap| this.max_h(cap).overflow_hidden())
             .relative()
             .text_color(foreground)
             .on_action(move |_: &crate::input::Copy, window, cx| {
@@ -820,52 +691,7 @@ impl Element for TextView {
         cx: &mut App,
     ) -> Self::PrepaintState {
         let state = request_layout.state.clone();
-        let max_lines_active = state.read(cx).max_lines.is_some();
-        if max_lines_active {
-            if let Ok(mut line_spans) = state.read(cx).line_spans.lock() {
-                line_spans.clear();
-            }
-            // Descendant `Inline`s report their line spans through the state
-            // stack during prepaint (in addition to the paint-time push below).
-            GlobalState::global_mut(cx)
-                .text_view_state_stack
-                .push(state.clone());
-        }
         request_layout.element.prepaint(window, cx);
-        if max_lines_active {
-            GlobalState::global_mut(cx).text_view_state_stack.pop();
-        }
-
-        let mut clip_bottom = None;
-        if max_lines_active {
-            let (line_spans, content_bottom) = {
-                let state = state.read(cx);
-                (
-                    state
-                        .line_spans
-                        .lock()
-                        .map(|spans| spans.clone())
-                        .unwrap_or_default(),
-                    state.bounds().bottom(),
-                )
-            };
-            // The content keeps its natural height inside the capped box, so
-            // this sees everything the box cannot show — including a tall image
-            // that reports no lines of its own.
-            let clipped = content_bottom > bounds.bottom() + px(1.);
-            // Notify on change so observers (e.g. an "expand" button gated on
-            // `is_clamped`) re-render once the flag flips.
-            if state.read(cx).clamped != clipped {
-                state.update(cx, |state, cx| {
-                    state.clamped = clipped;
-                    cx.notify();
-                });
-            }
-            if clipped {
-                clip_bottom = line_safe_clip_bottom(&line_spans, bounds.bottom(), content_bottom);
-            }
-        }
-
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         // Over the text, so after its hitbox.
         let touch_handles = if self.selectable {
@@ -878,7 +704,6 @@ impl Element for TextView {
         };
         TextViewPrepaintState {
             hitbox,
-            clip_bottom,
             touch_handles,
         }
     }
@@ -887,7 +712,7 @@ impl Element for TextView {
         &mut self,
         _: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
-        bounds: Bounds<Pixels>,
+        _bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
@@ -901,18 +726,7 @@ impl Element for TextView {
         GlobalState::global_mut(cx)
             .text_view_state_stack
             .push(state.clone());
-        if let Some(clip_bottom) = prepaint.clip_bottom {
-            // Snap the `max_lines` clip to the last whole line that fits, so a
-            // line of glyphs is never cut in half.
-            let mask = ContentMask {
-                bounds: Bounds::from_corners(bounds.origin, point(bounds.right(), clip_bottom)),
-            };
-            window.with_content_mask(Some(mask), |window| {
-                request_layout.element.paint(window, cx);
-            });
-        } else {
-            request_layout.element.paint(window, cx);
-        }
+        request_layout.element.paint(window, cx);
         GlobalState::global_mut(cx).text_view_state_stack.pop();
 
         // Every list has scrolled by now, so the line of a reveal is where
@@ -2167,203 +1981,6 @@ mod tests {
         assert_eq!(cx.opened_url(), None);
     }
 
-    struct MaxLinesTestRoot {
-        text_view: Entity<TextViewState>,
-        max_lines: usize,
-    }
-
-    impl MaxLinesTestRoot {
-        fn new(text: &str, max_lines: usize, cx: &mut Context<Self>) -> Self {
-            let text_view = cx.new(|cx| TextViewState::markdown(text, cx));
-            Self {
-                text_view,
-                max_lines,
-            }
-        }
-    }
-
-    impl Render for MaxLinesTestRoot {
-        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-            div()
-                .w(px(200.))
-                .child(TextView::new(&self.text_view).max_lines(self.max_lines))
-        }
-    }
-
-    #[test]
-    fn the_clip_only_moves_for_a_straddling_glyph_line() {
-        use super::line_safe_clip_bottom;
-        use crate::text::state::LineSpan;
-
-        let spans = [
-            // Lines end at 20 / 40 / 60.
-            LineSpan {
-                top: px(0.),
-                bottom: px(60.),
-                line_height: px(20.),
-            },
-            // A second block after an 8px gap; lines end at 88 / 108 / 128.
-            LineSpan {
-                top: px(68.),
-                bottom: px(128.),
-                line_height: px(20.),
-            },
-        ];
-
-        // Content continues well past the box in every case but the last.
-        let below = px(400.);
-
-        // A box ending inside the line 88..108 leaves that line out whole.
-        assert_eq!(
-            line_safe_clip_bottom(&spans, px(100.), below),
-            Some(px(88.))
-        );
-
-        // A box ending on a line boundary has nothing to pull the clip up for.
-        assert_eq!(line_safe_clip_bottom(&spans, px(88.), below), None);
-
-        // A strip below the last line shorter than a line — the border and
-        // padding a block leads with — is not worth showing.
-        assert_eq!(line_safe_clip_bottom(&spans, px(64.), below), Some(px(60.)));
-
-        // One taller than a line is: whatever crosses the edge keeps the part
-        // that fits rather than leaving the box half empty.
-        let one_block = [LineSpan {
-            top: px(0.),
-            bottom: px(60.),
-            line_height: px(20.),
-        }];
-        assert_eq!(line_safe_clip_bottom(&one_block, px(200.), below), None);
-
-        // Nothing crosses the edge at all: the space under the last line is
-        // the box's own, not a scrap of something below.
-        assert_eq!(line_safe_clip_bottom(&spans, px(130.), px(128.)), None);
-    }
-
-    #[test]
-    fn a_line_taller_than_the_budget_keeps_the_part_that_fits() {
-        use super::line_safe_clip_bottom;
-        use crate::text::state::LineSpan;
-
-        // A heading line of 28px, in a box capped at one 26px body line.
-        let heading = [LineSpan {
-            top: px(70.),
-            bottom: px(98.),
-            line_height: px(28.),
-        }];
-
-        assert_eq!(line_safe_clip_bottom(&heading, px(96.), px(400.)), None);
-    }
-
-    #[test]
-    fn the_clip_does_not_stop_on_a_row_of_border_and_padding() {
-        use super::line_safe_clip_bottom;
-        use crate::text::state::LineSpan;
-
-        // Two table rows, each one line of text, 9px of border and padding
-        // between them.
-        let rows = [
-            LineSpan {
-                top: px(100.),
-                bottom: px(126.),
-                line_height: px(26.),
-            },
-            LineSpan {
-                top: px(135.),
-                bottom: px(161.),
-                line_height: px(26.),
-            },
-        ];
-
-        // Leaving out the second row's text would strand the 9px it leads
-        // with, so the clip goes back to the row above it.
-        assert_eq!(
-            line_safe_clip_bottom(&rows, px(148.), px(400.)),
-            Some(px(126.))
-        );
-    }
-
-    /// A clamped view nested the way an application nests one: inside a card,
-    /// inside a region that fills a window of a known height. The height an
-    /// ancestor hands down must not reach the clamped content and hide the
-    /// overflow the clamp measures — with the content stretched to the capped
-    /// box, nothing looks clipped and lines get cut in half.
-    struct ClampedPageRoot {
-        text_view: Entity<TextViewState>,
-        max_lines: usize,
-    }
-
-    impl Render for ClampedPageRoot {
-        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-            use crate::{h_flex, v_flex};
-
-            v_flex()
-                .size_full()
-                .p_4()
-                .gap_4()
-                .child(h_flex().max_w(px(480.)).gap_3().child("header"))
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .min_h_0()
-                        .gap_4()
-                        .id("clamped-page-scroll")
-                        .child(
-                            v_flex()
-                                .max_w(px(480.))
-                                .p_3()
-                                .gap_2()
-                                .child(TextView::new(&self.text_view).max_lines(self.max_lines)),
-                        )
-                        .overflow_y_scroll(),
-                )
-        }
-    }
-
-    #[gpui::test]
-    fn max_lines_measures_overflow_inside_a_sized_page(cx: &mut TestAppContext) {
-        cx.update(crate::init);
-        let (root, cx) = cx.add_window_view(|_, cx| {
-            let text_view = cx.new(|cx| {
-                TextViewState::markdown(
-                    "first\n\nsecond\n\nthird\n\nfourth\n\nfifth\n\nsixth\n\nseventh",
-                    cx,
-                )
-            });
-            ClampedPageRoot {
-                text_view,
-                max_lines: 3,
-            }
-        });
-        let cx: &mut VisualTestContext = cx;
-
-        assert!(root.read_with(cx, |root, cx| root.text_view.read(cx).is_clamped()));
-    }
-
-    #[gpui::test]
-    fn max_lines_clamps_overflowing_content(cx: &mut TestAppContext) {
-        cx.update(crate::init);
-        let (root, cx) = cx.add_window_view(|_, cx| {
-            MaxLinesTestRoot::new(
-                "first\n\nsecond\n\nthird\n\nfourth\n\nfifth\n\nsixth",
-                2,
-                cx,
-            )
-        });
-        let cx: &mut VisualTestContext = cx;
-
-        assert!(root.read_with(cx, |root, cx| root.text_view.read(cx).is_clamped()));
-    }
-
-    #[gpui::test]
-    fn max_lines_leaves_short_content_unclamped(cx: &mut TestAppContext) {
-        cx.update(crate::init);
-        let (root, cx) = cx.add_window_view(|_, cx| MaxLinesTestRoot::new("only line", 3, cx));
-        let cx: &mut VisualTestContext = cx;
-
-        assert!(!root.read_with(cx, |root, cx| root.text_view.read(cx).is_clamped()));
-    }
-
     #[gpui::test]
     fn heading_refinement_changes_rendered_heading_geometry(cx: &mut TestAppContext) {
         struct HeadingStyleRoot;
@@ -2418,24 +2035,6 @@ mod tests {
         let custom_h2 = cx.debug_bounds("custom-h2").unwrap();
         assert!(custom_h1.size.height > default_h1.size.height);
         assert_eq!(custom_h2.size.height, default_h2.size.height);
-    }
-
-    #[gpui::test]
-    fn max_lines_disables_links_hidden_by_the_clamp(cx: &mut TestAppContext) {
-        cx.update(crate::init);
-        let (_, cx) = cx.add_window_view(|_, cx| {
-            MaxLinesTestRoot::new(
-                "first\n\nsecond\n\nthird\n\n[hidden](https://example.com)",
-                2,
-                cx,
-            )
-        });
-        let cx: &mut VisualTestContext = cx;
-
-        // Click far below the clamped box, where the link would sit unclamped.
-        cx.simulate_click(point(px(10.), px(150.)), Modifiers::default());
-
-        assert_eq!(cx.opened_url(), None);
     }
 
     #[gpui::test]
@@ -3168,55 +2767,71 @@ mod tests {
         }
 
         cx.update(crate::init);
-        let clicks = Arc::new(Mutex::new(Vec::new()));
-        let captured = clicks.clone();
-        let (content, cx) = cx.add_window_view(move |_, cx| LinkedImageRoot {
-                text_view: cx.new(|cx| {
-                    TextViewState::markdown(
-                        r#"Before [<img src="https://example.com/image.svg" width="32" height="32">](https://example.com/image-link) after."#,
-                        cx,
-                    )
-                }),
+        let image = r#"<img src="https://example.com/image.svg" width="32" height="32">"#;
+        let target = "https://example.com/image-link";
+        for (mixed, source) in [
+            (true, format!("Before [{image}]({target}) after.")),
+            (
+                true,
+                format!("Before [{image}][target] after.\n\n[target]: {target}"),
+            ),
+            (false, format!("[{image}][target]\n\n[target]: {target}")),
+        ] {
+            let clicks = Arc::new(Mutex::new(Vec::new()));
+            let captured = clicks.clone();
+            let (content, cx) = cx.add_window_view(move |_, cx| LinkedImageRoot {
+                text_view: cx.new(|cx| TextViewState::markdown(&source, cx)),
                 clicks,
+            });
+            let cx: &mut VisualTestContext = cx;
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                let _ = window.draw(cx);
+            });
+
+            let inline_bounds = content.read_with(cx, |content, cx| {
+                content.text_view.read(cx).selection_adapter.text_bounds()
+            });
+            let position = if mixed {
+                assert!(
+                    inline_bounds.len() >= 2,
+                    "linked image needs text bounds on both sides: {inline_bounds:?}"
+                );
+                assert!(
+                    inline_bounds[1].left() - inline_bounds[0].right() >= px(24.),
+                    "linked image did not reserve the expected click target: {inline_bounds:?}"
+                );
+                point(
+                    inline_bounds[0].right()
+                        + (inline_bounds[1].left() - inline_bounds[0].right()) * 0.5,
+                    inline_bounds[0].top() + px(8.),
+                )
+            } else {
+                content.read_with(cx, |content, cx| {
+                    content.text_view.read(cx).bounds().origin + point(px(8.), px(8.))
+                })
+            };
+            for button in [MouseButton::Left, MouseButton::Middle, MouseButton::Right] {
+                cx.simulate_mouse_down(position, button, Modifiers::default());
+                cx.simulate_mouse_up(position, button, Modifiers::default());
             }
-        );
-        let cx: &mut VisualTestContext = cx;
-        cx.run_until_parked();
-        cx.update(|window, cx| {
-            let _ = window.draw(cx);
-        });
 
-        let inline_bounds = content.read_with(cx, |content, cx| {
-            content.text_view.read(cx).selection_adapter.text_bounds()
-        });
-        assert!(
-            inline_bounds.len() >= 2,
-            "linked image needs text bounds on both sides: {inline_bounds:?}"
-        );
-        assert!(
-            inline_bounds[1].left() - inline_bounds[0].right() >= px(24.),
-            "linked image did not reserve the expected click target: {inline_bounds:?}"
-        );
-        let position = point(
-            inline_bounds[0].right() + (inline_bounds[1].left() - inline_bounds[0].right()) * 0.5,
-            inline_bounds[0].top() + px(8.),
-        );
-        for button in [MouseButton::Left, MouseButton::Middle, MouseButton::Right] {
-            cx.simulate_mouse_down(position, button, Modifiers::default());
-            cx.simulate_mouse_up(position, button, Modifiers::default());
+            let clicks = captured.lock().unwrap();
+            assert_eq!(
+                clicks.len(),
+                3,
+                "mixed={mixed}, position={position:?}, text_bounds={inline_bounds:?}"
+            );
+            assert!(
+                clicks
+                    .iter()
+                    .all(|(url, _)| url == "https://example.com/image-link")
+            );
+            assert!(!clicks[0].1.is_right_click() && !clicks[0].1.is_middle_click());
+            assert!(clicks[1].1.is_middle_click());
+            assert!(clicks[2].1.is_right_click());
+            assert_eq!(cx.opened_url(), None);
         }
-
-        let clicks = captured.lock().unwrap();
-        assert_eq!(clicks.len(), 3);
-        assert!(
-            clicks
-                .iter()
-                .all(|(url, _)| url == "https://example.com/image-link")
-        );
-        assert!(!clicks[0].1.is_right_click() && !clicks[0].1.is_middle_click());
-        assert!(clicks[1].1.is_middle_click());
-        assert!(clicks[2].1.is_right_click());
-        assert_eq!(cx.opened_url(), None);
     }
 
     #[gpui::test]
@@ -3668,6 +3283,144 @@ mod tests {
         assert!(
             (max - min) < 2.0,
             "list content total jittered while scrolling: min={min} max={max} totals={totals:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn html_structure_append_cancels_an_active_native_selection(cx: &mut TestAppContext) {
+        struct HtmlRoot {
+            state: Entity<TextViewState>,
+        }
+        impl Render for HtmlRoot {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .w(px(300.))
+                    .child(crate::TextSelectionLayer)
+                    .child(TextView::new(&self.state))
+            }
+        }
+        cx.update(crate::init);
+        let (root, cx) = cx.add_window_view(|_, cx| HtmlRoot {
+            state: cx.new(|cx| TextViewState::html("<table><tr><td>cell words</td></tr>", cx)),
+        });
+        let cx: &mut VisualTestContext = cx;
+        cx.run_until_parked();
+        let (state, bounds) = root.read_with(cx, |root, cx| {
+            (
+                root.state.clone(),
+                root.state.read(cx).selection_adapter.text_bounds()[0],
+            )
+        });
+        let start = bounds.origin + point(px(2.), px(5.));
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_move(
+            start + point(px(40.), px(0.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        state.read_with(cx, |state, _| {
+            assert!(state.is_selecting());
+            assert!(!state.selected_text().is_empty());
+        });
+        state.update(cx, |state, cx| state.push_str("outside </table>", cx));
+        cx.run_until_parked();
+        state.read_with(cx, |state, _| {
+            assert!(!state.is_selecting());
+            assert_eq!(state.selected_text(), "");
+            assert!(
+                state.rendered_text().as_str().starts_with("outside"),
+                "HTML5 repair moved new text before the old table"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn superseded_background_replace_cannot_preserve_an_old_native_drag(cx: &mut TestAppContext) {
+        struct MarkdownRoot {
+            state: Entity<TextViewState>,
+        }
+        impl Render for MarkdownRoot {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .w(px(300.))
+                    .child(crate::TextSelectionLayer)
+                    .child(TextView::new(&self.state))
+            }
+        }
+        cx.update(crate::init);
+        let mut cancelled = Vec::new();
+        for changed_references in [false, true] {
+            let (root, cx) = cx.add_window_view(|_, cx| MarkdownRoot {
+                state: cx.new(|cx| TextViewState::markdown("old words [link][r]\n\n[r]: u", cx)),
+            });
+            let cx: &mut VisualTestContext = cx;
+            cx.run_until_parked();
+            let (state, bounds) = root.read_with(cx, |root, cx| {
+                (
+                    root.state.clone(),
+                    root.state.read(cx).selection_adapter.text_bounds()[0],
+                )
+            });
+            let start = bounds.origin + point(px(2.), px(5.));
+            let end = start + point(px(40.), px(0.));
+            cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+            cx.simulate_mouse_move(end, Some(MouseButton::Left), Modifiers::default());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            state.read_with(cx, |state, _| {
+                assert!(state.is_selecting());
+                assert!(!state.selected_text().is_empty());
+            });
+            state.update(cx, |state, cx| state.push_str("\n\nordinary tail", cx));
+            cx.run_until_parked();
+            state.read_with(cx, |state, _| {
+                assert!(
+                    state.is_selecting(),
+                    "a committed compatible Markdown append preserves the drag"
+                );
+                assert!(!state.selected_text().is_empty());
+            });
+            let old_source = state.read_with(cx, |state, _| state.source().clone());
+            let target = if changed_references { "v" } else { "u" };
+            let replacement = format!(
+                "replacement words [link][r]\n\n{}\n\n[r]: {target}",
+                "word ".repeat(1024)
+            );
+            assert!(replacement.len() > 4096);
+            state.update(cx, |state, cx| state.set_text(&replacement, cx));
+            let mut background_ticks = 0;
+            while cx.dispatcher.tick(true) {
+                background_ticks += 1;
+            }
+            assert!(
+                background_ticks > 0,
+                "the original worker runs before the append"
+            );
+            state.read_with(cx, |state, _| {
+                assert_eq!(
+                    state.source(),
+                    old_source,
+                    "foreground has not committed the worker result"
+                );
+                assert!(state.is_selecting());
+            });
+            state.update(cx, |state, cx| state.push_str("\n\nappended tail", cx));
+            while cx.dispatcher.tick(true) {}
+            state.read_with(cx, |state, _| assert_eq!(state.source(), old_source));
+            cx.run_until_parked();
+            state.read_with(cx, |state, _| {
+                assert_eq!(
+                    state.source().as_str(),
+                    format!("{replacement}\n\nappended tail")
+                );
+                cancelled.push(!state.is_selecting() && state.selected_text().is_empty());
+            });
+            cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+        }
+        assert_eq!(
+            cancelled,
+            [true, true],
+            "same and changed references both reject an uncommitted replacement baseline"
         );
     }
 }
