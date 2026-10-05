@@ -20,7 +20,8 @@
 //! Trusted local connections between separate UI and Host deployment owners.
 mod connections;
 mod service;
-pub use connections::{Configuration, Connections, GATEWAY, Grant, Host};
+pub mod transport;
+pub use connections::{Configuration, Connections, GATEWAY, Grant, Host, with_gateway};
 pub use service::{LocalService, Scopes};
 pub type Result<T> = std::result::Result<T, String>;
 

@@ -18,6 +18,7 @@
  */
 
 mod schema;
+mod serve;
 
 use std::{
     io::Read,
@@ -49,6 +50,8 @@ pub(super) enum Command {
     Commit(Commit),
     /// Read and validate the persisted source and every selected package.
     Read(ReadSource),
+    /// Serve one invocation on a launcher-provided private stdin/stdout channel.
+    Serve(serve::Serve),
 }
 
 #[derive(Args)]
@@ -119,6 +122,7 @@ impl Command {
 
     async fn run_inner(self) -> Result<(), HostError> {
         match self {
+            Self::Serve(args) => serve::run(args).await?,
             Self::Schema => println!("{}", serde_json::to_string_pretty(&schema::catalog())?),
             Self::InspectPackage(args) => {
                 let reference = tokio::task::spawn_blocking(move || {

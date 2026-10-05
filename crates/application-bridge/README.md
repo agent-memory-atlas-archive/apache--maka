@@ -21,7 +21,8 @@
 
 The Desktop and TUI launchers accept `--connections FILE`. This trusted input
 connects separate UI and Host deployments in one process. It does not edit either
-composition. Cross-process authentication and transport are separate work.
+composition. Private cross-process invocation channels are described below.
+Network authentication and the default UI connector remain separate work.
 
 ```json
 {
@@ -76,3 +77,41 @@ cleanup receipt. Local endpoints hold captured Client/Binding/Scope admission,
 not Host deployment lifecycle ownership.
 
 [中文](README.zh-CN.md)
+
+## Private invocation channels
+
+`transport::Server` serves independently owned invocation streams on the existing
+Application. Its embedding authenticates the physical channel and supplies a
+`Peer` approving an exact caller source and consumer set. `PeerPolicy` issues
+private request evidence and checks the original Binding/method grant at final
+admission; mutation confirmation also checks the original caller and operation.
+Caller JSON, endpoint aliases and descriptor metadata are observations.
+
+`maka application serve --root ROOT --deployment UUID --peer FILE` serves one
+invocation on launcher-provided stdin/stdout pipes. The closed approval file is
+bounded to 512 KiB and contains `source` (DeploymentRef), `consumers` (UI instance
+IDs), `consumer` (Host instance ID), and `imports` (method/recovery grants as
+above). Each import selects exactly one existing provider. The launcher chooses
+the process, owns its private pipe handles, and provides that approval file.
+The command registers compiled gateway/agent/settings availability; the persisted
+Host composition still selects every executable instance.
+
+Input and resource descriptors use separate bounded JSON frames. Raw chunks are
+at most 64 KiB; the original Host slot/JSON/payload reservations precede reception,
+including empty bundles. Sixteen connection leases bound wire buffering. They do
+not create another resource budget or execution owner. Subscriptions acknowledge
+admission, then receive only in response to the caller's next Pull.
+
+Cancellation/EOF revokes the original Scope while the connection task keeps the
+same admission and completion observers. Terminal messages report business and
+actual Scope cleanup separately. Server shutdown drains reception/connections
+before the embedding shuts down Application and SQL; failed or panicking cleanup
+retains its original fence. Interrupted frame writes poison the channel.
+
+`transport::Call` owns the caller's immutable inputs and actual `RecordedIntent`.
+I/O failure retains this custody. `disconnect()` closes both physical halves while
+retaining unconfirmed inputs/token; EOF is a cancellation request, not a remote
+cleanup acknowledgement. A successful fresh original-receipt query never
+settles a lost dispatch; no mutation is automatically resent. The default
+Desktop/TUI `--connections` path still uses `LocalService`. Shared authenticated
+listeners, its NativeService connector and native platform acceptance remain work.

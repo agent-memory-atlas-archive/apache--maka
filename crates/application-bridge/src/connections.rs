@@ -188,7 +188,7 @@ impl Connections {
             let application = match Application::start_from_store(
                 store.clone(),
                 host.deployment,
-                gateway(native.clone())?,
+                with_gateway(native.clone())?,
                 issuer.clone(),
                 policy,
                 Default::default(),
@@ -378,7 +378,8 @@ impl NativeOwner for Gateway {
         Box::pin(async { Ok(()) })
     }
 }
-fn gateway(mut native: NativeRegistry) -> Result<NativeRegistry> {
+/// Register compiled gateway availability; the composition still selects it.
+pub fn with_gateway(mut native: NativeRegistry) -> Result<NativeRegistry> {
     native.insert(
         GATEWAY.into(),
         Arc::new(|_, configuration| {

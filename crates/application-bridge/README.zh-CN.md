@@ -20,7 +20,8 @@
 # 本地应用连接
 
 Desktop 与 TUI 启动器支持 `--connections FILE`。这份可信外部配置在同一进程中
-连接独立的 UI、Host 部署，不修改双方组合。跨进程认证和 transport 仍需另行实现。
+连接同进程内独立的 UI、Host 部署，不修改双方组合。私有跨进程调用流见下文；
+网络认证和默认 UI connector 仍需继续。
 完整 JSON 示例见[英文说明](README.md)。
 
 `hosts[].name` 对应 UI remote observation 的 deployment alias；`root` 和
@@ -51,4 +52,33 @@ UI endpoint 只持有实际 Client/Binding/Scope 准入，不拥有 Host 部署�
 
 本地 Subscription 复用实际 Host `Client.subscribe`、原 Binding/Scopes/Policy。UI取消
 会取消实际 Host scope，仍等待原准入 observer、原执行 completion 和实际 scope cleanup；
-不能丢弃准入观察者冒充清理。认证跨进程 transport 仍待实现。
+不能丢弃准入观察者冒充清理。私有跨进程调用流见下文；认证网络及默认 UI connector 仍待实现。
+
+## 私有跨进程调用流
+
+`transport::Server` 在原 Application 上管理独立调用流。可信 embedding 认证实际通道，
+交付批准精确 caller source 和 consumer 集合的 `Peer`。`PeerPolicy` 创建私有请求证据，
+最终准入核原 Binding 和方法 grant；mutation confirmation 另核原 caller 和 operation。
+传入 JSON、endpoint alias、资源 metadata 都只是观察。
+
+`maka application serve --root ROOT --deployment UUID --peer FILE` 通过启动器提供的
+私有 stdin/stdout pipes 服务一次调用。闭合批准文件上限 512 KiB，包含 `source`
+（DeploymentRef）、`consumers`（UI 实例 IDs）、`consumer`（Host 实例 ID）和 `imports`
+（前述 methods/recovery grants）；每个 import 必须明确选中一个现有 provider。
+启动器选择实际进程、持私有 pipe handles 并交付批准文件。CLI 只登记编译提供的
+Gateway/Agent/Settings availability，持久 Host 组合仍决定实际激活哪些实例。
+
+Input 与完整 resource descriptors 分别使用有界 JSON frame，raw chunk 最大 64 KiB。
+接收之前预约原 Host slot/JSON/payload 配额，空 bundle 也一样。16 个 connection leases
+只约束 wire buffers，不产生第二资源预算或执行 owner。Subscription 先确认准入，
+然后只响应原调用方下一次 Pull，不在后台预取消息。
+
+取消/EOF 撤销原 Scope，连接 task 继续保留同一准入与 completion observers。
+终态分别报告业务结果和实际 Scope cleanup。启动器先 drain 接收/连接，再关闭原
+Application 和 SQL；清理失败或 panic 保原 fence。半帧写入被中断后，禁止追加新帧。
+
+`transport::Call` 保持 caller immutable inputs 与实际 `RecordedIntent`；I/O 失败不释放。
+`disconnect()` 只关闭物理两端，保留未确认的资源/token；EOF 请求取消，不是远端清理确认。
+新的原回执查询不结算丢失 dispatch，不自动重发 mutation。默认 Desktop/TUI
+`--connections` 仍用 `LocalService`；共享认证 listener、NativeService connector 和
+原生平台完整验收仍需继续。

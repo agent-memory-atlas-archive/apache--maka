@@ -1,0 +1,503 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+//! Actual separately launched Application Host, not an in-process bridge fixture.
+#[allow(dead_code)]
+#[path = "../../application-bridge/tests/support/mod.rs"]
+mod support;
+use maka_application_bridge::transport::{Call, Reply, Source};
+use maka_event_log::{
+    EventLog,
+    root::{RootNamespaces, RootOwner},
+};
+use maka_plugin_core::{
+    composition::PresentationTarget,
+    contract::{Interface, MethodMode},
+    deployment::DeploymentRef,
+    operation::{OperationCleanup, OperationOutcome, OperationReply, Receipt},
+    package::EntryTarget,
+};
+use maka_plugins::call::{Attachments, ReadResource, ResourceEncoding};
+use serde_json::{Value, json};
+use std::{
+    collections::BTreeMap, ops::Range, path::PathBuf, process::Stdio, sync::Arc, time::Duration,
+};
+use tokio::{
+    process::{Child, ChildStdin, ChildStdout, Command},
+    runtime::Runtime,
+};
+use uuid::Uuid;
+struct Fixture {
+    timer: Runtime,
+    directory: tempfile::TempDir,
+    namespaces: RootNamespaces,
+    caller: Arc<EventLog>,
+    source: DeploymentRef,
+    host: Uuid,
+}
+impl Fixture {
+    fn new() -> Self {
+        let timer = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let namespaces = RootNamespaces::for_current_account().unwrap();
+        let open = |name| {
+            let owner =
+                Arc::new(RootOwner::create(&directory.path().join(name), &namespaces).unwrap());
+            Arc::new(timer.block_on(EventLog::for_root(owner)).unwrap())
+        };
+        let caller = open("caller");
+        let host_store = open("host");
+        let host = Uuid::new_v4();
+        let (mut input, originals) = support::host();
+        let mut contract = support::business();
+        let Interface::Service { methods } = &mut contract.interface else {
+            unreachable!()
+        };
+        for name in ["read", "write"] {
+            methods
+                .get_mut(name)
+                .unwrap()
+                .resources
+                .insert("text".into(), maka_ui::text::text_resource_type());
+        }
+        let mut feed = methods["read"].clone();
+        feed.mode = MethodMode::Subscription;
+        feed.resources.clear();
+        methods.insert("feed".into(), feed);
+        let mut packages = Vec::new();
+        for old in originals {
+            if old.manifest().id == "local.receipts" {
+                packages.push(old);
+                continue;
+            }
+            let mut declaration = old.manifest().application.clone().unwrap();
+            let entry = declaration.entries.get_mut(&EntryTarget::Host).unwrap();
+            for import in entry.imports.values_mut() {
+                if import.contract.name == contract.name {
+                    import.contract = contract.clone();
+                }
+            }
+            for export in entry.exports.values_mut() {
+                if export.contract.name == contract.name {
+                    export.contract = contract.clone();
+                }
+            }
+            let source=(old.manifest().id=="local.business").then(||format!(r#"
+                export function activate(){{return {{Counter:{{contract:{},service:['service']}}}};}}
+                export const service={{
+                    async read(input,observation,context){{
+                        const descriptor=await context.invoke({{operation:'metadata',slot:'text'}});
+                        const first=await context.invoke({{operation:'read',slot:'text',start:0,end:Math.min(5,descriptor.bytes)}});
+                        return {{bytes:descriptor.bytes,owner:descriptor.metadata.owner,first,inputLength:typeof input==='string'?input.length:0}};
+                    }},
+                    async write(input,observation,context){{
+                        const first=await context.invoke({{operation:'read',slot:'text',start:0,end:5}});
+                        if(first.join(',')!=='116,111,107,101,110')throw Error('original snapshot differs');
+                        if(input==='hold'){{while(true){{}}}}
+                        return {{accepted:true}};
+                    }},
+                    async feed(input,observation,context){{for(let i=0;i<35;i++)await context.invoke({{operation:'emit',value:{{i}}}});return {{done:true}};}}
+                }};
+            "#,serde_json::to_string(&contract).unwrap()));
+            let package = support::counter::package(&old.manifest().id, declaration, source);
+            for node in input.instances.values_mut() {
+                if node.package == old.application_ref().into() {
+                    node.package = package.application_ref().into();
+                }
+            }
+            packages.push(package);
+        }
+        timer
+            .block_on(host_store.commit_application(host, 0, input, vec![], packages))
+            .unwrap();
+        timer.block_on(host_store.shutdown()).unwrap();
+        drop(host_store);
+        let (input, packages, observations) = support::ui(PresentationTarget::Desktop);
+        let source = timer
+            .block_on(caller.commit_application(Uuid::new_v4(), 0, input, observations, packages))
+            .unwrap();
+        let approval = json!({"source":source,"consumers":[support::identity(2)],"consumer":support::identity(13),"imports":{"business":{"methods":["read","write","feed"],"recovery":false},"receipts":{"methods":["read"],"recovery":true}}});
+        std::fs::write(
+            directory.path().join("approval.json"),
+            serde_json::to_vec(&approval).unwrap(),
+        )
+        .unwrap();
+        Self {
+            timer,
+            directory,
+            namespaces,
+            caller,
+            source,
+            host,
+        }
+    }
+    fn host_path(&self) -> PathBuf {
+        self.directory.path().join("host")
+    }
+    fn source(&self) -> Source {
+        Source {
+            deployment: self.source.clone(),
+            consumer: support::identity(2),
+            request: Uuid::new_v4(),
+        }
+    }
+    fn spawn(
+        &self,
+        endpoint: &str,
+        method: &str,
+        input: Value,
+        resources: Attachments,
+        source: Source,
+    ) -> (Child, Call<ChildStdout, ChildStdin>) {
+        let _entered = self.timer.enter();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_maka"))
+            .args(["application", "serve", "--root"])
+            .arg(self.host_path())
+            .arg("--deployment")
+            .arg(self.host.to_string())
+            .arg("--peer")
+            .arg(self.directory.path().join("approval.json"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let call = Call::new(
+            child.stdout.take().unwrap(),
+            child.stdin.take().unwrap(),
+            endpoint.into(),
+            source,
+            method.into(),
+            input,
+            resources,
+        );
+        (child, call)
+    }
+    fn wait(&self, mut child: Child) {
+        assert!(
+            self.timer
+                .block_on(async {
+                    tokio::time::timeout(Duration::from_secs(15), child.wait()).await
+                })
+                .unwrap()
+                .unwrap()
+                .success()
+        );
+        drop(RootOwner::open(&self.host_path(), &self.namespaces).unwrap());
+    }
+    fn cleanup(self) {
+        self.timer.block_on(self.caller.shutdown()).unwrap();
+        drop(self.caller);
+    }
+}
+struct Snapshot {
+    data: String,
+    metadata: Value,
+}
+impl ReadResource for Snapshot {
+    fn resource_type(&self) -> maka_plugin_core::contract::ResourceType {
+        maka_ui::text::text_resource_type()
+    }
+    fn encoding(&self) -> ResourceEncoding {
+        ResourceEncoding::Utf8
+    }
+    fn bytes(&self) -> usize {
+        self.data.len()
+    }
+    fn metadata(&self) -> Value {
+        self.metadata.clone()
+    }
+    fn read(&self, range: Range<usize>) -> Result<Vec<u8>, String> {
+        self.data
+            .get(range)
+            .map(|s| s.as_bytes().to_vec())
+            .ok_or("UTF-8 boundary".into())
+    }
+}
+fn text(data: String, metadata: Value) -> Attachments {
+    BTreeMap::from([(
+        "text".into(),
+        Arc::new(Snapshot { data, metadata }) as Arc<dyn ReadResource>,
+    )])
+}
+fn token() -> Attachments {
+    text("token".into(), json!({"owner":"native-editor"}))
+}
+fn finished(reply: Reply) -> Value {
+    match reply {
+        Reply::Finished { result, cleanup } => {
+            cleanup.unwrap();
+            result.unwrap()
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+}
+#[test]
+fn private_pipes_move_actual_utf8_snapshots_and_metadata() {
+    let f = Fixture::new();
+    let data = format!("token{}", "你🙂".repeat(20000));
+    let (child, mut call) = f.spawn(
+        "business",
+        "read",
+        json!("q".repeat(400_000)),
+        text(
+            data.clone(),
+            json!({"owner":"actual-editor","large":"m".repeat(400_000)}),
+        ),
+        f.source(),
+    );
+    f.timer.block_on(async {
+        call.start().await.unwrap();
+        let value=finished(call.receive().await.unwrap());
+        assert_eq!(value,json!({"bytes":data.len(),"owner":"actual-editor","first":[116,111,107,101,110],"inputLength":400_000}));
+        assert!(call.cleanup_confirmed());
+    });
+    drop(call);
+    f.wait(child);
+    f.cleanup();
+}
+#[test]
+fn private_mutation_requires_actual_caller_sql_and_recovers_original_receipt_after_reopen() {
+    let f = Fixture::new();
+    let source = f.source();
+    let (child, mut call) = f.spawn("business", "write", Value::Null, token(), source.clone());
+    let reply = f.timer.block_on(async {
+        call.start().await.unwrap();
+        assert!(matches!(
+            call.receive().await.unwrap(),
+            Reply::Prepared { .. }
+        ));
+        assert!(
+            f.caller
+                .application_intents(f.source.deployment, support::identity(2), 0, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let recorded = f
+            .caller
+            .record_application_intent(
+                f.source.clone(),
+                support::identity(2),
+                call.reference().unwrap().clone(),
+            )
+            .await
+            .unwrap();
+        let history = f
+            .caller
+            .application_intents(f.source.deployment, support::identity(2), 0, 10)
+            .await
+            .unwrap();
+        assert_eq!(history[0].reference, *call.reference().unwrap());
+        match call.commit(recorded).await.unwrap() {
+            Reply::Mutation { reply, cleanup } => {
+                cleanup.unwrap();
+                *reply
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    });
+    assert!(call.cleanup_confirmed());
+    assert!(!call.holds_caller_intent());
+    assert!(matches!(
+        reply.receipt,
+        Receipt::Recorded {
+            cleanup: OperationCleanup::Confirmed,
+            ..
+        }
+    ));
+    drop(call);
+    f.wait(child);
+    let (child, mut recovery) = f.spawn(
+        "receipts",
+        "read",
+        serde_json::to_value(&reply.reference).unwrap(),
+        Attachments::new(),
+        f.source(),
+    );
+    let observed = f.timer.block_on(async {
+        recovery.start().await.unwrap();
+        finished(recovery.receive().await.unwrap())
+    });
+    assert_eq!(
+        serde_json::from_value::<OperationReply>(observed).unwrap(),
+        reply
+    );
+    drop(recovery);
+    f.wait(child);
+    f.cleanup();
+}
+#[test]
+fn private_subscription_pulls_in_order_and_cancel_drains_original_executor() {
+    let f = Fixture::new();
+    let (child, mut call) = f.spawn(
+        "business",
+        "feed",
+        Value::Null,
+        Attachments::new(),
+        f.source(),
+    );
+    f.timer.block_on(async {
+        call.start().await.unwrap();
+        assert!(matches!(call.receive().await.unwrap(), Reply::Subscribed));
+        for i in 0..3 {
+            assert!(
+                matches!(call.pull().await.unwrap(),Reply::Item {value} if value==json!({"i":i}))
+            );
+        }
+        let reply = call.cancel().await.unwrap();
+        assert!(reply.cleanup().unwrap().is_ok());
+        assert!(call.cleanup_confirmed());
+    });
+    drop(call);
+    f.wait(child);
+    f.cleanup();
+}
+#[test]
+fn private_preparation_abort_has_no_business_journal_effect() {
+    let f = Fixture::new();
+    let (child, mut call) = f.spawn("business", "write", Value::Null, token(), f.source());
+    let reference = f.timer.block_on(async {
+        call.start().await.unwrap();
+        call.receive().await.unwrap();
+        let reference = call.reference().unwrap().clone();
+        assert!(matches!(
+            call.cancel().await.unwrap(),
+            Reply::Aborted {
+                cleanup: Ok(()),
+                ..
+            }
+        ));
+        reference
+    });
+    drop(call);
+    f.wait(child);
+    let owner = Arc::new(RootOwner::open(&f.host_path(), &f.namespaces).unwrap());
+    let store = f.timer.block_on(EventLog::for_root(owner)).unwrap();
+    assert!(
+        f.timer
+            .block_on(store.operation_observation(&reference))
+            .unwrap()
+            .is_none()
+    );
+    f.timer.block_on(store.close()).unwrap();
+    f.cleanup();
+}
+#[test]
+fn private_peer_json_cannot_change_the_approved_ui_consumer() {
+    let f = Fixture::new();
+    let mut source = f.source();
+    source.consumer = support::identity(13);
+    let (child, mut call) = f.spawn("business", "write", Value::Null, token(), source);
+    assert!(
+        f.timer
+            .block_on(call.start())
+            .unwrap_err()
+            .contains("approved peer")
+    );
+    assert!(call.cleanup_confirmed());
+    drop(call);
+    f.wait(child);
+    f.cleanup();
+}
+
+#[test]
+fn private_host_loss_retains_real_caller_token_and_reopens_only_original_receipt() {
+    use sqlx::{
+        Connection,
+        sqlite::{SqliteConnectOptions, SqliteConnection},
+    };
+    let f = Fixture::new();
+    let source = f.source();
+    let (mut child, mut call) = f.spawn("business", "write", json!("hold"), token(), source);
+    let reference=f.timer.block_on(async {
+        call.start().await.unwrap();assert!(matches!(call.receive().await.unwrap(),Reply::Prepared {..}));
+        let reference=call.reference().unwrap().clone();
+        let recorded=f.caller.record_application_intent(f.source.clone(),support::identity(2),reference.clone()).await.unwrap();
+        let options=SqliteConnectOptions::new().filename(f.host_path().join(maka_event_log::root::ROOT_DATABASE)).read_only(true);
+        let mut reader=SqliteConnection::connect_with(&options).await.unwrap();
+        let dispatched=call.commit(recorded);tokio::pin!(dispatched);
+        tokio::select! {
+            result=&mut dispatched=>panic!("held operation completed before loss: {result:?}"),
+            result=tokio::time::timeout(Duration::from_secs(10),async {
+                loop {
+                    let exists:i64=sqlx::query_scalar("SELECT count(*) FROM application_operations WHERE operation=?").bind(reference.operation.to_string()).fetch_one(&mut reader).await.unwrap();
+                    if exists==1 {break;}
+                    tokio::task::yield_now().await;
+                }
+            })=>result.unwrap(),
+        }
+        reader.close().await.unwrap();
+        child.start_kill().unwrap();assert!(!tokio::time::timeout(Duration::from_secs(10),child.wait()).await.unwrap().unwrap().success());
+        assert!(dispatched.await.is_err());reference
+    });
+    assert!(call.holds_caller_intent());
+    assert!(!call.cleanup_confirmed());
+    let (reopened, mut recovery) = f.spawn(
+        "receipts",
+        "read",
+        serde_json::to_value(&reference).unwrap(),
+        Attachments::new(),
+        f.source(),
+    );
+    let reply = f.timer.block_on(async {
+        recovery.start().await.unwrap();
+        let value = finished(recovery.receive().await.unwrap());
+        serde_json::from_value::<OperationReply>(value).unwrap()
+    });
+    assert_eq!(reply.reference, reference);
+    assert!(matches!(
+        reply.receipt,
+        Receipt::Recorded {
+            outcome: OperationOutcome::Unresolved,
+            cleanup: OperationCleanup::Unconfirmed
+        }
+    ));
+    drop(recovery);
+    f.wait(reopened);
+    // A successful fresh lookup never clears the lost dispatch owner's token.
+    assert!(call.holds_caller_intent());
+    assert!(!call.cleanup_confirmed());
+    let Fixture {
+        timer,
+        directory,
+        namespaces,
+        caller,
+        ..
+    } = f;
+    timer
+        .block_on(Arc::try_unwrap(caller).ok().unwrap().close())
+        .unwrap();
+    assert_eq!(
+        RootOwner::open(&directory.path().join("caller"), &namespaces)
+            .err()
+            .unwrap()
+            .kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+    // Test teardown destroys this failed owner; that destruction is explicitly
+    // not a cleanup receipt, replay permission or product recovery mechanism.
+    drop(call);
+    drop(RootOwner::open(&directory.path().join("caller"), &namespaces).unwrap());
+}
