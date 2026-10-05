@@ -80,6 +80,7 @@ mod touch_selection;
 mod tree;
 mod undo_history;
 mod virtual_list;
+mod window_border;
 
 pub use accordion::{Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger};
 pub use alert_dialog::{
@@ -213,6 +214,9 @@ pub use undo_history::UndoHistory;
 #[doc(hidden)]
 pub use virtual_list::virtual_list;
 pub use virtual_list::{VirtualList, VirtualListScrollHandle, h_virtual_list, v_virtual_list};
+pub use window_border::{
+    WindowBorder, WindowBorderStyle, window_border, window_content_insets, window_paddings,
+};
 
 use gpui::App;
 

@@ -96,29 +96,47 @@ pub(crate) type TableActionsFn =
 
 pub(crate) type ImageSourceFn = dyn Fn(&gpui::SharedUri) -> gpui::ImageSource + Send + Sync;
 
-pub(crate) type LinkClickHandlerFn =
-    dyn Fn(&SharedString, &ClickEvent, &mut Window, &mut App) + Send + Sync;
+/// A synchronous link decision, applied before native default effects.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LinkDecision {
+    pub prevent_default: bool,
+    pub stop_propagation: bool,
+}
+
+pub(crate) type LinkActivationFn =
+    dyn Fn(&SharedString, &ClickEvent, &mut Window, &mut App) -> LinkDecision + Send + Sync;
 
 /// Kept by the element only, so unlike the handlers the state carries, it
 /// may hold a `ScrollHandle`.
 pub(crate) type RevealHandlerFn = dyn Fn(Bounds<Pixels>, &mut Window, &mut App);
 
-pub(crate) fn handle_link_click(
-    handler: &Option<Arc<LinkClickHandlerFn>>,
+pub(crate) fn handle_link_activation(
+    handler: &Option<Arc<LinkActivationFn>>,
     url: SharedString,
     event: ClickEvent,
     window: &mut Window,
     cx: &mut App,
 ) {
-    if let Some(handler) = handler {
-        handler(&url, &event, window, cx);
-    } else if match &event {
-        ClickEvent::Mouse(click) => {
-            matches!(click.up.button, MouseButton::Left | MouseButton::Middle)
+    let decision = handler
+        .as_ref()
+        .map(|handler| handler(&url, &event, window, cx))
+        .unwrap_or_default();
+    if decision.prevent_default {
+        window.prevent_default();
+    }
+    if decision.stop_propagation {
+        cx.stop_propagation();
+    }
+    if !window.default_prevented()
+        && match &event {
+            ClickEvent::Mouse(click) => {
+                matches!(click.up.button, MouseButton::Left | MouseButton::Middle)
+            }
+            ClickEvent::Keyboard(_) => true,
+            ClickEvent::Touch(click) => !click.long_press,
         }
-        ClickEvent::Keyboard(_) => true,
-        ClickEvent::Touch(click) => !click.long_press,
-    } {
+    {
+        crate::TextSelection::end(window, cx);
         cx.open_url(&url);
     }
 }
@@ -154,7 +172,7 @@ pub struct TextView {
     code_block_actions: Option<Arc<CodeBlockActionsFn>>,
     code_block_highlighter: Option<Arc<CodeBlockHighlighterFn>>,
     table_actions: Option<Arc<TableActionsFn>>,
-    link_click_handler: Option<Arc<LinkClickHandlerFn>>,
+    link_activation_handler: Option<Arc<LinkActivationFn>>,
     image_source: Option<Arc<ImageSourceFn>>,
     reveal_handler: Option<Rc<RevealHandlerFn>>,
     markdown_extensions: Arc<MarkdownExtensions>,
@@ -201,7 +219,7 @@ impl TextView {
             code_block_actions: None,
             code_block_highlighter: None,
             table_actions: None,
-            link_click_handler: None,
+            link_activation_handler: None,
             image_source: None,
             reveal_handler: None,
             markdown_extensions: Arc::default(),
@@ -225,7 +243,7 @@ impl TextView {
             code_block_actions: None,
             code_block_highlighter: None,
             table_actions: None,
-            link_click_handler: None,
+            link_activation_handler: None,
             image_source: None,
             reveal_handler: None,
             markdown_extensions: Arc::default(),
@@ -249,7 +267,7 @@ impl TextView {
             code_block_actions: None,
             code_block_highlighter: None,
             table_actions: None,
-            link_click_handler: None,
+            link_activation_handler: None,
             image_source: None,
             reveal_handler: None,
             markdown_extensions: Arc::default(),
@@ -390,15 +408,20 @@ impl TextView {
         self
     }
 
-    /// Handle pointer events on rendered links.
+    /// Decide link activation synchronously before selection-end or URL defaults.
     ///
-    /// The handler receives the resolved URL and the original GPUI click event.
-    /// Without a handler, links open through App::open_url.
-    pub fn on_link_click<F>(mut self, handler: F) -> Self
+    /// The handler receives the resolved target and original GPUI click event.
+    /// Its decision controls default effects and propagation independently.
+    /// Without prevention, primary/middle, keyboard and short-touch activation
+    /// open through App::open_url. Auxiliary events still reach the handler.
+    pub fn on_link_activation<F>(mut self, handler: F) -> Self
     where
-        F: Fn(&SharedString, &ClickEvent, &mut Window, &mut App) + Send + Sync + 'static,
+        F: Fn(&SharedString, &ClickEvent, &mut Window, &mut App) -> LinkDecision
+            + Send
+            + Sync
+            + 'static,
     {
-        self.link_click_handler = Some(Arc::new(handler));
+        self.link_activation_handler = Some(Arc::new(handler));
         self
     }
 
@@ -675,7 +698,7 @@ impl Element for TextView {
             state.code_block_actions = self.code_block_actions.clone();
             state.code_block_highlighter = code_block_highlighter;
             state.table_actions = self.table_actions.clone();
-            state.link_click_handler = self.link_click_handler.clone();
+            state.link_activation_handler = self.link_activation_handler.clone();
             state.image_source = self.image_source.clone();
             state.set_markdown_extensions(self.markdown_extensions.clone(), cx);
             if let Some(motion) = &self.motion {
@@ -946,7 +969,7 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
 
-    use super::{TextView, TextViewPlugin};
+    use super::{LinkDecision, TextView, TextViewPlugin};
     use crate::text::{TableData, TextViewState, TextViewStyle};
     use gpui::{
         AppContext as _, Bounds, ClickEvent, Context, Entity, InteractiveElement as _, IntoElement,
@@ -2872,6 +2895,93 @@ mod tests {
     }
 
     #[gpui::test]
+    fn link_decision_controls_native_open_and_parent_propagation_independently(
+        cx: &mut TestAppContext,
+    ) {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        struct Root {
+            text_view: Entity<TextViewState>,
+            decision: LinkDecision,
+            decisions: Arc<AtomicUsize>,
+            parent: Arc<AtomicUsize>,
+        }
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let decision = self.decision;
+                let decisions = self.decisions.clone();
+                let parent = self.parent.clone();
+                div()
+                    .w(px(300.))
+                    .on_mouse_up(MouseButton::Left, move |_, _, _| {
+                        parent.fetch_add(1, Ordering::SeqCst);
+                    })
+                    .child(crate::TextSelectionLayer)
+                    .child(TextView::new(&self.text_view).on_link_activation(
+                        move |_, _, window, cx| {
+                            assert!(cx.is_propagating());
+                            assert!(!window.default_prevented());
+                            decisions.fetch_add(1, Ordering::SeqCst);
+                            decision
+                        },
+                    ))
+            }
+        }
+        cx.update(crate::init);
+        for flow in [false, true] {
+            for prevent_default in [true, false] {
+                for stop_propagation in [true, false] {
+                    let decision = LinkDecision {
+                        prevent_default,
+                        stop_propagation,
+                    };
+                    let target =
+                        format!("https://example.com/{flow}/{prevent_default}/{stop_propagation}");
+                    let source =
+                        format!("{}[example]({target})", if flow { "`code` " } else { "" });
+                    let (root, cx) = cx.add_window_view(|_, cx| Root {
+                        text_view: cx.new(|cx| TextViewState::markdown(&source, cx)),
+                        decision,
+                        decisions: Arc::default(),
+                        parent: Arc::default(),
+                    });
+                    let cx: &mut VisualTestContext = cx;
+                    cx.run_until_parked();
+                    cx.update(|window, cx| window.draw(cx).clear(cx));
+                    let before = cx.opened_url();
+                    let position = root.read_with(cx, |root, cx| {
+                        root.text_view
+                            .read(cx)
+                            .selection_adapter
+                            .text_bounds()
+                            .last()
+                            .unwrap()
+                            .center()
+                    });
+                    cx.simulate_click(position, Modifiers::default());
+                    root.read_with(cx, |root, _| {
+                        assert_eq!(root.decisions.load(Ordering::SeqCst), 1);
+                        assert_eq!(
+                            root.parent.load(Ordering::SeqCst),
+                            usize::from(!stop_propagation)
+                        );
+                    });
+                    assert_eq!(
+                        cx.opened_url(),
+                        if prevent_default {
+                            before
+                        } else {
+                            Some(target)
+                        }
+                    );
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
     fn link_handler_receives_button_and_modifiers(cx: &mut TestAppContext) {
         use std::sync::{Arc, Mutex};
 
@@ -2889,11 +2999,19 @@ mod tests {
                 let clicks = self.clicks.clone();
                 div()
                     .w(px(240.))
-                    .child(
-                        TextView::new(&self.text_view).on_link_click(move |url, event, _, _| {
+                    .child(TextView::new(&self.text_view).on_link_activation(
+                        move |url, event, _, cx| {
+                            assert!(
+                                cx.is_propagating(),
+                                "decision precedes native propagation effects"
+                            );
                             clicks.lock().unwrap().push((url.clone(), event.clone()));
-                        }),
-                    )
+                            LinkDecision {
+                                prevent_default: true,
+                                stop_propagation: true,
+                            }
+                        },
+                    ))
             }
         }
 
@@ -2967,8 +3085,16 @@ mod tests {
                 div().w(px(300.)).child(crate::TextSelectionLayer).child(
                     TextView::new(&self.state)
                         .markdown_extensions(extensions)
-                        .on_link_click(move |url, _, _, _| {
-                            clicks.lock().unwrap().push(url.clone())
+                        .on_link_activation(move |url, _, _, cx| {
+                            assert!(
+                                cx.is_propagating(),
+                                "decision precedes native propagation effects"
+                            );
+                            clicks.lock().unwrap().push(url.clone());
+                            LinkDecision {
+                                prevent_default: true,
+                                stop_propagation: true,
+                            }
                         }),
                 )
             }
@@ -3026,8 +3152,16 @@ mod tests {
                 div().w(px(160.)).child(
                     TextView::new(&self.text_view)
                         .selectable(true)
-                        .on_link_click(move |url, event, _, _| {
+                        .on_link_activation(move |url, event, _, cx| {
+                            assert!(
+                                cx.is_propagating(),
+                                "decision precedes native propagation effects"
+                            );
                             clicks.lock().unwrap().push((url.clone(), event.clone()));
+                            LinkDecision {
+                                prevent_default: true,
+                                stop_propagation: true,
+                            }
                         }),
                 )
             }

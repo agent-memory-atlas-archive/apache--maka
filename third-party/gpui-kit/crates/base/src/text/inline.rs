@@ -17,14 +17,14 @@ use gpui::{
 };
 
 use crate::{
-    GlobalState, TextSelection,
+    GlobalState,
     input::Selection,
     text::TextViewMultiClickKind,
     text::node::LinkMark,
     text::range_highlight::RevealAt,
     text::selection::word_range_at,
     text::state::LineSpan,
-    text::text_view::{LinkClickHandlerFn, handle_link_click},
+    text::text_view::{LinkActivationFn, handle_link_activation},
     text_selection::text_rows_extent,
 };
 
@@ -210,7 +210,7 @@ pub(super) struct Inline {
     range_backgrounds: Vec<(Range<usize>, Hsla)>,
     /// The start of a pending reveal, when it is in this text.
     reveal: Option<RevealAt>,
-    link_click_handler: Option<Arc<LinkClickHandlerFn>>,
+    link_activation_handler: Option<Arc<LinkActivationFn>>,
     /// What this frame's layout was shaped with, to hand the shaped text to
     /// the next frame (see [`RetainedLayout`]).
     retained_key: Option<(Vec<TextRun>, TextStyle)>,
@@ -353,7 +353,7 @@ impl Inline {
         state: Arc<Mutex<InlineState>>,
         links: Vec<(Range<usize>, LinkMark)>,
         highlights: Vec<(Range<usize>, InlineHighlight)>,
-        link_click_handler: Option<Arc<LinkClickHandlerFn>>,
+        link_activation_handler: Option<Arc<LinkActivationFn>>,
     ) -> Self {
         let text = state
             .lock()
@@ -371,7 +371,7 @@ impl Inline {
             selection_source: None,
             range_backgrounds: Vec::new(),
             reveal: None,
-            link_click_handler,
+            link_activation_handler,
             retained_key: None,
             handed_over: false,
             state,
@@ -1142,7 +1142,7 @@ impl Element for Inline {
                 let text_layout = text_layout.clone();
                 let hitbox = hitbox.clone();
                 let text_view_state = GlobalState::global(cx).text_view_state().cloned();
-                let link_click_handler = self.link_click_handler.clone();
+                let link_activation_handler = self.link_activation_handler.clone();
 
                 move |event: &MouseUpEvent, phase, window, cx| {
                     if !phase.bubble() || !hitbox.is_hovered(window) {
@@ -1158,8 +1158,6 @@ impl Element for Inline {
                     if let Some(link) =
                         Self::link_for_position(&text_layout, &links, event.position)
                     {
-                        TextSelection::end(window, cx);
-                        cx.stop_propagation();
                         let click = ClickEvent::Mouse(MouseClickEvent {
                             down: MouseDownEvent {
                                 button: event.button,
@@ -1170,7 +1168,13 @@ impl Element for Inline {
                             },
                             up: event.clone(),
                         });
-                        handle_link_click(&link_click_handler, link.url, click, window, cx);
+                        handle_link_activation(
+                            &link_activation_handler,
+                            link.url,
+                            click,
+                            window,
+                            cx,
+                        );
                     }
                 }
             });

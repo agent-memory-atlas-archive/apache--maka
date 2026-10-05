@@ -1,8 +1,8 @@
 use crate::{
-    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
+    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, Decorations, DevicePixels,
     DispatchEventResult, GpuSpecs, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TextInputConfiguration,
+    PromptButton, RequestFrameOptions, ResizeEdge, Scene, Size, TestPlatform, TextInputConfiguration,
     TextInputStateChange, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControlArea, WindowInsets, WindowParams, WindowVisibility,
 };
@@ -21,6 +21,9 @@ use std::{
 
 pub(crate) struct TestWindowState {
     pub(crate) bounds: Bounds<Pixels>,
+    pub(crate) decorations: Decorations,
+    pub(crate) resize_requests: Vec<ResizeEdge>,
+    pub(crate) client_inset: Option<Pixels>,
     pub(crate) handle: AnyWindowHandle,
     display: Rc<dyn PlatformDisplay>,
     pub(crate) title: Option<String>,
@@ -98,6 +101,9 @@ impl TestWindow {
         };
         Self(Rc::new(Mutex::new(TestWindowState {
             bounds: params.bounds,
+            decorations: Decorations::Server,
+            resize_requests: Vec::new(),
+            client_inset: None,
             display,
             platform,
             handle,
@@ -320,6 +326,18 @@ impl TestWindow {
 }
 
 impl PlatformWindow for TestWindow {
+    fn window_decorations(&self) -> Decorations {
+        self.0.lock().decorations
+    }
+
+    fn start_window_resize(&self, edge: ResizeEdge) {
+        self.0.lock().resize_requests.push(edge);
+    }
+
+    fn set_client_inset(&self, inset: Pixels) {
+        self.0.lock().client_inset = Some(inset);
+    }
+
     fn a11y_init(&self, callbacks: crate::A11yCallbacks) {
         self.0.lock().a11y_callbacks = Some(callbacks);
     }

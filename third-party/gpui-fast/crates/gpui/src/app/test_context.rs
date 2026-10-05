@@ -1,9 +1,9 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
     BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
-    Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
+    Decorations, Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Platform, Point, Render, Result, SharedString, Size, SystemNotification,
+    Pixels, Platform, Point, Render, ResizeEdge, Result, SharedString, Size, SystemNotification,
     SystemNotificationResponse, Task, TestDispatcher, TestPlatform, TestScreenCaptureSource,
     TestWindow, TextSystem, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
     WindowVisibility, app::GpuiMode, window::ElementArenaScope,
@@ -442,6 +442,27 @@ impl TestAppContext {
     /// Simulates the user resizing the window to the new size.
     pub fn simulate_window_resize(&self, window_handle: AnyWindowHandle, size: Size<Pixels>) {
         self.test_window(window_handle).simulate_resize(size);
+    }
+
+    /// Changes the original test platform's decoration facts and requests a native redraw.
+    pub fn simulate_window_decorations(
+        &mut self,
+        window_handle: AnyWindowHandle,
+        decorations: Decorations,
+    ) {
+        self.test_window(window_handle).0.lock().decorations = decorations;
+        self.update_window(window_handle, |_, window, _| window.refresh())
+            .expect("test window exists");
+    }
+
+    /// Resize requests delivered to this original platform window, in order.
+    pub fn window_resize_requests(&self, window_handle: AnyWindowHandle) -> Vec<ResizeEdge> {
+        self.test_window(window_handle).0.lock().resize_requests.clone()
+    }
+
+    /// The client inset last delivered to this original platform window.
+    pub fn platform_client_inset(&self, window_handle: AnyWindowHandle) -> Option<Pixels> {
+        self.test_window(window_handle).0.lock().client_inset
     }
 
     /// Simulates a change in whether the platform is presenting the window.

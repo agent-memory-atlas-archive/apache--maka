@@ -14,7 +14,7 @@ use gpui::{
     TextStyle, WhiteSpace, Window, img, point, prelude::FluentBuilder as _, px, relative, size,
 };
 
-use crate::text::text_view::{LinkClickHandlerFn, handle_link_click};
+use crate::text::text_view::{LinkActivationFn, handle_link_activation};
 
 use super::{
     inline::{Inline, InlineHighlight, InlineState, text_runs, text_size_ranges},
@@ -29,7 +29,7 @@ pub(super) const INLINE_CODE_PADDING: f32 = 2.;
 pub(super) struct InlineFlow {
     id: ElementId,
     items: Vec<InlineFlowItem>,
-    link_click_handler: Option<Arc<LinkClickHandlerFn>>,
+    link_activation_handler: Option<Arc<LinkActivationFn>>,
 }
 
 pub(super) type InlineRenderer = dyn Fn(&super::InlineRenderContext, &mut Window, &mut App) -> Option<super::InlineElement>
@@ -245,12 +245,12 @@ impl InlineFlow {
     pub(super) fn new(
         id: impl Into<ElementId>,
         items: Vec<InlineFlowItem>,
-        link_click_handler: Option<Arc<LinkClickHandlerFn>>,
+        link_activation_handler: Option<Arc<LinkActivationFn>>,
     ) -> Self {
         Self {
             id: id.into(),
             items,
-            link_click_handler,
+            link_activation_handler,
         }
     }
 
@@ -260,7 +260,7 @@ impl InlineFlow {
         link: &Option<LinkMark>,
         _title: &str,
         size: Size<Pixels>,
-        link_click_handler: Option<Arc<LinkClickHandlerFn>>,
+        link_activation_handler: Option<Arc<LinkActivationFn>>,
     ) -> AnyElement {
         img(source.clone())
             .id(ix)
@@ -270,13 +270,11 @@ impl InlineFlow {
             .h(size.height)
             .when_some(link.clone(), |this, link| {
                 let aux_link = link.clone();
-                let aux_link_click_handler = link_click_handler.clone();
+                let aux_link_activation_handler = link_activation_handler.clone();
                 this.cursor_pointer()
                     .on_click(move |event, window, cx| {
-                        crate::TextSelection::end(window, cx);
-                        cx.stop_propagation();
-                        handle_link_click(
-                            &link_click_handler,
+                        handle_link_activation(
+                            &link_activation_handler,
                             link.url.clone(),
                             event.clone(),
                             window,
@@ -284,10 +282,8 @@ impl InlineFlow {
                         );
                     })
                     .on_aux_click(move |event, window, cx| {
-                        crate::TextSelection::end(window, cx);
-                        cx.stop_propagation();
-                        handle_link_click(
-                            &aux_link_click_handler,
+                        handle_link_activation(
+                            &aux_link_activation_handler,
                             aux_link.url.clone(),
                             event.clone(),
                             window,
@@ -499,7 +495,7 @@ impl Element for InlineFlow {
                             size(bounds.size.width, selection_bounds.size.height),
                         ),
                     )
-                    .link(link.clone(), self.link_click_handler.clone())
+                    .link(link.clone(), self.link_activation_handler.clone())
                     .into_any_element();
                     element.prepaint_as_root(
                         bounds.origin + *origin,
@@ -563,7 +559,7 @@ impl Element for InlineFlow {
                         state,
                         links.clone(),
                         highlights.clone(),
-                        self.link_click_handler.clone(),
+                        self.link_activation_handler.clone(),
                     )
                     .selection_source(source_state.clone(), source_range.clone())
                     .range_backgrounds(slice_ranges(
@@ -629,7 +625,7 @@ impl Element for InlineFlow {
                         link,
                         title.as_str(),
                         fragment_size,
-                        self.link_click_handler.clone(),
+                        self.link_activation_handler.clone(),
                     );
                     element.prepaint_as_root(
                         bounds.origin + origin,

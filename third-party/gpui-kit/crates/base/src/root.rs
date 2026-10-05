@@ -1,5 +1,5 @@
 //! Window roots and presentation-layer plugins.
-use crate::{StyledExt, TextSelectionLayer};
+use crate::{StyledExt, TextSelectionLayer, WindowBorderStyle, window_border};
 use gpui::{
     AnyElement, AnyView, App, AppContext, ClipboardItem, Context, Div, Entity, Global,
     InteractiveElement, IntoElement, Keystroke, ParentElement, Render, Stateful, StyleRefinement,
@@ -45,8 +45,8 @@ pub trait RootPlugin: Render + Sized {
     /// Add presentation around the completed root surface.
     ///
     /// This runs after plugin defaults and instance styles have been applied.
-    /// Return `surface` unchanged when no outer presentation is needed. Typical
-    /// uses include client-side window borders or another structural wrapper.
+    /// Return `surface` unchanged when no outer presentation is needed.
+    /// Platform frame mechanics belong to Root and wrap the resulting surface.
     /// `root` provides read-only access to the root and its application view.
     fn decorate(
         &self,
@@ -79,6 +79,8 @@ pub struct Root {
     style: StyleRefinement,
     plugins: Vec<Plugin>,
     _keyboard: Subscription,
+    _appearance: Subscription,
+    window_border_style: WindowBorderStyle,
 }
 
 impl Root {
@@ -155,14 +157,28 @@ impl Root {
                 root.apply_default(&event.keystroke, window, cx)
             });
         });
+        let appearance_owner = cx.weak_entity();
+        let appearance = window.observe_window_appearance(move |_, cx| {
+            let _ = appearance_owner.update(cx, |_, cx| cx.notify());
+        });
         Self {
             view: view.into(),
             _keyboard: keyboard,
+            _appearance: appearance,
+            window_border_style: WindowBorderStyle::default(),
             style: StyleRefinement::default(),
             plugins: factories
                 .into_iter()
                 .map(|(_, build)| build(window, cx))
                 .collect(),
+        }
+    }
+
+    /// Update immutable frame values on this original per-window owner.
+    pub fn set_window_border_style(&mut self, style: WindowBorderStyle, cx: &mut Context<Self>) {
+        if self.window_border_style != style {
+            self.window_border_style = style;
+            cx.notify();
         }
     }
 
@@ -345,7 +361,10 @@ impl Render for Root {
         for plugin in &self.plugins {
             content = (plugin.decorate)(content, self, window, cx);
         }
-        content
+        window_border()
+            .style(self.window_border_style.clone())
+            .child(content)
+            .into_any_element()
     }
 }
 

@@ -160,17 +160,17 @@ pub(super) struct InlineObject {
     content: AnyElement,
     content_measured: bool,
     link: Option<super::node::LinkMark>,
-    link_click_handler: Option<Arc<super::text_view::LinkClickHandlerFn>>,
+    link_activation_handler: Option<Arc<super::text_view::LinkActivationFn>>,
 }
 
 impl InlineObject {
     pub fn link(
         mut self,
         link: Option<super::node::LinkMark>,
-        handler: Option<Arc<super::text_view::LinkClickHandlerFn>>,
+        handler: Option<Arc<super::text_view::LinkActivationFn>>,
     ) -> Self {
         self.link = link;
-        self.link_click_handler = handler;
+        self.link_activation_handler = handler;
         self
     }
 
@@ -195,7 +195,7 @@ impl InlineObject {
             content,
             content_measured,
             link: None,
-            link_click_handler: None,
+            link_activation_handler: None,
         }
     }
 }
@@ -334,7 +334,7 @@ impl Element for InlineObject {
             window.set_cursor_style(CursorStyle::PointingHand, hitbox);
             let link_hitbox = hitbox.clone();
             let link_view = view.clone();
-            let handler = self.link_click_handler.clone();
+            let handler = self.link_activation_handler.clone();
             window.on_mouse_event(move |event: &gpui::MouseUpEvent, phase, window, cx| {
                 if !phase.bubble()
                     || !link_hitbox.is_hovered(window)
@@ -344,8 +344,6 @@ impl Element for InlineObject {
                 {
                     return;
                 }
-                crate::TextSelection::end(window, cx);
-                cx.stop_propagation();
                 let click = gpui::ClickEvent::Mouse(gpui::MouseClickEvent {
                     down: MouseDownEvent {
                         button: event.button,
@@ -356,7 +354,13 @@ impl Element for InlineObject {
                     },
                     up: event.clone(),
                 });
-                super::text_view::handle_link_click(&handler, link.url.clone(), click, window, cx);
+                super::text_view::handle_link_activation(
+                    &handler,
+                    link.url.clone(),
+                    click,
+                    window,
+                    cx,
+                );
             });
         }
         if selectable {

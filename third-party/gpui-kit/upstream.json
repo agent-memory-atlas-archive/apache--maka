@@ -205,6 +205,14 @@
     "crates/base/src/touch_selection.rs": "a4c0e56e99af0d268dd38e3d8f9d1cbc7fe4259fe9c52a6e4247e275ffe48141",
     "crates/base/src/tree.rs": "e74e4fcdef6ccec174e3e6ced50f108433e726f3e3d46f3539b1f41d5944e5df",
     "crates/base/src/undo_history.rs": "ed5b8f83b9de3d749855d2c9bb06097693c6d9664fb201d7a692801eca4fc1ce",
-    "crates/base/src/virtual_list.rs": "e3d267980d927b26299e564108b078fa49cc8aaa16ffe54062dcba30215c876b"
-  }
+    "crates/base/src/virtual_list.rs": "e3d267980d927b26299e564108b078fa49cc8aaa16ffe54062dcba30215c876b",
+    "crates/base/src/window_border.rs": "e2a2f038f807ca17dbe4520c98dab5e5ec3f9983aaa095e4c9a426aeb6f94e6d"
+  },
+  "additionalImports": [
+    {
+      "source": "crates/component/src/window_border.rs",
+      "destination": "crates/base/src/window_border.rs",
+      "sha256": "e2a2f038f807ca17dbe4520c98dab5e5ec3f9983aaa095e4c9a426aeb6f94e6d"
+    }
+  ]
 }

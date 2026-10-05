@@ -5759,7 +5759,6 @@ source = "git+https://github.com/longbridge/gpui-kit?rev=f89c5cc9576d823d253b456
 dependencies = [
  "gpui-base",
  "gpui-component",
- "gpui-kit-assets",
  "gpui-pre",
  "gpui-pre-platform",
  "gpui-pre-web",

@@ -34,3 +34,5 @@ macOS 还必须从 State 取出 AccessKit adapter，在 foreground teardown task
 App 提供原当前事件传播标记的只读查询。原生分发完成观察者能据此排除已消费的输入及此前已停止的观察，不复制事件状态、不新增键盘注册表。Kit 的既有 Root 默认行为可覆盖有焦点和无焦点的窗口，原生绑定及 raw 插件决定仍先执行。
 
 原生焦点显露派生自原 Window focus generation 与已提交的 prepaint 几何。焦点子树只给原 autoscroll request 标注 generation，精确 child caret 优先于整个控件的 fallback，无关兄弟请求不能覆盖焦点目标。滚动容器计划最小且被原 native limits 钳制的 offset，仅按自身 viewport 裁剪目标向祖先传递；正常后续 frame 一起重建 paint、hitbox 与 accessibility。一次 generation 完成后不抢回用户手动滚动；pointer 移焦保持 down/up 与拖选几何。List 完整 prepaint 可见 pass 后才选 retry 请求；失败事务撤回显露几何事实，保留已经写入的 offset 计划以安排重绘。pending 时绕过 retained/layer replay。
+
+原 TestWindow 记录 platform decoration facts、resize requests 和 client insets；TestAppContext 可改变原平台事实并请求原生重画，再观察实际平台调用。该有限 harness 接缝验证 Base Root 客户端 frame 行为，不增加第二窗口或 frame owner，不宣称 Linux OS 验收。
