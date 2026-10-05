@@ -37,7 +37,7 @@ struct Failed {
     _bytes: OwnedSemaphorePermit,
     _attachments: Attachments,
     _resources: OwnedSemaphorePermit,
-    _intent: Option<Box<maka_event_log::applications::intents::RecordedIntent>>,
+    _confirmation: Option<Confirmation>,
 }
 struct Owned {
     imports: Arc<BTreeMap<String, Vec<Binding>>>,
@@ -74,7 +74,7 @@ enum Done {
         _bytes: OwnedSemaphorePermit,
         attachments: Attachments,
         _resources: OwnedSemaphorePermit,
-        intent: Option<Box<maka_event_log::applications::intents::RecordedIntent>>,
+        confirmation: Option<Confirmation>,
     },
     Recovered {
         consumer: Activation,
@@ -661,7 +661,7 @@ impl Owner {
                                 "Host attachment descriptor changed before admission".into()
                             );
                         }
-                        self.policy.admit(Invocation {
+                        let invocation = Invocation {
                             scope: &scope,
                             consumer: binding.0.consumer(),
                             provider: binding.provider(),
@@ -670,7 +670,12 @@ impl Owner {
                             method: &method,
                             input: &input,
                             attachments: &attachments,
-                        })
+                        };
+                        self.policy.admit(invocation)?;
+                        if let Some(intent) = kind.peer_intent() {
+                            self.policy.confirm_peer_mutation(invocation, intent)?;
+                        }
+                        Ok::<(), String>(())
                     })) {
                         Ok(result) => result?,
                         Err(_) => {
@@ -686,7 +691,10 @@ impl Owner {
                     if matches!(
                         kind,
                         CallKind::PrepareMutation { .. }
-                            | CallKind::Mutation { recorded: None, .. }
+                            | CallKind::Mutation {
+                                confirmation: None,
+                                ..
+                            }
                     ) {
                         return Ok((None, None, request, reference));
                     }
@@ -696,7 +704,7 @@ impl Owner {
                 })();
                 match admission {
                     Err(error) => {
-                        drop(kind.take_intent());
+                        drop(kind.take_confirmation());
                         drop((attachments, resources, slot, bytes, input, scope));
                         if let Some(ticket) = parent.take() {
                             ticket.complete(if descriptor_failed {
@@ -726,7 +734,13 @@ impl Owner {
                             }));
                             return;
                         }
-                        if matches!(kind, CallKind::Mutation { recorded: None, .. }) {
+                        if matches!(
+                            kind,
+                            CallKind::Mutation {
+                                confirmation: None,
+                                ..
+                            }
+                        ) {
                             let request = request.expect("checked original mutation");
                             let store = self
                                 .persisted
@@ -768,7 +782,7 @@ impl Owner {
                         }
                         let execution = execution.expect("accepted execution");
                         let child = child.expect("accepted child scope");
-                        let intent = kind.take_intent();
+                        let confirmation = kind.take_confirmation();
                         let caller = scope;
                         let scope = child;
                         let consumer = binding.0.consumer().clone();
@@ -844,7 +858,7 @@ impl Owner {
                                 receipt=Some(Err("operation receipt unavailable; read original reference".into()));
                             }
                             Done::Called { parent, execution, result, historical, consumer, caller: Box::new(caller),
-                                scope: Box::new(scope), cleanup, receipt: receipt.map(Box::new), reply: output, _slot: slot, _bytes: bytes, attachments, _resources: resources, intent }
+                                scope: Box::new(scope), cleanup, receipt: receipt.map(Box::new), reply: output, _slot: slot, _bytes: bytes, attachments, _resources: resources, confirmation }
                         }));
                     }
                 }
@@ -939,10 +953,10 @@ impl Owner {
         match done {
             Done::IntentRecorded { mut call, recorded } => match recorded {
                 Ok(intent) => {
-                    let CallKind::Mutation { recorded, .. } = &mut call.kind else {
+                    let CallKind::Mutation { confirmation, .. } = &mut call.kind else {
                         unreachable!("recording belongs to a mutation")
                     };
-                    *recorded = Some(intent);
+                    *confirmation = Some(Confirmation::Recorded(intent));
                     self.command(Command::Call(call));
                 }
                 Err(error) => {
@@ -1017,7 +1031,7 @@ impl Owner {
                 _bytes,
                 attachments,
                 _resources,
-                intent,
+                confirmation,
             } => {
                 if let Some(observation) = historical {
                     receipt = Some(Box::new(
@@ -1041,12 +1055,12 @@ impl Owner {
                         _bytes,
                         _attachments: attachments,
                         _resources,
-                        _intent: intent,
+                        _confirmation: confirmation,
                     });
                 } else {
                     // Confirmed physical cleanup releases caller custody before waking
                     // an observer that may immediately reopen the caller Root.
-                    drop((intent, attachments, _resources, _slot, _bytes, scope));
+                    drop((confirmation, attachments, _resources, _slot, _bytes, scope));
                 }
                 if let Some(ticket) = parent {
                     ticket.complete(cleanup.clone());

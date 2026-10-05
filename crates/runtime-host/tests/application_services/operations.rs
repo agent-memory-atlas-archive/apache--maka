@@ -17,6 +17,8 @@
  * under the License.
  */
 
+#[path = "peer_confirmations.rs"]
+mod peer_confirmations;
 #[path = "receipts.rs"]
 mod receipts;
 #[path = "resource_mutations.rs"]

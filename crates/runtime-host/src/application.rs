@@ -30,6 +30,7 @@ mod subscriptions;
 pub use subscriptions::Subscription;
 
 use futures_util::future::BoxFuture;
+use maka_event_log::applications::intents::{CallerIntent, RecordedIntent};
 use maka_js_runtime::plugin::Limits;
 use maka_plugin_core::{
     composition::{ExecutionLocation, Input, InstanceId},
@@ -74,6 +75,17 @@ pub trait Handler: Send + Sync + 'static {
 /// Scope observation, package identity and a binding are not authorization.
 pub trait Policy: Send + Sync + 'static {
     fn admit(&self, invocation: Invocation<'_>) -> Result<()>;
+    /// Authenticate a peer's caller-commit attestation against the original
+    /// Scope's private evidence. This is additional to ordinary admission, not
+    /// a Host grant or proof of another process's SQLite commit. Default deny.
+    /// Checked in the final owner turn before execution, without an await.
+    fn confirm_peer_mutation(
+        &self,
+        _invocation: Invocation<'_>,
+        _intent: &CallerIntent,
+    ) -> Result<()> {
+        Err("peer caller confirmation is not authorized".into())
+    }
     /// Mutation admission never grants access to historical operation records.
     fn recover(&self, _invocation: RecoveryInvocation<'_>) -> Result<()> {
         Err("operation recovery is not authorized".into())
@@ -82,6 +94,7 @@ pub trait Policy: Send + Sync + 'static {
 
 /// Borrowed facts at final admission. Exact execution identities and actual
 /// payloads stay distinct from the Scope's private authorization evidence.
+#[derive(Clone, Copy)]
 pub struct Invocation<'a> {
     pub scope: &'a Scope,
     pub consumer: &'a Activation,
@@ -372,9 +385,23 @@ pub(super) enum CallKind {
     },
     Mutation {
         operation: Uuid,
-        recorded: Option<Box<maka_event_log::applications::intents::RecordedIntent>>,
+        confirmation: Option<Confirmation>,
         reply: oneshot::Sender<Result<Mutation>>,
     },
+}
+// Only the local variant holds a caller Root lease. Peer observations must pass
+// the final confirmation policy; the actual token stays in the caller process.
+pub(super) enum Confirmation {
+    Recorded(Box<RecordedIntent>),
+    Peer(Box<CallerIntent>),
+}
+impl Confirmation {
+    fn intent(&self) -> &CallerIntent {
+        match self {
+            Self::Recorded(recorded) => recorded.intent(),
+            Self::Peer(intent) => intent,
+        }
+    }
 }
 impl CallKind {
     fn operation(&self) -> Option<Uuid> {
@@ -409,20 +436,27 @@ impl CallKind {
             }
         }
     }
-    fn take_intent(
-        &mut self,
-    ) -> Option<Box<maka_event_log::applications::intents::RecordedIntent>> {
+    fn take_confirmation(&mut self) -> Option<Confirmation> {
         match self {
-            Self::Mutation { recorded, .. } => recorded.take(),
+            Self::Mutation { confirmation, .. } => confirmation.take(),
+            _ => None,
+        }
+    }
+    fn peer_intent(&self) -> Option<&CallerIntent> {
+        match self {
+            Self::Mutation {
+                confirmation: Some(Confirmation::Peer(intent)),
+                ..
+            } => Some(intent),
             _ => None,
         }
     }
     fn expected(&self) -> Option<&RecoveryRef> {
         match self {
             Self::Mutation {
-                recorded: Some(intent),
+                confirmation: Some(confirmation),
                 ..
-            } => Some(&intent.intent().reference),
+            } => Some(&confirmation.intent().reference),
             _ => None,
         }
     }
@@ -813,10 +847,34 @@ impl Client {
     /// Requires caller persistence, then rechecks the original invocation at dispatch.
     pub async fn mutate(
         &self,
-        mut prepared: PreparedMutation,
-        recorded: maka_event_log::applications::intents::RecordedIntent,
+        prepared: PreparedMutation,
+        recorded: RecordedIntent,
     ) -> Result<Mutation> {
-        if prepared.reference != recorded.intent().reference {
+        self.dispatch_mutation(prepared, Confirmation::Recorded(Box::new(recorded)))
+            .await
+    }
+    /// Dispatches an authenticated peer adapter's caller-commit attestation.
+    /// JSON observations do not prove commit or authorize execution: the Host's
+    /// final `Policy::confirm_peer_mutation` must check the original private
+    /// Scope evidence and exact caller source/consumer/request, in addition to
+    /// `Policy::admit`. It defaults to refusal. No Host caller intent is written.
+    /// The caller adapter must retain its actual `RecordedIntent` until remote
+    /// cleanup is confirmed; this observation cannot own the remote caller Root.
+    pub async fn mutate_from_peer(
+        &self,
+        prepared: PreparedMutation,
+        intent: CallerIntent,
+    ) -> Result<Mutation> {
+        intent.validate().map_err(|e| e.to_string())?;
+        self.dispatch_mutation(prepared, Confirmation::Peer(Box::new(intent)))
+            .await
+    }
+    async fn dispatch_mutation(
+        &self,
+        mut prepared: PreparedMutation,
+        confirmation: Confirmation,
+    ) -> Result<Mutation> {
+        if prepared.reference != confirmation.intent().reference {
             return Err("caller intent disagrees with original preparation".into());
         }
         let reference = prepared.reference.clone();
@@ -839,7 +897,7 @@ impl Client {
                 parent,
                 kind: CallKind::Mutation {
                     operation: reference.operation,
-                    recorded: Some(Box::new(recorded)),
+                    confirmation: Some(confirmation),
                     reply,
                 },
                 binding,

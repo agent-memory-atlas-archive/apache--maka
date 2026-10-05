@@ -94,6 +94,17 @@ source 中执行同样的记录与最终准入顺序，并与 query 共用真实
 `context.invoke({operation:'mutate', import, provider, method, input, operationId, attachments})`。
 回调实际 `HostObservation.operation` 提供原回执引用；attachments 显式映射当前请求的真实资源槽。
 
+`Client::mutate_from_peer` 接收认证 caller adapter 的有界 `CallerIntent` 观察，不能
+重建 `RecordedIntent`、证明另一进程的 SQL commit 或在 Host 补写替代 caller 记录。
+实际 owner 在接受执行前核完整原 Ref、普通 `Policy::admit`，以及默认拒绝的
+`Policy::confirm_peer_mutation`。可信 Policy 必须从原 Scope 私有证据核实际认证 peer
+批准的 caller source、UI consumer 与原 request；UI consumer 与 Host import consumer
+是不同执行身份。原 binding、撤销、生命周期和独立历史 recovery 检查仍然适用。
+确认 Policy panic 沿现有隔离准入失败路径处理；接受工作保留本地 token 或 peer 观察到
+真实清理及粘性失败。远端 caller adapter 必须保留**真实** SQL token/Root lease 到远端
+真实 cleanup 确认；peer 观察不能拥有该 Root，断线或业务 receipt 不能替代 cleanup。
+这只是执行接缝；认证 application 网络 transport 仍待实现。
+
 caller 历史按稳定 consumer 与 operation 保留首次 source 和原 Ref，跨 source 修订或目标变化
 仍读取原记录；不同 Ref 冲突。caller 记录不宣称业务结果，不产生 Host 授权。记录失败或 commit
 不确定不能执行 effect；确认 token 在接受工作及真实清理期间持有 caller Root，清理失败继续保留。

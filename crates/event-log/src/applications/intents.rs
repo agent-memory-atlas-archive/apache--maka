@@ -42,6 +42,23 @@ pub struct CallerIntent {
     pub consumer: InstanceId,
     pub reference: RecoveryRef,
 }
+impl CallerIntent {
+    /// Checks a bounded observation's shape, not whether a caller committed it.
+    /// Deserialized observations are never `RecordedIntent` or effect authority.
+    pub fn validate(&self) -> Result<(), StoreError> {
+        if self.cursor == 0 || self.cursor > i64::MAX as u64 {
+            return Err(invalid("invalid caller intent cursor"));
+        }
+        self.caller.validate().map_err(invalid)?;
+        consumer_valid(&self.consumer)?;
+        encode(&self.reference, MAX_REFERENCE)?;
+        encode(self, MAX_PAGE)?;
+        self.reference
+            .validate()
+            .map_err(|e| invalid(e.to_string()))?;
+        Ok(())
+    }
+}
 /// Only a confirmed caller commit constructs this token. It grants no Host authority.
 /// Accepted executors retain it through real cleanup, independently of the waiter.
 pub struct RecordedIntent {

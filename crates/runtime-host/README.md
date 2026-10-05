@@ -128,6 +128,22 @@ method and an explicit non-nil operation UUID. Native callers first use
 `RecordedIntent` to `Client::mutate`. Preparation holds the original input and attachment capacity but creates
 no accepted execution or business journal entry. Dispatch rechecks the captured
 binding, Scope, execution domain and policy; it never redirects to a current target.
+`Client::mutate_from_peer` instead receives a bounded `CallerIntent` observation
+from an authenticated caller adapter. It cannot reconstruct `RecordedIntent`,
+prove another process's SQL commit, or cause a substitute Host caller commit.
+The final owner checks the original reference, ordinary `Policy::admit` and the
+additional `Policy::confirm_peer_mutation` before accepting execution. Confirmation
+defaults to denial; a trusted policy must compare the actual peer's approved caller
+source, UI consumer and original request against private Scope evidence. The UI
+consumer and Host import consumer are distinct execution identities. The original
+binding, cancellation and independent historical recovery checks still apply.
+Confirmation panics use the existing isolated admission failure path. Accepted work
+retains its local token or peer observation through actual cleanup and sticky failures.
+The remote caller adapter must retain its **actual** SQL token/Root lease until
+remote cleanup is confirmed; a peer observation cannot own that Root. Disconnect
+or a business receipt is not cleanup confirmation. This is an execution seam;
+the authenticated application network transport is still required work.
+
 `Context::mutate` performs the same caller commit and final admission sequence in
 the original Host caller source. Native and JavaScript mutations share execution
 with queries. JavaScript uses

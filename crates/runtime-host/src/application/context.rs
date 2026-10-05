@@ -96,7 +96,7 @@ impl Context {
             attachments,
             CallKind::Mutation {
                 operation,
-                recorded: None,
+                confirmation: None,
                 reply,
             },
         )?;
