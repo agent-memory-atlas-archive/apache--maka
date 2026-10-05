@@ -186,6 +186,8 @@ export const en = {
   failed: 'The response was interrupted.',
   enterHint: 'Enter for a new line · Tab to Send',
   selectFirst: 'Create or select a conversation',
+  showSidebar: 'Show sidebar',
+  hideSidebar: 'Hide sidebar',
   connecting: 'Connecting…',
 } as const;
 export type Copy = { [K in keyof typeof en]: string };
@@ -346,6 +348,8 @@ const zhCN: Copy = {
   failed: '回复已中断。',
   enterHint: 'Enter 换行 · Tab 前往发送',
   selectFirst: '新建或选择一段对话',
+  showSidebar: '显示侧栏',
+  hideSidebar: '收起侧栏',
   connecting: '正在连接…',
 };
 const zhTW: Copy = {
@@ -505,6 +509,8 @@ const zhTW: Copy = {
   failed: '回覆已中斷。',
   enterHint: 'Enter 換行 · Tab 前往傳送',
   selectFirst: '新增或選擇一段對話',
+  showSidebar: '顯示側欄',
+  hideSidebar: '收起側欄',
   connecting: '正在連線…',
 };
 export function copy(locale: string): Copy {

@@ -87,3 +87,5 @@ The desktop model selector uses the public anchored Popup scene. Opening its
 model/default/history workflows keeps the composer in place; Escape or an
 outside click asks the plugin to close. The default child stays mounted across
 close/reopen. Terminal entries keep paged in-flow presentation.
+
+Desktop navigation can be collapsed without unmounting its component or the composer. Context and model controls use separate rows; long titles and model triggers are measured and truncated by the native renderer, with complete accessible values. Terminal navigation labels remain bounded by its own presentation.

@@ -128,3 +128,5 @@ The shared kernel validates whole proposed visible paths before committing,
 including unchanged ancestors and child-only updates. Hidden slots retain custody
 without consuming drawing depth. This is renderer metadata, not a kernel layout
 vocabulary or plugin-writable budget.
+
+Scene text uses stable accessible text nodes with the complete value. `Style.truncate: true` draws one measured line with an ellipsis while preserving that value and a button’s complete accessible label. Layout widths and flex constraints determine available space; JavaScript does not estimate desktop glyph widths.

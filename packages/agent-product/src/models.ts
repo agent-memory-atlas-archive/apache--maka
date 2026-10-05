@@ -96,9 +96,17 @@ function frame(
     [...label].length > 44 ? [...label].slice(0, 43).join('') + '…' : label;
   const trigger = ui.button(
     'toggle',
-    chosen ? compact(chosen.label) : text.chooseModel,
+    chosen ? (target === 'desktop' ? chosen.label : compact(chosen.label)) : text.chooseModel,
     props.busy,
   );
+  if (target === 'desktop')
+    trigger.style = {
+      ...(trigger.style as object),
+      width: fill,
+      minWidth: 0,
+      justify: 'start',
+      truncate: true,
+    };
   const content = ui.box(
     'model-list',
     [

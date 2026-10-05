@@ -1043,6 +1043,45 @@ test('settings routing keeps original composer key and commands while invalidati
     original.key,
   );
 });
+test('sidebar presentation retains the same children, draft command, and active work', () => {
+  const client = new Client().start();
+  client.state.sessions[0].title = '长标题 · A🙂é '.repeat(25);
+  client.component('draft', draft);
+  const originalState = structuredClone(client.state);
+  const originalSlots = modelSlots(client.output.frame.view);
+  client.raw('navigation-toggle');
+  assert.equal(client.state.navigationOpen, false);
+  assert.equal(client.output.frame.view.children[0].children[0].visible, false);
+  assert.deepEqual(modelSlots(client.output.frame.view), originalSlots);
+  assert.deepEqual(client.output.actions, []);
+  assert.deepEqual(client.state.watch, originalState.watch);
+  assert.deepEqual(client.state.command, originalState.command);
+  assert.deepEqual(client.state.model, originalState.model);
+  client.raw('settings');
+  client.input({ kind: 'component', child: 'connections', name: 'closed', event: {} });
+  assert.equal(client.state.navigationOpen, false);
+  client.raw('navigation-toggle');
+  assert.equal(client.state.navigationOpen, true);
+  assert.deepEqual(modelSlots(client.output.frame.view), originalSlots);
+});
+test('desktop model trigger retains its full label for native measurement and accessibility', async () => {
+  const module = await import(pathToFileURL(resolve(root, 'dist/packages/models/desktop.js')));
+  const label = '长模型名称 · A🙂é '.repeat(30);
+  const output = module.component.mount({
+    theme: values.appearance[0],
+    locale: 'en',
+    selection: {
+      selection: { connectionId: 'fixture', revision: 2, modelId: 'fixture-model' },
+      connectionName: 'Fixture',
+      label,
+    },
+    busy: false,
+    catalogEpoch: 0,
+  });
+  assert.equal(output.frame.view.trigger.label, label);
+  assert.equal(output.frame.view.trigger.style.truncate, true);
+  assert.equal(output.frame.view.trigger.style.minWidth, 0);
+});
 test('changed settings discard late model query and old default before selecting a fresh basis', async () => {
   const module = await import(pathToFileURL(resolve(root, 'dist/packages/models/desktop.js')));
   const form = new FormClient(module.component, {

@@ -60,3 +60,5 @@ node packages/agent-product/scripts/compose.mjs \
 Desktop 模型选择器使用公开锚定 Popup scene。打开模型、默认设置或操作历史时，
 输入区位置不变；Escape 或外部点击由插件处理关闭。默认设置子组件在关闭和
 重开之间持续挂载。Terminal entry 保留正常流内的分页呈现。
+
+Desktop 侧栏可收起，导航组件与输入区持续挂载。上下文与模型操作分行排列，长标题和模型按钮由原生测量显示省略号，保留完整可访问值；Terminal 导航名称按自身呈现边界显示。

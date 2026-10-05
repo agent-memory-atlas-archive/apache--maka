@@ -116,6 +116,70 @@ fn replace(
     .unwrap();
 }
 #[gpui::test]
+fn measured_truncation_keeps_full_accessible_text_and_adjacent_controls(cx: &mut TestAppContext) {
+    let (entity, window, clicks) = harness(cx);
+    let title = "一个很长的对话标题 · A🙂e\u{301} ".repeat(20);
+    let model = "非常长的模型名称 · A🙂e\u{301} ".repeat(20);
+    let source = |width| {
+        json!({
+            "kind":"stack","key":"root","direction":"row","gap":0,"padding":0,
+            "background":0xffffff,"style":{"width":{"unit":"pixels","value":width}},
+            "children":[
+                {"kind":"text","key":"title","text":title,"color":0,
+                 "style":{"width":{"unit":"pixels","value":0},"grow":1,"minWidth":0,"truncate":true}},
+                {"kind":"button","key":"action","label":model,
+                 "style":{"width":{"unit":"pixels","value":100},"minWidth":0,"height":{"unit":"pixels","value":40},"shrink":0,"truncate":true}},
+                {"kind":"button","key":"other","label":"Settings",
+                 "style":{"width":{"unit":"pixels","value":60},"height":{"unit":"pixels","value":40},"shrink":0}}
+            ]
+        })
+    };
+    cx.activate_accessibility(window);
+    let mut original = None;
+    for width in [240., 180., 240.] {
+        replace(cx, window, &entity, source(width));
+        draw(cx, window);
+        let update = cx.accessibility_update(window).unwrap();
+        let title_node = &update
+            .nodes
+            .iter()
+            .find(|(_, node)| node.value() == Some(title.as_str()))
+            .expect("the complete title is readable through accessibility")
+            .1;
+        assert_eq!(title_node.role(), Role::Label);
+        let title_bounds = title_node.bounds().unwrap();
+        let model_bounds = ax_bounds(cx, window, &model);
+        let settings_bounds = ax_bounds(cx, window, "Settings");
+        let scale = (model_bounds.x1 - model_bounds.x0) / 100.;
+        assert!(title_bounds.x1 <= model_bounds.x0);
+        assert!(model_bounds.x1 <= settings_bounds.x0);
+        assert!(settings_bounds.x1 <= width * scale);
+        assert_eq!(model_bounds.y1 - model_bounds.y0, 40. * scale);
+        cx.update_window(window, |_, window, cx| {
+            let handle = entity.read(cx).state().buttons["action"].focus.clone();
+            if let Some(original) = &original {
+                assert_eq!(&handle, original);
+                assert!(handle.is_focused(window));
+            } else {
+                handle.focus(window, cx);
+                original = Some(handle);
+            }
+        })
+        .unwrap();
+    }
+    let bounds = ax_bounds(cx, window, "Settings");
+    let scale = (bounds.x1 - bounds.x0) / 60.;
+    VisualTestContext::from_window(window, cx).simulate_click(
+        point(
+            px(((bounds.x0 + bounds.x1) / 2. / scale) as f32),
+            px(((bounds.y0 + bounds.y1) / 2. / scale) as f32),
+        ),
+        Modifiers::default(),
+    );
+    assert_eq!(clicks.get(), 1, "the adjacent action remains reachable");
+}
+
+#[gpui::test]
 fn scene_wrapping_reflows_controls_without_replacing_focus(cx: &mut TestAppContext) {
     let (entity, window, clicks) = harness(cx);
     let source = |width| {

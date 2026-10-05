@@ -32,7 +32,7 @@ import {
   type TimelineProps,
 } from './contracts.js';
 import { copy } from './locale.js';
-import { paint, slot, output, fill, pixels, type Target, type Node } from './view.js';
+import { paint, slot, output, fill, pixels, compactLabel, type Target, type Node } from './view.js';
 interface Revision {
   revision: number;
 }
@@ -120,18 +120,32 @@ export function components(target: Target): {
           ui.text('brand', 'maka', 24, props.theme.text, 650),
           ui.button('new', text.new, props.busy),
           ui.text('heading', text.conversations, 12, props.theme.muted, 550),
-          ...props.sessions.map((session, index) =>
-            ui.box('session-' + index, [ui.button(session.id, session.title, props.busy)], {
+          ...props.sessions.map((session, index) => {
+            const button = ui.button(
+              session.id,
+              target === 'desktop' ? session.title : compactLabel(session.title, 48),
+              props.busy,
+            );
+            if (target === 'desktop')
+              button.style = {
+                ...(button.style as object),
+                width: fill,
+                minWidth: 0,
+                justify: 'start',
+                truncate: true,
+              };
+            return ui.box('session-' + index, [button], {
               surface: session.id === props.selected,
-              style: { radius: 8 },
-            }),
-          ),
+              style: { width: fill, minWidth: 0, radius: 8, shrink: 0 },
+            });
+          }),
           ...(props.more ? [ui.button('more', text.moreSessions, props.busy)] : []),
         ],
         {
           surface: true,
           padding: target === 'desktop' ? 20 : 1,
           style: { height: fill, width: fill },
+          scroll: target === 'desktop',
         },
       ),
     );

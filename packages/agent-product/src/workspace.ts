@@ -86,6 +86,7 @@ export interface State {
   catalogEpoch: number;
   modelRefreshing: boolean;
   settingsOpen: boolean;
+  navigationOpen: boolean;
   messages: Message[];
   through: number | null;
   cursor: Cursor | null;
@@ -643,32 +644,64 @@ function frame(
         ? text.waiting
         : text.working
       : '';
+  const title = ui.text(
+    'title',
+    state.sessions.find((session) => session.id === state.selected)?.title ?? 'maka',
+    17,
+    theme.text,
+    550,
+  );
+  const models = slot(
+    'models',
+    'models',
+    {
+      theme,
+      locale,
+      selection: state.model,
+      catalogEpoch: state.catalogEpoch,
+      busy: busy || executionPending(state),
+    },
+    { selected: 'model' },
+  );
+  if (target === 'desktop')
+    title.style = {
+      ...(title.style as object),
+      width: pixels(0),
+      grow: 1,
+      minWidth: 0,
+      truncate: true,
+    };
   const main = ui.box(
     'main',
     [
       ui.box(
         'header',
         [
-          ui.text(
-            'title',
-            state.sessions.find((session) => session.id === state.selected)?.title ?? 'maka',
-            17,
-            theme.text,
-            550,
-          ),
-          slot(
-            'models',
-            'models',
-            {
-              theme,
-              locale,
-              selection: state.model,
-              catalogEpoch: state.catalogEpoch,
-              busy: busy || executionPending(state),
-            },
-            { selected: 'model' },
-          ),
-          ui.button('settings', text.settings),
+          ...(target === 'desktop'
+            ? [
+                ui.box(
+                  'context',
+                  [
+                    title,
+                    ui.button(
+                      'navigation-toggle',
+                      state.navigationOpen ? text.hideSidebar : text.showSidebar,
+                    ),
+                  ],
+                  { row: true, gap: 8, style: { width: fill, align: 'center' } },
+                ),
+                ui.box(
+                  'toolbar',
+                  [
+                    ui.box('model-control', [models], {
+                      style: { width: pixels(0), grow: 1, minWidth: 0 },
+                    }),
+                    ui.button('settings', text.settings),
+                  ],
+                  { row: true, gap: 8, style: { width: fill, align: 'center' } },
+                ),
+              ]
+            : [title, models, ui.button('settings', text.settings)]),
           ...(status ? [ui.text('status', status, 13, theme.muted)] : []),
           ...(state.uncertain
             ? [
@@ -684,11 +717,10 @@ function frame(
             : []),
         ],
         {
-          row: target === 'desktop',
+          gap: target === 'desktop' ? 8 : 1,
           style: {
             width: fill,
-            justify: 'between',
-            align: 'center',
+            shrink: 0,
             padding: { top: 16, right: 24, bottom: 16, left: 24 },
           },
         },
@@ -705,13 +737,22 @@ function frame(
           ]
         : [composer, timeline]),
     ],
-    { style: { width: fill, height: fill, align: 'center', minWidth: 0 } },
+    {
+      style: {
+        width: target === 'desktop' ? pixels(0) : fill,
+        grow: 1,
+        height: fill,
+        align: 'center',
+        minWidth: 0,
+      },
+    },
   );
   const conversation = ui.box(
     'workspace',
     target === 'desktop'
       ? [
           ui.box('sidebar', [navigation], {
+            visible: state.navigationOpen,
             style: { width: pixels(240), height: fill, shrink: 0 },
           }),
           main,
@@ -778,6 +819,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         catalogEpoch: 0,
         modelRefreshing: false,
         settingsOpen: false,
+        navigationOpen: true,
         messages: [],
         through: null,
         cursor: null,
@@ -934,6 +976,8 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         }
       } else if (input.kind === 'raw') {
         if (input.key === 'settings') state.settingsOpen = true;
+        else if (input.key === 'navigation-toggle' && target === 'desktop')
+          state.navigationOpen = !state.navigationOpen;
         else if (
           input.key === 'check' &&
           state.uncertain &&

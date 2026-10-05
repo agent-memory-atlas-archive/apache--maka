@@ -695,7 +695,10 @@ impl Node {
                         .id(SharedString::from(format!("text:{key}")))
                         .text_color(rgb(*color)),
                 )
-                .child(SharedString::from(text.clone()))
+                .child(gpui_kit::Text::new(
+                    SharedString::from(format!("label:{key}")).into(),
+                    SharedString::from(text.clone()),
+                ))
                 .into_any_element(),
             Self::Button {
                 key,
@@ -856,6 +859,9 @@ pub struct Style {
     #[schemars(range(min = 0, max = 100))]
     pub shrink: Option<f32>,
     pub wrap: Option<bool>,
+    /// Draw one measured line with an ellipsis; retain the complete text in AX.
+    #[serde(default)]
+    pub truncate: bool,
     pub align: Option<Align>,
     pub justify: Option<Justify>,
     pub text: Option<maka_ui::appearance::TextAppearance>,
@@ -998,6 +1004,9 @@ impl Style {
                 .text_size(px(v.font.size))
                 .line_height(gpui_kit::relative(v.font.line_height))
                 .text_color(crate::appearance::color(v.foreground));
+        }
+        if self.truncate {
+            element = element.truncate();
         }
         if let Some(v) = self.background {
             element = element.bg(crate::appearance::color(v));

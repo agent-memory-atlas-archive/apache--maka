@@ -100,3 +100,5 @@ Embedding 通过 `NativeRegistry::with_render_depth_limit` 声明 GPUI 的实际
 各 slot 外围成本，原生编辑器包含其菜单预算。共享内核在提交前校验整棵拟提交树
 的可见路径，包含未更新祖先和仅更新的子组件；隐藏 slot 保留 custody，但不消耗
 绘制深度。这是 renderer 派生元数据，不是内核布局词汇或插件可写配额。
+
+Scene 文本使用稳定的可访问文本节点，保留完整 value。`Style.truncate: true` 按原生测量显示单行省略号，不截断可访问文本或按钮名称；可用空间由宽度与 flex 约束决定，不由 JavaScript 估算 Desktop 字形宽度。
