@@ -19,9 +19,9 @@
 
 # 本地应用连接
 
-Desktop 与 TUI 启动器支持 `--connections FILE`。这份可信外部配置在同一进程中
-连接同进程内独立的 UI、Host 部署，不修改双方组合。私有跨进程调用流见下文；
-网络认证和默认 UI connector 仍需继续。
+Desktop 与 TUI 启动器支持 `--connections FILE`。这份可信外部配置为每个选定部署
+启动独立的共享 Host 子进程，不修改双方组合。每个 child 拥有原 Application 与 Root，
+独立私有 IPC 调用流共享该 Host 状态。网络认证仍需继续。
 完整 JSON 示例见[英文说明](README.md)。
 
 `hosts[].name` 对应 UI remote observation 的 deployment alias；`root` 和
@@ -33,7 +33,7 @@ Desktop 与 TUI 启动器支持 `--connections FILE`。这份可信外部配置�
 
 Host 组合显式选择 `maka.application.gateway` 实现的实例及其 imports，也可选择
 其他适当的 compiled consumer；availability 不自动激活实例。其他 Rust factory 由可信
-启动器提供，动态 JavaScript 从已提交的不可变包加载。配置中的批准默认绑定直接
+可执行文件的 compiled Host role 提供，动态 JavaScript 从已提交的不可变包加载。配置中的批准默认绑定直接
 endpoint，转发到其他 consumer 会拒绝；其他可信 embedding 可以通过 `LocalService`
 提供其独立 Host Policy 与只创建无资源 Scope 的 `Scopes` factory。
 
@@ -48,11 +48,23 @@ Scope cleanup 仍须等待真实释放。快照字节和 metadata 不进入操�
 真实 surface 与已接受 Work 完成清理后，启动器继续等待 caller SQL owner 的真实关闭
 确认及 Host 清理；失败保留 store、Root 和 runtime。原生退出也受同一 gate 约束。
 `drain_store` 和 `Connections::drain` 保留所有权，不把 drop 当作 cleanup 回执。
-UI endpoint 只持有实际 Client/Binding/Scope 准入，不拥有 Host 部署生命周期。
+UI endpoint 保留实际 catalogue selection、原 epoch、caller source 与原 physical-call custody，
+不会转向替代 Host，也不拥有 Host 部署生命周期。
 
-本地 Subscription 复用实际 Host `Client.subscribe`、原 Binding/Scopes/Policy。UI取消
+`Connections::prepare` 在启动 Host 前核选定 presentation 与精确 immutable source，
+UI consumer 集合来自实际 Plan 中启用的 executable Remote bindings。启动器先持有
+Connections，再观察 `start(&mut self)`；取消等待只释放借用，原 Child/Control 仍在同一
+owner 内。close 在轮询等待前同步撤销全部连接，并清理所有 child；每项须同时观察
+same-child Closed 与实际 Child.wait。aggregate cleanup 不结算旧 Lost Call 或 caller SQL token。
+
+SQL 启动错误须等待真实连接关闭；typed `StartupCleanupFailed`、worker crash 或 reader
+关闭不确定时，原 SQL worker 保留原 Root authority。启动器保持 runtime，包括 Ready 前
+失败。有限的 [SQLx owned-startup 接缝](../../third-party/sqlx-sqlite/SOURCE.md)仅拆开原
+establish/configure，不增加另一 SQL owner。
+
+Subscription 经私有 IPC 复用实际 Host `Client.subscribe`、原 Binding/Peer Policy。UI取消
 会取消实际 Host scope，仍等待原准入 observer、原执行 completion 和实际 scope cleanup；
-不能丢弃准入观察者冒充清理。私有跨进程调用流见下文；认证网络及默认 UI connector 仍待实现。
+不能丢弃准入观察者冒充清理。私有跨进程调用流见下文；认证网络仍待实现。
 
 ## 私有跨进程调用流
 

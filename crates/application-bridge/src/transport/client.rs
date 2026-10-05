@@ -124,11 +124,13 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Call<R, W> {
     /// Transfer descriptor observations, then chunks only after original Host
     /// reservation. No whole-payload clone or socket-backed ReadResource exists.
     pub async fn start(&mut self) -> Result<()> {
+        self.start_unless(|| false).await
+    }
+    pub(super) async fn start_unless(&mut self, cancelled: impl Fn() -> bool) -> Result<()> {
         if self.phase != Phase::New {
             return Err("remote call is not new".into());
         }
-        self.phase = Phase::Lost;
-        let open = self.open.take().expect("new request");
+        let open = self.open.take().ok_or("remote opening already observed")?;
         let mut descriptors = BTreeMap::new();
         for (slot, resource) in &self.resources {
             descriptors.insert(
@@ -141,6 +143,13 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Call<R, W> {
                 },
             );
         }
+        // Native resource observations can synchronously hold real custody.
+        // Cancellation during them still precedes every wire byte. Preserve the
+        // original inert boundary until the first write can actually begin.
+        if cancelled() {
+            return Err("remote opening cancelled before dispatch".into());
+        }
+        self.phase = Phase::Lost;
         let channel = self.channel.as_mut().expect("new channel");
         wire::write(&mut channel.writer, &open).await?;
         wire::write(&mut channel.writer, &descriptors).await?;
@@ -279,6 +288,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Call<R, W> {
         match self.phase {
             Phase::Closed => return Ok(None),
             Phase::New => {
+                self.open.take();
                 self.resources.clear();
                 self.recorded.take();
                 self.phase = Phase::Closed;

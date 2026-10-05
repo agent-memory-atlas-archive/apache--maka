@@ -36,6 +36,15 @@ type DesktopApplication = Application<dyn widgets::Widget>;
 use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc};
 
 #[derive(Parser)]
+enum CommandLine {
+    /// Present the selected plugin product.
+    Run(Args),
+    /// Internal inherited-pipe Host role selected only by this product launcher.
+    #[command(hide = true)]
+    ApplicationHost,
+}
+
+#[derive(clap::Args)]
 pub(crate) struct Args {
     #[arg(long)]
     pub(crate) root: PathBuf,
@@ -414,10 +423,28 @@ impl Render for Surface {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::set_logger(&NativeLog)?;
     log::set_max_level(log::LevelFilter::Warn);
-    let mut native = maka_runtime_host::application::NativeRegistry::default();
-    maka_agent_service::provide(&mut native)?;
-    maka_settings_service::provide(&mut native)?;
-    Launcher::start(Args::parse(), native, widgets::registry())?.run()
+    match CommandLine::parse() {
+        CommandLine::Run(args) => Launcher::start(
+            args,
+            maka_application_bridge::HostExecutable::new(
+                std::env::current_exe()?,
+                vec!["application-host".into()],
+            )?,
+            widgets::registry(),
+        )?
+        .run(),
+        CommandLine::ApplicationHost => {
+            let mut native = maka_runtime_host::application::NativeRegistry::default();
+            maka_agent_service::provide(&mut native)?;
+            maka_settings_service::provide(&mut native)?;
+            let timer = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()?;
+            timer.block_on(maka_application_bridge::transport::process::serve(native))?;
+            Ok(())
+        }
+    }
 }
 
 /// Trusted launcher owns the actual caller store and compiled availability.
@@ -432,12 +459,12 @@ pub(crate) struct Launcher {
 impl Launcher {
     pub(crate) fn start(
         args: Args,
-        native: maka_runtime_host::application::NativeRegistry,
+        executable: maka_application_bridge::HostExecutable,
         components: maka_ui::NativeRegistry<dyn widgets::Widget>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let timer = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
-            .enable_time()
+            .enable_all()
             .build()?;
         let namespaces = maka_event_log::root::RootNamespaces::for_current_account()?;
         let configuration = args
@@ -450,13 +477,14 @@ impl Launcher {
             &args.root,
             &namespaces,
         )?);
-        let store = Arc::new(timer.block_on(maka_event_log::EventLog::for_root(owner))?);
-        let mut connections = match timer.block_on(maka_application_bridge::Connections::start(
+        let store = Arc::new(timer.block_on(maka_application_bridge::open_store(owner))?);
+        let mut connections = match timer.block_on(maka_application_bridge::Connections::prepare(
             &store,
             args.deployment,
+            PresentationTarget::Desktop,
             configuration,
-            &namespaces,
-            native,
+            namespaces,
+            executable,
         )) {
             Ok(connections) => connections,
             Err(error) => {
@@ -464,6 +492,15 @@ impl Launcher {
                 return Err(error.into());
             }
         };
+        if let Err(error) = timer.block_on(connections.start()) {
+            timer.block_on(async {
+                tokio::join!(
+                    connections.drain(),
+                    maka_application_bridge::drain_store(&store)
+                );
+            });
+            return Err(error.into());
+        }
         let source = connections.source().clone();
         let registrations = connections.take_registrations();
         let started = timer.block_on(Application::start_from_store(

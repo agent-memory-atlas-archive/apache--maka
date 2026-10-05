@@ -73,3 +73,9 @@ MPL-2.0，不 vendoring 源码；分发须带许可证与源码链接。当前�
 物理 UI、已接受 Work、caller SQL 关闭确认和 Host 清理全部完成；失败继续保留
 store/Root/runtime。macOS 已用真实窗口及阻塞的 File/SQL owner 验证原生退出；
 Windows/Linux 原生验收和完整产品 UI 仍未完成。
+
+生产启动使用 `maka-desktop run --root PATH --deployment UUID`。默认启动器选同一
+executable 的内部 `application-host` role，共享 Host 经私有 IPC 提供业务服务；编译
+availability 在 child 内登记，持久组合决定实例。父子 runtime 均启用 Tokio IO；真实 UI
+清理后继续撤销原连接、等 same-child Closed 与实际 child exit。其他 embedding 显式
+提供自己 compiled role 的可信 HostExecutable，不跨进程传递 native factory 闭包。

@@ -16,7 +16,7 @@
 # under the License.
 
 [workspace]
-exclude = ["third-party/gpui-fast", "third-party/async-io"]
+exclude = ["third-party/gpui-fast", "third-party/async-io", "third-party/sqlx-sqlite"]
 default-members = ["crates/cli"]
 members = [
     "third-party/gpui-kit/crates/base",
@@ -164,6 +164,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 debug = "line-tables-only"
 
 [patch.crates-io]
+sqlx-sqlite = { path = "third-party/sqlx-sqlite" }
 async-io = { path = "third-party/async-io" }
 gpui-pre = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }
 gpui-pre-platform = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }

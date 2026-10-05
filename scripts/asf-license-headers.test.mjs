@@ -425,7 +425,7 @@ test('checkout audits include new source files and omit unstaged deletions', () 
   assert.deepEqual(listSourceFiles(root).files, ['kept.rs', 'new.rs']);
 });
 
-test('vendored GPUI provenance is finite and does not exempt Maka additions', () => {
+test('vendored provenance is finite and does not exempt Maka additions', () => {
   assert.deepEqual(classifyPath('third-party/gpui-fast/crates/gpui/src/platform.rs'), {
     rule: 'third-party-source',
     status: 'excluded',
@@ -440,4 +440,6 @@ test('vendored GPUI provenance is finite and does not exempt Maka additions', ()
     'excluded',
   );
   assert.equal(classifyPath('third-party/gpui-kit/crates/base/src/new.rs').status, 'covered');
+  assert.equal(classifyPath('third-party/sqlx-sqlite/src/connection/mod.rs').status, 'excluded');
+  assert.equal(classifyPath('third-party/sqlx-sqlite/src/new.rs').status, 'covered');
 });

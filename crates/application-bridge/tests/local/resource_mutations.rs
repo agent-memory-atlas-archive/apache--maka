@@ -129,9 +129,9 @@ impl NativeService for CaptureSource {
 struct Snapshot {
     data: String,
     descriptors: AtomicUsize,
+    pause_after: Option<usize>,
     entered: Arc<tokio::sync::Semaphore>,
     release: Mutex<std::sync::mpsc::Receiver<()>>,
-    pause: bool,
 }
 impl ReadResource for Snapshot {
     fn resource_type(&self) -> maka_plugin_core::contract::ResourceType {
@@ -141,7 +141,7 @@ impl ReadResource for Snapshot {
         self.data.len()
     }
     fn metadata(&self) -> Value {
-        if self.pause && self.descriptors.fetch_add(1, Ordering::SeqCst) == 1 {
+        if self.pause_after == Some(self.descriptors.fetch_add(1, Ordering::SeqCst)) {
             self.entered.add_permits(1);
             self.release
                 .lock()
@@ -195,9 +195,9 @@ fn actual_local_session_close_waits_for_preparing_custody_and_drops_its_own_reso
         let snapshot = Arc::new(Snapshot {
             data: "token-private-credential".into(),
             descriptors: AtomicUsize::new(0),
+            pause_after: (phase == 1).then(|| f.preparation_descriptor()),
             entered: entered.clone(),
             release: Mutex::new(receiver),
-            pause: phase == 1,
         });
         let weak = Arc::downgrade(&snapshot);
         let session = actual
@@ -215,10 +215,10 @@ fn actual_local_session_close_waits_for_preparing_custody_and_drops_its_own_reso
                 Some(session.clone().prepare())
             };
             if phase == 1 {
-                assert!(matches!(
-                    futures_util::poll!(preparation.as_mut().unwrap()),
-                    Poll::Pending
-                ));
+                // Drive the actual observer through asynchronous physical
+                // opening as well as admission. The parent independently owns
+                // the same session while its real resource callback is blocked.
+                let preparing = f.timer.spawn(preparation.take().unwrap());
                 tokio::time::timeout(Duration::from_secs(3), entered.acquire())
                     .await
                     .unwrap()
@@ -228,7 +228,7 @@ fn actual_local_session_close_waits_for_preparing_custody_and_drops_its_own_reso
                 assert!(matches!(futures_util::poll!(&mut close), Poll::Pending));
                 assert!(weak.upgrade().is_some());
                 release.send(()).unwrap();
-                assert!(preparation.take().unwrap().await.is_err());
+                assert!(preparing.await.unwrap().is_err());
                 close.await.unwrap();
             } else {
                 if let Some(preparation) = preparation {
@@ -345,9 +345,9 @@ fn snapshot(size: usize) -> (Arc<Snapshot>, std::sync::Weak<Snapshot>) {
     let snapshot = Arc::new(Snapshot {
         data,
         descriptors: AtomicUsize::new(0),
+        pause_after: None,
         entered: Arc::new(tokio::sync::Semaphore::new(0)),
         release: Mutex::new(receiver),
-        pause: false,
     });
     let weak = Arc::downgrade(&snapshot);
     (snapshot, weak)

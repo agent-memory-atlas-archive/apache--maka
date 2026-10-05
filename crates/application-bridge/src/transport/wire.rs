@@ -129,17 +129,18 @@ pub(super) async fn write_bounded<W: AsyncWrite + Unpin, T: Serialize>(
     value: &T,
     limit: usize,
 ) -> Result<()> {
+    let buffer = encode_bounded(value, limit)?;
+    writer
+        .write_u32(buffer.len() as u32)
+        .await
+        .map_err(|e| e.to_string())?;
+    writer.write_all(&buffer).await.map_err(|e| e.to_string())?;
+    writer.flush().await.map_err(|e| e.to_string())
+}
+pub(super) fn encode_bounded<T: Serialize>(value: &T, limit: usize) -> Result<Vec<u8>> {
     let mut buffer = Bounded(Vec::new(), limit.min(FRAME_LIMIT));
     serde_json::to_writer(&mut buffer, value).map_err(|e| e.to_string())?;
-    writer
-        .write_u32(buffer.0.len() as u32)
-        .await
-        .map_err(|e| e.to_string())?;
-    writer
-        .write_all(&buffer.0)
-        .await
-        .map_err(|e| e.to_string())?;
-    writer.flush().await.map_err(|e| e.to_string())
+    Ok(buffer.0)
 }
 /// Keeps partial prefix/body custody across select cancellation.
 pub(super) struct Reader<R> {

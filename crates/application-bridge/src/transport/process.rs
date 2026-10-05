@@ -74,6 +74,9 @@ impl Bootstrap {
         {
             return Err("invalid Host bootstrap".into());
         }
+        // The parent checks the actual wire bound before spawning any child.
+        // An oversized bootstrap must not leave a child waiting on partial IO.
+        wire::encode_bounded(self, BOOTSTRAP_LIMIT)?;
         Ok(())
     }
 }
@@ -162,7 +165,15 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Control<R, W> {
             drop(self.writer.take());
         }
         loop {
-            match self.reader.read().await? {
+            let event = match self.reader.read().await {
+                Ok(event) => event,
+                Err(error) => {
+                    self.phase = Phase::Lost;
+                    drop(self.writer.take());
+                    return Err(error);
+                }
+            };
+            match event {
                 Event::Closed { nonce } if nonce == self.nonce => {
                     self.phase = Phase::Closed;
                     return Ok(());
@@ -170,6 +181,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Control<R, W> {
                 Event::Ready { nonce, .. } if nonce == self.nonce && self.phase == Phase::Lost => {}
                 _ => {
                     self.phase = Phase::Lost;
+                    drop(self.writer.take());
                     return Err(
                         "Host lifecycle acknowledgement changed its original incarnation".into(),
                     );
@@ -191,11 +203,46 @@ pub async fn serve(native: NativeRegistry) -> Result<()> {
     let bootstrap: Bootstrap = input.read_bounded(BOOTSTRAP_LIMIT).await?;
     bootstrap.validate()?;
     let peer = Peer::new(bootstrap.source.clone(), bootstrap.consumers.clone())?;
-    let mut listener = LocalListener::bind(&bootstrap.address).map_err(|e| e.to_string())?;
-    let owner = Arc::new(
-        RootOwner::open(&bootstrap.root, &bootstrap.namespaces).map_err(|e| e.to_string())?,
-    );
-    let store = Arc::new(EventLog::for_root(owner).await.map_err(|e| e.to_string())?);
+    let initialized = async {
+        let listener = LocalListener::bind(&bootstrap.address).map_err(|e| e.to_string())?;
+        let owner = Arc::new(
+            RootOwner::open(&bootstrap.root, &bootstrap.namespaces).map_err(|e| e.to_string())?,
+        );
+        let store = match EventLog::for_root(owner).await {
+            Ok(store) => Arc::new(store),
+            Err(error @ maka_event_log::StoreError::StartupCleanupFailed { .. }) => {
+                // The original SQL worker still holds its actual authority.
+                // Neither process exit nor an aggregate Closed can settle it.
+                eprintln!("Host SQL startup cleanup unconfirmed: {error}");
+                std::future::pending::<()>().await;
+                unreachable!();
+            }
+            Err(error) => return Err(error.to_string()),
+        };
+        Ok::<_, String>((listener, store))
+    }
+    .await;
+    let (mut listener, store) = match initialized {
+        Ok(initialized) => initialized,
+        Err(error) => {
+            // No Application was admitted. Every successfully acquired SQL
+            // owner has confirmed its real close before reaching this branch.
+            wire::write(
+                &mut output,
+                &Event::Closed {
+                    nonce: bootstrap.nonce,
+                },
+            )
+            .await?;
+            drop(output);
+            tokio::time::timeout(std::time::Duration::from_secs(5), output_done)
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+            return Err(error);
+        }
+    };
     let policy = Arc::new(PeerPolicy::default());
     let application = Application::start_from_store(
         store.clone(),

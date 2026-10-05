@@ -19,12 +19,28 @@
 
 //! Trusted local connections between separate UI and Host deployment owners.
 mod connections;
+mod gateway;
 mod service;
 pub mod stdio;
 pub mod transport;
-pub use connections::{Configuration, Connections, GATEWAY, Grant, Host, with_gateway};
+pub use connections::{Configuration, Connections, Grant, Host, HostExecutable};
+pub use gateway::{GATEWAY, with_gateway};
 pub use service::{LocalService, Scopes};
 pub type Result<T> = std::result::Result<T, String>;
+
+/// Product startup must not exit after losing confirmation of an acquired SQL
+/// owner's close. That original worker retains the Root and writer authority.
+pub async fn open_store(
+    owner: std::sync::Arc<maka_event_log::root::RootOwner>,
+) -> std::result::Result<maka_event_log::EventLog, maka_event_log::StoreError> {
+    match maka_event_log::EventLog::for_root(owner).await {
+        Err(error @ maka_event_log::StoreError::StartupCleanupFailed { .. }) => {
+            eprintln!("SQL startup cleanup unconfirmed: {error}");
+            std::future::pending().await
+        }
+        result => result,
+    }
+}
 
 /// Wait for a SQL owner's real close acknowledgement. On failure the
 /// launcher must retain this store and its Root, rather than imply clean exit.

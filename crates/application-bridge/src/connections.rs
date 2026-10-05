@@ -17,36 +17,36 @@
  * under the License.
  */
 
-use crate::{LocalService, Result, Scopes};
-use futures_util::future::BoxFuture;
-use maka_event_log::{
-    EventLog,
-    root::{RootNamespaces, RootOwner},
+use crate::{
+    Result,
+    transport::{
+        ipc, native,
+        process::{Bootstrap, Control},
+    },
 };
+use futures_util::{
+    FutureExt,
+    future::{BoxFuture, join_all},
+};
+use maka_event_log::{EventLog, root::RootNamespaces};
 use maka_plugin_core::{
-    composition::{ExecutionLocation, InstanceId},
-    contract::{Interface, Transport},
-    deployment::DeploymentRef,
-    plan::RemoteCapability,
+    composition::{ExecutionLocation, InstanceId, PresentationTarget},
+    deployment::{DeploymentRef, RemoteObservation},
+    package::Packages,
+    plan::{Plan, Provider, RemoteCapability, RemoteExports},
 };
-use maka_plugins::call::{Identity, Issuer, Scope};
-use maka_runtime_host::application::{
-    Application, Binding, Invocation, NativeActivation, NativeOwner, NativeRegistry, Policy,
-    RecoveryInvocation,
-};
-use maka_ui::actions::{RemoteService, ServiceSource};
+use maka_ui::actions::RemoteService;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ffi::OsString,
     io::Read,
     path::{Path, PathBuf},
+    process::Stdio,
     sync::Arc,
 };
-use tokio_util::sync::CancellationToken;
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use uuid::Uuid;
-
-/// Compiled availability only. A Host composition selects the instance and imports.
-pub const GATEWAY: &str = "maka.application.gateway";
 
 /// Trusted launcher input, never a guest-created credential or deployment edit.
 #[derive(Default, Deserialize)]
@@ -120,24 +120,94 @@ impl Configuration {
     }
 }
 
-struct OwnedHost {
-    application: Application,
-    store: Arc<EventLog>,
+/// Trusted launcher-selected executable and its compiled Host role. No plugin
+/// configuration can choose this program or transport native factory closures.
+pub struct HostExecutable {
+    path: PathBuf,
+    arguments: Vec<OsString>,
 }
-/// Lifecycle custody only. UI endpoints cannot keep these deployment owners alive.
+impl HostExecutable {
+    pub fn new(path: PathBuf, arguments: Vec<OsString>) -> Result<Self> {
+        Ok(Self {
+            path: std::path::absolute(path).map_err(|e| e.to_string())?,
+            arguments,
+        })
+    }
+}
+struct PreparedHost {
+    configuration: Host,
+    consumers: BTreeSet<InstanceId>,
+}
+struct Address {
+    path: PathBuf,
+    // The parent retains the private directory until this same child has closed
+    // and actually exited. Failed cleanup never recycles an old address.
+    #[cfg(unix)]
+    _directory: tempfile::TempDir,
+}
+impl Address {
+    fn create(nonce: Uuid) -> Result<Self> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // Short account-private paths also fit Darwin's sockaddr_un limit.
+            let directory = tempfile::Builder::new()
+                .prefix("maka-")
+                .permissions(std::fs::Permissions::from_mode(0o700))
+                .tempdir_in("/tmp")
+                .map_err(|e| e.to_string())?;
+            let _ = nonce;
+            Ok(Self {
+                path: directory.path().join("host"),
+                _directory: directory,
+            })
+        }
+        #[cfg(windows)]
+        {
+            Ok(Self {
+                path: PathBuf::from(format!(r"\\.\pipe\maka-application-{nonce}")),
+            })
+        }
+    }
+}
+struct OwnedHost {
+    child: Child,
+    control: Control<ChildStdout, ChildStdin>,
+    connection: Arc<native::Connection>,
+    _address: Address,
+    ready: bool,
+}
+#[derive(PartialEq)]
+enum Phase {
+    Prepared,
+    Starting,
+    Started,
+    Closing,
+    Closed,
+}
+/// Actual child and original physical-call custody belong to the launcher.
+/// Prepare first, retain this object, then observe start through a mutable borrow.
 /// Close the UI and its actual accepted work before draining these connections.
 pub struct Connections {
     source: DeploymentRef,
+    observations: Vec<RemoteObservation>,
+    namespaces: RootNamespaces,
+    executable: HostExecutable,
+    prepared: Vec<PreparedHost>,
     hosts: Vec<OwnedHost>,
     registrations: Vec<RemoteService>,
+    phase: Phase,
 }
 impl Connections {
-    pub async fn start(
+    /// Validate the exact presentation and resolved caller identities before any
+    /// Host starts. This phase has no Host process or database effects.
+    pub async fn prepare(
         store: &EventLog,
         deployment: Uuid,
+        target: PresentationTarget,
         configuration: Configuration,
-        namespaces: &RootNamespaces,
-        native: NativeRegistry,
+        namespaces: RootNamespaces,
+        executable: HostExecutable,
     ) -> Result<Self> {
         configuration.validate()?;
         let loaded = store
@@ -145,117 +215,142 @@ impl Connections {
             .await
             .map_err(|e| e.to_string())?
             .ok_or("UI deployment not found")?;
-        if loaded.source.input.environment.location != ExecutionLocation::Ui {
-            return Err("UI deployment required".into());
+        if loaded.source.input.environment.location != ExecutionLocation::Ui
+            || loaded.source.input.environment.presentation != Some(target)
+        {
+            return Err("stored presentation target mismatch".into());
         }
-        let mut connections = Self {
+        let mut packages = Packages::default();
+        for package in &loaded.packages {
+            packages
+                .insert(
+                    package.application_ref(),
+                    package
+                        .manifest()
+                        .application
+                        .as_ref()
+                        .ok_or("package has no application declaration")?
+                        .clone(),
+                )
+                .map_err(|e| e.to_string())?;
+        }
+        let remote: RemoteExports = loaded
+            .source
+            .remote_exports
+            .iter()
+            .map(|o| (o.capability.clone(), o.declaration.clone()))
+            .collect();
+        let plan =
+            Plan::prepare(&loaded.source.input, &packages, &remote).map_err(|e| e.to_string())?;
+        let mut prepared = Vec::new();
+        for mut host in configuration.hosts {
+            let consumers: BTreeSet<_> = plan.instances().values()
+                .filter(|i| !i.disabled && i.entry.is_some())
+                .filter(|i| i.bindings.values().flatten().any(|b|
+                    matches!(&b.provider, Provider::Remote { capability } if capability.deployment == host.name)))
+                .map(|i| i.identity.clone()).collect();
+            if consumers.is_empty() {
+                return Err("configured Host has no enabled UI consumer".into());
+            }
+            host.root = std::path::absolute(host.root).map_err(|e| e.to_string())?;
+            prepared.push(PreparedHost {
+                configuration: host,
+                consumers,
+            });
+        }
+        Ok(Self {
             source: loaded.source.reference,
+            observations: loaded.source.remote_exports,
+            namespaces,
+            executable,
+            prepared,
             hosts: Vec::new(),
             registrations: Vec::new(),
-        };
-        let result = connections
-            .connect(
-                configuration,
-                namespaces,
-                &loaded.source.remote_exports,
-                native,
-            )
-            .await;
-        if let Err(error) = result {
-            // Even failed startup retains every started owner until real cleanup.
-            connections.drain().await;
-            return Err(error);
-        }
-        Ok(connections)
+            phase: Phase::Prepared,
+        })
     }
-    async fn connect(
-        &mut self,
-        configuration: Configuration,
-        namespaces: &RootNamespaces,
-        observations: &[maka_plugin_core::deployment::RemoteObservation],
-        native: NativeRegistry,
-    ) -> Result<()> {
+    /// The launcher owns self before this future can spawn a child. Dropping the
+    /// observer releases only its borrow; it never drops or restarts that child.
+    pub async fn start(&mut self) -> Result<()> {
+        if self.phase != Phase::Prepared {
+            return Err("Host connections cannot start in this phase".into());
+        }
+        self.phase = Phase::Starting;
         let mut targets = BTreeSet::new();
-        for host in configuration.hosts {
-            let owner =
-                Arc::new(RootOwner::open(&host.root, namespaces).map_err(|e| e.to_string())?);
-            let store = Arc::new(EventLog::for_root(owner).await.map_err(|e| e.to_string())?);
-            let issuer = Issuer::default();
-            let policy = Arc::new(LocalPolicy {
-                issuer: issuer.clone(),
+        for prepared in std::mem::take(&mut self.prepared) {
+            let host = prepared.configuration;
+            let nonce = Uuid::new_v4();
+            let address = Address::create(nonce)?;
+            let bootstrap = Bootstrap {
+                root: host.root,
+                deployment: host.deployment,
+                namespaces: self.namespaces.clone(),
                 source: self.source.clone(),
-            });
-            let application = match Application::start_from_store(
-                store.clone(),
-                host.deployment,
-                with_gateway(native.clone())?,
-                issuer.clone(),
-                policy,
-                Default::default(),
-            )
-            .await
-            {
-                Ok(application) => application,
-                Err(error) => {
-                    crate::drain_store(&store).await;
-                    return Err(error);
-                }
+                consumers: prepared.consumers,
+                consumer: host.consumer,
+                imports: host.imports,
+                address: address.path.clone(),
+                nonce,
             };
-            self.hosts.push(OwnedHost { application, store });
-            let application = &self.hosts.last().unwrap().application;
-            application.ready().await?;
-            let client = application.client();
-            let consumer = client.activation(&host.consumer)?;
-            for (import, grant) in host.imports {
-                let bindings = client.bind(consumer.clone(), import).await?;
-                if bindings.is_empty() {
-                    return Err("local service grant has no provider".into());
+            bootstrap.validate()?;
+            let connection = native::Connection::new(Arc::new(ipc::Connector::new(
+                address.path.clone(),
+                nonce,
+            )?));
+            let mut child = Command::new(&self.executable.path)
+                .args(&self.executable.arguments)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .map_err(|e| e.to_string())?;
+            let control = Control::new(
+                child.stdout.take().expect("piped child stdout"),
+                child.stdin.take().expect("piped child stdin"),
+                nonce,
+            )?;
+            // Publish actual custody before polling bootstrap IO.
+            self.hosts.push(OwnedHost {
+                child,
+                control,
+                connection,
+                _address: address,
+                ready: false,
+            });
+            let owned = self.hosts.last_mut().unwrap();
+            let catalogue = owned.control.start(&bootstrap).await?;
+            owned.ready = true;
+            for import in bootstrap.imports.keys() {
+                let selection = catalogue.select(import)?;
+                let description = selection.description();
+                let target = RemoteCapability {
+                    deployment: host.name.clone(),
+                    instance: description.provider.clone(),
+                    export: description.export.clone(),
+                };
+                if !targets.insert(target.clone()) {
+                    return Err("duplicate local endpoint grant".into());
                 }
-                for binding in bindings {
-                    let contract = binding.contract().clone();
-                    if contract.transport != Transport::Remote {
-                        return Err("local UI connection requires a remote service contract".into());
-                    }
-                    let Interface::Service { methods } = &contract.interface else {
-                        return Err("local connection requires a service".into());
-                    };
-                    if grant.methods.iter().any(|m| !methods.contains_key(m)) {
-                        return Err("grant names an undeclared service method".into());
-                    }
-                    let target = RemoteCapability {
-                        deployment: host.name.clone(),
-                        instance: binding.provider().instance().clone(),
-                        export: binding.export().into(),
-                    };
-                    if !targets.insert(target.clone()) {
-                        return Err("duplicate local endpoint grant".into());
-                    }
-                    if !observations.iter().any(|o| {
-                        o.capability == target && o.declaration.contract.accepts(&contract)
-                    }) {
-                        return Err(
-                            "local endpoint differs from the selected UI source observation".into(),
-                        );
-                    }
-                    let scopes = Arc::new(LocalScopes {
-                        issuer: issuer.clone(),
-                        source: self.source.clone(),
-                        binding: binding.clone(),
-                        grant: grant.clone(),
-                    });
-                    self.registrations.push(RemoteService {
-                        target,
-                        registration_epoch: binding.registration_epoch(),
-                        contract,
-                        implementation: Arc::new(LocalService::new(
-                            client.clone(),
-                            binding,
-                            scopes,
-                        )),
-                    });
+                if !self.observations.iter().any(|o| {
+                    o.capability == target && o.declaration.contract.accepts(&description.contract)
+                }) {
+                    return Err(
+                        "Host endpoint differs from the selected UI source observation".into(),
+                    );
                 }
+                self.registrations.push(RemoteService {
+                    target,
+                    registration_epoch: description.registration_epoch,
+                    contract: description.contract.clone(),
+                    implementation: Arc::new(native::Service::new(
+                        owned.connection.clone(),
+                        selection,
+                        self.source.clone(),
+                    )?),
+                });
             }
         }
+        self.phase = Phase::Started;
         Ok(())
     }
     pub fn source(&self) -> &DeploymentRef {
@@ -264,26 +359,49 @@ impl Connections {
     pub fn take_registrations(&mut self) -> Vec<RemoteService> {
         std::mem::take(&mut self.registrations)
     }
-    /// Err retains every application/store lease. It never confirms cleanup.
-    pub async fn close(&mut self) -> Result<()> {
-        let mut error = None;
-        for host in &self.hosts {
-            if let Err(failure) = host.application.shutdown().await {
-                error.get_or_insert(failure);
+    /// Revoke every connection synchronously, then drain all original children.
+    /// Both same-child Closed and actual exit are necessary. Failed original
+    /// Calls and caller tokens remain in their physical owner even after exit.
+    pub fn close(&mut self) -> BoxFuture<'_, Result<()>> {
+        self.phase = Phase::Closing;
+        let physical: Vec<_> = self
+            .hosts
+            .iter()
+            .map(|host| host.connection.close())
+            .collect();
+        async move {
+            let closes: Vec<_> = self
+                .hosts
+                .iter_mut()
+                .zip(physical)
+                .map(|(host, physical)| async move {
+                    let (physical, process) = tokio::join!(physical, async {
+                        let closed = host.control.close().await;
+                        let exited = host.child.wait().await.map_err(|e| e.to_string());
+                        closed?;
+                        let status = exited?;
+                        if host.ready && !status.success() {
+                            return Err(format!("original Host exited unsuccessfully: {status}"));
+                        }
+                        Ok(())
+                    });
+                    physical.and(process)
+                })
+                .collect();
+            let results = join_all(closes).await;
+            if let Some(error) = results.into_iter().find_map(Result::err) {
+                return Err(error);
             }
+            self.registrations.clear();
+            self.hosts.clear();
+            self.prepared.clear();
+            self.phase = Phase::Closed;
+            Ok(())
         }
-        if let Some(error) = error {
-            return Err(error);
-        }
-        for host in &self.hosts {
-            host.store.shutdown().await.map_err(|e| e.to_string())?;
-        }
-        self.registrations.clear();
-        self.hosts.clear();
-        Ok(())
+        .boxed()
     }
-    /// Keep the owner and runtime alive through unconfirmed cleanup. Diagnostics
-    /// are emitted once per distinct failure; process termination is not a receipt.
+    /// Unconfirmed cleanup keeps the same owners and runtime alive. Never kill a
+    /// child, release a failed Call, or infer cleanup from historical receipts.
     pub async fn drain(&mut self) {
         let mut reported = BTreeSet::new();
         loop {
@@ -298,103 +416,4 @@ impl Connections {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
     }
-}
-struct Evidence {
-    source: ServiceSource,
-    binding: Binding,
-    grant: Grant,
-}
-struct LocalScopes {
-    issuer: Issuer,
-    source: DeploymentRef,
-    binding: Binding,
-    grant: Grant,
-}
-impl Scopes for LocalScopes {
-    fn scope(&self, source: &ServiceSource) -> Result<Scope> {
-        if source.deployment() != Some(&self.source) {
-            return Err("UI source differs from the approved connection".into());
-        }
-        self.issuer
-            .issue_with(
-                Identity::Remote {
-                    request_id: source.request_id(),
-                },
-                Evidence {
-                    source: source.clone(),
-                    binding: self.binding.clone(),
-                    grant: self.grant.clone(),
-                },
-                CancellationToken::new(),
-            )
-            .map_err(|e| e.to_string())
-    }
-}
-struct LocalPolicy {
-    issuer: Issuer,
-    source: DeploymentRef,
-}
-impl LocalPolicy {
-    fn evidence<'a>(&self, scope: &'a Scope) -> Result<&'a Evidence> {
-        let evidence = self
-            .issuer
-            .evidence::<Evidence>(scope)
-            .ok_or("local connection issuer or evidence mismatch")?;
-        if evidence.source.deployment() != Some(&self.source)
-            || scope.identity
-                != (Identity::Remote {
-                    request_id: evidence.source.request_id(),
-                })
-        {
-            return Err("local connection source mismatch".into());
-        }
-        Ok(evidence)
-    }
-}
-impl Policy for LocalPolicy {
-    fn admit(&self, invocation: Invocation<'_>) -> Result<()> {
-        let evidence = self.evidence(invocation.scope)?;
-        if invocation.consumer != evidence.binding.consumer()
-            || invocation.provider != evidence.binding.provider()
-            || invocation.export != evidence.binding.export()
-            || invocation.contract != evidence.binding.contract()
-            || !evidence.grant.methods.contains(invocation.method)
-        {
-            return Err("local service invocation not granted".into());
-        }
-        Ok(())
-    }
-    fn recover(&self, invocation: RecoveryInvocation<'_>) -> Result<()> {
-        let evidence = self.evidence(invocation.scope)?;
-        if !evidence.grant.recovery || invocation.consumer != evidence.binding.provider() {
-            return Err("original receipt recovery not granted".into());
-        }
-        Ok(())
-    }
-}
-struct Gateway;
-impl NativeOwner for Gateway {
-    fn close(&self) -> BoxFuture<'static, Result<()>> {
-        Box::pin(async { Ok(()) })
-    }
-}
-/// Register compiled gateway availability; the composition still selects it.
-pub fn with_gateway(mut native: NativeRegistry) -> Result<NativeRegistry> {
-    native.insert(
-        GATEWAY.into(),
-        Arc::new(|_, configuration| {
-            Box::pin(async move {
-                #[derive(Deserialize)]
-                #[serde(deny_unknown_fields)]
-                struct Empty {}
-                NativeActivation {
-                    exports: serde_json::from_value::<Empty>(configuration)
-                        .map(|_| BTreeMap::new())
-                        .map_err(|e| e.to_string()),
-                    owner: Arc::new(Gateway),
-                }
-            })
-        }),
-    )?;
-    Ok(native)
 }

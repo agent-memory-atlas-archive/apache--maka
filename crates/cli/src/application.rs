@@ -27,7 +27,7 @@ use std::{
 
 use clap::{Args, Subcommand};
 use maka_plugin_core::{
-    composition::Input,
+    composition::{Input, PresentationTarget},
     deployment::RemoteObservation,
     package::Packages,
     plan::{Plan, RemoteExports},
@@ -173,16 +173,18 @@ impl Command {
                     .transpose()?
                     .unwrap_or_default();
                 let namespaces = maka_event_log::root::RootNamespaces::for_current_account()?;
-                let mut native = maka_runtime_host::application::NativeRegistry::default();
-                maka_agent_service::provide(&mut native)?;
-                maka_settings_service::provide(&mut native)?;
+                let executable = maka_application_bridge::HostExecutable::new(
+                    std::env::current_exe()?,
+                    vec!["application".into(), "serve".into()],
+                )?;
                 let store = std::sync::Arc::new(open_store(args.root).await?);
-                let mut connections = match maka_application_bridge::Connections::start(
+                let mut connections = match maka_application_bridge::Connections::prepare(
                     &store,
                     args.deployment,
+                    PresentationTarget::Tui,
                     configuration,
-                    &namespaces,
-                    native,
+                    namespaces,
+                    executable,
                 )
                 .await
                 {
@@ -192,6 +194,13 @@ impl Command {
                         return Err(error.into());
                     }
                 };
+                if let Err(error) = connections.start().await {
+                    tokio::join!(
+                        connections.drain(),
+                        maka_application_bridge::drain_store(&store)
+                    );
+                    return Err(error.into());
+                }
                 let source = connections.source().clone();
                 let registrations = connections.take_registrations();
                 let foreground_store = store.clone();
@@ -287,5 +296,5 @@ async fn open_store(root: PathBuf) -> Result<maka_event_log::EventLog, HostError
         )
     })
     .await??;
-    Ok(maka_event_log::EventLog::for_root(std::sync::Arc::new(owner)).await?)
+    Ok(maka_application_bridge::open_store(std::sync::Arc::new(owner)).await?)
 }

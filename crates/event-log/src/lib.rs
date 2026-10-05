@@ -136,6 +136,11 @@ pub enum StoreError {
     OperationUnknown,
     #[error("database close failed: {0}")]
     CloseFailed(String),
+    #[error("database startup failed: {cause}; cleanup unconfirmed: {cleanup}")]
+    StartupCleanupFailed {
+        cause: Box<StoreError>,
+        cleanup: Box<StoreError>,
+    },
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 }
@@ -246,7 +251,20 @@ impl EventLog {
                     )
                 })
             })
-            .await?;
+            .await;
+        let high_water = match high_water {
+            Ok(value) => value,
+            Err(cause) => {
+                // Startup errors have the same real close boundary as normal shutdown.
+                if let Err(cleanup) = connection.shutdown().await {
+                    return Err(StoreError::StartupCleanupFailed {
+                        cause: Box::new(cause),
+                        cleanup: Box::new(cleanup),
+                    });
+                }
+                return Err(cause);
+            }
+        };
         Ok(Self {
             connection,
             root_owner,

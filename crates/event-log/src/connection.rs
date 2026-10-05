@@ -34,8 +34,10 @@ type Job = Box<
     dyn for<'c> FnOnce(&'c mut SqliteConnection, Result<(), StoreError>) -> BoxFuture<'c, ()>
         + Send,
 >;
-type ReadJob =
-    Box<dyn FnOnce(Result<SqliteConnection, StoreError>) -> BoxFuture<'static, ()> + Send>;
+type ReadJob = Box<
+    dyn FnOnce(Result<SqliteConnection, StoreError>) -> BoxFuture<'static, Result<(), StoreError>>
+        + Send,
+>;
 enum Command {
     Run(Job),
     Read(ReadJob),
@@ -63,16 +65,16 @@ impl OwnedConnection {
         std::thread::Builder::new()
             .name("runtime-store-owner".into())
             .spawn(move || {
-                let result = (|| {
+                let mut result = std::panic::catch_unwind(AssertUnwindSafe(|| {
                     let runtime = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()?;
                     let validate = || authority.validate();
                     validate()?;
-                    let mut connection =
-                        runtime.block_on(SqliteConnection::connect_with(&options))?;
+                    let mut connection = runtime.block_on(connect_owned(&options))?;
                     let read_options = options.clone().create_if_missing(false).read_only(true);
                     let mut readers = tokio::task::JoinSet::new();
+                    let mut reader_failure = None;
                     let initialized = std::panic::catch_unwind(AssertUnwindSafe(|| {
                         runtime.block_on(async {
                             initialize(&mut connection).await?;
@@ -84,7 +86,9 @@ impl OwnedConnection {
                     // If open's waiter disappeared, close without accepting work.
                     if ready.send(initialized).is_ok() && success {
                         while let Some(command) = runtime.block_on(receiver.recv()) {
-                            while readers.try_join_next().is_some() {}
+                            while let Some(result) = readers.try_join_next() {
+                                retain_reader_failure(result, &mut reader_failure);
+                            }
                             let job = match command {
                                 Command::Run(job) => job,
                                 Command::Read(job) => {
@@ -94,22 +98,33 @@ impl OwnedConnection {
                                     readers.spawn_on(
                                         async move {
                                             let connection = match valid {
-                                                Ok(()) => SqliteConnection::connect_with(&options)
-                                                    .await
-                                                    .map_err(StoreError::from),
+                                                Ok(()) => connect_owned(&options).await,
                                                 Err(error) => Err(error),
                                             };
                                             let connection = match connection {
                                                 Ok(connection) => match authority.validate() {
                                                     Ok(()) => Ok(connection),
                                                     Err(error) => {
-                                                        let _ = connection.close().await;
-                                                        Err(error)
+                                                        Err(close_startup(connection, error).await)
                                                     }
                                                 },
                                                 Err(error) => Err(error),
                                             };
-                                            job(connection).await;
+                                            let startup_cleanup = connection
+                                                .as_ref()
+                                                .err()
+                                                .filter(|error| {
+                                                    matches!(
+                                                        error,
+                                                        StoreError::StartupCleanupFailed { .. }
+                                                    )
+                                                })
+                                                .map(ToString::to_string);
+                                            let closed = job(connection).await;
+                                            match startup_cleanup {
+                                                Some(error) => Err(StoreError::CloseFailed(error)),
+                                                None => closed,
+                                            }
                                         },
                                         runtime.handle(),
                                     );
@@ -132,15 +147,49 @@ impl OwnedConnection {
                     }
                     // Readers share this owner's authority, not the caller's lifetime.
                     // Close them before releasing the writer lease or acknowledging shutdown.
-                    runtime.block_on(async { while readers.join_next().await.is_some() {} });
+                    runtime.block_on(async {
+                        while let Some(result) = readers.join_next().await {
+                            retain_reader_failure(result, &mut reader_failure);
+                        }
+                    });
                     // Await real close before releasing authority, even after failure.
                     runtime
                         .block_on(connection.close())
-                        .map_err(StoreError::from)
-                })();
-                drop(receiver);
-                drop(authority);
+                        .map_err(|error| StoreError::CloseFailed(error.to_string()))?;
+                    match reader_failure {
+                        Some(error) => Err(StoreError::CloseFailed(error)),
+                        None => Ok(()),
+                    }
+                }))
+                .unwrap_or_else(|_| {
+                    Err(StoreError::StartupCleanupFailed {
+                        cause: Box::new(StoreError::Initialization),
+                        cleanup: Box::new(StoreError::OperationUnknown),
+                    })
+                });
+                // Unexecuted accepted jobs still own their original payloads.
+                // Their destructors cannot unwind past this authority boundary.
+                if std::panic::catch_unwind(AssertUnwindSafe(|| drop(receiver))).is_err() {
+                    result = Err(StoreError::CloseFailed(format!(
+                        "queued connection work destruction panicked; prior close: {result:?}"
+                    )));
+                }
+                let cleanup_failed = matches!(
+                    result,
+                    Err(StoreError::CloseFailed(_) | StoreError::StartupCleanupFailed { .. })
+                );
+                if !cleanup_failed {
+                    drop(authority);
+                }
                 let _ = completion.send(result);
+                // A failed real close is not permission to release the original
+                // authority. Keep its actual worker alive; no replacement owner
+                // or process exit can manufacture a cleanup acknowledgement.
+                if cleanup_failed {
+                    loop {
+                        std::thread::park();
+                    }
+                }
             })?;
         match startup.await {
             Ok(Ok(())) => Ok(Self {
@@ -159,13 +208,37 @@ impl OwnedConnection {
             }),
             Ok(Err(error)) => {
                 drop(jobs);
-                let _ = closed.await;
-                Err(error)
+                match closed.await {
+                    Ok(Ok(())) => Err(error),
+                    result => Err(StoreError::StartupCleanupFailed {
+                        cause: Box::new(error),
+                        cleanup: Box::new(match result {
+                            Ok(Err(error)) => error,
+                            Err(_) => StoreError::OperationUnknown,
+                            Ok(Ok(())) => unreachable!(),
+                        }),
+                    }),
+                }
             }
             Err(_) => {
                 drop(jobs);
-                closed.await.map_err(|_| StoreError::OperationUnknown)??;
-                Err(StoreError::Initialization)
+                match closed.await {
+                    Ok(Ok(())) => Err(StoreError::Initialization),
+                    Ok(Err(error @ StoreError::StartupCleanupFailed { .. })) => Err(error),
+                    Ok(Err(error)) if !matches!(error, StoreError::CloseFailed(_)) => {
+                        // Owned startup confirms any acquired connection has closed;
+                        // a crashed worker or failed close takes the typed branch above.
+                        Err(error)
+                    }
+                    result => Err(StoreError::StartupCleanupFailed {
+                        cause: Box::new(StoreError::Initialization),
+                        cleanup: Box::new(match result {
+                            Ok(Err(error)) => error,
+                            Err(_) => StoreError::OperationUnknown,
+                            Ok(Ok(())) => unreachable!(),
+                        }),
+                    }),
+                }
             }
         }
     }
@@ -218,22 +291,30 @@ impl OwnedConnection {
             .send(Command::Read(Box::new(move |connection| {
                 Box::pin(async move {
                     let _permit = permit;
-                    let result = match connection {
+                    let (result, closed) = match connection {
                         Ok(mut connection) => {
                             let result =
                                 AssertUnwindSafe(async { operation(&mut connection).await })
                                     .catch_unwind()
                                     .await
                                     .unwrap_or(Err(StoreError::OperationUnknown));
-                            let closed = connection.close().await.map_err(StoreError::from);
-                            match (result, closed) {
-                                (Ok(value), Ok(())) => Ok(value),
-                                (Err(error), _) | (_, Err(error)) => Err(error),
-                            }
+                            let closed = connection
+                                .close()
+                                .await
+                                .map_err(|error| StoreError::CloseFailed(error.to_string()));
+                            let result = match result {
+                                Err(error) => Err(error),
+                                Ok(value) => match &closed {
+                                    Ok(()) => Ok(value),
+                                    Err(error) => Err(StoreError::CloseFailed(error.to_string())),
+                                },
+                            };
+                            (result, closed)
                         }
-                        Err(error) => Err(error),
+                        Err(error) => (Err(error), Ok(())),
                     };
                     let _ = reply.send(result);
+                    closed
                 })
             })))
             .await
@@ -246,6 +327,45 @@ impl OwnedConnection {
     }
 }
 
+// These are the original owner's startup and reader cleanup boundaries, not
+// another SQL owner. A returned ordinary startup error confirms actual close.
+async fn close_startup(connection: SqliteConnection, cause: StoreError) -> StoreError {
+    match connection.close().await {
+        Ok(()) => cause,
+        Err(cleanup) => StoreError::StartupCleanupFailed {
+            cause: Box::new(cause),
+            cleanup: Box::new(StoreError::CloseFailed(cleanup.to_string())),
+        },
+    }
+}
+async fn connect_owned(options: &SqliteConnectOptions) -> Result<SqliteConnection, StoreError> {
+    let mut connection = match SqliteConnection::establish(options).await {
+        Ok(connection) => connection,
+        Err(sqlx::Error::WorkerCrashed) => {
+            return Err(StoreError::StartupCleanupFailed {
+                cause: Box::new(StoreError::Initialization),
+                cleanup: Box::new(StoreError::OperationUnknown),
+            });
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if let Err(error) = connection.configure(options).await {
+        return Err(close_startup(connection, error.into()).await);
+    }
+    Ok(connection)
+}
+fn retain_reader_failure(
+    result: Result<Result<(), StoreError>, tokio::task::JoinError>,
+    failure: &mut Option<String>,
+) {
+    if let Err(error) = result
+        .map_err(|error| error.to_string())
+        .and_then(|closed| closed.map_err(|error| error.to_string()))
+    {
+        failure.get_or_insert(error);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,6 +374,124 @@ mod tests {
         sync::{Arc, mpsc as blocking},
         time::Duration,
     };
+
+    #[tokio::test]
+    async fn failed_pragma_configuration_closes_the_established_worker_before_releasing_authority()
+    {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("configured.sqlite");
+        let lock = directory.path().join("writer.lock");
+        let lease = Arc::new(crate::root::FileLease::acquire(&lock).unwrap());
+        let original = Arc::downgrade(&lease);
+        let result = OwnedConnection::open(
+            SqliteConnectOptions::new()
+                .filename(&database)
+                .create_if_missing(true)
+                .pragma("maka_invalid", "("),
+            ConnectionAuthority::Writer { lease, root: None },
+            |_| Box::pin(async { panic!("configuration must fail before initialization") }),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(StoreError::Sqlx(sqlx::Error::Database(_)))
+        ));
+        assert!(
+            database.exists(),
+            "the actual SQLite handle must have been established"
+        );
+        assert!(original.upgrade().is_none());
+        drop(crate::root::FileLease::acquire(&lock).unwrap());
+    }
+
+    #[tokio::test]
+    async fn actual_reader_close_failure_fences_the_original_writer_and_root_authority() {
+        struct PanickingDrop;
+        impl Drop for PanickingDrop {
+            fn drop(&mut self) {
+                panic!("actual SQLite callback destructor failed");
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("root");
+        let namespaces = crate::root::RootNamespaces {
+            ownership: directory.path().join("owners"),
+            control: directory.path().join("control"),
+        };
+        let authority = Arc::new(crate::root::RootOwner::create(&root, &namespaces).unwrap());
+        let original = Arc::downgrade(&authority);
+        let owner = OwnedConnection::open(
+            SqliteConnectOptions::new()
+                .filename(root.join(crate::root::ROOT_DATABASE))
+                .create_if_missing(true),
+            ConnectionAuthority::Root(authority),
+            |_| Box::pin(async { Ok(()) }),
+        )
+        .await
+        .unwrap();
+        let read = owner
+            .read(|connection| {
+                Box::pin(async move {
+                    let actual = PanickingDrop;
+                    connection
+                        .lock_handle()
+                        .await?
+                        .set_progress_handler(1, move || {
+                            let _retained = &actual;
+                            true
+                        });
+                    Ok(())
+                })
+            })
+            .await;
+        assert!(matches!(read, Err(StoreError::CloseFailed(_))));
+        let (entered, reached) = oneshot::channel();
+        let (release, gate) = oneshot::channel();
+        owner
+            .jobs
+            .send(Command::Run(Box::new(move |_, _| {
+                Box::pin(async move {
+                    entered.send(()).unwrap();
+                    gate.await.unwrap();
+                    panic!("accepted writer operation unwound");
+                })
+            })))
+            .await
+            .unwrap();
+        reached.await.unwrap();
+        let queued_payload = PanickingDrop;
+        owner
+            .jobs
+            .send(Command::Run(Box::new(move |_, _| {
+                // The earlier operation unwinds before this queued job runs;
+                // receiver destruction must settle its original payload here.
+                drop(queued_payload);
+                Box::pin(async {})
+            })))
+            .await
+            .unwrap();
+        release.send(()).unwrap();
+        let closed = owner.shutdown().await;
+        assert!(matches!(closed, Err(StoreError::CloseFailed(_))));
+        assert!(
+            closed
+                .unwrap_err()
+                .to_string()
+                .contains("queued connection work destruction panicked")
+        );
+        drop(owner);
+        assert!(
+            original.upgrade().is_some(),
+            "the same original SQL worker must retain authority"
+        );
+        assert_eq!(
+            crate::root::RootOwner::open(&root, &namespaces)
+                .err()
+                .unwrap()
+                .kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
 
     #[tokio::test]
     async fn read_snapshot_does_not_block_writes_and_shutdown_drains_abandoned_readers() {

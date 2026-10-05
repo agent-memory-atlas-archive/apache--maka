@@ -331,7 +331,16 @@ impl Session {
             return Err(reason);
         }
         state.opening = false;
-        observe_two(state.call.as_mut().unwrap().start(), &self.stop, stop).await
+        observe_two(
+            state
+                .call
+                .as_mut()
+                .unwrap()
+                .start_unless(|| self.stop.is_cancelled() || stop.is_cancelled()),
+            &self.stop,
+            stop,
+        )
+        .await
     }
     async fn finish(&self, state: &mut State) -> Settlement {
         if let Some(reason) = &state.physical_failure {

@@ -110,7 +110,57 @@ mod probe {
             })
         }
     }
+    fn host() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = PathBuf::from(
+            std::env::args_os()
+                .nth(2)
+                .ok_or("probe directory required")?,
+        );
+        let fail = std::env::args_os().nth(3).is_some_and(|a| a == "fail");
+        let mut native = NativeRegistry::default();
+        native.insert(
+            "probe.File".into(),
+            Arc::new(move |_, _| {
+                let directory = directory.clone();
+                Box::pin(async move {
+                    let file = std::fs::File::create(directory.join("native-resource"));
+                    let error = file.as_ref().err().map(ToString::to_string);
+                    let resource = Arc::new(Resource {
+                        file: Mutex::new(file.ok()),
+                        directory,
+                        effects: AtomicUsize::new(0),
+                        fail,
+                    });
+                    NativeActivation {
+                        exports: match error {
+                            Some(error) => Err(error),
+                            None => Ok(BTreeMap::from([(
+                                "Counter".into(),
+                                Published {
+                                    contract: fixture::business(),
+                                    value: resource.clone() as Arc<dyn Handler>,
+                                },
+                            )])),
+                        },
+                        owner: Arc::new(Close(resource)),
+                    }
+                })
+            }),
+        )?;
+        let timer = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()?;
+        timer.block_on(maka_application_bridge::transport::process::serve(native))?;
+        Ok(())
+    }
     pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+        if std::env::args_os()
+            .nth(1)
+            .is_some_and(|a| a == "application-host")
+        {
+            return host();
+        }
         let directory = PathBuf::from(
             std::env::args_os()
                 .nth(1)
@@ -122,7 +172,7 @@ mod probe {
         let sql = mode.as_deref() == Some("sql");
         let timer = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
-            .enable_time()
+            .enable_all()
             .build()?;
         let namespaces = RootNamespaces::for_current_account()?;
         let host = uuid::Uuid::new_v4();
@@ -151,7 +201,6 @@ mod probe {
             Result::<(), Box<dyn std::error::Error>>::Ok(())
         })?;
         let path = directory.join("connections.json");
-        let mut native = NativeRegistry::default();
         if sql {
             std::fs::write(&path, b"{\"hosts\":[]}")?;
         } else {
@@ -161,32 +210,6 @@ mod probe {
                     &json!({"hosts":[{"name":"local","root":directory.join("host"),"deployment":host,"consumer":fixture::identity(13),"imports":{"business":{"methods":["read","write"],"recovery":false},"receipts":{"methods":["read"],"recovery":true}}}]}),
                 )?,
             )?;
-            let resource = Arc::new(Resource {
-                file: Mutex::new(Some(std::fs::File::create(
-                    directory.join("native-resource"),
-                )?)),
-                directory: directory.clone(),
-                effects: AtomicUsize::new(0),
-                fail,
-            });
-            native.insert(
-                "probe.File".into(),
-                Arc::new(move |_, _| {
-                    let resource = resource.clone();
-                    Box::pin(async move {
-                        NativeActivation {
-                            exports: Ok(BTreeMap::from([(
-                                "Counter".into(),
-                                Published {
-                                    contract: fixture::business(),
-                                    value: resource.clone() as Arc<dyn Handler>,
-                                },
-                            )])),
-                            owner: Arc::new(Close(resource)),
-                        }
-                    })
-                }),
-            )?;
         }
         let launcher = desktop::Launcher::start(
             desktop::Args {
@@ -194,7 +217,14 @@ mod probe {
                 deployment: caller,
                 connections: Some(path),
             },
-            native,
+            maka_application_bridge::HostExecutable::new(
+                std::env::current_exe()?,
+                vec![
+                    "application-host".into(),
+                    directory.clone().into_os_string(),
+                    if fail { "fail".into() } else { "ok".into() },
+                ],
+            )?,
             maka_ui_gpui::registry(),
         )?;
         if sql {

@@ -17,12 +17,15 @@
  * under the License.
  */
 
+#[path = "local/embedded.rs"]
+mod embedded;
 #[path = "local/resource_mutations.rs"]
 mod resource_mutations;
 #[path = "local/subscriptions.rs"]
 mod subscriptions;
 mod support;
-use maka_application_bridge::{Configuration, Connections, Grant, Host};
+use embedded::Connections;
+use maka_application_bridge::{Configuration, Grant, Host};
 use maka_event_log::{
     EventLog,
     root::{RootNamespaces, RootOwner},
@@ -48,6 +51,12 @@ struct Fixture {
     host: Uuid,
 }
 impl Fixture {
+    // In-process validation observes metadata before queued preparation; IPC
+    // captures it once before any Open byte. Block the actual preparation stage.
+    fn preparation_descriptor(&self) -> usize {
+        1
+    }
+
     fn new() -> Self {
         Self::from_sources(support::host(), support::ui(PresentationTarget::Desktop))
     }

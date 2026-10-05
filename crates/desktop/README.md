@@ -83,7 +83,7 @@ Native dependencies include MPL-2.0 [dwrote](https://github.com/servo/dwrote)
 Their source is not vendored. Binary distribution must include licenses and
 source references; this crate does not yet provide release packaging.
 
-Production startup takes `--root PATH --deployment UUID`, reads the original
+Production startup takes `run --root PATH --deployment UUID`, reads the original
 stored source and exact package bytes, and checks the Desktop target before
 activation. A newer desired source does not rewrite the running source. Root
 custody remains with the application through pending/failed cleanup; successful
@@ -96,3 +96,10 @@ cleanup, accepted work, caller SQL close acknowledgement and Host cleanup all
 complete. Failed close keeps the store/Root/runtime held. macOS native quit has
 been exercised with a real window and blocked File/SQL owners; Windows/Linux
 native acceptance and complete product UI remain pending.
+
+The launcher selects its same executable’s internal `application-host` role for
+shared private IPC Hosts. Compiled business availability stays in the child,
+selected by its persistent composition. Both parent and child enable Tokio IO;
+UI cleanup precedes native connection revocation, same-child Closed and actual
+child exit. An embedding supplies a trusted HostExecutable for its own compiled
+Host role rather than passing native factory closures across processes.

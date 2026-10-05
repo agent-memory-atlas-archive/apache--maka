@@ -28018,6 +28018,7 @@ sqlx-sqlite@0.9.0 (MIT OR Apache-2.0); authors declared by package: Ryan Leckey 
 sqlx@0.9.0 (MIT OR Apache-2.0); authors declared by package: Ryan Leckey <leckey.ryan@gmail.com>, Austin Bonander <austin.bonander@gmail.com>, Chloe Ross <orangesnowfox@gmail.com>, Daniel Akhterov <akhterovd@gmail.com>
 
 https://crates.io/api/v1/crates/sqlx/0.9.0/download :: LICENSE-APACHE
+https://github.com/launchbadge/sqlx#003b698e99e024f3621b8043a2426fde5b741171 (adapted; third-party/sqlx-sqlite) :: LICENSE-APACHE
 https://raw.githubusercontent.com/launchbadge/sqlx/003b698e99e024f3621b8043a2426fde5b741171/LICENSE-APACHE
 
 Apache License
@@ -28234,6 +28235,7 @@ sqlx-sqlite@0.9.0 (MIT OR Apache-2.0); authors declared by package: Ryan Leckey 
 sqlx@0.9.0 (MIT OR Apache-2.0); authors declared by package: Ryan Leckey <leckey.ryan@gmail.com>, Austin Bonander <austin.bonander@gmail.com>, Chloe Ross <orangesnowfox@gmail.com>, Daniel Akhterov <akhterovd@gmail.com>
 
 https://crates.io/api/v1/crates/sqlx/0.9.0/download :: LICENSE-MIT
+https://github.com/launchbadge/sqlx#003b698e99e024f3621b8043a2426fde5b741171 (adapted; third-party/sqlx-sqlite) :: LICENSE-MIT
 https://raw.githubusercontent.com/launchbadge/sqlx/003b698e99e024f3621b8043a2426fde5b741171/LICENSE-MIT
 
 Copyright (C) SQLx Contributors

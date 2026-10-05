@@ -20,10 +20,10 @@
 # Local application connections
 
 The Desktop and TUI launchers accept `--connections FILE`. This trusted input
-connects separate UI and Host deployments in one process. It does not edit either
-composition. Private cross-process invocation channels are described below.
-The shared private IPC Host entrypoint is available; the default UI process
-supervisor and network authentication remain separate work.
+starts a separate shared Host child for each selected deployment. It does not edit
+either composition. Each child owns its original Application and Root; independent
+private IPC invocation streams share that same Host state. Network authentication
+remains separate work.
 
 ```json
 {
@@ -45,7 +45,7 @@ is the existing Host consumer instance; `imports` names its explicit bindings.
 The Host composition must select a gateway instance with implementation
 `maka.application.gateway` and its imports, or another appropriate compiled
 consumer. No factory or service is automatically activated. Other Rust factories
-are supplied by the trusted launcher; dynamic JavaScript comes from committed
+are supplied by the selected executable’s compiled Host role; dynamic JavaScript comes from committed
 immutable package bytes.
 
 Mutations carry their original immutable snapshots through preparation, caller
@@ -53,8 +53,8 @@ persistence and final Host admission. The session moves its request resources
 into the original queued/prepared custody, and Scope cleanup waits for actual
 release even if prepare and close run concurrently. Snapshot bytes and metadata
 are never operation-log input. Authenticated network transport remains pending.
-Local subscriptions execute the actual Host `Client.subscribe` with the original
-Binding/Scopes/Policy. UI cancellation cancels the Host execution scope and then
+Subscriptions cross private IPC and execute the actual Host `Client.subscribe`
+with the original Binding/Peer Policy. UI cancellation cancels the Host execution scope and then
 awaits its original admission observer and actual completion, including scope cleanup.
 Dropping an admission observer cannot stand in for a cleanup receipt.
 
@@ -62,7 +62,8 @@ Each method must exist in the actual captured service contract. The endpoint
 must match the selected UI deployment's observation. Startup captures that exact
 `DeploymentRef`; a later desired-source update cannot inherit its approval.
 Ordinary query/mutation permission does not grant original-receipt recovery.
-A forwarded call to a different consumer fails closed under this configuration;
+The UI consumer set comes from enabled executable instances in the exact resolved
+Plan. A forwarded call to a different Host consumer fails closed under this configuration;
 other trusted embeddings can supply a different explicit Host Policy and inert
 `Scopes` factory through `LocalService`.
 
@@ -74,8 +75,23 @@ After real surface and accepted-work cleanup, the launchers await both the calle
 SQL owner's actual close acknowledgement and Host cleanup. Failure retains the
 store, Root and runtime. Native quit is subject to the same gate. `drain_store`
 and `Connections::drain` preserve custody instead of treating owner drop as a
-cleanup receipt. Local endpoints hold captured Client/Binding/Scope admission,
-not Host deployment lifecycle ownership.
+cleanup receipt. Native endpoints retain the exact Host catalogue selection,
+registration epoch, caller source and original physical-call custody. They never
+retarget a replacement Host or own its deployment lifecycle.
+
+`Connections::prepare` validates the requested presentation and immutable source
+before any Host starts. The launcher retains Connections before observing
+`start(&mut self)`; cancelling that observer leaves the actual Child/Control in
+that same owner. Close revokes every connection before polling its observer and
+drains all children. Each requires its same-child Closed and an actual Child.wait
+observation. Aggregate cleanup cannot settle an old Lost Call or caller SQL token.
+
+SQL startup errors return only after real connection close. Typed
+`StartupCleanupFailed`, a crashed worker or an unconfirmed reader close keeps the
+original SQL worker and Root authority fenced. Launchers keep their runtime alive
+on this boundary, including failures before Host Ready. The finite SQLx SQLite
+[owned-startup seam](../../third-party/sqlx-sqlite/SOURCE.md) splits establishment
+from configuration without adding another SQL owner.
 
 [中文](README.zh-CN.md)
 
