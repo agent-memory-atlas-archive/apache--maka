@@ -82,3 +82,8 @@ The ordinary `connections` component presents bounded catalog pages and opens a 
 Earlier operations have a separate bounded pane because caller history is shared by mounts of the same consumer instance and its references do not contain original connection inputs. Checking those facts never adopts a current target or clears a new draft. The settings route hides the conversation presentation while retaining its native composer owner.
 
 `model-default` is a separate component bound explicitly by the model selector. It distinguishes an unset default from an unavailable saved target. Setting or clearing freezes the observed catalog revision and target for confirmation; a conflict requires refresh and a new confirmation. Unknown results query the original receipt without another write. Earlier receipts have a separate bounded pane and never adopt a current target. Saving refreshes the catalog without changing the model selected for the current conversation. Hiding the selector retains the same child slot and pending workflow. A selectable default describes catalog eligibility, not authenticated execution or network availability.
+
+The desktop model selector uses the public anchored Popup scene. Opening its
+model/default/history workflows keeps the composer in place; Escape or an
+outside click asks the plugin to close. The default child stays mounted across
+close/reopen. Terminal entries keep paged in-flow presentation.

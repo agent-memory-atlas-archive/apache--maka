@@ -18,7 +18,11 @@
  */
 
 use super::*;
-use std::{collections::VecDeque, io::Write, time::Instant};
+use std::{
+    collections::{BTreeSet, VecDeque},
+    io::Write,
+    time::Instant,
+};
 
 /// Count JSON without allocating a serialized copy. Both adapters have the
 /// same call boundary; reject oversized input before schema evaluation/cloning.
@@ -697,7 +701,59 @@ impl<V: ?Sized + 'static> Application<V> {
         }
         Ok(())
     }
+    fn validate_render_depth(&self, update: &Update<V>) -> Result<()> {
+        let Some(limit) = self.render_depth_limit else {
+            return Ok(());
+        };
+        // Walk the proposed whole tree, including retained ancestors and children.
+        // Removed/retiring roots are absent from admission. Their already
+        // validated frames can remain in custody during native cleanup, which
+        // may have completed some children before their root.
+        // Hidden slots retain custody but draw nothing.
+        let admitted: BTreeSet<_> = self
+            .runtime
+            .mount_statuses()
+            .into_iter()
+            .filter(|status| status.phase != Phase::Retiring)
+            .map(|status| status.mount.id())
+            .collect();
+        let mut roots = BTreeMap::new();
+        for view in self.views.values().chain(update.changed.values()) {
+            if view.frame.surface.is_some()
+                && admitted.contains(&view.mount.id())
+                && !update.removed.contains_key(&view.mount.id())
+            {
+                roots.insert(view.mount.id(), view.mount.clone());
+            }
+        }
+        let mut pending: Vec<_> = roots.into_values().map(|mount| (mount, 0u16)).collect();
+        while let Some((mount, enclosing)) = pending.pop() {
+            if Instant::now() >= update.deadline {
+                return Err(Error::Invalid(
+                    "composed UI update deadline exceeded".into(),
+                ));
+            }
+            let mounted = self.current(&mount, update)?;
+            let view = &mounted.frame.view;
+            let total = enclosing
+                .checked_add(view.render_depth)
+                .ok_or_else(|| Error::Invalid("native render depth overflow".into()))?;
+            if total > limit {
+                return Err(Error::Invalid("composed native render depth limit".into()));
+            }
+            for slot in view.visible_slots() {
+                let cost = view.slot_render_depth.get(&slot.key).copied().unwrap_or(0);
+                let child = mounted
+                    .children
+                    .get(&slot.key)
+                    .ok_or_else(|| Error::Invalid("native slot has no proposed child".into()))?;
+                pending.push((child.mount.clone(), enclosing + cost));
+            }
+        }
+        Ok(())
+    }
     fn commit(&mut self, update: &mut Update<V>) -> Result<()> {
+        self.validate_render_depth(update)?;
         self.discard_private(update)?;
         if Instant::now() >= update.deadline {
             return Err(Error::Invalid(

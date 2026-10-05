@@ -1,0 +1,335 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::Style;
+use crate::LiveInput;
+use gpui_kit::{base::Popup, *};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::{
+    cell::{Cell, RefCell},
+    rc::{Rc, Weak},
+};
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Anchor {
+    TopLeft,
+    TopCenter,
+    #[default]
+    TopRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+    LeftCenter,
+    RightCenter,
+}
+impl Anchor {
+    fn native(self) -> gpui_kit::Anchor {
+        match self {
+            Self::TopLeft => gpui_kit::Anchor::TopLeft,
+            Self::TopCenter => gpui_kit::Anchor::TopCenter,
+            Self::TopRight => gpui_kit::Anchor::TopRight,
+            Self::BottomLeft => gpui_kit::Anchor::BottomLeft,
+            Self::BottomCenter => gpui_kit::Anchor::BottomCenter,
+            Self::BottomRight => gpui_kit::Anchor::BottomRight,
+            Self::LeftCenter => gpui_kit::Anchor::LeftCenter,
+            Self::RightCenter => gpui_kit::Anchor::RightCenter,
+        }
+    }
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Input {
+    Dismiss { reason: Reason },
+}
+#[derive(Clone, Copy, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Reason {
+    Escape,
+    Outside,
+}
+
+struct Phase {
+    token: Rc<()>,
+    open: bool,
+}
+type Gate = Rc<RefCell<Phase>>;
+// This is mechanical focus/scroll and listener admission derived from the
+// committed scene. It neither decides nor publishes product open state.
+pub(super) struct State {
+    gate: Gate,
+    focus: FocusHandle,
+    previous: Option<WeakFocusHandle>,
+    restore: Option<Subscription>,
+    scroll: ScrollHandle,
+    trigger: Rc<Cell<Bounds<Pixels>>>,
+    window: WindowId,
+}
+struct Admission {
+    gate: Weak<RefCell<Phase>>,
+    token: Rc<()>,
+    window: WindowId,
+}
+impl Admission {
+    fn allows(&self, window: &Window) -> bool {
+        self.window == window.window_handle().window_id()
+            && self.gate.upgrade().is_some_and(|gate| {
+                let phase = gate.borrow();
+                phase.open && Rc::ptr_eq(&self.token, &phase.token)
+            })
+    }
+}
+impl State {
+    pub fn new(window: &Window, cx: &mut App) -> Self {
+        Self {
+            gate: Rc::new(RefCell::new(Phase {
+                token: Rc::new(()),
+                open: false,
+            })),
+            focus: cx.focus_handle(),
+            previous: None,
+            restore: None,
+            scroll: ScrollHandle::default(),
+            trigger: Rc::new(Cell::new(Bounds::default())),
+            window: window.window_handle().window_id(),
+        }
+    }
+    pub fn admitted(&self) -> bool {
+        self.gate.borrow().open
+    }
+    pub fn presentation(&mut self, open: bool, window: &mut Window, cx: &mut App) {
+        if self.admitted() == open {
+            return;
+        }
+        let token = Rc::new(());
+        *self.gate.borrow_mut() = Phase {
+            token: token.clone(),
+            open,
+        };
+        self.focus = self
+            .focus
+            .clone()
+            .tab_stop(open)
+            .tab_index(if open { 0 } else { -1 });
+        if open {
+            self.previous = window.focused(cx).map(|focus| focus.downgrade());
+            self.focus.focus(window, cx);
+            let admission = self.admission();
+            let scope = self.focus.downgrade();
+            self.restore = Some(window.on_focus_lost(cx, move |window, cx| {
+                if !admission.allows(window) || window.focused(cx).is_some() {
+                    return;
+                }
+                let Some(scope) = scope.upgrade().filter(|focus| focus.tab_stop) else {
+                    return;
+                };
+                let Some(target) = window
+                    .focus_lost_restore_target(cx)
+                    .filter(|target| scope.contains(target, window))
+                else {
+                    return;
+                };
+                // A page can hide the focused control without closing its
+                // popup. The newly rendered original ancestry chooses the
+                // nearest surviving scope, including a nested child popup.
+                target.focus(window, cx);
+            }));
+        } else {
+            self.restore = None;
+            let owned_focus = self.focus.contains_focused(window, cx);
+            let previous = self.previous.take();
+            if owned_focus {
+                window.blur(cx);
+                let gate = Rc::downgrade(&self.gate);
+                let original_window = self.window;
+                // Parent synchronization precedes child presentation. Restore
+                // only after the whole pass has disabled/blurred hidden inputs.
+                window.defer(cx, move |window, cx| {
+                    if window.window_handle().window_id() != original_window
+                        || window.focused(cx).is_some()
+                    {
+                        return;
+                    }
+                    let Some(gate) = gate.upgrade() else {
+                        return;
+                    };
+                    let phase = gate.borrow();
+                    if phase.open || !Rc::ptr_eq(&phase.token, &token) {
+                        return;
+                    }
+                    if let Some(previous) = previous
+                        .and_then(|previous| previous.upgrade())
+                        .filter(|focus| focus.tab_stop)
+                    {
+                        previous.focus(window, cx);
+                    }
+                });
+            }
+        }
+    }
+    pub fn deactivate(&mut self, window: &mut Window, cx: &mut App) {
+        *self.gate.borrow_mut() = Phase {
+            token: Rc::new(()),
+            open: false,
+        };
+        self.previous = None;
+        self.restore = None;
+        self.focus = self.focus.clone().tab_stop(false).tab_index(-1);
+        if self.focus.contains_focused(window, cx) {
+            window.blur(cx);
+        }
+    }
+    fn admission(&self) -> Admission {
+        Admission {
+            gate: Rc::downgrade(&self.gate),
+            token: self.gate.borrow().token.clone(),
+            window: self.window,
+        }
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn render(
+        &self,
+        key: &str,
+        label: &str,
+        trigger: AnyElement,
+        content: Option<AnyElement>,
+        anchor: Anchor,
+        offset: u16,
+        style: &Style,
+        live: &LiveInput,
+        input: crate::Input,
+        window: &Window,
+    ) -> AnyElement {
+        let measured_trigger = self.trigger.clone();
+        let popup = Popup::new(SharedString::from(format!("popup:{key}")), trigger)
+            .anchor(anchor.native())
+            .offset(px(offset.into()))
+            .on_position(move |_, bounds| measured_trigger.set(bounds));
+        let Some(content) = content else {
+            return popup.into_any_element();
+        };
+        let available = Popup::available_size(window);
+        let mut style = style.clone();
+        let width = style
+            .max_width
+            .unwrap_or(available.width.into())
+            .min(available.width.into());
+        let height = style
+            .max_height
+            .unwrap_or(available.height.into())
+            .min(available.height.into());
+        style.max_width = Some(width);
+        style.max_height = Some(height);
+        style.min_width = style.min_width.map(|value| value.min(width));
+        style.min_height = style.min_height.map(|value| value.min(height));
+        if let Some(super::Dimension::Pixels(value)) = &mut style.width {
+            *value = value.min(width);
+        }
+        if let Some(super::Dimension::Pixels(value)) = &mut style.height {
+            *value = value.min(height);
+        }
+        // Taffy cannot shrink a border box below its padding and border. Keep
+        // those insets within its viewport budget, leaving at least half of
+        // each inner axis for actual content rather than only decorations.
+        let effective =
+            |dimension: Option<super::Dimension>, available: f32, maximum: f32| match dimension {
+                Some(super::Dimension::Pixels(value)) => value.min(maximum),
+                Some(super::Dimension::Fraction(value)) => (available * value).min(maximum),
+                _ => maximum,
+            };
+        let inset_width = effective(style.width, available.width.into(), width);
+        let inset_height = effective(style.height, available.height.into(), height);
+        let border = style
+            .border_width
+            .unwrap_or(0.)
+            .min(inset_width.min(inset_height) / 4.);
+        style.border_width = style.border_width.map(|_| border);
+        if let Some(padding) = &mut style.padding {
+            let horizontal = padding.left + padding.right;
+            let vertical = padding.top + padding.bottom;
+            let horizontal_scale =
+                ((inset_width - 2. * border) / (2. * horizontal).max(1.)).min(1.);
+            let vertical_scale = ((inset_height - 2. * border) / (2. * vertical).max(1.)).min(1.);
+            padding.left *= horizontal_scale;
+            padding.right *= horizontal_scale;
+            padding.top *= vertical_scale;
+            padding.bottom *= vertical_scale;
+        }
+        let escape_admission = self.admission();
+        let outside_admission = self.admission();
+        let trigger_bounds = self.trigger.clone();
+        let pointer_scope = self.focus.clone();
+        let escape_live = live.clone();
+        let outside_live = live.clone();
+        let escape = input.bind(key.into(), |_: &KeyDownEvent| {
+            serde_json::to_value(Input::Dismiss {
+                reason: Reason::Escape,
+            })
+            .expect("popup input")
+        });
+        let outside = input.bind(key.into(), |_: &MouseDownEvent| {
+            serde_json::to_value(Input::Dismiss {
+                reason: Reason::Outside,
+            })
+            .expect("popup input")
+        });
+        let body = style
+            .apply(
+                div()
+                    .id(SharedString::from(format!("popup-body:{key}")))
+                    .flex()
+                    .flex_col(),
+            )
+            .role(Role::Dialog)
+            .aria_label(SharedString::from(label.to_owned()))
+            .track_focus(&self.focus)
+            .tab_stop(self.focus.tab_stop)
+            .tab_index(self.focus.tab_index)
+            .tab_group()
+            .overflow_x_hidden()
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
+            .on_key_down(move |event, window: &mut Window, cx| {
+                if event.keystroke.key == "escape"
+                    && escape_admission.allows(window)
+                    && escape_live.0.borrow().is_some()
+                {
+                    escape(event, window, cx);
+                }
+            })
+            .on_mouse_down_out(move |event, window: &mut Window, cx| {
+                if outside_admission.allows(window)
+                    && outside_live.0.borrow().is_some()
+                    && !trigger_bounds.get().contains(&event.position)
+                    && !pointer_scope.contains_hovered(window)
+                {
+                    outside(event, window, cx);
+                }
+            })
+            .child(content);
+        popup.content(body).into_any_element()
+    }
+}
+
+impl Drop for State {
+    fn drop(&mut self) {
+        self.focus = self.focus.clone().tab_stop(false).tab_index(-1);
+    }
+}

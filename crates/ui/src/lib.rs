@@ -111,6 +111,7 @@ pub struct Application<V: ?Sized = ()> {
     pub(crate) scheduler: tokio::runtime::Handle,
     target: PresentationTarget,
     scene_compiler: Option<Rc<native::SceneCompiler<V>>>,
+    render_depth_limit: Option<u16>,
     source: Option<maka_plugin_core::deployment::DeploymentRef>,
     store: Option<std::sync::Arc<maka_event_log::EventLog>>,
 }
@@ -259,6 +260,7 @@ impl<V: ?Sized + 'static> Application<V> {
             slice: limits.synchronous_slice,
             target,
             scene_compiler: native.scene_compiler.clone(),
+            render_depth_limit: native.render_depth_limit,
             scheduler: timer.clone(),
             source,
             store,

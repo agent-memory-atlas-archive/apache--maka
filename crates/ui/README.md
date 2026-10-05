@@ -356,3 +356,13 @@ Desktop invalidates mechanical admission before the next paint and rejects retai
 child renders; TUI applies geometry admission only after a successful flush.
 Custom native layouts use the same public Slots boundary and cannot paint a hidden
 child. This projection does not retire resources or create a second writable draft.
+
+An embedding may set `NativeRegistry::with_render_depth_limit` for bounded
+native rendering. Its scene compiler and trusted native factories describe the
+maximum local cost and each slot's enclosing cost with
+`NativeView::with_render_depth`. The transaction checks complete proposed visible
+surface paths, merging staged frames and retained ancestors/children, before any
+publication or native effect. Hidden slots still mount and settle observations,
+but consume no drawing depth. Rejection preserves the original frames, mounts
+and resource custody. These numbers describe renderer work; the kernel neither
+interprets layout nor lets guest code choose its budget.

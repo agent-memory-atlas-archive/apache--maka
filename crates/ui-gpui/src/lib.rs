@@ -43,6 +43,8 @@ use std::{any::Any, cell::RefCell, collections::BTreeMap, rc::Rc};
 /// handles here. Native state belongs to renderer owners and GPUI retained state;
 /// its actual destruction releases leases independently of the retired frame.
 pub trait Widget: Any {
+    /// Allocate custody without taking focus. The presenter applies actual
+    /// visibility, including initially hidden owners, before the first commit.
     fn create(&self, _: LiveInput, _: &mut Window, _: &mut App) -> Box<dyn Any> {
         Box::new(())
     }
@@ -209,6 +211,7 @@ impl NativeComponent<dyn Widget> for LabelComponent {
 pub fn registry() -> NativeRegistry<dyn Widget> {
     let mut registry =
         NativeRegistry::with_surface(maka_plugin_core::composition::PresentationTarget::Desktop)
+            .with_render_depth_limit(gpui_kit::MAX_DEFERRED_DEPTH)
             .with_scene_compiler(scene::language(), scene::compile)
             .expect("valid desktop scene language");
     registry

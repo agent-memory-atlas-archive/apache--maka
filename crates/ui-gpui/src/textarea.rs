@@ -792,7 +792,9 @@ impl NativeComponent<dyn Widget> for TextareaComponent {
             }),
             BTreeMap::from([("observe".into(), observation_schema())]),
             vec![],
-        )?;
+        )?
+        // The original native edit menu may add one deferred layer.
+        .with_render_depth(1, BTreeMap::new())?;
         Ok(output.map_view(|_| view))
     }
 }

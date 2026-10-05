@@ -363,3 +363,140 @@ fn value_only_guest_needs_no_scene_compiler_and_cannot_publish_components() {
         }
     }
 }
+
+#[test]
+fn composed_render_budget_rejects_child_only_updates_against_retained_ancestors() {
+    let timer = timer();
+    let (input, packages) = support::composed_fixture(support::CHILD_UPDATE, support::PARENT_EVENT);
+    let native = NativeRegistry::with_surface(PresentationTarget::Desktop)
+        .with_render_depth_limit(10)
+        .with_scene_compiler(
+            support::scene::language(PresentationTarget::Desktop),
+            |source, deadline| {
+                let view = support::scene::compile::<()>(source, deadline)?;
+                let root = source["key"] == "root";
+                let depth = if root {
+                    if view.slots()[0].props["label"] == "Left 0" {
+                        9
+                    } else {
+                        8
+                    }
+                } else if source["children"][1]["text"] == "11" {
+                    2
+                } else {
+                    1
+                };
+                let slots = view
+                    .slots()
+                    .iter()
+                    .map(|slot| (slot.key.clone(), depth))
+                    .collect();
+                view.with_render_depth(depth, slots)
+            },
+        )
+        .unwrap();
+    let mut app = Application::new(
+        &input,
+        packages,
+        timer.handle().clone(),
+        maka_js_runtime::plugin::Limits {
+            synchronous_slice: std::time::Duration::from_millis(100),
+            ..Default::default()
+        },
+        native,
+        Default::default(),
+    )
+    .unwrap();
+    let root = app.mount_launch(json!({})).unwrap();
+    let left = app.child_mount(&root, "left").unwrap().clone();
+    let right = app.child_mount(&root, "right").unwrap().clone();
+    // Each compiled scene is <=10. Only the full proposed path is 9+2=11.
+    let error = app
+        .dispatch(&left, 0, "inc", Value::Null)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("composed native render depth"), "{error}");
+    assert_eq!(app.frame(&root).unwrap().revision, 0);
+    assert_eq!(app.frame(&left).unwrap().revision, 0);
+    assert_eq!(app.frame(&left).unwrap().state["count"], 10);
+    assert_eq!(app.frame(&right).unwrap().revision, 0);
+    assert_eq!(app.child_mount(&root, "left").unwrap(), &left);
+    // A subsequent ordinary batch reduces the ancestor cost without replacing
+    // child custody. The same previously rejected input can now commit at 10.
+    app.dispatch(&root, 0, "parent", Value::Null).unwrap();
+    assert_eq!(app.child_mount(&root, "left").unwrap(), &left);
+    app.dispatch(&left, 1, "inc", Value::Null).unwrap();
+    assert_eq!(app.frame(&left).unwrap().state["count"], 11);
+    assert_eq!(app.frame(&left).unwrap().revision, 2);
+    app.retire(&root).unwrap();
+    for mount in app.retiring_mounts() {
+        app.close(&mount, Ok(())).unwrap();
+    }
+    app.shutdown().unwrap();
+}
+
+#[test]
+fn hidden_native_slot_retains_custody_without_consuming_render_depth() {
+    let timer = timer();
+    let (input, packages) = support::composed_fixture(support::CHILD_UPDATE, support::PARENT_EVENT);
+    let native = NativeRegistry::with_surface(PresentationTarget::Desktop)
+        .with_render_depth_limit(10)
+        .with_scene_compiler(
+            support::scene::language(PresentationTarget::Desktop),
+            |source, deadline| {
+                let view = support::scene::compile::<()>(source, deadline)?;
+                if source["key"] == "root" {
+                    let hide = view.slots()[0].props["label"] == "Left 0";
+                    let slots = view
+                        .slots()
+                        .iter()
+                        .map(|slot| (slot.key.clone(), 9))
+                        .collect();
+                    view.with_hidden_slots(if hide {
+                        std::collections::BTreeSet::from(["left".into()])
+                    } else {
+                        Default::default()
+                    })?
+                    .with_render_depth(9, slots)
+                } else {
+                    let depth = if source["children"][1]["text"] == "11" {
+                        2
+                    } else {
+                        1
+                    };
+                    view.with_render_depth(depth, BTreeMap::new())
+                }
+            },
+        )
+        .unwrap();
+    let mut app = Application::new(
+        &input,
+        packages,
+        timer.handle().clone(),
+        maka_js_runtime::plugin::Limits {
+            synchronous_slice: std::time::Duration::from_millis(100),
+            ..Default::default()
+        },
+        native,
+        Default::default(),
+    )
+    .unwrap();
+    let root = app.mount_launch(json!({})).unwrap();
+    let left = app.child_mount(&root, "left").unwrap().clone();
+    // Hidden owners can settle native observations while retaining their state.
+    app.dispatch(&left, 0, "inc", Value::Null).unwrap();
+    assert_eq!(app.frame(&left).unwrap().state["count"], 11);
+    let error = app
+        .dispatch(&root, 0, "parent", Value::Null)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("composed native render depth"));
+    assert_eq!(app.frame(&root).unwrap().revision, 0);
+    assert_eq!(app.frame(&left).unwrap().revision, 1);
+    assert_eq!(app.child_mount(&root, "left").unwrap(), &left);
+    app.retire(&root).unwrap();
+    for mount in app.retiring_mounts() {
+        app.close(&mount, Ok(())).unwrap();
+    }
+    app.shutdown().unwrap();
+}

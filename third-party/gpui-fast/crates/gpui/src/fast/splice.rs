@@ -677,6 +677,8 @@ impl Window {
         dispatch: &mut OpenDispatchCopy,
     ) {
         self.reuse_placement_claims(&range);
+        let hitboxes_start = self.next_frame.hitboxes.len();
+        let parent = self.next_frame.dispatch_tree.active_node_id();
         self.next_frame.hitboxes.extend(
             self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
                 .iter()
@@ -703,6 +705,11 @@ impl Window {
             &mut self.next_frame.dispatch_tree,
             self.focus,
         );
+        for hitbox in &mut self.next_frame.hitboxes[hitboxes_start..] {
+            hitbox.dispatch_node = hitbox
+                .dispatch_node
+                .and_then(|node| dispatch.copied(node).or(parent));
+        }
         if contains_focus {
             self.next_frame.focus = self.focus;
         }

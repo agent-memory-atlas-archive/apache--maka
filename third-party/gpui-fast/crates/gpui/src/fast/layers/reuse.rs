@@ -43,8 +43,9 @@ pub(crate) fn carry_prepaint(
     input.viewport = viewport;
     input.handle_offset.set(delta);
     // The hitboxes are the layer's, lent to the carry while it runs.
-    let hitboxes = std::mem::take(&mut input.hitboxes);
-    let carried = carry_prepaint_records(window, &range, &hitboxes, delta, viewport, !moved, true);
+    let mut hitboxes = std::mem::take(&mut input.hitboxes);
+    let carried =
+        carry_prepaint_records(window, &range, &mut hitboxes, delta, viewport, !moved, true);
     if let Some(layer) = window.fast_layers.layers.get_mut(id) {
         layer.input.hitboxes = hitboxes;
         if let Some(record) = layer.record.as_mut() {
@@ -64,7 +65,7 @@ pub(crate) fn carry_prepaint(
 pub(crate) fn carry_prepaint_records(
     window: &mut Window,
     range: &Range<PrepaintStateIndex>,
-    hitboxes: &[Hitbox],
+    hitboxes: &mut [Hitbox],
     delta: Point<Pixels>,
     viewport: Bounds<Pixels>,
     tooltips: bool,
@@ -99,6 +100,17 @@ pub(crate) fn carry_prepaint_records(
         &mut rendered.dispatch_tree,
         window.focus,
     );
+    for hitbox in &mut next.hitboxes[start.hitboxes_index..] {
+        hitbox.dispatch_node = hitbox
+            .dispatch_node
+            .and_then(|node| subtree.refresh_hitbox_node(node));
+    }
+    // Keep original geometry, but advance cached associations with its ranges.
+    for hitbox in hitboxes {
+        hitbox.dispatch_node = hitbox
+            .dispatch_node
+            .and_then(|node| subtree.refresh_hitbox_node(node));
+    }
     if subtree.contains_focus() {
         next.focus = window.focus;
     }
@@ -219,6 +231,7 @@ pub(crate) fn follow_prepaint(
         return;
     }
     let frame = window.fast_layers.frame;
+    let parent = window.next_frame.dispatch_tree.active_node_id();
     let inside = |range: &Range<PrepaintStateIndex>| {
         let (a, b) = (&range.start, &range.end);
         let (c, d) = (&from.start, &from.end);
@@ -251,8 +264,20 @@ pub(crate) fn follow_prepaint(
         if !current || !layer.rows.list || !inside(&record.prepaint_range) {
             continue;
         }
+        let node = |node: crate::DispatchNodeId| {
+            if (from.start.dispatch_tree_index..from.end.dispatch_tree_index).contains(&node.0) {
+                Some(crate::DispatchNodeId(
+                    node.0 - from.start.dispatch_tree_index + to.dispatch_tree_index,
+                ))
+            } else {
+                parent
+            }
+        };
         record.prepaint_range = shift(&record.prepaint_range);
-        layer.rows.follow_prepaint(&shift);
+        for hitbox in &mut layer.input.hitboxes {
+            hitbox.dispatch_node = hitbox.dispatch_node.and_then(&node);
+        }
+        layer.rows.follow_prepaint(&shift, &node);
         layer.input.prepaint_followed = Some(frame);
     }
 }

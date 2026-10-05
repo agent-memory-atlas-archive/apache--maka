@@ -65,7 +65,7 @@ use std::{
 /// ID of a node within `DispatchTree`. Note that these are **not** stable between frames, and so a
 /// `DispatchNodeId` should only be used with the `DispatchTree` that provided it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub(crate) struct DispatchNodeId(pub(crate) usize);
+pub struct DispatchNodeId(pub(crate) usize);
 
 pub(crate) struct DispatchTree {
     pub(crate) node_stack: Vec<DispatchNodeId>,
@@ -93,6 +93,7 @@ pub(crate) struct ReusedSubtree {
     old_range: Range<usize>,
     new_range: Range<usize>,
     contains_focus: bool,
+    parent: Option<DispatchNodeId>,
 }
 
 impl ReusedSubtree {
@@ -104,6 +105,16 @@ impl ReusedSubtree {
             self.old_range
         );
         DispatchNodeId((node_id.0 - self.old_range.start) + self.new_range.start)
+    }
+
+    pub fn refresh_hitbox_node(&self, node: DispatchNodeId) -> Option<DispatchNodeId> {
+        if self.old_range.contains(&node.0) {
+            Some(self.refresh_node_id(node))
+        } else {
+            // A deferred Positioner may insert its occluding hitbox on the
+            // enclosing dispatch node, outside the replayed child range.
+            self.parent
+        }
     }
 
     pub fn contains_focus(&self) -> bool {
@@ -248,6 +259,7 @@ impl DispatchTree {
         source: &mut Self,
         focus: Option<FocusId>,
     ) -> ReusedSubtree {
+        let parent = self.active_node_id();
         let new_range = self.nodes.len()..self.nodes.len() + old_range.len();
 
         let contains_focus =
@@ -257,6 +269,7 @@ impl DispatchTree {
             old_range,
             new_range,
             contains_focus,
+            parent,
         }
     }
 
@@ -294,6 +307,20 @@ impl DispatchTree {
                 action_type,
                 listener,
             });
+    }
+
+    pub fn focus_contains_node(&self, parent: FocusId, child: DispatchNodeId) -> bool {
+        let Some(parent) = self.focusable_node_ids.get(&parent) else {
+            return false;
+        };
+        let mut node = Some(child);
+        while let Some(current) = node {
+            if current == *parent {
+                return true;
+            }
+            node = self.nodes.get(current.0).and_then(|node| node.parent);
+        }
+        false
     }
 
     pub fn focus_contains(&self, parent: FocusId, child: FocusId) -> bool {

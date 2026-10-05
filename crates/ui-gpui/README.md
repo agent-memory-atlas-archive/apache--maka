@@ -101,3 +101,30 @@ Desktop invalidates mechanical admission before the next paint and rejects retai
 child renders; TUI applies geometry admission only after a successful flush.
 Custom native layouts use the same public Slots boundary and cannot paint a hidden
 child. This projection does not retire resources or create a second writable draft.
+
+`Popup` is an anchored, nonmodal scene node with `trigger`, `content`, `open`,
+`label`, `anchor`, `offset` and `style`. Only the trigger occupies normal layout;
+style applies to floating content, bounded by the actual window frame and margin.
+Oversized border/padding adapts to its effective dimensions, preserving at least
+half of each inner axis for scrollable content.
+Content uses its original scroll/focus owner. Both branches declare their slots
+permanently; closing hides content without retiring its drafts or workflows.
+Escape and outside pointer input emit `{kind: "dismiss", reason: "escape" | "outside"}`
+to the popup key. The plugin commits open state and chooses input decisions;
+rejected batches never close a native popup independently. Trigger clicks remain
+ordinary input. Deferred descendants use original hit-test dispatch ancestry,
+including retained caches and slots, so they do not count as outside the parent.
+Each opening fences old listeners. Closing restores an available weak previous
+focus after the full presentation pass, unless another control has taken focus.
+Creating hidden scene owners never takes focus.
+If a page hides its focused control while the popup stays open, the existing
+native focus-lost path restores the nearest surviving scope, keeping Escape usable.
+
+The embedding declares GPUI's actual deferred-depth bound through
+`NativeRegistry::with_render_depth_limit`. Scenes report local depth and the
+cost enclosing each slot with `NativeView::with_render_depth`; native factories
+must account for their own deferred surfaces too (the editor reserves its menu).
+The shared kernel validates whole proposed visible paths before committing,
+including unchanged ancestors and child-only updates. Hidden slots retain custody
+without consuming drawing depth. This is renderer metadata, not a kernel layout
+vocabulary or plugin-writable budget.

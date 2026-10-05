@@ -620,3 +620,118 @@ fn native_recipe_replacement_clears_focus_before_old_scene_listeners_release(
     drop(snapshot);
     scene.close(cx);
 }
+
+#[gpui::test]
+fn newly_created_hidden_popup_slots_cannot_steal_the_original_composer_focus(
+    cx: &mut TestAppContext,
+) {
+    let timer = timer();
+    let (mut input, mut packages) = support::editor_fixture();
+    for (id, suffix) in [
+        (
+            "dynamic.app",
+            r#"
+        const originalFrame=frame;frame=(state)=>{const out=originalFrame(state);
+        if(state.version>0)out.frame.view.children.push({kind:'stack',key:'hidden-popups',visible:false,direction:'column',gap:0,padding:0,background:0,
+            children:['a','b'].map(key=>({kind:'component',key:'hidden-'+key,binding:'counter',member:0,props:{label:'Hidden '+key,initial:0},on:{}}))});
+        return out;};"#,
+        ),
+        (
+            "dynamic.counter",
+            r#"
+        const originalFrame=frame;frame=(state)=>{const out=originalFrame(state);
+        if(state.label.startsWith('Hidden'))out.frame.view={kind:'popup',key:'popup',label:state.label,open:true,
+            trigger:{kind:'text',key:'trigger',text:'Open',color:0},content:{kind:'button',key:'inc',label:'Hidden action'}};
+        return out;};"#,
+        ),
+    ] {
+        let index = packages
+            .iter()
+            .position(|package| package.manifest().id == id)
+            .unwrap();
+        let old = packages.remove(index);
+        let source = format!(
+            "{}\n{suffix}",
+            std::str::from_utf8(old.file("index.mjs").unwrap()).unwrap()
+        );
+        let package = support::package(
+            id,
+            old.manifest().application.clone().unwrap(),
+            Some(source),
+        );
+        for node in input.instances.values_mut() {
+            if node.package == old.application_ref().into() {
+                node.package = package.application_ref().into();
+            }
+        }
+        packages.push(package);
+    }
+    let scene = Scene::from_packages(cx, &timer, false, (input, packages));
+    scene.draw(cx);
+    let owner = scene.owner();
+    let original = cx
+        .update_window(scene.window, |_, window, cx| {
+            owner.update(cx, |owner, cx| {
+                let focus = owner.state.read(cx).presentation().focus_handle().clone();
+                focus.focus(window, cx);
+                owner.replace_text_in_range(Some(0..5), "原始草稿 · A🙂é", window, cx);
+                focus
+            })
+        })
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(scene.window, |_, window, cx| {
+        let revision = scene.app.borrow().frame(&scene.root).unwrap().revision;
+        scene
+            .app
+            .borrow_mut()
+            .dispatch(&scene.root, revision, "parent", Value::Null)
+            .unwrap();
+        scene
+            .surface
+            .update(cx, |surface, cx| surface.sync_native(window, cx).unwrap());
+        assert!(
+            original.is_focused(window),
+            "allocating two hidden popup owners must not move native focus"
+        );
+        assert_eq!(
+            scene.owner(),
+            owner,
+            "original native editor custody is retained"
+        );
+        assert_eq!(
+            owner.read(cx).state.read(cx).value().as_ref(),
+            "原始草稿 · A🙂é"
+        );
+        for key in ["hidden-a", "hidden-b"] {
+            let mount = scene
+                .app
+                .borrow()
+                .child_mount(&scene.root, key)
+                .unwrap()
+                .clone();
+            let resources = scene.resources.borrow();
+            let native = &resources.owners[&mount.id().to_string()];
+            assert!(!native.visible);
+            assert_eq!(native.revision, Some(0));
+            assert!(
+                scene
+                    .app
+                    .borrow()
+                    .frame(&mount)
+                    .unwrap()
+                    .view
+                    .visible_slots()
+                    .count()
+                    == 0
+            );
+        }
+    })
+    .unwrap();
+    scene.draw(cx);
+    cx.update_window(scene.window, |_, window, _| {
+        assert!(original.is_focused(window))
+    })
+    .unwrap();
+    scene.close(cx);
+}

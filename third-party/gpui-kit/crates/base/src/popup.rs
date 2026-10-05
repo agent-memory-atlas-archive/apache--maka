@@ -38,6 +38,12 @@ pub struct Popup {
 }
 
 impl Popup {
+    /// Maximum content size inside the same frame and margin used to position
+    /// this popup. The caller constrains its original scrollable surface.
+    pub fn available_size(window: &Window) -> gpui::Size<Pixels> {
+        Positioner::available_size(window, WINDOW_MARGIN)
+    }
+
     pub fn new(id: impl Into<ElementId>, trigger: impl IntoElement) -> Self {
         let id = id.into();
         Self {

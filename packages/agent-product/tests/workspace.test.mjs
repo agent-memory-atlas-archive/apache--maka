@@ -2093,7 +2093,8 @@ for (const [target, module] of defaultModules) {
 }
 function modelSlots(node, result = []) {
   if (node.kind === 'component') result.push(node);
-  for (const child of node.children ?? []) modelSlots(child, result);
+  for (const child of [...(node.children ?? []), node.trigger, node.content].filter(Boolean))
+    modelSlots(child, result);
   return result;
 }
 for (const target of ['desktop', 'tui']) {
@@ -2173,3 +2174,32 @@ for (const target of ['desktop', 'tui']) {
     },
   );
 }
+
+test('desktop model popup dismissal preserves the retained default workflow and only Escape consumes its native input', async () => {
+  const module = await import(pathToFileURL(resolve(root, 'dist/packages/models/desktop.js')));
+  const form = new FormClient(module.component, {
+    ...modelProps,
+    busy: false,
+    selection: defaultChoice,
+  });
+  form.raw('toggle');
+  form.raw('defaults');
+  const popup = form.output.frame.view;
+  assert.equal(popup.kind, 'popup');
+  assert.equal(popup.open, true);
+  const child = modelSlots(popup).find((node) => node.binding === 'defaults');
+  form.input({ kind: 'raw', key: 'model-popup', event: { kind: 'dismiss', reason: 'escape' } });
+  assert.equal(form.state.open, false);
+  assert.equal(form.state.defaultsOpen, true);
+  assert.deepEqual(form.output.decision, { preventDefault: true, stopPropagation: true });
+  assert.deepEqual(
+    modelSlots(form.output.frame.view).find((node) => node.binding === 'defaults'),
+    child,
+  );
+  form.raw('toggle');
+  form.input({ kind: 'raw', key: 'model-popup', event: { kind: 'dismiss', reason: 'outside' } });
+  assert.equal(form.state.open, false);
+  assert.equal(form.output.decision, undefined);
+  assert.equal(form.state.defaultsOpen, true);
+  assert.equal(form.output.actions.length, 0);
+});

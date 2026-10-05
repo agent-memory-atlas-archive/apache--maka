@@ -247,3 +247,10 @@ capture 能力与 command receipt 继续由同一 owner 持有并结算。显示
 恢复当前 props。Desktop 在下次 paint 前失效机械输入准入，并拒绝保留的子组件 render；
 TUI 仅在成功 flush 后切换几何准入。自定义原生布局也通过公共 Slots 边界执行隐藏规则。
 这一投影不退役资源，也不增加第二份可写草稿。
+
+Embedding 可通过 `NativeRegistry::with_render_depth_limit` 约束原生绘制嵌套。
+Scene compiler 和受信原生工厂使用 `NativeView::with_render_depth` 报告本地最大
+成本及各 slot 的外围成本。事务在发布和原生副作用之前，合并 staged frame 与
+保留的祖先/子节点，检查整棵拟提交可见 surface 路径。隐藏 slot 仍挂载并结算
+观察，但不消耗绘制深度；拒绝保留原 frame、mount 和资源 custody。数字仅描述
+renderer 工作，内核不解释布局，也不允许 guest 决定配额。

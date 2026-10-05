@@ -124,8 +124,10 @@ fn harness(cx: &mut TestAppContext, move_rule: bool) -> TestHarness {
         .unwrap()
         .view;
         let live = LiveInput(Rc::new(RefCell::new(Some(dispatcher.clone()))));
+        let mut state = recipe.create(live.clone(), window, cx);
+        recipe.presentation(state.as_mut(), true, window, cx);
         Harness {
-            state: recipe.create(live.clone(), window, cx),
+            state,
             recipe,
             slots: Slots::new(vec![], dispatcher, |_, _, _| {
                 Err(maka_ui::Error::Invalid("no slots".into()))

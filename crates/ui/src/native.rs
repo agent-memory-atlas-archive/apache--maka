@@ -40,6 +40,8 @@ pub struct NativeView<V: ?Sized> {
     slots: Rc<Vec<ComponentSlot>>,
     hidden_slots: Rc<BTreeSet<String>>,
     inputs: Rc<BTreeMap<String, jsonschema::Validator>>,
+    pub(crate) render_depth: u16,
+    pub(crate) slot_render_depth: Rc<BTreeMap<String, u16>>,
     declaration: Option<Rc<Value>>,
 }
 impl<V: ?Sized> NativeView<V> {
@@ -79,6 +81,8 @@ impl<V: ?Sized> NativeView<V> {
             slots: Rc::new(slots),
             hidden_slots: Rc::new(BTreeSet::new()),
             inputs: Rc::new(inputs),
+            render_depth: 0,
+            slot_render_depth: Rc::new(BTreeMap::new()),
             declaration: None,
         })
     }
@@ -108,6 +112,21 @@ impl<V: ?Sized> NativeView<V> {
         super::tree::check_call_bytes(&self.metadata())?;
         Ok(self)
     }
+    /// Renderer-derived nesting cost, independent of business state. `depth`
+    /// is the maximum local cost; each slot records its enclosing local cost.
+    /// The application checks complete visible paths before committing a batch.
+    pub fn with_render_depth(mut self, depth: u16, slots: BTreeMap<String, u16>) -> Result<Self> {
+        if slots
+            .iter()
+            .any(|(key, cost)| *cost > depth || !self.slots.iter().any(|slot| &slot.key == key))
+        {
+            return Err(Error::Invalid("invalid native render depth".into()));
+        }
+        self.render_depth = depth;
+        self.slot_render_depth = Rc::new(slots);
+        super::tree::check_call_bytes(&self.metadata())?;
+        Ok(self)
+    }
     pub fn visible_slots(&self) -> impl Iterator<Item = &ComponentSlot> {
         self.slots
             .iter()
@@ -119,6 +138,8 @@ impl<V: ?Sized> NativeView<V> {
             &*self.slots,
             &*self.hidden_slots,
             self.declaration.as_deref(),
+            self.render_depth,
+            &*self.slot_render_depth,
         )
     }
     pub(crate) fn validate_input(&self, key: &str, input: &Value) -> Result<()> {
@@ -138,6 +159,8 @@ impl<V: ?Sized> Clone for NativeView<V> {
             slots: self.slots.clone(),
             hidden_slots: self.hidden_slots.clone(),
             inputs: self.inputs.clone(),
+            render_depth: self.render_depth,
+            slot_render_depth: self.slot_render_depth.clone(),
             declaration: self.declaration.clone(),
         }
     }
@@ -203,12 +226,14 @@ pub(crate) struct SceneCompiler<V: ?Sized> {
 /// this map does not register capabilities or automatically activate products.
 pub struct NativeRegistry<V: ?Sized> {
     factories: BTreeMap<String, Box<Factory<V>>>,
+    pub(crate) render_depth_limit: Option<u16>,
     pub(crate) scene_compiler: Option<Rc<SceneCompiler<V>>>,
 }
 impl<V: ?Sized + 'static> Default for NativeRegistry<V> {
     fn default() -> Self {
         Self {
             factories: BTreeMap::new(),
+            render_depth_limit: None,
             scene_compiler: None,
         }
     }
@@ -228,6 +253,12 @@ impl<V: ?Sized + 'static> NativeRegistry<V> {
             compile: Box::new(compiler),
         }));
         Ok(self)
+    }
+    /// Embedding policy for nesting native render work. Scene compilers and
+    /// compiled components report local costs; composition can only consume it.
+    pub fn with_render_depth_limit(mut self, limit: u16) -> Self {
+        self.render_depth_limit = Some(limit);
+        self
     }
     pub fn register(
         &mut self,

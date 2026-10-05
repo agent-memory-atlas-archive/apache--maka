@@ -20,8 +20,9 @@
 use super::*;
 use crate::{Input, LiveInput, Slots, Widget};
 use gpui_kit::{
-    AccessibleAction, AnyWindowHandle, AppContext, Context, Entity, IntoElement, Modifiers, Render,
-    Role, TestAppContext, VisualTestContext, accesskit, point, px,
+    AccessibleAction, AnyWindowHandle, AppContext, Context, Entity, InteractiveElement,
+    IntoElement, Modifiers, ParentElement, Render, Role, Styled, TestAppContext, VisualTestContext,
+    accesskit, point, px,
 };
 use std::{
     any::Any,
@@ -81,8 +82,10 @@ fn harness(cx: &mut TestAppContext) -> (Entity<Harness>, AnyWindowHandle, Rc<Cel
         .unwrap()
         .view;
         let live = LiveInput(Rc::new(RefCell::new(Some(input.clone()))));
+        let mut state = recipe.create(live, window, cx);
+        recipe.presentation(state.as_mut(), true, window, cx);
         Harness {
-            state: recipe.create(live, window, cx),
+            state,
             recipe,
             slots: Slots::new(vec![], input, |_, _, _| {
                 Err(maka_ui::Error::Invalid("unknown slot".into()))
@@ -304,7 +307,8 @@ fn scene_slot_render_errors_are_returned_before_publication(cx: &mut TestAppCont
     let recipe=compile(&json!({"kind":"component","key":"missing","binding":"child","member":0,"props":{},"on":{}}),Instant::now()+std::time::Duration::from_secs(1)).unwrap().view;
     cx.update_window(window, |_, w, cx| {
         let input = Input(Rc::new(|_, _, _, _| Ok(Default::default())));
-        let state = recipe.create(LiveInput(Rc::new(RefCell::new(Some(input.clone())))), w, cx);
+        let mut state = recipe.create(LiveInput(Rc::new(RefCell::new(Some(input.clone())))), w, cx);
+        recipe.presentation(state.as_mut(), true, w, cx);
         let slots = Slots::new(vec!["missing".into()], input, |_, _, _| {
             Err(maka_ui::Error::Invalid("detached exact child".into()))
         });
@@ -494,4 +498,603 @@ fn retained_presentation_hides_scene_controls_before_paint_and_restores_original
         .simulate_click(point(px(10.), px(10.)), Modifiers::default());
     assert_eq!(clicks.get(), 3);
     cx.update(|cx| assert_eq!(entity.read(cx).state().buttons["action"].focus, focus));
+}
+
+fn popup_source(open: bool) -> Value {
+    json!({"kind":"stack","key":"root","direction":"column","gap":0,"padding":0,"background":0xffffff,"children":[
+        {"kind":"stack","key":"header","direction":"row","gap":0,"padding":0,"background":0xffffff,"children":[
+            {"kind":"popup","key":"overlay","label":"Models","open":open,"anchor":"top_left","offset":8,
+             "style":{"width":{"unit":"pixels","value":360},"maxHeight":140,"background":0xffeeccffu32},
+             "trigger":{"kind":"button","key":"toggle","label":"Choose","style":{"width":{"unit":"pixels","value":100},"height":{"unit":"pixels","value":40}}},
+             "content":{"kind":"button","key":"choice","label":"Choice","style":{"width":{"unit":"pixels","value":100},"height":{"unit":"pixels","value":40},"shrink":0}}}
+        ]},
+        {"kind":"button","key":"covered","label":"Covered","style":{"width":{"unit":"pixels","value":100},"height":{"unit":"pixels","value":40}}},
+        {"kind":"button","key":"composer","label":"Composer","style":{"width":{"unit":"pixels","value":100},"height":{"unit":"pixels","value":40}}}
+    ]})
+}
+type PopupEvents = Rc<RefCell<Vec<(String, Value)>>>;
+fn popup_harness(
+    cx: &mut TestAppContext,
+) -> (
+    Entity<Harness>,
+    AnyWindowHandle,
+    PopupEvents,
+    Rc<Cell<bool>>,
+) {
+    let events = Rc::new(RefCell::new(vec![]));
+    let observed = events.clone();
+    let accept = Rc::new(Cell::new(true));
+    let accepted = accept.clone();
+    let scene = Rc::new(RefCell::new(popup_source(false)));
+    let source = scene.clone();
+    let owner: Rc<RefCell<Option<gpui_kit::WeakEntity<Harness>>>> = Rc::new(RefCell::new(None));
+    let route = owner.clone();
+    let input = Input(Rc::new(move |key, value, window, cx| {
+        observed.borrow_mut().push((key.to_owned(), value.clone()));
+        if !accepted.get() {
+            return Err(maka_ui::Error::Invalid("reject original batch".into()));
+        }
+        if key == "toggle" || key == "overlay" {
+            let mut scene = source.borrow_mut();
+            let open = &mut scene["children"][0]["children"][0]["open"];
+            *open = if key == "toggle" {
+                json!(!open.as_bool().unwrap())
+            } else {
+                json!(false)
+            };
+            let next = scene.clone();
+            route
+                .borrow()
+                .as_ref()
+                .unwrap()
+                .update(cx, |h, cx| h.replace(next, window, cx))
+                .unwrap();
+        }
+        Ok(maka_ui::InputDecision {
+            prevent_default: value["kind"] == "dismiss" && value["reason"] == "escape",
+            stop_propagation: value["kind"] == "dismiss" && value["reason"] == "escape",
+        })
+    }));
+    let (entity, _) = cx.add_window_view(move |window, cx| {
+        let recipe = compile(
+            &scene.borrow(),
+            Instant::now() + std::time::Duration::from_secs(1),
+        )
+        .unwrap()
+        .view;
+        let mut state = recipe.create(
+            LiveInput(Rc::new(RefCell::new(Some(input.clone())))),
+            window,
+            cx,
+        );
+        recipe.presentation(state.as_mut(), true, window, cx);
+        Harness {
+            state,
+            recipe,
+            slots: Slots::new(vec![], input, |_, _, _| {
+                Err(maka_ui::Error::Invalid("unknown slot".into()))
+            }),
+        }
+    });
+    *owner.borrow_mut() = Some(entity.downgrade());
+    let window = cx.windows()[0];
+    cx.activate_accessibility(window);
+    draw(cx, window);
+    (entity, window, events, accept)
+}
+fn ax_bounds(cx: &mut TestAppContext, window: AnyWindowHandle, label: &str) -> accesskit::Rect {
+    cx.accessibility_update(window)
+        .unwrap()
+        .nodes
+        .iter()
+        .find(|(_, node)| node.label() == Some(label))
+        .unwrap()
+        .1
+        .bounds()
+        .unwrap()
+}
+#[gpui::test]
+fn popup_overlay_keeps_composer_geometry_and_trigger_toggle_is_one_committed_input(
+    cx: &mut TestAppContext,
+) {
+    let (entity, window, events, _) = popup_harness(cx);
+    let closed = ax_bounds(cx, window, "Composer");
+    VisualTestContext::from_window(window, cx)
+        .simulate_click(point(px(10.), px(10.)), Modifiers::default());
+    draw(cx, window);
+    draw(cx, window);
+    assert_eq!(
+        ax_bounds(cx, window, "Composer"),
+        closed,
+        "floating content adds no header height"
+    );
+    assert!(cx.update(|cx| entity.read(cx).state().popups["overlay"].admitted()));
+    VisualTestContext::from_window(window, cx)
+        .simulate_click(point(px(10.), px(10.)), Modifiers::default());
+    draw(cx, window);
+    assert!(!cx.update(|cx| entity.read(cx).state().popups["overlay"].admitted()));
+    assert_eq!(
+        events
+            .borrow()
+            .iter()
+            .map(|(key, _)| key.as_str())
+            .collect::<Vec<_>>(),
+        ["toggle", "toggle"]
+    );
+}
+#[gpui::test]
+fn popup_occludes_covered_control_and_outside_click_keeps_its_original_action(
+    cx: &mut TestAppContext,
+) {
+    let (_, window, events, _) = popup_harness(cx);
+    VisualTestContext::from_window(window, cx)
+        .simulate_click(point(px(10.), px(10.)), Modifiers::default());
+    draw(cx, window);
+    draw(cx, window);
+    VisualTestContext::from_window(window, cx)
+        .simulate_click(point(px(10.), px(60.)), Modifiers::default());
+    assert_eq!(
+        events
+            .borrow()
+            .iter()
+            .map(|(key, _)| key.as_str())
+            .collect::<Vec<_>>(),
+        ["toggle", "choice"]
+    );
+    // The composer begins at y=80 and lies outside the 40px-high floating body.
+    VisualTestContext::from_window(window, cx)
+        .simulate_click(point(px(10.), px(100.)), Modifiers::default());
+    assert_eq!(
+        events
+            .borrow()
+            .iter()
+            .map(|(key, _)| key.as_str())
+            .collect::<Vec<_>>(),
+        ["toggle", "choice", "overlay", "composer"]
+    );
+    assert_eq!(
+        events.borrow()[2].1,
+        json!({"kind":"dismiss","reason":"outside"})
+    );
+}
+#[gpui::test]
+fn popup_rejected_escape_keeps_committed_open_and_close_restores_original_focus(
+    cx: &mut TestAppContext,
+) {
+    let (entity, window, events, accept) = popup_harness(cx);
+    VisualTestContext::from_window(window, cx)
+        .simulate_click(point(px(10.), px(10.)), Modifiers::default());
+    draw(cx, window);
+    draw(cx, window);
+    let opening_focus = cx
+        .update_window(window, |_, window, cx| window.focused(cx).unwrap())
+        .unwrap();
+    accept.set(false);
+    cx.simulate_keystrokes(window, "escape");
+    assert!(cx.update(|cx| entity.read(cx).state().popups["overlay"].admitted()));
+    cx.update_window(window, |_, window, _| {
+        assert!(opening_focus.is_focused(window))
+    })
+    .unwrap();
+    accept.set(true);
+    cx.simulate_keystrokes(window, "escape");
+    cx.run_until_parked();
+    assert!(!cx.update(|cx| entity.read(cx).state().popups["overlay"].admitted()));
+    cx.update_window(window, |_, window, cx| {
+        assert!(
+            entity.read(cx).state().buttons["toggle"]
+                .focus
+                .is_focused(window)
+        )
+    })
+    .unwrap();
+    assert_eq!(
+        events.borrow().last().unwrap().1,
+        json!({"kind":"dismiss","reason":"escape"})
+    );
+}
+#[gpui::test]
+fn popup_page_replacement_restores_native_focus_and_escape_after_the_focused_button_hides(
+    cx: &mut TestAppContext,
+) {
+    popup_page_replacement(cx, true);
+}
+#[gpui::test]
+fn popup_page_replacement_before_the_pressed_button_paints_preserves_escape(
+    cx: &mut TestAppContext,
+) {
+    popup_page_replacement(cx, false);
+}
+fn popup_page_replacement(cx: &mut TestAppContext, paint_pressed_button: bool) {
+    let (entity, window, events, _) = popup_harness(cx);
+    let mut source = popup_source(true);
+    replace(cx, window, &entity, source.clone());
+    draw(cx, window);
+    draw(cx, window);
+    let scope = cx
+        .update_window(window, |_, window, cx| window.focused(cx).unwrap())
+        .unwrap();
+    cx.with_paused_automatic_drawing(|cx| {
+        cx.update_window(window, |_, window, cx| {
+            let focus = entity.read(cx).state().buttons["choice"].focus.clone();
+            focus.focus(window, cx);
+        })
+        .unwrap();
+        if paint_pressed_button { draw(cx, window); }
+        source["children"][0]["children"][0]["content"] = json!({
+            "kind":"stack","key":"page","direction":"column","gap":0,"padding":0,"background":0xffffff,"children":[
+                {"kind":"stack","key":"first-page","direction":"column","gap":0,"padding":0,"background":0xffffff,"visible":false,"children":[{"kind":"button","key":"choice","label":"Choice"}]},
+                {"kind":"button","key":"next-page","label":"Next page"}
+            ]
+        });
+        replace(cx, window, &entity, source);
+    });
+    draw(cx, window);
+    cx.run_until_parked();
+    assert!(
+        cx.update_window(window, |_, window, _| scope.is_focused(window))
+            .unwrap(),
+        "the still-open original popup remains a keyboard scope"
+    );
+    cx.simulate_keystrokes(window, "escape");
+    assert_eq!(
+        events.borrow().last().unwrap().1,
+        json!({"kind":"dismiss","reason":"escape"})
+    );
+    assert!(!cx.update(|cx| entity.read(cx).state().popups["overlay"].admitted()));
+}
+#[gpui::test]
+fn popup_content_fits_a_viewport_smaller_than_its_declared_style(cx: &mut TestAppContext) {
+    let (entity, window, events, _) = popup_harness(cx);
+    cx.simulate_window_resize(window, gpui_kit::size(px(220.), px(110.)));
+    draw(cx, window);
+    let closed_composer = ax_bounds(cx, window, "Composer");
+    let mut source = popup_source(true);
+    source["children"][0]["children"][0]["content"] = json!({
+        "kind":"stack","key":"long-content","direction":"column","gap":0,"padding":0,"background":0xffeecc,
+        "style":{"height":{"unit":"pixels","value":600},"shrink":0},
+        "children":[
+            {"kind":"button","key":"first-choice","label":"First choice","style":{"height":{"unit":"pixels","value":40},"shrink":0}},
+            {"kind":"stack","key":"spacer","direction":"column","gap":0,"padding":0,"background":0xffeecc,"children":[],"style":{"height":{"unit":"pixels","value":520},"shrink":0}},
+            {"kind":"button","key":"last-choice","label":"Last choice","style":{"height":{"unit":"pixels","value":40},"shrink":0}}
+        ]
+    });
+    replace(cx, window, &entity, source.clone());
+    draw(cx, window);
+    draw(cx, window);
+    let body = ax_bounds(cx, window, "Models");
+    let trigger = ax_bounds(cx, window, "Choose");
+    let scale = (trigger.x1 - trigger.x0) / 100.;
+    assert!(body.x0 >= 8. * scale && body.x1 <= 212. * scale, "{body:?}");
+    assert!(body.y0 >= 8. * scale && body.y1 <= 102. * scale, "{body:?}");
+    assert!(body.y1 - body.y0 <= 94. * scale);
+    assert_eq!(ax_bounds(cx, window, "Composer"), closed_composer);
+    source["children"][0]["children"][0]["style"]["padding"] =
+        json!({"top":128,"right":128,"bottom":128,"left":128});
+    source["children"][0]["children"][0]["style"]["borderWidth"] = json!(8);
+    for explicit_small_size in [false, true] {
+        if explicit_small_size {
+            source["children"][0]["children"][0]["style"]["width"] =
+                json!({"unit":"pixels","value":80});
+            source["children"][0]["children"][0]["style"]["height"] =
+                json!({"unit":"pixels","value":40});
+        }
+        replace(cx, window, &entity, source.clone());
+        draw(cx, window);
+        draw(cx, window);
+        let body = ax_bounds(cx, window, "Models");
+        assert!(
+            body.x0 >= 8. * scale
+                && body.x1 <= 212. * scale
+                && body.y0 >= 8. * scale
+                && body.y1 <= 102. * scale,
+            "valid padding/border must also fit: {body:?}"
+        );
+        let scroll_point = point(
+            px(((body.x0 + body.x1) / (2. * scale)) as f32),
+            px(((body.y0 + body.y1) / (2. * scale)) as f32),
+        );
+        cx.update_window(window, |_, window, cx| {
+            window.dispatch_event(
+                gpui_kit::PlatformInput::ScrollWheel(gpui_kit::ScrollWheelEvent {
+                    position: scroll_point,
+                    delta: gpui_kit::ScrollDelta::Pixels(point(px(0.), px(1000.))),
+                    modifiers: Modifiers::default(),
+                    touch_phase: gpui_kit::TouchPhase::Moved,
+                }),
+                cx,
+            );
+        })
+        .unwrap();
+        draw(cx, window);
+        let first = ax_bounds(cx, window, "First choice");
+        let visible_y = first.y1.min(body.y1 - 8. * scale);
+        assert!(
+            visible_y > first.y0,
+            "original content viewport remains visible"
+        );
+        let click = point(
+            px(((first.x0 + first.x1) / (2. * scale)) as f32),
+            px(((first.y0 + visible_y) / (2. * scale)) as f32),
+        );
+        VisualTestContext::from_window(window, cx).simulate_click(click, Modifiers::default());
+        assert_eq!(events.borrow().last().unwrap().0, "first-choice");
+        cx.update_window(window, |_, window, cx| {
+            window.dispatch_event(
+                gpui_kit::PlatformInput::ScrollWheel(gpui_kit::ScrollWheelEvent {
+                    position: click,
+                    delta: gpui_kit::ScrollDelta::Pixels(point(px(0.), px(-1000.))),
+                    modifiers: Modifiers::default(),
+                    touch_phase: gpui_kit::TouchPhase::Moved,
+                }),
+                cx,
+            );
+        })
+        .unwrap();
+        draw(cx, window);
+        let last = ax_bounds(cx, window, "Last choice");
+        let visible_y = last.y0.max(body.y0 + 8. * scale);
+        assert!(
+            last.y1.min(body.y1 - 8. * scale) > visible_y,
+            "last item scrolls into its original viewport: {last:?}, {body:?}"
+        );
+        let click = point(
+            px(((last.x0 + last.x1) / (2. * scale)) as f32),
+            px(((visible_y + last.y1.min(body.y1 - 8. * scale)) / (2. * scale)) as f32),
+        );
+        VisualTestContext::from_window(window, cx).simulate_click(click, Modifiers::default());
+        assert_eq!(events.borrow().last().unwrap().0, "last-choice");
+    }
+}
+#[test]
+fn popup_compiler_preserves_hidden_slots_and_bounds_all_branches_and_deferred_depth() {
+    let mut source = popup_source(false);
+    let content = &mut source["children"][0]["children"][0]["content"];
+    *content = json!({"kind":"component","key":"native-editor","binding":"editor","member":0,"props":{},"on":{}});
+    let compiled = compile(&source, Instant::now() + std::time::Duration::from_secs(1)).unwrap();
+    assert_eq!(compiled.slots().len(), 1);
+    assert_eq!(compiled.visible_slots().count(), 0);
+    for level in 0..11 {
+        source = json!({"kind":"popup","key":format!("popup-{level}"),"label":"Nested","open":true,"trigger":{"kind":"text","key":format!("trigger-{level}"),"text":"Open","color":0},"content":source});
+    }
+    assert!(
+        compile(&source, Instant::now() + std::time::Duration::from_secs(1))
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("render depth")
+    );
+    source["open"] = json!(false);
+    assert!(
+        compile(&source, Instant::now() + std::time::Duration::from_secs(1)).is_ok(),
+        "closed content is retained without native deferred work"
+    );
+    source["trigger"]["style"] = json!({"maxWidth":1e300});
+    assert!(
+        compile(&source, Instant::now() + std::time::Duration::from_secs(1)).is_err(),
+        "even hidden/trigger branches retain source validation"
+    );
+}
+
+#[gpui::test]
+fn popup_nested_pointer_scope_and_inner_close_restore_the_original_outer_group(
+    cx: &mut TestAppContext,
+) {
+    let (entity, window, events, _) = popup_harness(cx);
+    let mut source = popup_source(true);
+    let outer = &mut source["children"][0]["children"][0];
+    outer["style"]["width"] = json!({"unit":"pixels","value":140});
+    outer["content"] = json!({"kind":"popup","key":"inner","label":"Inner models","open":true,"anchor":"top_left","offset":8,
+        "style":{"width":{"unit":"pixels","value":180},"maxHeight":140,"background":0xccffffffu32},
+        "trigger":{"kind":"button","key":"inner-trigger","label":"Nested","style":{"width":{"unit":"pixels","value":100},"height":{"unit":"pixels","value":40}}},
+        "content":{"kind":"button","key":"inner-choice","label":"Inner choice","style":{"width":{"unit":"pixels","value":100},"height":{"unit":"pixels","value":40}}}});
+    replace(cx, window, &entity, source.clone());
+    draw(cx, window);
+    draw(cx, window);
+    draw(cx, window);
+    let outer_focus = cx
+        .update_window(window, |_, w, cx| {
+            let inner = w.focused(cx).unwrap();
+            assert!(inner.tab_stop);
+            entity.read(cx).state().buttons["inner-trigger"]
+                .focus
+                .clone()
+        })
+        .unwrap();
+    // A deferred child is outside its parent's physical body rectangle, but is
+    // still inside that parent's original native input subtree.
+    VisualTestContext::from_window(window, cx)
+        .simulate_click(point(px(10.), px(110.)), Modifiers::default());
+    assert_eq!(
+        events
+            .borrow()
+            .iter()
+            .map(|(key, _)| key.as_str())
+            .collect::<Vec<_>>(),
+        ["inner-choice"]
+    );
+    cx.simulate_keystrokes(window, "escape");
+    assert_eq!(events.borrow().last().unwrap().0, "inner");
+    source["children"][0]["children"][0]["content"]["open"] = json!(false);
+    replace(cx, window, &entity, source);
+    cx.run_until_parked();
+    // The inner opened in the same batch as the outer, before a first frame.
+    // Its predecessor is the original outer group, an active native focus stop.
+    cx.update_window(window, |_, w, cx| {
+        let current = w.focused(cx).unwrap();
+        assert_ne!(current, outer_focus);
+        assert!(current.tab_stop);
+    })
+    .unwrap();
+    draw(cx, window);
+    cx.simulate_keystrokes(window, "escape");
+    assert_eq!(events.borrow().last().unwrap().0, "overlay");
+    assert!(!cx.update(|cx| entity.read(cx).state().popups["overlay"].admitted()));
+}
+
+#[gpui::test]
+fn popup_reopen_and_hidden_retirement_reject_old_native_callbacks_before_repaint(
+    cx: &mut TestAppContext,
+) {
+    let (entity, window, events, _) = popup_harness(cx);
+    VisualTestContext::from_window(window, cx)
+        .simulate_click(point(px(10.), px(10.)), Modifiers::default());
+    draw(cx, window);
+    draw(cx, window);
+    cx.with_paused_automatic_drawing(|cx| {
+        replace(cx, window, &entity, popup_source(false));
+        replace(cx, window, &entity, popup_source(true));
+        // Key dispatch synchronously redraws dirty GPUI windows. Pointer
+        // capture instead exercises the actual retained old opening listener.
+        VisualTestContext::from_window(window, cx)
+            .simulate_click(point(px(10.), px(100.)), Modifiers::default());
+        assert_eq!(
+            events
+                .borrow()
+                .iter()
+                .filter(|(key, _)| key == "overlay")
+                .count(),
+            0,
+            "old opening occurrence cannot dismiss a reopened popup"
+        );
+        assert!(cx.update(|cx| entity.read(cx).state().popups["overlay"].admitted()));
+    });
+    draw(cx, window);
+    VisualTestContext::from_window(window, cx)
+        .simulate_click(point(px(10.), px(100.)), Modifiers::default());
+    assert_eq!(
+        events
+            .borrow()
+            .iter()
+            .filter(|(key, _)| key == "overlay")
+            .count(),
+        1,
+        "current opening accepts its native outside click"
+    );
+    let admitted_events = events.borrow().len();
+    replace(cx, window, &entity, popup_source(true));
+    draw(cx, window);
+    cx.with_paused_automatic_drawing(|cx| {
+        cx.update_window(window, |_, w, cx| {
+            entity.update(cx, |h, cx| {
+                h.recipe.presentation(h.state.as_mut(), false, w, cx);
+            })
+        })
+        .unwrap();
+        VisualTestContext::from_window(window, cx)
+            .simulate_click(point(px(10.), px(60.)), Modifiers::default());
+        cx.simulate_keystrokes(window, "escape");
+        assert_eq!(
+            events.borrow().len(),
+            admitted_events,
+            "hidden content and old outside listeners are inadmissible"
+        );
+        cx.update_window(window, |_, w, cx| {
+            entity.update(cx, |h, cx| {
+                h.recipe.deactivate(h.state.as_mut(), w, cx);
+            })
+        })
+        .unwrap();
+        VisualTestContext::from_window(window, cx)
+            .simulate_click(point(px(10.), px(100.)), Modifiers::default());
+        assert_eq!(
+            events.borrow().len(),
+            admitted_events,
+            "retired scene rejects its retained old native listeners"
+        );
+    });
+}
+
+struct CachedPointerChild {
+    a: gpui_kit::FocusHandle,
+    b: gpui_kit::FocusHandle,
+    builds: Rc<Cell<usize>>,
+    scopes: Rc<RefCell<Vec<(bool, bool)>>>,
+}
+impl Render for CachedPointerChild {
+    fn render(&mut self, _: &mut gpui_kit::Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.builds.set(self.builds.get() + 1);
+        let (a, b, scopes) = (self.a.clone(), self.b.clone(), self.scopes.clone());
+        gpui_kit::div()
+            .id("opaque-child")
+            .size_full()
+            .occlude()
+            .on_mouse_down(gpui_kit::MouseButton::Left, move |_, window, _| {
+                scopes
+                    .borrow_mut()
+                    .push((a.contains_hovered(window), b.contains_hovered(window)));
+            })
+    }
+}
+struct PointerScopeRoot {
+    a: gpui_kit::FocusHandle,
+    b: gpui_kit::FocusHandle,
+    second: bool,
+    child: Entity<CachedPointerChild>,
+}
+impl Render for PointerScopeRoot {
+    fn render(&mut self, _: &mut gpui_kit::Window, _: &mut Context<Self>) -> impl IntoElement {
+        gpui_kit::div()
+            .id("scope-root")
+            .track_focus(if self.second { &self.b } else { &self.a })
+            .child(
+                self.child
+                    .clone()
+                    .cached(gpui_kit::StyleRefinement::default().w(px(100.)).h(px(40.))),
+            )
+    }
+}
+#[gpui::test]
+fn popup_pointer_scope_follows_a_cached_opaque_child_when_its_external_parent_changes(
+    cx: &mut TestAppContext,
+) {
+    let builds = Rc::new(Cell::new(0));
+    let scopes = Rc::new(RefCell::new(vec![]));
+    let (root, _) = cx.add_window_view({
+        let (builds, scopes) = (builds.clone(), scopes.clone());
+        move |_, cx| {
+            let a = cx.focus_handle();
+            let b = cx.focus_handle();
+            let child = cx.new(|_| CachedPointerChild {
+                a: a.clone(),
+                b: b.clone(),
+                builds,
+                scopes,
+            });
+            PointerScopeRoot {
+                a,
+                b,
+                second: false,
+                child,
+            }
+        }
+    });
+    let window = cx.windows()[0];
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+        .unwrap();
+    VisualTestContext::from_window(window, cx)
+        .simulate_click(point(px(10.), px(10.)), Modifiers::default());
+    let initial_builds = builds.get();
+    for _ in 0..3 {
+        cx.update(|cx| {
+            root.update(cx, |root, cx| {
+                root.second = true;
+                cx.notify();
+            })
+        });
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+    }
+    assert_eq!(
+        builds.get(),
+        initial_builds,
+        "the opaque child's real prepaint/paint was retained"
+    );
+    VisualTestContext::from_window(window, cx)
+        .simulate_click(point(px(10.), px(10.)), Modifiers::default());
+    assert_eq!(
+        *scopes.borrow(),
+        [(true, false), (false, true)],
+        "input ancestry comes from remapped dispatch nodes, not a cached external FocusId"
+    );
 }

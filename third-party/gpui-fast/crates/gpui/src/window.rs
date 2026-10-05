@@ -75,6 +75,10 @@ use crate::util::{
 };
 pub use prompts::*;
 
+/// Maximum nested deferred prepaint rounds. Declarative embeddings must
+/// validate composed render paths against this bound before publication.
+pub const MAX_DEFERRED_DEPTH: u16 = 10;
+
 /// Default window size used when no explicit size is provided.
 pub const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1536.), px(1095.));
 
@@ -498,6 +502,25 @@ impl FocusId {
         window.focus == Some(*self)
     }
 
+    /// Whether an actually hovered hitbox belongs to this original dispatch
+    /// subtree, including deferred children outside the parent's rectangle.
+    pub fn contains_hovered(&self, window: &Window) -> bool {
+        window.rendered_frame.hitboxes.iter().any(|hitbox| {
+            window
+                .mouse_hit_test
+                .ids
+                .iter()
+                .take(window.mouse_hit_test.hover_hitbox_count)
+                .any(|id| *id == hitbox.id)
+                && hitbox.dispatch_node.is_some_and(|node| {
+                    window
+                        .rendered_frame
+                        .dispatch_tree
+                        .focus_contains_node(*self, node)
+                })
+        })
+    }
+
     /// Obtains whether the element associated with this handle contains the focused
     /// element or is itself focused.
     pub fn contains_focused(&self, window: &Window, cx: &App) -> bool {
@@ -606,8 +629,13 @@ impl FocusHandle {
         self.id.is_focused(window)
     }
 
-    /// Obtains whether the element associated with this handle contains the focused
-    /// element or is itself focused.
+    /// Pointer containment follows the original dispatch subtree, not geometry
+    /// of a parent or the window's currently focused element.
+    pub fn contains_hovered(&self, window: &Window) -> bool {
+        self.id.contains_hovered(window)
+    }
+
+    /// Obtains whether this handle contains the focused element or is focused.
     pub fn contains_focused(&self, window: &Window, cx: &App) -> bool {
         self.id.contains_focused(window, cx)
     }
@@ -831,6 +859,8 @@ pub struct Hitbox {
     pub content_mask: ContentMask<Pixels>,
     /// Flags that specify hitbox behavior.
     pub behavior: HitboxBehavior,
+    /// Original dispatch scope; remapped with retained prepaint records.
+    pub dispatch_node: Option<DispatchNodeId>,
 }
 
 impl Hitbox {
@@ -2317,14 +2347,15 @@ impl Window {
             .and_then(|id| FocusHandle::for_id(id, &cx.focus_handles))
     }
 
-    /// While focus-lost listeners are being dispatched, returns the closest ancestor of the
-    /// previously focused element that can still receive focus, making it a suitable target
-    /// for focus restoration. Returns `None` at all other times, or when no such ancestor exists.
+    /// During focus-lost listeners, returns the nearest surviving tab stop on
+    /// the previous rendered focus path. This includes its leaf: a pressed
+    /// control can focus and disappear before painting, leaving the previously
+    /// rendered scope as the surviving target. Returns `None` outside that
+    /// callback or when no admitted rendered handle survives.
     pub fn focus_lost_restore_target(&self, cx: &App) -> Option<FocusHandle> {
-        let (_leaf, ancestors) = self.focus_lost_path.split_last()?;
-        ancestors.iter().rev().find_map(|id| {
+        self.focus_lost_path.iter().rev().find_map(|id| {
             self.rendered_frame.dispatch_tree.focusable_node_id(*id)?;
-            FocusHandle::for_id(*id, &cx.focus_handles)
+            FocusHandle::for_id(*id, &cx.focus_handles).filter(|focus| focus.tab_stop)
         })
     }
 
@@ -3677,7 +3708,10 @@ impl Window {
                 break;
             }
             // Limit maximum nesting depth to prevent infinite loops.
-            assert!(depth < 10, "Exceeded maximum (10) deferred depth");
+            assert!(
+                depth < MAX_DEFERRED_DEPTH,
+                "Exceeded maximum deferred depth"
+            );
             depth += 1;
 
             // Sort this round by priority.
@@ -3820,6 +3854,7 @@ impl Window {
 
     pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
         self.reuse_placement_claims(&range);
+        let hitboxes_start = self.next_frame.hitboxes.len();
         self.next_frame.hitboxes.extend(
             self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
                 .iter()
@@ -3845,6 +3880,12 @@ impl Window {
             &mut self.rendered_frame.dispatch_tree,
             self.focus,
         );
+
+        for hitbox in &mut self.next_frame.hitboxes[hitboxes_start..] {
+            hitbox.dispatch_node = hitbox
+                .dispatch_node
+                .and_then(|node| reused_subtree.refresh_hitbox_node(node));
+        }
 
         if reused_subtree.contains_focus() {
             self.next_frame.focus = self.focus;
@@ -5181,6 +5222,7 @@ impl Window {
             bounds,
             content_mask,
             behavior,
+            dispatch_node: self.next_frame.dispatch_tree.active_node_id(),
         };
         self.next_frame.hitboxes.push(hitbox.clone());
         hitbox
@@ -5381,6 +5423,26 @@ impl Window {
                 }
                 true
             }));
+        cx.defer(move |_| activate());
+        subscription
+    }
+
+    /// Register a listener for a window whose rendered focus path becomes empty.
+    /// The existing rendered ancestor path is available through
+    /// [`Self::focus_lost_restore_target`] during this callback.
+    /// The subscription controls the original listener's lifetime.
+    pub fn on_focus_lost(
+        &mut self,
+        cx: &mut App,
+        mut listener: impl FnMut(&mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.focus_lost_listeners.insert(
+            (),
+            Box::new(move |window, cx| {
+                listener(window, cx);
+                true
+            }),
+        );
         cx.defer(move |_| activate());
         subscription
     }

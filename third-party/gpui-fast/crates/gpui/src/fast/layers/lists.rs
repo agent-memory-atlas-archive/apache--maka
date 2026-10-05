@@ -133,9 +133,13 @@ impl LayerRows {
     pub(crate) fn follow_prepaint(
         &mut self,
         shift: &dyn Fn(&Range<PrepaintStateIndex>) -> Range<PrepaintStateIndex>,
+        node: &dyn Fn(crate::DispatchNodeId) -> Option<crate::DispatchNodeId>,
     ) {
         for row in self.rows.values_mut() {
             row.prepaint = shift(&row.prepaint);
+            for hitbox in &mut row.hitboxes {
+                hitbox.dispatch_node = hitbox.dispatch_node.and_then(node);
+            }
         }
     }
 
@@ -839,7 +843,7 @@ fn carry_prepaint_rows(window: &mut Window, id: &GlobalElementId) {
         row.prepaint = reuse::carry_prepaint_records(
             window,
             &row.prepaint,
-            &row.hitboxes,
+            &mut row.hitboxes,
             delta,
             viewport,
             tooltips,

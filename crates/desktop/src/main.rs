@@ -197,7 +197,7 @@ impl Surface {
                 .owners
                 .get_mut(&mount.id().to_string())
                 .expect("prepared native owner");
-            if owner.visible != visible {
+            if owner.revision.is_none() || owner.visible != visible {
                 owner.visible = visible;
                 native
                     .view

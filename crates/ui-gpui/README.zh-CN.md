@@ -81,3 +81,22 @@ capture 能力与 command receipt 继续由同一 owner 持有并结算。显示
 恢复当前 props。Desktop 在下次 paint 前失效机械输入准入，并拒绝保留的子组件 render；
 TUI 仅在成功 flush 后切换几何准入。自定义原生布局也通过公共 Slots 边界执行隐藏规则。
 这一投影不退役资源，也不增加第二份可写草稿。
+
+`Popup` 是锚定的非模态场景节点，包含 `trigger`、`content`、`open`、
+`label`、`anchor`、`offset` 和 `style`。仅触发器占正常布局；style 只作用于浮层内容，
+受实际窗口边框和边距约束。超大 border/padding 按实际尺寸缩减，每轴至少保留一半
+内部空间用于可滚动内容。内容保留原滚动与焦点 owner。两个分支永久声明 slot；
+关闭只隐藏内容，不退役草稿或工作流。Escape 和外部鼠标输入向 popup key 发出
+`{kind: "dismiss", reason: "escape" | "outside"}`，由插件提交打开状态并决定传播；
+事务被拒绝时，原生层不会自行关闭。触发器仍执行普通输入。Deferred 子浮层使用
+真实 hit-test 的原 dispatch 祖先，包含缓存和 slot，不会误判为父层外部。
+每次打开隔离旧监听器；关闭后在完整 presentation pass 结束时恢复可用的 weak
+前焦点，已有其他控件取得焦点时不抢回。初建隐藏场景 owner 不取得焦点。
+页面隐藏当前焦点控件但浮层仍打开时，沿原生 focus-lost 路径恢复最近存活的 scope，
+保持 Escape 可用。
+
+Embedding 通过 `NativeRegistry::with_render_depth_limit` 声明 GPUI 的实际 deferred
+深度上限；scene 和原生工厂通过 `NativeView::with_render_depth` 报告本地成本与
+各 slot 外围成本，原生编辑器包含其菜单预算。共享内核在提交前校验整棵拟提交树
+的可见路径，包含未更新祖先和仅更新的子组件；隐藏 slot 保留 custody，但不消耗
+绘制深度。这是 renderer 派生元数据，不是内核布局词汇或插件可写配额。

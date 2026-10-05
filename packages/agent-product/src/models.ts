@@ -30,7 +30,7 @@ import type {
 import type { ModelsProps } from './contracts.js';
 import { modelsContract } from './contracts.js';
 import { copy } from './locale.js';
-import { fill, output, paint, slot, type Target } from './view.js';
+import { fill, output, paint, pixels, slot, type Target } from './view.js';
 interface State {
   catalogEpoch: number;
   defaultModel: SettingsDefaultModel | null;
@@ -94,94 +94,114 @@ function frame(
   const chosen = state.staleSelection ? null : props.selection;
   const compact = (label: string) =>
     [...label].length > 44 ? [...label].slice(0, 43).join('') + '…' : label;
-  const view = ui.box(
-    'models',
+  const trigger = ui.button(
+    'toggle',
+    chosen ? compact(chosen.label) : text.chooseModel,
+    props.busy,
+  );
+  const content = ui.box(
+    'model-list',
     [
-      ui.button('toggle', chosen ? compact(chosen.label) : text.chooseModel, props.busy),
       ui.box(
-        'model-list',
+        'model-choices',
         [
+          ui.text('model-heading', text.models, 13, props.theme.muted),
+          ...(state.pending
+            ? [ui.text('model-loading', text.loadingModels, 13, props.theme.muted)]
+            : []),
+          ...(state.failed
+            ? [ui.text('model-error', text.modelsUnavailable, 13, props.theme.muted)]
+            : []),
+          ...(!state.pending && !state.failed && !state.choices.length
+            ? [ui.text('no-models', text.noModels, 13, props.theme.muted)]
+            : []),
           ui.box(
-            'model-choices',
+            'model-actions',
             [
-              ui.text('model-heading', text.models, 13, props.theme.muted),
-              ...(state.pending
-                ? [ui.text('model-loading', text.loadingModels, 13, props.theme.muted)]
+              ...(target === 'tui' && state.offset > 0
+                ? [ui.button('previous', text.previousModels, props.busy || !!state.pending)]
                 : []),
-              ...(state.failed
-                ? [ui.text('model-error', text.modelsUnavailable, 13, props.theme.muted)]
+              ...((target === 'tui' && state.offset + 3 < state.choices.length) || state.next
+                ? [ui.button('more', text.moreModels, !!state.pending || props.busy)]
                 : []),
-              ...(!state.pending && !state.failed && !state.choices.length
-                ? [ui.text('no-models', text.noModels, 13, props.theme.muted)]
-                : []),
-              ui.box(
-                'model-actions',
-                [
-                  ...(target === 'tui' && state.offset > 0
-                    ? [ui.button('previous', text.previousModels, props.busy || !!state.pending)]
-                    : []),
-                  ...((target === 'tui' && state.offset + 3 < state.choices.length) || state.next
-                    ? [ui.button('more', text.moreModels, !!state.pending || props.busy)]
-                    : []),
-                  ui.button('refresh', text.refreshModels, !!state.pending || props.busy),
-                  ui.button('defaults', text.defaultModel),
-                  ui.button('close', text.closeModels, false),
-                ],
-                { row: true, gap: target === 'desktop' ? 8 : 1, style: { wrap: true } },
-              ),
-              ...(target === 'desktop'
-                ? state.choices
-                : state.choices.slice(state.offset, state.offset + 3)
-              ).map((choice, index) =>
-                ui.button(
-                  `choose-${index + (target === 'tui' ? state.offset : 0)}`,
-                  `${compact(choice.label)} · ${compact(choice.connectionName)}`,
-                  props.busy || !!state.pending || state.failed,
-                ),
-              ),
+              ui.button('refresh', text.refreshModels, !!state.pending || props.busy),
+              ui.button('defaults', text.defaultModel),
+              ui.button('close', text.closeModels, false),
             ],
-            { visible: !state.defaultsOpen, gap: target === 'desktop' ? 8 : 0 },
+            { row: true, gap: target === 'desktop' ? 8 : 1, style: { wrap: true } },
           ),
-          ui.box(
-            'model-default-pane',
-            [
-              ui.box(
-                'default-navigation',
-                [
-                  ui.button('default-back', text.models),
-                  ui.button('default-refresh', text.refreshModels, !!state.pending),
-                  ui.button('default-close', text.closeModels),
-                ],
-                { row: target === 'desktop', gap: 0, style: { wrap: true } },
-              ),
-              slot(
-                'default-settings',
-                'defaults',
-                {
-                  theme: props.theme,
-                  locale: props.locale,
-                  selection: chosen,
-                  defaultModel: state.defaultModel,
-                  catalogRevision: state.catalogRevision,
-                  busy: props.busy || !!state.pending || state.failed,
-                },
-                { changed: 'default-changed' },
-              ),
-            ],
-            { visible: state.defaultsOpen, gap: target === 'desktop' ? 8 : 0 },
+          ...(target === 'desktop'
+            ? state.choices
+            : state.choices.slice(state.offset, state.offset + 3)
+          ).map((choice, index) =>
+            ui.button(
+              `choose-${index + (target === 'tui' ? state.offset : 0)}`,
+              `${compact(choice.label)} · ${compact(choice.connectionName)}`,
+              props.busy || !!state.pending || state.failed,
+            ),
           ),
         ],
-        {
-          visible: state.open,
-          surface: true,
-          padding: target === 'desktop' ? 12 : 0,
-          scroll: true,
-          style: { width: fill, maxHeight: 320, minWidth: 0 },
-        },
+        { visible: !state.defaultsOpen, gap: target === 'desktop' ? 8 : 0 },
+      ),
+      ui.box(
+        'model-default-pane',
+        [
+          ui.box(
+            'default-navigation',
+            [
+              ui.button('default-back', text.models),
+              ui.button('default-refresh', text.refreshModels, !!state.pending),
+              ui.button('default-close', text.closeModels),
+            ],
+            { row: target === 'desktop', gap: 0, style: { wrap: true } },
+          ),
+          slot(
+            'default-settings',
+            'defaults',
+            {
+              theme: props.theme,
+              locale: props.locale,
+              selection: chosen,
+              defaultModel: state.defaultModel,
+              catalogRevision: state.catalogRevision,
+              busy: props.busy || !!state.pending || state.failed,
+            },
+            { changed: 'default-changed' },
+          ),
+        ],
+        { visible: state.defaultsOpen, gap: target === 'desktop' ? 8 : 0 },
       ),
     ],
-    { gap: target === 'desktop' ? 8 : 0, style: { maxWidth: 480, minWidth: 0 } },
+    {
+      visible: target === 'desktop' || state.open,
+      surface: true,
+      padding: target === 'desktop' ? 12 : 0,
+      scroll: target === 'tui',
+      style: { width: fill, minWidth: 0, background: 0 },
+    },
   );
+  const view =
+    target === 'desktop'
+      ? {
+          kind: 'popup',
+          key: 'model-popup',
+          label: text.models,
+          trigger,
+          content,
+          open: state.open,
+          anchor: 'top_right',
+          offset: 8,
+          style: {
+            width: pixels(360),
+            maxHeight: 320,
+            minWidth: 0,
+            background: props.theme.menu.background,
+            border: props.theme.menu.border,
+            borderWidth: props.theme.menu.borderWidth,
+            radius: props.theme.menu.radius,
+          },
+        }
+      : ui.box('models', [trigger, content], { gap: 0 });
   const out = output(state, view, events);
   out.actions = actions;
   return out;
@@ -275,7 +295,13 @@ export function models(target: Target): Component<State, ModelsProps> {
         state.defaultModel = null;
         actions.push(...read(state));
       } else if (input.kind === 'raw') {
-        if (input.key === 'close' || input.key === 'default-close') state.open = false;
+        if (
+          input.key === 'model-popup' &&
+          target === 'desktop' &&
+          (input.event as { kind?: string })?.kind === 'dismiss'
+        )
+          state.open = false;
+        else if (input.key === 'close' || input.key === 'default-close') state.open = false;
         else if (input.key === 'defaults') state.defaultsOpen = true;
         else if (input.key === 'default-back') state.defaultsOpen = false;
         else if (!props.busy) {
@@ -302,7 +328,15 @@ export function models(target: Target): Component<State, ModelsProps> {
           }
         }
       }
-      return frame(target, state, props, actions, events);
+      const out = frame(target, state, props, actions, events);
+      if (
+        input.kind === 'raw' &&
+        input.key === 'model-popup' &&
+        (input.event as { reason?: string })?.reason === 'escape'
+      ) {
+        out.decision = { preventDefault: true, stopPropagation: true };
+      }
+      return out;
     },
   };
 }

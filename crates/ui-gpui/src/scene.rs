@@ -18,6 +18,7 @@
  */
 
 pub mod canvas;
+mod popup;
 
 use maka_ui::{ComponentSlot, NativeView};
 use schemars::JsonSchema;
@@ -44,6 +45,20 @@ pub enum Direction {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "DesktopScene")]
 pub enum Node {
+    Popup {
+        key: String,
+        label: String,
+        trigger: Box<Node>,
+        content: Box<Node>,
+        open: bool,
+        #[serde(default)]
+        anchor: popup::Anchor,
+        #[serde(default)]
+        offset: u16,
+        /// Styles the floating content; the trigger keeps its own layout.
+        #[serde(default)]
+        style: Style,
+    },
     Stack {
         key: String,
         direction: Direction,
@@ -109,7 +124,8 @@ impl Node {
             Self::Stack { key, .. }
             | Self::Text { key, .. }
             | Self::Button { key, .. }
-            | Self::Canvas { key, .. } => key,
+            | Self::Canvas { key, .. }
+            | Self::Popup { key, .. } => key,
             Self::Component(slot) => &slot.key,
         };
         if depth > 32
@@ -121,9 +137,10 @@ impl Node {
             return Err("invalid or duplicate UI node identity".into());
         }
         match self {
-            Self::Stack { style, .. } | Self::Text { style, .. } | Self::Canvas { style, .. } => {
-                style.validate()?
-            }
+            Self::Stack { style, .. }
+            | Self::Text { style, .. }
+            | Self::Canvas { style, .. }
+            | Self::Popup { style, .. } => style.validate()?,
             Self::Button {
                 style,
                 hover,
@@ -142,6 +159,19 @@ impl Node {
             Self::Component(_) => {}
         }
         match self {
+            Self::Popup {
+                trigger,
+                content,
+                label,
+                offset,
+                ..
+            } => {
+                if label.is_empty() || label.len() > 4096 || *offset > 1024 {
+                    return Err("invalid popup presentation".into());
+                }
+                trigger.validate(depth + 1, keys, deadline)?;
+                content.validate(depth + 1, keys, deadline)?;
+            }
             Self::Stack {
                 gap,
                 padding,
@@ -175,6 +205,40 @@ impl Node {
         }
         Ok(())
     }
+    fn render_depth(
+        &self,
+        enclosing: u16,
+        visible: bool,
+        depth: &mut u16,
+        slots: &mut BTreeMap<String, u16>,
+    ) {
+        if !visible {
+            return;
+        }
+        *depth = (*depth).max(enclosing);
+        match self {
+            Self::Popup {
+                trigger,
+                content,
+                open,
+                ..
+            } => {
+                trigger.render_depth(enclosing, true, depth, slots);
+                content.render_depth(enclosing + 1, *open, depth, slots);
+            }
+            Self::Stack {
+                children, visible, ..
+            } => {
+                for child in children {
+                    child.render_depth(enclosing, *visible, depth, slots);
+                }
+            }
+            Self::Component(slot) => {
+                slots.insert(slot.key.clone(), enclosing);
+            }
+            _ => {}
+        }
+    }
     fn metadata(
         &self,
         slots: &mut Vec<ComponentSlot>,
@@ -188,6 +252,34 @@ impl Node {
             return Err("scene compilation deadline".into());
         }
         match self {
+            Self::Popup {
+                key,
+                trigger,
+                content,
+                open,
+                ..
+            } => {
+                *input_count += 1;
+                if *input_count > 64 {
+                    return Err("scene input limit".into());
+                }
+                if visible && *open {
+                    inputs.insert(
+                        key.clone(),
+                        serde_json::to_value(schemars::schema_for!(popup::Input))
+                            .expect("popup input schema"),
+                    );
+                }
+                trigger.metadata(slots, inputs, hidden_slots, input_count, visible, deadline)?;
+                content.metadata(
+                    slots,
+                    inputs,
+                    hidden_slots,
+                    input_count,
+                    visible && *open,
+                    deadline,
+                )?;
+            }
             Self::Component(slot) => {
                 if slots.len() >= 64 {
                     return Err("scene slot limit".into());
@@ -279,6 +371,11 @@ pub fn compile(
                 scan(child, depth + 1, count, deadline)?;
             }
         }
+        for field in ["trigger", "content"] {
+            if let Some(child) = source.get(field) {
+                scan(child, depth + 1, count, deadline)?;
+            }
+        }
         Ok(())
     }
     scan(source, 0, &mut 0, deadline)?;
@@ -297,8 +394,17 @@ pub fn compile(
         deadline,
     )
     .map_err(maka_ui::Error::Invalid)?;
+    let mut depth = 0;
+    let mut slot_depth = BTreeMap::new();
+    node.render_depth(0, true, &mut depth, &mut slot_depth);
+    if depth > gpui_kit::MAX_DEFERRED_DEPTH {
+        return Err(maka_ui::Error::Invalid(
+            "native scene render depth limit".into(),
+        ));
+    }
     NativeView::new(Rc::new(node) as Rc<dyn super::Widget>, inputs, slots)?
-        .with_hidden_slots(hidden_slots)
+        .with_hidden_slots(hidden_slots)?
+        .with_render_depth(depth, slot_depth)
 }
 // The mount owns mechanical state. Layout ancestry is not focus/scroll identity.
 // Cached listeners retain only this node's admission, never the whole scene owner.
@@ -318,12 +424,14 @@ struct SceneState {
     buttons: BTreeMap<String, ButtonState>,
     scrolls: BTreeMap<String, gpui_kit::ScrollHandle>,
     canvases: BTreeMap<String, canvas::State>,
+    popups: BTreeMap<String, popup::State>,
 }
 impl SceneState {
     fn reconcile(&mut self, root: &Node, window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
         let mut buttons = std::mem::take(&mut self.buttons);
         let mut scrolls = std::mem::take(&mut self.scrolls);
         let mut canvases = std::mem::take(&mut self.canvases);
+        let mut popups = std::mem::take(&mut self.popups);
         // Original mechanical owners and native context remain separate.
         #[allow(clippy::too_many_arguments)]
         fn visit(
@@ -332,11 +440,39 @@ impl SceneState {
             buttons: &mut BTreeMap<String, ButtonState>,
             scrolls: &mut BTreeMap<String, gpui_kit::ScrollHandle>,
             canvases: &mut BTreeMap<String, canvas::State>,
+            popups: &mut BTreeMap<String, popup::State>,
             window: &mut gpui_kit::Window,
             cx: &mut gpui_kit::App,
             visible: bool,
         ) {
             match node {
+                Node::Popup {
+                    key,
+                    trigger,
+                    content,
+                    open,
+                    ..
+                } => {
+                    visit(
+                        trigger, current, buttons, scrolls, canvases, popups, window, cx, visible,
+                    );
+                    let mut popup = popups
+                        .remove(key)
+                        .unwrap_or_else(|| popup::State::new(window, cx));
+                    popup.presentation(visible && *open, window, cx);
+                    visit(
+                        content,
+                        current,
+                        buttons,
+                        scrolls,
+                        canvases,
+                        popups,
+                        window,
+                        cx,
+                        visible && *open,
+                    );
+                    current.popups.insert(key.clone(), popup);
+                }
                 Node::Button {
                     key,
                     disabled,
@@ -386,6 +522,7 @@ impl SceneState {
                             buttons,
                             scrolls,
                             canvases,
+                            popups,
                             window,
                             cx,
                             visible && *local,
@@ -402,12 +539,16 @@ impl SceneState {
             &mut buttons,
             &mut scrolls,
             &mut canvases,
+            &mut popups,
             window,
             cx,
             visible,
         );
         for canvas in canvases.values_mut() {
             canvas.deactivate(window, cx);
+        }
+        for popup in popups.values_mut() {
+            popup.deactivate(window, cx);
         }
         for button in buttons.values() {
             if button.focus.is_focused(window) {
@@ -424,11 +565,14 @@ impl super::Widget for Node {
         cx: &mut gpui_kit::App,
     ) -> Box<dyn std::any::Any> {
         let mut state = SceneState {
-            visible: true,
+            // Custody is allocated before the presenter knows actual visibility.
+            // In particular, an initially hidden popup must never steal focus.
+            visible: false,
             input,
             buttons: BTreeMap::new(),
             scrolls: BTreeMap::new(),
             canvases: BTreeMap::new(),
+            popups: BTreeMap::new(),
         };
         state.reconcile(self, window, cx);
         Box::new(state)
@@ -464,6 +608,9 @@ impl super::Widget for Node {
         cx: &mut gpui_kit::App,
     ) {
         let state = state.downcast_mut::<SceneState>().expect("scene owner");
+        for popup in state.popups.values_mut() {
+            popup.deactivate(window, cx);
+        }
         for canvas in state.canvases.values_mut() {
             canvas.deactivate(window, cx);
         }
@@ -504,6 +651,39 @@ impl Node {
             StatefulInteractiveElement, Styled, base::Button, div, px, rgb,
         };
         Ok(match self {
+            Self::Popup {
+                key,
+                label,
+                trigger,
+                content,
+                anchor,
+                offset,
+                style,
+                open,
+            } => {
+                let popup = state
+                    .popups
+                    .get(key)
+                    .ok_or_else(|| maka_ui::Error::Invalid("scene popup owner replaced".into()))?;
+                let trigger = trigger.element(state, slots, window, cx)?;
+                let content = if *open && popup.admitted() {
+                    Some(content.element(state, slots, window, cx)?)
+                } else {
+                    None
+                };
+                popup.render(
+                    key,
+                    label,
+                    trigger,
+                    content,
+                    *anchor,
+                    *offset,
+                    style,
+                    &state.input,
+                    slots.input.clone(),
+                    window,
+                )
+            }
             Self::Text {
                 key,
                 text,
