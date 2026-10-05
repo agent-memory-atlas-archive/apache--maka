@@ -20,12 +20,10 @@
 //! Trusted local connections between separate UI and Host deployment owners.
 mod connections;
 mod gateway;
-mod service;
 pub mod stdio;
 pub mod transport;
 pub use connections::{Configuration, Connections, Grant, Host, HostExecutable};
 pub use gateway::{GATEWAY, with_gateway};
-pub use service::{LocalService, Scopes};
 pub type Result<T> = std::result::Result<T, String>;
 
 /// Product startup must not exit after losing confirmation of an acquired SQL

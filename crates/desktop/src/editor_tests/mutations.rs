@@ -242,6 +242,8 @@ impl Handler for Effect {
 }
 type EffectFuture =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>>;
+// Deliberate UI boundary fault injection over the direct Host Client.
+// It changes method/contract and delivery behavior; it is not a transport adapter.
 struct Bridge {
     client: Client,
     binding: Binding,
@@ -466,6 +468,7 @@ impl Harness {
         let host = timer.block_on(host_service_fixture(
             Arc::new(Effect(state.clone())),
             issuer.clone(),
+            Arc::new(HostGrant(issuer.clone())),
             host_store.clone(),
             contract("test.Store", "commit"),
         ));

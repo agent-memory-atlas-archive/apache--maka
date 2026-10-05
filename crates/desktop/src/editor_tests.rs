@@ -193,7 +193,7 @@ impl Scene {
 fn timer() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
-        .enable_time()
+        .enable_all()
         .build()
         .unwrap()
 }
@@ -1194,34 +1194,27 @@ impl maka_runtime_host::application::NativeOwner for HostClose {
         Box::pin(async { Ok(()) })
     }
 }
-struct UiReadScopes {
-    issuer: maka_plugins::call::Issuer,
+struct ReadPolicy {
+    peer: std::sync::Arc<maka_application_bridge::transport::PeerPolicy>,
     approved: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    observed: std::sync::Arc<std::sync::Mutex<Option<maka_ui::actions::ServiceSource>>>,
 }
-impl maka_application_bridge::Scopes for UiReadScopes {
-    fn scope(
+impl maka_runtime_host::application::Policy for ReadPolicy {
+    fn admit(
         &self,
-        source: &maka_ui::actions::ServiceSource,
-    ) -> Result<maka_plugins::call::Scope, String> {
-        *self.observed.lock().unwrap() = Some(source.clone());
-        self.issuer
-            .issue_with(
-                maka_plugins::call::Identity::Remote {
-                    request_id: source.request_id(),
-                },
-                UiReadGrant {
-                    source: source.clone(),
-                    approved: self.approved.load(std::sync::atomic::Ordering::SeqCst),
-                },
-                tokio_util::sync::CancellationToken::new(),
-            )
-            .map_err(|e| e.to_string())
+        invocation: maka_runtime_host::application::Invocation<'_>,
+    ) -> Result<(), String> {
+        maka_runtime_host::application::Policy::admit(self.peer.as_ref(), invocation)?;
+        if self.approved.load(std::sync::atomic::Ordering::SeqCst) {
+            Ok(())
+        } else {
+            Err("native read grant denied".into())
+        }
     }
 }
 async fn host_service_fixture(
     query: std::sync::Arc<dyn maka_runtime_host::application::Handler>,
     issuer: maka_plugins::call::Issuer,
+    policy: std::sync::Arc<dyn maka_runtime_host::application::Policy>,
     store: std::sync::Arc<maka_event_log::EventLog>,
     contract: maka_plugin_core::contract::Contract,
 ) -> maka_runtime_host::application::Application {
@@ -1368,7 +1361,7 @@ async fn host_service_fixture(
         deployment,
         native,
         issuer.clone(),
-        std::sync::Arc::new(HostGrant(issuer)),
+        policy,
         Default::default(),
     )
     .await
@@ -1414,7 +1407,8 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
     let started = std::sync::Arc::new(tokio::sync::Semaphore::new(0));
     let release = std::sync::Arc::new(tokio::sync::Semaphore::new(0));
     let snapshot = std::sync::Arc::new(std::sync::Mutex::new(None));
-    let issuer = maka_plugins::call::Issuer::default();
+    let peer = std::sync::Arc::new(maka_application_bridge::transport::PeerPolicy::default());
+    let approved = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let (host_dir, host_ns, host_store) = stored_root(&timer);
     let host_root = host_dir.path().join("root");
     let host = timer.block_on(host_service_fixture(
@@ -1424,7 +1418,11 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
             release: release.clone(),
             snapshot: snapshot.clone(),
         }),
-        issuer.clone(),
+        peer.issuer(),
+        std::sync::Arc::new(ReadPolicy {
+            peer: peer.clone(),
+            approved: approved.clone(),
+        }),
         host_store,
         {
             let mut contract = maka_ui::text::reader_contract();
@@ -1444,17 +1442,6 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
         .unwrap()
         .remove(0);
     let registration_epoch = binding.registration_epoch();
-    let approved = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let observed = std::sync::Arc::new(std::sync::Mutex::new(None));
-    let bridge = std::sync::Arc::new(maka_application_bridge::LocalService::new(
-        client,
-        binding,
-        std::sync::Arc::new(UiReadScopes {
-            issuer,
-            approved: approved.clone(),
-            observed: observed.clone(),
-        }),
-    ));
     let (mut input, mut packages) = support::resource_fixture();
     input.instances.remove("reader");
     packages.retain(|p| p.manifest().id != "native.reader");
@@ -1500,37 +1487,37 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
         }],
     );
     packages.push(package);
-    let remotes = maka_ui::actions::RemoteServices {
-        declarations: BTreeMap::from([(
-            target.clone(),
-            maka_plugin_core::contract::Export {
-                contract: contract.clone(),
-                availability: maka_plugin_core::contract::Availability::Required,
-            },
-        )]),
-        registrations: vec![maka_ui::actions::RemoteService {
-            target,
-            registration_epoch,
-            contract,
-            implementation: bridge,
-        }],
-    };
     let (dir, namespaces, store) = stored_root(&timer);
     let root = dir.path().join("root");
     let deployment = uuid::Uuid::new_v4();
-    let observations = remotes
-        .declarations
-        .into_iter()
-        .map(
-            |(capability, declaration)| maka_plugin_core::deployment::RemoteObservation {
-                capability,
-                declaration,
-            },
-        )
-        .collect();
+    let observation = maka_plugin_core::deployment::RemoteObservation {
+        capability: target.clone(),
+        declaration: maka_plugin_core::contract::Export {
+            contract: contract.clone(),
+            availability: maka_plugin_core::contract::Availability::Required,
+        },
+    };
     let ui_source = timer
-        .block_on(store.commit_application(deployment, 0, input, observations, packages))
+        .block_on(store.commit_application(deployment, 0, input, vec![observation], packages))
         .unwrap();
+    let remote = transport::Remote::new(
+        client,
+        binding,
+        peer,
+        ui_source.clone(),
+        consumer_id.clone(),
+        maka_application_bridge::Grant {
+            methods: std::collections::BTreeSet::from(["read".into()]),
+            recovery: false,
+        },
+    );
+    let observed = remote.observed.clone();
+    let registrations = vec![maka_ui::actions::RemoteService {
+        target,
+        registration_epoch,
+        contract,
+        implementation: remote.service.clone(),
+    }];
     let application = timer
         .block_on(Application::start_from_store(
             store.clone(),
@@ -1539,7 +1526,7 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
             timer.handle().clone(),
             Default::default(),
             widgets::registry(),
-            remotes.registrations,
+            registrations,
         ))
         .unwrap();
     drop(store);
@@ -1656,6 +1643,7 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
                 .unwrap()
                 .contains("Host snapshot cleanup unconfirmed")
         );
+        assert!(timer.block_on(remote.close()).is_err());
         assert!(timer.block_on(host.shutdown()).is_err());
         assert!(maka_event_log::root::RootOwner::open(&root, &namespaces).is_err());
         assert!(maka_event_log::root::RootOwner::open(&host_root, &host_ns).is_err());
@@ -1665,8 +1653,10 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
     } else {
         await_action(cx, &scene.app, |a| a.accepted_action_count() == 0);
         assert!(weak.upgrade().is_none());
-        timer.block_on(host.shutdown()).unwrap();
         scene.app.borrow_mut().shutdown().unwrap();
+        timer.block_on(remote.close()).unwrap();
+        drop(remote);
+        timer.block_on(host.shutdown()).unwrap();
         timer.block_on(async {
             tokio::time::timeout(std::time::Duration::from_secs(10), async {
                 for (path, ns) in [(&root, &namespaces), (&host_root, &host_ns)] {
@@ -1845,3 +1835,5 @@ fn dynamic_workspace_layout_changes_preserve_original_editor_draft_focus_and_mar
 mod subscriptions;
 
 mod publication;
+
+mod transport;

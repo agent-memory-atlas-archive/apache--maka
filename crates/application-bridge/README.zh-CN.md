@@ -17,7 +17,7 @@
   under the License.
 -->
 
-# 本地应用连接
+# 应用 Host 连接
 
 Desktop 与 TUI 启动器支持 `--connections FILE`。这份可信外部配置为每个选定部署
 启动独立的共享 Host 子进程，不修改双方组合。每个 child 拥有原 Application 与 Root，
@@ -34,8 +34,8 @@ Desktop 与 TUI 启动器支持 `--connections FILE`。这份可信外部配置�
 Host 组合显式选择 `maka.application.gateway` 实现的实例及其 imports，也可选择
 其他适当的 compiled consumer；availability 不自动激活实例。其他 Rust factory 由可信
 可执行文件的 compiled Host role 提供，动态 JavaScript 从已提交的不可变包加载。配置中的批准默认绑定直接
-endpoint，转发到其他 consumer 会拒绝；其他可信 embedding 可以通过 `LocalService`
-提供其独立 Host Policy 与只创建无资源 Scope 的 `Scopes` factory。
+endpoint，转发到其他 consumer 会拒绝。Rust 编译扩展在选定 Host 内执行；所有 UI
+remote service 使用同一物理 transport adapter。
 
 Mutation 的原 immutable snapshots 随准备、caller 持久化、最终 Host 准入转移。
 Session 将请求资源一次转移进原 queued/prepared custody；prepare 与 close 并发时，
@@ -106,7 +106,7 @@ Application 和 SQL；清理失败或 panic 保原 fence。控制帧写入被中
 `transport::Call` 保持 caller immutable inputs 与实际 `RecordedIntent`；I/O 失败不释放。
 `disconnect()` 只关闭物理两端，保留未确认的资源/token；EOF 请求取消，不是远端清理确认。
 新的原回执查询不结算丢失 dispatch，不自动重发 mutation。默认 Desktop/TUI
-`--connections` 仍用 `LocalService`；默认启动器进程 supervisor 和原生平台完整验收仍需继续。
+`--connections` 使用共享 child supervisor 与此物理 transport；完整原生平台和产品验收仍需继续。
 
 CLI 在接受调用前，从原捕获 Bindings 发布有界 `Catalogue`。`Selection` 固定 endpoint
 alias 与 registration epoch；每个 Open 携带原 epoch，另一 Host incarnation 即使发布
@@ -118,5 +118,5 @@ alias 与 registration epoch；每个 Open 携带原 epoch，另一 Host incarna
 incarnation。取消等待原 opening 明确完成；构造、poll、future 析构 panic 均保原建立
 屏障。适配器核 UI kernel 私有来源与已批准 caller，在创建 dispatch observer 时同步
 接收实际 SQL token。Stop 在 session mutex 之前发出，cleanup 等同一调用及实际本地
-资源析构完成才释放容量。失败 custody 保留在原 Connection；适配器尚未成为默认
-Desktop/TUI connector。
+资源析构完成才释放容量。失败 custody 保留在原 Connection；两个启动器均使用此
+适配器，没有另一套进程内 UI service/session 实现。

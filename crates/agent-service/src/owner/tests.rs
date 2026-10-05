@@ -332,6 +332,14 @@ struct Fixture {
 }
 impl Fixture {
     async fn new(base: &str, cap: usize, model: Option<ModelExecutor>) -> Self {
+        Self::with_peer(base, cap, model, None).await
+    }
+    async fn with_peer(
+        base: &str,
+        cap: usize,
+        model: Option<ModelExecutor>,
+        peer: Option<Arc<maka_application_bridge::transport::PeerPolicy>>,
+    ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("root");
         let namespaces = RootNamespaces {
@@ -438,13 +446,19 @@ impl Fixture {
                 }),
             )
             .unwrap();
-        let issuer = Issuer::default();
+        let (issuer, policy): (Issuer, Arc<dyn Policy>) = match peer {
+            Some(peer) => (peer.issuer(), peer),
+            None => {
+                let issuer = Issuer::default();
+                (issuer.clone(), Arc::new(Grant(issuer)))
+            }
+        };
         let app = Application::start_from_store(
             store.clone(),
             deployment,
             native,
             issuer.clone(),
-            Arc::new(Grant(issuer.clone())),
+            policy,
             Default::default(),
         )
         .await

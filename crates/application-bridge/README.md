@@ -17,7 +17,7 @@
   under the License.
 -->
 
-# Local application connections
+# Application Host connections
 
 The Desktop and TUI launchers accept `--connections FILE`. This trusted input
 starts a separate shared Host child for each selected deployment. It does not edit
@@ -63,9 +63,9 @@ must match the selected UI deployment's observation. Startup captures that exact
 `DeploymentRef`; a later desired-source update cannot inherit its approval.
 Ordinary query/mutation permission does not grant original-receipt recovery.
 The UI consumer set comes from enabled executable instances in the exact resolved
-Plan. A forwarded call to a different Host consumer fails closed under this configuration;
-other trusted embeddings can supply a different explicit Host Policy and inert
-`Scopes` factory through `LocalService`.
+Plan. A forwarded call to a different Host consumer fails closed under this
+configuration. Compiled Rust extensions run within their selected Host; all UI
+remote services use the same physical transport adapter.
 
 The configuration is closed JSON, bounded to 1 MiB, 16 Hosts, 128 imports per Host
 and 64 methods per import. Omission means no local connections. Relative Root
@@ -148,8 +148,9 @@ original channel. Cancel delivery failure does not erase an already sent reply.
 I/O failure retains this custody. `disconnect()` closes both physical halves while
 retaining unconfirmed inputs/token; EOF is a cancellation request, not a remote
 cleanup acknowledgement. A successful fresh original-receipt query never
-settles a lost dispatch; no mutation is automatically resent. The default
-Desktop/TUI `--connections` path still uses `LocalService`. Default launcher process supervision and native platform acceptance remain work.
+settles a lost dispatch; no mutation is automatically resent. Desktop/TUI
+`--connections` use the shared child supervisor and this physical transport.
+Complete native platform and product acceptance remain work.
 
 Before accepting the invocation, the CLI publishes a bounded `Catalogue` from its
 actual captured Bindings. A `Selection` freezes the endpoint alias and registration
@@ -167,4 +168,5 @@ checks the UI kernel's private source against the approved caller and transfers
 actual SQL tokens synchronously when dispatch observers are created. Stop requests
 precede the session mutex; cleanup waits for the same invocation and actual local
 resource destructors before releasing capacity. Failed custody stays in its
-original Connection. This adapter is not yet the default Desktop/TUI connector.
+original Connection. Both launchers use this adapter; there is no separate
+in-process UI service/session implementation.

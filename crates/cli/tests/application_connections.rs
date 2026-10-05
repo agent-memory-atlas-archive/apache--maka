@@ -17,9 +17,9 @@
  * under the License.
  */
 
-#[path = "../../application-bridge/tests/local/resource_mutations.rs"]
+#[path = "application_connections/resource_mutations.rs"]
 mod resource_mutations;
-#[path = "../../application-bridge/tests/local/subscriptions.rs"]
+#[path = "application_connections/subscriptions.rs"]
 mod subscriptions;
 #[allow(dead_code)]
 #[path = "../../application-bridge/tests/support/mod.rs"]
@@ -51,12 +51,6 @@ struct Fixture {
     target: PresentationTarget,
 }
 impl Fixture {
-    // In-process validation observes metadata before queued preparation; IPC
-    // captures it once before any Open byte. Block the actual preparation stage.
-    fn preparation_descriptor(&self) -> usize {
-        0
-    }
-
     fn new() -> Self {
         Self::from_sources(support::host(), support::ui(PresentationTarget::Desktop))
     }

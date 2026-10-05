@@ -30,32 +30,21 @@ use maka_ui::operations::{CALLER_HISTORY, caller_history_contract};
 use std::sync::atomic::AtomicBool;
 
 struct ReceiptGrant {
-    issuer: maka_plugins::call::Issuer,
+    peer: Arc<maka_application_bridge::transport::PeerPolicy>,
     recovery: Arc<AtomicBool>,
     observed: Arc<Mutex<Vec<InstanceId>>>,
 }
 impl Policy for ReceiptGrant {
     fn admit(&self, invocation: Invocation<'_>) -> Result<(), String> {
-        HostGrant(self.issuer.clone()).admit(invocation)
+        self.peer.admit(invocation)
     }
     fn recover(&self, invocation: RecoveryInvocation<'_>) -> Result<(), String> {
         self.observed
             .lock()
             .unwrap()
             .push(invocation.consumer.instance().clone());
-        if self.recovery.load(Ordering::SeqCst)
-            && self
-                .issuer
-                .evidence::<UiReadGrant>(invocation.scope)
-                .is_some_and(|grant| {
-                    grant.approved
-                        && invocation.scope.identity
-                            == maka_plugins::call::Identity::Remote {
-                                request_id: grant.source.request_id(),
-                            }
-                })
-        {
-            Ok(())
+        if self.recovery.load(Ordering::SeqCst) {
+            self.peer.recover(invocation)
         } else {
             Err("historical grant denied".into())
         }
@@ -127,7 +116,7 @@ async fn reader_source(store: &EventLog, original: &DeploymentRef) {
 async fn start_reader(
     store: Arc<EventLog>,
     source: &DeploymentRef,
-    issuer: &maka_plugins::call::Issuer,
+    peer: &Arc<maka_application_bridge::transport::PeerPolicy>,
     recovery: Arc<AtomicBool>,
     observed: Arc<Mutex<Vec<InstanceId>>>,
 ) -> HostApplication {
@@ -149,9 +138,9 @@ async fn start_reader(
         store,
         source.deployment,
         native,
-        issuer.clone(),
+        peer.issuer(),
         Arc::new(ReceiptGrant {
-            issuer: issuer.clone(),
+            peer: peer.clone(),
             recovery,
             observed,
         }),
@@ -389,13 +378,13 @@ fn caller_history_recovers_lost_original_receipt_after_both_roots_reopen_and_bus
             )))
             .unwrap(),
     );
-    let issuer = maka_plugins::call::Issuer::default();
+    let peer = Arc::new(maka_application_bridge::transport::PeerPolicy::default());
     let recovery = Arc::new(AtomicBool::new(false));
     let seen = Arc::new(Mutex::new(Vec::new()));
     let reader = timer.block_on(start_reader(
         host_store.clone(),
         &original.source,
-        &issuer,
+        &peer,
         recovery.clone(),
         seen.clone(),
     ));
@@ -413,16 +402,18 @@ fn caller_history_recovers_lost_original_receipt_after_both_roots_reopen_and_bus
         .unwrap()
         .remove(0);
     let reader_activation = binding.provider().clone();
-    let observed = Arc::new(Mutex::new(None));
-    let reader_bridge = Arc::new(maka_application_bridge::LocalService::new(
+    let remote = transport::Remote::new(
         client.clone(),
         binding.clone(),
-        Arc::new(UiReadScopes {
-            issuer,
-            approved: Arc::new(AtomicBool::new(true)),
-            observed: observed.clone(),
-        }),
-    ));
+        peer,
+        current.clone(),
+        InstanceId(vec![Uuid::from_u128(2)]),
+        maka_application_bridge::Grant {
+            methods: std::collections::BTreeSet::from(["read".into()]),
+            recovery: true,
+        },
+    );
+    let observed = remote.observed.clone();
     let business_calls = Arc::new(AtomicUsize::new(0));
     let registrations = vec![
         RemoteService {
@@ -435,7 +426,7 @@ fn caller_history_recovers_lost_original_receipt_after_both_roots_reopen_and_bus
             target: receipts.capability,
             registration_epoch: binding.registration_epoch(),
             contract: receipts.declaration.contract,
-            implementation: reader_bridge,
+            implementation: remote.service.clone(),
         },
     ];
     let application = timer
@@ -495,6 +486,8 @@ fn caller_history_recovers_lost_original_receipt_after_both_roots_reopen_and_bus
     scene.close(cx);
     await_action(cx, &scene.app, |a| a.can_shutdown());
     cx.update(|cx| actions::quit_when_drained(&scene.app, cx));
+    timer.block_on(remote.close()).unwrap();
+    drop(remote);
     timer.block_on(reader.shutdown()).unwrap();
     timer.block_on(caller.shutdown()).unwrap();
     timer.block_on(host_store.shutdown()).unwrap();

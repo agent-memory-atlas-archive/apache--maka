@@ -160,7 +160,7 @@ impl ReadResource for Snapshot {
 }
 
 #[test]
-fn actual_local_session_close_waits_for_preparing_custody_and_drops_its_own_resource_copy() {
+fn actual_transport_session_close_waits_for_preparing_custody_and_drops_its_own_resource_copy() {
     let f = fixture();
     let mut connections = f.connect(f.configuration(true, true));
     let source = Arc::new(Mutex::new(None));
@@ -195,7 +195,7 @@ fn actual_local_session_close_waits_for_preparing_custody_and_drops_its_own_reso
         let snapshot = Arc::new(Snapshot {
             data: "token-private-credential".into(),
             descriptors: AtomicUsize::new(0),
-            pause_after: (phase == 1).then(|| f.preparation_descriptor()),
+            pause_after: (phase == 1).then_some(0),
             entered: entered.clone(),
             release: Mutex::new(receiver),
         });

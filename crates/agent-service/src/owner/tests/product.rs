@@ -22,14 +22,33 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use maka_plugin_core::deployment::RemoteObservation;
-use maka_ui::actions::{RemoteService, ServiceSource};
+use maka_ui::actions::RemoteService;
 use ratatui::{buffer::Buffer, layout::Rect};
 use std::{path::PathBuf, process::Command};
 
-struct Scopes(Issuer);
-impl maka_application_bridge::Scopes for Scopes {
-    fn scope(&self, _: &ServiceSource) -> Result<Scope, String> {
-        Ok(scope(&self.0, true))
+struct Physical {
+    server: Arc<maka_application_bridge::transport::Server>,
+    peer: maka_application_bridge::transport::Peer,
+}
+impl maka_application_bridge::transport::native::Connector for Physical {
+    fn connect(
+        &self,
+        stop: tokio_util::sync::CancellationToken,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<maka_application_bridge::transport::native::Stream, String>,
+    > {
+        let server = self.server.clone();
+        let peer = self.peer.clone();
+        Box::pin(async move {
+            if stop.is_cancelled() {
+                return Err("physical opening cancelled before admission".into());
+            }
+            let (channel, accepted) = tokio::io::duplex(64 * 1024);
+            let (reader, writer) = tokio::io::split(accepted);
+            drop(server.serve(reader, writer, peer)?);
+            Ok(Box::new(channel) as maka_application_bridge::transport::native::Stream)
+        })
     }
 }
 fn draw(presenter: &mut maka_tui::application::Presenter) -> Buffer {
@@ -118,7 +137,8 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         assert!(body.to_string().contains("Hello product"));
         response(&mut socket).await;
     });
-    let fixture = runtime.block_on(Fixture::new(&base, 1, None));
+    let peer = Arc::new(maka_application_bridge::transport::PeerPolicy::default());
+    let fixture = runtime.block_on(Fixture::with_peer(&base, 1, None, Some(peer.clone())));
     runtime.block_on(super::selection::edit(&fixture, |changes| {
         changes.enabled_model_ids =
             Some((0..20).map(|at| format!("fixture-model-{at:02}")).collect());
@@ -207,6 +227,30 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     let input: Input = serde_json::from_value(authored["input"].clone()).unwrap();
     let observations: Vec<RemoteObservation> =
         serde_json::from_value(authored["observations"].clone()).unwrap();
+    let mut declarations = maka_plugin_core::package::Packages::default();
+    for package in &packages {
+        declarations
+            .insert(
+                package.application_ref(),
+                package.manifest().application.clone().unwrap(),
+            )
+            .unwrap();
+    }
+    let exports = observations
+        .iter()
+        .map(|observation| {
+            (
+                observation.capability.clone(),
+                observation.declaration.clone(),
+            )
+        })
+        .collect();
+    let plan = maka_plugin_core::plan::Plan::prepare(&input, &declarations, &exports).unwrap();
+    let consumers = plan.instances().values()
+        .filter(|instance| !instance.disabled && instance.entry.is_some())
+        .filter(|instance| instance.bindings.values().flatten().any(|binding|
+            matches!(&binding.provider, maka_plugin_core::plan::Provider::Remote { capability } if capability.deployment == "local")))
+        .map(|instance| instance.identity.clone()).collect();
     let deployment = runtime
         .block_on(caller.commit_application(
             Uuid::new_v4(),
@@ -216,16 +260,6 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
             packages,
         ))
         .unwrap();
-    let registration = |observation: &RemoteObservation, binding: Binding| RemoteService {
-        target: observation.capability.clone(),
-        registration_epoch: binding.registration_epoch(),
-        contract: binding.contract().clone(),
-        implementation: Arc::new(maka_application_bridge::LocalService::new(
-            fixture.app.client(),
-            binding,
-            Arc::new(Scopes(fixture.issuer.clone())),
-        )),
-    };
     let receipt_binding = runtime
         .block_on(fixture.app.client().bind(
             fixture.app.client().activation(&id(2)).unwrap(),
@@ -245,6 +279,58 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         receipt_binding,
         settings_binding,
     ];
+    use maka_application_bridge::transport::{
+        Endpoint, Peer, Server,
+        native::{Connection, Service},
+    };
+    let endpoints = bindings
+        .iter()
+        .enumerate()
+        .map(|(index, binding)| {
+            let maka_plugin_core::contract::Interface::Service { methods } =
+                &binding.contract().interface
+            else {
+                panic!("service contract")
+            };
+            // This trusted product fixture explicitly grants the selected contracts.
+            // Only the original receipt-reader endpoint has historical authority.
+            (
+                format!("service-{index}"),
+                Endpoint::new(
+                    binding.clone(),
+                    maka_application_bridge::Grant {
+                        methods: methods.keys().cloned().collect(),
+                        recovery: index == 1,
+                    },
+                )
+                .unwrap(),
+            )
+        })
+        .collect();
+    let wire_server = Server::new(fixture.app.client(), peer, endpoints).unwrap();
+    let connection = Connection::new(Arc::new(Physical {
+        server: wire_server.clone(),
+        peer: Peer::new(deployment.clone(), consumers).unwrap(),
+    }));
+    let registrations: Vec<_> = observations
+        .iter()
+        .enumerate()
+        .map(|(index, observation)| {
+            let selected = wire_server
+                .catalogue()
+                .select(&format!("service-{index}"))
+                .unwrap();
+            let description = selected.description();
+            RemoteService {
+                target: observation.capability.clone(),
+                registration_epoch: description.registration_epoch,
+                contract: description.contract.clone(),
+                implementation: Arc::new(
+                    Service::new(connection.clone(), selected, deployment.clone()).unwrap(),
+                ),
+            }
+        })
+        .collect();
     let start = || {
         runtime
             .block_on(maka_tui::application::Presenter::start_from_store(
@@ -253,10 +339,14 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
                 runtime.handle().clone(),
                 maka_tui::application::registry(),
                 json!({}),
-                observations
+                registrations
                     .iter()
-                    .zip(bindings.iter())
-                    .map(|(observation, binding)| registration(observation, binding.clone()))
+                    .map(|registration| RemoteService {
+                        target: registration.target.clone(),
+                        registration_epoch: registration.registration_epoch,
+                        contract: registration.contract.clone(),
+                        implementation: registration.implementation.clone(),
+                    })
                     .collect(),
             ))
             .unwrap()
@@ -731,6 +821,14 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     }
     reopened.shutdown().unwrap();
     drop(reopened);
+    runtime.block_on(async {
+        let (physical, host_wire) = tokio::join!(connection.close(), wire_server.close());
+        physical.unwrap();
+        host_wire.unwrap();
+    });
+    drop(connection);
+    drop(wire_server);
+    drop(registrations);
     runtime.block_on(fixture.app.shutdown()).unwrap();
     runtime.block_on(fixture.config.shutdown()).unwrap();
     runtime.block_on(caller.shutdown()).unwrap();
