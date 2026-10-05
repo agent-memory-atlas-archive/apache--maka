@@ -29,7 +29,8 @@ use maka_event_log::{
     root::{ROOT_DATABASE, RootNamespaces, RootOwner},
 };
 use maka_runtime::access::ManagedPrincipalKind;
-use maka_runtime_host::server::{Host, local::LocalListener, websocket::WebSocketListener};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::server::{Host, websocket::WebSocketListener};
 use maka_transport::ndjson;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};

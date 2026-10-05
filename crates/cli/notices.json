@@ -5,7 +5,7 @@
     "crates/acp/Cargo.toml": "836cf57acda320dc984f4648e5893580e79063e95ced700f33cfbaa75994b8f8",
     "crates/agent-service/Cargo.toml": "3336209347e391f4f571dab5548d94a72e57def1e204a9d1a482ad39f572fd70",
     "crates/agent/Cargo.toml": "241d363907d6e5491ba6645de5c114877165e4abd6844b2c581a35fd19c0f4f4",
-    "crates/application-bridge/Cargo.toml": "dec64ff55aa0657ba51b233c35047d8dd5b079ebabd0ce9675ef6e2480b172a6",
+    "crates/application-bridge/Cargo.toml": "6a1ea980880b92c935227042f92c45bfdc322d00eba025954012f1c7ef505df2",
     "crates/apply-patch/Cargo.toml": "049167f87e46959c056e9c3ec990d2243ea6366f883afc6cf5ff5f1364c94e51",
     "crates/assistant/Cargo.toml": "87e733fdce1096c5dcb2bdd792e74c56b25d2e736a03a0741c1600803c9f4e70",
     "crates/background-health/Cargo.toml": "92062dcfce288c91fdca0b14f6c842151fb3228448dfb46f5f4dfcbb8bdc52dc",

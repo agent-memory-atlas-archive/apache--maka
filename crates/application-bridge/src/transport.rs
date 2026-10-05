@@ -22,8 +22,10 @@
 //! this module never treats caller observations or credentials in JSON as trust.
 mod catalogue;
 mod client;
+pub mod ipc;
 pub mod native;
 mod policy;
+pub mod process;
 mod server;
 mod wire;
 pub use catalogue::{Catalogue, Description, Selection};

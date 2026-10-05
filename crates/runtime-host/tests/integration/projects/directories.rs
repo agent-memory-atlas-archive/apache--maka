@@ -23,7 +23,8 @@ use maka_protocol::{
     OperationErrorCode,
     project::{Query, QueryResult},
 };
-use maka_runtime_host::server::{DirectoryRootSpec, Host, HostOptions, local::LocalListener};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::server::{DirectoryRootSpec, Host, HostOptions};
 use std::{os::unix::fs::symlink, time::Duration};
 use tokio_util::sync::CancellationToken;
 

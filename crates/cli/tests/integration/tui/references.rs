@@ -45,7 +45,8 @@ fn host_directory_reference_survives_restart_and_sends_without_text_or_registrat
     let _cleanup = stop.clone().drop_guard();
     let (server, registration, client, model) = runtime.block_on(async {
         use maka_event_log::root::{RootOwner, RootNamespaces};
-        use maka_runtime_host::server::{Host, HostOptions, DirectoryRootSpec, local::LocalListener};
+        use maka_runtime_host::ipc::LocalListener;
+        use maka_runtime_host::server::{Host, HostOptions, DirectoryRootSpec};
         let owner = RootOwner::open(&host.root, &RootNamespaces::for_current_account().unwrap()).unwrap();
         let service = Host::open_with_options(owner, None, HostOptions {
             project_directory_roots: Some(vec![DirectoryRootSpec {label:"Published folders".into(), path:published.clone()}]),

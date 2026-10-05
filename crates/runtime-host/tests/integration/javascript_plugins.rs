@@ -28,7 +28,8 @@ use maka_plugins::{
     fiber::Fiber,
 };
 use maka_runtime::event::InvocationOutcome;
-use maka_runtime_host::server::{Host, HostOptions, local::LocalListener};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::server::{Host, HostOptions};
 use serde_json::{Value, json};
 use std::{path::Path, time::Duration};
 use tokio_util::sync::CancellationToken;

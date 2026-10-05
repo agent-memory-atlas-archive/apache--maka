@@ -20,6 +20,7 @@
 //! The connection owns reception and observations; Application owns execution.
 use super::{
     catalogue::Catalogue,
+    ipc::{Accepted, Hello},
     policy::{Endpoint, Peer, PolicyOwner},
     wire::{self, Control, Open, Reader, Reply},
 };
@@ -97,6 +98,38 @@ impl Server {
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
+        self.serve_inner(reader, writer, peer, None)
+    }
+    /// An inherited-bootstrap nonce pairs a private current-account channel
+    /// with this original Host incarnation. Hello uses the same capacity and
+    /// tracked connection owner as Open; it never creates request authority.
+    pub fn serve_private<R, W>(
+        self: &Arc<Self>,
+        reader: R,
+        writer: W,
+        peer: Peer,
+        nonce: uuid::Uuid,
+    ) -> Result<impl Future<Output = Result<()>> + Send + 'static>
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
+        if nonce.is_nil() {
+            return Err("private channel nonce must be nonnil".into());
+        }
+        self.serve_inner(reader, writer, peer, Some(nonce))
+    }
+    fn serve_inner<R, W>(
+        self: &Arc<Self>,
+        reader: R,
+        writer: W,
+        peer: Peer,
+        nonce: Option<uuid::Uuid>,
+    ) -> Result<impl Future<Output = Result<()>> + Send + 'static>
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
         let gate = self.admission.lock().unwrap();
         if *gate {
             return Err("Application transport is closing".into());
@@ -118,7 +151,7 @@ impl Server {
                 lost: false,
                 pending: None,
             };
-            let execution = AssertUnwindSafe(session.run(&server, peer))
+            let execution = AssertUnwindSafe(session.run(&server, peer, nonce))
                 .catch_unwind()
                 .await;
             let panicked = execution.is_err();
@@ -309,7 +342,23 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Session<R, W> {
         })
         .await
     }
-    async fn run(&mut self, server: &Server, peer: Peer) -> Result<()> {
+    async fn run(&mut self, server: &Server, peer: Peer, nonce: Option<uuid::Uuid>) -> Result<()> {
+        if let Some(nonce) = nonce {
+            let hello: Hello = tokio::select! {
+                biased;
+                () = self.stop.cancelled() => return Err("Application transport is closing".into()),
+                result = self.reader.read_bounded(512) => result?,
+            };
+            if hello.nonce != nonce {
+                return Err("private channel belongs to a different Host incarnation".into());
+            }
+            let accepted = Accepted { nonce };
+            tokio::select! {
+                biased;
+                () = self.stop.cancelled() => return Err("Application transport is closing".into()),
+                result = wire::write(&mut self.writer, &accepted) => result?,
+            }
+        }
         let open: Open = self.read().await?;
         let descriptors: BTreeMap<String, ResourceDescriptor> = self.read().await?;
         let Some(endpoint) = server.endpoints.get(&open.endpoint).cloned() else {

@@ -31,7 +31,8 @@ use maka_runtime::{
     read::{ReadInput, ResourceAddress},
     tool_output::{DurableToolProjection, ToolOutput},
 };
-use maka_runtime_host::server::{Host, local::LocalListener};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::server::Host;
 use serde_json::{Value, json};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;

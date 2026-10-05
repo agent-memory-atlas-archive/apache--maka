@@ -160,8 +160,10 @@ impl Args {
             mut events,
             mut completion,
         } = plan.observe(Some(timeout_ms), cancel.clone())?;
-        let mut stdout = crate::stdio::Output::open("sandbox-stdout", std::io::stdout())?;
-        let mut stderr = crate::stdio::Output::open("sandbox-stderr", std::io::stderr())?;
+        let mut stdout =
+            maka_application_bridge::stdio::Output::open("sandbox-stdout", std::io::stdout())?;
+        let mut stderr =
+            maka_application_bridge::stdio::Output::open("sandbox-stderr", std::io::stderr())?;
         let output = async move {
             while let Some(event) = events.recv().await {
                 if let PipeEvent::Output { stream, bytes } = event {

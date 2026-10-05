@@ -18,7 +18,8 @@
  */
 
 use maka_event_log::root::{RootNamespaces, RootOwner};
-use maka_runtime_host::server::{Host, HostError, HostOptions, Registration, local::LocalListener};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::server::{Host, HostError, HostOptions, Registration};
 use std::{fs, io::Write, os::unix::fs::PermissionsExt, path::Path, time::Duration};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;

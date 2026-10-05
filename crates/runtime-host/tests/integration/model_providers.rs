@@ -21,7 +21,8 @@ use super::{
     javascript_plugins::{package, ready},
     support::{host_fixture::HostFixture, message_recovery::Provider, peer::Peer},
 };
-use maka_runtime_host::server::{Host, local::LocalListener};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::server::Host;
 use serde_json::{Value, json};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;

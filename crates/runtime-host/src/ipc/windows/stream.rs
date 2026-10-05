@@ -24,54 +24,92 @@ use std::{
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
-    net::windows::named_pipe::NamedPipeServer,
+    net::windows::named_pipe::{NamedPipeClient, NamedPipeServer},
 };
 
-pub(in crate::server) struct LocalStream(pub(super) NamedPipeServer);
-
+/// Both directions share one actual handle. Windows pipes have no write-half
+/// EOF: shutdown closes that handle and readers observe EOF, never a fake Ack.
+pub struct LocalStream {
+    pipe: Option<Pipe>,
+}
+enum Pipe {
+    Server(NamedPipeServer),
+    Client(NamedPipeClient),
+}
+impl LocalStream {
+    pub(super) fn server(pipe: NamedPipeServer) -> Self {
+        Self {
+            pipe: Some(Pipe::Server(pipe)),
+        }
+    }
+    pub(super) fn client(pipe: NamedPipeClient) -> Self {
+        Self {
+            pipe: Some(Pipe::Client(pipe)),
+        }
+    }
+}
 impl AsyncRead for LocalStream {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.0).poll_read(cx, buf)
+        match self.pipe.as_mut() {
+            Some(Pipe::Server(pipe)) => Pin::new(pipe).poll_read(cx, buf),
+            Some(Pipe::Client(pipe)) => Pin::new(pipe).poll_read(cx, buf),
+            None => Poll::Ready(Ok(())),
+        }
     }
 }
-
 impl AsyncWrite for LocalStream {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.0).poll_write(cx, buf)
+        match self.pipe.as_mut() {
+            Some(Pipe::Server(pipe)) => Pin::new(pipe).poll_write(cx, buf),
+            Some(Pipe::Client(pipe)) => Pin::new(pipe).poll_write(cx, buf),
+            None => Poll::Ready(Err(io::ErrorKind::BrokenPipe.into())),
+        }
     }
-
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        // Tokio's pipe flush is a no-op, while Mio may still own a queued write.
-        // A zero-byte write checks Mio's previous-write completion/error first.
-        // try_write also clears stale readiness on WouldBlock; readiness alone
-        // does not establish completion. Byte-mode pipes (fixed at creation)
-        // do not deliver zero-byte writes as messages or EOF to readers.
+        // Tokio flush is a no-op. A zero-byte write observes Mio's actual
+        // previous-write completion/error and clears stale readiness on WouldBlock.
         loop {
-            ready!(self.0.poll_write_ready(cx))?;
-            match self.0.try_write(&[]) {
+            let result = match self.pipe.as_ref() {
+                Some(Pipe::Server(pipe)) => {
+                    ready!(pipe.poll_write_ready(cx))?;
+                    pipe.try_write(&[])
+                }
+                Some(Pipe::Client(pipe)) => {
+                    ready!(pipe.poll_write_ready(cx))?;
+                    pipe.try_write(&[])
+                }
+                None => return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into())),
+            };
+            match result {
                 Ok(_) => return Poll::Ready(Ok(())),
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => continue,
                 Err(error) => return Poll::Ready(Err(error)),
             }
         }
     }
-
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.poll_flush(cx)
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if self.pipe.is_none() {
+            return Poll::Ready(Ok(()));
+        }
+        // Complete prior writes before releasing the real handle. Even a flush
+        // error closes it; EOF is cancellation, never a remote cleanup Ack.
+        let result = ready!(self.as_mut().poll_flush(cx));
+        drop(self.pipe.take());
+        Poll::Ready(result)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::server::local::LocalListener;
+    use crate::ipc::LocalListener;
     use std::{path::PathBuf, time::Duration};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},

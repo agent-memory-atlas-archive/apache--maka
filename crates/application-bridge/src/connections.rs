@@ -35,7 +35,7 @@ use maka_runtime_host::application::{
     RecoveryInvocation,
 };
 use maka_ui::actions::{RemoteService, ServiceSource};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
     io::Read,
@@ -63,7 +63,7 @@ pub struct Host {
     pub consumer: InstanceId,
     pub imports: BTreeMap<String, Grant>,
 }
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Grant {
     pub methods: BTreeSet<String>,

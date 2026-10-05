@@ -24,7 +24,8 @@ use maka_event_log::{
     root::{ROOT_DATABASE, RootOwner},
 };
 use maka_runtime::event::{Fact, InvocationOutcome};
-use maka_runtime_host::server::{Host, local::LocalListener};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::server::Host;
 use maka_transport::{MessageReader, MessageWriter, TransportError};
 use serde_json::{Value, json};
 use sqlx::Connection;

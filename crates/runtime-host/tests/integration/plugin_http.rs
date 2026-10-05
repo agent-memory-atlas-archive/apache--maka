@@ -26,7 +26,8 @@ use super::{
 };
 use maka_config::ConfigurationStore;
 use maka_plugins::{composition::Scope, fiber::Fiber};
-use maka_runtime_host::server::{Host, local::LocalListener};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::server::Host;
 use serde_json::json;
 use std::{
     sync::{Arc, atomic::Ordering},

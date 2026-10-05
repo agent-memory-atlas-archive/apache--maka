@@ -19,7 +19,8 @@
 
 use super::*;
 use crate::support::host_fixture::HostFixture;
-use maka_runtime_host::server::{Host, local::LocalListener};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::server::Host;
 use tokio_util::sync::CancellationToken;
 
 pub(super) struct Scene {

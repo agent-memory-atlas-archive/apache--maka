@@ -29,8 +29,9 @@ use maka_protocol::subscription::{
     AssistantObservationFrame, ObservationFrame, SubscriptionClosedReason, SubscriptionOpenInput,
     TranscriptPolicy,
 };
+use maka_runtime_host::ipc::LocalListener;
 use maka_runtime_host::{
-    server::{Host, HostOperations, local::LocalListener},
+    server::{Host, HostOperations},
     session::{PreparedSession, SessionConfiguration, SessionTarget},
 };
 use serde_json::json;

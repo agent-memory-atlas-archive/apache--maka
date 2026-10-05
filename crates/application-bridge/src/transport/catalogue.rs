@@ -89,10 +89,14 @@ impl Catalogue {
     pub async fn read<R: AsyncRead + Unpin>(reader: R) -> Result<(Self, BufReader<R>)> {
         let mut reader = wire::Reader::new(reader);
         let catalogue: Self = reader.read().await?;
-        if catalogue.endpoints.is_empty() || catalogue.endpoints.len() > 128 {
+        catalogue.validate()?;
+        Ok((catalogue, reader.inner))
+    }
+    pub(super) fn validate(&self) -> Result<()> {
+        if self.endpoints.is_empty() || self.endpoints.len() > 128 {
             return Err("invalid Host endpoint catalogue".into());
         }
-        for (name, description) in &catalogue.endpoints {
+        for (name, description) in &self.endpoints {
             if name.is_empty()
                 || name.len() > 256
                 || description.registration_epoch.is_nil()
@@ -108,7 +112,7 @@ impl Catalogue {
             }
             description.contract.validate().map_err(|e| e.to_string())?;
         }
-        Ok((catalogue, reader.inner))
+        Ok(())
     }
     /// Only the trusted embedding publishes the actual captured catalogue.
     pub async fn write<W: AsyncWrite + Unpin>(&self, writer: &mut W) -> Result<()> {

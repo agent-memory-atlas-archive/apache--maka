@@ -19,7 +19,8 @@
 
 use super::{composition, model, readback, support};
 use maka_event_log::root::{RootNamespaces, RootOwner};
-use maka_runtime_host::server::{Host, HostOptions, local::LocalListener};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::server::{Host, HostOptions};
 use serde_json::{Value, json};
 use std::{fs, io::Write, os::unix::fs::PermissionsExt, time::Duration};
 use tokio_util::sync::CancellationToken;

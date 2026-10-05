@@ -50,7 +50,7 @@ pub(super) enum Command {
     Commit(Commit),
     /// Read and validate the persisted source and every selected package.
     Read(ReadSource),
-    /// Serve one invocation on a launcher-provided private stdin/stdout channel.
+    /// Own a shared Host with inherited bootstrap/control and private IPC calls.
     Serve(serve::Serve),
 }
 

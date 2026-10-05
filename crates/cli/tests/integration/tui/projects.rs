@@ -45,9 +45,8 @@ fn project_catalog_notifications_and_creation_use_host_project_identity() {
     let _cancel_on_failure = cancellation.clone().drop_guard();
     let (server, registration) = runtime.block_on(async {
         use maka_event_log::root::{RootNamespaces, RootOwner};
-        use maka_runtime_host::server::{
-            DirectoryRootSpec, Host, HostOptions, local::LocalListener,
-        };
+        use maka_runtime_host::ipc::LocalListener;
+        use maka_runtime_host::server::{DirectoryRootSpec, Host, HostOptions};
         let owner =
             RootOwner::open(&host.root, &RootNamespaces::for_current_account().unwrap()).unwrap();
         let host = Host::open_with_options(

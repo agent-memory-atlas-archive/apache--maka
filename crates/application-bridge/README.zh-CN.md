@@ -61,12 +61,25 @@ UI endpoint 只持有实际 Client/Binding/Scope 准入，不拥有 Host 部署�
 最终准入核原 Binding 和方法 grant；mutation confirmation 另核原 caller 和 operation。
 传入 JSON、endpoint alias、资源 metadata 都只是观察。
 
-`maka application serve --root ROOT --deployment UUID --peer FILE` 通过启动器提供的
-私有 stdin/stdout pipes 服务一次调用。闭合批准文件上限 512 KiB，包含 `source`
-（DeploymentRef）、`consumers`（UI 实例 IDs）、`consumer`（Host 实例 ID）和 `imports`
-（前述 methods/recovery grants）；每个 import 必须明确选中一个现有 provider。
-启动器选择实际进程、持私有 pipe handles 并交付批准文件。CLI 只登记编译提供的
-Gateway/Agent/Settings availability，持久 Host 组合仍决定实际激活哪些实例。
+`maka application serve` 在进程整个生命周期持有同一个 Host。实际选中的 child 从继承
+stdin 接收 `process::Bootstrap`：Root/deployment/namespaces、精确 UI source/消费者集合、
+Host consumer/import grants、私有 IPC 地址与非空 incarnation nonce。闭合 JSON 上限
+512 KiB。Stdin/stdout 只传 Bootstrap、Ready、Close、Closed；每个 import 明确选择一个
+实际 provider。Gateway/Agent/Settings 编译 availability 由该 executable 提供，持久组合
+仍决定实际执行的实例。
+
+`runtime_host::ipc` 是两条 Host 路径共用的物理 listener/connector。Unix socket 要求
+私有 current-account 父目录并用 0600；Windows pipe 拒绝 remote client、保留
+current-account/SYSTEM ACL。`transport::ipc::Connector` 用原 child nonce 配对新 stream；
+Hello 在任何 Scope/Open 之前受原 Server 的 16 wire leases、TaskTracker、close fence
+约束。配对不授予业务权限；独立调用共享同一原 Host Application 与 JavaScript 状态。
+
+`process::Control` 捕获实际 child Catalogue，控制 read/write 被中断后保留原 stdout。
+不确定写入后不再追加第二命令。Child 先撤销 listener、drain 原 Server/Application，
+再真实关闭 SQL/Root，最后发布匹配 nonce 的 Closed。打开 store 后启动失败也经过
+同一收尾；start 即使未见 Ready 也保留真实 Closed，同时返回启动错误。启动器持实际
+Child 并单独观察它的终止，正常关闭要求成功退出；启动失败可能已确认 cleanup 却
+退出非零。聚合 Closed 或进程退出都不结算旧 Lost Call。
 
 Input 与完整 resource descriptors 分别使用有界 JSON frame，raw chunk 最大 64 KiB。
 接收之前预约原 Host slot/JSON/payload 配额，空 bundle 也一样。16 个 connection leases
@@ -81,8 +94,7 @@ Application 和 SQL；清理失败或 panic 保原 fence。控制帧写入被中
 `transport::Call` 保持 caller immutable inputs 与实际 `RecordedIntent`；I/O 失败不释放。
 `disconnect()` 只关闭物理两端，保留未确认的资源/token；EOF 请求取消，不是远端清理确认。
 新的原回执查询不结算丢失 dispatch，不自动重发 mutation。默认 Desktop/TUI
-`--connections` 仍用 `LocalService`；共享认证 listener、默认启动器 connector 和
-原生平台完整验收仍需继续。
+`--connections` 仍用 `LocalService`；默认启动器进程 supervisor 和原生平台完整验收仍需继续。
 
 CLI 在接受调用前，从原捕获 Bindings 发布有界 `Catalogue`。`Selection` 固定 endpoint
 alias 与 registration epoch；每个 Open 携带原 epoch，另一 Host incarnation 即使发布

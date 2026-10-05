@@ -167,7 +167,7 @@ async fn catalog_revisions_preserve_branch_origin_without_inheriting_execution_s
     let stop = tokio_util::sync::CancellationToken::new();
     let _cleanup = stop.clone().drop_guard();
     let server = tokio::spawn(
-        maka_runtime_host::server::local::LocalListener::bind(&endpoint)
+        maka_runtime_host::ipc::LocalListener::bind(&endpoint)
             .unwrap()
             .serve(host.clone(), stop.clone()),
     );

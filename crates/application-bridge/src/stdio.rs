@@ -23,7 +23,7 @@ use tokio_util::io::SyncIoBridge;
 
 /// Process-lifetime stdio workers own no Host, deployment or effect leases.
 /// An open input pipe or blocked output must not hold Tokio shutdown hostage.
-pub(super) struct Stdio {
+pub struct Stdio {
     pub input: DuplexStream,
     pub output: DuplexStream,
     pub output_done: oneshot::Receiver<io::Result<()>>,
@@ -54,7 +54,7 @@ impl Stdio {
 
 /// Blocking OS writes belong to process-lifetime threads, not Tokio's blocking
 /// pool: abandoning a full pipe must not prevent the CLI runtime from exiting.
-pub(super) struct Output {
+pub struct Output {
     pub writer: DuplexStream,
     pub done: oneshot::Receiver<io::Result<()>>,
 }

@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use super::HostError;
+use super::Error;
 use maka_event_log::root::windows::PrivateSecurity;
 use std::{
     io,
@@ -26,7 +26,7 @@ use std::{
 use tokio::net::windows::named_pipe::{NamedPipeServer, PipeMode, ServerOptions};
 
 mod stream;
-use stream::LocalStream;
+pub use stream::LocalStream;
 
 /// The listening instance stays alive until the replacement exists, so no
 /// other account can claim the name between accepted connections.
@@ -36,26 +36,34 @@ pub struct LocalListener {
 }
 
 impl LocalListener {
-    pub fn bind(path: &Path) -> Result<Self, HostError> {
-        let name = path.to_str().ok_or("pipe path must be UTF-8")?;
-        let suffix = name
-            .strip_prefix(r"\\.\pipe\")
-            .ok_or("local pipe path must start with \\\\.\\pipe\\")?;
-        if suffix.is_empty() || suffix.contains(['\\', '/', '\0']) {
-            return Err("local pipe name must be a single nonempty component".into());
-        }
+    pub fn bind(path: &Path) -> Result<Self, Error> {
+        validate_path(path)?;
         Ok(Self {
             listener: create(path, true)?,
             path: path.to_owned(),
         })
     }
 
-    pub(in crate::server) async fn accept(&mut self) -> io::Result<LocalStream> {
+    pub async fn accept(&mut self) -> io::Result<LocalStream> {
         // Tokio connect is cancellation-safe: select may retry this same instance.
         self.listener.connect().await?;
         let next = create(&self.path, false)?;
-        Ok(LocalStream(std::mem::replace(&mut self.listener, next)))
+        Ok(LocalStream::server(std::mem::replace(
+            &mut self.listener,
+            next,
+        )))
     }
+}
+
+fn validate_path(path: &Path) -> Result<(), Error> {
+    let name = path.to_str().ok_or("pipe path must be UTF-8")?;
+    let suffix = name
+        .strip_prefix(r"\\.\pipe\")
+        .ok_or("local pipe path must start with \\\\.\\pipe\\")?;
+    if suffix.is_empty() || suffix.contains(['\\', '/', '\0']) {
+        return Err("local pipe name must be a single nonempty component".into());
+    }
+    Ok(())
 }
 
 fn create(path: &Path, first: bool) -> io::Result<NamedPipeServer> {
@@ -69,6 +77,27 @@ fn create(path: &Path, first: bool) -> io::Result<NamedPipeServer> {
             .first_pipe_instance(first)
             .reject_remote_clients(true)
             .create_with_security_attributes_raw(path, std::ptr::from_mut(&mut attributes).cast())
+    }
+}
+
+/// Retry only the OS busy condition; cancellation drops this same opening.
+pub async fn connect(path: &Path) -> Result<LocalStream, Error> {
+    validate_path(path)?;
+    loop {
+        match tokio::net::windows::named_pipe::ClientOptions::new().open(path) {
+            Ok(client) => {
+                use std::os::windows::io::{AsRawHandle, BorrowedHandle};
+                // Validate the held pipe, before sending any pairing nonce.
+                let handle = unsafe { BorrowedHandle::borrow_raw(client.as_raw_handle()) };
+                let held = std::fs::File::from(handle.try_clone_to_owned()?);
+                maka_event_log::root::windows::validate_private(&held)?;
+                return Ok(LocalStream::client(client));
+            }
+            Err(error) if error.raw_os_error() == Some(231) => {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            Err(error) => return Err(error.into()),
+        }
     }
 }
 

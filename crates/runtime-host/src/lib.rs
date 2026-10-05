@@ -21,6 +21,7 @@ pub mod access_delivery;
 pub mod application;
 mod controllers;
 mod execution;
+pub mod ipc;
 pub mod oauth;
 pub mod plugins;
 pub mod sandbox;

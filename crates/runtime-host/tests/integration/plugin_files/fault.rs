@@ -27,7 +27,8 @@ use crate::{
 };
 use maka_event_log::root::ROOT_DATABASE;
 use maka_runtime::event::{Fact, ToolOutcome};
-use maka_runtime_host::server::{Host, local::LocalListener};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::server::Host;
 use serde_json::json;
 use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
 use std::time::Duration;

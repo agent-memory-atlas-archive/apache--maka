@@ -26,7 +26,8 @@ use maka_event_log::{
 use maka_runtime::artifact::{
     Artifact, ArtifactKind, ArtifactSource, content_digest, upload_artifact_id,
 };
-use maka_runtime_host::server::{Host, local::LocalListener};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::server::Host;
 use sqlx::Connection;
 use std::{os::unix::fs::PermissionsExt, time::Duration};
 

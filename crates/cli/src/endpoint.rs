@@ -17,7 +17,8 @@
  * under the License.
  */
 
-use maka_runtime_host::server::{HostError, local::LocalListener};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::server::HostError;
 use std::path::PathBuf;
 
 pub(super) struct LocalEndpoint {

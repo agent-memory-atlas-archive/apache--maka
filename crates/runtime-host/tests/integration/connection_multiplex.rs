@@ -21,7 +21,7 @@
 
 use crate::support::execution_fixture;
 use maka_event_log::root::RootOwner;
-use maka_runtime_host::server::local::LocalListener;
+use maka_runtime_host::ipc::LocalListener;
 use maka_transport::{MessageReader, MessageWriter, TransportError};
 use serde_json::{Value, json};
 use std::time::Duration;

@@ -21,14 +21,7 @@ use super::{Host, HostError};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-#[cfg(unix)]
-mod unix;
-#[cfg(unix)]
-pub use unix::LocalListener;
-#[cfg(windows)]
-mod windows;
-#[cfg(windows)]
-pub use windows::LocalListener;
+use crate::ipc::LocalListener;
 
 impl LocalListener {
     pub async fn serve(

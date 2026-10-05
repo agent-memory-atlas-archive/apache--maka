@@ -24,8 +24,9 @@ use maka_runtime::{
     event::{EventWrite, Fact, Invocation, InvocationInput, InvocationOutcome, RuntimeEvent},
     handoff::{HandoffExecution, HandoffIntent, HandoffPause, HandoffTools},
 };
+use maka_runtime_host::ipc::LocalListener;
 use maka_runtime_host::{
-    server::{Host, local::LocalListener},
+    server::Host,
     session::{PreparedSession, SessionConfiguration, SessionModel},
 };
 use serde_json::json;

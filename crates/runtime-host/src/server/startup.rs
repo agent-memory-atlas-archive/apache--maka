@@ -104,7 +104,7 @@ mod tests {
             #[cfg(windows)]
             let endpoint =
                 PathBuf::from(format!(r"\\.\pipe\maka-startup-{}", uuid::Uuid::new_v4()));
-            let listener = super::super::local::LocalListener::bind(&endpoint).unwrap();
+            let listener = crate::ipc::LocalListener::bind(&endpoint).unwrap();
             let stop = CancellationToken::new();
             stop.cancel();
             listener.serve(self.host.clone(), stop).await.unwrap();

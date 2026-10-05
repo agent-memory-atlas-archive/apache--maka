@@ -28,7 +28,8 @@ async fn model_tool_preferences_freeze_each_run_and_survive_reopen() {
         peer::Peer,
     };
     use maka_runtime::{event::Fact, execution::EditingTools};
-    use maka_runtime_host::server::{Host, local::LocalListener};
+    use maka_runtime_host::ipc::LocalListener;
+    use maka_runtime_host::server::Host;
     use serde_json::json;
     use tokio_util::sync::CancellationToken;
 
@@ -207,7 +208,8 @@ async fn set_model_tools(
 async fn model_thinking_default_is_frozen_at_creation_not_replay() {
     use super::support::{message_recovery::configure, peer::Peer};
     use maka_runtime::execution::ThinkingLevel;
-    use maka_runtime_host::server::{Host, local::LocalListener};
+    use maka_runtime_host::ipc::LocalListener;
+    use maka_runtime_host::server::Host;
     use serde_json::json;
     use tokio_util::sync::CancellationToken;
 

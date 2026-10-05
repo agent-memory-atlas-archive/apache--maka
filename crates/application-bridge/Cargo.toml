@@ -30,8 +30,8 @@ maka-plugins.workspace = true
 maka-event-log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
-tokio-util.workspace = true
+tokio = { workspace = true, features = ["net", "process"] }
+tokio-util = { workspace = true, features = ["io-util"] }
 uuid.workspace = true
 futures-util.workspace = true
 

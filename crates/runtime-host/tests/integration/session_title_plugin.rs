@@ -22,7 +22,8 @@ use super::support::{
     message_recovery::{Provider, configure},
     peer::Peer,
 };
-use maka_runtime_host::server::{Host, local::LocalListener};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::server::Host;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::time::Duration;

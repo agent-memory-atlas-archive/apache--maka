@@ -24,10 +24,8 @@ use super::support::{
 };
 use maka_protocol::Operation;
 use maka_runtime::{event::Fact, execution::SandboxMode};
-use maka_runtime_host::{
-    server::{Host, local::LocalListener},
-    session::SessionConfiguration,
-};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::{server::Host, session::SessionConfiguration};
 use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::sync::mpsc;

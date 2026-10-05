@@ -103,11 +103,13 @@ impl Reply {
         }
     }
 }
-struct Bounded(Vec<u8>);
+struct Bounded(Vec<u8>, usize);
 impl Write for Bounded {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        if bytes.len() > FRAME_LIMIT - self.0.len() {
-            return Err(std::io::Error::other("Application frame exceeds 2 MiB"));
+        if bytes.len() > self.1 - self.0.len() {
+            return Err(std::io::Error::other(
+                "Application frame exceeds byte limit",
+            ));
         }
         self.0.extend_from_slice(bytes);
         Ok(bytes.len())
@@ -120,7 +122,14 @@ pub(super) async fn write<W: AsyncWrite + Unpin, T: Serialize>(
     writer: &mut W,
     value: &T,
 ) -> Result<()> {
-    let mut buffer = Bounded(Vec::new());
+    write_bounded(writer, value, FRAME_LIMIT).await
+}
+pub(super) async fn write_bounded<W: AsyncWrite + Unpin, T: Serialize>(
+    writer: &mut W,
+    value: &T,
+    limit: usize,
+) -> Result<()> {
+    let mut buffer = Bounded(Vec::new(), limit.min(FRAME_LIMIT));
     serde_json::to_writer(&mut buffer, value).map_err(|e| e.to_string())?;
     writer
         .write_u32(buffer.0.len() as u32)
@@ -151,6 +160,9 @@ impl<R: AsyncRead + Unpin> Reader<R> {
         }
     }
     pub(super) async fn read<T: DeserializeOwned>(&mut self) -> Result<T> {
+        self.read_bounded(FRAME_LIMIT).await
+    }
+    pub(super) async fn read_bounded<T: DeserializeOwned>(&mut self, limit: usize) -> Result<T> {
         while self.prefix_read < 4 {
             let n = self
                 .inner
@@ -163,7 +175,7 @@ impl<R: AsyncRead + Unpin> Reader<R> {
             self.prefix_read += n;
         }
         let length = u32::from_be_bytes(self.prefix) as usize;
-        if !(1..=FRAME_LIMIT).contains(&length) {
+        if !(1..=limit.min(FRAME_LIMIT)).contains(&length) {
             return Err("invalid Application frame length".into());
         }
         if self.body.is_empty() {

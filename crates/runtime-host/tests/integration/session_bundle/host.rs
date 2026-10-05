@@ -19,7 +19,8 @@
 
 use super::super::support::{host_fixture::HostFixture, peer::Peer};
 use maka_client::{Client, Notification};
-use maka_runtime_host::server::{Host, HostError, local::LocalListener};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::server::{Host, HostError};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 

@@ -27,7 +27,8 @@ use maka_protocol::{
     subscription::{SubscriptionOpenInput, TranscriptPolicy},
     transcript::{SessionTranscriptPageDirection, SessionTranscriptPageInput},
 };
-use maka_runtime_host::server::{Host, local::LocalListener};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::server::Host;
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::PathBuf};
 use tokio::sync::mpsc;

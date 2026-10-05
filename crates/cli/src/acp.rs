@@ -32,7 +32,7 @@ pub(crate) struct Args {
 pub(crate) async fn run(args: Args) -> Result<(), HostError> {
     let stop = CancellationToken::new();
     let _signals = crate::signals::watch(stop.clone())?;
-    let stdio = crate::stdio::Stdio::open()?;
+    let stdio = maka_application_bridge::stdio::Stdio::open()?;
     let root = match args.root {
         Some(root) => root,
         None => RootNamespaces::for_current_account()?

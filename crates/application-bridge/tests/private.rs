@@ -60,6 +60,12 @@ impl Fixture {
     }
     async fn with_gate(gate: Option<Arc<Gate>>) -> Self {
         let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+                .unwrap();
+        }
         let root = directory.path().join("host");
         let caller_root = directory.path().join("caller");
         let namespaces = RootNamespaces {
@@ -544,12 +550,35 @@ fn stop_ui(mut ui: maka_ui::Application, root: &maka_plugin_core::runtime::Mount
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn native_adapter_runs_checked_ui_actions_actual_caller_sql_and_original_recovery() {
     let f = Fixture::new().await;
+    let nonce = Uuid::new_v4();
+    #[cfg(unix)]
+    let path = f._directory.path().join("native.sock");
+    #[cfg(windows)]
+    let path = std::path::PathBuf::from(format!(r"\\.\pipe\maka-native-test-{nonce}"));
+    let mut listener = maka_runtime_host::ipc::LocalListener::bind(&path).unwrap();
+    let stop = tokio_util::sync::CancellationToken::new();
+    let accept_stop = stop.clone();
+    let server = f.server.clone();
+    let peer = f.peer.clone();
+    let acceptance = tokio::spawn(async move {
+        loop {
+            let stream = tokio::select! {
+                biased;
+                ()=accept_stop.cancelled()=>break,
+                stream=listener.accept()=>stream.unwrap(),
+            };
+            let (reader, writer) = tokio::io::split(stream);
+            drop(
+                server
+                    .serve_private(reader, writer, peer.clone(), nonce)
+                    .unwrap(),
+            );
+        }
+        drop(listener);
+    });
     let (mut ui, connection, _, _) = native_ui(
         &f,
-        Arc::new(Physical {
-            server: f.server.clone(),
-            peer: f.peer.clone(),
-        }),
+        Arc::new(maka_application_bridge::transport::ipc::Connector::new(path, nonce).unwrap()),
     )
     .await;
     let root = ui.mount_launch(serde_json::json!({})).unwrap();
@@ -579,6 +608,8 @@ async fn native_adapter_runs_checked_ui_actions_actual_caller_sql_and_original_r
     stop_ui(ui, &root);
     connection.close().await.unwrap();
     drop(connection);
+    stop.cancel();
+    acceptance.await.unwrap();
     f.server.close().await.unwrap();
     f.cleanup().await;
 }
@@ -1304,4 +1335,92 @@ async fn lost_close_before_dispatch_poll_keeps_the_actual_confirmed_sql_token() 
     drop(connection);
     drop(RootOwner::open(&caller_root, &namespaces).unwrap());
     drop(_directory);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn private_hello_uses_original_capacity_and_close_cancels_partial_handshakes() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let f = Fixture::new().await;
+    let nonce = Uuid::new_v4();
+    #[cfg(unix)]
+    let path = f._directory.path().join("hello.sock");
+    #[cfg(windows)]
+    let path = std::path::PathBuf::from(format!(r"\\.\pipe\maka-hello-test-{nonce}"));
+    let mut listener = maka_runtime_host::ipc::LocalListener::bind(&path).unwrap();
+    let mut clients = Vec::new();
+    let mut observers = Vec::new();
+    for _ in 0..16 {
+        let mut client = maka_runtime_host::ipc::connect(&path).await.unwrap();
+        let accepted = listener.accept().await.unwrap();
+        let (reader, writer) = tokio::io::split(accepted);
+        observers.push(
+            f.server
+                .serve_private(reader, writer, f.peer.clone(), nonce)
+                .unwrap(),
+        );
+        // Leave a real physical header incomplete. No Scope/Open is admitted.
+        client.write_all(&[0]).await.unwrap();
+        clients.push(client);
+    }
+    let extra = maka_runtime_host::ipc::connect(&path).await.unwrap();
+    let accepted = listener.accept().await.unwrap();
+    let (reader, writer) = tokio::io::split(accepted);
+    assert!(
+        f.server
+            .serve_private(reader, writer, f.peer.clone(), nonce)
+            .err()
+            .unwrap()
+            .contains("capacity")
+    );
+    drop(extra);
+    drop(clients.remove(0));
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), observers.remove(0))
+            .await
+            .unwrap()
+            .is_err()
+    );
+    // The released original wire lease admits another connection. A foreign
+    // nonce fails before Scope and releases its same owner, without an Open.
+    let mut foreign = maka_runtime_host::ipc::connect(&path).await.unwrap();
+    let accepted = listener.accept().await.unwrap();
+    let (reader, writer) = tokio::io::split(accepted);
+    let observer = f
+        .server
+        .serve_private(reader, writer, f.peer.clone(), nonce)
+        .unwrap();
+    let hello = serde_json::to_vec(&serde_json::json!({"nonce":Uuid::new_v4()})).unwrap();
+    foreign
+        .write_all(&(hello.len() as u32).to_be_bytes())
+        .await
+        .unwrap();
+    foreign.write_all(&hello).await.unwrap();
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), observer)
+            .await
+            .unwrap()
+            .unwrap_err()
+            .contains("different Host incarnation")
+    );
+    drop(foreign);
+    drop(listener);
+    tokio::time::timeout(std::time::Duration::from_secs(2), f.server.close())
+        .await
+        .unwrap()
+        .unwrap();
+    for observer in observers {
+        assert!(observer.await.is_err());
+    }
+    for mut client in clients {
+        let mut byte = [0];
+        assert_eq!(client.read(&mut byte).await.unwrap(), 0);
+    }
+    assert!(
+        f.caller
+            .application_intents(f.source.deployment, support::identity(2), 0, 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    f.cleanup().await;
 }

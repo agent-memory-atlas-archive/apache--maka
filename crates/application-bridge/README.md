@@ -22,7 +22,8 @@
 The Desktop and TUI launchers accept `--connections FILE`. This trusted input
 connects separate UI and Host deployments in one process. It does not edit either
 composition. Private cross-process invocation channels are described below.
-Network authentication and the default UI connector remain separate work.
+The shared private IPC Host entrypoint is available; the default UI process
+supervisor and network authentication remain separate work.
 
 ```json
 {
@@ -87,14 +88,31 @@ private request evidence and checks the original Binding/method grant at final
 admission; mutation confirmation also checks the original caller and operation.
 Caller JSON, endpoint aliases and descriptor metadata are observations.
 
-`maka application serve --root ROOT --deployment UUID --peer FILE` serves one
-invocation on launcher-provided stdin/stdout pipes. The closed approval file is
-bounded to 512 KiB and contains `source` (DeploymentRef), `consumers` (UI instance
-IDs), `consumer` (Host instance ID), and `imports` (method/recovery grants as
-above). Each import selects exactly one existing provider. The launcher chooses
-the process, owns its private pipe handles, and provides that approval file.
-The command registers compiled gateway/agent/settings availability; the persisted
-Host composition still selects every executable instance.
+`maka application serve` owns one shared Host for its entire lifetime. The selected
+child receives `process::Bootstrap` on inherited stdin: Root/deployment/namespaces,
+exact approved UI source/consumers, Host consumer/import grants, private IPC address
+and a nonnil incarnation nonce. The input is closed JSON, bounded to 512 KiB.
+Stdin/stdout are only for Bootstrap, Ready, Close and Closed. Each import selects
+exactly one existing provider. Compiled gateway/agent/settings availability comes
+from this executable; the persisted Host composition selects executed instances.
+
+`runtime_host::ipc` is the canonical physical listener/connector used by both Host
+paths. Unix sockets require a private current-account parent and use mode 0600;
+Windows pipes reject remote clients and retain the current-account/SYSTEM ACL.
+`transport::ipc::Connector` pairs each fresh stream with the original child nonce.
+Hello uses the original Server's sixteen wire leases, tracked task and close fence,
+before any Scope/Open. Pairing does not grant business permission. Independent
+calls share the same original Host application and JavaScript state.
+
+`process::Control` captures this child's actual Catalogue and retains its original
+stdout across interrupted control reads/writes. It never appends a second command
+after an uncertain write. Child shutdown revokes the listener, drains the original
+Server and Application, then closes SQL/Root before publishing matching Closed.
+Startup failure after opening the store follows the same cleanup. Start preserves
+a matching Closed even when no Ready was published, while reporting startup failure.
+The launcher must own the actual Child and independently observe its terminal exit;
+normal shutdown requires success. A failed start can return a nonzero exit despite
+confirmed cleanup. Neither aggregate Closed nor process exit settles a Lost Call.
 
 Input and resource descriptors use separate bounded JSON frames. Raw chunks are
 at most 64 KiB; the original Host slot/JSON/payload reservations precede reception,
@@ -115,8 +133,7 @@ I/O failure retains this custody. `disconnect()` closes both physical halves whi
 retaining unconfirmed inputs/token; EOF is a cancellation request, not a remote
 cleanup acknowledgement. A successful fresh original-receipt query never
 settles a lost dispatch; no mutation is automatically resent. The default
-Desktop/TUI `--connections` path still uses `LocalService`. Shared authenticated
-listeners, the default launcher connector and native platform acceptance remain work.
+Desktop/TUI `--connections` path still uses `LocalService`. Default launcher process supervision and native platform acceptance remain work.
 
 Before accepting the invocation, the CLI publishes a bounded `Catalogue` from its
 actual captured Bindings. A `Selection` freezes the endpoint alias and registration

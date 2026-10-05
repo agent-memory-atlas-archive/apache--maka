@@ -20,6 +20,7 @@
 //! Trusted local connections between separate UI and Host deployment owners.
 mod connections;
 mod service;
+pub mod stdio;
 pub mod transport;
 pub use connections::{Configuration, Connections, GATEWAY, Grant, Host, with_gateway};
 pub use service::{LocalService, Scopes};

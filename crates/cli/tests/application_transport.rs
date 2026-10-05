@@ -21,7 +21,14 @@
 #[allow(dead_code)]
 #[path = "../../application-bridge/tests/support/mod.rs"]
 mod support;
-use maka_application_bridge::transport::{Call, Catalogue, Reply, Source};
+use maka_application_bridge::{
+    Grant,
+    transport::{
+        Call, Catalogue, Reply, Source, ipc,
+        native::{Connector as _, Stream},
+        process::{Bootstrap, Control},
+    },
+};
 use maka_event_log::{
     EventLog,
     root::{RootNamespaces, RootOwner},
@@ -51,6 +58,14 @@ struct Fixture {
     source: DeploymentRef,
     host: Uuid,
 }
+type ChannelCall = Call<tokio::io::ReadHalf<Stream>, tokio::io::WriteHalf<Stream>>;
+struct HostProcess {
+    child: Child,
+    control: Control<ChildStdout, ChildStdin>,
+    catalogue: Catalogue,
+    connector: ipc::Connector,
+}
+
 impl Fixture {
     fn new() -> Self {
         let timer = tokio::runtime::Builder::new_multi_thread()
@@ -59,6 +74,12 @@ impl Fixture {
             .build()
             .unwrap();
         let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+                .unwrap();
+        }
         let namespaces = RootNamespaces::for_current_account().unwrap();
         let open = |name| {
             let owner =
@@ -103,18 +124,19 @@ impl Fixture {
                 }
             }
             let source=(old.manifest().id=="local.business").then(||format!(r#"
+                let writes=0;
                 export function activate(){{return {{Counter:{{contract:{},service:['service']}}}};}}
                 export const service={{
                     async read(input,observation,context){{
                         const descriptor=await context.invoke({{operation:'metadata',slot:'text'}});
                         const first=await context.invoke({{operation:'read',slot:'text',start:0,end:Math.min(5,descriptor.bytes)}});
-                        return {{bytes:descriptor.bytes,owner:descriptor.metadata.owner,first,inputLength:typeof input==='string'?input.length:0}};
+                        return {{bytes:descriptor.bytes,owner:descriptor.metadata.owner,first,inputLength:typeof input==='string'?input.length:0,writes}};
                     }},
                     async write(input,observation,context){{
                         const first=await context.invoke({{operation:'read',slot:'text',start:0,end:5}});
                         if(first.join(',')!=='116,111,107,101,110')throw Error('original snapshot differs');
                         if(input==='hold'){{while(true){{}}}}
-                        return {{accepted:true}};
+                        writes++;return {{accepted:true}};
                     }},
                     async feed(input,observation,context){{for(let i=0;i<35;i++)await context.invoke({{operation:'emit',value:{{i}}}});return {{done:true}};}}
                 }};
@@ -136,12 +158,6 @@ impl Fixture {
         let source = timer
             .block_on(caller.commit_application(Uuid::new_v4(), 0, input, observations, packages))
             .unwrap();
-        let approval = json!({"source":source,"consumers":[support::identity(2)],"consumer":support::identity(13),"imports":{"business":{"methods":["read","write","feed"],"recovery":false},"receipts":{"methods":["read"],"recovery":true}}});
-        std::fs::write(
-            directory.path().join("approval.json"),
-            serde_json::to_vec(&approval).unwrap(),
-        )
-        .unwrap();
         Self {
             timer,
             directory,
@@ -161,6 +177,102 @@ impl Fixture {
             request: Uuid::new_v4(),
         }
     }
+    fn launch(&self) -> (Child, Control<ChildStdout, ChildStdin>, Bootstrap) {
+        let _entered = self.timer.enter();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_maka"))
+            .args(["application", "serve"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let nonce = Uuid::new_v4();
+        #[cfg(unix)]
+        let address = self
+            .directory
+            .path()
+            .join(format!("{}.sock", &nonce.to_string()[..8]));
+        #[cfg(windows)]
+        let address = PathBuf::from(format!(r"\\.\pipe\maka-application-test-{nonce}"));
+        let bootstrap = Bootstrap {
+            root: self.host_path(),
+            deployment: self.host,
+            namespaces: self.namespaces.clone(),
+            source: self.source.clone(),
+            consumers: [support::identity(2)].into(),
+            consumer: support::identity(13),
+            imports: BTreeMap::from([
+                (
+                    "business".into(),
+                    Grant {
+                        methods: ["read".into(), "write".into(), "feed".into()].into(),
+                        recovery: false,
+                    },
+                ),
+                (
+                    "receipts".into(),
+                    Grant {
+                        methods: ["read".into()].into(),
+                        recovery: true,
+                    },
+                ),
+            ]),
+            address: address.clone(),
+            nonce,
+        };
+        let control = Control::new(
+            child.stdout.take().unwrap(),
+            child.stdin.take().unwrap(),
+            nonce,
+        )
+        .unwrap();
+        (child, control, bootstrap)
+    }
+    fn start_host(&self) -> HostProcess {
+        let (child, mut control, bootstrap) = self.launch();
+        let catalogue = self.timer.block_on(async {
+            tokio::time::timeout(Duration::from_secs(15), control.start(&bootstrap))
+                .await
+                .unwrap()
+                .unwrap()
+        });
+        HostProcess {
+            child,
+            control,
+            catalogue,
+            connector: ipc::Connector::new(bootstrap.address, bootstrap.nonce).unwrap(),
+        }
+    }
+    fn open(
+        &self,
+        host: &HostProcess,
+        endpoint: &str,
+        method: &str,
+        input: Value,
+        resources: Attachments,
+        source: Source,
+    ) -> ChannelCall {
+        let stream = self.timer.block_on(async {
+            tokio::time::timeout(
+                Duration::from_secs(10),
+                host.connector.connect(Default::default()),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+        });
+        let (reader, writer) = tokio::io::split(stream);
+        Call::new(
+            reader,
+            writer,
+            host.catalogue.select(endpoint).unwrap(),
+            source,
+            method.into(),
+            input,
+            resources,
+        )
+    }
     fn spawn(
         &self,
         endpoint: &str,
@@ -168,46 +280,25 @@ impl Fixture {
         input: Value,
         resources: Attachments,
         source: Source,
-    ) -> (Child, Call<tokio::io::BufReader<ChildStdout>, ChildStdin>) {
-        let _entered = self.timer.enter();
-        let mut child = Command::new(env!("CARGO_BIN_EXE_maka"))
-            .args(["application", "serve", "--root"])
-            .arg(self.host_path())
-            .arg("--deployment")
-            .arg(self.host.to_string())
-            .arg("--peer")
-            .arg(self.directory.path().join("approval.json"))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
-        let (catalogue, channel_input) = self
-            .timer
-            .block_on(Catalogue::read(child.stdout.take().unwrap()))
-            .unwrap();
-        let call = Call::new(
-            channel_input,
-            child.stdin.take().unwrap(),
-            catalogue.select(endpoint).unwrap(),
-            source,
-            method.into(),
-            input,
-            resources,
-        );
-        (child, call)
+    ) -> (HostProcess, ChannelCall) {
+        let host = self.start_host();
+        let call = self.open(&host, endpoint, method, input, resources, source);
+        (host, call)
     }
-    fn wait(&self, mut child: Child) {
-        assert!(
-            self.timer
-                .block_on(async {
-                    tokio::time::timeout(Duration::from_secs(15), child.wait()).await
-                })
+    fn wait(&self, mut host: HostProcess) {
+        self.timer.block_on(async {
+            tokio::time::timeout(Duration::from_secs(15), host.control.close())
+                .await
                 .unwrap()
-                .unwrap()
-                .success()
-        );
+                .unwrap();
+            assert!(
+                tokio::time::timeout(Duration::from_secs(15), host.child.wait())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .success()
+            );
+        });
         drop(RootOwner::open(&self.host_path(), &self.namespaces).unwrap());
     }
     fn cleanup(self) {
@@ -274,7 +365,7 @@ fn private_pipes_move_actual_utf8_snapshots_and_metadata() {
     f.timer.block_on(async {
         call.start().await.unwrap();
         let value=finished(call.receive().await.unwrap());
-        assert_eq!(value,json!({"bytes":data.len(),"owner":"actual-editor","first":[116,111,107,101,110],"inputLength":400_000}));
+        assert_eq!(value,json!({"bytes":data.len(),"owner":"actual-editor","first":[116,111,107,101,110],"inputLength":400_000,"writes":0}));
         assert!(call.cleanup_confirmed());
     });
     drop(call);
@@ -453,7 +544,7 @@ fn private_host_loss_retains_real_caller_token_and_reopens_only_original_receipt
             })=>result.unwrap(),
         }
         reader.close().await.unwrap();
-        child.start_kill().unwrap();assert!(!tokio::time::timeout(Duration::from_secs(10),child.wait()).await.unwrap().unwrap().success());
+        child.child.start_kill().unwrap();assert!(!tokio::time::timeout(Duration::from_secs(10),child.child.wait()).await.unwrap().unwrap().success());
         assert!(dispatched.await.is_err());reference
     });
     assert!(call.holds_caller_intent());
@@ -504,4 +595,101 @@ fn private_host_loss_retains_real_caller_token_and_reopens_only_original_receipt
     // not a cleanup receipt, replay permission or product recovery mechanism.
     drop(call);
     drop(RootOwner::open(&directory.path().join("caller"), &namespaces).unwrap());
+}
+
+#[test]
+fn shared_host_keeps_actual_javascript_state_across_independent_channels() {
+    let f = Fixture::new();
+    let host = f.start_host();
+    let original_epoch = host
+        .catalogue
+        .select("business")
+        .unwrap()
+        .description()
+        .registration_epoch;
+    let mut write = f.open(&host, "business", "write", Value::Null, token(), f.source());
+    f.timer.block_on(async {
+        write.start().await.unwrap();
+        assert!(matches!(
+            write.receive().await.unwrap(),
+            Reply::Prepared { .. }
+        ));
+        let recorded = f
+            .caller
+            .record_application_intent(
+                f.source.clone(),
+                support::identity(2),
+                write.reference().unwrap().clone(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            write.commit(recorded).await.unwrap(),
+            Reply::Mutation {
+                cleanup: Ok(()),
+                ..
+            }
+        ));
+    });
+    drop(write);
+    let mut read = f.open(&host, "business", "read", Value::Null, token(), f.source());
+    let value = f.timer.block_on(async {
+        read.start().await.unwrap();
+        finished(read.receive().await.unwrap())
+    });
+    assert_eq!(value["writes"], 1);
+    assert_eq!(
+        host.catalogue
+            .select("business")
+            .unwrap()
+            .description()
+            .registration_epoch,
+        original_epoch
+    );
+    drop(read);
+    f.wait(host);
+    f.cleanup();
+}
+
+#[test]
+fn failed_start_preserves_the_same_child_actual_closed_acknowledgement() {
+    let f = Fixture::new();
+    for missing_import in [true, false] {
+        let (mut child, mut control, mut bootstrap) = f.launch();
+        if missing_import {
+            bootstrap.imports.insert(
+                "missing".into(),
+                Grant {
+                    methods: ["read".into()].into(),
+                    recovery: false,
+                },
+            );
+        } else {
+            bootstrap.deployment = Uuid::new_v4();
+        }
+        f.timer.block_on(async {
+            assert!(
+                tokio::time::timeout(Duration::from_secs(15), control.start(&bootstrap))
+                    .await
+                    .unwrap()
+                    .unwrap_err()
+                    .contains("closed before publishing")
+            );
+            tokio::time::timeout(Duration::from_secs(2), control.close())
+                .await
+                .unwrap()
+                .unwrap();
+            control.close().await.unwrap();
+            // Startup remains a failure, independently of the real cleanup Ack.
+            assert!(
+                !tokio::time::timeout(Duration::from_secs(15), child.wait())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .success()
+            );
+        });
+        drop(RootOwner::open(&f.host_path(), &f.namespaces).unwrap());
+    }
+    f.cleanup();
 }

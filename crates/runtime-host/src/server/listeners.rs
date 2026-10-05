@@ -17,7 +17,8 @@
  * under the License.
  */
 
-use super::{Host, HostError, local::LocalListener, websocket::WebSocketListener};
+use super::{Host, HostError, websocket::WebSocketListener};
+use crate::ipc::LocalListener;
 use maka_transport::ndjson;
 use std::sync::Arc;
 use tokio::task::JoinSet;

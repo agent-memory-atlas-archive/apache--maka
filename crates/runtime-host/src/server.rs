@@ -34,7 +34,7 @@ mod execution_boundary;
 mod handshake;
 pub(crate) mod interactions;
 mod listeners;
-pub mod local;
+mod local;
 pub(crate) mod messages;
 mod navigation;
 mod oauth;

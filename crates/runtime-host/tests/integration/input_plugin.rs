@@ -30,9 +30,10 @@ use maka_plugins::{
     session,
 };
 use maka_runtime::event::Fact;
+use maka_runtime_host::ipc::LocalListener;
 use maka_runtime_host::{
     plugins::Setup,
-    server::{Host, HostOptions, local::LocalListener},
+    server::{Host, HostOptions},
 };
 use serde_json::{Value, json};
 use std::{

@@ -27,7 +27,8 @@ use maka_protocol::{
     transcript::{SessionTranscriptPageDirection, SessionTranscriptPageInput},
     turn::AttachmentRef,
 };
-use maka_runtime_host::server::{Host, local::LocalListener};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::server::Host;
 use serde_json::{Value, json};
 use std::{path::Path, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;

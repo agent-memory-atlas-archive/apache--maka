@@ -31,7 +31,8 @@ use maka_protocol::{
     },
     transcript::{SessionTranscriptPageDirection, SessionTranscriptPageInput},
 };
-use maka_runtime_host::server::{Host, HostOperations, local::LocalListener};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::server::{Host, HostOperations};
 use serde_json::{Value, json};
 use std::{collections::HashSet, time::Duration};
 use tokio_util::sync::CancellationToken;

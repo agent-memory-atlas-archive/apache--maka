@@ -33,7 +33,6 @@ mod operation;
 mod sandbox;
 mod serve;
 mod signals;
-mod stdio;
 #[cfg(windows)]
 mod windows;
 

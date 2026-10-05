@@ -22,7 +22,8 @@ use super::support::{
     message_recovery::{ModelRequest, Provider, configure},
     peer::Peer,
 };
-use maka_runtime_host::server::{Host, local::LocalListener};
+use maka_runtime_host::ipc::LocalListener;
+use maka_runtime_host::server::Host;
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, time::Duration};
 use tokio_util::sync::CancellationToken;

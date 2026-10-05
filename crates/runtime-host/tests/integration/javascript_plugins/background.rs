@@ -52,7 +52,7 @@ async fn pending_work_owns_residency_and_wake_can_replace_itself_without_deadloc
             let stop = tokio_util::sync::CancellationToken::new();
             let cleanup = stop.clone().drop_guard();
             let server = tokio::spawn(
-                maka_runtime_host::server::local::LocalListener::bind(&endpoint)
+                maka_runtime_host::ipc::LocalListener::bind(&endpoint)
                     .unwrap()
                     .serve(host.clone(), stop.clone()),
             );

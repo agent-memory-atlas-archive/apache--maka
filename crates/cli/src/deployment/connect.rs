@@ -43,11 +43,11 @@ pub(crate) struct Connect {
 
 impl Connect {
     pub async fn run(self) -> Result<(), HostError> {
-        let crate::stdio::Stdio {
+        let maka_application_bridge::stdio::Stdio {
             input,
             mut output,
             mut output_done,
-        } = crate::stdio::Stdio::open()?;
+        } = maka_application_bridge::stdio::Stdio::open()?;
         let cancel = CancellationToken::new();
         let _signals = crate::signals::watch(cancel.clone())?;
         let result = tokio::select! {

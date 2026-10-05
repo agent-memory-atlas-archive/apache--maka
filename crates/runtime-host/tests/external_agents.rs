@@ -27,9 +27,10 @@ use maka_event_log::{
 };
 use maka_plugins::kernel::Definition;
 use maka_runtime::{event::Fact, executor::Output};
+use maka_runtime_host::ipc::LocalListener;
 use maka_runtime_host::{
     plugins::Setup,
-    server::{Host, HostOptions, local::LocalListener},
+    server::{Host, HostOptions},
 };
 use peer::Peer;
 use serde_json::{Value, json};

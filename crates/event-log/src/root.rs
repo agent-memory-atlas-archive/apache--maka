@@ -39,7 +39,8 @@ pub const ROOT_DATABASE: &str = "runtime-rust.sqlite";
 const PROTOTYPE: &[u8] = b"{\"schemaVersion\":1,\"runtime\":\"rust-prototype\"}\n";
 const REMOUNT_STAGING: &str = ".maka-storage-root.next";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RootNamespaces {
     pub ownership: PathBuf,
     pub control: PathBuf,
