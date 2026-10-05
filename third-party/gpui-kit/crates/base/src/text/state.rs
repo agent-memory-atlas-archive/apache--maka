@@ -336,11 +336,9 @@ impl TextViewState {
         if self.text.as_str() == text {
             return;
         }
-        // HTML blocks carry no spans, so an append would parse the delta as a
-        // standalone document. After a failed parse the background parser's
-        // document lacks that text, so only a full parse resynchronizes it.
+        // HTML repair can restructure earlier nodes. Markdown source extensions
+        // remain appends even while their last parse has not succeeded.
         if self.format == TextViewFormat::Markdown
-            && self.parsed_error.is_none()
             && !self.text.is_empty()
             && let Some(delta) = text.strip_prefix(self.text.as_str())
         {
@@ -551,13 +549,15 @@ impl TextViewState {
                     self.parsed_content = content;
                     self.parsed_error = None;
                     self.invalidate_measured_heights();
-                    self.reset_selection_and_adapter(cx);
                 }
                 Err(err) => {
                     self.stream_fade.discard_pending();
                     self.parsed_error = Some(err);
                 }
             }
+            // A failed replacement also withdraws the old visible document's
+            // selection, before another native frame can run.
+            self.reset_selection_and_adapter(cx);
             // Keep the background parser's accumulated document in sync so a
             // later append extends this baseline instead of parsing the delta
             // as a standalone document.
@@ -1109,6 +1109,8 @@ pub(crate) struct ParsedContent {
 struct UpdateFuture {
     format: TextViewFormat,
     content: ParsedContent,
+    /// Consumed input that has not yet produced a successful parse.
+    pending: Option<UpdateOptions>,
     rx: Pin<Box<Receiver<UpdateOptions>>>,
     tx_result: Sender<ParsedUpdate>,
 }
@@ -1122,6 +1124,7 @@ impl UpdateFuture {
         Self {
             format,
             content: Default::default(),
+            pending: None,
             rx: Box::pin(rx),
             tx_result,
         }
@@ -1135,6 +1138,10 @@ impl Future for UpdateFuture {
         loop {
             match self.rx.as_mut().poll_next(cx) {
                 Poll::Ready(Some(mut options)) => {
+                    if let Some(mut pending) = self.pending.take() {
+                        pending.merge(options);
+                        options = pending;
+                    }
                     let hit_coalesce_budget =
                         merge_pending_options(&mut options, self.rx.as_ref().get_ref());
 
@@ -1144,10 +1151,7 @@ impl Future for UpdateFuture {
                         && res.as_ref().is_ok_and(|content| {
                             !previous_references.is_empty() || !content.node_cx.link_refs.is_empty()
                         });
-                    if let Ok(content) = &res {
-                        self.content = content.clone();
-                    }
-                    _ = self.tx_result.try_send(ParsedUpdate {
+                    let update = ParsedUpdate {
                         revision: options.revision,
                         appended: options.append,
                         full_parse: !options.append
@@ -1157,7 +1161,15 @@ impl Future for UpdateFuture {
                             && self.format == TextViewFormat::Markdown,
                         baseline_ack: options.mode == ParseMode::BaselineAck,
                         result: res,
-                    });
+                    };
+                    if let Ok(content) = &update.result {
+                        self.content = content.clone();
+                    } else {
+                        // Wait for real new input. A replacement supersedes this
+                        // message; an append must include every failed chunk.
+                        self.pending = Some(options);
+                    }
+                    _ = self.tx_result.try_send(update);
                     if hit_coalesce_budget {
                         cx.waker().wake_by_ref();
                         return Poll::Pending;
@@ -1882,27 +1894,6 @@ mod tests {
         let parsed = cx.update(|cx| cx.new(|cx| TextViewState::html(text, cx)));
         cx.run_until_parked();
         assert_eq!(parsed_blocks(&streamed, cx), parsed_blocks(&parsed, cx));
-    }
-
-    #[gpui::test]
-    fn set_text_extending_after_a_parse_error_parses_it_again(cx: &mut TestAppContext) {
-        cx.update(crate::init);
-        let state = cx.update(|cx| cx.new(|cx| TextViewState::markdown("hello", cx)));
-        cx.run_until_parked();
-
-        let full_update_revision = state.read_with(cx, |state, _| state.full_update_revision);
-
-        state.update(cx, |state, cx| {
-            state.parsed_error = Some("failed".into());
-            state.set_text("hello world", cx);
-        });
-        cx.run_until_parked();
-
-        state.read_with(cx, |state, _| {
-            assert!(state.parsed_error.is_none());
-            assert_ne!(state.full_update_revision, full_update_revision);
-            assert_eq!(state.source().as_str(), "hello world");
-        });
     }
 
     #[test]
@@ -3625,6 +3616,127 @@ mod tests {
                     "same source has the same DOM and occurrences regardless of chunk history"
                 );
             });
+        }
+    }
+
+    #[gpui::test]
+    fn failed_streamed_parses_recover_every_received_chunk(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        for use_set_text in [false, true] {
+            for commit_errors in [true, false] {
+                let extensions = Arc::new(MarkdownExtensions::default().mdx());
+                let state = cx.update(|cx| cx.new(|cx| TextViewState::markdown("中文 before", cx)));
+                state.update(cx, |state, cx| {
+                    state.set_markdown_extensions(extensions.clone(), cx)
+                });
+                cx.run_until_parked();
+                let advance = |cx: &mut TestAppContext| {
+                    if commit_errors {
+                        cx.run_until_parked();
+                    } else {
+                        while cx.dispatcher.tick(true) {}
+                    }
+                };
+                let mut failed = Vec::new();
+                let mut received = "中文 before".to_string();
+                for delta in ["\n\n{value", " + 1"] {
+                    received.push_str(delta);
+                    state.update(cx, |state, cx| {
+                        if use_set_text {
+                            state.set_text(&received, cx);
+                        } else {
+                            state.push_str(delta, cx);
+                        }
+                    });
+                    advance(cx);
+                    failed.push(state.read_with(cx, |state, _| state.parsed_error.is_some()));
+                }
+                if !commit_errors {
+                    state.read_with(cx, |state, _| {
+                        assert_eq!(state.source().as_str(), "中文 before");
+                        assert!(state.parsed_error.is_none(), "only the worker has run");
+                    });
+                }
+                received.push_str("}\n\n[after](u)");
+                state.update(cx, |state, cx| {
+                    if use_set_text {
+                        state.set_text(&received, cx);
+                    } else {
+                        state.push_str("}\n\n[after](u)", cx);
+                    }
+                });
+                cx.run_until_parked();
+
+                let expected = "中文 before\n\n{value + 1}\n\n[after](u)";
+                let fresh = cx.update(|cx| cx.new(|cx| TextViewState::markdown(expected, cx)));
+                fresh.update(cx, |state, cx| {
+                    state.set_markdown_extensions(extensions, cx)
+                });
+                cx.run_until_parked();
+                state.read_with(cx, |state, cx| {
+                    assert_eq!(state.text, expected);
+                    assert_eq!(state.source().as_str(), expected);
+                    assert!(state.parsed_error.is_none());
+                    assert_eq!(
+                        state.parsed_content.document,
+                        fresh.read(cx).parsed_content.document
+                    );
+                });
+                if commit_errors {
+                    assert_eq!(failed, [true, true], "both unclosed inputs must fail");
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn failed_replacements_recover_or_are_fully_superseded(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        for large in [false, true] {
+            for replace_failed_input in [false, true] {
+                let extensions = Arc::new(MarkdownExtensions::default().mdx());
+                let state = cx.update(|cx| cx.new(|cx| TextViewState::markdown("old", cx)));
+                state.update(cx, |state, cx| {
+                    state.set_markdown_extensions(extensions.clone(), cx)
+                });
+                cx.run_until_parked();
+                let prefix = if large {
+                    "word ".repeat(1024)
+                } else {
+                    "new 中文".into()
+                };
+                let invalid = format!("{prefix}\n\n{{value");
+                assert_eq!(invalid.len() > MAX_SYNC_FULL_REPLACE_BYTES, large);
+                state.update(cx, |state, cx| state.set_text(&invalid, cx));
+                cx.run_until_parked();
+                state.read_with(cx, |state, _| {
+                    assert!(state.parsed_error.is_some());
+                    assert_eq!(state.source().as_str(), "old");
+                });
+                let expected = if replace_failed_input {
+                    let replacement = "**replacement**";
+                    state.update(cx, |state, cx| state.set_text(replacement, cx));
+                    replacement.to_string()
+                } else {
+                    state.update(cx, |state, cx| state.push_str(" + 1}", cx));
+                    format!("{invalid} + 1}}")
+                };
+                cx.run_until_parked();
+                let fresh = cx.update(|cx| cx.new(|cx| TextViewState::markdown(&expected, cx)));
+                fresh.update(cx, |state, cx| {
+                    state.set_markdown_extensions(extensions, cx)
+                });
+                cx.run_until_parked();
+                state.read_with(cx, |state, cx| {
+                    assert_eq!(state.text, expected);
+                    assert_eq!(state.source().as_str(), expected);
+                    assert!(state.parsed_error.is_none());
+                    assert_eq!(
+                        state.parsed_content.document,
+                        fresh.read(cx).parsed_content.document
+                    );
+                });
+            }
         }
     }
 }

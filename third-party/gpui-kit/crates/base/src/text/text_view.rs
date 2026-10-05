@@ -3423,4 +3423,50 @@ mod tests {
             "same and changed references both reject an uncommitted replacement baseline"
         );
     }
+
+    #[gpui::test]
+    fn synchronous_parse_failure_withdraws_an_active_native_selection(cx: &mut TestAppContext) {
+        struct MarkdownRoot {
+            state: Entity<TextViewState>,
+        }
+        impl Render for MarkdownRoot {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .w(px(300.))
+                    .child(crate::TextSelectionLayer)
+                    .child(TextView::new(&self.state).markdown_mdx())
+            }
+        }
+        cx.with_paused_automatic_drawing(|cx| {
+            cx.update(crate::init);
+            let (root, cx) = cx.add_window_view(|_, cx| MarkdownRoot {
+                state: cx.new(|cx| TextViewState::markdown("old selectable words", cx)),
+            });
+            let cx: &mut VisualTestContext = cx;
+            let state = root.read_with(cx, |root, _| root.state.clone());
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            let bounds = state.read_with(cx, |state, _| state.selection_adapter.text_bounds()[0]);
+            let start = bounds.origin + point(px(2.), px(5.));
+            let end = start + point(px(40.), px(0.));
+            cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+            cx.simulate_mouse_move(end, Some(MouseButton::Left), Modifiers::default());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            state.read_with(cx, |state, _| {
+                assert!(state.is_selecting());
+                assert!(!state.selected_text().is_empty());
+            });
+            state.update(cx, |state, cx| state.set_text("{value", cx));
+            state.read_with(cx, |state, _| {
+                assert_eq!(state.source().as_str(), "old selectable words");
+                assert!(
+                    !state.is_selecting(),
+                    "failed replacement withdraws the old drag synchronously"
+                );
+                assert!(state.selected_text().is_empty());
+            });
+            cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+            state.read_with(cx, |state, _| assert!(state.selected_text().is_empty()));
+        });
+    }
 }
