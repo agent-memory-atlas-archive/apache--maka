@@ -37,6 +37,7 @@ pub(super) async fn validate(
     staged: &mut SqliteConnection,
     original: &mut SqliteConnection,
     inventory: &Inventory,
+    positions: Option<&crate::bundle::relocation::Positions>,
 ) -> Result<(), StoreError> {
     sqlx::query("DELETE FROM referenced_mappings")
         .execute(&mut *staged)
@@ -50,9 +51,20 @@ pub(super) async fn validate(
         ).bind(after).fetch_optional(&mut *staged).await?;
         let Some((number, json)) = row else { break };
         match serde_json::from_str(&json)? {
-            Record::Blob(Blob::Artifact { metadata, digest }) => {
+            Record::Blob(Blob::Artifact {
+                metadata,
+                digest,
+                frozen_at,
+            }) => {
                 selected(inventory, &metadata.session_id)?;
                 crate::artifacts::validate_material(&metadata, metadata.size_bytes, &digest)?;
+                if let Some(source) = frozen_at {
+                    let sequence = match positions {
+                        Some(positions) => positions.event(source)?,
+                        None => source,
+                    };
+                    frozen_witness(staged, original, &metadata, sequence).await?;
+                }
             }
             Record::HistoryArtifact {
                 session,
@@ -124,6 +136,81 @@ pub(super) async fn validate(
     Ok(())
 }
 
+async fn frozen_witness(
+    staged: &mut SqliteConnection,
+    original: &mut SqliteConnection,
+    artifact: &Artifact,
+    sequence: u64,
+) -> Result<(), StoreError> {
+    use maka_runtime::{
+        artifact::ArtifactKind,
+        event::{Fact, ToolOutcome},
+        tool_output::DurableToolProjection,
+    };
+    if sequence == 0 || sequence > i64::MAX as u64 {
+        return Err(invalid("invalid bundle media witness position"));
+    }
+    // A proof-only event's existence is insufficient. Membership belongs to the
+    // exact artifact owner; a copied owner resolves only its validated mapping.
+    let row: Option<(bool, String)> = sqlx::query_as(
+        "SELECT inherited,event_json FROM session_history_events WHERE owner_session_id=? AND sequence=?",
+    ).bind(&artifact.session_id).bind(sequence as i64).fetch_optional(&mut *original).await?;
+    let (inherited, json) =
+        row.ok_or_else(|| invalid("bundle media witness is outside its owner history"))?;
+    let event: RuntimeEvent = serde_json::from_str(&json)?;
+    let Fact::ToolSettled {
+        outcome:
+            ToolOutcome::Succeeded {
+                model_projection: DurableToolProjection::Content { parts },
+                ..
+            },
+        ..
+    } = event.fact
+    else {
+        return Err(invalid(
+            "bundle media witness is not a successful media consumption",
+        ));
+    };
+    for part in parts {
+        let Some((
+            StorageRef::SessionFile {
+                session_id,
+                relative_path,
+            },
+            mime,
+        )) = part.media()
+        else {
+            continue;
+        };
+        if artifact.mime_type.as_deref() != Some(mime)
+            || artifact.kind
+                != if mime.starts_with("image/") {
+                    ArtifactKind::Image
+                } else {
+                    ArtifactKind::File
+                }
+        {
+            continue;
+        }
+        let matches = if inherited {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM frames WHERE kind='history_artifact'
+                 AND json_extract(record_json,'$.session')=? AND json_extract(record_json,'$.artifact')=?
+                 AND json_extract(record_json,'$.source_session')=? AND json_extract(record_json,'$.source_artifact')=?)",
+            ).bind(&artifact.session_id).bind(&artifact.id).bind(session_id).bind(relative_path)
+                .fetch_one(&mut *staged).await?
+        } else {
+            session_id == &artifact.session_id && relative_path == &artifact.id
+        };
+        if matches {
+            return Ok(());
+        }
+    }
+    Err(invalid(
+        "bundle media witness does not bind its owned material",
+    ))
+}
+
 async fn reference_material(
     staged: &mut SqliteConnection,
     owner: &str,
@@ -182,7 +269,10 @@ async fn descriptor(
          AND json_extract(record_json,'$.metadata.sessionId')=? AND json_extract(record_json,'$.metadata.id')=?"
     ).bind(session).bind(id).fetch_optional(staged).await?;
     row.map(|json| {
-        let Record::Blob(Blob::Artifact { metadata, digest }) = serde_json::from_str(&json)? else {
+        let Record::Blob(Blob::Artifact {
+            metadata, digest, ..
+        }) = serde_json::from_str(&json)?
+        else {
             unreachable!()
         };
         Ok((metadata, digest))

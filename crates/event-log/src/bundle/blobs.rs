@@ -94,7 +94,22 @@ pub(super) async fn export<W: AsyncWrite + Unpin>(
             {
                 return Err(invalid("artifact metadata differs from stored bytes"));
             }
-            transfer(db, Blob::Artifact { metadata, digest }, writer).await?;
+            let frozen_at = frozen_witness(db, &metadata).await?;
+            if frozen_at.is_some_and(|sequence| !closure.events.contains(&sequence)) {
+                return Err(invalid(
+                    "bundle media witness is outside its selected history",
+                ));
+            }
+            transfer(
+                db,
+                Blob::Artifact {
+                    metadata,
+                    digest,
+                    frozen_at,
+                },
+                writer,
+            )
+            .await?;
             after = Some(id);
         }
         let mut after = None::<(String, String)>;
@@ -120,6 +135,55 @@ pub(super) async fn export<W: AsyncWrite + Unpin>(
         }
     }
     Ok(())
+}
+
+/// An earlier source freeze need not be in a partial copied history. Export the
+/// first consumption in this owner's selected history at which those same bytes
+/// were already frozen, without bringing in another Session's private history.
+async fn frozen_witness(
+    db: &mut SqliteConnection,
+    metadata: &maka_runtime::artifact::Artifact,
+) -> Result<Option<u64>, StoreError> {
+    let Some(mime) = metadata.mime_type.as_deref() else {
+        return Ok(None);
+    };
+    let kind = if mime.starts_with("image/") {
+        maka_runtime::artifact::ArtifactKind::Image
+    } else {
+        maka_runtime::artifact::ArtifactKind::File
+    };
+    if metadata.kind != kind {
+        return Ok(None);
+    }
+    let sequence: Option<i64> = sqlx::query_scalar(
+        "WITH media AS (
+            SELECT e.sequence,e.inherited,
+                CASE json_extract(p.value,'$.kind')
+                    WHEN 'artifact' THEN json_extract(p.value,'$.image')
+                    WHEN 'audio' THEN json_extract(p.value,'$.audio') END AS value
+            FROM session_history_events e
+            JOIN json_each(e.event_json,'$.fact.outcome.model_projection.parts') p
+            JOIN artifacts a ON a.session_id=?1 AND a.id=?2
+            WHERE e.owner_session_id=?1 AND e.kind='tool_settled'
+                AND json_extract(e.event_json,'$.fact.outcome.kind')='succeeded'
+                AND json_extract(e.event_json,'$.fact.outcome.model_projection.kind')='content'
+                AND a.canonical_at>0 AND a.canonical_at<=e.sequence)
+         SELECT MIN(sequence) FROM media
+         WHERE json_extract(value,'$.ref.kind')='session_file'
+           AND json_extract(value,'$.mimeType')=?3
+           AND ((inherited=0 AND json_extract(value,'$.ref.sessionId')=?1
+                AND json_extract(value,'$.ref.relativePath')=?2)
+             OR (inherited=1 AND EXISTS(
+                SELECT 1 FROM session_history_artifacts h WHERE h.session_id=?1 AND h.artifact_id=?2
+                  AND h.source_session_id=json_extract(value,'$.ref.sessionId')
+                  AND h.source_artifact_id=json_extract(value,'$.ref.relativePath'))))",
+    )
+    .bind(&metadata.session_id)
+    .bind(&metadata.id)
+    .bind(&metadata.mime_type)
+    .fetch_one(db)
+    .await?;
+    sequence.map(sequence_number).transpose()
 }
 
 async fn required(db: &mut SqliteConnection, session: &str) -> Result<(), StoreError> {

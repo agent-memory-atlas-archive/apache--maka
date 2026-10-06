@@ -126,6 +126,7 @@ impl EventLog {
                             &receipt,
                             &binding_digest,
                             &configurations,
+                            &positions,
                         )
                         .await;
                         relocated.close().await?;

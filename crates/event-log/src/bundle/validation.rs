@@ -190,7 +190,7 @@ async fn replay(
     }
     material::check_bindings(staged, original).await?;
     catalog::validate(staged, original, &inventory, source_high_water).await?;
-    artifacts::validate(staged, original, &inventory).await?;
+    artifacts::validate(staged, original, &inventory, positions).await?;
     super::accounting::validate(staged, original).await
 }
 

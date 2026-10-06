@@ -198,7 +198,7 @@ async fn generated_media_remain_required_material_not_deletable_upload_reference
         let expected = if remove {
             "bundle lacks generated tool material"
         } else {
-            "bundle generated tool material differs from its canonical evidence"
+            "bundle media witness does not bind its owned material"
         };
         assert!(
             matches!(error, Err(BundleError::Store(StoreError::InvalidTransition(ref message))) if message == expected),

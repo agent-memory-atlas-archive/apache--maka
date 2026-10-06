@@ -30,6 +30,8 @@ use serde_json::{Value, json};
 mod fixtures;
 #[path = "frames.rs"]
 mod frames;
+#[path = "image.rs"]
+mod image;
 #[path = "import.rs"]
 mod import;
 #[path = "materials.rs"]

@@ -33,6 +33,17 @@ pub(super) async fn tool(
     step: &str,
     text: String,
 ) -> EventWrite {
+    output(log, invocation, step, ToolSuccess::from(json!(text)))
+        .await
+        .0
+}
+
+pub(super) async fn output(
+    log: &EventLog,
+    invocation: &Invocation,
+    step: &str,
+    output: ToolSuccess,
+) -> (EventWrite, u64) {
     let source = log
         .read_model_context(
             &invocation.session_id,
@@ -73,6 +84,17 @@ pub(super) async fn tool(
     )
     .await
     .unwrap();
+    log.append(&event(Fact::ModelObserved {
+        step_id: step.into(),
+        event: maka_runtime::model::ModelEvent::ToolCall(
+            serde_json::from_value(json!({
+                    "id":step,"name":"Read","input":{"path":"file"},"provider_executed":false
+            }))
+            .unwrap(),
+        ),
+    }))
+    .await
+    .unwrap();
     log.append(&event(Fact::ModelCompleted {
         step_id: step.into(),
         output: serde_json::from_value(json!({
@@ -99,9 +121,9 @@ pub(super) async fn tool(
         std::time::SystemTime::now(),
         invocation.clone(),
         operation,
-        ToolSuccess::from(json!(text)),
+        output,
     )
     .unwrap();
-    log.append(&result).await.unwrap();
-    result
+    let sequence = log.append(&result).await.unwrap();
+    (result, sequence)
 }

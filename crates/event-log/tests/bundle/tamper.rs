@@ -198,7 +198,7 @@ pub(super) async fn verify_original_proofs(
         rejected(&tampered, expected).await;
     }
     // Reject attacker-declared allocation before waiting for the absent body.
-    let mut oversized = b"MAKA-SESSION\0\x01".to_vec();
+    let mut oversized = b"MAKA-SESSION\0\x02".to_vec();
     oversized.extend(u32::MAX.to_be_bytes());
     assert!(matches!(
         bundle::inspect(oversized.as_slice()).await,
@@ -250,7 +250,7 @@ fn request(bytes: &[u8], field: &str, value: Value) -> Vec<u8> {
 }
 
 fn append_record(bytes: &[u8], extra: Value) -> Vec<u8> {
-    let mut offset = b"MAKA-SESSION\0\x01".len();
+    let mut offset = b"MAKA-SESSION\0\x02".len();
     loop {
         let start = offset;
         let length = u32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;

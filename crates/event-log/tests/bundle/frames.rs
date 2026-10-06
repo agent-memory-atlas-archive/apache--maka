@@ -23,7 +23,7 @@ use sha2::{Digest, Sha256};
 /// Inspect the actual external frames, independently of the production encoder.
 pub(super) fn records(bytes: &[u8], expected: &str) -> Vec<Value> {
     use std::io::{Cursor, Read};
-    let magic = b"MAKA-SESSION\0\x01";
+    let magic = b"MAKA-SESSION\0\x02";
     assert_eq!(&bytes[..magic.len()], magic);
     let mut cursor = Cursor::new(bytes);
     cursor.set_position(magic.len() as u64);
@@ -83,7 +83,7 @@ pub(super) fn rewrite_events(bytes: &[u8], mut change: impl FnMut(&mut Value) ->
 
 pub(super) fn rewrite_records(bytes: &[u8], mut change: impl FnMut(&mut Value) -> bool) -> Vec<u8> {
     use std::io::{Cursor, Read};
-    let magic = b"MAKA-SESSION\0\x01";
+    let magic = b"MAKA-SESSION\0\x02";
     let mut cursor = Cursor::new(bytes);
     cursor.set_position(magic.len() as u64);
     let mut output = magic.to_vec();

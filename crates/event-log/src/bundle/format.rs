@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
-pub(super) const MAGIC: &[u8] = b"MAKA-SESSION\0\x01";
+pub(super) const MAGIC: &[u8] = b"MAKA-SESSION\0\x02";
 pub(super) const MAX_FRAME: usize = 18 * 1024 * 1024;
 pub(super) const MAX_BYTES: u64 = 1024 * 1024 * 1024;
 pub(super) const MAX_EVENTS: usize = 100_000;
@@ -114,6 +114,8 @@ pub(super) enum Blob {
     Artifact {
         metadata: Artifact,
         digest: String,
+        /// Selected owner-history consumption witness, not the source SQL stamp.
+        frozen_at: Option<u64>,
     },
     Composition {
         event_id: String,

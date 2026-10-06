@@ -37,6 +37,7 @@ pub(super) async fn all(
     receipt: &ImportReceipt,
     binding_digest: &str,
     configurations: &BTreeMap<String, Value>,
+    positions: &crate::bundle::relocation::Positions,
 ) -> Result<(), StoreError> {
     sqlx::query("INSERT INTO session_bundle_imports VALUES(?,?,?)")
         .bind(&receipt.bundle_digest)
@@ -85,7 +86,7 @@ pub(super) async fn all(
     }
     events(destination, relocated, &receipt.bundle_digest).await?;
     copies(destination, relocated, &receipt.bundle_digest).await?;
-    materials(destination, staged).await?;
+    materials(destination, staged, positions).await?;
     crate::bundle::accounting::validate(staged, destination).await
 }
 
@@ -206,6 +207,7 @@ async fn copies(
 async fn materials(
     destination: &mut SqliteConnection,
     staged: &mut SqliteConnection,
+    positions: &crate::bundle::relocation::Positions,
 ) -> Result<(), StoreError> {
     let mut after = 0i64;
     loop {
@@ -239,8 +241,24 @@ async fn materials(
                     .execute(&mut *destination)
                     .await?;
             }
-            Blob::Artifact { metadata, .. } => {
+            Blob::Artifact {
+                metadata,
+                frozen_at,
+                ..
+            } => {
+                let stamp = frozen_at
+                    .map(|source| positions.event(source))
+                    .transpose()?;
+                let (session, id) = (metadata.session_id.clone(), metadata.id.clone());
                 crate::artifacts::commit_in_transaction(destination, metadata, &payload).await?;
+                if let Some(stamp) = stamp {
+                    sqlx::query("UPDATE artifacts SET canonical_at=? WHERE session_id=? AND id=?")
+                        .bind(stamp as i64)
+                        .bind(session)
+                        .bind(id)
+                        .execute(&mut *destination)
+                        .await?;
+                }
             }
         }
         after = number;

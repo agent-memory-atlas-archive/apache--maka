@@ -1,0 +1,470 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use maka_event_log::{
+    EventLog,
+    bundle::{self, StagedBundle},
+    sessions::SessionCopy,
+};
+use maka_plugins::session::history::{Page, Position, Role, Tool};
+use maka_runtime::{
+    artifact::{Artifact, ArtifactKind, ArtifactSource, content_digest},
+    attachment::StorageRef,
+    event::{
+        EventWrite, Fact, Invocation, InvocationInput, InvocationOutcome, LogScope, RuntimeEvent,
+    },
+    session::CopyPurpose,
+    tool_output::{ImageOutput, ToolOutput, ToolSuccess},
+};
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
+
+const GIF: &[u8] = &[
+    71, 73, 70, 56, 57, 97, 1, 0, 1, 0, 128, 0, 0, 0, 0, 0, 255, 255, 255, 33, 249, 4, 1, 0, 0, 0,
+    0, 44, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 1, 68, 0, 59,
+];
+fn invocation(session: &str, run: &str) -> Invocation {
+    Invocation {
+        session_id: session.into(),
+        turn_id: run.into(),
+        run_id: run.into(),
+        invocation_id: run.into(),
+    }
+}
+async fn open(log: &EventLog, i: &Invocation) {
+    log.append(
+        &EventWrite::plain(RuntimeEvent::new(
+            i.clone(),
+            Fact::InvocationOpened {
+                input: InvocationInput::Message {
+                    content: "image test".into(),
+                    source_messages: Vec::new(),
+                    request_fingerprint: None,
+                },
+                configuration: None,
+            },
+        ))
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+}
+async fn end(log: &EventLog, i: &Invocation) {
+    log.append(
+        &EventWrite::plain(RuntimeEvent::new(
+            i.clone(),
+            Fact::InvocationEnded {
+                outcome: InvocationOutcome::Completed,
+            },
+        ))
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+}
+fn borrowed(id: &str) -> ToolSuccess {
+    ToolOutput::Image(ImageOutput {
+        detail: None,
+        mime_type: "image/gif".into(),
+        reference: StorageRef::SessionFile {
+            session_id: "images".into(),
+            relative_path: id.into(),
+        },
+    })
+    .into()
+}
+async fn upload(log: &EventLog, id: &str) {
+    log.commit_artifact(
+        Artifact {
+            id: id.into(),
+            session_id: "images".into(),
+            turn_id: "upload".into(),
+            created_at: 1,
+            name: "image.gif".into(),
+            kind: ArtifactKind::Image,
+            size_bytes: GIF.len() as u64,
+            mime_type: Some("image/gif".into()),
+            source: ArtifactSource::UserUpload,
+            summary: Some(content_digest(GIF)),
+        },
+        GIF,
+    )
+    .await
+    .unwrap();
+}
+async fn rows(
+    log: &EventLog,
+    session: &str,
+    invocation: &Invocation,
+) -> (u64, BTreeMap<String, u64>) {
+    let through = log
+        .scoped_prefix(LogScope::Root, 1000, 8 * 1024 * 1024)
+        .await
+        .unwrap()
+        .high_water;
+    assert!(log.prepare_transcript(session, through, 32).await.unwrap());
+    let mut rows = BTreeMap::new();
+    let mut position = Position::Start;
+    loop {
+        let Page::Ready { chunks, after, .. } = log
+            .history_text(session, through, position, 8192, 8, 65536)
+            .await
+            .unwrap()
+        else {
+            panic!("ready")
+        };
+        for chunk in chunks {
+            if chunk.role == Role::ToolResult
+                && let Some(Tool::Result { tool_use_id, .. }) = chunk.tool
+            {
+                for step in ["generated", "borrowed", "missing", "later", "current"] {
+                    let expected = maka_presentation::tool_message_id(
+                        &invocation.invocation_id,
+                        &format!("{step}:{step}"),
+                    );
+                    if tool_use_id == expected {
+                        rows.insert(step.to_owned(), chunk.sequence);
+                    }
+                }
+            }
+        }
+        if let Some(cursor) = after {
+            position = Position::After { cursor };
+        } else {
+            break;
+        }
+    }
+    (through, rows)
+}
+async fn export(log: &EventLog, session: &str) -> Vec<u8> {
+    let inventory = log.preview_bundle(session).await.unwrap();
+    log.export_bundle(session, &inventory.subtree_digest, Vec::new())
+        .await
+        .unwrap()
+        .0
+}
+async fn import(log: &EventLog, bytes: &[u8]) -> bundle::ImportReceipt {
+    let staged = StagedBundle::read(bytes).await.unwrap();
+    let configurations: BTreeMap<String, Value> = staged
+        .summary()
+        .inventory
+        .sessions
+        .iter()
+        .map(|s| (s.id.clone(), Value::Null))
+        .collect();
+    log.import_bundle(staged, &content_digest(b"image binding"), configurations)
+        .await
+        .unwrap()
+}
+async fn padding(log: &EventLog, session: &str, count: usize) {
+    log.create_session(session, session, &Value::Null, 1)
+        .await
+        .unwrap();
+    for n in 0..count {
+        let i = invocation(session, &format!("{session}-{n}"));
+        open(log, &i).await;
+        end(log, &i).await;
+    }
+}
+#[tokio::test]
+async fn transferred_generated_borrowed_and_later_frozen_images_keep_exact_row_causality() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = EventLog::open(&dir.path().join("source.sqlite"))
+        .await
+        .unwrap();
+    padding(&source, "source-padding", 3).await;
+    source
+        .create_session("images", "images", &Value::Null, 1)
+        .await
+        .unwrap();
+    let i = invocation("images", "images-run");
+    open(&source, &i).await;
+    super::fixtures::output(
+        &source,
+        &i,
+        "generated",
+        ToolSuccess::image(GIF.to_vec(), "image/gif".into()).unwrap(),
+    )
+    .await;
+    upload(&source, "borrowed").await;
+    let (_, borrowed_at) =
+        super::fixtures::output(&source, &i, "borrowed", borrowed("borrowed")).await;
+    super::fixtures::output(&source, &i, "missing", borrowed("late")).await;
+    upload(&source, "late").await;
+    let (_, late_at) = super::fixtures::output(&source, &i, "later", borrowed("late")).await;
+    end(&source, &i).await;
+    let bytes = export(&source, "images").await;
+    let summary = bundle::inspect(bytes.as_slice()).await.unwrap();
+    let records = super::frames::records(&bytes, &summary.digest);
+    for (id, at) in [("borrowed", borrowed_at), ("late", late_at)] {
+        let record = records
+            .iter()
+            .find(|r| r["resource"] == "artifact" && r["metadata"]["id"] == id)
+            .unwrap();
+        assert_eq!(record["frozen_at"], at);
+    }
+    let path = dir.path().join("destination.sqlite");
+    let destination = EventLog::open(&path).await.unwrap();
+    padding(&destination, "destination-padding", 11).await;
+    let receipt = import(&destination, &bytes).await;
+    let (through, rows) = rows(&destination, "images", &i).await;
+    for step in ["generated", "borrowed", "later"] {
+        assert_eq!(
+            destination
+                .tool_image("images", through, rows[step], 0, 32768)
+                .await
+                .unwrap()
+                .bytes,
+            GIF
+        );
+    }
+    assert!(
+        destination
+            .tool_image("images", through, rows["missing"], 0, 32768)
+            .await
+            .is_err()
+    );
+    assert_ne!(rows["borrowed"] / 256, borrowed_at);
+    assert_eq!(import(&destination, &bytes).await, receipt);
+    destination.close().await.unwrap();
+    let reopened = EventLog::open(&path).await.unwrap();
+    assert_eq!(
+        reopened
+            .tool_image("images", through, rows["later"], 0, 32768)
+            .await
+            .unwrap()
+            .bytes,
+        GIF
+    );
+    assert!(
+        reopened
+            .tool_image("images", through, rows["missing"], 0, 32768)
+            .await
+            .is_err()
+    );
+    reopened.close().await.unwrap();
+    source.close().await.unwrap();
+}
+#[tokio::test]
+async fn none_stays_unavailable_and_wrong_or_missing_consumption_witness_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = EventLog::open(&dir.path().join("source.sqlite"))
+        .await
+        .unwrap();
+    source
+        .create_session("images", "images", &Value::Null, 1)
+        .await
+        .unwrap();
+    let i = invocation("images", "missing-run");
+    open(&source, &i).await;
+    super::fixtures::output(&source, &i, "missing", borrowed("late")).await;
+    end(&source, &i).await;
+    upload(&source, "late").await;
+    let bytes = export(&source, "images").await;
+    let destination = EventLog::open(&dir.path().join("destination.sqlite"))
+        .await
+        .unwrap();
+    import(&destination, &bytes).await;
+    let (through, rows) = rows(&destination, "images", &i).await;
+    assert!(
+        destination
+            .tool_image("images", through, rows["missing"], 0, 32768)
+            .await
+            .is_err()
+    );
+    for at in [0, 1, 99999] {
+        let changed = super::frames::rewrite_records(&bytes, |r| {
+            if r["resource"] == "artifact" {
+                r["frozen_at"] = json!(at);
+            }
+            true
+        });
+        let mut staged = StagedBundle::read(changed.as_slice()).await.unwrap();
+        assert!(
+            staged.validate_history().await.is_err(),
+            "accepted unrelated witness {at}"
+        );
+        staged.close().await.unwrap();
+    }
+    destination.close().await.unwrap();
+    source.close().await.unwrap();
+}
+#[tokio::test]
+async fn copied_image_ownership_survives_transfer_without_importing_parent_catalog() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = EventLog::open(&dir.path().join("source.sqlite"))
+        .await
+        .unwrap();
+    source
+        .create_session("images", "images", &Value::Null, 1)
+        .await
+        .unwrap();
+    let i = invocation("images", "copy-run");
+    open(&source, &i).await;
+    upload(&source, "borrowed").await;
+    super::fixtures::output(&source, &i, "borrowed", borrowed("borrowed")).await;
+    end(&source, &i).await;
+    let revision = source
+        .get_session::<Value>("images")
+        .await
+        .unwrap()
+        .unwrap()
+        .revision;
+    source
+        .copy_session(
+            SessionCopy {
+                source_session_id: "images".into(),
+                target_session_id: "branch".into(),
+                expected_source_revision: revision,
+                purpose: CopyPurpose::Branch {
+                    turn_id: None,
+                    side_conversation: false,
+                },
+            },
+            &Value::Null,
+            1,
+        )
+        .await
+        .unwrap();
+    let bytes = export(&source, "branch").await;
+    let destination = EventLog::open(&dir.path().join("destination.sqlite"))
+        .await
+        .unwrap();
+    padding(&destination, "destination-padding", 5).await;
+    import(&destination, &bytes).await;
+    assert!(
+        destination
+            .get_session::<Value>("images")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let (through, rows) = rows(&destination, "branch", &i).await;
+    assert_eq!(
+        destination
+            .tool_image("branch", through, rows["borrowed"], 0, 32768)
+            .await
+            .unwrap()
+            .bytes,
+        GIF
+    );
+    assert!(
+        destination
+            .tool_image("images", through, rows["borrowed"], 0, 32768)
+            .await
+            .is_err()
+    );
+    destination.close().await.unwrap();
+    source.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_copied_frozen_upload_exports_its_current_consumption_without_source_history() {
+    use maka_plugins::{composition::Scope, storage::Namespace};
+    use maka_runtime::attachment::{AttachmentKind, AttachmentRef};
+    let dir = tempfile::tempdir().unwrap();
+    let source = EventLog::open(&dir.path().join("source.sqlite"))
+        .await
+        .unwrap();
+    source
+        .create_session("images", "images", &Value::Null, 1)
+        .await
+        .unwrap();
+    let i = invocation("images", "outside-run");
+    open(&source, &i).await;
+    upload(&source, "borrowed").await;
+    let (_, original_at) =
+        super::fixtures::output(&source, &i, "outside", borrowed("borrowed")).await;
+    end(&source, &i).await;
+    source
+        .create_session("detached", "detached", &Value::Null, 1)
+        .await
+        .unwrap();
+    let copied = source
+        .copy_plugin_attachment(
+            &Namespace::new("image.fixture", Scope::Profile).unwrap(),
+            maka_plugins::execution::CopyAttachment {
+                target_session_id: "detached".into(),
+                attachment: AttachmentRef {
+                    kind: AttachmentKind::Image,
+                    name: "image.gif".into(),
+                    mime_type: "image/gif".into(),
+                    bytes: GIF.len() as u64,
+                    storage_ref: StorageRef::SessionFile {
+                        session_id: "images".into(),
+                        relative_path: "borrowed".into(),
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+    let i = invocation("detached", "detached-run");
+    open(&source, &i).await;
+    let (_, current_at) = super::fixtures::output(
+        &source,
+        &i,
+        "current",
+        ToolOutput::Image(ImageOutput {
+            detail: None,
+            mime_type: copied.mime_type.clone(),
+            reference: copied.storage_ref,
+        })
+        .into(),
+    )
+    .await;
+    end(&source, &i).await;
+    let bytes = export(&source, "detached").await;
+    let summary = bundle::inspect(bytes.as_slice()).await.unwrap();
+    let records = super::frames::records(&bytes, &summary.digest);
+    let artifact = records
+        .iter()
+        .find(|r| r["resource"] == "artifact")
+        .unwrap();
+    assert_ne!(current_at, original_at);
+    assert_eq!(artifact["frozen_at"], current_at);
+    assert!(
+        !records
+            .iter()
+            .any(|r| r["kind"] == "event" && r["sequence"] == original_at)
+    );
+    let destination = EventLog::open(&dir.path().join("destination.sqlite"))
+        .await
+        .unwrap();
+    padding(&destination, "destination-padding", 9).await;
+    import(&destination, &bytes).await;
+    let (through, rows) = rows(&destination, "detached", &i).await;
+    assert_eq!(
+        destination
+            .tool_image("detached", through, rows["current"], 0, 32768)
+            .await
+            .unwrap()
+            .bytes,
+        GIF
+    );
+    assert!(
+        destination
+            .get_session::<Value>("images")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    destination.close().await.unwrap();
+    source.close().await.unwrap();
+}
