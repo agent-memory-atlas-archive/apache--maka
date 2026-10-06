@@ -23,7 +23,7 @@ use maka_event_log::{
     connection::{ConnectionAuthority, OwnedConnection},
     root::RootOwner,
 };
-use sqlx::{SqliteConnection, sqlite::SqliteConnectOptions};
+use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
 #[cfg(not(windows))]
 use std::fs::OpenOptions;
 use std::sync::Arc;
@@ -95,6 +95,24 @@ pub(super) async fn open(owner: Arc<RootOwner>) -> Result<OwnedConnection> {
 }
 
 async fn initialize(connection: &mut SqliteConnection) -> std::result::Result<(), StoreError> {
+    // Native plugin owners may open this Root concurrently. Hold the actual
+    // database writer transaction across schema inspection and migration;
+    // SQLx uses savepoints for its nested migration transactions.
+    let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
+    initialize_schema(&mut tx).await?;
+    tx.commit().await?;
+    // Bounded configuration transactions do not need to change the persistent
+    // journal mode. Switching to WAL here would race another opening writer.
+    sqlx::raw_sql("PRAGMA synchronous = FULL; PRAGMA secure_delete = ON;")
+        .execute(&mut *connection)
+        .await?;
+    crate::pricing::initialize(connection).await?;
+    Ok(())
+}
+
+async fn initialize_schema(
+    connection: &mut SqliteConnection,
+) -> std::result::Result<(), StoreError> {
     let application_id: i64 = sqlx::query_scalar("PRAGMA application_id")
         .fetch_one(&mut *connection)
         .await?;
@@ -134,11 +152,5 @@ async fn initialize(connection: &mut SqliteConnection) -> std::result::Result<()
             .await?;
     }
     MIGRATIONS.run_direct(None, &mut *connection, false).await?;
-    sqlx::raw_sql(
-        "PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA secure_delete = ON;",
-    )
-    .execute(&mut *connection)
-    .await?;
-    crate::pricing::initialize(connection).await?;
     Ok(())
 }

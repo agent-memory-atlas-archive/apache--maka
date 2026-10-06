@@ -94,3 +94,28 @@ async fn invalid_databases_are_rejected_without_mutation_and_interrupted_initial
     assert!(store.catalog().await.unwrap().connections.is_empty());
     store.close().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_plugin_owners_initialize_one_fresh_configuration_database() {
+    for _ in 0..4 {
+        let temp = tempfile::tempdir().unwrap();
+        let owner = root(temp.path());
+        let mut opened = tokio::task::JoinSet::new();
+        for _ in 0..8 {
+            let owner = owner.clone();
+            opened.spawn(async move { ConfigurationStore::for_root(owner).await });
+        }
+        let mut stores = Vec::new();
+        while let Some(result) = opened.join_next().await {
+            stores.push(result.unwrap().expect("concurrent owner initialization"));
+        }
+        for store in stores {
+            assert_eq!(store.catalog().await.unwrap().revision, 0);
+            assert!(store.catalog().await.unwrap().connections.is_empty());
+            store.close().await.unwrap();
+        }
+        let reopened = ConfigurationStore::for_root(owner).await.unwrap();
+        assert_eq!(reopened.catalog().await.unwrap().revision, 0);
+        reopened.close().await.unwrap();
+    }
+}

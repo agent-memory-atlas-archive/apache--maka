@@ -439,7 +439,7 @@ export function components(target: Target): {
                   row: true,
                   gap: target === 'desktop' ? 8 : 1,
                   terminal: { wrap: true },
-                  style: { width: fill, shrink: 0, wrap: 'wrap' },
+                  style: { width: fill, shrink: 0, wrap: true },
                 }),
               ]
             : []),
