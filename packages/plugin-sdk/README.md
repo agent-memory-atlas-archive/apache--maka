@@ -149,7 +149,12 @@ prefix after the displayed fence; complete canonical messages alone use Markdown
 The product also opens a fixed-fence, single-message source reader with bounded
 beginning/previous/next/end excerpts, exact retry and Back to the retained
 conversation. Desktop selects literal source; TUI currently uses plain labels.
-TUI native ReadingArea/SourceText and actual whole-reader OS acceptance remain unfinished.
+TUI provides standalone native `SourceText` with the same contract and implementation name.
+It preserves literal UTF-8 selection bytes (including CRLF, tabs and controls), displays controls
+safely, and copies through Ctrl+Shift+C; Copy is a bounded OSC52 write, not an OS acknowledgement.
+Prefix append preserves existing byte endpoints; replacement/disabled revokes the old selection.
+TUI ReadingArea aggregate selection, ordinary product integration and actual whole-reader OS
+acceptance remain unfinished.
 
 Persisted UI components submit mutations, including declared captured resources, through their ordinary
 `actions`. The kernel generates the operation identity and records the original

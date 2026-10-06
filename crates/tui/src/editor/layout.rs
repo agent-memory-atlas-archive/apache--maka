@@ -27,21 +27,21 @@ use unicode_width::UnicodeWidthStr;
 /// One source of truth for rendering, vertical movement and pointer hit-testing.
 /// Bytes identify text; columns identify terminal cells. Never interchange them.
 #[derive(Clone, Default)]
-pub(super) struct Layout {
+pub(crate) struct Layout {
     pub rows: Vec<Row>,
     pub boundaries: Vec<usize>,
     pub width: u16,
 }
 
 #[derive(Clone)]
-pub(super) struct Row {
+pub(crate) struct Row {
     pub start: usize,
     pub end: usize,
     pub cells: Vec<Cell>,
 }
 
 #[derive(Clone)]
-pub(super) struct Cell {
+pub(crate) struct Cell {
     pub bytes: Range<usize>,
     pub column: usize,
     pub width: usize,
@@ -49,8 +49,20 @@ pub(super) struct Cell {
 
 impl Layout {
     pub fn new(text: &str, width: u16) -> Self {
-        // Keep a cell for the insertion cursor even on a full logical line.
-        let wrap = width.saturating_sub(1).max(1) as usize;
+        Self::wrapped(text, width, false)
+    }
+    /// Literal participants retain every original byte span. CRLF occupies one
+    /// line break; other controls are safe one-cell display placeholders.
+    pub fn literal(text: &str, width: u16) -> Self {
+        Self::wrapped(text, width, true)
+    }
+    fn wrapped(text: &str, width: u16, literal: bool) -> Self {
+        // Editors reserve the insertion cursor; literal source uses the full row.
+        let wrap = if literal {
+            width.max(1)
+        } else {
+            width.saturating_sub(1).max(1)
+        } as usize;
         let mut rows = Vec::new();
         let mut row = Row {
             start: 0,
@@ -61,12 +73,12 @@ impl Layout {
         let mut boundaries = Vec::new();
         for (byte, grapheme) in text.grapheme_indices(true) {
             boundaries.push(byte);
-            if grapheme == "\n" {
+            if grapheme == "\n" || literal && grapheme == "\r\n" {
                 row.end = byte;
                 rows.push(row);
                 row = Row {
-                    start: byte + 1,
-                    end: byte + 1,
+                    start: byte + grapheme.len(),
+                    end: byte + grapheme.len(),
                     cells: Vec::new(),
                 };
                 column = 0;

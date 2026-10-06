@@ -1031,3 +1031,90 @@ fn pure_native_paint_panics_drain_original_state_and_failed_drop_keeps_root() {
         }
     }
 }
+
+#[path = "tests/source.rs"]
+mod source;
+
+#[test]
+fn retired_target_cleanup_preserves_the_original_nested_scroll_ancestor_identity() {
+    use maka_plugin_core::package::EntryTarget;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_time()
+        .build()
+        .unwrap();
+    let (mut input, mut packages) = support::native_fixture();
+    let index = packages
+        .iter()
+        .position(|package| package.manifest().id == "dynamic.app")
+        .unwrap();
+    let original = packages.remove(index);
+    let source = std::str::from_utf8(original.file("index.mjs").unwrap())
+        .unwrap()
+        .to_owned()
+        + "const originalFrame=frame;frame=state=>{const out=originalFrame(state);const root=out.frame.view;const counters=root.children.find(node=>node.key==='counters').children;root.children=[{kind:'stack',key:'outer',direction:'column',gap:1,padding:0,background:root.background,scroll:'manual',layout:{grow:1},children:[...(state.right?[counters.find(node=>node.key==='right')]:[]),{kind:'stack',key:'inner',direction:'column',gap:0,padding:0,background:root.background,scroll:'manual',layout:{basis:3},children:[{kind:'button',key:'inner-action',label:'Inner'},{kind:'text',key:'inner-tail',text:'inner\\n'.repeat(20),color:16777215}]},{kind:'text',key:'outer-tail',text:'outer\\n'.repeat(20),color:16777215}]},...root.children.filter(node=>node.kind==='button')];return out;};";
+    let replacement = support::package(
+        "dynamic.app",
+        original.manifest().application.clone().unwrap(),
+        Some(source),
+    );
+    input.instances.get_mut("app").unwrap().package = replacement.application_ref().into();
+    packages.push(replacement);
+    let (input, packages) = terminal_packages(input, packages);
+    assert!(packages.iter().any(|package| {
+        package
+            .manifest()
+            .application
+            .as_ref()
+            .is_some_and(|app| app.entries.contains_key(&EntryTarget::Tui))
+    }));
+    let mut presenter = Presenter::new(
+        &input,
+        packages,
+        runtime.handle().clone(),
+        registry(),
+        json!({}),
+    )
+    .unwrap();
+    draw(&mut presenter, 40, 20);
+    let target = presenter
+        .scene
+        .iter()
+        .find(|target| target.key == "inner-action")
+        .unwrap()
+        .clone();
+    let point = target.area.visible();
+    let retired = presenter
+        .application
+        .child_mount(&presenter.root, "right")
+        .unwrap()
+        .clone();
+    let toggle = presenter
+        .scene
+        .iter()
+        .find(|target| target.key == "toggle")
+        .unwrap()
+        .clone();
+    presenter
+        .application
+        .dispatch(&toggle.mount, toggle.revision, &toggle.key, json!({}))
+        .unwrap();
+    presenter.pump().unwrap();
+    assert!(!presenter.scene.iter().any(|target| target.mount == retired));
+    presenter
+        .input(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: point.x,
+            row: point.y,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+    let state = presenter.resources.owners[&presenter.root.id()]
+        .state
+        .downcast_ref::<super::scroll::SceneState>()
+        .unwrap();
+    assert_eq!(state.scrolls["inner"].offset, 3);
+    assert_eq!(state.scrolls["outer"].offset, 0);
+    presenter.surface_closed(Ok(())).unwrap();
+    presenter.shutdown().unwrap();
+}

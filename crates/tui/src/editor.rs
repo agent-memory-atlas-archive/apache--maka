@@ -21,7 +21,7 @@
 //! editing and display geometry; implemented here against Ratatui 0.30.
 //! No Host state or submission authority belongs in this widget.
 pub mod completion;
-mod layout;
+pub(crate) mod layout;
 pub mod marks;
 mod presentation;
 mod preview;

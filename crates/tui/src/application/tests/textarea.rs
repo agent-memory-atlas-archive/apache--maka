@@ -478,3 +478,52 @@ fn unhandled_editor_page_key_reaches_its_original_scene_scroll_ancestor() {
     assert_eq!(observation(&tui), before);
     close(&mut tui);
 }
+
+#[test]
+fn pointer_capture_survives_tab_focus_change_and_release_keeps_the_new_focus() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 20);
+    let mount = draft(&tui);
+    let target = tui
+        .scene
+        .iter()
+        .find(|target| target.mount == mount)
+        .unwrap()
+        .clone();
+    let point = target.area.visible();
+    click(
+        &mut tui,
+        MouseEventKind::Down(MouseButton::Left),
+        point.x + 1,
+        point.y + 1,
+    );
+    assert!(
+        tui.drag
+            .as_ref()
+            .is_some_and(|captured| captured.same(&target))
+    );
+    tui.input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
+        .unwrap();
+    let next = tui.focus.clone().unwrap();
+    assert!(!next.same(&target));
+    click(
+        &mut tui,
+        MouseEventKind::Drag(MouseButton::Left),
+        point.x + 4,
+        point.y + 1,
+    );
+    assert_eq!(
+        observation(&tui)["snapshot"]["selection"],
+        json!({"start":0,"end":3})
+    );
+    assert!(tui.focus.as_ref().unwrap().same(&next));
+    click(
+        &mut tui,
+        MouseEventKind::Up(MouseButton::Left),
+        point.x + 4,
+        point.y + 1,
+    );
+    assert!(tui.drag.is_none());
+    assert!(tui.focus.as_ref().unwrap().same(&next));
+    close(&mut tui);
+}

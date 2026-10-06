@@ -180,7 +180,7 @@ impl Resources {
     }
     pub fn input(
         &mut self,
-        target: &paint::Target,
+        target: &paint::TargetIdentity,
         event: &Event,
     ) -> maka_ui::Result<Option<WidgetInput>> {
         let Some(owner) = self.owners.get_mut(&target.mount.id()).filter(|owner| {
@@ -199,6 +199,38 @@ impl Resources {
                 Err(Error::Invalid(error))
             }
         }
+    }
+    fn read_native<T>(
+        &mut self,
+        target: &paint::TargetIdentity,
+        read: impl FnOnce(&dyn Widget, &dyn Any) -> T,
+    ) -> maka_ui::Result<Option<T>> {
+        let Some(owner) = self.owners.get_mut(&target.mount.id()).filter(|owner| {
+            owner.live && owner.presented && Rc::ptr_eq(&owner.identity, &target.owner)
+        }) else {
+            return Ok(None);
+        };
+        match catch_unwind(AssertUnwindSafe(|| {
+            read(owner.recipe.as_ref(), owner.state.as_ref())
+        })) {
+            Ok(value) => Ok(Some(value)),
+            Err(_) => {
+                owner.live = false;
+                let error = "terminal native read cleanup unconfirmed".to_owned();
+                self.failed.insert(target.mount.id(), error.clone());
+                Err(Error::Invalid(error))
+            }
+        }
+    }
+    pub fn pointer_capture(&mut self, target: &paint::TargetIdentity) -> maka_ui::Result<bool> {
+        Ok(self
+            .read_native(target, |recipe, state| recipe.pointer_capture(state))?
+            .unwrap_or(false))
+    }
+    pub fn copy(&mut self, target: &paint::TargetIdentity) -> maka_ui::Result<Option<String>> {
+        Ok(self
+            .read_native(target, |recipe, state| recipe.copy(state))?
+            .flatten())
     }
     pub fn present(&mut self, mount: &Mount, identity: &Rc<()>, geometry: Box<dyn Any>) {
         let Some(owner) = self
@@ -338,6 +370,11 @@ impl Presenter {
             }
         }
         self.resources.prepare(&self.application, &self.root)?;
+        if let Some(target) = &self.drag
+            && !self.resources.pointer_capture(target)?
+        {
+            self.drag = None;
+        }
         Ok(())
     }
 }

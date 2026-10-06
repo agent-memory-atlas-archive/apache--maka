@@ -90,8 +90,13 @@ pub fn run(
             presenter.present(scene.expect("successful paint"));
             if event::poll(Duration::from_millis(30)).map_err(|e| e.to_string())? {
                 let input = event::read().map_err(|e| e.to_string())?;
-                if matches!(input,Event::Key(key) if key.kind!=KeyEventKind::Release && key.code==KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
-                {
+                if is_copy(&input) {
+                    if let Err(error) = presenter.copy(&mut std::io::stdout().lock()) {
+                        report(&mut reported, &error.to_string());
+                    }
+                    return Ok(false);
+                }
+                if is_exit(&input) {
                     return Ok(true);
                 }
                 presenter.input(input).map_err(|e| e.to_string())?;
@@ -129,5 +134,43 @@ fn report(reported: &mut BTreeSet<String>, message: &str) {
     let message = sanitize(message);
     if reported.insert(message.clone()) {
         eprintln!("{message}");
+    }
+}
+
+fn is_copy(event: &Event) -> bool {
+    matches!(event,Event::Key(key) if key.kind!=KeyEventKind::Release && matches!(key.code,KeyCode::Char('c'|'C')) && key.modifiers==KeyModifiers::CONTROL|KeyModifiers::SHIFT)
+}
+fn is_exit(event: &Event) -> bool {
+    matches!(event,Event::Key(key) if key.kind!=KeyEventKind::Release && key.code==KeyCode::Char('c') && key.modifiers==KeyModifiers::CONTROL)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyEvent;
+    #[test]
+    fn source_copy_does_not_overlap_exit_or_release() {
+        let copy = Event::Key(KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ));
+        assert!(is_copy(&copy));
+        assert!(!is_exit(&copy));
+        let uppercase = Event::Key(KeyEvent::new(
+            KeyCode::Char('C'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ));
+        assert!(is_copy(&uppercase));
+        assert!(!is_exit(&uppercase));
+        let exit = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert!(is_exit(&exit));
+        assert!(!is_copy(&exit));
+        let mut released = KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        );
+        released.kind = KeyEventKind::Release;
+        assert!(!is_copy(&Event::Key(released)));
+        assert!(!is_exit(&Event::Key(released)));
     }
 }

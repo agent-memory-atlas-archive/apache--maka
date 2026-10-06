@@ -25,9 +25,10 @@ use maka_ui::{
 };
 use std::{any::Any, cell::Cell, collections::BTreeMap, rc::Rc};
 
-enum View {
+pub(super) enum View {
     Scene(Value),
     ChangingScene(Rc<std::cell::RefCell<Value>>),
+    StandaloneSource(Rc<std::cell::RefCell<Value>>),
     Flush,
 }
 struct Root {
@@ -70,6 +71,15 @@ impl NativeComponent<dyn Widget> for Root {
                 &source.borrow(),
                 std::time::Instant::now() + std::time::Duration::from_secs(1),
             )?,
+            View::StandaloneSource(source) => {
+                let view = super::super::source::compile(&source.borrow())?;
+                NativeView::<dyn Widget>::new(
+                    view.view,
+                    BTreeMap::from([("back".into(), json!(true))]),
+                    vec![],
+                )?
+                .with_declaration(source.borrow().clone())?
+            }
             View::Flush => NativeView::<dyn Widget>::new(
                 Rc::new(Flush),
                 BTreeMap::from([("flushed".into(), json!({"type":"integer","minimum":0}))]),
@@ -111,7 +121,7 @@ impl Widget for Flush {
         })
     }
 }
-fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Runtime, Presenter) {
+pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Runtime, Presenter) {
     let (runtime, mut input, mut packages) = fixture("return frame(state);");
     let index = packages
         .iter()

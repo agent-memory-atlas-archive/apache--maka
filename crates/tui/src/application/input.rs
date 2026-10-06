@@ -109,6 +109,9 @@ impl Widget for Recipe {
             WidgetInput::Unhandled
         })
     }
+    fn pointer_capture(&self, state: &dyn Any) -> bool {
+        state.downcast_ref::<Owner>().unwrap().editor.dragging()
+    }
     fn capture(
         &self,
         state: &dyn Any,

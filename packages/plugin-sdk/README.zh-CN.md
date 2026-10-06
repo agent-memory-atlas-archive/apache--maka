@@ -121,8 +121,12 @@ Desktop 还提供 `contracts.sourceText`（`maka.ui.source`，导出 `SourceText
 Latest 显式捕获新 fence。Watch 进度不自动替换正在阅读的窗口。实时节选只保留显示 fence
 之后的有界前缀；仅完整 canonical 消息使用 Markdown。产品还提供固定 fence 的单消息原文
 阅读器，以有界开头/上一段/下一段/末尾导航访问完整原文，失败保留当前段并可精确重试，
-返回时保留原对话窗口。Desktop 支持原文选择，TUI 当前使用普通 label；TUI 原生
-ReadingArea/SourceText 与完整阅读器的实窗验收仍待完成。
+返回时保留原对话窗口。Desktop 支持原文选择，TUI 当前使用普通 label。
+
+TUI 已提供同契约、同实现名的 standalone 原生 `SourceText`。选区保留原始 UTF-8 字节，
+包括 CRLF、tab 与控制字符；控制字符安全显示，Ctrl+Shift+C 通过有界 OSC52 请求复制，
+不表示操作系统已确认写入。追加文本保留原端点，替换/禁用撤销旧选区。TUI ReadingArea
+跨参与者选择、普通产品接入与完整阅读器实窗验收仍待完成。
 
 持久 UI component 通过普通 `actions` 提交 mutation（可携带声明的原捕获资源）；内核生成 operation
 identity，先记录原 caller intent 再派发。feedback 的 `ActionOutcome` 使用

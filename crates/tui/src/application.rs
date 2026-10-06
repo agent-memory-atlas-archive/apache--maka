@@ -29,6 +29,7 @@ mod resources;
 mod run;
 mod scene;
 mod scroll;
+mod source;
 mod textarea;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
@@ -66,6 +67,12 @@ pub trait Widget: std::any::Any {
     }
     fn input(&self, _: &mut dyn std::any::Any, _: &str, _: &Event) -> maka_ui::Result<WidgetInput> {
         Ok(WidgetInput::Unhandled)
+    }
+    fn pointer_capture(&self, _: &dyn std::any::Any) -> bool {
+        false
+    }
+    fn copy(&self, _: &dyn std::any::Any) -> Option<String> {
+        None
     }
     fn capture(
         &self,
@@ -128,6 +135,7 @@ pub struct Presenter {
     scene: Vec<paint::Target>,
     resources: resources::Resources,
     focus: Option<paint::Target>,
+    drag: Option<paint::Target>,
     jobs: FuturesUnordered<Job>,
     closing: bool,
     surface_cleanup: Option<Result<(), String>>,
@@ -206,6 +214,7 @@ impl Presenter {
             scene: Vec::new(),
             resources: Default::default(),
             focus: None,
+            drag: None,
             jobs: FuturesUnordered::new(),
             closing: false,
             surface_cleanup: None,
@@ -304,7 +313,7 @@ impl Presenter {
                     MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
                 ) =>
             {
-                self.focus.clone()
+                self.drag.clone()
             }
             _ => None,
         };
@@ -331,10 +340,16 @@ impl Presenter {
                 other => other,
             };
             if let WidgetInput::Consumed(observed) = native {
+                if self.resources.pointer_capture(&target)? {
+                    self.drag = Some(target.clone());
+                } else if self.drag.as_ref().is_some_and(|old| old.same(&target)) {
+                    self.drag = None;
+                }
+
                 if let Some(observed) = observed {
                     self.resources.observe(&target.mount, observed);
                 }
-                if !matches!(event,Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown))
+                if !matches!(event,Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown | MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)))
                 {
                     self.focus = Some(target);
                 }
@@ -342,15 +357,16 @@ impl Presenter {
                 return Ok(());
             }
             // Bubble unconsumed navigation through the original flushed scroll ancestors.
-            for index in target.ancestors.iter().rev() {
-                let ancestor = self.scene[*index].clone();
+            for ancestor in target.ancestors.iter().rev() {
                 if self.application.is_retiring(&ancestor.mount) {
                     continue;
                 }
-                if matches!(
-                    self.resources.input(&ancestor, &event)?,
-                    Some(WidgetInput::Consumed(_))
-                ) {
+                if let Some(WidgetInput::Consumed(observed)) =
+                    self.resources.input(ancestor, &event)?
+                {
+                    if let Some(observed) = observed {
+                        self.resources.observe(&ancestor.mount, observed);
+                    }
                     self.sync_native()?;
                     return Ok(());
                 }
@@ -379,6 +395,21 @@ impl Presenter {
             self.sync_native()?;
         }
         Ok(())
+    }
+    /// Copy only the focused original live native scope through the bounded
+    /// terminal writer. An OSC52 write is not an OS clipboard acknowledgement.
+    pub fn copy(&mut self, writer: &mut impl std::io::Write) -> maka_ui::Result<bool> {
+        let Some(target) = self.focus.clone() else {
+            return Ok(false);
+        };
+        if self.application.is_retiring(&target.mount) {
+            return Ok(false);
+        }
+        let Some(text) = self.resources.copy(&target)? else {
+            return Ok(false);
+        };
+        crate::terminal::copy(writer, &text).map_err(|error| Error::Invalid(error.to_string()))?;
+        Ok(true)
     }
     fn report(&mut self, error: &Error) {
         let diagnostic: String = sanitize(&error.to_string()).chars().take(2048).collect();
@@ -410,6 +441,13 @@ impl Presenter {
         let retired = self.application.retiring_mounts();
         self.scene.retain(|target| !retired.contains(&target.mount));
         if self
+            .drag
+            .as_ref()
+            .is_some_and(|target| retired.contains(&target.mount))
+        {
+            self.drag = None;
+        }
+        if self
             .focus
             .as_ref()
             .is_some_and(|target| retired.contains(&target.mount))
@@ -438,6 +476,7 @@ impl Presenter {
         self.closing = true;
         self.scene.clear();
         self.focus = None;
+        self.drag = None;
         self.application.retire(&self.root)?;
         self.resources.deactivate(&self.application);
         Ok(())

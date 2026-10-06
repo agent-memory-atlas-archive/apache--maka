@@ -108,15 +108,25 @@ pub(super) enum TargetKind {
     Scroll,
 }
 #[derive(Clone)]
-pub(super) struct Target {
+pub(super) struct TargetIdentity {
     pub mount: Mount,
     pub key: String,
+    pub owner: std::rc::Rc<()>,
+}
+#[derive(Clone)]
+pub(super) struct Target {
+    pub identity: TargetIdentity,
     pub revision: u64,
     pub area: Placement,
     pub tab_index: i16,
-    pub owner: std::rc::Rc<()>,
     pub kind: TargetKind,
-    pub ancestors: Vec<usize>,
+    pub ancestors: Vec<TargetIdentity>,
+}
+impl std::ops::Deref for Target {
+    type Target = TargetIdentity;
+    fn deref(&self) -> &TargetIdentity {
+        &self.identity
+    }
 }
 impl Target {
     pub fn same(&self, other: &Self) -> bool {
@@ -131,7 +141,7 @@ pub struct PaintedScene {
     pub(super) targets: Vec<Target>,
     placed: std::collections::BTreeSet<uuid::Uuid>,
     geometries: Vec<NativeGeometry>,
-    ancestry: Vec<usize>,
+    ancestry: Vec<TargetIdentity>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -260,12 +270,14 @@ impl Slots<'_> {
             return Ok(());
         }
         let target = Target {
-            mount: self.parent.clone(),
-            key: key.into(),
+            identity: TargetIdentity {
+                mount: self.parent.clone(),
+                key: key.into(),
+                owner: owner.identity.clone(),
+            },
             revision: self.presenter.application.frame(self.parent)?.revision,
             area,
             tab_index,
-            owner: owner.identity.clone(),
             kind: TargetKind::Native,
             ancestors: self.scene.as_ref().unwrap().ancestry.clone(),
         };
@@ -372,6 +384,11 @@ impl Presenter {
             self.resources
                 .present(&pending.mount, &pending.owner, pending.geometry);
         }
+        self.drag = self
+            .drag
+            .take()
+            .filter(|target| self.resources.pointer_capture(target).unwrap_or(false))
+            .and_then(|old| scene.targets.iter().find(|new| new.same(&old)).cloned());
         self.focus = self
             .focus
             .take()
@@ -532,20 +549,22 @@ impl Presenter {
                 let target = Target {
                     kind: TargetKind::Action,
                     ancestors: scene.ancestry.clone(),
-                    mount: mount.clone(),
-                    key: key.clone(),
                     revision: self.application.frame(mount)?.revision,
                     area: Placement::new(CellRect::new(area.x, area.y, area.width, 1), area.clip),
                     tab_index: 0,
-                    owner: self
-                        .resources
-                        .owners
-                        .get(&mount.id())
-                        .ok_or_else(|| {
-                            maka_ui::Error::Invalid("terminal native owner unavailable".into())
-                        })?
-                        .identity
-                        .clone(),
+                    identity: TargetIdentity {
+                        mount: mount.clone(),
+                        key: key.clone(),
+                        owner: self
+                            .resources
+                            .owners
+                            .get(&mount.id())
+                            .ok_or_else(|| {
+                                maka_ui::Error::Invalid("terminal native owner unavailable".into())
+                            })?
+                            .identity
+                            .clone(),
+                    },
                 };
                 if target.area.is_empty() {
                     return Ok(());
@@ -606,18 +625,20 @@ impl Presenter {
                     let viewport = state.candidate(key, *scroll, inner, flow.size.1, &identities);
                     let offset = viewport.offset;
                     pass.viewports.push((key.clone(), viewport));
-                    let index = scene.targets.len();
-                    scene.targets.push(Target {
+                    let identity = TargetIdentity {
                         mount: mount.clone(),
                         key: key.clone(),
+                        owner: self.resources.owners[&mount.id()].identity.clone(),
+                    };
+                    scene.targets.push(Target {
+                        identity: identity.clone(),
                         revision: self.application.frame(mount)?.revision,
                         area: inner,
                         tab_index: -1,
-                        owner: self.resources.owners[&mount.id()].identity.clone(),
                         kind: TargetKind::Scroll,
                         ancestors: scene.ancestry.clone(),
                     });
-                    scene.ancestry.push(index);
+                    scene.ancestry.push(identity);
                     offset
                 } else {
                     0
