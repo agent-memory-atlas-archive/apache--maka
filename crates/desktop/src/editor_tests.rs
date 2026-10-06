@@ -18,6 +18,7 @@
  */
 
 mod continuations;
+mod reading;
 
 use super::*;
 use gpui_kit::{AnyWindowHandle, Entity, EntityInputHandler};
