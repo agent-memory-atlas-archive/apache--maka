@@ -26,7 +26,7 @@ pub(crate) struct Geometry {
     revision: u64,
     selection: Selection,
     layout: Layout,
-    area: Rect,
+    area: Placement,
     top: usize,
     left: usize,
 }
@@ -48,7 +48,7 @@ impl Editor {
     }
     pub(crate) fn paint_prepared(
         &self,
-        area: Rect,
+        area: Placement,
         buffer: &mut Buffer,
         focused: bool,
         normal: Style,
@@ -98,12 +98,24 @@ impl Editor {
                 .take(area.height as usize)
                 .enumerate()
             {
-                let y = area.y + screen_row as u16;
+                let y = area.y + screen_row as i64;
                 for cell in &row.cells {
                     if cell.column < left || cell.column + cell.width > left + area.width as usize {
                         continue;
                     }
-                    let x = area.x + (cell.column - left) as u16;
+                    let Some(point) = area.point(cell.column - left, screen_row) else {
+                        continue;
+                    };
+                    if area
+                        .point(
+                            cell.column - left + cell.width.saturating_sub(1),
+                            screen_row,
+                        )
+                        .is_none()
+                    {
+                        continue;
+                    }
+                    let (x, y) = (point.x, point.y);
                     let style =
                         if cell.bytes.start < selection.end && cell.bytes.end > selection.start {
                             selected
@@ -135,23 +147,25 @@ impl Editor {
                 if self.text.as_bytes().get(row.end) == Some(&b'\n') && selection.contains(&row.end)
                 {
                     let column = row.cells.last().map_or(0, |cell| cell.column + cell.width);
-                    buffer[(
-                        area.x + column.min(area.width.saturating_sub(1) as usize) as u16,
-                        y,
-                    )]
-                        .set_style(selected);
+                    if let Some(point) = area.point(
+                        column.min(area.width.saturating_sub(1) as usize),
+                        (y - area.y) as usize,
+                    ) {
+                        buffer[(point.x, point.y)].set_style(selected);
+                    }
                 }
             }
-            if focused && cursor_row >= top && cursor_row < top + area.height as usize {
-                buffer[(
-                    area.x
-                        + cursor_column
-                            .saturating_sub(left)
-                            .min(area.width.saturating_sub(1) as usize)
-                            as u16,
-                    area.y + (cursor_row - top) as u16,
-                )]
-                    .set_style(caret);
+            if focused
+                && cursor_row >= top
+                && cursor_row < top + area.height as usize
+                && let Some(point) = area.point(
+                    cursor_column
+                        .saturating_sub(left)
+                        .min(area.width.saturating_sub(1) as usize),
+                    cursor_row - top,
+                )
+            {
+                buffer[(point.x, point.y)].set_style(caret);
             }
         }
         Geometry {
@@ -181,7 +195,7 @@ mod tests {
     fn paint(editor: &Editor, area: Rect) -> (Geometry, Buffer) {
         let mut buffer = Buffer::empty(area);
         let geometry = editor.paint_prepared(
-            area,
+            area.into(),
             &mut buffer,
             true,
             Style::default(),
@@ -269,5 +283,35 @@ mod tests {
         assert_eq!(editor.selection.cursor, "A👩🏽‍💻".len());
         editor.key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
         assert_eq!(editor.selected_text(), "e\u{301}");
+    }
+    #[test]
+    fn clipped_editor_paints_and_hits_original_unicode_row_without_rebasing_source() {
+        let mut editor = Editor::default();
+        editor.insert("00\n11\n中文😀\n44\n55");
+        editor.selection.cursor = 0;
+        let clip = Rect::new(0, 0, 6, 3);
+        let area = Placement::new(crate::application::CellRect::new(0, -2, 12, 6), clip);
+        let mut buffer = Buffer::empty(clip);
+        let geometry = editor.paint_prepared(
+            area,
+            &mut buffer,
+            false,
+            Style::default(),
+            Style::default(),
+            Style::default(),
+        );
+        assert_eq!(buffer[(0, 0)].symbol(), "中");
+        assert_eq!(buffer[(2, 0)].symbol(), "文");
+        assert_eq!(buffer[(4, 0)].symbol(), "😀");
+        assert!(editor.mouse_presented(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 4,
+                row: 0,
+                modifiers: KeyModifiers::NONE
+            },
+            &geometry
+        ));
+        assert_eq!(editor.selection.cursor, "00\n11\n中文".len());
     }
 }

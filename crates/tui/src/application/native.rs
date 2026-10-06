@@ -24,7 +24,6 @@ use maka_ui::{
 };
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
     style::{Color, Modifier, Style},
 };
 use serde_json::json;
@@ -33,10 +32,15 @@ struct Label {
     props: LabelProps,
 }
 impl Widget for Label {
-    fn measure(&self, _: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u16)> {
+    fn measure(&self, _: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
         Ok(paint::text_size(&self.props.text, width))
     }
-    fn paint(&self, _: &mut Slots<'_>, area: Rect, buffer: &mut Buffer) -> maka_ui::Result<()> {
+    fn paint(
+        &self,
+        _: &mut Slots<'_>,
+        area: super::Placement,
+        buffer: &mut Buffer,
+    ) -> maka_ui::Result<()> {
         let rgba = self.props.appearance.foreground.0;
         let mut style = Style::default().fg(Color::Rgb(
             (rgba >> 24) as u8,

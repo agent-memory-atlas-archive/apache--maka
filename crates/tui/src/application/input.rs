@@ -17,6 +17,7 @@
  * under the License.
  */
 
+use super::Placement;
 use super::editor::Owner;
 use super::{NativeInput, Slots, Widget, WidgetInput};
 use crate::editor::{Editor, Geometry};
@@ -27,7 +28,6 @@ use maka_ui::{
 };
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
     style::{Color, Modifier, Style},
 };
 use std::{any::Any, collections::BTreeMap, rc::Rc, sync::Arc};
@@ -64,7 +64,7 @@ impl Widget for Recipe {
             Ok(None)
         }
     }
-    fn input(&self, state: &mut dyn Any, event: &Event) -> maka_ui::Result<WidgetInput> {
+    fn input(&self, state: &mut dyn Any, _: &str, event: &Event) -> maka_ui::Result<WidgetInput> {
         let owner = state
             .downcast_mut::<Owner>()
             .expect("terminal editor owner");
@@ -103,7 +103,11 @@ impl Widget for Recipe {
             _ => false,
         };
         let observed = handled && owner.refresh();
-        Ok(WidgetInput::Consumed(observed.then(|| owner.observation())))
+        Ok(if handled {
+            WidgetInput::Consumed(observed.then(|| owner.observation()))
+        } else {
+            WidgetInput::Unhandled
+        })
     }
     fn capture(
         &self,
@@ -116,17 +120,22 @@ impl Widget for Recipe {
             .capture(target)
     }
 
-    fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u16)> {
+    fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
         let _ = slots.native_state::<Owner>()?;
         Ok((width, 3))
     }
 
-    fn paint(&self, slots: &mut Slots<'_>, area: Rect, buffer: &mut Buffer) -> maka_ui::Result<()> {
+    fn paint(
+        &self,
+        slots: &mut Slots<'_>,
+        area: Placement,
+        buffer: &mut Buffer,
+    ) -> maka_ui::Result<()> {
         let owner = slots.native_state::<Owner>()?;
         let focused = slots.focused();
         let appearance = &self.props.appearance;
         buffer.set_style(
-            area,
+            area.visible(),
             Style::default()
                 .bg(color(appearance.background))
                 .fg(color(appearance.text.foreground)),

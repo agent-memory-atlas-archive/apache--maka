@@ -27,6 +27,7 @@ use std::{any::Any, cell::Cell, collections::BTreeMap, rc::Rc};
 
 enum View {
     Scene(Value),
+    ChangingScene(Rc<std::cell::RefCell<Value>>),
     Flush,
 }
 struct Root {
@@ -65,6 +66,10 @@ impl NativeComponent<dyn Widget> for Root {
                 source,
                 std::time::Instant::now() + std::time::Duration::from_secs(1),
             )?,
+            View::ChangingScene(source) => super::super::scene::compile(
+                &source.borrow(),
+                std::time::Instant::now() + std::time::Duration::from_secs(1),
+            )?,
             View::Flush => NativeView::<dyn Widget>::new(
                 Rc::new(Flush),
                 BTreeMap::from([("flushed".into(), json!({"type":"integer","minimum":0}))]),
@@ -87,10 +92,10 @@ impl Widget for Flush {
     fn create(&self) -> Box<dyn Any> {
         Box::new(None::<u16>)
     }
-    fn measure(&self, _: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u16)> {
+    fn measure(&self, _: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
         Ok((width, 1))
     }
-    fn paint(&self, slots: &mut Slots<'_>, area: Rect, _: &mut Buffer) -> maka_ui::Result<()> {
+    fn paint(&self, slots: &mut Slots<'_>, area: Placement, _: &mut Buffer) -> maka_ui::Result<()> {
         slots.native_geometry(Box::new(area.width))
     }
     fn present(&self, state: &mut dyn Any, geometry: Box<dyn Any>) -> Option<NativeInput> {
@@ -180,7 +185,7 @@ fn actual_long_scene_keeps_footer_painted_and_native_click_bound_to_flush() {
             .collect::<Vec<_>>(),
         ["back", "next", "last"]
     );
-    let last = presenter.scene.last().unwrap().area;
+    let last = presenter.scene.last().unwrap().area.visible();
     assert_eq!(last.y, 9);
     presenter
         .input(Event::Mouse(MouseEvent {
@@ -316,6 +321,224 @@ fn deep_legal_rows_share_one_measurement_pass_instead_of_expanding_recursively()
         presenter.application.frame(&presenter.root).unwrap().state,
         before
     );
+    presenter.surface_closed(Ok(())).unwrap();
+    presenter.shutdown().unwrap();
+}
+
+fn scroll_scene(policy: &str, text: &str) -> Value {
+    json!({"kind":"stack","key":"root","direction":"column","gap":0,"padding":0,"background":0,"children":[
+        {"kind":"stack","key":"body","direction":"column","gap":0,"padding":0,"background":0,"layout":{"grow":1},"scroll":policy,"children":[
+            {"kind":"text","key":"source","text":text,"color":0xffffff}]},
+        {"kind":"button","key":"back","label":"Back"}]})
+}
+fn flushed(presenter: &mut Presenter, width: u16, height: u16) -> Buffer {
+    presenter.sync_native().unwrap();
+    let area = Rect::new(0, 0, width, height);
+    let mut buffer = Buffer::empty(area);
+    let scene = presenter.paint(area, &mut buffer).unwrap();
+    presenter.present(scene);
+    buffer
+}
+fn wheel(presenter: &mut Presenter, down: bool, column: u16, row: u16) {
+    presenter
+        .input(Event::Mouse(MouseEvent {
+            kind: if down {
+                MouseEventKind::ScrollDown
+            } else {
+                MouseEventKind::ScrollUp
+            },
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+}
+fn scroll_state(presenter: &Presenter, key: &str) -> (u32, u32) {
+    let state = presenter.resources.owners[&presenter.root.id()]
+        .state
+        .downcast_ref::<super::super::scroll::SceneState>()
+        .unwrap();
+    let scroll = &state.scrolls[key];
+    (scroll.offset, scroll.presented.as_ref().unwrap().offset)
+}
+#[test]
+fn native_scroll_has_real_clipped_cells_and_does_not_ack_unflushed_or_superseded_intent() {
+    let text = (0..30).map(|n| format!("row {n:02}\n")).collect::<String>();
+    let (_runtime, mut presenter) = native(
+        View::Scene(scroll_scene("manual", &text)),
+        Rc::new(Cell::new(true)),
+    );
+    let first = flushed(&mut presenter, 12, 6);
+    assert_eq!(first[(4, 0)].symbol(), "0");
+    wheel(&mut presenter, true, 1, 1);
+    assert_eq!(scroll_state(&presenter, "body"), (3, 0));
+    let area = Rect::new(0, 0, 12, 6);
+    let mut discarded = Buffer::empty(area);
+    let stale = presenter.paint(area, &mut discarded).unwrap();
+    assert_eq!(discarded[(5, 0)].symbol(), "3");
+    assert_eq!(discarded[(0, 5)].symbol(), "[");
+    wheel(&mut presenter, true, 1, 1);
+    presenter.present(stale);
+    assert_eq!(scroll_state(&presenter, "body"), (6, 0));
+    let next = flushed(&mut presenter, 12, 6);
+    assert_eq!(next[(5, 0)].symbol(), "6");
+    assert_eq!(scroll_state(&presenter, "body"), (6, 6));
+    presenter.surface_closed(Ok(())).unwrap();
+    presenter.shutdown().unwrap();
+}
+#[test]
+fn wheel_and_page_keys_bubble_from_the_original_button_target() {
+    let mut source = scroll_scene("manual", "");
+    source["children"][0]["children"] = json!(
+        (0..20)
+            .map(|n| json!({"kind":"button","key":format!("b{n}"),"label":format!("Item {n}")}))
+            .collect::<Vec<_>>()
+    );
+    let (_runtime, mut presenter) = native(View::Scene(source), Rc::new(Cell::new(true)));
+    flushed(&mut presenter, 20, 7);
+    wheel(&mut presenter, true, 2, 0);
+    assert_eq!(scroll_state(&presenter, "body").0, 3);
+    flushed(&mut presenter, 20, 7);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::PageDown,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    assert_eq!(scroll_state(&presenter, "body").0, 9);
+    assert_eq!(
+        presenter.application.frame(&presenter.root).unwrap().state["count"],
+        0
+    );
+    presenter.surface_closed(Ok(())).unwrap();
+    presenter.shutdown().unwrap();
+}
+#[test]
+fn follow_end_uses_actual_flush_and_manual_interaction_survives_recipe_updates() {
+    let source = Rc::new(std::cell::RefCell::new(scroll_scene(
+        "follow_end",
+        "0\n1\n2\n3\n4\n5\n6\n7",
+    )));
+    let (_runtime, mut presenter) = native(
+        View::ChangingScene(source.clone()),
+        Rc::new(Cell::new(true)),
+    );
+    flushed(&mut presenter, 10, 5);
+    assert_eq!(scroll_state(&presenter, "body"), (4, 4));
+    let owner = presenter.resources.owners[&presenter.root.id()]
+        .identity
+        .clone();
+    source.borrow_mut()["children"][0]["children"][0]["text"] =
+        json!("0\n1\n2\n3\n4\n5\n6\n7\n8\n9");
+    refresh(&mut presenter);
+    flushed(&mut presenter, 10, 5);
+    assert_eq!(scroll_state(&presenter, "body"), (6, 6));
+    wheel(&mut presenter, false, 1, 1);
+    source.borrow_mut()["children"][0]["children"][0]["text"] =
+        json!("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11");
+    refresh(&mut presenter);
+    flushed(&mut presenter, 10, 5);
+    assert_eq!(scroll_state(&presenter, "body"), (3, 3));
+    assert!(Rc::ptr_eq(
+        &owner,
+        &presenter.resources.owners[&presenter.root.id()].identity
+    ));
+    presenter.surface_closed(Ok(())).unwrap();
+    presenter.shutdown().unwrap();
+}
+#[test]
+fn anchor_keeps_gap_offset_and_original_child_after_hide_and_prepend() {
+    let mut initial = scroll_scene("anchor", "A");
+    initial["children"][0]["gap"] = json!(10);
+    initial["children"][0]["children"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"kind":"text","key":"second","text":"B\nC\nD\nE\nF\nG", "color":0xffffff}));
+    let source = Rc::new(std::cell::RefCell::new(initial));
+    let (_runtime, mut presenter) = native(
+        View::ChangingScene(source.clone()),
+        Rc::new(Cell::new(true)),
+    );
+    flushed(&mut presenter, 10, 5);
+    wheel(&mut presenter, true, 1, 1);
+    flushed(&mut presenter, 10, 5);
+    flushed(&mut presenter, 10, 5);
+    assert_eq!(scroll_state(&presenter, "body"), (3, 3));
+    source.borrow_mut()["children"][0]["visible"] = json!(false);
+    refresh(&mut presenter);
+    flushed(&mut presenter, 10, 5);
+    assert_eq!(scroll_state(&presenter, "body"), (3, 3));
+    source.borrow_mut()["children"][0]["children"]
+        .as_array_mut()
+        .unwrap()
+        .insert(
+            0,
+            json!({"kind":"text","key":"prefix","text":"prefix\n".repeat(100),"color":0xffffff}),
+        );
+    source.borrow_mut()["children"][0]["visible"] = json!(true);
+    refresh(&mut presenter);
+    flushed(&mut presenter, 10, 5);
+    assert_eq!(scroll_state(&presenter, "body"), (114, 114));
+    presenter.surface_closed(Ok(())).unwrap();
+    presenter.shutdown().unwrap();
+}
+
+fn refresh(presenter: &mut Presenter) {
+    let revision = presenter
+        .application
+        .frame(&presenter.root)
+        .unwrap()
+        .revision;
+    presenter
+        .application
+        .dispatch(&presenter.root, revision, "back", json!({"kind":"click"}))
+        .unwrap();
+    presenter.sync_native().unwrap();
+}
+
+#[test]
+fn native_scroll_reaches_content_beyond_u16_terminal_height() {
+    let mut source = scroll_scene("manual", "");
+    source["children"][0]["children"] = json!((0..4).map(|n| json!({"kind":"text", "key":format!("part{n}"), "text":"p\n".repeat(20000), "color":0xffffff})).collect::<Vec<_>>());
+    let (_runtime, mut presenter) = native(View::Scene(source), Rc::new(Cell::new(true)));
+    flushed(&mut presenter, 10, 6);
+    presenter
+        .input(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 1,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE)))
+        .unwrap();
+    let end = flushed(&mut presenter, 10, 6);
+    assert_eq!(scroll_state(&presenter, "body"), (79999, 79999));
+    assert_eq!(end[(0, 0)].symbol(), "p");
+    assert_eq!(end[(0, 5)].symbol(), "[");
+    presenter.surface_closed(Ok(())).unwrap();
+    presenter.shutdown().unwrap();
+}
+#[test]
+fn nested_scroll_consumes_innermost_wheel_then_bubbles_at_its_boundary() {
+    let mut source = scroll_scene("manual", "");
+    source["children"][0]["children"] = json!([
+        {"kind":"stack","key":"inner","direction":"column","gap":0,"padding":0,"background":0,"scroll":"manual","layout":{"basis":3},"children":[
+            {"kind":"text","key":"inner-text","text":"0\n1\n2\n3\n4\n5\n6\n7\n8\n9","color":0xffffff}]},
+        {"kind":"text","key":"outer-text","text":"tail\n".repeat(30),"color":0xffffff}]);
+    let (_runtime, mut presenter) = native(View::Scene(source), Rc::new(Cell::new(true)));
+    flushed(&mut presenter, 10, 6);
+    for _ in 0..3 {
+        wheel(&mut presenter, true, 1, 1);
+        flushed(&mut presenter, 10, 6);
+    }
+    assert_eq!(scroll_state(&presenter, "inner"), (7, 7));
+    assert_eq!(scroll_state(&presenter, "body"), (0, 0));
+    wheel(&mut presenter, true, 1, 1);
+    flushed(&mut presenter, 10, 6);
+    assert_eq!(scroll_state(&presenter, "body"), (3, 3));
+    assert_eq!(scroll_state(&presenter, "inner"), (7, 7));
     presenter.surface_closed(Ok(())).unwrap();
     presenter.shutdown().unwrap();
 }

@@ -39,6 +39,7 @@ use ratatui::{
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::application::Placement;
 use layout::Layout;
 use saved::Cursor as Selection;
 
@@ -83,7 +84,7 @@ pub struct Editor {
     redo: Vec<Edit>,
     history_bytes: usize,
     layout: Layout,
-    area: Option<Rect>,
+    area: Option<Placement>,
     top: usize,
     preferred_column: Option<usize>,
     single_line: bool,
@@ -209,15 +210,15 @@ impl Editor {
         let (row, column) = self
             .layout
             .cursor(self.selection.cursor, self.selection.upstream);
-        (row >= self.top && row < self.top + usize::from(area.height)).then(|| {
-            Position::new(
-                area.x
-                    + column
-                        .saturating_sub(self.left)
-                        .min(area.width.saturating_sub(1) as usize) as u16,
-                area.y + (row - self.top) as u16,
-            )
-        })
+        if row < self.top || row >= self.top + area.height as usize {
+            return None;
+        }
+        area.point(
+            column
+                .saturating_sub(self.left)
+                .min(area.width.saturating_sub(1) as usize),
+            row - self.top,
+        )
     }
 
     pub fn contains(&self, point: Position) -> bool {
@@ -544,10 +545,9 @@ impl Editor {
             self.layout.hit(
                 0,
                 self.left
-                    + point
-                        .x
-                        .saturating_sub(area.x)
-                        .min(area.width.saturating_sub(1)) as usize,
+                    + (i64::from(point.x) - area.x)
+                        .clamp(0, i64::from(area.width.saturating_sub(1)))
+                        as usize,
             )
         } else {
             self.layout.pointer(area, self.top, point)
@@ -570,9 +570,9 @@ impl Editor {
                 self.selection.anchor.get_or_insert(self.selection.cursor);
             }
             MouseEventKind::Drag(MouseButton::Left) if self.dragging => {
-                if point.y < area.y {
+                if i64::from(point.y) < area.y {
                     self.top = self.top.saturating_sub(1);
-                } else if point.y >= area.bottom() {
+                } else if i64::from(point.y) >= area.bottom() {
                     self.top = (self.top + 1)
                         .min(self.layout.rows.len().saturating_sub(area.height as usize));
                 }
@@ -626,8 +626,8 @@ impl Editor {
             self.invalidate_geometry();
             return;
         }
-        let resized = self.area != Some(area);
-        self.area = Some(area);
+        let resized = self.area != Some(area.into());
+        self.area = Some(area.into());
         if self.layout.width != area.width {
             self.layout = self.make_layout(area.width);
         }

@@ -52,6 +52,17 @@ pub struct Layout {
     pub basis: Option<u16>,
     pub wrap: bool,
 }
+/// Native scroll policy; offsets and accepted viewport geometry remain native.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "TerminalScrollPolicy")]
+pub enum ScrollPolicy {
+    #[default]
+    None,
+    Manual,
+    Anchor,
+    FollowEnd,
+}
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "TerminalScene")]
@@ -65,6 +76,8 @@ pub enum Node {
         children: Vec<Node>,
         #[serde(default)]
         layout: Layout,
+        #[serde(default)]
+        scroll: ScrollPolicy,
         #[serde(default = "visible")]
         visible: bool,
     },
@@ -83,6 +96,12 @@ fn visible() -> bool {
     true
 }
 impl Node {
+    pub(super) fn key(&self) -> &str {
+        match self {
+            Self::Stack { key, .. } | Self::Text { key, .. } | Self::Button { key, .. } => key,
+            Self::Component(slot) => &slot.key,
+        }
+    }
     pub(super) fn layout(&self) -> Layout {
         match self {
             Self::Stack { layout, .. } => *layout,
@@ -124,9 +143,13 @@ impl Node {
                 children,
                 layout,
                 direction,
+                scroll,
                 ..
             } => {
-                if layout.grow > 1024 || (layout.wrap && !matches!(direction, Direction::Row)) {
+                if layout.grow > 1024
+                    || (layout.wrap && !matches!(direction, Direction::Row))
+                    || (*scroll != ScrollPolicy::None && !matches!(direction, Direction::Column))
+                {
                     return Err("invalid terminal layout".into());
                 }
                 if *gap > 1024 || *padding > 1024 || *background > 0xffffff {
@@ -254,7 +277,47 @@ pub(super) fn compile(
         .with_hidden_slots(hidden_slots)
 }
 impl super::Widget for Node {
-    fn measure(&self, slots: &super::Slots<'_>, width: u16) -> maka_ui::Result<(u16, u16)> {
+    fn create(&self) -> Box<dyn std::any::Any> {
+        Box::<super::scroll::SceneState>::default()
+    }
+    fn commit(&self, state: &mut dyn std::any::Any) -> maka_ui::Result<Option<super::NativeInput>> {
+        state
+            .downcast_mut::<super::scroll::SceneState>()
+            .unwrap()
+            .commit(self);
+        Ok(None)
+    }
+    fn input(
+        &self,
+        state: &mut dyn std::any::Any,
+        key: &str,
+        event: &crossterm::event::Event,
+    ) -> maka_ui::Result<super::WidgetInput> {
+        Ok(
+            if state
+                .downcast_mut::<super::scroll::SceneState>()
+                .unwrap()
+                .input(key, event)
+            {
+                super::WidgetInput::Consumed(None)
+            } else {
+                super::WidgetInput::Unhandled
+            },
+        )
+    }
+    fn present(
+        &self,
+        state: &mut dyn std::any::Any,
+        geometry: Box<dyn std::any::Any>,
+    ) -> Option<super::NativeInput> {
+        state
+            .downcast_mut::<super::scroll::SceneState>()
+            .unwrap()
+            .present(*geometry.downcast::<super::scroll::Geometry>().unwrap());
+        None
+    }
+
+    fn measure(&self, slots: &super::Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
         slots
             .presenter
             .measure(slots.parent, self, width, slots.measurements)
@@ -262,9 +325,13 @@ impl super::Widget for Node {
     fn paint(
         &self,
         slots: &mut super::Slots<'_>,
-        area: ratatui::layout::Rect,
+        area: super::Placement,
         buffer: &mut ratatui::buffer::Buffer,
     ) -> maka_ui::Result<()> {
+        let generation = slots
+            .native_state::<super::scroll::SceneState>()?
+            .generation;
+        let mut viewports = Vec::new();
         slots.presenter.paint_node(
             slots.parent,
             self,
@@ -274,7 +341,14 @@ impl super::Widget for Node {
                 .scene
                 .as_deref_mut()
                 .ok_or_else(|| maka_ui::Error::Invalid("cannot paint while measuring".into()))?,
-            slots.measurements,
-        )
+            &mut super::paint::NodePaint {
+                measurements: slots.measurements,
+                viewports: &mut viewports,
+            },
+        )?;
+        slots.native_geometry(Box::new(super::scroll::Geometry {
+            generation,
+            viewports,
+        }))
     }
 }

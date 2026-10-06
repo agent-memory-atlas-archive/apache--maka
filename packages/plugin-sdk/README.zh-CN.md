@@ -53,7 +53,10 @@ Desktop 为 `{ name: "maka.desktop.scene", version: 1 }`，TUI 为
 `TerminalScene` 与 `TerminalLayout` 从实际 TUI 编译器生成。Stack 的 `layout.grow`
 在固定兄弟节点占位后分配剩余格子；`basis` 指定其在父主轴上的基础长度。Row 的
 `wrap` 将控件分到后续行，每行分别分配弹性宽度，并按实际宽度测量换行高度。
-隐藏子树同样要求节点 key 唯一。
+Column Stack 的 `scroll` 选择 `none`、`manual`、`anchor` 或 `follow_end`。
+阅读视口通过 `layout.grow` 或 `basis` 分配高度，内部内容保留自然高度。位置、滚轮/
+Page/Home/End 与稳定子节点锚点由原生 owner 持有。绘制只读，只有成功终端输出后
+才接受匹配的视口几何；隐藏路由保留阅读基线。隐藏子树同样要求节点 key 唯一。
 
 
 `raw` 事件及同一次输入的同步组件观察者可返回 `decision: { preventDefault: true, stopPropagation: true }`，省略标志为 false。私有准入仅沿原经过检查的 `on` 路径传递，公开组件事件仍为 `component`。旗标按 OR 合并，完整事务提交后才生效，不保留在 frame。生命周期 emission 与 action/subscription feedback 不能通过 payload 中的 raw DTO 获得准入。决定作用于实际平台监听阶段，不能撤销更早的原生行为。

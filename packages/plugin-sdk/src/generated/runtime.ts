@@ -250,6 +250,10 @@ export type TerminalScene =
       background: number;
       children: TerminalScene[];
       layout?: TerminalLayout;
+      /**
+       * Native scroll policy; offsets and accepted viewport geometry remain native.
+       */
+      scroll?: 'none' | 'manual' | 'anchor' | 'follow_end';
       visible?: boolean;
       kind: 'stack';
     }

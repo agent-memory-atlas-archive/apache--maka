@@ -20,6 +20,7 @@
 //! Native terminal presentation of the shared plugin application kernel.
 //! 统一插件应用内核的原生终端呈现器。
 mod editor;
+mod geometry;
 mod input;
 mod layout;
 mod native;
@@ -27,9 +28,11 @@ mod paint;
 mod resources;
 mod run;
 mod scene;
+mod scroll;
 mod textarea;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
+pub use geometry::{CellRect, Placement};
 use maka_plugin_core::{
     composition::{Input, PresentationTarget},
     runtime::Mount,
@@ -41,7 +44,9 @@ use maka_ui::{
 };
 pub use native::registry;
 pub use paint::{PaintedScene, Slots, sanitize};
-use ratatui::{buffer::Buffer, layout::Rect};
+use ratatui::buffer::Buffer;
+#[cfg(test)]
+use ratatui::layout::Rect;
 pub use run::run;
 pub use scene::{Direction as TerminalDirection, Layout as TerminalLayout, Node as TerminalScene};
 use serde_json::{Value, json};
@@ -59,7 +64,7 @@ pub trait Widget: std::any::Any {
     fn commit(&self, _: &mut dyn std::any::Any) -> maka_ui::Result<Option<NativeInput>> {
         Ok(None)
     }
-    fn input(&self, _: &mut dyn std::any::Any, _: &Event) -> maka_ui::Result<WidgetInput> {
+    fn input(&self, _: &mut dyn std::any::Any, _: &str, _: &Event) -> maka_ui::Result<WidgetInput> {
         Ok(WidgetInput::Unhandled)
     }
     fn capture(
@@ -96,8 +101,13 @@ pub trait Widget: std::any::Any {
     /// retaining the editor, capture and pending command observations.
     fn presentation(&self, _: &mut dyn std::any::Any, _: bool) {}
     fn deactivate(&self, _: &mut dyn std::any::Any) {}
-    fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u16)>;
-    fn paint(&self, slots: &mut Slots<'_>, area: Rect, buffer: &mut Buffer) -> maka_ui::Result<()>;
+    fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)>;
+    fn paint(
+        &self,
+        slots: &mut Slots<'_>,
+        area: Placement,
+        buffer: &mut Buffer,
+    ) -> maka_ui::Result<()>;
 }
 /// Owner-originated observation; never a guest-created native resource.
 #[derive(Clone, PartialEq)]
@@ -329,6 +339,27 @@ impl Presenter {
                     self.focus = Some(target);
                 }
                 self.sync_native()?;
+                return Ok(());
+            }
+            // Bubble unconsumed navigation through the original flushed scroll ancestors.
+            for index in target.ancestors.iter().rev() {
+                let ancestor = self.scene[*index].clone();
+                if self.application.is_retiring(&ancestor.mount) {
+                    continue;
+                }
+                if matches!(
+                    self.resources.input(&ancestor, &event)?,
+                    Some(WidgetInput::Consumed(_))
+                ) {
+                    self.sync_native()?;
+                    return Ok(());
+                }
+            }
+            if target.kind != paint::TargetKind::Action {
+                if matches!(event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left))
+                {
+                    self.focus = Some(target);
+                }
                 return Ok(());
             }
             if !matches!(event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left))

@@ -236,6 +236,7 @@ export function components(target: Target): {
           padding: { top: 24, right: 24, bottom: 24, left: 24 },
         },
         scroll: props.live ? 'follow_end' : 'anchor',
+        terminal: { grow: 1 },
       },
     );
     const controls: Node[] = props.source

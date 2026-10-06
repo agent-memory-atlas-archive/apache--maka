@@ -63,7 +63,12 @@ JSON counts toward callback, transaction and retained-frame budgets.
 A Stack's `layout.grow` distributes remaining cells after fixed siblings;
 `basis` sets its base length in the parent's main axis. Row `wrap` lays out
 controls on successive rows, including per-row growth and height measurement
-at each allocated width. Hidden subtrees still require unique node keys.
+at each allocated width. Column Stack `scroll` selects `none`, `manual`, `anchor`
+or `follow_end`. Give a reading viewport `layout.grow` or `basis`; its scrollable
+content retains natural height. Offsets, wheel/Page/Home/End handling and stable
+child anchors belong to the native owner. Paint is read-only; only a successful
+terminal flush accepts matching viewport geometry. Hidden routes retain their
+reading baseline. Hidden subtrees still require unique node keys.
 
 
 A `raw` event and its synchronous component observers may return `decision: { preventDefault: true, stopPropagation: true }`. Omitted flags default to false. Private admission follows only the original checked `on` routes; public component inputs keep their `component` kind. Flags join by OR, become visible after the whole transaction commits, and are never stored in a frame. Lifecycle emissions and action/subscription feedback cannot acquire admission through a raw DTO in their payload. Decisions affect the actual platform listener phase and cannot undo earlier native behavior.

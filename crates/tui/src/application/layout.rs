@@ -17,23 +17,23 @@
  * under the License.
  */
 
+use super::CellRect;
 use super::scene::{Direction, Layout};
-use ratatui::layout::Rect;
 
 pub(super) struct Flow {
-    pub size: (u16, u16),
-    pub children: Vec<Rect>,
+    pub size: (u16, u32),
+    pub children: Vec<CellRect>,
 }
 /// Row width allocation precedes cross-axis measurement. Narrow basis/grow
 /// children and wrapped rows must report their height at the actual width.
 pub(super) fn measured<E>(
     direction: Direction,
     width: u16,
-    height: Option<u16>,
+    height: Option<u32>,
     gap: u16,
     wrap: bool,
     layouts: &[Layout],
-    mut measure: impl FnMut(usize, u16) -> Result<(u16, u16), E>,
+    mut measure: impl FnMut(usize, u16) -> Result<(u16, u32), E>,
 ) -> Result<Flow, E> {
     let mut children = layouts
         .iter()
@@ -57,13 +57,13 @@ pub(super) fn measured<E>(
 pub(super) fn flow(
     direction: Direction,
     width: u16,
-    height: Option<u16>,
+    height: Option<u32>,
     gap: u16,
     wrap: bool,
-    children: &[((u16, u16), Layout)],
+    children: &[((u16, u32), Layout)],
 ) -> Flow {
     if matches!(direction, Direction::Row) && wrap {
-        let mut rows: Vec<Vec<((u16, u16), Layout)>> = Vec::new();
+        let mut rows: Vec<Vec<((u16, u32), Layout)>> = Vec::new();
         let mut occupied = 0u32;
         for &(size, mut layout) in children {
             let basis = layout.basis.unwrap_or(size.0).min(width);
@@ -84,18 +84,18 @@ pub(super) fn flow(
             layout.basis = Some(basis);
             row.push((size, layout));
         }
-        let (mut y, mut widest) = (0u16, 0u16);
+        let (mut y, mut widest) = (0u32, 0u16);
         let mut placed = Vec::with_capacity(children.len());
         for (index, row) in rows.iter().enumerate() {
             let line = flow(Direction::Row, width, None, gap, false, row);
             widest = widest.max(line.size.0);
             for mut rect in line.children {
-                rect.y = y;
+                rect.y = i64::from(y);
                 placed.push(rect);
             }
             y = y.saturating_add(line.size.1);
             if index + 1 < rows.len() {
-                y = y.saturating_add(gap);
+                y = y.saturating_add(u32::from(gap));
             }
         }
         return Flow {
@@ -104,29 +104,38 @@ pub(super) fn flow(
         };
     }
     let horizontal = matches!(direction, Direction::Row);
-    let available = if horizontal { Some(width) } else { height };
-    let bases: Vec<u16> = children
+    let available = if horizontal {
+        Some(u32::from(width))
+    } else {
+        height
+    };
+    let bases: Vec<u32> = children
         .iter()
         .map(|&(size, layout)| {
             layout
                 .basis
+                .map(u32::from)
                 .unwrap_or(if layout.grow > 0 && available.is_some() {
                     0
                 } else if horizontal {
-                    size.0
+                    u32::from(size.0)
                 } else {
                     size.1
                 })
         })
         .collect();
     let spacing = u32::from(gap) * children.len().saturating_sub(1) as u32;
-    let occupied = bases.iter().map(|&n| u32::from(n)).sum::<u32>() + spacing;
-    let free = available.map_or(0, |n| u32::from(n).saturating_sub(occupied));
+    let occupied = bases
+        .iter()
+        .copied()
+        .fold(0u32, u32::saturating_add)
+        .saturating_add(spacing);
+    let free = available.map_or(0, |n| n.saturating_sub(occupied));
     let weight = children
         .iter()
         .map(|(_, layout)| u32::from(layout.grow))
         .sum::<u32>();
-    let (mut offset, mut cross, mut used_weight) = (0u16, 0u16, 0u32);
+    let (mut offset, mut cross, mut used_weight) = (0u32, 0u32, 0u32);
     let mut placed = Vec::with_capacity(children.len());
     for (&(size, layout), base) in children.iter().zip(bases) {
         let before = used_weight;
@@ -137,29 +146,38 @@ pub(super) fn flow(
             (u64::from(free) * u64::from(used_weight) / u64::from(weight)
                 - u64::from(free) * u64::from(before) / u64::from(weight)) as u32
         };
-        let length = base.saturating_add(extra as u16);
+        let length = base.saturating_add(extra);
         let length = if horizontal {
-            length.min(width.saturating_sub(offset))
+            length.min(u32::from(width).saturating_sub(offset))
         } else {
             length
         };
         placed.push(if horizontal {
-            Rect::new(offset, 0, length, height.unwrap_or(size.1))
+            CellRect::new(
+                i64::from(offset),
+                0,
+                length as u16,
+                height.unwrap_or(size.1),
+            )
         } else {
-            Rect::new(0, offset, width, length)
+            CellRect::new(0, i64::from(offset), width, length)
         });
-        cross = cross.max(if horizontal { size.1 } else { size.0 });
+        cross = cross.max(if horizontal {
+            size.1
+        } else {
+            u32::from(size.0)
+        });
         offset = offset.saturating_add(length);
         if placed.len() < children.len() {
-            offset = offset.saturating_add(gap);
+            offset = offset.saturating_add(u32::from(gap));
         }
     }
     let length = offset;
     Flow {
         size: if horizontal {
-            (length.min(width), cross)
+            (length.min(u32::from(width)) as u16, cross)
         } else {
-            (cross.min(width), length)
+            (cross.min(u32::from(width)) as u16, length)
         },
         children: placed,
     }
@@ -185,9 +203,9 @@ mod tests {
         assert_eq!(
             layout.children,
             [
-                Rect::new(0, 0, 20, 2),
-                Rect::new(0, 3, 20, 5),
-                Rect::new(0, 9, 20, 3)
+                CellRect::new(0, 0, 20, 2),
+                CellRect::new(0, 3, 20, 5),
+                CellRect::new(0, 9, 20, 3)
             ]
         );
         assert_eq!(
@@ -238,9 +256,9 @@ mod tests {
         assert_eq!(
             layout.children,
             [
-                Rect::new(0, 0, 8, 1),
-                Rect::new(0, 2, 9, 1),
-                Rect::new(10, 2, 6, 1)
+                CellRect::new(0, 0, 8, 1),
+                CellRect::new(0, 2, 9, 1),
+                CellRect::new(10, 2, 6, 1)
             ]
         );
         assert_eq!(layout.size, (16, 3));
@@ -273,9 +291,9 @@ mod wrap_growth_tests {
         assert_eq!(
             layout.children,
             [
-                Rect::new(0, 0, 9, 1),
-                Rect::new(10, 0, 8, 1),
-                Rect::new(0, 2, 18, 1)
+                CellRect::new(0, 0, 9, 1),
+                CellRect::new(10, 0, 8, 1),
+                CellRect::new(0, 2, 18, 1)
             ]
         );
         assert_eq!(layout.size, (18, 3));

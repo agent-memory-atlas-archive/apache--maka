@@ -91,7 +91,7 @@ export function paint(target: Target, theme: Theme) {
       visible: options.visible ?? true,
       ...(desktop
         ? { style: options.style ?? {}, scroll: options.scroll ?? 'none' }
-        : { layout: options.terminal ?? {} }),
+        : { layout: options.terminal ?? {}, scroll: options.scroll ?? 'none' }),
     }),
   };
 }

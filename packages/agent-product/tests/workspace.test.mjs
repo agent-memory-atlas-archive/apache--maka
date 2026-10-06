@@ -3003,6 +3003,11 @@ test('TUI reader declares a flexible body and wrapped controls while keeping dra
   const routes = () => client.output.frame.view.children[0].children;
   assert.equal(client.state.navigationOpen, false);
   assert.equal(routes().find((node) => node.key === 'main-route').visible, true);
+  const originalTimeline = timeline.mount(client.timeline, {}).frame.view;
+  const retained = originalTimeline.children.find((node) => node.key === 'retained-conversation');
+  assert.equal(retained.layout.grow, 1);
+  assert.equal(retained.children[0].layout.grow, 1);
+  assert.ok(['anchor', 'follow_end'].includes(retained.children[0].scroll));
   const originalDraft = modelSlots(client.output.frame.view).find(
     (node) => node.binding === 'composer',
   );
@@ -3010,6 +3015,7 @@ test('TUI reader declares a flexible body and wrapped controls while keeping dra
   const frame = timeline.mount(client.timeline, {}).frame.view;
   assert.equal(frame.layout.grow, 1);
   assert.equal(frame.children.find((node) => node.key === 'source-document').layout.grow, 1);
+  assert.equal(frame.children.find((node) => node.key === 'source-document').scroll, 'anchor');
   assert.equal(frame.children.at(-1).layout.wrap, true);
   assert.equal(frame.children.at(-1).gap, 1);
   const main = routes().find((node) => node.key === 'main-route').children[0];

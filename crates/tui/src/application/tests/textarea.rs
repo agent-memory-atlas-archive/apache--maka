@@ -50,7 +50,7 @@ pub(super) fn editor_fixture() -> (tokio::runtime::Runtime, Input, Vec<Package>)
                     source = source.replace("state.outcome?.value?.text??", "state.outcome?.value?.text?.slice(0,2048)??");
                     source = source.replace("if(event.kind==='action')", "if(event.key==='reject'){next.reject=event.event.reject;next.observation=null;}if(event.key==='configure'){next.options=event.event;}if(event.kind==='action')")
                         .replace("{kind:'button',key:'remove'", "{kind:'button',key:'reject',label:'Reject observation'},{kind:'button',key:'configure',label:'Configure editor'},{kind:'button',key:'remove'");
-                    source.push_str("const normalFrame=frame;frame=(state)=>{const out=normalFrame(state);const editor=out.frame.view.children.find(node=>node.key==='editor');if(editor){editor.props={...editor.props,...state.options};delete editor.props.visible;}out.frame.view.children=out.frame.view.children.map(node=>node.key==='editor'?{kind:'stack',key:'presentation',direction:'column',gap:0,padding:0,background:out.frame.view.background,visible:state.options?.visible!==false,children:[node]}:node);if(state.reject&&state.observation)out.frame.view={kind:'invalid'};return out;};");
+                    source.push_str("const normalFrame=frame;frame=(state)=>{const out=normalFrame(state);const editor=out.frame.view.children.find(node=>node.key==='editor');if(editor){editor.props={...editor.props,...state.options};delete editor.props.visible;delete editor.props.prefix;delete editor.props.readingViewport;}out.frame.view.children=out.frame.view.children.map(node=>node.key==='editor'?{kind:'stack',key:'presentation',direction:'column',gap:0,padding:0,background:out.frame.view.background,visible:state.options?.visible!==false,children:[node]}:node);if(state.options?.prefix)out.frame.view.children.unshift({kind:'text',key:'prefix',text:state.options.prefix,color:0xffffff});if(state.options?.readingViewport){const pane=out.frame.view.children.find(node=>node.key==='presentation');pane.scroll='manual';pane.layout={basis:6};pane.children.push({kind:'text',key:'long-tail',text:'tail\\n'.repeat(30),color:0xffffff});}if(state.reject&&state.observation)out.frame.view={kind:'invalid'};return out;};");
                 }
                 files.insert(module.clone(), source.into_bytes());
             }
@@ -196,8 +196,8 @@ fn failed_flush_keeps_previous_geometry_and_new_document_rejects_old_pointer_map
     let (_runtime, mut tui) = presenter();
     draw(&mut tui, 50, 20);
     let target = tui.scene[0].clone();
-    let x = target.area.x + 1;
-    let y = target.area.y + 1;
+    let x = target.area.visible().x + 1;
+    let y = target.area.visible().y + 1;
     // Paint a completely different viewport without publishing a flush.
     let area = Rect::new(10, 5, 30, 14);
     let mut buffer = Buffer::empty(area);
@@ -287,8 +287,8 @@ fn non_tab_stop_keeps_mouse_editing_and_readonly_disabled_gate_before_edit() {
     click(
         &mut tui,
         MouseEventKind::Down(MouseButton::Left),
-        target.area.x + 1,
-        target.area.y + 1,
+        target.area.visible().x + 1,
+        target.area.visible().y + 1,
     );
     tui.input(Event::Paste("中".into())).unwrap();
     assert_eq!(observation(&tui)["snapshot"]["text"]["bytes"], 8);
@@ -360,8 +360,8 @@ fn wheel_hits_visible_editor_without_stealing_button_focus_or_snapping_back() {
     click(
         &mut tui,
         MouseEventKind::ScrollUp,
-        editor.area.x + 1,
-        editor.area.y + 1,
+        editor.area.visible().x + 1,
+        editor.area.visible().y + 1,
     );
     assert_eq!(tui.focus.as_ref().unwrap().key, "read");
     let after = draw(&mut tui, 50, 30);
@@ -427,4 +427,54 @@ fn a_different_editor_with_equal_revision_cannot_capture_or_clear_the_original_d
     assert_eq!(observation(&b)["snapshot"]["text"]["bytes"], 0);
     close(&mut a);
     close(&mut b);
+}
+
+#[test]
+fn completely_clipped_editor_cannot_receive_focus_or_physical_input() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 20);
+    let mount = draft(&tui);
+    dispatch(
+        &mut tui,
+        "configure",
+        json!({"prefix":"heading\n".repeat(40)}),
+    );
+    draw(&mut tui, 50, 20);
+    assert!(!tui.scene.iter().any(|target| target.mount == mount));
+    assert!(
+        tui.focus
+            .as_ref()
+            .is_none_or(|target| target.mount != mount)
+    );
+    let before = observation(&tui);
+    tui.input(Event::Paste("invisible edit".into())).unwrap();
+    assert_eq!(observation(&tui), before);
+    close(&mut tui);
+}
+#[test]
+fn unhandled_editor_page_key_reaches_its_original_scene_scroll_ancestor() {
+    let (_runtime, mut tui) = presenter();
+    dispatch(&mut tui, "configure", json!({"readingViewport":true}));
+    draw(&mut tui, 50, 20);
+    let mount = draft(&tui);
+    let target = tui
+        .scene
+        .iter()
+        .find(|target| target.mount == mount)
+        .unwrap()
+        .clone();
+    tui.focus = Some(target);
+    let before = observation(&tui);
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::PageDown,
+        KeyModifiers::NONE,
+    )))
+    .unwrap();
+    let state = tui.resources.owners[&tui.root.id()]
+        .state
+        .downcast_ref::<super::super::scroll::SceneState>()
+        .unwrap();
+    assert_eq!(state.scrolls["presentation"].offset, 6);
+    assert_eq!(observation(&tui), before);
+    close(&mut tui);
 }

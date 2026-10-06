@@ -95,7 +95,7 @@ fn same_package_has_native_surfaces_and_distinct_layouts_and_paint_never_calls_g
     // Coordinates bind the last flushed scene revision. No repaint/re-resolution.
     assert!(tui.input(key(KeyCode::Enter)).is_err());
     draw(&mut tui, 30, 12);
-    let hit = tui.scene[0].area;
+    let hit = tui.scene[0].area.visible();
     tui.input(Event::Mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: hit.x,
@@ -150,7 +150,7 @@ fn unicode_geometry_clips_and_every_untrusted_text_sink_removes_controls() {
     assert_eq!(sanitize("a\tb\r\n"), "a    b\n");
     let area = Rect::new(1, 1, 4, 3);
     let mut buffer = Buffer::empty(Rect::new(0, 0, 8, 6));
-    paint::text(input, area, &mut buffer, Default::default());
+    paint::text(input, area.into(), &mut buffer, Default::default());
     for y in 0..6 {
         for x in 0..8 {
             let cell = &buffer[(x, y)];
@@ -609,7 +609,7 @@ struct SlotRow {
     duplicate: bool,
 }
 impl Widget for SlotRow {
-    fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u16)> {
+    fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
         assert!(slots.measure("undeclared", width).is_err());
         let first = slots.measure("right", width / 2)?;
         let second = slots.measure("left", width / 2)?;
@@ -620,17 +620,30 @@ impl Widget for SlotRow {
             first.1.max(second.1),
         ))
     }
-    fn paint(&self, slots: &mut Slots<'_>, area: Rect, buffer: &mut Buffer) -> maka_ui::Result<()> {
+    fn paint(
+        &self,
+        slots: &mut Slots<'_>,
+        area: Placement,
+        buffer: &mut Buffer,
+    ) -> maka_ui::Result<()> {
         assert_eq!(slots.keys().collect::<Vec<_>>(), ["right", "left"]);
         let half = area.width / 2;
         slots.paint(
             "right",
-            Rect::new(area.x, area.y, half, area.height),
+            Placement::new(CellRect::new(area.x, area.y, half, area.height), area.clip),
             buffer,
         )?;
         slots.paint(
             if self.duplicate { "right" } else { "left" },
-            Rect::new(area.x + half, area.y, area.width - half, area.height),
+            Placement::new(
+                CellRect::new(
+                    area.x + i64::from(half),
+                    area.y,
+                    area.width - half,
+                    area.height,
+                ),
+                area.clip,
+            ),
             buffer,
         )
     }
@@ -774,8 +787,8 @@ fn native_terminal_slots_measure_and_paint_js_children_with_original_input_mount
         .clone();
     tui.input(Event::Mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
-        column: target.area.x,
-        row: target.area.y,
+        column: target.area.visible().x,
+        row: target.area.visible().y,
         modifiers: KeyModifiers::NONE,
     }))
     .unwrap();
@@ -910,7 +923,7 @@ fn raw_click_focus_is_a_default_after_successful_commit() {
         )
         .unwrap();
         draw(&mut tui, 30, 12);
-        let hit = tui.scene[0].area;
+        let hit = tui.scene[0].area.visible();
         tui.focus = None;
         let result = tui.input(Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
@@ -969,10 +982,10 @@ fn pure_native_paint_panics_drain_original_state_and_failed_drop_keeps_root() {
                 failed: self.failed,
             })
         }
-        fn measure(&self, _: &Slots<'_>, _: u16) -> maka_ui::Result<(u16, u16)> {
+        fn measure(&self, _: &Slots<'_>, _: u16) -> maka_ui::Result<(u16, u32)> {
             panic!("pure measurement failure")
         }
-        fn paint(&self, _: &mut Slots<'_>, _: Rect, _: &mut Buffer) -> maka_ui::Result<()> {
+        fn paint(&self, _: &mut Slots<'_>, _: Placement, _: &mut Buffer) -> maka_ui::Result<()> {
             panic!("pure painting failure")
         }
     }

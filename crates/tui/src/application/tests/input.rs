@@ -199,8 +199,8 @@ fn retained_presentation_preserves_input_custody_and_only_successful_flush_hides
             .clone();
         tui.input(Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
-            column: restored.area.x + 1,
-            row: restored.area.y + 1,
+            column: restored.area.visible().x + 1,
+            row: restored.area.visible().y + 1,
             modifiers: KeyModifiers::NONE,
         }))
         .unwrap();

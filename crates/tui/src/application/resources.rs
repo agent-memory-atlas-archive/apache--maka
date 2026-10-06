@@ -189,7 +189,7 @@ impl Resources {
             return Ok(None);
         };
         match catch_unwind(AssertUnwindSafe(|| {
-            owner.recipe.input(owner.state.as_mut(), event)
+            owner.recipe.input(owner.state.as_mut(), &target.key, event)
         })) {
             Ok(result) => result.map(Some),
             Err(_) => {

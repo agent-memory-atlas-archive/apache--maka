@@ -19,7 +19,8 @@
 
 use std::ops::Range;
 
-use ratatui::layout::{Position, Rect};
+use crate::application::Placement;
+use ratatui::layout::Position;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -170,12 +171,11 @@ impl Layout {
         (byte, self.cursor(byte, false).0 != row)
     }
 
-    pub fn pointer(&self, area: Rect, top: usize, point: Position) -> (usize, bool) {
-        let row = point.y.clamp(area.y, area.bottom().saturating_sub(1)) - area.y;
-        let column = point
-            .x
-            .saturating_sub(area.x)
-            .min(area.width.saturating_sub(1));
+    pub fn pointer(&self, area: Placement, top: usize, point: Position) -> (usize, bool) {
+        let visible = area.visible();
+        let row = i64::from(point.y.clamp(visible.y, visible.bottom().saturating_sub(1))) - area.y;
+        let column =
+            (i64::from(point.x) - area.x).clamp(0, i64::from(area.width.saturating_sub(1)));
         self.hit(top + row as usize, column as usize)
     }
 

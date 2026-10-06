@@ -57,10 +57,10 @@ impl Widget for Probe {
                 == Some(&state.downcast_ref::<Cell<u64>>().unwrap().get()),
         )
     }
-    fn measure(&self, _: &Slots<'_>, _: u16) -> maka_ui::Result<(u16, u16)> {
+    fn measure(&self, _: &Slots<'_>, _: u16) -> maka_ui::Result<(u16, u32)> {
         Ok((1, 1))
     }
-    fn paint(&self, _: &mut Slots<'_>, _: Rect, _: &mut Buffer) -> maka_ui::Result<()> {
+    fn paint(&self, _: &mut Slots<'_>, _: Placement, _: &mut Buffer) -> maka_ui::Result<()> {
         Ok(())
     }
 }

@@ -17,14 +17,13 @@
  * under the License.
  */
 
-use super::Presenter;
 use super::scene::Node;
+use super::{CellRect, Placement, Presenter};
 use maka_plugin_core::runtime::Mount;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
-    widgets::{Paragraph, Widget as _},
 };
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -68,7 +67,7 @@ fn lines(text: &str, width: u16) -> Vec<String> {
     }
     result
 }
-pub(super) fn text_size(text: &str, width: u16) -> (u16, u16) {
+pub(super) fn text_size(text: &str, width: u16) -> (u16, u32) {
     let lines = lines(text, width);
     (
         lines
@@ -76,26 +75,48 @@ pub(super) fn text_size(text: &str, width: u16) -> (u16, u16) {
             .map(|s| s.width().min(usize::from(width)) as u16)
             .max()
             .unwrap_or(0),
-        lines.len().min(usize::from(u16::MAX)) as u16,
+        lines.len().min(u32::MAX as usize) as u32,
     )
 }
-pub(super) fn text(text: &str, area: Rect, buffer: &mut Buffer, style: Style) {
-    let lines = lines(text, area.width);
-    let content = lines
+pub(super) fn text(text: &str, area: Placement, buffer: &mut Buffer, style: Style) {
+    let area = area.clipped(buffer.area);
+    let visible = area.visible();
+    let first = (i64::from(visible.y) - area.y).max(0) as usize;
+    for (row, line) in lines(text, area.width)
         .into_iter()
-        .take(usize::from(area.height))
-        .collect::<Vec<_>>()
-        .join("\n");
-    Paragraph::new(content).style(style).render(area, buffer);
+        .take(area.height as usize)
+        .enumerate()
+        .skip(first)
+        .take(usize::from(visible.height))
+    {
+        let mut column = 0;
+        for grapheme in line.graphemes(true) {
+            let width = grapheme.width();
+            if let Some(point) = area.point(column, row)
+                && (width == 0 || area.point(column + width - 1, row).is_some())
+            {
+                buffer.set_stringn(point.x, point.y, grapheme, width.max(1), style);
+            }
+            column += width;
+        }
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum TargetKind {
+    Action,
+    Native,
+    Scroll,
 }
 #[derive(Clone)]
 pub(super) struct Target {
     pub mount: Mount,
     pub key: String,
     pub revision: u64,
-    pub area: Rect,
+    pub area: Placement,
     pub tab_index: i16,
     pub owner: std::rc::Rc<()>,
+    pub kind: TargetKind,
+    pub ancestors: Vec<usize>,
 }
 impl Target {
     pub fn same(&self, other: &Self) -> bool {
@@ -110,6 +131,7 @@ pub struct PaintedScene {
     pub(super) targets: Vec<Target>,
     placed: std::collections::BTreeSet<uuid::Uuid>,
     geometries: Vec<NativeGeometry>,
+    ancestry: Vec<usize>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -117,7 +139,7 @@ enum MeasurementKey {
     Mount,
     Node(usize),
 }
-type MeasurementCache = std::collections::BTreeMap<(uuid::Uuid, MeasurementKey, u16), (u16, u16)>;
+type MeasurementCache = std::collections::BTreeMap<(uuid::Uuid, MeasurementKey, u16), (u16, u32)>;
 /// Derived, paint-local memoization. No entry survives the immutable render pass
 /// or participates in input/continuation/geometry admission.
 #[derive(Default)]
@@ -134,8 +156,8 @@ impl Measurements {
         mount: uuid::Uuid,
         key: MeasurementKey,
         width: u16,
-        measure: impl FnOnce() -> maka_ui::Result<(u16, u16)>,
-    ) -> maka_ui::Result<(u16, u16)> {
+        measure: impl FnOnce() -> maka_ui::Result<(u16, u32)>,
+    ) -> maka_ui::Result<(u16, u32)> {
         #[cfg(test)]
         {
             let requests = self.requests.get() + 1;
@@ -165,6 +187,12 @@ impl Measurements {
     }
 }
 
+/// Derived data for one immutable scene recipe's paint pass.
+pub(super) struct NodePaint<'a> {
+    pub measurements: &'a Measurements,
+    pub viewports: &'a mut Vec<(String, super::scroll::Viewport)>,
+}
+
 /// Synchronous terminal geometry over one parent's committed component slots.
 /// Measuring is read-only; painting publishes hit geometry only after flush.
 pub struct Slots<'a> {
@@ -173,6 +201,7 @@ pub struct Slots<'a> {
     declarations: &'a [maka_ui::ComponentSlot],
     pub(super) scene: Option<&'a mut PaintedScene>,
     pub(super) measurements: &'a Measurements,
+    placement: Option<Placement>,
 }
 struct NativeGeometry {
     mount: Mount,
@@ -208,13 +237,28 @@ impl Slots<'_> {
             });
         Ok(())
     }
-    pub fn native_target(&mut self, key: &str, area: Rect, tab_index: i16) -> maka_ui::Result<()> {
+    pub fn native_target(
+        &mut self,
+        key: &str,
+        area: Placement,
+        tab_index: i16,
+    ) -> maka_ui::Result<()> {
         let owner = self
             .presenter
             .resources
             .owners
             .get(&self.parent.id())
             .ok_or_else(|| maka_ui::Error::Invalid("terminal native owner unavailable".into()))?;
+        let area = area.clipped(
+            self.placement
+                .ok_or_else(|| {
+                    maka_ui::Error::Invalid("cannot publish hits while measuring".into())
+                })?
+                .visible(),
+        );
+        if area.is_empty() {
+            return Ok(());
+        }
         let target = Target {
             mount: self.parent.clone(),
             key: key.into(),
@@ -222,6 +266,8 @@ impl Slots<'_> {
             area,
             tab_index,
             owner: owner.identity.clone(),
+            kind: TargetKind::Native,
+            ancestors: self.scene.as_ref().unwrap().ancestry.clone(),
         };
         self.scene
             .as_deref_mut()
@@ -245,7 +291,7 @@ impl Slots<'_> {
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.declarations.iter().map(|slot| slot.key.as_str())
     }
-    pub fn measure(&self, key: &str, width: u16) -> maka_ui::Result<(u16, u16)> {
+    pub fn measure(&self, key: &str, width: u16) -> maka_ui::Result<(u16, u32)> {
         let child = self.presenter.application.child_mount(self.parent, key)?;
         if !self
             .presenter
@@ -260,7 +306,12 @@ impl Slots<'_> {
         self.presenter
             .measure_mount(child, width, self.measurements)
     }
-    pub fn paint(&mut self, key: &str, area: Rect, buffer: &mut Buffer) -> maka_ui::Result<()> {
+    pub fn paint(
+        &mut self,
+        key: &str,
+        area: Placement,
+        buffer: &mut Buffer,
+    ) -> maka_ui::Result<()> {
         let child = self.presenter.application.child_mount(self.parent, key)?;
         if !self
             .presenter
@@ -278,7 +329,8 @@ impl Slots<'_> {
             .ok_or_else(|| maka_ui::Error::Invalid("cannot paint during measurement".into()))?;
         self.presenter.paint_mount(
             child,
-            area.intersection(buffer.area),
+            area.clipped(buffer.area)
+                .clipped(self.placement.unwrap().visible()),
             buffer,
             scene,
             self.measurements,
@@ -305,9 +357,10 @@ impl Presenter {
             targets: Vec::new(),
             placed: Default::default(),
             geometries: Vec::new(),
+            ancestry: Vec::new(),
         };
         let measurements = Measurements::default();
-        self.paint_mount(&self.root, area, buffer, &mut scene, &measurements)?;
+        self.paint_mount(&self.root, area.into(), buffer, &mut scene, &measurements)?;
         Ok(scene)
     }
     pub fn present(&mut self, scene: PaintedScene) {
@@ -338,7 +391,7 @@ impl Presenter {
         mount: &Mount,
         width: u16,
         measurements: &Measurements,
-    ) -> maka_ui::Result<(u16, u16)> {
+    ) -> maka_ui::Result<(u16, u32)> {
         measurements.get_or(mount.id(), MeasurementKey::Mount, width, || {
             let native = &self.application.frame(mount)?.view;
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -349,6 +402,7 @@ impl Presenter {
                         declarations: native.slots(),
                         scene: None,
                         measurements,
+                        placement: None,
                     },
                     width,
                 )
@@ -362,7 +416,7 @@ impl Presenter {
         node: &Node,
         width: u16,
         measurements: &Measurements,
-    ) -> maka_ui::Result<(u16, u16)> {
+    ) -> maka_ui::Result<(u16, u32)> {
         measurements.get_or(
             mount.id(),
             MeasurementKey::Node(node as *const Node as usize),
@@ -414,7 +468,7 @@ impl Presenter {
                         )?;
                         (
                             flow.size.0.saturating_add(inset).min(width),
-                            flow.size.1.saturating_add(inset),
+                            flow.size.1.saturating_add(u32::from(inset)),
                         )
                     }
                 })
@@ -424,12 +478,12 @@ impl Presenter {
     fn paint_mount(
         &self,
         mount: &Mount,
-        area: Rect,
+        area: Placement,
         buffer: &mut Buffer,
         scene: &mut PaintedScene,
         measurements: &Measurements,
     ) -> maka_ui::Result<()> {
-        if area.width == 0 || area.height == 0 {
+        if area.is_empty() {
             return Ok(());
         }
         if !scene.placed.insert(mount.id()) {
@@ -446,6 +500,7 @@ impl Presenter {
                     declarations: native.slots(),
                     scene: Some(scene),
                     measurements,
+                    placement: Some(area),
                 },
                 area,
                 buffer,
@@ -457,12 +512,13 @@ impl Presenter {
         &self,
         mount: &Mount,
         node: &Node,
-        area: Rect,
+        area: Placement,
         buffer: &mut Buffer,
         scene: &mut PaintedScene,
-        measurements: &Measurements,
+        pass: &mut NodePaint<'_>,
     ) -> maka_ui::Result<()> {
-        if !node.visible() || area.width == 0 || area.height == 0 {
+        let measurements = pass.measurements;
+        if !node.visible() || area.is_empty() {
             return Ok(());
         }
         match node {
@@ -474,10 +530,12 @@ impl Presenter {
             Node::Button { key, label } => {
                 let label = format!("[ {} ]", sanitize(label).replace('\n', " "));
                 let target = Target {
+                    kind: TargetKind::Action,
+                    ancestors: scene.ancestry.clone(),
                     mount: mount.clone(),
                     key: key.clone(),
                     revision: self.application.frame(mount)?.revision,
-                    area: Rect::new(area.x, area.y, area.width, 1),
+                    area: Placement::new(CellRect::new(area.x, area.y, area.width, 1), area.clip),
                     tab_index: 0,
                     owner: self
                         .resources
@@ -489,14 +547,15 @@ impl Presenter {
                         .identity
                         .clone(),
                 };
+                if target.area.is_empty() {
+                    return Ok(());
+                }
                 let mut style = Style::default().fg(Color::Rgb(156, 194, 230));
                 if self.focus.as_ref().is_some_and(|old| old.same(&target)) {
                     style = style.add_modifier(Modifier::REVERSED);
                 }
                 // Buttons are single-line, clipped rather than wrapped to hidden hit cells.
-                Paragraph::new(label)
-                    .style(style)
-                    .render(target.area, buffer);
+                text(&label, target.area, buffer, style);
                 scene.targets.push(target);
             }
             Node::Component(slot) => self.paint_mount(
@@ -507,6 +566,8 @@ impl Presenter {
                 measurements,
             )?,
             Node::Stack {
+                key,
+                scroll,
                 direction,
                 gap,
                 padding,
@@ -514,41 +575,62 @@ impl Presenter {
                 children,
                 ..
             } => {
-                buffer.set_style(area, Style::default().bg(color(*background)));
-                let px = (*padding).min(area.width / 2);
-                let py = (*padding).min(area.height / 2);
-                let inner = Rect::new(
-                    area.x + px,
-                    area.y + py,
-                    area.width - px * 2,
-                    area.height - py * 2,
-                );
+                buffer.set_style(area.visible(), Style::default().bg(color(*background)));
+                let inner = area.inner(ratatui::layout::Margin::new(*padding, *padding));
                 let children: Vec<_> = children.iter().filter(|child| child.visible()).collect();
                 let layouts: Vec<_> = children.iter().map(|child| child.layout()).collect();
                 let flow = super::layout::measured(
                     *direction,
                     inner.width,
-                    Some(inner.height),
+                    if *scroll == super::scene::ScrollPolicy::None {
+                        Some(inner.height)
+                    } else {
+                        None
+                    },
                     *gap,
                     node.layout().wrap,
                     &layouts,
                     |index, width| self.measure(mount, children[index], width, measurements),
                 )?;
+                let scrolling = *scroll != super::scene::ScrollPolicy::None && !inner.is_empty();
+                let offset = if scrolling {
+                    let identities: Vec<_> = children
+                        .iter()
+                        .zip(&flow.children)
+                        .map(|(child, rect)| (child.key().to_owned(), rect.y as u32, rect.height))
+                        .collect();
+                    let state = self.resources.owners[&mount.id()]
+                        .state
+                        .downcast_ref::<super::scroll::SceneState>()
+                        .unwrap();
+                    let viewport = state.candidate(key, *scroll, inner, flow.size.1, &identities);
+                    let offset = viewport.offset;
+                    pass.viewports.push((key.clone(), viewport));
+                    let index = scene.targets.len();
+                    scene.targets.push(Target {
+                        mount: mount.clone(),
+                        key: key.clone(),
+                        revision: self.application.frame(mount)?.revision,
+                        area: inner,
+                        tab_index: -1,
+                        owner: self.resources.owners[&mount.id()].identity.clone(),
+                        kind: TargetKind::Scroll,
+                        ancestors: scene.ancestry.clone(),
+                    });
+                    scene.ancestry.push(index);
+                    offset
+                } else {
+                    0
+                };
                 for (child, relative) in children.into_iter().zip(flow.children) {
-                    let area = Rect::new(
-                        inner.x.saturating_add(relative.x),
-                        inner.y.saturating_add(relative.y),
-                        relative.width,
-                        relative.height,
+                    let area = Placement::new(
+                        relative.translated(inner.x, inner.y - i64::from(offset)),
+                        inner.visible(),
                     );
-                    self.paint_node(
-                        mount,
-                        child,
-                        area.intersection(inner),
-                        buffer,
-                        scene,
-                        measurements,
-                    )?;
+                    self.paint_node(mount, child, area, buffer, scene, pass)?;
+                }
+                if scrolling {
+                    scene.ancestry.pop();
                 }
             }
         }
