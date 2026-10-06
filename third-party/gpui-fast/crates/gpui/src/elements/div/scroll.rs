@@ -34,6 +34,58 @@ pub enum ScrollRetention {
     FollowEnd,
 }
 
+/// An explicit command for a tracked Div's original reading owner.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ScrollCommand {
+    /// Reveal the beginning of the container.
+    Start,
+    /// Reveal the end of the container.
+    End,
+    /// Reveal a currently committed direct child's stable ID.
+    RevealChild(ElementId),
+}
+
+/// Owner-local command identity. It carries no authority across handles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScrollRequestId(pub(super) u64);
+
+/// A command settles only at actual paint, or when superseded by new intent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollRequestStatus {
+    /// Awaiting actual presentation.
+    Pending,
+    /// The resolved target was actually presented.
+    Applied,
+    /// A later explicit reading intent superseded the command.
+    Cancelled,
+    /// The target did not exist in the painted layout.
+    Rejected,
+}
+
+/// Immutable facts from the last actually painted tracked Div viewport.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ScrollObservation {
+    /// Explicit reading intent used when laying out the displayed children.
+    pub reading_revision: u64,
+    /// Device-pixel snapped offset actually used for the children.
+    pub offset: Point<Pixels>,
+    /// Scroll limits of that same painted layout.
+    pub max_offset: Point<Pixels>,
+    /// Size of that same viewport.
+    pub viewport: Size<Pixels>,
+    /// Whether that same painted offset reaches the vertical end.
+    pub at_end: bool,
+    /// Identified direct children intersecting the vertical viewport.
+    pub visible_child_keys: Vec<ElementId>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ScrollPresentation {
+    pub layout: ScrollLayout,
+    pub observation: ScrollObservation,
+    pub request: Option<(ScrollRequestId, ScrollRequestStatus)>,
+}
+
 #[derive(Debug)]
 pub(crate) struct ScrollLayout {
     pub max_y: Pixels,
@@ -62,6 +114,16 @@ enum Origin {
     Explicit(Pixels),
 }
 impl ScrollHandleState {
+    pub(super) fn note_reading_intent(&mut self) {
+        self.reading_revision = self
+            .reading_revision
+            .checked_add(1)
+            .expect("reading revision exhausted");
+        if let Some(request) = self.scroll_request.take() {
+            self.last_receipt = Some((request.id, ScrollRequestStatus::Cancelled));
+        }
+    }
+
     pub(super) fn explicit_scroll(&mut self, y: Pixels) {
         if let Some(attempt) = &mut self.retention_attempt {
             attempt.origin = Origin::Explicit(y);

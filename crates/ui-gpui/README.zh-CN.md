@@ -41,6 +41,18 @@ follow_end 仅在原已绘制底部时跟随增长。真实滚轮、显式滚动
 未绘制的自动调整；显式隐藏跳过自动调整和请求解析，实际跳过绘制不确认请求。
 布局重试依据最后已绘制几何重新解析，无需插件同步像素位置。呈现器不替产品决定阅读策略。
 
+原生 tracked Div 将 `ScrollHandle::painted_observation()` 与 `reading_revision()`
+分开：前者记录实际显示、对齐设备像素的视口和可见直接子元素 ID，后者在真实滚轮、
+焦点显露或导航意图到来时递增。manual 模式也保留已绘制几何；晚发生的焦点显露可以
+产生尚未绘制的新意图。自动布局保持、重试和 dependency invalidate 不产生阅读意图。
+
+`request_scroll(Start | End | RevealChild(ElementId))` 返回 owner 内的请求 ID。
+`request_status(id)` 给出 pending、applied、cancelled 或 rejected：实际 paint 才结算
+当前解析的请求，缺失直接子元素拒绝，新显式意图取消。仅保留当前和最近一次回执，
+不建立历史 ledger。自定义列表在发出导航时标记意图，派生几何通过 `set_layout_offset`
+写入；它们不发布 Div 观察。这些是原生机制，插件 ReadingArea 契约、文本选区保护、
+Editor 特定的意图分类和完整阅读体验仍需接入。
+
 `Canvas` 在 `contents` 中提供有界 Rect/Line/Text 绘制命令与显式按钮型区域。
 插件定义绘制、鼠标、键盘与放置的同步规则；原生 Owner 提供焦点、辅助功能激活和
 可选拖拽轮廓。绘制不执行插件。Down/AX 保留原实际绘制的输入；持续手势与提前的

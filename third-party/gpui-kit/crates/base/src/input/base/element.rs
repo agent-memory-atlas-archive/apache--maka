@@ -254,7 +254,7 @@ impl<M: InputModeKind> Element for EditorScrollbar<M> {
         let scroll_handle = state.scroll_handle.clone();
 
         if scroll_handle.offset() != snapshot.cursor_scroll_offset {
-            scroll_handle.set_offset(snapshot.cursor_scroll_offset);
+            scroll_handle.set_layout_offset(snapshot.cursor_scroll_offset);
         }
 
         let mut scrollbar = if !snapshot.soft_wrap {

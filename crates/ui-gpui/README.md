@@ -50,6 +50,24 @@ hidden containers skip automatic adjustment and request resolution; skipped pain
 never acknowledges requests. Layout retries resolve against the last painted geometry; no plugin pixel mirror is required. The native
 presenter does not choose a product's reading policy.
 
+Native tracked Divs expose `ScrollHandle::painted_observation()` separately from
+`reading_revision()`: the former records the actually displayed, device-pixel
+snapped viewport and visible direct-child IDs; the latter changes when explicit
+wheel, focus or navigation intent arrives. Even manual mode retains painted
+geometry. Late focus reveal can therefore produce a newer intent than the last
+painted observation. Layout retention, retries and dependency invalidation do
+not issue reading intent.
+
+`request_scroll(Start | End | RevealChild(ElementId))` returns an owner-local
+request ID. `request_status(id)` reports pending, applied, cancelled or rejected:
+only actual paint settles the currently resolved request; a missing direct child
+rejects, while new explicit intent cancels. The handle retains the pending and
+most recently settled receipt, without a history ledger. Custom list adapters
+mark intent at issue and use `set_layout_offset` for derived geometry; they do
+not publish Div observations. These are native mechanics, not yet a plugin
+ReadingArea contract or text-selection guard. Editor-specific intent
+classification and complete reading UX require separate integration.
+
 `Canvas` adds bounded Rect/Line/Text commands and explicit button-like regions
 under `contents`. Plugins supply drawing and synchronous pointer/key/drop rules;
 native owners supply focus, accessibility activation and optional drag outlines.

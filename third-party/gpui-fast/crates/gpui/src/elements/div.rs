@@ -44,8 +44,10 @@ use std::{
 };
 
 mod scroll;
-pub use scroll::ScrollRetention;
-use scroll::{Attempt, ScrollLayout};
+use scroll::{Attempt, ScrollLayout, ScrollPresentation};
+pub use scroll::{
+    ScrollCommand, ScrollObservation, ScrollRequestId, ScrollRequestStatus, ScrollRetention,
+};
 
 use super::ImageCacheProvider;
 
@@ -1881,9 +1883,7 @@ impl Div {
 /// bounds of the children after the layout phase is complete.
 pub struct DivFrameState {
     child_layout_ids: SmallVec<[LayoutId; 2]>,
-    // Outer None: not presented; Some(None): commit plain mode.
-    scroll_layout: Option<Option<ScrollLayout>>,
-    scroll_request: Option<u64>,
+    scroll_presentation: Option<ScrollPresentation>,
 }
 
 /// Interactivity state displayed an manipulated in the inspector.
@@ -1993,8 +1993,7 @@ impl Element for Div {
             layout_id,
             DivFrameState {
                 child_layout_ids,
-                scroll_layout: None,
-                scroll_request: None,
+                scroll_presentation: None,
             },
         )
     }
@@ -2048,7 +2047,7 @@ impl Element for Div {
             }
             (child_max - child_min).into()
         };
-        if self.interactivity.scroll_retention != ScrollRetention::None {
+        if self.interactivity.tracked_scroll_handle.is_some() {
             self.interactivity.scroll_child_ids = self
                 .children
                 .iter()
@@ -2105,8 +2104,7 @@ impl Element for Div {
                 hitbox
             },
         );
-        request_layout.scroll_layout = self.interactivity.pending_scroll_layout.take();
-        request_layout.scroll_request = self.interactivity.pending_scroll_request.take();
+        request_layout.scroll_presentation = self.interactivity.pending_scroll_presentation.take();
         hitbox
     }
 
@@ -2159,21 +2157,22 @@ impl Element for Div {
             return;
         }
         if let Some(handle) = self.interactivity.tracked_scroll_handle.as_ref()
-            && let Some(layout) = request_layout.scroll_layout.take()
+            && let Some(presentation) = request_layout.scroll_presentation.take()
         {
             let mut state = handle.0.borrow_mut();
-            state.painted_layout = layout;
-            state.retention_attempt = None;
-        }
-        if let Some(handle) = self.interactivity.tracked_scroll_handle.as_ref()
-            && request_layout.scroll_request.is_some()
-        {
-            let mut state = handle.0.borrow_mut();
-            if state
-                .scroll_request
-                .is_some_and(|request| Some(request.generation) == request_layout.scroll_request)
+            if state.reading_revision == presentation.observation.reading_revision {
+                state.retention_attempt = None;
+            }
+            state.painted_layout = Some(presentation.layout);
+            state.painted_observation = Some(presentation.observation);
+            if let Some((id, status)) = presentation.request
+                && state
+                    .scroll_request
+                    .as_ref()
+                    .is_some_and(|request| request.id == id)
             {
                 state.scroll_request = None;
+                state.last_receipt = Some((id, status));
             }
         }
     }
@@ -2233,8 +2232,7 @@ pub struct Interactivity {
     pub(crate) tracked_scroll_handle: Option<ScrollHandle>,
     pub(crate) scroll_retention: ScrollRetention,
     pub(crate) scroll_child_ids: Vec<Option<ElementId>>,
-    pub(crate) pending_scroll_layout: Option<Option<ScrollLayout>>,
-    pub(crate) pending_scroll_request: Option<u64>,
+    pub(crate) pending_scroll_presentation: Option<ScrollPresentation>,
     pub(crate) scroll_anchor: crate::fast::interactivity::Rare<ScrollAnchor>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     pub(crate) ongoing_scroll: Option<Rc<RefCell<OngoingScroll>>>,
@@ -2651,8 +2649,7 @@ impl Interactivity {
         let Some(scroll_offset) = self.scroll_offset.as_ref() else {
             return Point::default();
         };
-        self.pending_scroll_layout = None;
-        self.pending_scroll_request = None;
+        self.pending_scroll_presentation = None;
         if !window.prepaint_visible {
             return *scroll_offset.borrow();
         }
@@ -2681,18 +2678,46 @@ impl Interactivity {
                     &layout,
                     px(1. / window.scale_factor()),
                 );
-                self.pending_scroll_layout =
-                    Some((self.scroll_retention != ScrollRetention::None).then_some(layout));
+                self.pending_scroll_presentation = Some(ScrollPresentation {
+                    layout,
+                    observation: ScrollObservation::default(),
+                    request: None,
+                });
                 state.overflow = style.overflow;
                 state.bounds = bounds;
                 state.max_offset = scroll_max;
             }
             // Explicit targets resolve after automatic retention.
-            self.pending_scroll_request = handle.resolve_scroll_request();
+            if let Some(presentation) = self.pending_scroll_presentation.as_mut() {
+                presentation.request = handle.resolve_scroll_request(&self.scroll_child_ids);
+            }
         }
         let mut scroll_offset = scroll_offset.borrow_mut();
         scroll_offset.x = scroll_offset.x.clamp(-scroll_max.x, px(0.));
         scroll_offset.y = scroll_offset.y.clamp(-scroll_max.y, px(0.));
+        let offset = crate::fast::layers::paint::snap_scroll_offset(window, *scroll_offset);
+        if let Some(presentation) = self.pending_scroll_presentation.as_mut()
+            && let Some(handle) = self.tracked_scroll_handle.as_ref()
+        {
+            presentation.observation = ScrollObservation {
+                reading_revision: handle.0.borrow().reading_revision,
+                offset,
+                max_offset: scroll_max,
+                viewport: bounds.size,
+                at_end: (offset.y + scroll_max.y).abs() <= px(1. / window.scale_factor()),
+                visible_child_keys: presentation
+                    .layout
+                    .children
+                    .iter()
+                    .filter_map(|(id, child)| {
+                        (child.bottom() + offset.y > px(0.)
+                            && child.top() + offset.y < bounds.size.height)
+                            .then(|| id.clone())
+                            .flatten()
+                    })
+                    .collect(),
+            };
+        }
         *scroll_offset
     }
 
@@ -3737,7 +3762,7 @@ impl Interactivity {
                     if *scroll_offset != old_scroll_offset {
                         if let Some(handle) = scroll_handle.as_ref().and_then(Weak::upgrade) {
                             let mut state = handle.borrow_mut();
-                            state.scroll_request = None;
+                            state.note_reading_intent();
                             state.explicit_scroll(scroll_offset.y);
                         }
                         crate::fast::retained::invalidate_retained_subtrees(window, &subtrees);
@@ -4697,19 +4722,22 @@ pub(crate) struct ScrollHandleState {
     child_bounds: Vec<Bounds<Pixels>>,
     scroll_request: Option<ScrollRequest>,
     painted_layout: Option<ScrollLayout>,
+    painted_observation: Option<ScrollObservation>,
+    reading_revision: u64,
+    last_receipt: Option<(ScrollRequestId, ScrollRequestStatus)>,
     retention_attempt: Option<Attempt>,
     overflow: Point<Overflow>,
     pub(crate) version: crate::fast::dependencies::StateVersion,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct ScrollRequest {
-    generation: u64,
+    id: ScrollRequestId,
     target: ScrollTarget,
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum ScrollTarget {
-    End,
+    Command(ScrollCommand),
     Item {
         index: usize,
         strategy: ScrollStrategy,
@@ -4816,7 +4844,7 @@ impl ScrollHandle {
 
     /// Scroll the minimal distance to reveal a direct child after layout.
     pub fn scroll_to_item(&self, ix: usize) {
-        self.request_scroll(ScrollTarget::Item {
+        self.queue_scroll(ScrollTarget::Item {
             index: ix,
             strategy: ScrollStrategy::FirstVisible,
         });
@@ -4824,7 +4852,7 @@ impl ScrollHandle {
 
     /// Align a direct child to the viewport top after layout.
     pub fn scroll_to_top_of_item(&self, ix: usize) {
-        self.request_scroll(ScrollTarget::Item {
+        self.queue_scroll(ScrollTarget::Item {
             index: ix,
             strategy: ScrollStrategy::Top,
         });
@@ -4833,54 +4861,120 @@ impl ScrollHandle {
     /// Scroll to the bottom after layout. Requests remain pending until the
     /// container really paints; a discarded or hidden candidate cannot consume them.
     pub fn scroll_to_bottom(&self) {
-        self.request_scroll(ScrollTarget::End);
+        self.request_scroll(ScrollCommand::End);
     }
 
-    fn request_scroll(&self, target: ScrollTarget) {
+    /// Issue an explicit reading command against this original Div owner.
+    /// Does not schedule a frame; the caller must notify its view.
+    pub fn request_scroll(&self, command: ScrollCommand) -> ScrollRequestId {
+        self.queue_scroll(ScrollTarget::Command(command))
+    }
+
+    fn queue_scroll(&self, target: ScrollTarget) -> ScrollRequestId {
         let mut state = self.0.borrow_mut();
+        state.note_reading_intent();
         state.version.bump();
-        state.scroll_request = Some(ScrollRequest {
-            generation: state.version.get(),
-            target,
-        });
+        let id = ScrollRequestId(state.reading_revision);
+        state.scroll_request = Some(ScrollRequest { id, target });
+        id
     }
 
-    fn resolve_scroll_request(&self) -> Option<u64> {
+    fn resolve_scroll_request(
+        &self,
+        child_ids: &[Option<ElementId>],
+    ) -> Option<(ScrollRequestId, ScrollRequestStatus)> {
         let mut state = self.0.borrow_mut();
-        let request = state.scroll_request?;
-        match request.target {
-            ScrollTarget::End => state.offset.borrow_mut().y = -state.max_offset.y,
-            ScrollTarget::Item { index, strategy } => {
-                let bounds = state.child_bounds.get(index)?;
-                let mut offset = state.offset.borrow_mut();
-                if state.overflow.y == Overflow::Scroll {
-                    match strategy {
-                        ScrollStrategy::FirstVisible => {
-                            if bounds.size.height > state.bounds.size.height
-                                || bounds.top() + offset.y < state.bounds.top()
-                            {
-                                offset.y = state.bounds.top() - bounds.top();
-                            } else if bounds.bottom() + offset.y > state.bounds.bottom() {
-                                offset.y = state.bounds.bottom() - bounds.bottom();
-                            }
+        let request = state.scroll_request.clone()?;
+        let (index, strategy) = match request.target {
+            ScrollTarget::Command(ScrollCommand::Start) => {
+                state.offset.borrow_mut().y = px(0.);
+                (None, ScrollStrategy::Top)
+            }
+            ScrollTarget::Command(ScrollCommand::End) => {
+                state.offset.borrow_mut().y = -state.max_offset.y;
+                (None, ScrollStrategy::Top)
+            }
+            ScrollTarget::Command(ScrollCommand::RevealChild(id)) => {
+                let Some(index) = child_ids
+                    .iter()
+                    .position(|child| child.as_ref() == Some(&id))
+                else {
+                    return Some((request.id, ScrollRequestStatus::Rejected));
+                };
+                (Some(index), ScrollStrategy::FirstVisible)
+            }
+            ScrollTarget::Item { index, strategy } => (Some(index), strategy),
+        };
+        if let Some(index) = index {
+            let Some(bounds) = state.child_bounds.get(index) else {
+                return Some((request.id, ScrollRequestStatus::Rejected));
+            };
+            let mut offset = state.offset.borrow_mut();
+            if state.overflow.y == Overflow::Scroll {
+                match strategy {
+                    ScrollStrategy::FirstVisible => {
+                        if bounds.size.height > state.bounds.size.height
+                            || bounds.top() + offset.y < state.bounds.top()
+                        {
+                            offset.y = state.bounds.top() - bounds.top();
+                        } else if bounds.bottom() + offset.y > state.bounds.bottom() {
+                            offset.y = state.bounds.bottom() - bounds.bottom();
                         }
-                        ScrollStrategy::Top => offset.y = state.bounds.top() - bounds.top(),
                     }
+                    ScrollStrategy::Top => offset.y = state.bounds.top() - bounds.top(),
                 }
-                if state.overflow.x == Overflow::Scroll {
-                    if bounds.size.width > state.bounds.size.width
-                        || bounds.left() + offset.x < state.bounds.left()
-                    {
-                        offset.x = state.bounds.left() - bounds.left();
-                    } else if bounds.right() + offset.x > state.bounds.right() {
-                        offset.x = state.bounds.right() - bounds.right();
-                    }
+            }
+            if state.overflow.x == Overflow::Scroll {
+                if bounds.size.width > state.bounds.size.width
+                    || bounds.left() + offset.x < state.bounds.left()
+                {
+                    offset.x = state.bounds.left() - bounds.left();
+                } else if bounds.right() + offset.x > state.bounds.right() {
+                    offset.x = state.bounds.right() - bounds.right();
                 }
             }
         }
         let y = state.offset.borrow().y;
         state.explicit_scroll(y);
-        Some(request.generation)
+        Some((request.id, ScrollRequestStatus::Applied))
+    }
+
+    /// Current explicit native reading intent, independent of layout/cache revisions.
+    pub fn reading_revision(&self) -> u64 {
+        self.0.borrow().reading_revision
+    }
+
+    /// Last actually painted Div viewport; never candidate prepaint geometry.
+    /// Custom list adapters do not publish Div observations.
+    pub fn painted_observation(&self) -> Option<ScrollObservation> {
+        self.0.borrow().painted_observation.clone()
+    }
+
+    /// Status of the current command or the most recently settled command.
+    /// Older receipts are not retained: applications consume settlement before
+    /// issuing their next command, rather than growing a native ledger.
+    pub fn request_status(&self, id: ScrollRequestId) -> Option<ScrollRequestStatus> {
+        let state = self.0.borrow();
+        if state
+            .scroll_request
+            .as_ref()
+            .is_some_and(|request| request.id == id)
+        {
+            Some(ScrollRequestStatus::Pending)
+        } else {
+            state
+                .last_receipt
+                .filter(|(settled, _)| *settled == id)
+                .map(|(_, status)| status)
+        }
+    }
+
+    /// Custom native adapters call this when issuing explicit deferred navigation.
+    /// Resolving a deferred target and automatic layout must not call it again.
+    pub fn note_reading_intent(&self) {
+        let mut state = self.0.borrow_mut();
+        state.note_reading_intent();
+        state.version.bump();
     }
 
     /// Set the offset explicitly. The offset is the distance from the top left of the
@@ -4888,13 +4982,24 @@ impl ScrollHandle {
     /// As you scroll further down the offset becomes more negative.
     pub fn set_offset(&self, mut position: Point<Pixels>) {
         let mut state = self.0.borrow_mut();
-        state.scroll_request = None;
+        state.note_reading_intent();
         crate::fast::layers::invalidate::offset_set(
             &state.version,
             *state.offset.borrow() != position,
         );
         *state.offset.borrow_mut() = position;
         state.explicit_scroll(position.y);
+    }
+
+    /// Write a native adapter's derived layout offset without issuing new
+    /// reading intent or cancelling an accepted command.
+    pub fn set_layout_offset(&self, position: Point<Pixels>) {
+        let state = self.0.borrow();
+        crate::fast::layers::invalidate::offset_set(
+            &state.version,
+            *state.offset.borrow() != position,
+        );
+        *state.offset.borrow_mut() = position;
     }
 
     /// Get the logical scroll top, based on a child index and a pixel offset.
@@ -5394,7 +5499,7 @@ mod tests {
         }
 
         handle.scroll_to_item(0);
-        handle.resolve_scroll_request();
+        handle.resolve_scroll_request(&[]);
 
         assert_eq!(handle.offset().x, px(-25.));
     }
@@ -5410,7 +5515,7 @@ mod tests {
         }
 
         handle.scroll_to_item(0);
-        handle.resolve_scroll_request();
+        handle.resolve_scroll_request(&[]);
 
         assert_eq!(handle.offset().y, px(-25.));
     }

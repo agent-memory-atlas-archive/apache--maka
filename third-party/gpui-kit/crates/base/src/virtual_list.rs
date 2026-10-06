@@ -117,7 +117,7 @@ impl VirtualListScrollHandle {
             offset,
             scroll_strict: false,
         });
-        self.base_handle.invalidate();
+        self.base_handle.note_reading_intent();
     }
 
     /// Scrolls to the bottom of the list.
@@ -307,7 +307,7 @@ impl VirtualList {
                 }
             }
         }
-        self.scroll_handle.set_offset(scroll_offset);
+        self.scroll_handle.set_layout_offset(scroll_offset);
         scroll_offset
     }
 
@@ -655,7 +655,7 @@ impl Element for VirtualList {
             ))
             .min(&point(px(0.), px(0.)));
         if scroll_offset != self.scroll_handle.offset() {
-            self.scroll_handle.set_offset(scroll_offset);
+            self.scroll_handle.set_layout_offset(scroll_offset);
         }
 
         self.base.interactivity().prepaint(
@@ -675,11 +675,11 @@ impl Element for VirtualList {
                         match self.axis {
                             Axis::Horizontal if scroll_offset.x < min_scroll_offset => {
                                 scroll_offset.x = min_scroll_offset;
-                                self.scroll_handle.set_offset(scroll_offset);
+                                self.scroll_handle.set_layout_offset(scroll_offset);
                             }
                             Axis::Vertical if scroll_offset.y < min_scroll_offset => {
                                 scroll_offset.y = min_scroll_offset;
-                                self.scroll_handle.set_offset(scroll_offset);
+                                self.scroll_handle.set_layout_offset(scroll_offset);
                             }
                             _ => {}
                         }

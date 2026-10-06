@@ -20,9 +20,10 @@
 use gpui::{
     AnyElement, App, AppContext as _, AvailableSpace, Bounds, Context, Element, ElementId, Entity,
     FocusHandle, GlobalElementId, InspectorElementId, InteractiveElement as _, IntoElement,
-    LayoutId, Modifiers, MouseMoveEvent, ParentElement as _, Pixels, Render, ScrollDelta,
-    ScrollHandle, ScrollRetention, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _,
-    Styled as _, TestAppContext, TouchPhase, VisualTestContext, Window, div, point, px, size,
+    LayoutId, Modifiers, MouseMoveEvent, ParentElement as _, Pixels, Render, ScrollCommand,
+    ScrollDelta, ScrollHandle, ScrollRequestStatus, ScrollRetention, ScrollWheelEvent,
+    SharedString, StatefulInteractiveElement as _, Styled as _, TestAppContext, TouchPhase,
+    VisualTestContext, Window, div, point, px, size,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -198,7 +199,13 @@ impl Element for Retry {
     ) {
         if let Some(child) = self.retry_child.take() {
             let result: Result<(), ()> = window.transact(|window| {
+                let previous = self.handle.painted_observation();
                 self.child.prepaint(window, cx);
+                assert_eq!(
+                    self.handle.painted_observation(),
+                    previous,
+                    "discarded prepaint cannot publish observation"
+                );
                 self.attempts.borrow_mut().push(self.handle.offset().y);
                 Err(())
             });
@@ -717,5 +724,250 @@ fn changed_child_box_rebuilds_scroll_parent_but_internal_change_can_splice(
         draw(cx);
         assert_eq!(renders.get(), before);
         assert_eq!(handle.bounds_for_item(0).unwrap().size.height, px(120.));
+    });
+}
+
+#[gpui::test]
+fn painted_observation_tracks_native_wheel_but_not_layout_or_cache(cx: &mut TestAppContext) {
+    cx.with_paused_automatic_drawing(|cx| {
+        let (view, cx, handle) = reader(cx);
+        let first = handle.painted_observation().unwrap();
+        assert!(first.at_end);
+        assert_eq!(first.offset.y, px(-300.));
+        assert_eq!(first.visible_child_keys, vec![ElementId::from("row-3")]);
+        let revision = handle.reading_revision();
+        handle.invalidate();
+        view.update(cx, |view, cx| {
+            view.rows.push((4, 100.));
+            cx.notify();
+        });
+        draw(cx);
+        assert_eq!(handle.reading_revision(), revision);
+        assert_eq!(handle.painted_observation().unwrap().offset.y, px(-400.));
+        cx.simulate_event(ScrollWheelEvent {
+            position: point(px(50.), px(50.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(250.))),
+            modifiers: Modifiers::default(),
+            touch_phase: TouchPhase::Moved,
+        });
+        // The new reading intent exists before the next actual paint.
+        assert!(handle.reading_revision() > revision);
+        assert_eq!(
+            handle.painted_observation().unwrap().reading_revision,
+            revision
+        );
+        draw(cx);
+        let browsed = handle.painted_observation().unwrap();
+        assert_eq!(browsed.reading_revision, handle.reading_revision());
+        assert_eq!(browsed.offset.y, px(-150.));
+        assert!(!browsed.at_end);
+        assert_eq!(
+            browsed.visible_child_keys,
+            vec![ElementId::from("row-1"), ElementId::from("row-2")]
+        );
+        view.update(cx, |view, cx| {
+            view.rows.insert(0, (9, 70.));
+            view.retry = true;
+            cx.notify();
+        });
+        draw(cx);
+        assert_eq!(handle.reading_revision(), browsed.reading_revision);
+        assert_eq!(handle.painted_observation().unwrap().offset.y, px(-220.));
+    });
+}
+
+#[gpui::test]
+fn commands_settle_from_actual_paint_and_superseding_intent(cx: &mut TestAppContext) {
+    cx.with_paused_automatic_drawing(|cx| {
+        let (view, cx, handle) = reader(cx);
+        let end = handle.request_scroll(ScrollCommand::End);
+        assert_eq!(
+            handle.request_status(end),
+            Some(ScrollRequestStatus::Pending)
+        );
+        let start = handle.request_scroll(ScrollCommand::Start);
+        assert_eq!(
+            handle.request_status(end),
+            Some(ScrollRequestStatus::Cancelled)
+        );
+        assert_eq!(
+            handle.request_status(start),
+            Some(ScrollRequestStatus::Pending)
+        );
+        cx.update(|window, _| window.refresh());
+        draw(cx);
+        assert_eq!(
+            handle.request_status(start),
+            Some(ScrollRequestStatus::Applied)
+        );
+        assert_eq!(handle.painted_observation().unwrap().offset.y, px(0.));
+        let reveal = handle.request_scroll(ScrollCommand::RevealChild("row-2".into()));
+        view.update(cx, |view, cx| {
+            view.rows.insert(0, (9, 70.));
+            view.retry = true;
+            view.abandoned = Some(Candidate {
+                rows: vec![(0, 100.)],
+                policy: ScrollRetention::None,
+                hidden: false,
+            });
+            cx.notify();
+        });
+        draw(cx);
+        assert_eq!(
+            handle.request_status(reveal),
+            Some(ScrollRequestStatus::Applied)
+        );
+        assert_eq!(handle.painted_observation().unwrap().offset.y, px(-270.));
+        let missing = handle.request_scroll(ScrollCommand::RevealChild("absent".into()));
+        cx.update(|window, _| window.refresh());
+        draw(cx);
+        assert_eq!(
+            handle.request_status(missing),
+            Some(ScrollRequestStatus::Rejected)
+        );
+        let end = handle.request_scroll(ScrollCommand::End);
+        cx.simulate_event(ScrollWheelEvent {
+            position: point(px(50.), px(50.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(25.))),
+            modifiers: Modifiers::default(),
+            touch_phase: TouchPhase::Moved,
+        });
+        assert_eq!(
+            handle.request_status(end),
+            Some(ScrollRequestStatus::Cancelled)
+        );
+        draw(cx);
+        assert_eq!(
+            handle.request_status(end),
+            Some(ScrollRequestStatus::Cancelled)
+        );
+    });
+}
+
+#[gpui::test]
+fn manual_and_hidden_reading_owners_publish_only_actual_viewports(cx: &mut TestAppContext) {
+    cx.with_paused_automatic_drawing(|cx| {
+        let (view, cx, handle) = reader(cx);
+        view.update(cx, |view, cx| {
+            view.abandoned = Some(Candidate {
+                rows: view.rows.clone(),
+                policy: ScrollRetention::None,
+                hidden: false,
+            });
+            cx.notify();
+        });
+        let start = handle.request_scroll(ScrollCommand::Start);
+        draw(cx);
+        assert_eq!(
+            handle.request_status(start),
+            Some(ScrollRequestStatus::Applied)
+        );
+        let painted = handle.painted_observation().unwrap();
+        assert_eq!(painted.visible_child_keys, vec![ElementId::from("row-0")]);
+        assert!(!painted.at_end);
+        view.update(cx, |view, cx| {
+            view.abandoned.as_mut().unwrap().hidden = true;
+            cx.notify();
+        });
+        let end = handle.request_scroll(ScrollCommand::End);
+        draw(cx);
+        assert_eq!(handle.painted_observation().unwrap(), painted);
+        assert_eq!(
+            handle.request_status(end),
+            Some(ScrollRequestStatus::Pending)
+        );
+        view.update(cx, |view, cx| {
+            view.abandoned.as_mut().unwrap().hidden = false;
+            cx.notify();
+        });
+        draw(cx);
+        assert_eq!(
+            handle.request_status(end),
+            Some(ScrollRequestStatus::Applied)
+        );
+        assert!(handle.painted_observation().unwrap().at_end);
+        // Switching from a genuinely painted manual viewport to anchoring
+        // uses that same geometry, rather than discarding reading evidence.
+        handle.set_offset(point(px(0.), px(-150.)));
+        cx.update(|window, _| window.refresh());
+        draw(cx);
+        let revision = handle.reading_revision();
+        view.update(cx, |view, cx| {
+            view.abandoned = None;
+            view.rows.insert(0, (9, 70.));
+            cx.notify();
+        });
+        draw(cx);
+        assert_eq!(handle.painted_observation().unwrap().offset.y, px(-220.));
+        assert_eq!(handle.reading_revision(), revision);
+        assert_eq!(top(cx, 1), px(-50.));
+    });
+}
+
+#[gpui::test]
+fn derived_adapter_offsets_are_not_new_reading_intent(cx: &mut TestAppContext) {
+    cx.with_paused_automatic_drawing(|cx| {
+        let (_, cx, handle) = reader(cx);
+        let request = handle.request_scroll(ScrollCommand::Start);
+        let revision = handle.reading_revision();
+        handle.set_layout_offset(point(px(0.), px(-75.)));
+        assert_eq!(handle.reading_revision(), revision);
+        assert_eq!(
+            handle.request_status(request),
+            Some(ScrollRequestStatus::Pending)
+        );
+        cx.update(|window, _| window.refresh());
+        draw(cx);
+        assert_eq!(
+            handle.request_status(request),
+            Some(ScrollRequestStatus::Applied)
+        );
+        assert_eq!(handle.painted_observation().unwrap().offset.y, px(0.));
+        let request = handle.request_scroll(ScrollCommand::End);
+        handle.set_offset(handle.offset());
+        assert_eq!(
+            handle.request_status(request),
+            Some(ScrollRequestStatus::Cancelled)
+        );
+        assert!(handle.reading_revision() > revision);
+    });
+}
+
+#[gpui::test]
+fn late_native_focus_reveal_does_not_claim_the_next_frame_was_painted(cx: &mut TestAppContext) {
+    cx.with_paused_automatic_drawing(|cx| {
+        let (view, cx, handle) = reader(cx);
+        let command = handle.request_scroll(ScrollCommand::End);
+        let commanded_revision = handle.reading_revision();
+        let focus = view.read_with(cx, |view, _| view.focus.clone());
+        cx.update(|window, cx| window.focus(&focus, cx));
+        draw(cx);
+        let shown = handle.painted_observation().unwrap();
+        assert_eq!(
+            shown.offset.y,
+            px(-300.),
+            "children were positioned before focus reveal"
+        );
+        assert_eq!(shown.reading_revision, commanded_revision);
+        assert!(shown.at_end);
+        assert_eq!(
+            handle.offset().y,
+            px(0.),
+            "native focus schedules the new offset for the next frame"
+        );
+        assert!(handle.reading_revision() > shown.reading_revision);
+        assert_eq!(
+            handle.request_status(command),
+            Some(ScrollRequestStatus::Cancelled)
+        );
+        draw(cx);
+        let shown = handle.painted_observation().unwrap();
+        assert_eq!(shown.offset.y, px(0.));
+        assert_eq!(shown.reading_revision, handle.reading_revision());
+        assert!(!shown.at_end);
+        assert_eq!(
+            handle.request_status(command),
+            Some(ScrollRequestStatus::Cancelled)
+        );
     });
 }

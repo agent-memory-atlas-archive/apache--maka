@@ -864,13 +864,6 @@ impl crate::StateInner {
     }
 }
 
-/// Marks `handle` as scrolled from outside the element it tracks, as a
-/// uniform list scrolling to an item does.
-#[inline(always)]
-pub(crate) fn scroll_handle_changed(handle: &crate::ScrollHandle) {
-    handle.0.borrow().version.bump();
-}
-
 /// Marks a list's state changed if pausing it stops it following its tail.
 /// See [`crate::StateInner::note_following_paused`].
 #[inline(always)]
