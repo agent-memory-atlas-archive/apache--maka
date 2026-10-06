@@ -89,7 +89,10 @@ export interface TimelineProps {
   locale: string;
   messages: Message[];
   loading: boolean;
-  more: boolean;
+  older: boolean;
+  newer: boolean;
+  latest: boolean;
+  landing: { sequence: number; edge: 'start' | 'end' };
   live: boolean;
 }
 export interface ComposerProps {
@@ -163,10 +166,16 @@ export const timelineContract = component(
     locale,
     messages: { type: 'array', maxItems: 32, items: { $ref: '#/$defs/Message' } },
     loading: { type: 'boolean' },
-    more: { type: 'boolean' },
+    older: { type: 'boolean' },
+    newer: { type: 'boolean' },
+    latest: { type: 'boolean' },
+    landing: object({
+      sequence: { type: 'integer', minimum: 0 },
+      edge: { enum: ['start', 'end'] },
+    }),
     live: { type: 'boolean' },
   }),
-  { more: object({}) },
+  { older: object({}), newer: object({}), latest: object({}) },
 );
 export const composerContract = component(
   'maka.agent.Composer',

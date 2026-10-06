@@ -1,9 +1,9 @@
 use std::ops::Range;
 
 use gpui::{
-    App, BorderStyle, Bounds, Corners, Edges, Element, ElementId, GlobalElementId, Hitbox,
-    HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, PaintQuad, Pixels, Point,
-    SharedString, StyledText, TextStyleRefinement, Window, transparent_black,
+    App, BorderStyle, Bounds, Corners, Edges, Element, ElementId, FocusHandle, GlobalElementId,
+    Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, PaintQuad, Pixels,
+    Point, SharedString, StyledText, TextStyleRefinement, Window, transparent_black,
 };
 
 use crate::{TextSelection, TextSelectionHandle, TextSelectionRegistration, TextSelectionRun};
@@ -24,6 +24,7 @@ pub struct SelectableText {
     document_order: u64,
     text_style: Option<TextStyleRefinement>,
     selection_color: Option<Hsla>,
+    focus: Option<FocusHandle>,
 }
 
 impl SelectableText {
@@ -50,12 +51,19 @@ impl SelectableText {
             document_order: 0,
             text_style: None,
             selection_color: None,
+            focus: None,
         }
     }
 
     /// Places this run in reading order among the others sharing its handle.
     pub fn document_order(mut self, order: u64) -> Self {
         self.document_order = order;
+        self
+    }
+
+    /// Derive reading order from the actual focus tree, including retained peers.
+    pub fn focus_handle(mut self, focus: &FocusHandle) -> Self {
+        self.focus = Some(focus.clone());
         self
     }
 
@@ -188,10 +196,13 @@ impl Element for SelectableText {
         self.styled_text
             .prepaint(global_id, inspector_id, bounds, &mut (), window, cx);
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-        let registration = TextSelectionRegistration::new(hitbox.clone(), bounds)
+        let mut registration = TextSelectionRegistration::new(hitbox.clone(), bounds)
             .with_document_order(self.document_order)
             .with_text_bounds(vec![bounds])
             .with_rendered_element(handle, window, cx);
+        if let Some(focus) = &self.focus {
+            registration = registration.with_native_focus(focus.clone(), window);
+        }
         handle.register(registration, window, cx);
         hitbox
     }

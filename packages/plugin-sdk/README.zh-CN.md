@@ -102,7 +102,16 @@ Desktop 提供 `contracts.readingArea`（`maka.ui.reading`，导出 `ReadingArea
 和 `input` 事件，不保存像素 offset。递增编号的 `start`、`end`、`reveal_child` 命令结算为
 `applied`、`cancelled` 或 `rejected`；省略命令不会重放已接受的命令，只保留当前命令与最近回执。
 原生 `tail` continuation 仅在原实际绘制的末尾、阅读意图和本阅读区选区仍符合条件时准入隐式替换；
-滚轮或活动选区使反馈成为 `stale`，不撤销独立服务读取。TUI ReadingArea 与完整源码/历史导航仍待实现。
+滚轮或活动选区使反馈成为 `stale`，不撤销独立服务读取。
+
+Desktop 还提供 `contracts.sourceText`（`maka.ui.source`，导出 `SourceText`），用于只读原文。
+原生选择与 Copy 保留空白，并可在同一 ReadingArea 的 SourceText 与 Markdown 间复制。
+前缀追加及换行保留原字节选区；替换原文撤销该选区。该组件不解析标记，也不授予图片或网络访问。
+
+普通 agent 产品保留固定 fence 下的一页精确 canonical 历史。Earlier/Next 替换该窗口；
+Latest 显式捕获新 fence。Watch 进度不自动替换正在阅读的窗口。实时节选只保留显示 fence
+之后的有界前缀；仅完整 canonical 消息使用 Markdown。TUI ReadingArea/SourceText
+与完整消息源码导航仍待实现。
 
 持久 UI component 通过普通 `actions` 提交 mutation（可携带声明的原捕获资源）；内核生成 operation
 identity，先记录原 caller intent 再派发。feedback 的 `ActionOutcome` 使用

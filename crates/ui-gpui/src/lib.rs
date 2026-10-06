@@ -26,6 +26,7 @@ pub mod input;
 mod markdown;
 mod reading;
 pub mod scene;
+mod source;
 pub mod textarea;
 
 use gpui_kit::{
@@ -253,6 +254,7 @@ pub fn registry() -> NativeRegistry<dyn Widget> {
     textarea::register(&mut registry);
     markdown::register(&mut registry);
     reading::register(&mut registry);
+    source::register(&mut registry);
     input::register(&mut registry);
     registry
 }

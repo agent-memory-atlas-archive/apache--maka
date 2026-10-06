@@ -40,6 +40,7 @@ export type RuntimeProtocol =
   | TextareaProps
   | MarkdownProps
   | MarkdownLink
+  | SourceTextProps
   | ReadingProps
   | ReadingObservation
   | InputProps
@@ -1449,6 +1450,12 @@ export interface MarkdownAppearance {
 }
 export interface MarkdownLink {
   url: string;
+}
+export interface SourceTextProps {
+  source: string;
+  appearance: TextAppearance;
+  selection: Color;
+  disabled: boolean;
 }
 export interface ReadingProps {
   /**

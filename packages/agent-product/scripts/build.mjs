@@ -233,8 +233,13 @@ const mechanical = {
     entries: {
       desktop: {
         ...native('maka.ui.reading', { ReadingArea: required(sdk.contracts.readingArea) }),
-        imports: { markdown: one(sdk.contracts.markdown) },
+        imports: { markdown: one(sdk.contracts.markdown), source: one(sdk.contracts.sourceText) },
       },
+    },
+  },
+  'source-text': {
+    entries: {
+      desktop: native('maka.ui.source', { SourceText: required(sdk.contracts.sourceText) }),
     },
   },
   markdown: {

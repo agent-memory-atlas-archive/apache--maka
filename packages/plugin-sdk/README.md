@@ -124,7 +124,17 @@ an accepted command. Observations retain only the current command and latest rec
 The native `tail` continuation admits implicit replacement only while the original
 painted end, reading intent and scoped selection remain eligible. A wheel or active
 selection produces `stale` feedback; it does not undo the independent service read.
-TUI ReadingArea and complete source/history navigation remain unfinished.
+Desktop also provides `contracts.sourceText` (`maka.ui.source`, export `SourceText`)
+for literal, read-only source. It preserves whitespace and uses original native
+selection and Copy, including across SourceText and Markdown in one ReadingArea.
+Appending a prefix retains the original byte selection through wrapping; replacing
+source withdraws that selection. No parsing or image/network access is implied.
+
+The ordinary agent product retains one exact canonical history window at a fixed
+fence. Earlier/Next replace that window; Latest explicitly captures a new fence.
+Watch progress never automatically replaces it. Live excerpts retain a bounded
+prefix after the displayed fence; complete canonical messages alone use Markdown.
+TUI ReadingArea/SourceText and complete-message source navigation remain unfinished.
 
 Persisted UI components submit mutations, including declared captured resources, through their ordinary
 `actions`. The kernel generates the operation identity and records the original

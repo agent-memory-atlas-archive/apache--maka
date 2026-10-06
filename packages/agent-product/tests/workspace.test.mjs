@@ -110,10 +110,10 @@ class Client {
       key: name,
       child: ['send', 'draft', 'stop'].includes(name)
         ? 'composer'
-        : name === 'history'
+        : ['older', 'newer', 'latest'].includes(name)
           ? 'timeline'
           : 'navigation',
-      name: name === 'draft' ? 'changed' : ['history', 'sessions'].includes(name) ? 'more' : name,
+      name: name === 'draft' ? 'changed' : name === 'sessions' ? 'more' : name,
       event,
     });
   }
@@ -122,6 +122,15 @@ class Client {
   }
   get state() {
     return this.output.frame.state;
+  }
+  get timeline() {
+    return modelSlots(this.output.frame.view).find((node) => node.binding === 'timeline').props;
+  }
+  get messages() {
+    return this.timeline.messages.filter((message) => !message.id.startsWith('live-'));
+  }
+  get liveMessages() {
+    return this.timeline.messages.filter((message) => message.id.startsWith('live-'));
   }
   start({ through = 0, parts = [], run = null, chunks = [] } = {}) {
     this.query('page', []);
@@ -262,10 +271,10 @@ test('bootstrap replays the original active prefix and does not render thinking 
     ],
     9,
   );
-  assert.equal(client.state.liveMessages[0].text, 'prefix suffix');
-  assert.equal(client.state.liveMessages.length, 1);
+  assert.equal(client.liveMessages[0].text, 'suffix');
+  assert.equal(client.liveMessages.length, 1);
   client.page([fact(9, { kind: 'delta', stepId: 'step', partId: 'same', text: 'duplicate' })], 9);
-  assert.equal(client.state.liveMessages[0].text, 'prefix suffix');
+  assert.equal(client.liveMessages[0].text, 'suffix');
   client.page(
     [
       fact(10, { kind: 'part_finished', stepId: 'step', partId: 'same' }),
@@ -274,8 +283,13 @@ test('bootstrap replays the original active prefix and does not render thinking 
     ],
     12,
   );
+  assert.equal(
+    [...client.actions.values()].some((action) => action.method === 'history'),
+    false,
+  );
+  client.component('latest');
   const history = client.find('history');
-  assert.equal(history.input.position.sequence, 3);
+  assert.deepEqual(history.input.position, { kind: 'tail' });
   client.query('history', {
     kind: 'ready',
     through: 12,
@@ -292,11 +306,11 @@ test('bootstrap replays the original active prefix and does not render thinking 
     before: null,
     after: null,
   });
-  assert.equal(client.state.messages[0].text, 'prefix suffix');
-  assert.equal(client.state.liveMessages.length, 0);
+  assert.equal(client.messages[0].text, 'prefix suffix');
+  assert.equal(client.liveMessages.length, 0);
   assert.equal(client.state.parts.length, 0);
 });
-test('opening a run refreshes the canonical user message without restarting its watch', () => {
+test('opening a run leaves the reading window intact until explicit Latest and preserves its watch', () => {
   const client = new Client().start();
   const demand = structuredClone(client.output.subscriptions);
   client.page(
@@ -313,6 +327,9 @@ test('opening a run refreshes the canonical user message without restarting its 
     ],
     4,
   );
+  assert.equal(client.messages.length, 0);
+  assert.equal(client.timeline.latest, true);
+  client.component('latest');
   client.query('history', {
     kind: 'ready',
     through: 4,
@@ -322,8 +339,9 @@ test('opening a run refreshes the canonical user message without restarting its 
     before: null,
     after: null,
   });
-  assert.equal(client.state.messages[0].text, 'Hello');
-  assert.equal(client.state.liveMessages[0].text, 'First response');
+  assert.equal(client.messages[0].text, 'Hello');
+  assert.equal(client.liveMessages.length, 0);
+  assert.equal(client.state.live.length, 0);
   assert.deepEqual(client.output.subscriptions, demand);
 });
 test('live display is bounded and marks its truncated Unicode excerpt', () => {
@@ -353,7 +371,7 @@ test('live display is bounded and marks its truncated Unicode excerpt', () => {
       ],
       sequence,
     );
-  const message = client.state.liveMessages[0];
+  const message = client.liveMessages[0];
   assert.ok(message.text.length <= 16000);
   assert.equal(message.continued, true);
   assert.ok(message.text.isWellFormed());
@@ -431,7 +449,7 @@ test('both product compositions use actual immutable package refs and check in t
   }
 });
 
-test('reconnect rebuilds its display dedupe with the same canonical page', () => {
+test('reconnect replaces one canonical window without cross-page append', () => {
   const chunk = {
     messageId: 'user',
     role: 'user',
@@ -448,15 +466,12 @@ test('reconnect rebuilds its display dedupe with the same canonical page', () =>
   });
   client.raw('reload');
   client.query('observe', { session, through: 5, run: null, parts: [] });
-  client.query('history', {
-    kind: 'ready',
-    through: 5,
-    chunks: [chunk],
-    before: null,
-    after: null,
-  });
-  assert.equal(client.state.messages[0].text, 'Hello');
-  assert.equal(client.state.messages.length, 1);
+  assert.equal(
+    [...client.actions.values()].some((action) => action.method === 'history'),
+    false,
+  );
+  assert.equal(client.messages[0].text, 'Hello');
+  assert.equal(client.messages.length, 1);
 });
 test('a delayed observation cannot resurrect a run ended by a newer delivery', () => {
   const client = new Client().start({ through: 5, run: { invocationId: 'run', state: 'running' } });
@@ -509,12 +524,13 @@ test('reconnect isolates late reads before building the new active-prefix watch'
       run: { invocationId: 'run', state: 'running' },
     },
   });
+  client.component('latest');
   const currentHistory = client.find('history');
   client.complete(lateObserve, {
     status: 'succeeded',
     value: { session, through: 20, parts: [], run: null },
   });
-  assert.equal(client.state.through, 40);
+  assert.equal(client.state.latestKnown, 40);
   assert.equal(client.state.parts[0].startSequence, 30);
   client.complete(currentHistory, {
     status: 'succeeded',
@@ -528,7 +544,7 @@ test('reconnect isolates late reads before building the new active-prefix watch'
     ],
     41,
   );
-  assert.equal(client.state.liveMessages[0].text, 'Preserved reply');
+  assert.equal(client.liveMessages[0].text, 'Preserved reply');
 });
 
 const modelRoot = new URL('../', import.meta.url);
@@ -2261,7 +2277,10 @@ test('prepending history preserves the streamed message presentation identity', 
     locale: 'en',
     messages: [message],
     loading: false,
-    more: true,
+    older: false,
+    newer: false,
+    latest: false,
+    landing: { sequence: 0, edge: 'end' },
     live: true,
   };
   const initial = timeline.mount(props, {});
@@ -2297,7 +2316,10 @@ test('desktop scroll-to-end uses native painted facts and preserves its accepted
     locale: 'en',
     messages: [],
     loading: false,
-    more: true,
+    older: false,
+    newer: false,
+    latest: false,
+    landing: { sequence: 0, edge: 'end' },
     live: true,
   };
   let result = timeline.mount(props, {});
@@ -2322,7 +2344,7 @@ test('desktop scroll-to-end uses native painted facts and preserves its accepted
     props,
     {},
   );
-  assert.equal(result.frame.view.children[1].key, 'end');
+  assert.equal(result.frame.view.children[1].children[0].key, 'end');
   result = timeline.event(result.frame.state, { kind: 'raw', key: 'end', event: null }, props, {});
   assert.deepEqual(reading().props.command, { sequence: 1, target: { kind: 'end' } });
   result = timeline.update(result.frame.state, { ...props, live: false }, {});
@@ -2340,7 +2362,7 @@ test('desktop scroll-to-end uses native painted facts and preserves its accepted
     props,
     {},
   );
-  assert.equal(result.frame.view.children[1].disabled, true);
+  assert.equal(result.frame.view.children[1].children[0].disabled, true);
   result = timeline.event(result.frame.state, { kind: 'raw', key: 'end', event: null }, props, {});
   assert.equal(reading().props.command.sequence, 1);
   result = timeline.event(
@@ -2350,12 +2372,19 @@ test('desktop scroll-to-end uses native painted facts and preserves its accepted
       child: 'reading',
       name: 'input',
       key: 'reading-input',
-      event: { kind: 'raw', key: 'more', event: null },
+      event: { kind: 'raw', key: 'newer', event: null },
     },
     props,
     {},
   );
-  assert.deepEqual(result.events, [{ name: 'more', value: {} }]);
+  assert.deepEqual(result.events, []);
+  const navigation = timeline.event(
+    result.frame.state,
+    { kind: 'raw', key: 'newer', event: null },
+    { ...props, newer: true },
+    {},
+  );
+  assert.deepEqual(navigation.events, [{ name: 'newer', value: {} }]);
   result = timeline.event(
     result.frame.state,
     {
@@ -2374,3 +2403,327 @@ test('desktop scroll-to-end uses native painted facts and preserves its accepted
   );
   assert.equal(result.frame.view.children.length, 1);
 });
+
+const historyChunk = (text, overrides = {}) => ({
+  messageId: uuid(900),
+  turnId: uuid(901),
+  timestamp: 1,
+  role: 'assistant',
+  sequence: 25600,
+  offset: 0,
+  totalBytes: Buffer.byteLength(text),
+  text,
+  ...overrides,
+});
+test('canonical navigation replaces one exact fixed-fence window and keeps it during Preparing/error', () => {
+  const current = historyChunk('**完整** café 😀');
+  const client = new Client().start({ through: 100, chunks: [current] });
+  const page = {
+    ...client.state.window.page,
+    before: { sequence: 20000, offset: 3 },
+    after: { sequence: 25600, offset: Buffer.byteLength(current.text) },
+  };
+  client.state.window.page = page;
+  // Detached state passed through a real callback; no source concatenation or trimming.
+  client.component('older');
+  let action = client.find('history');
+  const expected = {
+    sessionId: session.id,
+    through: 100,
+    position: { kind: 'before', cursor: page.before },
+  };
+  assert.deepEqual(action.input, expected);
+  assert.deepEqual(client.state.window.page, page);
+  client.complete(action, { status: 'succeeded', value: { kind: 'preparing', through: 100 } });
+  action = client.find('history');
+  assert.deepEqual(action.input, expected);
+  assert.deepEqual(client.state.window.page, page);
+  client.complete(action, { status: 'failed', reason: 'not available' });
+  assert.deepEqual(client.state.window.page, page);
+  assert.equal(client.state.loading, false);
+  client.component('older');
+  const older = {
+    kind: 'ready',
+    through: 100,
+    chunks: [historyChunk('older', { messageId: uuid(902), sequence: 19000 })],
+    before: null,
+    after: page.before,
+  };
+  client.query('history', older);
+  assert.deepEqual(client.state.window.page, older);
+  assert.deepEqual(
+    client.messages.map((message) => message.text),
+    ['older'],
+  );
+  assert.equal(client.state.landing.edge, 'end');
+  assert.equal(client.timeline.live, false);
+  const demand = structuredClone(client.output.subscriptions);
+  client.page([fact(101, { kind: 'opened' })], 101);
+  assert.deepEqual(client.state.window.page, older);
+  assert.equal(client.timeline.latest, true);
+  assert.equal(client.output.actions.length, 0);
+  client.component('newer');
+  assert.deepEqual(client.find('history').input, {
+    sessionId: session.id,
+    through: 100,
+    position: { kind: 'after', cursor: older.after },
+  });
+  client.query('history', page);
+  assert.equal(client.state.landing.edge, 'start');
+  client.component('latest');
+  assert.deepEqual(client.find('history').input, {
+    sessionId: session.id,
+    through: 101,
+    position: { kind: 'tail' },
+  });
+  client.query('history', { ...page, through: 101, before: page.before, after: null });
+  assert.equal(client.state.landing.edge, 'end');
+  assert.equal(client.timeline.latest, false);
+  assert.deepEqual(client.output.subscriptions, demand);
+  assert.equal(client.messages[0].text, current.text);
+});
+test('live fragments use event fences even when a canonical prefix has the same message identity', () => {
+  const part = {
+    startSequence: 3,
+    messageId: uuid(900),
+    stepId: 'step',
+    partId: 'part',
+    textKind: 'text',
+  };
+  const client = new Client().start({
+    through: 8,
+    chunks: [historyChunk('canonical prefix')],
+    parts: [part],
+    run: { invocationId: 'run', state: 'running' },
+  });
+  client.page(
+    [
+      fact(3, { kind: 'part_started', ...part }),
+      fact(4, { kind: 'delta', stepId: 'step', partId: 'part', text: 'already canonical' }),
+      fact(9, { kind: 'delta', stepId: 'step', partId: 'part', text: ' new suffix' }),
+    ],
+    9,
+  );
+  assert.equal(client.messages[0].text, 'canonical prefix');
+  assert.equal(client.liveMessages[0].text, ' new suffix');
+  assert.equal(client.liveMessages[0].continued, true);
+  assert.equal(client.timeline.latest, true);
+  client.component('latest');
+  client.query('history', {
+    kind: 'ready',
+    through: 9,
+    chunks: [historyChunk('canonical prefix new suffix')],
+    before: null,
+    after: null,
+  });
+  assert.equal(client.state.live.length, 0);
+  assert.equal(client.liveMessages.length, 0);
+  assert.equal(client.messages[0].text, 'canonical prefix new suffix');
+});
+test('ended part identities are reclaimed without navigating, while active part demand stays bounded', () => {
+  const client = new Client().start();
+  let sequence = 0;
+  for (let index = 0; index < 150; index++) {
+    const stepId = 'step-' + index;
+    client.page(
+      [
+        fact(++sequence, {
+          kind: 'part_started',
+          messageId: 'message-' + index,
+          stepId,
+          partId: 'part',
+          textKind: 'text',
+        }),
+        fact(++sequence, { kind: 'delta', stepId, partId: 'part', text: 'reply' }),
+        fact(++sequence, { kind: 'step_ended', stepId }),
+      ],
+      sequence,
+    );
+    assert.equal(client.state.parts.length, 0);
+    assert.ok(client.state.watch);
+  }
+  for (let index = 0; index < 128; index++)
+    client.page(
+      [
+        fact(++sequence, {
+          kind: 'part_started',
+          messageId: 'active-' + index,
+          stepId: 'active-' + index,
+          partId: 'part',
+          textKind: 'text',
+        }),
+      ],
+      sequence,
+    );
+  assert.equal(client.state.parts.length, 128);
+  client.page(
+    [
+      fact(++sequence, {
+        kind: 'part_started',
+        messageId: 'too-many',
+        stepId: 'too-many',
+        partId: 'part',
+        textKind: 'text',
+      }),
+    ],
+    sequence,
+  );
+  assert.equal(client.state.watch, null);
+  assert.equal(client.state.notice, 'unavailable');
+});
+test('only a complete canonical UTF-8 message becomes Markdown; tail and live excerpts stay selectable literal source', async () => {
+  const { component: timeline } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/timeline/desktop.js'))
+  );
+  const text = '**尾部** 中文😀';
+  const client = new Client().start({
+    through: 100,
+    chunks: [historyChunk(text, { offset: 17, totalBytes: 17 + Buffer.byteLength(text) })],
+  });
+  assert.equal(client.messages[0].continued, true);
+  const excerpt = timeline.mount(client.timeline, {});
+  const slots = modelSlots(excerpt.frame.view.children[0].props.content);
+  assert.equal(slots.find((node) => node.key === 'text-' + uuid(900)).binding, 'source');
+  assert.equal(
+    slots.some((node) => node.binding === 'markdown'),
+    false,
+  );
+  const complete = timeline.update(
+    excerpt.frame.state,
+    { ...client.timeline, messages: [{ ...client.messages[0], continued: false }] },
+    {},
+  );
+  assert.equal(
+    modelSlots(complete.frame.view.children[0].props.content).find(
+      (node) => node.key === 'text-' + uuid(900),
+    ).binding,
+    'markdown',
+  );
+  const landing = timeline.update(
+    complete.frame.state,
+    {
+      ...client.timeline,
+      landing: { sequence: client.timeline.landing.sequence + 1, edge: 'start' },
+    },
+    {},
+  );
+  assert.equal(landing.frame.view.children[0].props.command.target.kind, 'start');
+  assert.throws(
+    () => timeline.update(landing.frame.state, client.timeline, {}),
+    /landing sequence/,
+  );
+});
+
+test('streaming budget never evicts the displayed prefix before explicit canonical navigation', () => {
+  const client = new Client().start();
+  const part = { messageId: 'answer', stepId: 'step', partId: 'part', textKind: 'text' };
+  client.page(
+    [
+      fact(1, { kind: 'part_started', ...part }),
+      fact(2, { kind: 'delta', stepId: 'step', partId: 'part', text: '中文😀'.repeat(5000) }),
+    ],
+    2,
+  );
+  const excerpt = client.liveMessages[0].text;
+  assert.ok(excerpt.length <= 16000);
+  assert.ok(excerpt.isWellFormed());
+  client.page(
+    [
+      fact(3, {
+        kind: 'delta',
+        stepId: 'step',
+        partId: 'part',
+        text: 'new bytes beyond this displayed prefix',
+      }),
+    ],
+    3,
+  );
+  assert.equal(client.liveMessages[0].text, excerpt);
+  assert.equal(client.timeline.latest, true);
+  assert.equal(client.state.latestKnown, 3);
+  assert.equal(client.output.actions.length, 0);
+});
+
+test('surrogate truncation closes the streaming prefix before later deltas', () => {
+  const client = new Client().start();
+  client.page(
+    [
+      fact(1, {
+        kind: 'part_started',
+        messageId: 'answer',
+        stepId: 'step',
+        partId: 'part',
+        textKind: 'text',
+      }),
+      fact(2, {
+        kind: 'delta',
+        stepId: 'step',
+        partId: 'part',
+        text: 'a'.repeat(15999) + '😀omitted',
+      }),
+    ],
+    2,
+  );
+  client.page([fact(3, { kind: 'delta', stepId: 'step', partId: 'part', text: 'Z' })], 3);
+  assert.equal(client.liveMessages[0].text, 'a'.repeat(15999));
+  assert.ok(client.liveMessages[0].text.isWellFormed());
+  assert.equal(client.state.latestKnown, 3);
+  assert.equal(client.timeline.latest, true);
+});
+
+for (const readyFirst of [false, true]) {
+  test(
+    'canonical replay consumes no live budget with Ready ' +
+      (readyFirst ? 'before' : 'after') +
+      ' watch',
+    () => {
+      const client = new Client();
+      const part = {
+        startSequence: 1,
+        messageId: 'answer',
+        stepId: 'step',
+        partId: 'part',
+        textKind: 'text',
+      };
+      client.query('page', []);
+      client.query('list', { revision: 'catalog', sessions: [session], nextCursor: null });
+      client.query('observe', {
+        session,
+        through: 100,
+        run: { invocationId: 'run', state: 'running' },
+        parts: [part],
+      });
+      const ready = {
+        kind: 'ready',
+        through: 100,
+        chunks: [historyChunk('canonical prefix')],
+        before: null,
+        after: null,
+      };
+      if (readyFirst) client.query('history', ready);
+      client.page(
+        [
+          fact(1, { kind: 'part_started', ...part }),
+          ...Array.from({ length: 80 }, (_, index) =>
+            fact(index + 2, {
+              kind: 'delta',
+              stepId: 'step',
+              partId: 'part',
+              text: 'old'.repeat(100),
+            }),
+          ),
+          fact(101, { kind: 'delta', stepId: 'step', partId: 'part', text: 'new suffix' }),
+        ],
+        101,
+      );
+      assert.deepEqual(
+        client.state.live.map((fragment) => fragment.text),
+        ['new suffix'],
+      );
+      if (!readyFirst) client.query('history', ready);
+      assert.equal(client.liveMessages[0].text, 'new suffix');
+      assert.equal(client.messages[0].text, 'canonical prefix');
+      assert.equal(client.state.latestKnown, 101);
+    },
+  );
+}

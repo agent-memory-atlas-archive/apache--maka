@@ -34,7 +34,6 @@ import type {
   CallerIntent,
   Component,
   ComponentValues,
-  Cursor,
   OperationReply,
   RecoveryRef,
   EditorCommand,
@@ -54,7 +53,8 @@ type Request =
       kind: 'history';
       epoch: number;
       through: number;
-      refresh: boolean;
+      navigation: number;
+      latest: boolean;
       position: HistoryPosition;
     }
   | { kind: 'read'; draft: EditorObservation; sessionId: string; model: ModelSelection }
@@ -66,9 +66,7 @@ type Request =
   | { kind: 'restoreReceipt'; reference: RecoveryRef; cursor: number };
 type Mutation = Extract<Request, { kind: 'create' | 'send' | 'stop' }> | { kind: 'restored' };
 interface DisplayPart extends AgentPart {
-  continued: boolean;
   invocationId: string | null;
-  sealed: boolean;
 }
 interface Uncertain {
   reference: RecoveryRef;
@@ -87,17 +85,15 @@ export interface State {
   modelRefreshing: boolean;
   settingsOpen: boolean;
   navigationOpen: boolean;
-  messages: Message[];
-  through: number | null;
-  cursor: Cursor | null;
+  window: { page: Extract<AgentHistoryPage, { kind: 'ready' }>; latest: boolean } | null;
+  navigation: number;
+  landing: { sequence: number; edge: 'start' | 'end' };
   parts: DisplayPart[];
   run: AgentRun | null;
   runThrough: number;
   loading: boolean;
-  liveMessages: Message[];
-  canonicalDone: number;
-  refreshTarget: number;
-  refreshed: Record<string, { sequence: number; end: number }>;
+  live: { sequence: number; messageId: string; text: string }[];
+  latestKnown: number;
   watch: { key: string; input: { sessionId: string; after: number }; last: number } | null;
   pending: Record<string, Request>;
   uncertain: Uncertain | null;
@@ -115,33 +111,46 @@ function utf8Bytes(text: string): number {
   }
   return bytes;
 }
-const WINDOW_CHARS = 16000;
-const WINDOW_MESSAGES = 16;
-// A bounded disposable display window. Canonical history remains in the service.
-function trim(messages: Message[]): Message[] {
-  while (messages.length > WINDOW_MESSAGES) messages.shift();
-  let remaining = WINDOW_CHARS;
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index];
-    if (message.text.length > remaining) {
-      const tail = message.text.slice(-remaining || message.text.length);
-      message.text =
-        tail.charCodeAt(0) >= 0xdc00 && tail.charCodeAt(0) <= 0xdfff ? tail.slice(1) : tail;
-      message.continued = true;
-    }
-    remaining = Math.max(0, remaining - message.text.length);
-  }
-  return messages.filter((message) => message.text.length > 0);
+// Retain a bounded streaming prefix until explicit navigation admits a new fence.
+// Automatic eviction would replace selected source even while the reader stays put.
+function appendLive(state: State, sequence: number, messageId: string, text: string) {
+  const baseline =
+    state.window?.page.through ??
+    Object.values(state.pending).find(
+      (request): request is Extract<Request, { kind: 'history' }> =>
+        request.kind === 'history' &&
+        request.epoch === state.epoch &&
+        request.navigation === state.navigation,
+    )?.through;
+  if (baseline === undefined || sequence <= baseline) return;
+  const ids = new Set(state.live.map((fragment) => fragment.messageId));
+  const remaining = 16000 - state.live.reduce((total, fragment) => total + fragment.text.length, 0);
+  // A truncated surrogate can leave one unused code unit; keep the prefix closed.
+  if (remaining <= 1 || state.live.length >= 64 || (!ids.has(messageId) && ids.size >= 16)) return;
+  text = text.slice(0, remaining);
+  const last = text.charCodeAt(text.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) text = text.slice(0, -1);
+  if (text) state.live.push({ sequence, messageId, text });
 }
-function append(state: State, id: string, role: Message['role'], text: string, continued: boolean) {
-  let message = state.messages.find((message) => message.id === id);
-  if (!message) {
-    message = { id, role, text: '', continued };
-    state.messages.push(message);
+function messages(state: State): Message[] {
+  const canonical = (state.window?.page.chunks ?? []).map((chunk) => ({
+    id: chunk.messageId,
+    role: chunk.role,
+    text: chunk.text,
+    continued: chunk.offset !== 0 || utf8Bytes(chunk.text) !== chunk.totalBytes,
+  }));
+  if (!state.window?.latest) return canonical;
+  const live = new Map<string, Message>();
+  for (const fragment of state.live) {
+    if (fragment.sequence <= state.window.page.through) continue;
+    let message = live.get(fragment.messageId);
+    if (!message) {
+      message = { id: 'live-' + fragment.messageId, role: 'assistant', text: '', continued: true };
+      live.set(fragment.messageId, message);
+    }
+    message.text += fragment.text;
   }
-  message.text += text;
-  message.continued ||= continued;
-  state.messages = trim(state.messages);
+  return [...canonical, ...live.values()];
 }
 function intent(
   state: State,
@@ -162,72 +171,36 @@ function observe(state: State, actions: Action[]) {
       sessionId: state.selected,
     });
 }
-function history(state: State, actions: Action[]) {
-  if (state.selected && state.through !== null)
-    intent(
-      state,
-      actions,
-      {
-        kind: 'history',
-        epoch: state.epoch,
-        through: state.through,
-        refresh: false,
-        position: state.cursor ? { kind: 'after', cursor: state.cursor } : { kind: 'start' },
-      },
-      'agent',
-      'history',
-      {
-        sessionId: state.selected,
-        through: state.through,
-        position: state.cursor ? { kind: 'after', cursor: state.cursor } : { kind: 'start' },
-      },
-    );
-}
-function refresh(state: State, actions: Action[]) {
-  if (
-    !state.selected ||
-    state.refreshTarget <= state.canonicalDone ||
-    state.loading ||
-    Object.values(state.pending).some(
-      (request) => request.kind === 'history' && request.epoch === state.epoch,
-    )
-  )
-    return;
-  const through = state.refreshTarget;
-  const start = Math.min(state.canonicalDone + 1, ...state.parts.map((part) => part.startSequence));
+function history(
+  state: State,
+  actions: Action[],
+  position: HistoryPosition,
+  through: number,
+  latest: boolean,
+) {
+  if (!state.selected) return;
+  state.loading = true;
+  const navigation = ++state.navigation;
   intent(
     state,
     actions,
-    {
-      kind: 'history',
-      epoch: state.epoch,
-      through,
-      refresh: true,
-      position: { kind: 'event', sequence: Math.min(start, through) },
-    },
+    { kind: 'history', epoch: state.epoch, navigation, through, latest, position },
     'agent',
     'history',
-    {
-      sessionId: state.selected,
-      through,
-      position: { kind: 'event', sequence: Math.min(start, through) },
-    },
+    { sessionId: state.selected, through, position },
   );
 }
 function select(state: State, actions: Action[], sessionId: string) {
   state.selected = sessionId;
   state.epoch++;
-  state.messages = [];
-  state.through = null;
-  state.cursor = null;
+  state.window = null;
+  state.navigation++;
   state.parts = [];
   state.run = null;
   state.watch = null;
   state.runThrough = 0;
-  state.liveMessages = [];
-  state.canonicalDone = 0;
-  state.refreshTarget = 0;
-  state.refreshed = {};
+  state.live = [];
+  state.latestKnown = 0;
   state.loading = true;
   state.notice = null;
   observe(state, actions);
@@ -296,7 +269,10 @@ function receipt(state: State, actions: Action[], request: Mutation, reply: Oper
 }
 function queryFailed(state: State, request: Request) {
   if (request.kind === 'history' || request.kind === 'observe') {
-    if (request.epoch === state.epoch) {
+    if (
+      request.epoch === state.epoch &&
+      (request.kind !== 'history' || request.navigation === state.navigation)
+    ) {
       state.loading = false;
       state.notice = 'unavailable';
     }
@@ -337,22 +313,41 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
       if (!state.watch)
         state.parts = observation.parts.map((part) => ({
           ...part,
-          continued: false,
           invocationId: observation.run?.invocationId ?? null,
-          sealed: false,
         }));
-      state.refreshTarget = Math.max(state.refreshTarget, observation.through);
-      // Keep an existing watch's original cursor. Re-observation must not drop
-      // intervening text or restart the subscription with every frame.
+      state.latestKnown = Math.max(state.latestKnown, observation.through);
+      // Watch/run facts are independent of the fixed-fence reading window.
       if (!state.watch) {
-        state.through = observation.through;
-        state.cursor = null;
-        history(state, actions);
+        const after = Math.min(
+          observation.through,
+          ...state.parts.map((part) => part.startSequence - 1),
+        );
+        state.watch = {
+          key: 'watch-' + state.epoch,
+          input: { sessionId: state.selected!, after },
+          last: after,
+        };
       }
+      if (
+        !state.window &&
+        !Object.values(state.pending).some(
+          (pending) => pending.kind === 'history' && pending.epoch === state.epoch,
+        )
+      )
+        history(state, actions, { kind: 'tail' }, observation.through, true);
+      else if (
+        !Object.values(state.pending).some(
+          (pending) =>
+            pending.kind === 'history' &&
+            pending.epoch === state.epoch &&
+            pending.navigation === state.navigation,
+        )
+      )
+        state.loading = false;
       break;
     }
     case 'history': {
-      if (request.epoch !== state.epoch) break;
+      if (request.epoch !== state.epoch || request.navigation !== state.navigation) break;
       const page = value as AgentHistoryPage;
       if (page.through !== request.through) {
         state.loading = false;
@@ -367,70 +362,14 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         });
         break;
       }
-      for (const chunk of page.chunks) {
-        const prior = state.refreshed[chunk.messageId];
-        if (!prior || chunk.offset >= prior.end) {
-          append(
-            state,
-            chunk.messageId,
-            chunk.role,
-            chunk.text,
-            chunk.offset !== 0 && !state.messages.some((message) => message.id === chunk.messageId),
-          );
-          state.refreshed[chunk.messageId] = {
-            sequence: chunk.sequence,
-            end: chunk.offset + utf8Bytes(chunk.text),
-          };
-        }
-        state.liveMessages = state.liveMessages.filter((message) => message.id !== chunk.messageId);
-      }
-      for (const id of Object.keys(state.refreshed))
-        if (!state.messages.some((message) => message.id === id)) delete state.refreshed[id];
-      if (request.refresh) {
-        if (page.after)
-          intent(
-            state,
-            actions,
-            { ...request, position: { kind: 'after', cursor: page.after } },
-            'agent',
-            'history',
-            {
-              sessionId: state.selected,
-              through: request.through,
-              position: { kind: 'after', cursor: page.after },
-            },
-          );
-        else {
-          state.canonicalDone = request.through;
-          state.parts = state.parts.filter(
-            (part) =>
-              !part.sealed && !state.messages.some((message) => message.id === part.messageId),
-          );
-        }
-        break;
-      }
-      state.cursor = page.after ?? null;
-      if (
-        state.cursor &&
-        state.messages.length < WINDOW_MESSAGES &&
-        state.messages.reduce((n, message) => n + message.text.length, 0) < WINDOW_CHARS
-      )
-        history(state, actions);
-      else {
-        state.loading = false;
-        if (!state.watch && state.selected) {
-          const after = Math.min(
-            page.through,
-            ...state.parts.map((part) => part.startSequence - 1),
-          );
-          state.watch = {
-            key: 'watch-' + state.epoch,
-            input: { sessionId: state.selected, after },
-            last: after,
-          };
-          state.canonicalDone = page.through;
-        }
-      }
+      state.window = { page, latest: request.latest };
+      state.landing = {
+        sequence: state.landing.sequence + 1,
+        edge: request.position.kind === 'before' || request.latest ? 'end' : 'start',
+      };
+      state.loading = false;
+      state.notice = null;
+      state.live = state.live.filter((fragment) => fragment.sequence > page.through);
       break;
     }
     case 'read': {
@@ -515,6 +454,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
 function delivery(state: State, page: AgentDeliveryPage) {
   const watch = state.watch;
   if (!watch) return;
+  state.latestKnown = Math.max(state.latestKnown, page.through);
   for (const event of page.events) {
     if (event.sequence <= watch.last) continue;
     const fact = event.fact;
@@ -523,10 +463,12 @@ function delivery(state: State, page: AgentDeliveryPage) {
         state.run = { invocationId: event.invocationId, state: 'running' };
         state.runThrough = event.sequence;
       }
-      state.refreshTarget = Math.max(state.refreshTarget, page.through);
     } else if (fact.kind === 'part_started') {
       state.parts = state.parts.filter(
-        (part) => part.stepId !== fact.stepId || part.partId !== fact.partId,
+        (part) =>
+          part.invocationId !== event.invocationId ||
+          part.stepId !== fact.stepId ||
+          part.partId !== fact.partId,
       );
       if (state.parts.length >= 128) {
         state.watch = null;
@@ -539,40 +481,36 @@ function delivery(state: State, page: AgentDeliveryPage) {
         stepId: fact.stepId,
         partId: fact.partId,
         textKind: fact.textKind,
-        continued: false,
         invocationId: event.invocationId,
-        sealed: false,
       });
     } else if (fact.kind === 'delta') {
       const part = state.parts.find(
-        (part) => part.stepId === fact.stepId && part.partId === fact.partId,
+        (part) =>
+          part.invocationId === event.invocationId &&
+          part.stepId === fact.stepId &&
+          part.partId === fact.partId,
       );
       if (part?.textKind === 'text') {
-        let message = state.liveMessages.find((message) => message.id === part.messageId);
-        if (!message) {
-          message = { id: part.messageId, role: 'assistant', text: '', continued: false };
-          state.liveMessages.push(message);
-        }
-        message.text += fact.text;
-        state.liveMessages = trim(state.liveMessages);
+        appendLive(state, event.sequence, part.messageId, fact.text);
       }
+    } else if (fact.kind === 'part_finished') {
+      state.parts = state.parts.filter(
+        (part) =>
+          part.invocationId !== event.invocationId ||
+          part.stepId !== fact.stepId ||
+          part.partId !== fact.partId,
+      );
     } else if (fact.kind === 'step_ended') {
-      state.parts = state.parts.map((part) =>
-        part.stepId === fact.stepId ? { ...part, sealed: true } : part,
+      state.parts = state.parts.filter(
+        (part) => part.invocationId !== event.invocationId || part.stepId !== fact.stepId,
       );
-      state.refreshTarget = Math.max(state.refreshTarget, page.through);
-    } else if (fact.kind === 'transcript_changed')
-      state.refreshTarget = Math.max(state.refreshTarget, page.through);
-    else if (fact.kind === 'ended') {
-      state.parts = state.parts.map((part) =>
-        part.invocationId === event.invocationId ? { ...part, sealed: true } : part,
-      );
+    } else if (fact.kind === 'ended') {
+      state.parts = state.parts.filter((part) => part.invocationId !== event.invocationId);
       if (event.sequence > state.runThrough && state.run?.invocationId === event.invocationId) {
         state.run = null;
         state.runThrough = event.sequence;
         state.notice = fact.failed ? 'failed' : 'completed';
       }
-      state.refreshTarget = Math.max(state.refreshTarget, page.through);
     }
   }
   watch.last = Math.max(watch.last, page.nextAfter);
@@ -607,17 +545,16 @@ function frame(
     {
       theme,
       locale,
-      messages: [
-        ...state.messages,
-        ...state.liveMessages.filter(
-          (message) => !state.messages.some((canonical) => canonical.id === message.id),
-        ),
-      ].slice(-32),
+      messages: messages(state),
       loading: state.loading,
-      more: !!state.cursor && !state.run,
-      live: !!state.run,
+      older: !!state.window?.page.before,
+      newer: !!state.window?.page.after,
+      latest:
+        !!state.window && (!state.window.latest || state.latestKnown > state.window.page.through),
+      landing: state.landing,
+      live: !!state.run && !!state.window?.latest,
     },
-    { more: 'history' },
+    { older: 'older', newer: 'newer', latest: 'latest' },
   );
   const composer = slot(
     'composer',
@@ -820,17 +757,15 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         modelRefreshing: false,
         settingsOpen: false,
         navigationOpen: true,
-        messages: [],
-        through: null,
-        cursor: null,
+        window: null,
+        navigation: 0,
+        landing: { sequence: 0, edge: 'end' },
         parts: [],
         run: null,
         runThrough: 0,
         loading: false,
-        liveMessages: [],
-        canonicalDone: 0,
-        refreshTarget: 0,
-        refreshed: {},
+        live: [],
+        latestKnown: 0,
         watch: null,
         pending: {},
         uncertain: null,
@@ -963,16 +898,14 @@ export function workspace(target: Target, locale: string): Component<State, Reco
             revision: state.listRevision,
             cursor: state.listCursor,
           });
-        else if (
-          input.child === 'timeline' &&
-          input.name === 'more' &&
-          state.cursor &&
-          !state.loading &&
-          !state.run
-        ) {
-          state.messages = [];
-          state.loading = true;
-          history(state, actions);
+        else if (input.child === 'timeline' && !state.loading && state.window) {
+          const page = state.window.page;
+          if (input.name === 'older' && page.before)
+            history(state, actions, { kind: 'before', cursor: page.before }, page.through, false);
+          else if (input.name === 'newer' && page.after)
+            history(state, actions, { kind: 'after', cursor: page.after }, page.through, false);
+          else if (input.name === 'latest')
+            history(state, actions, { kind: 'tail' }, state.latestKnown, true);
         }
       } else if (input.kind === 'raw') {
         if (input.key === 'settings') state.settingsOpen = true;
@@ -1000,11 +933,12 @@ export function workspace(target: Target, locale: string): Component<State, Reco
           else if (!state.selected)
             intent(state, actions, { kind: 'list', append: false }, 'agent', 'list', {});
           else {
+            const window = state.window;
             select(state, actions, state.selected);
+            state.window = window;
           }
         }
       }
-      refresh(state, actions);
       return frame(target, locale, state, values, actions);
     },
   };

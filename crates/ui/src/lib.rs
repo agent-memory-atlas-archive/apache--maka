@@ -29,6 +29,7 @@ pub mod markdown;
 mod native;
 pub mod operations;
 pub mod reading;
+pub mod source;
 pub mod text;
 pub mod textarea;
 mod tree;

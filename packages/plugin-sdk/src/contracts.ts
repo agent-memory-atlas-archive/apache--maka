@@ -191,6 +191,100 @@ export const contracts = {
       captures: {},
     },
   },
+  sourceText: {
+    name: 'maka.ui.SourceText',
+    version: 1,
+    transport: 'local',
+    interface: {
+      kind: 'component',
+      props: {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        title: 'SourceTextProps',
+        type: 'object',
+        properties: {
+          source: {
+            type: 'string',
+            maxLength: 65536,
+          },
+          appearance: {
+            $ref: '#/$defs/TextAppearance',
+          },
+          selection: {
+            $ref: '#/$defs/Color',
+          },
+          disabled: {
+            type: 'boolean',
+          },
+        },
+        additionalProperties: false,
+        required: ['source', 'appearance', 'selection', 'disabled'],
+        $defs: {
+          TextAppearance: {
+            type: 'object',
+            properties: {
+              font: {
+                $ref: '#/$defs/FontAppearance',
+              },
+              foreground: {
+                $ref: '#/$defs/Color',
+              },
+            },
+            additionalProperties: false,
+            required: ['font', 'foreground'],
+          },
+          FontAppearance: {
+            type: 'object',
+            properties: {
+              family: {
+                $ref: '#/$defs/FontFamily',
+              },
+              fallbacks: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/FontFamily',
+                },
+                maxItems: 8,
+              },
+              size: {
+                type: 'number',
+                format: 'float',
+                minimum: 6,
+                maximum: 96,
+              },
+              lineHeight: {
+                description: 'Line height relative to this font size.',
+                type: 'number',
+                format: 'float',
+                minimum: 1,
+                maximum: 3,
+              },
+              weight: {
+                type: 'integer',
+                format: 'uint16',
+                minimum: 1,
+                maximum: 1000,
+              },
+            },
+            additionalProperties: false,
+            required: ['family', 'fallbacks', 'size', 'lineHeight', 'weight'],
+          },
+          FontFamily: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+          },
+          Color: {
+            description: 'Packed RGBA, including explicit alpha zero.',
+            type: 'integer',
+            format: 'uint32',
+            minimum: 0,
+          },
+        },
+      },
+      events: {},
+      captures: {},
+    },
+  },
   readingArea: {
     name: 'maka.ui.ReadingArea',
     version: 1,

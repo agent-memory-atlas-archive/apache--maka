@@ -46,6 +46,7 @@ interface Draft extends Revision {
 interface Reading extends Revision {
   observation: ReadingObservation | null;
   command: ReadingCommand | null;
+  landing: TimelineProps['landing'];
 }
 export function components(target: Target): {
   composer: Component<Draft, ComposerProps>;
@@ -179,7 +180,7 @@ export function components(target: Target): {
           ...(message.continued
             ? [ui.text('continued-' + message.id, text.partial, 12, props.theme.muted)]
             : []),
-          target === 'desktop' && message.role === 'assistant'
+          target === 'desktop' && message.role === 'assistant' && !message.continued
             ? slot(
                 'text-' + message.id,
                 'markdown',
@@ -191,7 +192,19 @@ export function components(target: Target): {
                 } satisfies MarkdownProps,
                 {},
               )
-            : ui.text('text-' + message.id, message.text, 16),
+            : target === 'desktop'
+              ? slot(
+                  'text-' + message.id,
+                  'source',
+                  {
+                    source: message.text,
+                    appearance: props.theme.markdown.body,
+                    selection: props.theme.markdown.selection,
+                    disabled: false,
+                  },
+                  {},
+                )
+              : ui.text('text-' + message.id, message.text, 16),
         ],
         {
           gap: target === 'desktop' ? 8 : 0,
@@ -211,7 +224,6 @@ export function components(target: Target): {
             ]
           : messages),
         ...(props.loading ? [ui.text('loading', text.loading, 14, props.theme.muted)] : []),
-        ...(props.more ? [ui.button('more', text.more)] : []),
       ],
       {
         gap: target === 'desktop' ? 24 : 1,
@@ -223,25 +235,39 @@ export function components(target: Target): {
         scroll: props.live ? 'follow_end' : 'anchor',
       },
     );
+    const controls: Node[] = [
+      ...(props.older ? [ui.button('older', text.older, props.loading)] : []),
+      ...(props.newer ? [ui.button('newer', text.newer, props.loading)] : []),
+      ...(props.latest ? [ui.button('latest', text.latest, props.loading)] : []),
+      ...(target === 'desktop' && state.observation?.viewport && !state.observation.viewport.atEnd
+        ? [ui.button('end', text.toEnd, state.observation.pendingCommand != null)]
+        : []),
+    ];
     return output(
       state,
-      target === 'desktop'
-        ? ui.box(
-            'timeline-frame',
-            [
-              slot(
+      ui.box(
+        'timeline-frame',
+        [
+          target === 'desktop'
+            ? slot(
                 'reading',
                 'reading',
                 { content, command: state.command },
                 { observed: 'reading-observed', input: 'reading-input' },
-              ),
-              ...(state.observation?.viewport && !state.observation.viewport.atEnd
-                ? [ui.button('end', text.toEnd, state.observation.pendingCommand != null)]
-                : []),
-            ],
-            { gap: 8, style: { width: fill, height: fill } },
-          )
-        : content,
+              )
+            : content,
+          ...(controls.length
+            ? [
+                ui.box('reading-controls', controls, {
+                  row: true,
+                  gap: 8,
+                  style: { width: fill, shrink: 0, wrap: 'wrap' },
+                }),
+              ]
+            : []),
+        ],
+        { gap: 8, style: { width: fill, height: fill } },
+      ),
     );
   };
   return {
@@ -293,8 +319,42 @@ export function components(target: Target): {
       },
     },
     timeline: {
-      mount: (props) => timelineFrame({ revision: 0, observation: null, command: null }, props),
-      update: (state, props) => timelineFrame({ ...state, revision: state.revision + 1 }, props),
+      mount: (props) =>
+        timelineFrame(
+          {
+            revision: 0,
+            observation: null,
+            command:
+              props.landing.sequence > 0
+                ? { sequence: 1, target: { kind: props.landing.edge } }
+                : null,
+            landing: props.landing,
+          },
+          props,
+        ),
+      update(state, props) {
+        if (
+          props.landing.sequence < state.landing.sequence ||
+          (props.landing.sequence === state.landing.sequence &&
+            props.landing.edge !== state.landing.edge)
+        )
+          throw new Error('Invalid reading landing sequence');
+        return timelineFrame(
+          {
+            ...state,
+            revision: state.revision + 1,
+            command:
+              state.landing.sequence !== props.landing.sequence
+                ? {
+                    sequence: (state.command?.sequence ?? 0) + 1,
+                    target: { kind: props.landing.edge },
+                  }
+                : state.command,
+            landing: props.landing,
+          },
+          props,
+        );
+      },
       event(state, input, props) {
         const next = { ...state, revision: state.revision + 1 };
         if (input.kind === 'component' && input.child === 'reading') {
@@ -311,8 +371,12 @@ export function components(target: Target): {
         )
           next.command = { sequence: (next.command?.sequence ?? 0) + 1, target: { kind: 'end' } };
         const out = timelineFrame(next, props);
-        if (input.kind === 'raw' && input.key === 'more' && props.more && !props.loading)
-          out.events.push({ name: 'more', value: {} });
+        if (input.kind === 'raw' && !props.loading) {
+          if (input.key === 'older' && props.older) out.events.push({ name: 'older', value: {} });
+          if (input.key === 'newer' && props.newer) out.events.push({ name: 'newer', value: {} });
+          if (input.key === 'latest' && props.latest)
+            out.events.push({ name: 'latest', value: {} });
+        }
         return out;
       },
     },

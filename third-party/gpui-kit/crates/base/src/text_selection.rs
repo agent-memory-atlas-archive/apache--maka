@@ -488,6 +488,44 @@ fn project_ranges(
     }
 }
 
+// A single literal run can retain original content-key byte endpoints through reflow.
+fn project_byte_ranges(
+    owner: EntityId,
+    snapshot: Option<TextSelectionSnapshot>,
+    runs: &[TextSelectionRun],
+) -> TextSelectionProjection {
+    let Some(snapshot) = snapshot else {
+        return project_ranges(None, runs);
+    };
+    let [run] = runs else {
+        return project_ranges(Some(snapshot), runs);
+    };
+    let byte = |endpoint: TextSelectionEndpoint| {
+        (endpoint.entity_id() == Some(owner))
+            .then(|| endpoint.content_key())
+            .flatten()
+            .and_then(|key| usize::try_from(key.value()).ok())
+            .filter(|byte| *byte <= run.text.len() && run.text.is_char_boundary(*byte))
+    };
+    let own = || byte(snapshot.anchor()).or_else(|| byte(snapshot.cursor()));
+    let range = match snapshot.coverage() {
+        TextSelectionCoverage::Full => Some(0..run.text.len()),
+        TextSelectionCoverage::FromStart => own().map(|end| 0..end),
+        TextSelectionCoverage::ToEnd => own().map(|start| start..run.text.len()),
+        TextSelectionCoverage::Bounded => byte(snapshot.anchor())
+            .zip(byte(snapshot.cursor()))
+            .map(|(a, b)| a.min(b)..a.max(b)),
+    };
+    if let Some(range) = range {
+        TextSelectionProjection {
+            ranges: vec![(!range.is_empty()).then_some(range)],
+            is_active: true,
+        }
+    } else {
+        project_ranges(Some(snapshot), runs)
+    }
+}
+
 fn selection_range_for_run(
     run: &TextSelectionRun,
     selection_start: Point<Pixels>,
@@ -690,6 +728,7 @@ struct SelectableTextState {
     clear: Option<ClearHandler>,
     copy: Option<CopyCallback>,
     content_key_resolver: Option<ContentKeyResolver>,
+    byte_owner: Option<EntityId>,
 }
 
 impl EventEmitter<TextSelectionEvent> for SelectableTextState {}
@@ -708,6 +747,7 @@ impl SelectableTextState {
             clear: None,
             copy: None,
             content_key_resolver: None,
+            byte_owner: None,
         }
     }
 
@@ -724,6 +764,9 @@ impl SelectableTextState {
 
     /// Marks participant-local selection (for example select-all) as active.
     fn set_local_selection(&mut self, active: bool) {
+        if self.local_selection != active {
+            self.projected_copy_text = None;
+        }
         self.local_selection = active;
     }
 
@@ -735,7 +778,16 @@ impl SelectableTextState {
     /// never returns text from a previous projection while waiting to repaint.
     fn update_runs(&mut self, runs: &[TextSelectionRun]) -> TextSelectionProjection {
         self.runs = runs.to_vec();
-        let states = project_ranges(self.snapshot, runs);
+        let states = if self.local_selection && !runs.is_empty() {
+            TextSelectionProjection {
+                ranges: runs.iter().map(|run| Some(0..run.text.len())).collect(),
+                is_active: true,
+            }
+        } else if let Some(owner) = self.byte_owner {
+            project_byte_ranges(owner, self.snapshot, runs)
+        } else {
+            project_ranges(self.snapshot, runs)
+        };
         let mut selected_runs = runs
             .iter()
             .zip(states.ranges())
@@ -919,6 +971,101 @@ impl TextSelectionHandle {
     pub fn set_local_selection(&self, active: bool, cx: &mut App) {
         self.0
             .update(cx, |state, _| state.set_local_selection(active));
+    }
+
+    /// Retain byte endpoints for one literal run using the original content-key path.
+    pub fn preserve_byte_offsets(&self, cx: &mut App) {
+        let owner = self.entity_id();
+        let weak = self.downgrade();
+        self.0.update(cx, |state, _| state.byte_owner = Some(owner));
+        self.resolve_content_key_with(
+            move |position, cx| {
+                let state = weak.upgrade()?;
+                let state = state.read(cx);
+                let [run] = state.runs.as_slice() else {
+                    return None;
+                };
+                Some(TextSelectionContentKey::new(
+                    run.layout
+                        .index_for_position(position + run.bounds.origin - run.translation)
+                        .unwrap_or_else(|byte| byte) as u64,
+                ))
+            },
+            cx,
+        );
+    }
+
+    /// Copy the selected participants in this participant's original painted scope.
+    /// Plain runs refresh from current native snapshots; rich callbacks stay original.
+    pub fn selected_text_in_scope(&self, window: &Window, cx: &mut App) -> Option<String> {
+        let state = WindowSelectionState::existing(window, cx)?;
+        let participants = {
+            let state = state.read(cx);
+            let scope = state
+                .participants
+                .get(&self.entity_id())?
+                .registration
+                .scope;
+            state
+                .participants
+                .values()
+                .filter(|entry| entry.registration.scope == scope)
+                .filter_map(|entry| {
+                    Some((
+                        entry.participant.upgrade()?,
+                        entry.registration.document_order,
+                    ))
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut items = participants
+            .into_iter()
+            .filter_map(|(participant, order)| {
+                participant.update(cx, |participant, _| {
+                    if !participant.local_selection && participant.copy.is_none() {
+                        let runs = participant.runs.clone();
+                        participant.update_runs(&runs);
+                    }
+                    participant.copy_item(order)
+                })
+            })
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            return None;
+        }
+        items.sort_by_key(|item| item.document_order);
+        Some(
+            items
+                .into_iter()
+                .map(|item| {
+                    item.callback
+                        .map(|callback| callback(cx))
+                        .unwrap_or(item.fallback)
+                })
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    }
+
+    /// Activate the scope from this participant's actual painted registration.
+    pub fn activate_scope(&self, window: &mut Window, cx: &mut App) -> bool {
+        if !self.0.read(cx).enabled {
+            return false;
+        }
+        let Some(state) = WindowSelectionState::existing(window, cx) else {
+            return false;
+        };
+        let scope = state
+            .read(cx)
+            .participants
+            .get(&self.entity_id())
+            .map(|entry| entry.registration.scope);
+        let Some(scope) = scope else {
+            return false;
+        };
+        TextSelection::activate_scope(scope, window, cx);
+        true
     }
 
     /// Returns whether participant-local selection is active.
@@ -1640,7 +1787,12 @@ impl WindowSelectionState {
         let cursor_endpoint = self.cursor.as_ref()?;
         let anchor = anchor_endpoint.resolve(&self.participants)?;
         let cursor = cursor_endpoint.resolve(&self.participants)?;
-        (anchor != cursor).then(|| {
+        let different_content = anchor_endpoint.entity_id() == cursor_endpoint.entity_id()
+            && anchor_endpoint
+                .content_key
+                .zip(cursor_endpoint.content_key)
+                .is_some_and(|(a, b)| a != b);
+        (anchor != cursor || different_content).then(|| {
             TextSelectionSnapshot::new(anchor_endpoint.snapshot(), cursor_endpoint.snapshot())
                 .with_selecting(self.is_selecting)
                 .with_window_points(Some(TextSelectionWindowPoints { anchor, cursor }))
