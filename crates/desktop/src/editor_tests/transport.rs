@@ -22,7 +22,7 @@ use futures_util::future::BoxFuture;
 use maka_application_bridge::{
     Grant,
     transport::{
-        Endpoint, Peer, PeerPolicy, Server,
+        Endpoint, Peer, PeerPolicy, Peers, Server,
         native::{Connection, Connector, Service, Stream},
     },
 };
@@ -39,7 +39,7 @@ use tokio_util::sync::CancellationToken;
 
 struct Physical {
     server: Arc<Server>,
-    peer: Peer,
+    peer: Arc<Peers>,
 }
 impl Connector for Physical {
     fn connect(&self, stop: CancellationToken) -> BoxFuture<'static, Result<Stream, String>> {
@@ -96,16 +96,17 @@ impl Remote {
             BTreeMap::from([("reader".into(), Endpoint::new(binding, grant).unwrap())]),
         )
         .unwrap();
+        let peers = Peers::new(Peer::new(source, BTreeSet::from([consumer])).unwrap());
         let connection = Connection::new(Arc::new(Physical {
             server: server.clone(),
-            peer: Peer::new(source.clone(), BTreeSet::from([consumer])).unwrap(),
+            peer: peers.clone(),
         }));
         let observed = Arc::new(Mutex::new(None));
         let service = Arc::new(
             Service::new(
                 connection.clone(),
                 server.catalogue().select("reader").unwrap(),
-                source,
+                peers,
             )
             .unwrap(),
         );

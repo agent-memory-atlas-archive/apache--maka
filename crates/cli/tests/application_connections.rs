@@ -166,7 +166,7 @@ impl Fixture {
                 self.timer.handle().clone(),
                 Default::default(),
                 crate::support::counter::scene::registry(target),
-                connections.take_registrations(),
+                connections.registrations(),
             ))
             .unwrap()
     }
@@ -485,4 +485,155 @@ fn actual_child_sql_initialization_and_cursor_errors_confirm_cleanup_without_rea
         f.blocked("caller");
         f.timer.block_on(f.caller.shutdown()).unwrap();
     }
+}
+
+#[test]
+fn exact_source_approval_reuses_original_host_services_and_revokes_unused_consumers() {
+    let f = Fixture::new();
+    let mut connections = f.connect(f.configuration(true, true));
+    let originals = connections.registrations();
+    let mut old = f.ui(&mut connections);
+    let old_mount = old.mount_launch(json!({})).unwrap();
+    assert_eq!(
+        action(&f, &mut old, &old_mount, "read")["status"],
+        "succeeded"
+    );
+    let (mut input, packages, observations) = support::ui(PresentationTarget::Desktop);
+    input.instances.get_mut("app").unwrap().key = Uuid::from_u128(22);
+    let newer = f
+        .timer
+        .block_on(f.caller.commit_application(
+            f.source.deployment,
+            1,
+            input,
+            observations,
+            packages,
+        ))
+        .unwrap();
+    let registrations = f
+        .timer
+        .block_on(connections.approve_source(&f.caller, newer.clone(), BTreeSet::from([1])))
+        .unwrap();
+    for registered in &registrations {
+        let original = originals
+            .iter()
+            .find(|original| original.target == registered.target)
+            .unwrap();
+        assert_eq!(original.registration_epoch, registered.registration_epoch);
+        assert!(Arc::ptr_eq(
+            &original.implementation,
+            &registered.implementation
+        ));
+    }
+    f.blocked("host");
+    let mut current = f
+        .timer
+        .block_on(Application::start_from_store(
+            f.caller.clone(),
+            newer.clone(),
+            f.target,
+            f.timer.handle().clone(),
+            Default::default(),
+            support::counter::scene::registry(f.target),
+            registrations,
+        ))
+        .unwrap();
+    let mount = current.mount_launch(json!({})).unwrap();
+    assert_eq!(
+        action(&f, &mut current, &mount, "read")["status"],
+        "succeeded"
+    );
+    assert_eq!(
+        action(&f, &mut old, &old_mount, "read")["status"],
+        "succeeded"
+    );
+    f.timer
+        .block_on(connections.approve_source(&f.caller, newer, BTreeSet::new()))
+        .unwrap();
+    assert_eq!(action(&f, &mut old, &old_mount, "read")["status"], "failed");
+    assert_eq!(
+        action(&f, &mut current, &mount, "read")["status"],
+        "succeeded"
+    );
+    let (mut input, packages, observations) = support::ui(PresentationTarget::Desktop);
+    input.instances.get_mut("app").unwrap().disabled = true;
+    input.launch = None;
+    let empty = f
+        .timer
+        .block_on(f.caller.commit_application(
+            f.source.deployment,
+            2,
+            input,
+            observations,
+            packages,
+        ))
+        .unwrap();
+    assert!(
+        f.timer
+            .block_on(connections.approve_source(&f.caller, empty, BTreeSet::new()))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(action(&f, &mut current, &mount, "read")["status"], "failed");
+    old.retire(&old_mount).unwrap();
+    old.close(&old_mount, Ok(())).unwrap();
+    old.shutdown().unwrap();
+    drop(old);
+    stop(&f, current, &mount, &mut connections);
+    f.timer.block_on(f.caller.shutdown()).unwrap();
+}
+
+#[test]
+fn invalid_actual_endpoint_candidate_does_not_revoke_original_child_approval() {
+    let f = Fixture::new();
+    let mut connections = f.connect(f.configuration(true, true));
+    let originals = connections.registrations();
+    let mut app = f.ui(&mut connections);
+    let mount = app.mount_launch(json!({})).unwrap();
+    let (mut input, packages, mut observations) = support::ui(PresentationTarget::Desktop);
+    let target = input
+        .instances
+        .get_mut("app")
+        .unwrap()
+        .bindings
+        .get_mut("business")
+        .unwrap()
+        .first_mut()
+        .unwrap();
+    let maka_plugin_core::composition::Target::Remote { instance, .. } = target else {
+        panic!("remote target")
+    };
+    *instance = support::identity(99);
+    observations
+        .iter_mut()
+        .find(|o| o.capability.export == "Counter")
+        .unwrap()
+        .capability
+        .instance = support::identity(99);
+    let invalid = f
+        .timer
+        .block_on(f.caller.commit_application(
+            f.source.deployment,
+            1,
+            input,
+            observations,
+            packages,
+        ))
+        .unwrap();
+    assert!(
+        f.timer
+            .block_on(connections.approve_source(&f.caller, invalid, BTreeSet::new()))
+            .err()
+            .unwrap()
+            .contains("configured grants")
+    );
+    for (before, after) in originals.iter().zip(connections.registrations()) {
+        assert_eq!(before.registration_epoch, after.registration_epoch);
+        assert!(Arc::ptr_eq(&before.implementation, &after.implementation));
+    }
+    assert_eq!(action(&f, &mut app, &mount, "read")["status"], "succeeded");
+    assert_eq!(action(&f, &mut app, &mount, "write")["status"], "operation");
+    f.blocked("host");
+    stop(&f, app, &mount, &mut connections);
+    f.timer.block_on(f.caller.shutdown()).unwrap();
 }

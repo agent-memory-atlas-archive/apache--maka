@@ -76,7 +76,7 @@ SQL owner's actual close acknowledgement and Host cleanup. Failure retains the
 store, Root and runtime. Native quit is subject to the same gate. `drain_store`
 and `Connections::drain` preserve custody instead of treating owner drop as a
 cleanup receipt. Native endpoints retain the exact Host catalogue selection,
-registration epoch, caller source and original physical-call custody. They never
+registration epoch and original physical-call custody; sessions freeze caller approval. They never
 retarget a replacement Host or own its deployment lifecycle.
 
 `Connections::prepare` validates the requested presentation and immutable source
@@ -99,7 +99,7 @@ from configuration without adding another SQL owner.
 
 `transport::Server` serves independently owned invocation streams on the existing
 Application. Its embedding authenticates the physical channel and supplies a
-`Peer` approving an exact caller source and consumer set. `PeerPolicy` issues
+`Peers` holding exact caller-source and consumer approvals. `PeerPolicy` issues
 private request evidence and checks the original Binding/method grant at final
 admission; mutation confirmation also checks the original caller and operation.
 Caller JSON, endpoint aliases and descriptor metadata are observations.
@@ -108,7 +108,7 @@ Caller JSON, endpoint aliases and descriptor metadata are observations.
 child receives `process::Bootstrap` on inherited stdin: Root/deployment/namespaces,
 exact approved UI source/consumers, Host consumer/import grants, private IPC address
 and a nonnil incarnation nonce. The input is closed JSON, bounded to 512 KiB.
-Stdin/stdout are only for Bootstrap, Ready, Close and Closed. Each import selects
+Stdin/stdout carry Bootstrap/Ready, Capture/Captured, Approve/Approved and Close/Closed. Each import selects
 exactly one existing provider. Compiled gateway/agent/settings availability comes
 from this executable; the persisted Host composition selects executed instances.
 
@@ -170,3 +170,31 @@ precede the session mutex; cleanup waits for the same invocation and actual loca
 resource destructors before releasing capacity. Failed custody stays in its
 original Connection. Both launchers use this adapter; there is no separate
 in-process UI service/session implementation.
+
+## Exact-source updates
+
+The trusted Root manager may call `Connections::approve_source` with an exact
+committed UI source and the revisions whose original consumers remain live. This
+explicit operation delegates the original configuration's method/recovery grants;
+watching a SQL head alone grants nothing. It cannot change the selected Host Root,
+deployment, executable, gateway consumer or native grants.
+
+Before publication, all participating children capture actual Bindings over their
+original inherited control channels. The parent validates the entire candidate's
+targets, contracts, unique registrations, approvals and wire bounds. A child then
+publishes those same captured Bindings; it does not rebind an alias between
+validation and approval. Unused Hosts apply retention without binding endpoints.
+Known validation errors preserve the previous approvals. Cross-child physical I/O
+failure is not a transaction or a rollback receipt: the original child/control
+owners remain responsible for their actual state and cleanup.
+
+Unchanged Host registration epochs reuse the original service implementation.
+Sessions and issued Scopes freeze their original approval ticket. Revocation
+rejects subsequent admission, including prepared but unaccepted mutations;
+already accepted work retains its original execution, resources and cleanup.
+Within the original controller incarnation, a revoked or superseded revision cannot
+be newly approved. Reinstalling its contents requires a fresh committed revision;
+retained live revisions keep their original ticket. Retained actors
+continue using their original source, so the manager must retain those revisions
+until their last executable consumer retires. Production plugin-management and
+foreground adoption coordination remain separate integration work.

@@ -26,7 +26,7 @@ use maka_event_log::{
 };
 use maka_plugin_core::{composition::InstanceId, deployment::DeploymentRef};
 use maka_runtime_host::{
-    application::{Application, NativeRegistry},
+    application::{Application, Client, NativeRegistry},
     ipc::LocalListener,
 };
 use serde::{Deserialize, Serialize};
@@ -90,13 +90,39 @@ impl Bootstrap {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum Event {
-    Ready { nonce: Uuid, catalogue: Catalogue },
-    Closed { nonce: Uuid },
+    Ready {
+        nonce: Uuid,
+        catalogue: Catalogue,
+    },
+    Closed {
+        nonce: Uuid,
+    },
+    Captured {
+        nonce: Uuid,
+        result: Result<Catalogue>,
+    },
+    Approved {
+        nonce: Uuid,
+        source: DeploymentRef,
+        result: Result<()>,
+    },
 }
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum Command {
-    Close { nonce: Uuid },
+    Close {
+        nonce: Uuid,
+    },
+    Capture {
+        nonce: Uuid,
+    },
+    Approve {
+        nonce: Uuid,
+        source: DeploymentRef,
+        consumers: BTreeSet<InstanceId>,
+        retain: BTreeSet<u64>,
+        captured: Option<Catalogue>,
+    },
 }
 #[derive(PartialEq)]
 enum Phase {
@@ -147,6 +173,92 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Control<R, W> {
             _ => Err("Host control did not publish its original registrations".into()),
         }
     }
+    /// Capture actual registrations without publishing endpoints or approvals.
+    pub async fn capture(&mut self) -> Result<Catalogue> {
+        if self.phase != Phase::Started {
+            return Err("Host control is not ready for capture".into());
+        }
+        self.phase = Phase::Lost;
+        wire::write(
+            self.writer.as_mut().unwrap(),
+            &Command::Capture { nonce: self.nonce },
+        )
+        .await?;
+        match self.reader.read().await? {
+            Event::Captured { nonce, result } if nonce == self.nonce => {
+                self.phase = Phase::Started;
+                let catalogue = result?;
+                catalogue.validate()?;
+                Ok(catalogue)
+            }
+            _ => Err("Host capture acknowledgement differs from its original incarnation".into()),
+        }
+    }
+    pub(crate) fn check_approval(
+        &self,
+        source: &DeploymentRef,
+        consumers: &BTreeSet<InstanceId>,
+        retain: &BTreeSet<u64>,
+        captured: &Option<Catalogue>,
+    ) -> Result<()> {
+        if self.phase != Phase::Started {
+            return Err("Host control is not ready for approval".into());
+        }
+        source.validate()?;
+        if !consumers.is_empty() {
+            Peer::new(source.clone(), consumers.clone())?;
+        }
+        if consumers.is_empty() != captured.is_none() {
+            return Err("approval requires its captured endpoints".into());
+        }
+        if retain.len() > 256 {
+            return Err("maximum 256 retained source approvals".into());
+        }
+        wire::encode_bounded(
+            &Command::Approve {
+                nonce: self.nonce,
+                source: source.clone(),
+                consumers: consumers.clone(),
+                retain: retain.clone(),
+                captured: captured.clone(),
+            },
+            BOOTSTRAP_LIMIT,
+        )?;
+        Ok(())
+    }
+    /// Publish the previously captured endpoints and exact caller approval.
+    /// An empty consumer set performs only retention, without rebinding endpoints.
+    pub async fn approve(
+        &mut self,
+        source: DeploymentRef,
+        consumers: BTreeSet<InstanceId>,
+        retain: BTreeSet<u64>,
+        captured: Option<Catalogue>,
+    ) -> Result<()> {
+        self.check_approval(&source, &consumers, &retain, &captured)?;
+        let command = Command::Approve {
+            nonce: self.nonce,
+            source: source.clone(),
+            consumers,
+            retain,
+            captured,
+        };
+        wire::encode_bounded(&command, BOOTSTRAP_LIMIT)?;
+        // An abandoned/partial exchange cannot append another control frame.
+        self.phase = Phase::Lost;
+        wire::write_bounded(self.writer.as_mut().unwrap(), &command, BOOTSTRAP_LIMIT).await?;
+        match self.reader.read().await? {
+            Event::Approved {
+                nonce,
+                source: approved,
+                result,
+            } if nonce == self.nonce && approved == source => {
+                self.phase = Phase::Started;
+                result
+            }
+            _ => Err("Host approval acknowledgement differs from its original request".into()),
+        }
+    }
     pub async fn close(&mut self) -> Result<()> {
         if self.phase == Phase::Closed {
             return Ok(());
@@ -185,7 +297,10 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Control<R, W> {
                     self.phase = Phase::Closed;
                     return Ok(());
                 }
-                Event::Ready { nonce, .. } if nonce == self.nonce && self.phase == Phase::Lost => {}
+                Event::Ready { nonce, .. }
+                | Event::Captured { nonce, .. }
+                | Event::Approved { nonce, .. }
+                    if nonce == self.nonce && self.phase == Phase::Lost => {}
                 _ => {
                     self.phase = Phase::Lost;
                     drop(self.writer.take());
@@ -209,7 +324,10 @@ pub async fn serve(native: NativeRegistry) -> Result<()> {
     let mut input = wire::Reader::new(input);
     let bootstrap: Bootstrap = input.read_bounded(BOOTSTRAP_LIMIT).await?;
     bootstrap.validate()?;
-    let peer = Peer::new(bootstrap.source.clone(), bootstrap.consumers.clone())?;
+    let peer = super::Peers::new(Peer::new(
+        bootstrap.source.clone(),
+        bootstrap.consumers.clone(),
+    )?);
     let initialized = async {
         let listener = LocalListener::bind(&bootstrap.address).map_err(|e| e.to_string())?;
         let owner = Arc::new(
@@ -265,34 +383,61 @@ pub async fn serve(native: NativeRegistry) -> Result<()> {
             let result = async {
                 application.ready().await?;
                 let client = application.client();
-                let consumer = client.activation(&bootstrap.consumer)?;
-                let mut endpoints = BTreeMap::new();
-                for (name, grant) in bootstrap.imports {
-                    let mut bindings = client.bind(consumer.clone(), name.clone()).await?;
-                    if bindings.len() != 1 {
-                        return Err("Host import requires one explicitly selected provider".to_string());
-                    }
-                    endpoints.insert(name, Endpoint::new(bindings.pop().unwrap(), grant)?);
-                }
-                let server = Server::new(client, policy, endpoints)?;
+                let endpoints = capture_endpoints(&client, &bootstrap.consumer, &bootstrap.imports).await?;
+                let server = Server::new(client.clone(), policy, endpoints)?;
                 let ready = Event::Ready {
                     nonce: bootstrap.nonce,
                     catalogue: server.catalogue(),
                 };
                 let published = wire::write(&mut output, &ready).await;
                 let mut control_error = None;
+                let mut captured = None;
                 if published.is_ok() {
                     loop {
                         tokio::select! {
                             biased;
-                            command = input.read_bounded::<Command>(512) => {
-                                // Only this private supervisor stream controls lifecycle.
-                                // EOF or malformed/foreign control asks actual drain;
-                                // neither alone is a cleanup acknowledgement.
-                                if matches!(command, Ok(Command::Close { nonce }) if nonce != bootstrap.nonce) {
-                                    control_error = Some("Host close named a different incarnation".to_string());
+                            command = input.read_bounded::<Command>(BOOTSTRAP_LIMIT) => {
+                                match command {
+                                    Ok(Command::Capture { nonce }) if nonce == bootstrap.nonce => {
+                                        let result = capture_endpoints(&client, &bootstrap.consumer, &bootstrap.imports).await;
+                                        let result = match result {
+                                            Ok(endpoints) => {
+                                                let catalogue = Catalogue::captured(&endpoints);
+                                                captured = Some(endpoints);
+                                                Ok(catalogue)
+                                            }
+                                            Err(error) => { captured = None; Err(error) }
+                                        };
+                                        let reply = capture_reply(nonce, result);
+                                        if matches!(&reply, Event::Captured { result: Err(_), .. }) { captured = None; }
+                                        if let Err(error) = wire::write(&mut output, &reply).await {
+                                            control_error = Some(error); break;
+                                        }
+                                    }
+                                    Ok(Command::Approve { nonce, source, consumers, retain, captured: expected }) if nonce == bootstrap.nonce => {
+                                        let result = (|| {
+                                            source.validate()?;
+                                            if source.state_domain != bootstrap.source.state_domain || source.deployment != bootstrap.source.deployment {
+                                                return Err("foreign approval deployment".into());
+                                            }
+                                            let approved = if consumers.is_empty() { None } else { Some(Peer::new(source.clone(), consumers)?) };
+                                            if approved.is_none() != expected.is_none() { return Err("approval requires its captured endpoints".into()); }
+                                            peer.check_update(approved.clone(), &retain)?;
+                                            if let Some(expected) = expected {
+                                                let endpoints = captured.take().ok_or("Host endpoints were not captured")?;
+                                                if Catalogue::captured(&endpoints) != expected { return Err("Host captured endpoints differ".into()); }
+                                                // Publish original Bindings, never rebind an alias after preflight.
+                                                server.replace_endpoints(endpoints)?;
+                                            }
+                                            peer.update(approved, &retain)
+                                        })();
+                                        if let Err(error) = wire::write(&mut output, &Event::Approved { nonce, source, result }).await {
+                                            control_error = Some(error); break;
+                                        }
+                                    }
+                                    Ok(Command::Close { nonce }) if nonce == bootstrap.nonce => break,
+                                    _ => { control_error = Some("Host control ended or named a foreign incarnation".into()); break; }
                                 }
-                                break;
                             }
                             accepted = listener.accept() => {
                                 let stream = match accepted {
@@ -348,6 +493,36 @@ pub async fn serve(native: NativeRegistry) -> Result<()> {
         .map_err(|e| e.to_string())?;
     result
 }
+fn capture_reply(nonce: Uuid, result: Result<Catalogue>) -> Event {
+    let event = Event::Captured { nonce, result };
+    match wire::encode_bounded(&event, wire::FRAME_LIMIT) {
+        Ok(_) => event,
+        // Known serialization bounds fail before IO; they must not close the Host.
+        Err(_) => Event::Captured {
+            nonce,
+            result: Err("Host captured catalogue exceeds control frame limit".into()),
+        },
+    }
+}
+async fn capture_endpoints(
+    client: &Client,
+    consumer: &InstanceId,
+    imports: &BTreeMap<String, Grant>,
+) -> Result<BTreeMap<String, Endpoint>> {
+    let consumer = client.activation(consumer)?;
+    let mut endpoints = BTreeMap::new();
+    for (name, grant) in imports {
+        let mut bindings = client.bind(consumer.clone(), name.clone()).await?;
+        if bindings.len() != 1 {
+            return Err("Host import requires one explicitly selected provider".into());
+        }
+        endpoints.insert(
+            name.clone(),
+            Endpoint::new(bindings.pop().unwrap(), grant.clone())?,
+        );
+    }
+    Ok(endpoints)
+}
 async fn drain_server(server: &Server) {
     let mut reported = BTreeSet::new();
     loop {
@@ -374,5 +549,27 @@ async fn drain_application(application: &Application) {
             }
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn oversized_capture_is_a_bounded_error_acknowledgement() {
+        let contract = serde_json::json!({
+            "name":"large.Service", "version":1, "transport":"remote",
+            "interface":{"kind":"service","methods":{"read":{"mode":"query","input":{"description":"x".repeat(wire::FRAME_LIMIT)},"output":{},"resources":{}}}}
+        });
+        // Read-only descriptors cannot manufacture any Binding or grant.
+        let catalogue: Catalogue = serde_json::from_value(serde_json::json!({"endpoints":{"large":{
+            "provider":[Uuid::from_u128(1)],"export":"Large","contract":contract,"registration_epoch":Uuid::from_u128(2)
+        }}})).unwrap();
+        let nonce = Uuid::from_u128(3);
+        let reply = capture_reply(nonce, Ok(catalogue));
+        assert!(
+            matches!(&reply, Event::Captured { nonce: actual, result: Err(_) } if *actual == nonce)
+        );
+        wire::encode_bounded(&reply, wire::FRAME_LIMIT).unwrap();
     }
 }

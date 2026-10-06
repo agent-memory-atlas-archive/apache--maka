@@ -52,7 +52,7 @@ struct Fixture {
     source: DeploymentRef,
     app: Application,
     server: Arc<Server>,
-    peer: Peer,
+    peer: Arc<maka_application_bridge::transport::Peers>,
 }
 impl Fixture {
     async fn new() -> Self {
@@ -178,7 +178,9 @@ impl Fixture {
             BTreeMap::from([("business".into(), endpoint), ("receipts".into(), reader)]),
         )
         .unwrap();
-        let peer = Peer::new(source.clone(), BTreeSet::from([support::identity(2)])).unwrap();
+        let peer = maka_application_bridge::transport::Peers::new(
+            Peer::new(source.clone(), BTreeSet::from([support::identity(2)])).unwrap(),
+        );
         Self {
             _directory: directory,
             namespaces,
@@ -409,7 +411,7 @@ impl maka_runtime_host::application::NativeOwner for Gate {
 }
 struct Physical {
     server: Arc<Server>,
-    peer: Peer,
+    peer: Arc<maka_application_bridge::transport::Peers>,
 }
 impl maka_application_bridge::transport::native::Connector for Physical {
     fn connect(
@@ -466,7 +468,7 @@ async fn native_ui(
         Service::new(
             connection.clone(),
             catalogue.select("business").unwrap(),
-            f.source.clone(),
+            f.peer.clone(),
         )
         .unwrap(),
     ) as Arc<dyn maka_ui::actions::NativeService>;
@@ -485,7 +487,7 @@ async fn native_ui(
                 Service::new(
                     connection.clone(),
                     catalogue.select("receipts").unwrap(),
-                    f.source.clone(),
+                    f.peer.clone(),
                 )
                 .unwrap(),
             ),
@@ -629,6 +631,14 @@ async fn concurrent_native_dispatch_and_close_cancel_the_original_host_without_a
     let root = ui.mount_launch(serde_json::json!({})).unwrap();
     ui_action(&mut ui, &root, "read").await;
     let source = source.lock().unwrap().take().unwrap();
+    let inert = service
+        .mutation(maka_ui::actions::ServiceRequest {
+            source: source.clone(),
+            method: "write".into(),
+            input: serde_json::Value::Null,
+            resources: Default::default(),
+        })
+        .unwrap();
     let session = service
         .mutation(maka_ui::actions::ServiceRequest {
             source,
@@ -647,6 +657,18 @@ async fn concurrent_native_dispatch_and_close_cancel_the_original_host_without_a
     tokio::time::timeout(std::time::Duration::from_secs(5), gate.entered.notified())
         .await
         .unwrap();
+    // Revocation rejects unaccepted work but cannot discard accepted custody.
+    f.peer.replace(vec![]).unwrap();
+    assert!(
+        inert
+            .clone()
+            .prepare()
+            .await
+            .unwrap_err()
+            .contains("approved")
+    );
+    inert.clone().close().await.unwrap();
+    drop(inert);
     let closed = session.clone().close();
     let (result, cleanup) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         tokio::join!(dispatched, closed)
@@ -1151,7 +1173,7 @@ impl Drop for DoubleOpening {
 }
 struct DoubleConnector {
     server: Arc<Server>,
-    peer: Peer,
+    peer: Arc<maka_application_bridge::transport::Peers>,
     poll_panics: bool,
 }
 impl maka_application_bridge::transport::native::Connector for DoubleConnector {
@@ -1229,7 +1251,7 @@ async fn opening_poll_future_drop_and_returned_channel_drop_are_independently_is
 
 struct BrokenConnector {
     server: Arc<Server>,
-    peer: Peer,
+    peer: Arc<maka_application_bridge::transport::Peers>,
     broken: Arc<std::sync::atomic::AtomicBool>,
 }
 impl maka_application_bridge::transport::native::Connector for BrokenConnector {
@@ -1423,5 +1445,202 @@ async fn private_hello_uses_original_capacity_and_close_cancels_partial_handshak
             .unwrap()
             .is_empty()
     );
+    f.cleanup().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn revoking_issued_scope_rejects_prepared_commit_without_losing_original_cleanup() {
+    let f = Fixture::new().await;
+    let (channel, accepted) = tokio::io::duplex(64 * 1024);
+    let (reader, writer) = tokio::io::split(accepted);
+    let observer = f.server.serve(reader, writer, f.peer.clone()).unwrap();
+    let (reader, writer) = tokio::io::split(channel);
+    let mut call = Call::new(
+        reader,
+        writer,
+        f.server.catalogue().select("business").unwrap(),
+        Source {
+            deployment: f.source.clone(),
+            consumer: support::identity(2),
+            request: Uuid::new_v4(),
+        },
+        "write".into(),
+        serde_json::Value::Null,
+        Default::default(),
+    );
+    call.start().await.unwrap();
+    assert!(matches!(
+        call.receive().await.unwrap(),
+        Reply::Prepared { .. }
+    ));
+    let reference = call.reference().unwrap().clone();
+    let intent = f
+        .caller
+        .record_application_intent(f.source.clone(), support::identity(2), reference.clone())
+        .await
+        .unwrap();
+    f.peer.replace(vec![]).unwrap();
+    let Reply::Mutation { reply, cleanup } = call.commit(intent).await.unwrap() else {
+        panic!("mutation receipt")
+    };
+    assert_eq!(reply.reference, reference);
+    assert!(
+        matches!(reply.receipt, maka_plugin_core::operation::Receipt::Unavailable { ref diagnostic } if diagnostic.contains("revoked"))
+    );
+    cleanup.unwrap();
+    assert!(call.cleanup_confirmed());
+    assert!(!call.holds_caller_intent());
+    assert!(
+        f.store
+            .operation_observation(&reference)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    drop(call);
+    observer.await.unwrap();
+    f.server.close().await.unwrap();
+    f.cleanup().await;
+}
+
+struct HeldChannel {
+    stream: DuplexStream,
+    written: Arc<AtomicUsize>,
+    dropped: Arc<AtomicUsize>,
+}
+impl AsyncRead for HeldChannel {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stream).poll_read(cx, buffer)
+    }
+}
+impl AsyncWrite for HeldChannel {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bytes: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match Pin::new(&mut self.stream).poll_write(cx, bytes) {
+            Poll::Ready(Ok(count)) => {
+                self.written.fetch_add(count, Ordering::SeqCst);
+                Poll::Ready(Ok(count))
+            }
+            other => other,
+        }
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stream).poll_flush(cx)
+    }
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stream).poll_shutdown(cx)
+    }
+}
+impl Drop for HeldChannel {
+    fn drop(&mut self) {
+        self.dropped.fetch_add(1, Ordering::SeqCst);
+    }
+}
+struct HeldConnector {
+    entered: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+    written: Arc<AtomicUsize>,
+    dropped: Arc<AtomicUsize>,
+    physical: Physical,
+}
+impl maka_application_bridge::transport::native::Connector for HeldConnector {
+    fn connect(
+        &self,
+        _: tokio_util::sync::CancellationToken,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<maka_application_bridge::transport::native::Stream, String>,
+    > {
+        let entered = self.entered.clone();
+        let release = self.release.clone();
+        let written = self.written.clone();
+        let dropped = self.dropped.clone();
+        let server = self.physical.server.clone();
+        let peer = self.physical.peer.clone();
+        Box::pin(async move {
+            let (stream, accepted) = tokio::io::duplex(64 * 1024);
+            let (reader, writer) = tokio::io::split(accepted);
+            drop(server.serve(reader, writer, peer)?);
+            entered.notify_one();
+            release.notified().await;
+            Ok(Box::new(HeldChannel {
+                stream,
+                written,
+                dropped,
+            })
+                as maka_application_bridge::transport::native::Stream)
+        })
+    }
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn revocation_during_actual_opening_sends_no_wire_and_closes_original_channel() {
+    let f = Fixture::new().await;
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let written = Arc::new(AtomicUsize::new(0));
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let (mut ui, connection, _, _) = native_ui(
+        &f,
+        Arc::new(HeldConnector {
+            entered: entered.clone(),
+            release: release.clone(),
+            written: written.clone(),
+            dropped: dropped.clone(),
+            physical: Physical {
+                server: f.server.clone(),
+                peer: f.peer.clone(),
+            },
+        }),
+    )
+    .await;
+    let root = ui.mount_launch(serde_json::json!({})).unwrap();
+    ui.dispatch(
+        &root,
+        ui.frame(&root).unwrap().revision,
+        "read",
+        serde_json::Value::Null,
+    )
+    .unwrap();
+    ui.capture_actions(&root, |_| panic!("resource-free action"))
+        .unwrap();
+    let task = ui.start_task(&root).unwrap().unwrap();
+    let id = task.id;
+    let worker = tokio::spawn(task.future);
+    tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified())
+        .await
+        .unwrap();
+    f.peer.replace(vec![]).unwrap();
+    assert!(
+        f.peer
+            .replace(vec![
+                Peer::new(f.source.clone(), BTreeSet::from([support::identity(2)])).unwrap()
+            ])
+            .is_err()
+    );
+    release.notify_one();
+    let completion = tokio::time::timeout(std::time::Duration::from_secs(5), worker)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(ui.finish_task(id, completion).unwrap().is_none());
+    ui.deliver_action_results(&root, |_, _, _| Ok(false))
+        .unwrap();
+    assert_eq!(
+        ui.frame(&root).unwrap().state["outcome"]["status"],
+        "failed"
+    );
+    assert_eq!(written.load(Ordering::SeqCst), 0);
+    assert_eq!(dropped.load(Ordering::SeqCst), 1);
+    stop_ui(ui, &root);
+    connection.close().await.unwrap();
+    drop(connection);
+    f.server.close().await.unwrap();
     f.cleanup().await;
 }

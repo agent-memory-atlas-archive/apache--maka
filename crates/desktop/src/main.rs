@@ -571,7 +571,7 @@ impl Launcher {
             return Err(error.into());
         }
         let source = connections.source().clone();
-        let registrations = connections.take_registrations();
+        let registrations = connections.registrations();
         let started = timer.block_on(Application::start_from_store(
             store.clone(),
             source,

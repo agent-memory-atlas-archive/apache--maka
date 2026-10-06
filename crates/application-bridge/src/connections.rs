@@ -54,7 +54,7 @@ use uuid::Uuid;
 pub struct Configuration {
     pub hosts: Vec<Host>,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Host {
     pub name: String,
@@ -184,6 +184,8 @@ struct OwnedHost {
     connection: Arc<native::Connection>,
     _address: Address,
     ready: bool,
+    configuration: Host,
+    peers: Arc<crate::transport::Peers>,
 }
 #[derive(PartialEq)]
 enum Phase {
@@ -197,6 +199,7 @@ enum Phase {
 /// Prepare first, retain this object, then observe start through a mutable borrow.
 /// Close the UI and its actual accepted work before draining these connections.
 pub struct Connections {
+    target: PresentationTarget,
     source: DeploymentRef,
     observations: Vec<RemoteObservation>,
     namespaces: RootNamespaces,
@@ -267,6 +270,7 @@ impl Connections {
             });
         }
         Ok(Self {
+            target,
             source: loaded.source.reference,
             observations: loaded.source.remote_exports,
             namespaces,
@@ -287,6 +291,7 @@ impl Connections {
         let mut targets = BTreeSet::new();
         for prepared in std::mem::take(&mut self.prepared) {
             let host = prepared.configuration;
+            let configuration = host.clone();
             let nonce = Uuid::new_v4();
             let address = Address::create(nonce)?;
             let bootstrap = Bootstrap {
@@ -325,6 +330,11 @@ impl Connections {
                 connection,
                 _address: address,
                 ready: false,
+                configuration,
+                peers: crate::transport::Peers::new(crate::transport::Peer::new(
+                    bootstrap.source.clone(),
+                    bootstrap.consumers.clone(),
+                )?),
             });
             let owned = self.hosts.last_mut().unwrap();
             let catalogue = owned.control.start(&bootstrap).await?;
@@ -354,7 +364,7 @@ impl Connections {
                     implementation: Arc::new(native::Service::new(
                         owned.connection.clone(),
                         selection,
-                        self.source.clone(),
+                        owned.peers.clone(),
                     )?),
                 });
             }
@@ -365,8 +375,165 @@ impl Connections {
     pub fn source(&self) -> &DeploymentRef {
         &self.source
     }
-    pub fn take_registrations(&mut self) -> Vec<RemoteService> {
-        std::mem::take(&mut self.registrations)
+    pub fn registrations(&self) -> Vec<RemoteService> {
+        self.registrations.clone()
+    }
+    /// Trusted same-Root manager operation, not a head-watcher grant. The caller
+    /// delegates the original configuration's grants to this exact committed
+    /// plan's enabled consumers, retaining only the explicitly live old sources.
+    pub async fn approve_source(
+        &mut self,
+        store: &EventLog,
+        source: DeploymentRef,
+        retain: BTreeSet<u64>,
+    ) -> Result<Vec<RemoteService>> {
+        if self.phase != Phase::Started {
+            return Err("Host connections are not ready for approval".into());
+        }
+        if source.state_domain != self.source.state_domain
+            || source.deployment != self.source.deployment
+        {
+            return Err("foreign UI deployment approval".into());
+        }
+        let loaded = store
+            .load_application_at(&source)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or("committed UI source not found")?;
+        if loaded.source.input.environment.location != ExecutionLocation::Ui
+            || loaded.source.input.environment.presentation != Some(self.target)
+        {
+            return Err("stored presentation target mismatch".into());
+        }
+        let mut packages = Packages::default();
+        for package in &loaded.packages {
+            packages
+                .insert(
+                    package.application_ref(),
+                    package
+                        .manifest()
+                        .application
+                        .as_ref()
+                        .ok_or("package has no application declaration")?
+                        .clone(),
+                )
+                .map_err(|e| e.to_string())?;
+        }
+        let remote: RemoteExports = loaded
+            .source
+            .remote_exports
+            .iter()
+            .map(|o| (o.capability.clone(), o.declaration.clone()))
+            .collect();
+        let plan =
+            Plan::prepare(&loaded.source.input, &packages, &remote).map_err(|e| e.to_string())?;
+        let required: BTreeSet<_> = plan
+            .instances()
+            .values()
+            .filter(|i| !i.disabled)
+            .flat_map(|i| i.bindings.values().flatten())
+            .filter_map(|binding| match &binding.provider {
+                Provider::Remote { capability } => Some(capability.clone()),
+                _ => None,
+            })
+            .collect();
+        if required.iter().any(|target| {
+            !self
+                .hosts
+                .iter()
+                .any(|host| host.configuration.name == target.deployment)
+        }) {
+            return Err("UI source selects an unconfigured Host".into());
+        }
+        let mut published = Vec::new();
+        let mut targets = BTreeSet::new();
+        let mut staged = Vec::new();
+        for owned in &mut self.hosts {
+            let name = &owned.configuration.name;
+            let consumers: BTreeSet<_> = plan.instances().values().filter(|i| !i.disabled && i.entry.is_some())
+                .filter(|i| i.bindings.values().flatten().any(|binding| matches!(&binding.provider, Provider::Remote { capability } if &capability.deployment == name)))
+                .map(|i| i.identity.clone()).collect();
+            let approved = if consumers.is_empty() {
+                None
+            } else {
+                Some(crate::transport::Peer::new(
+                    source.clone(),
+                    consumers.clone(),
+                )?)
+            };
+            owned.peers.check_update(approved.clone(), &retain)?;
+            let catalogue = if consumers.is_empty() {
+                None
+            } else {
+                Some(owned.control.capture().await?)
+            };
+            if let Some(catalogue) = &catalogue {
+                for import in owned.configuration.imports.keys() {
+                    let selection = catalogue.select(import)?;
+                    let description = selection.description();
+                    let target = RemoteCapability {
+                        deployment: name.clone(),
+                        instance: description.provider.clone(),
+                        export: description.export.clone(),
+                    };
+                    if !targets.insert(target.clone()) {
+                        return Err("duplicate local endpoint grant".into());
+                    }
+                    if !required.contains(&target) {
+                        continue;
+                    }
+                    if !remote
+                        .get(&target)
+                        .is_some_and(|expected| expected.contract.accepts(&description.contract))
+                    {
+                        return Err(
+                            "Host endpoint differs from selected UI source observation".into()
+                        );
+                    }
+                    let value = if let Some(registered) =
+                        self.registrations.iter().find(|registered| {
+                            registered.target == target
+                                && registered.registration_epoch == description.registration_epoch
+                        }) {
+                        registered.clone()
+                    } else {
+                        RemoteService {
+                            target,
+                            registration_epoch: description.registration_epoch,
+                            contract: description.contract.clone(),
+                            implementation: Arc::new(native::Service::new(
+                                owned.connection.clone(),
+                                selection,
+                                owned.peers.clone(),
+                            )?),
+                        }
+                    };
+                    published.push(value);
+                }
+            }
+            owned
+                .control
+                .check_approval(&source, &consumers, &retain, &catalogue)?;
+            staged.push((approved, consumers, catalogue));
+        }
+        if required.iter().any(|target| {
+            !published
+                .iter()
+                .any(|registered| &registered.target == target)
+        }) {
+            return Err("UI source selects an endpoint outside its configured grants".into());
+        }
+        // Complete the whole batch's known validation before changing any grant.
+        // Physical IO failure still belongs to each original child, not rollback.
+        for (owned, (approved, consumers, catalogue)) in self.hosts.iter_mut().zip(staged) {
+            owned
+                .control
+                .approve(source.clone(), consumers, retain.clone(), catalogue)
+                .await?;
+            owned.peers.update(approved, &retain)?;
+        }
+        self.registrations = published.clone();
+        Ok(published)
     }
     /// Revoke every connection synchronously, then drain all original children.
     /// Both same-child Closed and actual exit are necessary. Failed original

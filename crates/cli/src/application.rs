@@ -202,7 +202,7 @@ impl Command {
                     return Err(error.into());
                 }
                 let source = connections.source().clone();
-                let registrations = connections.take_registrations();
+                let registrations = connections.registrations();
                 let foreground_store = store.clone();
                 let result = tokio::task::spawn_blocking(move || -> Result<(), HostError> {
                     maka_tui::application::run(foreground_store, source, registrations, scheduler)

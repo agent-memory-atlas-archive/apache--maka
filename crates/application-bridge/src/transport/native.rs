@@ -18,13 +18,12 @@
  */
 
 //! Original native request custody on an authenticated physical connector.
-use super::{Call, Reply, Selection, Source};
+use super::{Call, Peers, Reply, Selection, Source, policy::PeerApproval};
 use crate::Result;
 use futures_util::{FutureExt, future::BoxFuture};
 use maka_event_log::applications::intents::RecordedIntent;
 use maka_plugin_core::{
     contract::{Interface, MethodMode},
-    deployment::DeploymentRef,
     operation::{OperationReply, Receipt},
 };
 use maka_ui::actions::*;
@@ -91,6 +90,7 @@ impl Connection {
         self: &Arc<Self>,
         selection: Selection,
         request: ServiceRequest,
+        approval: Arc<PeerApproval>,
     ) -> Result<Arc<Session>> {
         let gate = self.closed.lock().unwrap();
         if *gate {
@@ -104,6 +104,7 @@ impl Connection {
         Ok(Arc::new(Session {
             connection: self.clone(),
             selection,
+            approval,
             stop: self.stop.child_token(),
             state: tokio::sync::Mutex::new(State {
                 request: Some(request),
@@ -144,28 +145,31 @@ impl Connection {
 pub struct Service {
     connection: Arc<Connection>,
     selection: Selection,
-    caller: DeploymentRef,
+    callers: Arc<Peers>,
 }
 impl Service {
     pub fn new(
         connection: Arc<Connection>,
         selection: Selection,
-        caller: DeploymentRef,
+        callers: Arc<Peers>,
     ) -> Result<Self> {
-        caller.validate()?;
         let Interface::Service { .. } = &selection.description().contract.interface else {
             return Err("remote native endpoint requires a service".into());
         };
         Ok(Self {
             connection,
             selection,
-            caller,
+            callers,
         })
     }
     fn session(&self, request: ServiceRequest, mode: MethodMode) -> Result<Arc<Session>> {
-        if request.source.deployment() != Some(&self.caller) {
-            return Err("UI source differs from the frozen connection approval".into());
-        }
+        let source = request
+            .source
+            .deployment()
+            .ok_or("persisted UI source required")?;
+        let approval = self
+            .callers
+            .resolve(source, request.source.consumer().instance())?;
         let Interface::Service { methods } = &self.selection.description().contract.interface
         else {
             unreachable!()
@@ -176,7 +180,8 @@ impl Service {
         {
             return Err("method differs from the captured native service mode".into());
         }
-        self.connection.session(self.selection.clone(), request)
+        self.connection
+            .session(self.selection.clone(), request, approval)
     }
 }
 impl NativeService for Service {
@@ -246,6 +251,7 @@ struct State {
     physical_failure: Option<String>,
 }
 struct Session {
+    approval: Arc<PeerApproval>,
     connection: Arc<Connection>,
     selection: Selection,
     stop: CancellationToken,
@@ -258,6 +264,16 @@ impl Session {
         self.begin_with_stop(state, &self.stop).await
     }
     async fn begin_with_stop(&self, state: &mut State, stop: &CancellationToken) -> Result<()> {
+        let request = state
+            .request
+            .as_ref()
+            .ok_or("original request unavailable")?;
+        let deployment = request
+            .source
+            .deployment()
+            .ok_or("persisted UI source required")?;
+        self.approval
+            .check(deployment, request.source.consumer().instance())?;
         let source = Source::try_from(
             &state
                 .request
@@ -332,11 +348,9 @@ impl Session {
         }
         state.opening = false;
         observe_two(
-            state
-                .call
-                .as_mut()
-                .unwrap()
-                .start_unless(|| self.stop.is_cancelled() || stop.is_cancelled()),
+            state.call.as_mut().unwrap().start_unless(|| {
+                self.stop.is_cancelled() || stop.is_cancelled() || self.approval.live().is_err()
+            }),
             &self.stop,
             stop,
         )

@@ -21,7 +21,7 @@
 use super::{
     catalogue::Catalogue,
     ipc::{Accepted, Hello},
-    policy::{Endpoint, Peer, PolicyOwner},
+    policy::{Endpoint, Peers, PolicyOwner},
     wire::{self, Control, Open, Reader, Reply},
 };
 use crate::Result;
@@ -53,7 +53,7 @@ struct Failed {
 pub struct Server {
     client: Client,
     policy: PolicyOwner,
-    endpoints: BTreeMap<String, Endpoint>,
+    endpoints: Mutex<BTreeMap<String, Endpoint>>,
     slots: Arc<Semaphore>,
     stop: CancellationToken,
     tasks: TaskTracker,
@@ -75,7 +75,7 @@ impl Server {
         Ok(Arc::new(Self {
             client,
             policy,
-            endpoints,
+            endpoints: Mutex::new(endpoints),
             slots: Arc::new(Semaphore::new(CONNECTIONS as usize)),
             stop: CancellationToken::new(),
             tasks: TaskTracker::new(),
@@ -84,7 +84,21 @@ impl Server {
         }))
     }
     pub fn catalogue(&self) -> Catalogue {
-        Catalogue::captured(&self.endpoints)
+        Catalogue::captured(&self.endpoints.lock().unwrap())
+    }
+    pub(crate) fn replace_endpoints(&self, endpoints: BTreeMap<String, Endpoint>) -> Result<()> {
+        if endpoints.is_empty()
+            || endpoints.len() > 128
+            || endpoints.keys().any(|n| n.is_empty() || n.len() > 256)
+        {
+            return Err("invalid Application endpoints".into());
+        }
+        let gate = self.admission.lock().unwrap();
+        if *gate {
+            return Err("Application transport is closing".into());
+        }
+        *self.endpoints.lock().unwrap() = endpoints;
+        Ok(())
     }
     /// The embedding authenticates the actual private channel and chooses Peer.
     /// No incoming JSON or endpoint name constructs that approval.
@@ -92,7 +106,7 @@ impl Server {
         self: &Arc<Self>,
         reader: R,
         writer: W,
-        peer: Peer,
+        peer: Arc<Peers>,
     ) -> Result<impl Future<Output = Result<()>> + Send + 'static>
     where
         R: AsyncRead + Unpin + Send + 'static,
@@ -107,7 +121,7 @@ impl Server {
         self: &Arc<Self>,
         reader: R,
         writer: W,
-        peer: Peer,
+        peer: Arc<Peers>,
         nonce: uuid::Uuid,
     ) -> Result<impl Future<Output = Result<()>> + Send + 'static>
     where
@@ -123,7 +137,7 @@ impl Server {
         self: &Arc<Self>,
         reader: R,
         writer: W,
-        peer: Peer,
+        peer: Arc<Peers>,
         nonce: Option<uuid::Uuid>,
     ) -> Result<impl Future<Output = Result<()>> + Send + 'static>
     where
@@ -342,7 +356,12 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Session<R, W> {
         })
         .await
     }
-    async fn run(&mut self, server: &Server, peer: Peer, nonce: Option<uuid::Uuid>) -> Result<()> {
+    async fn run(
+        &mut self,
+        server: &Server,
+        peer: Arc<Peers>,
+        nonce: Option<uuid::Uuid>,
+    ) -> Result<()> {
         if let Some(nonce) = nonce {
             let hello: Hello = tokio::select! {
                 biased;
@@ -361,7 +380,13 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Session<R, W> {
         }
         let open: Open = self.read().await?;
         let descriptors: BTreeMap<String, ResourceDescriptor> = self.read().await?;
-        let Some(endpoint) = server.endpoints.get(&open.endpoint).cloned() else {
+        let Some(endpoint) = server
+            .endpoints
+            .lock()
+            .unwrap()
+            .get(&open.endpoint)
+            .cloned()
+        else {
             return self
                 .abort("Application endpoint is not granted".into())
                 .await;

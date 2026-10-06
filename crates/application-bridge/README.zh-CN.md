@@ -48,7 +48,7 @@ Scope cleanup 仍须等待真实释放。快照字节和 metadata 不进入操�
 真实 surface 与已接受 Work 完成清理后，启动器继续等待 caller SQL owner 的真实关闭
 确认及 Host 清理；失败保留 store、Root 和 runtime。原生退出也受同一 gate 约束。
 `drain_store` 和 `Connections::drain` 保留所有权，不把 drop 当作 cleanup 回执。
-UI endpoint 保留实际 catalogue selection、原 epoch、caller source 与原 physical-call custody，
+UI endpoint 保留实际 catalogue selection、原 epoch 与原 physical-call custody；Session 固定原 caller 批准，
 不会转向替代 Host，也不拥有 Host 部署生命周期。
 
 `Connections::prepare` 在启动 Host 前核选定 presentation 与精确 immutable source，
@@ -69,14 +69,14 @@ Subscription 经私有 IPC 复用实际 Host `Client.subscribe`、原 Binding/Pe
 ## 私有跨进程调用流
 
 `transport::Server` 在原 Application 上管理独立调用流。可信 embedding 认证实际通道，
-交付批准精确 caller source 和 consumer 集合的 `Peer`。`PeerPolicy` 创建私有请求证据，
+交付持有精确 caller source 和 consumer 批准集合的 `Peers`。`PeerPolicy` 创建私有请求证据，
 最终准入核原 Binding 和方法 grant；mutation confirmation 另核原 caller 和 operation。
 传入 JSON、endpoint alias、资源 metadata 都只是观察。
 
 `maka application serve` 在进程整个生命周期持有同一个 Host。实际选中的 child 从继承
 stdin 接收 `process::Bootstrap`：Root/deployment/namespaces、精确 UI source/消费者集合、
 Host consumer/import grants、私有 IPC 地址与非空 incarnation nonce。闭合 JSON 上限
-512 KiB。Stdin/stdout 只传 Bootstrap、Ready、Close、Closed；每个 import 明确选择一个
+512 KiB。Stdin/stdout 传 Bootstrap/Ready、Capture/Captured、Approve/Approved、Close/Closed；每个 import 明确选择一个
 实际 provider。Gateway/Agent/Settings 编译 availability 由该 executable 提供，持久组合
 仍决定实际执行的实例。
 
@@ -120,3 +120,23 @@ incarnation。取消等待原 opening 明确完成；构造、poll、future 析�
 接收实际 SQL token。Stop 在 session mutex 之前发出，cleanup 等同一调用及实际本地
 资源析构完成才释放容量。失败 custody 保留在原 Connection；两个启动器均使用此
 适配器，没有另一套进程内 UI service/session 实现。
+
+## 精确来源更新
+
+可信 Root manager 可以对精确已提交 UI source 调用 `Connections::approve_source`，
+同时明确保留仍有原消费者存活的 revision。此操作委托原配置的方法及恢复权限；
+观察 SQL head 本身不授予权限，也不能改变 Host Root、deployment、可执行文件、
+gateway consumer 或 native grants。
+
+发布前，原 child 通过继承控制通道捕获实际 Bindings；parent 完成整批 target、contract、
+唯一 registration、批准集合与 wire 上限校验。Child 发布同一批原 Bindings，不在校验
+和批准之间重新按 alias 绑定。不再使用的 Host 只更新保留集合，无需绑定 endpoint。
+已知校验错误保留旧批准；跨 child 物理 I/O 失败不是事务或回滚回执，原 Child/Control
+owner 继续承担实际状态与清理。
+
+真实 Host registration epoch 未变时复用原 service。Session 与已签发 Scope 固定原批准
+ticket；撤销拒绝后续准入，包括已准备但尚未接受的 mutation，不丢弃已接受工作的原
+执行、资源及清理。同一 controller 生命周期内，已撤销或被越过的 revision 不可重新获批；
+重装原内容必须提交新 revision，仍存活的来源保留原 ticket。未退休 actor 仍使用原 source，
+manager 须保留对应 revision，直到最后一个原 executable consumer 退休。生产插件
+管理与前台 adoption 协调仍需后续接线。

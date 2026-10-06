@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 use tokio::io::{AsyncRead, AsyncWrite, BufReader};
 use uuid::Uuid;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Description {
     pub provider: InstanceId,
@@ -39,7 +39,7 @@ pub struct Description {
 }
 /// This catalogue is received over the embedding's authenticated bootstrap.
 /// It grants no admission and never constructs a Host Binding from metadata.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Catalogue {
     endpoints: BTreeMap<String, Description>,

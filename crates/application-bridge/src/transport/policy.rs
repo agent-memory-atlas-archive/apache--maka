@@ -29,7 +29,13 @@ use maka_plugin_core::{
 use maka_plugins::call::{Identity, Issuer, Scope};
 use maka_runtime_host::application::{Binding, Invocation, Policy, RecoveryInvocation};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 use tokio_util::sync::CancellationToken;
 
 /// Trusted embedding input. Reading the same fields from a request is not approval.
@@ -50,6 +56,159 @@ impl Peer {
             return Err("invalid approved UI consumers".into());
         }
         Ok(Self { source, consumers })
+    }
+}
+/// One trusted controller's exact-source approvals for its original UI deployment.
+/// Updating this set never changes an endpoint or acknowledges request cleanup.
+pub struct Peers {
+    origin: DeploymentRef,
+    approved: Mutex<Approvals>,
+}
+struct Approvals {
+    // Revocation is terminal within this controller incarnation. Only a newly
+    // committed revision may obtain a new ticket; retained tickets keep identity.
+    latest: u64,
+    tickets: BTreeMap<u64, Arc<PeerApproval>>,
+}
+pub(super) struct PeerApproval {
+    peer: Peer,
+    active: AtomicBool,
+}
+impl PeerApproval {
+    pub(super) fn check(&self, source: &DeploymentRef, consumer: &InstanceId) -> Result<()> {
+        if !self.active.load(Ordering::Acquire)
+            || *source != self.peer.source
+            || !self.peer.consumers.contains(consumer)
+        {
+            return Err("caller is not approved for this exact source".into());
+        }
+        Ok(())
+    }
+    pub(super) fn live(&self) -> Result<()> {
+        self.active
+            .load(Ordering::Acquire)
+            .then_some(())
+            .ok_or("peer approval was revoked".into())
+    }
+}
+impl Peers {
+    pub fn new(peer: Peer) -> Arc<Self> {
+        Arc::new(Self {
+            origin: peer.source.clone(),
+            approved: Mutex::new(Approvals {
+                latest: peer.source.revision,
+                tickets: BTreeMap::from([(
+                    peer.source.revision,
+                    Arc::new(PeerApproval {
+                        peer,
+                        active: AtomicBool::new(true),
+                    }),
+                )]),
+            }),
+        })
+    }
+    /// Trusted controller replaces the live approval set. Sessions keep their
+    /// original ticket; removing an approval revokes admission, not execution custody.
+    pub fn replace(&self, peers: Vec<Peer>) -> Result<()> {
+        let mut current = self.approved.lock().unwrap();
+        let next = self.prepare(&current, peers)?;
+        Self::publish(&mut current, next);
+        Ok(())
+    }
+    fn prepare(
+        &self,
+        current: &Approvals,
+        peers: Vec<Peer>,
+    ) -> Result<BTreeMap<u64, Arc<PeerApproval>>> {
+        if peers.len() > 256 {
+            return Err("maximum 256 approved sources".into());
+        }
+        let mut next = BTreeMap::new();
+        for peer in peers {
+            if peer.source.state_domain != self.origin.state_domain
+                || peer.source.deployment != self.origin.deployment
+            {
+                return Err("foreign approval deployment".into());
+            }
+            let revision = peer.source.revision;
+            let ticket = match current.tickets.get(&revision) {
+                Some(ticket) if ticket.peer.consumers == peer.consumers => ticket.clone(),
+                Some(_) => return Err("exact-source consumer approval cannot be rewritten".into()),
+                None if revision <= current.latest => {
+                    return Err(
+                        "revoked or superseded source requires a new committed revision".into(),
+                    );
+                }
+                None => Arc::new(PeerApproval {
+                    peer,
+                    active: AtomicBool::new(true),
+                }),
+            };
+            if next.insert(revision, ticket).is_some() {
+                return Err("duplicate source approval".into());
+            }
+        }
+        Ok(next)
+    }
+    fn publish(current: &mut Approvals, next: BTreeMap<u64, Arc<PeerApproval>>) {
+        for (revision, ticket) in &current.tickets {
+            if !next.contains_key(revision) {
+                ticket.active.store(false, Ordering::Release);
+            }
+        }
+        if let Some(revision) = next.keys().next_back() {
+            current.latest = current.latest.max(*revision);
+        }
+        current.tickets = next;
+    }
+    fn updated(
+        current: &Approvals,
+        peer: Option<Peer>,
+        retain: &BTreeSet<u64>,
+    ) -> Result<Vec<Peer>> {
+        if retain.len() > 256 {
+            return Err("maximum 256 retained source approvals".into());
+        }
+        let mut peers = current
+            .tickets
+            .values()
+            .filter(|ticket| {
+                retain.contains(&ticket.peer.source.revision)
+                    && peer
+                        .as_ref()
+                        .is_none_or(|peer| ticket.peer.source != peer.source)
+            })
+            .map(|ticket| ticket.peer.clone())
+            .collect::<Vec<_>>();
+        peers.extend(peer);
+        Ok(peers)
+    }
+    pub(crate) fn check_update(&self, peer: Option<Peer>, retain: &BTreeSet<u64>) -> Result<()> {
+        let current = self.approved.lock().unwrap();
+        self.prepare(&current, Self::updated(&current, peer, retain)?)?;
+        Ok(())
+    }
+    pub(crate) fn update(&self, peer: Option<Peer>, retain: &BTreeSet<u64>) -> Result<()> {
+        let mut current = self.approved.lock().unwrap();
+        let next = self.prepare(&current, Self::updated(&current, peer, retain)?)?;
+        Self::publish(&mut current, next);
+        Ok(())
+    }
+    pub(super) fn resolve(
+        &self,
+        source: &DeploymentRef,
+        consumer: &InstanceId,
+    ) -> Result<Arc<PeerApproval>> {
+        let ticket = self
+            .approved
+            .lock()
+            .unwrap()
+            .tickets
+            .get(&source.revision)
+            .cloned()
+            .ok_or("source is not approved")?;
+        ticket.check(source, consumer)?;
+        Ok(ticket)
     }
 }
 #[derive(Clone)]
@@ -104,6 +263,7 @@ impl NativeGrant {
     }
 }
 struct Evidence {
+    approval: Arc<PeerApproval>,
     source: Source,
     endpoint: Endpoint,
 }
@@ -130,23 +290,25 @@ impl PeerPolicy {
     }
     pub(super) fn scope(
         &self,
-        peer: &Peer,
+        peer: &Arc<Peers>,
         source: Source,
         endpoint: Endpoint,
         cancel: CancellationToken,
     ) -> Result<Scope> {
-        if source.deployment != peer.source
-            || !peer.consumers.contains(&source.consumer)
-            || source.request.is_nil()
-        {
-            return Err("caller observations differ from the approved peer".into());
+        if source.request.is_nil() {
+            return Err("invalid peer request identity".into());
         }
+        let approval = peer.resolve(&source.deployment, &source.consumer)?;
         self.issuer
             .issue_with(
                 Identity::Remote {
                     request_id: source.request,
                 },
-                Evidence { source, endpoint },
+                Evidence {
+                    approval,
+                    source,
+                    endpoint,
+                },
                 cancel,
             )
             .map_err(|e| e.to_string())
@@ -163,11 +325,15 @@ impl PeerPolicy {
         {
             return Err("Application request identity mismatch".into());
         }
+        evidence.approval.live()?;
         Ok(evidence)
     }
 }
 impl Policy for PeerPolicy {
     fn admit(&self, invocation: Invocation<'_>) -> Result<()> {
+        if let Some(e) = self.issuer.evidence::<Evidence>(invocation.scope) {
+            e.approval.live()?;
+        }
         if let Some(origin) = invocation.native_origin {
             return self
                 .native
@@ -208,6 +374,9 @@ impl Policy for PeerPolicy {
         Ok(())
     }
     fn recover(&self, invocation: RecoveryInvocation<'_>) -> Result<()> {
+        if let Some(e) = self.issuer.evidence::<Evidence>(invocation.scope) {
+            e.approval.live()?;
+        }
         if let Some(origin) = invocation.native_origin {
             return self
                 .native
@@ -232,3 +401,107 @@ impl Policy for PeerPolicy {
 }
 // Policy ownership is shared with the original Application, not a second kernel.
 pub(super) type PolicyOwner = Arc<PeerPolicy>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn source(revision: u64) -> DeploymentRef {
+        DeploymentRef {
+            state_domain: "a".repeat(64),
+            deployment: uuid::Uuid::from_u128(1),
+            revision,
+        }
+    }
+    fn peer(revision: u64, consumer: u128) -> Peer {
+        Peer::new(
+            source(revision),
+            BTreeSet::from([InstanceId(vec![uuid::Uuid::from_u128(consumer)])]),
+        )
+        .unwrap()
+    }
+    #[test]
+    fn retained_ticket_is_original_and_revoked_ticket_never_revives() {
+        let peers = Peers::new(peer(1, 2));
+        let old = peers
+            .resolve(&source(1), &InstanceId(vec![uuid::Uuid::from_u128(2)]))
+            .unwrap();
+        peers
+            .update(Some(peer(2, 3)), &BTreeSet::from([1]))
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            &old,
+            &peers
+                .resolve(&source(1), &old.peer.consumers.first().unwrap().clone())
+                .unwrap()
+        ));
+        assert!(
+            peers
+                .resolve(&source(2), old.peer.consumers.first().unwrap())
+                .is_err()
+        );
+        peers.update(Some(peer(2, 3)), &BTreeSet::new()).unwrap();
+        assert!(old.live().is_err());
+        assert!(peers.replace(vec![peer(1, 2)]).is_err());
+        assert!(old.live().is_err());
+        assert!(
+            peers
+                .resolve(&source(1), old.peer.consumers.first().unwrap())
+                .is_err()
+        );
+        // The same contents can be installed with a fresh immutable revision.
+        peers.replace(vec![peer(3, 2)]).unwrap();
+        assert!(
+            peers
+                .resolve(&source(3), old.peer.consumers.first().unwrap())
+                .is_ok()
+        );
+    }
+    #[test]
+    fn failed_batch_and_preflight_leave_original_ticket_live() {
+        let peers = Peers::new(peer(1, 2));
+        let old = peers
+            .resolve(&source(1), &InstanceId(vec![uuid::Uuid::from_u128(2)]))
+            .unwrap();
+        assert!(
+            peers
+                .check_update(Some(peer(1, 3)), &BTreeSet::new())
+                .is_err()
+        );
+        assert!(peers.update(Some(peer(1, 3)), &BTreeSet::new()).is_err());
+        let mut foreign = peer(3, 4);
+        foreign.source.deployment = uuid::Uuid::from_u128(9);
+        assert!(peers.replace(vec![peer(2, 3), foreign]).is_err());
+        old.live().unwrap();
+        assert!(
+            peers
+                .resolve(&source(2), &InstanceId(vec![uuid::Uuid::from_u128(3)]))
+                .is_err()
+        );
+    }
+    #[test]
+    fn preflight_does_not_advance_latest_and_empty_update_cannot_reset_it() {
+        let peers = Peers::new(peer(1, 2));
+        peers
+            .check_update(Some(peer(3, 2)), &BTreeSet::new())
+            .unwrap();
+        peers.update(Some(peer(2, 2)), &BTreeSet::new()).unwrap();
+        peers.update(None, &BTreeSet::new()).unwrap();
+        assert!(peers.update(Some(peer(2, 2)), &BTreeSet::new()).is_err());
+        assert!(peers.replace(vec![peer(1, 2)]).is_err());
+        peers.update(Some(peer(3, 2)), &BTreeSet::new()).unwrap();
+    }
+    #[test]
+    fn retain_only_revokes_unused_host_without_empty_peer() {
+        let peers = Peers::new(peer(1, 2));
+        let old = peers
+            .resolve(&source(1), &InstanceId(vec![uuid::Uuid::from_u128(2)]))
+            .unwrap();
+        peers.update(None, &BTreeSet::new()).unwrap();
+        assert!(old.live().is_err());
+        assert!(
+            peers
+                .resolve(&source(1), old.peer.consumers.first().unwrap())
+                .is_err()
+        );
+    }
+}

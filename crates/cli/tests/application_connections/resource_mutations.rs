@@ -164,7 +164,7 @@ fn actual_transport_session_close_waits_for_preparing_custody_and_drops_its_own_
     let f = fixture();
     let mut connections = f.connect(f.configuration(true, true));
     let source = Arc::new(Mutex::new(None));
-    let mut registrations = connections.take_registrations();
+    let mut registrations = connections.registrations();
     let business = registrations
         .iter_mut()
         .find(|r| r.target.export == "Counter")
@@ -385,7 +385,7 @@ fn actual_resource_mutation_counts_preparing_running_and_closing_and_rechecks_or
             f.timer.handle().clone(),
             Default::default(),
             native,
-            connections.take_registrations(),
+            connections.registrations(),
         ))
         .unwrap();
     let root = app.mount_launch(json!({})).unwrap();

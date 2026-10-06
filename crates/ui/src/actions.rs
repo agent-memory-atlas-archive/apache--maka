@@ -146,6 +146,7 @@ pub struct RemoteServices {
     pub declarations: maka_plugin_core::plan::RemoteExports,
     pub registrations: Vec<RemoteService>,
 }
+#[derive(Clone)]
 pub struct RemoteService {
     pub target: maka_plugin_core::plan::RemoteCapability,
     pub registration_epoch: Uuid,

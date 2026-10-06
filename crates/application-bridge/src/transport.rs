@@ -30,6 +30,6 @@ mod server;
 mod wire;
 pub use catalogue::{Catalogue, Description, Selection};
 pub use client::Call;
-pub use policy::{Endpoint, NativeGrant, Peer, PeerPolicy};
+pub use policy::{Endpoint, NativeGrant, Peer, PeerPolicy, Peers};
 pub use server::Server;
 pub use wire::{Reply, Source};
