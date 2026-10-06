@@ -61,6 +61,38 @@ struct Surface {
     mount: Mount,
 }
 impl Surface {
+    /// The returned future owns only the storage snapshot read, not this entity.
+    #[cfg(test)]
+    fn load_committed_update(
+        &self,
+        source: maka_plugin_core::deployment::DeploymentRef,
+    ) -> maka_ui::Result<
+        impl std::future::Future<Output = maka_ui::Result<maka_ui::CommittedUpdate>>
+        + Send
+        + 'static
+        + use<>,
+    > {
+        self.application.borrow().load_committed_update(source)
+    }
+    /// Desired-input acknowledgement is distinct from native synchronization.
+    #[cfg(test)]
+    fn adopt_update(
+        &self,
+        update: maka_ui::CommittedUpdate,
+        registrations: Vec<maka_ui::actions::RemoteService>,
+        window: &mut gpui_kit::Window,
+        cx: &mut Context<Self>,
+    ) -> maka_ui::Result<()> {
+        self.application
+            .borrow_mut()
+            .adopt_update(update, registrations)?;
+        if let Err(error) = self.sync_native(window, cx) {
+            eprintln!("deployment native synchronization failed: {error}");
+        }
+        cx.notify();
+        Ok(())
+    }
+
     fn input(
         &self,
         lease: &resources::Lease,
@@ -189,6 +221,19 @@ impl Surface {
         if self.resources.borrow().is_removed() {
             return Ok(());
         }
+        let advancement = if self.application.borrow().deployment_status().closing
+            || self.application.borrow().is_retiring(&self.mount)
+        {
+            Ok(())
+        } else {
+            self.application.borrow_mut().advance_deployment()
+        };
+        self.resources
+            .borrow_mut()
+            .deactivate_unmounted(&self.application.borrow(), window, cx)?;
+        if let Err(error) = advancement {
+            eprintln!("deployment convergence failed: {error}");
+        }
         self.prepare_native(window, cx)?;
         self.application
             .borrow_mut()
@@ -234,6 +279,22 @@ impl Surface {
         self.resources
             .borrow_mut()
             .collect(&mut self.application.borrow_mut())?;
+        let advancement = if self.application.borrow().deployment_status().closing
+            || self.application.borrow().is_retiring(&self.mount)
+        {
+            Ok(())
+        } else {
+            self.application.borrow_mut().advance_deployment()
+        };
+        self.resources
+            .borrow_mut()
+            .deactivate_unmounted(&self.application.borrow(), window, cx)?;
+        if let Err(error) = advancement {
+            eprintln!("deployment convergence failed: {error}");
+        }
+        if self.application.borrow().is_retiring(&self.mount) {
+            return Ok(());
+        }
         actions::pump(
             self.application.clone(),
             self.mount.clone(),

@@ -634,3 +634,132 @@ fn failed_submit_is_not_replayed_and_preserves_unpublished_command_receipt() {
     );
     close(&mut tui);
 }
+
+#[test]
+fn committed_addition_preserves_native_draft_selection_focus_and_undo() {
+    use maka_event_log::{
+        EventLog,
+        root::{RootNamespaces, RootOwner},
+    };
+    use std::{rc::Rc, sync::Arc};
+    let (runtime, mut input, packages) = editor_fixture();
+    let dir = tempfile::tempdir().unwrap();
+    let namespaces = RootNamespaces {
+        ownership: dir.path().join("owners"),
+        control: dir.path().join("control"),
+    };
+    let store = Arc::new(
+        runtime
+            .block_on(EventLog::for_root(Arc::new(
+                RootOwner::create(&dir.path().join("root"), &namespaces).unwrap(),
+            )))
+            .unwrap(),
+    );
+    let deployment = Uuid::new_v4();
+    let original = runtime
+        .block_on(store.commit_application(deployment, 0, input.clone(), vec![], packages.clone()))
+        .unwrap();
+    let mut tui = runtime
+        .block_on(Presenter::start_from_store(
+            store.clone(),
+            original,
+            runtime.handle().clone(),
+            registry(),
+            json!({}),
+            vec![],
+        ))
+        .unwrap();
+    draw(&mut tui, 50, 20);
+    tui.input(Event::Paste("中文👩🏽‍💻e\u{301}".into())).unwrap();
+    draw(&mut tui, 50, 20);
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Left,
+        KeyModifiers::SHIFT,
+    )))
+    .unwrap();
+    let before = observation(&tui);
+    let mount = draft(&tui);
+    let identity = tui.resources.owners[&mount.id()].identity.clone();
+    let focused = tui.focus.as_ref().unwrap().mount.clone();
+    let mut extra = input.instances["editor"].clone();
+    extra.key = Uuid::new_v4();
+    input.instances.insert("unused-editor".into(), extra);
+    let next = runtime
+        .block_on(store.commit_application(deployment, 1, input.clone(), vec![], packages.clone()))
+        .unwrap();
+    let load = tui.load_committed_update(next.clone()).unwrap();
+    // Rendering and input remain available while the immutable snapshot loads.
+    draw(&mut tui, 50, 20);
+    let update = runtime.block_on(load).unwrap();
+    tui.adopt_update(update, vec![]).unwrap();
+    tui.pump().unwrap();
+    draw(&mut tui, 50, 20);
+    assert_eq!(tui.deployment_status().effective, Some(next));
+    assert_eq!(draft(&tui), mount);
+    assert!(Rc::ptr_eq(
+        &identity,
+        &tui.resources.owners[&mount.id()].identity
+    ));
+    assert_eq!(tui.focus.as_ref().unwrap().mount, focused);
+    assert_eq!(observation(&tui), before);
+
+    let original = packages
+        .iter()
+        .find(|p| p.manifest().id == "dynamic.app")
+        .unwrap();
+    let mut declaration = original.manifest().application.clone().unwrap();
+    if let Implementation::JavaScript { realm, .. } = &mut declaration
+        .entries
+        .get_mut(&EntryTarget::Tui)
+        .unwrap()
+        .implementation
+    {
+        *realm = maka_plugin_core::package::Realm::Dedicated;
+    }
+    let failing = support::package(
+        "test.failed-addition",
+        declaration,
+        Some("export function activate(){throw Error('new isolated plugin failed');}".into()),
+    );
+    let mut extra = input.instances["app"].clone();
+    extra.key = Uuid::new_v4();
+    extra.package = failing.application_ref().into();
+    input.instances.insert("failed-addition".into(), extra);
+    let mut bytes = packages;
+    bytes.push(failing);
+    let failed = runtime
+        .block_on(store.commit_application(deployment, 2, input, vec![], bytes))
+        .unwrap();
+    let update = runtime
+        .block_on(tui.load_committed_update(failed.clone()).unwrap())
+        .unwrap();
+    tui.adopt_update(update, vec![]).unwrap();
+    // A failed, independent candidate must not turn into terminal shutdown.
+    tui.pump().unwrap();
+    tui.pump().unwrap();
+    draw(&mut tui, 50, 20);
+    let status = tui.deployment_status();
+    assert_eq!(status.desired, Some(failed));
+    assert!(status.error.unwrap().contains("new isolated plugin failed"));
+    assert!(status.converging);
+    assert!(!tui.application.is_retiring(&tui.root));
+    assert_eq!(observation(&tui), before);
+    assert!(Rc::ptr_eq(
+        &identity,
+        &tui.resources.owners[&mount.id()].identity
+    ));
+    assert_eq!(tui.focus.as_ref().unwrap().mount, focused);
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Char('z'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    assert_eq!(observation(&tui)["snapshot"]["text"]["bytes"], 5);
+    assert!(!tui.requires_surface_replacement());
+    drop(identity);
+    close(&mut tui);
+    drop(tui);
+    runtime
+        .block_on(Arc::try_unwrap(store).ok().unwrap().close())
+        .unwrap();
+}

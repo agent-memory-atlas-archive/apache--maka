@@ -103,3 +103,14 @@ selected by its persistent composition. Both parent and child enable Tokio IO;
 UI cleanup precedes native connection revocation, same-child Closed and actual
 child exit. An embedding supplies a trusted HostExecutable for its own compiled
 Host role rather than passing native factory closures across processes.
+
+
+The foreground native pump advances adopted committed plans outside paint, then
+revokes retired native input before continuing preparation and action processing.
+Unchanged Mounts retain their original editor entities and reading scopes. An
+independent new plugin's initialization failure is a deployment diagnostic; it
+does not close a healthy existing window. Actual native synchronization and
+cleanup failures retain their original error/fence semantics. Production
+management admission and physical root-window replacement are still pending;
+the current adoption entry exercised here is a trusted owner test seam. Native
+entity tests do not substitute for operating-system IME acceptance.

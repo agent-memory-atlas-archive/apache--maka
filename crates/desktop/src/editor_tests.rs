@@ -1841,3 +1841,163 @@ mod subscriptions;
 mod publication;
 
 mod transport;
+
+#[gpui::test]
+fn committed_addition_preserves_actual_editor_entity_focus_selection_and_composition(
+    cx: &mut TestAppContext,
+) {
+    let timer = timer();
+    let (_dir, _namespaces, store) = stored_root(&timer);
+    let deployment = uuid::Uuid::new_v4();
+    let (mut input, packages) = support::editor_fixture();
+    let original = timer
+        .block_on(store.commit_application(deployment, 0, input.clone(), vec![], packages.clone()))
+        .unwrap();
+    let application = timer
+        .block_on(Application::start_from_store(
+            store.clone(),
+            original,
+            PresentationTarget::Desktop,
+            timer.handle().clone(),
+            Default::default(),
+            widgets::registry(),
+            vec![],
+        ))
+        .unwrap();
+    let scene = Scene::from_application(cx, application);
+    scene.draw(cx);
+    let owner = scene.owner();
+    let editor = cx.update(|cx| owner.read(cx).state.clone());
+    let identity = scene.resources.borrow().owners[&scene.editor.id().to_string()]
+        .identity
+        .clone();
+    cx.update_window(scene.window, |_, window, cx| {
+        editor.update(cx, |state, cx| state.focus(window, cx));
+        owner.update(cx, |state, cx| {
+            state.replace_text_in_range(Some(0..5), "草稿🙂", window, cx);
+            state.replace_and_mark_text_in_range(None, "中文", Some(1..2), window, cx);
+        });
+    })
+    .unwrap();
+    scene.draw(cx);
+    let revision = cx.update(|cx| owner.read(cx).revision);
+    let before = cx
+        .update_window(scene.window, |_, window, cx| {
+            owner.update(cx, |state, cx| {
+                (
+                    state.selected_text_range(false, window, cx).unwrap().range,
+                    state.marked_text_range(window, cx).unwrap(),
+                )
+            })
+        })
+        .unwrap();
+    let mut extra = input.instances["editor"].clone();
+    extra.key = uuid::Uuid::new_v4();
+    input.instances.insert("unused-editor".into(), extra);
+    let next = timer
+        .block_on(store.commit_application(deployment, 1, input.clone(), vec![], packages.clone()))
+        .unwrap();
+    let load = cx.update(|cx| {
+        scene
+            .surface
+            .read(cx)
+            .load_committed_update(next.clone())
+            .unwrap()
+    });
+    // An owned snapshot read does not lock the foreground entity or native editor.
+    assert_eq!(scene.owner().entity_id(), owner.entity_id());
+    let update = timer.block_on(load).unwrap();
+    cx.update_window(scene.window, |_, window, cx| {
+        scene.surface.update(cx, |surface, cx| {
+            surface.adopt_update(update, vec![], window, cx).unwrap()
+        });
+    })
+    .unwrap();
+    scene.draw(cx);
+    assert_eq!(scene.app.borrow().deployment_status().effective, Some(next));
+    assert_eq!(scene.owner().entity_id(), owner.entity_id());
+    assert!(Rc::ptr_eq(
+        &identity,
+        &scene.resources.borrow().owners[&scene.editor.id().to_string()].identity
+    ));
+
+    let original = packages
+        .iter()
+        .find(|p| p.manifest().id == "dynamic.app")
+        .unwrap();
+    let mut declaration = original.manifest().application.clone().unwrap();
+    if let maka_plugin_core::package::Implementation::JavaScript { realm, .. } = &mut declaration
+        .entries
+        .get_mut(&maka_plugin_core::package::EntryTarget::Desktop)
+        .unwrap()
+        .implementation
+    {
+        *realm = maka_plugin_core::package::Realm::Dedicated;
+    }
+    let failing = support::package(
+        "test.failed-addition",
+        declaration,
+        Some("export function activate(){throw Error('new isolated plugin failed');}".into()),
+    );
+    let mut extra = input.instances["app"].clone();
+    extra.key = uuid::Uuid::new_v4();
+    extra.package = failing.application_ref().into();
+    input.instances.insert("failed-addition".into(), extra);
+    let mut bytes = packages;
+    bytes.push(failing);
+    let failed = timer
+        .block_on(store.commit_application(deployment, 2, input, vec![], bytes))
+        .unwrap();
+    let load = cx.update(|cx| {
+        scene
+            .surface
+            .read(cx)
+            .load_committed_update(failed.clone())
+            .unwrap()
+    });
+    let update = timer.block_on(load).unwrap();
+    cx.update_window(scene.window, |_, window, cx| {
+        scene.surface.update(cx, |surface, cx| {
+            surface.adopt_update(update, vec![], window, cx).unwrap()
+        });
+    })
+    .unwrap();
+    scene.draw(cx);
+    let status = scene.app.borrow().deployment_status();
+    assert_eq!(status.desired, Some(failed));
+    assert!(status.error.unwrap().contains("new isolated plugin failed"));
+    assert!(status.converging);
+    assert!(!scene.app.borrow().is_retiring(&scene.root));
+    cx.update_window(scene.window, |_, window, cx| {
+        assert_eq!(owner.read(cx).state.entity_id(), editor.entity_id());
+        assert_eq!(owner.read(cx).revision, revision);
+        assert_eq!(editor.read(cx).value().as_ref(), "草稿🙂中文");
+        assert!(
+            editor
+                .read(cx)
+                .presentation()
+                .focus_handle()
+                .is_focused(window)
+        );
+        owner.update(cx, |state, cx| {
+            assert_eq!(
+                state.selected_text_range(false, window, cx).unwrap().range,
+                before.0
+            );
+            assert_eq!(state.marked_text_range(window, cx).unwrap(), before.1);
+            state.unmark_text(window, cx);
+            state.replace_text_in_range(None, "续", window, cx);
+        });
+        assert!(owner.read(cx).revision > revision);
+    })
+    .unwrap();
+    drop(editor);
+    drop(owner);
+    drop(identity);
+    scene.close(cx);
+    scene.app.borrow_mut().shutdown().unwrap();
+    drop(scene);
+    timer
+        .block_on(std::sync::Arc::try_unwrap(store).ok().unwrap().close())
+        .unwrap();
+}

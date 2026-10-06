@@ -175,7 +175,8 @@ impl<V: ?Sized + 'static> Application<V> {
     pub fn load_committed_update(
         &self,
         source: DeploymentRef,
-    ) -> Result<impl std::future::Future<Output = Result<CommittedUpdate>> + Send + 'static> {
+    ) -> Result<impl std::future::Future<Output = Result<CommittedUpdate>> + Send + 'static + use<V>>
+    {
         self.check_update_source(&source)?;
         let store = self.store.as_ref().expect("paired UI store").clone();
         Ok(async move {

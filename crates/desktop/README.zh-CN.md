@@ -79,3 +79,10 @@ executable 的内部 `application-host` role，共享 Host 经私有 IPC 提供�
 availability 在 child 内登记，持久组合决定实例。父子 runtime 均启用 Tokio IO；真实 UI
 清理后继续撤销原连接、等 same-child Closed 与实际 child exit。其他 embedding 显式
 提供自己 compiled role 的可信 HostExecutable，不跨进程传递 native factory 闭包。
+
+
+前台原生 pump 在 paint 外推进已接纳的 committed plan，并在继续资源准备和动作处理前
+撤销退休控件的原生输入。未改变的 Mount 保留原 editor entity 和阅读作用域。
+独立新插件初始化失败是部署诊断，不关闭仍健康的原窗口；实际原生同步与清理错误
+仍保留原错误和 fence 语义。生产管理准入与物理根窗口替换仍待接入，目前 adoption
+入口仅由可信 owner 测试接缝验证。原生 entity 测试不替代 OS 输入法验收。

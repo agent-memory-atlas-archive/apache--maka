@@ -87,8 +87,8 @@ keeps the application fenced; it does not return by discarding the owner.
 This presenter currently supports Stack/Text/Button/imported Component and compiled
 Label recipes through its own pure scene compiler and the shared `NativeView` path.
 Its scene language owns terminal geometry and does not inherit Desktop layout.
-Native editing, scrolling, selection and interactive recovery are
-pending. The `maka tui` business client described above still awaits migration and
+Native editing, scrolling and selection use retained presenter owners.
+Interactive recovery remains pending. The `maka tui` business client described above still awaits migration and
 deletion; it is not a compatibility contract for the new application architecture.
 
 The application launcher also accepts `--connections FILE` for explicit
@@ -131,3 +131,14 @@ Desktop invalidates mechanical admission before the next paint and rejects retai
 child renders; TUI applies geometry admission only after a successful flush.
 Custom native layouts use the same public Slots boundary and cannot paint a hidden
 child. This projection does not retire resources or create a second writable draft.
+
+
+The trusted Presenter owner can load an exact committed update without borrowing
+its foreground state, adopt it with explicit remote registrations, and observe
+`deployment_status`. Its pump advances that plan outside paint and revokes
+retired native inputs even if convergence fails. Unchanged native draft,
+selection, focus and undo owners survive; an independent plugin initialization
+failure is a bounded diagnostic and leaves the healthy terminal running. Root
+retirement requires the original terminal-restoration receipt and is reported
+by `requires_surface_replacement`; the launcher does not yet perform live root
+handoff or expose production update management.

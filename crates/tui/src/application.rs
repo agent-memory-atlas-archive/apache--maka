@@ -195,6 +195,33 @@ impl Presenter {
         .await?;
         Self::mount(application, props)
     }
+    /// Load immutable desired input without borrowing this terminal owner.
+    pub fn load_committed_update(
+        &self,
+        source: maka_plugin_core::deployment::DeploymentRef,
+    ) -> maka_ui::Result<
+        impl Future<Output = maka_ui::Result<maka_ui::CommittedUpdate>> + Send + 'static + use<>,
+    > {
+        self.application.load_committed_update(source)
+    }
+    /// Acknowledge desired input only. Native retirement is synchronous; actual
+    /// terminal restoration and replacement remain the surface owner's work.
+    pub fn adopt_update(
+        &mut self,
+        update: maka_ui::CommittedUpdate,
+        registrations: Vec<maka_ui::actions::RemoteService>,
+    ) -> maka_ui::Result<()> {
+        self.application.adopt_update(update, registrations)?;
+        self.resources.deactivate(&self.application);
+        Ok(())
+    }
+    pub fn deployment_status(&self) -> maka_ui::DeploymentStatus {
+        self.application.deployment_status()
+    }
+    pub fn requires_surface_replacement(&self) -> bool {
+        !self.closing && self.application.is_retiring(&self.root)
+    }
+
     fn mount(mut application: Application<dyn Widget>, props: Value) -> maka_ui::Result<Self> {
         let root = match application.mount_launch(props) {
             Ok(root) => root,
@@ -430,6 +457,15 @@ impl Presenter {
         }
     }
     pub fn pump(&mut self) -> maka_ui::Result<()> {
+        let advancement = if !self.closing && !self.application.is_retiring(&self.root) {
+            self.application.advance_deployment()
+        } else {
+            Ok(())
+        };
+        self.resources.deactivate(&self.application);
+        if let Err(error) = advancement {
+            self.report(&error);
+        }
         self.sync_native()?;
         // Each join observer stays with the actual owner, independently of UI.
         while let Some(Some((id, completion))) = self.jobs.next().now_or_never() {
@@ -481,6 +517,14 @@ impl Presenter {
                     failure.get_or_insert(error);
                 }
             }
+        }
+        if !self.closing && failure.is_none() && !self.application.is_retiring(&self.root) {
+            let advancement = self.application.advance_deployment();
+            self.resources.deactivate(&self.application);
+            if let Err(error) = advancement {
+                self.report(&error);
+            }
+            self.sync_native()?;
         }
         failure.map_or(Ok(()), Err)
     }

@@ -308,3 +308,209 @@ fn actual_reading_tail_checks_wheel_and_completed_selection_before_whole_scene_p
         }
     });
 }
+
+#[gpui::test]
+fn committed_addition_preserves_original_reading_selection_copy_and_viewport(
+    cx: &mut TestAppContext,
+) {
+    let timer = timer();
+    for select in [true, false] {
+        let (_dir, _namespaces, store) = stored_root(&timer);
+        let deployment = uuid::Uuid::new_v4();
+        let (mut input, mut packages, contract) = fixture(!select);
+        if !select {
+            let index = packages
+                .iter()
+                .position(|p| p.manifest().id == "dynamic.app")
+                .unwrap();
+            let original = packages.remove(index);
+            let source = std::str::from_utf8(original.file("index.mjs").unwrap())
+                .unwrap()
+                .replace("scroll:'follow_end'", "scroll:'manual'");
+            let package = support::package(
+                "dynamic.app",
+                original.manifest().application.clone().unwrap(),
+                Some(source),
+            );
+            input.instances.get_mut("app").unwrap().package = package.application_ref().into();
+            packages.push(package);
+        }
+        let mut registry = widgets::registry();
+        registry
+            .register("test.history", move |_, _| {
+                Ok(BTreeMap::from([(
+                    "History".into(),
+                    NativeExport {
+                        contract: contract.clone(),
+                        value: NativeCapability::Service(Arc::new(History)),
+                    },
+                )]))
+            })
+            .unwrap();
+        let original = timer
+            .block_on(store.commit_application(
+                deployment,
+                0,
+                input.clone(),
+                vec![],
+                packages.clone(),
+            ))
+            .unwrap();
+        let app = timer
+            .block_on(Application::start_from_store(
+                store.clone(),
+                original,
+                PresentationTarget::Desktop,
+                timer.handle().clone(),
+                Default::default(),
+                registry,
+                vec![],
+            ))
+            .unwrap();
+        let scene = Scene::from_application(cx, app);
+        scene.draw(cx);
+        cx.update_window(scene.window, |_, window, cx| window.simulate_next_frame(cx))
+            .unwrap();
+        let reading = scene.editor.clone();
+        let document = scene
+            .app
+            .borrow()
+            .child_mount(&reading, "document")
+            .unwrap()
+            .clone();
+        let reading_owner = scene.resources.borrow().owners[&reading.id().to_string()]
+            .identity
+            .clone();
+        let document_owner = scene.resources.borrow().owners[&document.id().to_string()]
+            .identity
+            .clone();
+        let initial_revision = scene.app.borrow().frame(&scene.root).unwrap().state["observation"]
+            ["readingRevision"]
+            .as_u64()
+            .unwrap();
+        cx.update_window(scene.window, |_, window, cx| {
+            if select {
+                window.dispatch_event(
+                    PlatformInput::MouseDown(gpui_kit::MouseDownEvent {
+                        button: MouseButton::Left,
+                        position: point(px(30.), px(20.)),
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }),
+                    cx,
+                );
+                window.dispatch_event(
+                    PlatformInput::MouseUp(gpui_kit::MouseUpEvent {
+                        button: MouseButton::Left,
+                        position: point(px(30.), px(12.)),
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                    }),
+                    cx,
+                );
+                window.focused(cx).unwrap().dispatch_action(
+                    &gpui_kit::base::input::SelectAll,
+                    window,
+                    cx,
+                );
+                assert_eq!(
+                    gpui_kit::base::TextSelection::selected_text(window, cx),
+                    "Original selection 中文\n"
+                );
+            } else {
+                window.dispatch_event(
+                    PlatformInput::ScrollWheel(ScrollWheelEvent {
+                        position: point(px(30.), px(40.)),
+                        delta: ScrollDelta::Pixels(point(px(0.), px(-50.))),
+                        modifiers: Modifiers::default(),
+                        touch_phase: TouchPhase::Moved,
+                    }),
+                    cx,
+                );
+            }
+        })
+        .unwrap();
+        scene.draw(cx);
+        cx.update_window(scene.window, |_, window, cx| window.simulate_next_frame(cx))
+            .unwrap();
+        scene.draw(cx);
+        let before = scene.app.borrow().frame(&scene.root).unwrap().state["observation"].clone();
+        if !select {
+            assert_eq!(before["viewport"]["atEnd"], false);
+            assert!(before["readingRevision"].as_u64().unwrap() > initial_revision);
+        }
+        let mut extra = input.instances["history"].clone();
+        extra.key = uuid::Uuid::new_v4();
+        input.instances.insert("unused-history".into(), extra);
+        let next = timer
+            .block_on(store.commit_application(deployment, 1, input, vec![], packages))
+            .unwrap();
+        let load = cx.update(|cx| {
+            scene
+                .surface
+                .read(cx)
+                .load_committed_update(next.clone())
+                .unwrap()
+        });
+        let update = timer.block_on(load).unwrap();
+        cx.update_window(scene.window, |_, window, cx| {
+            scene.surface.update(cx, |surface, cx| {
+                surface.adopt_update(update, vec![], window, cx).unwrap()
+            });
+        })
+        .unwrap();
+        scene.draw(cx);
+        cx.update_window(scene.window, |_, window, cx| window.simulate_next_frame(cx))
+            .unwrap();
+        scene.draw(cx);
+        assert_eq!(scene.app.borrow().deployment_status().effective, Some(next));
+        assert_eq!(
+            scene
+                .app
+                .borrow()
+                .child_mount(&reading, "document")
+                .unwrap(),
+            &document
+        );
+        assert!(Rc::ptr_eq(
+            &reading_owner,
+            &scene.resources.borrow().owners[&reading.id().to_string()].identity
+        ));
+        assert!(Rc::ptr_eq(
+            &document_owner,
+            &scene.resources.borrow().owners[&document.id().to_string()].identity
+        ));
+        assert_eq!(
+            scene.app.borrow().frame(&scene.root).unwrap().state["observation"],
+            before
+        );
+        if select {
+            cx.update_window(scene.window, |_, window, cx| {
+                assert_eq!(
+                    gpui_kit::base::TextSelection::selected_text(window, cx),
+                    "Original selection 中文\n"
+                );
+                cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("sentinel".into()));
+                window.focused(cx).unwrap().dispatch_action(
+                    &gpui_kit::base::input::Copy,
+                    window,
+                    cx,
+                );
+                assert_eq!(
+                    cx.read_from_clipboard().unwrap().text().unwrap(),
+                    "Original selection 中文"
+                );
+            })
+            .unwrap();
+        }
+        drop(reading_owner);
+        drop(document_owner);
+        scene.close(cx);
+        scene.app.borrow_mut().shutdown().unwrap();
+        drop(scene);
+        timer
+            .block_on(Arc::try_unwrap(store).ok().unwrap().close())
+            .unwrap();
+    }
+}

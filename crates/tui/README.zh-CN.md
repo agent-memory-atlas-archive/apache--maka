@@ -73,7 +73,7 @@ Tab/Shift+Tab 切换焦点，Enter/Space 或左键激活按钮，Ctrl+C 退休�
 实际服务 worker 在终端恢复后仍由 owner 持有直到真实清理完成；失败保留应用 fence，
 不靠丢弃 owner 返回。现经平台自己的纯场景编译器和共用 `NativeView` 路径支持
 Stack/Text/Button/导入组件及编译的 Label recipe；场景语言拥有终端几何，不继承桌面布局。
-原生编辑、滚动、选区和交互恢复尚待实现。上文 `maka tui` 业务客户端仍待迁移删除，
+原生编辑、滚动与选区由保留式 presenter owner 实现；交互恢复尚待实现。上文 `maka tui` 业务客户端仍待迁移删除，
 不是新架构的兼容承诺。
 
 应用启动器另支持 `--connections FILE`，选择[明确授权的本地 Host 连接](../application-bridge/README.zh-CN.md)。
@@ -106,3 +106,11 @@ capture 能力与 command receipt 继续由同一 owner 持有并结算。显示
 恢复当前 props。Desktop 在下次 paint 前失效机械输入准入，并拒绝保留的子组件 render；
 TUI 仅在成功 flush 后切换几何准入。自定义原生布局也通过公共 Slots 边界执行隐藏规则。
 这一投影不退役资源，也不增加第二份可写草稿。
+
+
+可信 Presenter owner 可在不借用前台状态的情况下读取确切 committed update，
+用显式 remote registrations 接纳，并观察 `deployment_status`。pump 在 paint 外
+推进计划，即使收敛失败也先撤销退休控件的原生输入。未变控件保留原草稿、选区、
+焦点和撤销 owner；独立插件初始化失败仅记录有界诊断，健康终端继续运行。
+根退休仍需要原终端恢复回执，由 `requires_surface_replacement` 报告；启动器
+尚未实现运行中根交接或生产更新管理入口。
