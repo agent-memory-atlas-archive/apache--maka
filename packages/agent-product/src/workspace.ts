@@ -24,6 +24,7 @@ import type {
   SettingsModelChoice,
   AgentDeliveryPage,
   AgentHistoryPage,
+  AgentHistoryChunk,
   HistoryPosition,
   AgentObservation,
   AgentPart,
@@ -57,6 +58,13 @@ type Request =
       latest: boolean;
       position: HistoryPosition;
     }
+  | {
+      kind: 'source';
+      epoch: number;
+      navigation: number;
+      through: number;
+      position: HistoryPosition;
+    }
   | { kind: 'read'; draft: EditorObservation; sessionId: string; model: ModelSelection }
   | { kind: 'create' }
   | { kind: 'send'; draft: EditorObservation; sessionId: string; model: ModelSelection }
@@ -87,6 +95,15 @@ export interface State {
   navigationOpen: boolean;
   window: { page: Extract<AgentHistoryPage, { kind: 'ready' }>; latest: boolean } | null;
   navigation: number;
+  source: {
+    through: number;
+    chunk: AgentHistoryChunk;
+    navigation: number;
+    landing: { sequence: number; edge: 'start' | 'end' };
+    loading: boolean;
+    failed: boolean;
+    position: HistoryPosition | null;
+  } | null;
   landing: { sequence: number; edge: 'start' | 'end' };
   parts: DisplayPart[];
   run: AgentRun | null;
@@ -138,6 +155,7 @@ function messages(state: State): Message[] {
     role: chunk.role,
     text: chunk.text,
     continued: chunk.offset !== 0 || utf8Bytes(chunk.text) !== chunk.totalBytes,
+    source: chunk.sequence,
   }));
   if (!state.window?.latest) return canonical;
   const live = new Map<string, Message>();
@@ -145,7 +163,13 @@ function messages(state: State): Message[] {
     if (fragment.sequence <= state.window.page.through) continue;
     let message = live.get(fragment.messageId);
     if (!message) {
-      message = { id: 'live-' + fragment.messageId, role: 'assistant', text: '', continued: true };
+      message = {
+        id: 'live-' + fragment.messageId,
+        role: 'assistant',
+        text: '',
+        continued: true,
+        source: null,
+      };
       live.set(fragment.messageId, message);
     }
     message.text += fragment.text;
@@ -194,6 +218,7 @@ function select(state: State, actions: Action[], sessionId: string) {
   state.selected = sessionId;
   state.epoch++;
   state.window = null;
+  state.source = null;
   state.navigation++;
   state.parts = [];
   state.run = null;
@@ -268,7 +293,12 @@ function receipt(state: State, actions: Action[], request: Mutation, reply: Oper
   }
 }
 function queryFailed(state: State, request: Request) {
-  if (request.kind === 'history' || request.kind === 'observe') {
+  if (request.kind === 'source') {
+    if (request.epoch === state.epoch && request.navigation === state.source?.navigation) {
+      state.source.loading = false;
+      state.source.failed = true;
+    }
+  } else if (request.kind === 'history' || request.kind === 'observe') {
     if (
       request.epoch === state.epoch &&
       (request.kind !== 'history' || request.navigation === state.navigation)
@@ -344,6 +374,47 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         )
       )
         state.loading = false;
+      break;
+    }
+    case 'source': {
+      const source = state.source;
+      if (request.epoch !== state.epoch || !source || request.navigation !== source.navigation)
+        break;
+      const page = value as AgentHistoryPage;
+      if (page.through !== request.through) {
+        queryFailed(state, request);
+        break;
+      }
+      if (page.kind === 'preparing') {
+        intent(state, actions, request, 'agent', 'history', {
+          sessionId: state.selected,
+          through: request.through,
+          position: request.position,
+        });
+        break;
+      }
+      const chunk = page.chunks.find((chunk) => chunk.sequence === source.chunk.sequence);
+      const end = chunk ? chunk.offset + utf8Bytes(chunk.text) : 0;
+      const position = request.position;
+      if (
+        !chunk ||
+        chunk.messageId !== source.chunk.messageId ||
+        chunk.totalBytes !== source.chunk.totalBytes ||
+        !chunk.text ||
+        end > chunk.totalBytes ||
+        (position.kind === 'after' && chunk.offset !== position.cursor.offset) ||
+        (position.kind === 'before' && end !== position.cursor.offset)
+      ) {
+        queryFailed(state, request);
+        break;
+      }
+      source.chunk = chunk;
+      source.loading = false;
+      source.failed = false;
+      source.landing = {
+        sequence: request.navigation,
+        edge: position.kind === 'before' ? 'end' : 'start',
+      };
       break;
     }
     case 'history': {
@@ -546,6 +617,20 @@ function frame(
       theme,
       locale,
       messages: messages(state),
+      source: state.source
+        ? {
+            key: `${state.source.through}-${state.source.chunk.sequence}-${state.source.chunk.offset}`,
+            text: state.source.chunk.text,
+            atStart: state.source.chunk.offset === 0,
+            atEnd:
+              state.source.chunk.offset + utf8Bytes(state.source.chunk.text) ===
+              state.source.chunk.totalBytes,
+            loading: state.source.loading,
+            failed: state.source.failed,
+            navigation: state.source.landing.sequence,
+            landing: state.source.landing.edge,
+          }
+        : null,
       loading: state.loading,
       older: !!state.window?.page.before,
       newer: !!state.window?.page.after,
@@ -554,7 +639,18 @@ function frame(
       landing: state.landing,
       live: !!state.run && !!state.window?.latest,
     },
-    { older: 'older', newer: 'newer', latest: 'latest' },
+    {
+      older: 'older',
+      newer: 'newer',
+      latest: 'latest',
+      source: 'source',
+      sourceFirst: 'source-first',
+      sourcePrevious: 'source-previous',
+      sourceNext: 'source-next',
+      sourceLast: 'source-last',
+      sourceBack: 'source-back',
+      sourceRetry: 'source-retry',
+    },
   );
   const composer = slot(
     'composer',
@@ -758,6 +854,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         settingsOpen: false,
         navigationOpen: true,
         window: null,
+        source: null,
         navigation: 0,
         landing: { sequence: 0, edge: 'end' },
         parts: [],
@@ -898,9 +995,74 @@ export function workspace(target: Target, locale: string): Component<State, Reco
             revision: state.listRevision,
             cursor: state.listCursor,
           });
-        else if (input.child === 'timeline' && !state.loading && state.window) {
+        else if (input.child === 'timeline' && state.source) {
+          const source = state.source;
+          if (input.name === 'sourceBack') state.source = null;
+          else if (!source.loading) {
+            const chunk = source.chunk;
+            const end = chunk.offset + utf8Bytes(chunk.text);
+            const offset =
+              input.name === 'sourceFirst'
+                ? 0
+                : input.name === 'sourcePrevious'
+                  ? chunk.offset
+                  : input.name === 'sourceNext'
+                    ? end
+                    : chunk.totalBytes;
+            const position: HistoryPosition | null =
+              input.name === 'sourceRetry' && source.failed
+                ? source.position
+                : (input.name === 'sourceFirst' || input.name === 'sourcePrevious') &&
+                    chunk.offset > 0
+                  ? {
+                      kind: input.name === 'sourceFirst' ? 'after' : 'before',
+                      cursor: { sequence: chunk.sequence, offset },
+                    }
+                  : (input.name === 'sourceNext' || input.name === 'sourceLast') &&
+                      end < chunk.totalBytes
+                    ? {
+                        kind: input.name === 'sourceNext' ? 'after' : 'before',
+                        cursor: { sequence: chunk.sequence, offset },
+                      }
+                    : null;
+            if (position) {
+              source.navigation = ++state.navigation;
+              source.loading = true;
+              source.failed = false;
+              source.position = position;
+              intent(
+                state,
+                actions,
+                {
+                  kind: 'source',
+                  epoch: state.epoch,
+                  navigation: source.navigation,
+                  through: source.through,
+                  position,
+                },
+                'agent',
+                'history',
+                { sessionId: state.selected, through: source.through, position },
+              );
+            }
+          }
+        } else if (input.child === 'timeline' && !state.loading && state.window) {
           const page = state.window.page;
-          if (input.name === 'older' && page.before)
+          if (input.name === 'source') {
+            const chunk = page.chunks.find(
+              (chunk) => chunk.sequence === (input.event as { sequence: number }).sequence,
+            );
+            if (chunk)
+              state.source = {
+                through: page.through,
+                chunk,
+                navigation: ++state.navigation,
+                landing: { sequence: state.navigation, edge: 'start' },
+                loading: false,
+                failed: false,
+                position: null,
+              };
+          } else if (input.name === 'older' && page.before)
             history(state, actions, { kind: 'before', cursor: page.before }, page.through, false);
           else if (input.name === 'newer' && page.after)
             history(state, actions, { kind: 'after', cursor: page.after }, page.through, false);

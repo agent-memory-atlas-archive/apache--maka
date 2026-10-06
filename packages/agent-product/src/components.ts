@@ -205,6 +205,9 @@ export function components(target: Target): {
                   {},
                 )
               : ui.text('text-' + message.id, message.text, 16),
+          ...(message.source !== null
+            ? [ui.button('source-' + message.source, text.readSource, props.loading)]
+            : []),
         ],
         {
           gap: target === 'desktop' ? 8 : 0,
@@ -235,27 +238,119 @@ export function components(target: Target): {
         scroll: props.live ? 'follow_end' : 'anchor',
       },
     );
-    const controls: Node[] = [
-      ...(props.older ? [ui.button('older', text.older, props.loading)] : []),
-      ...(props.newer ? [ui.button('newer', text.newer, props.loading)] : []),
-      ...(props.latest ? [ui.button('latest', text.latest, props.loading)] : []),
-      ...(target === 'desktop' && state.observation?.viewport && !state.observation.viewport.atEnd
-        ? [ui.button('end', text.toEnd, state.observation.pendingCommand != null)]
-        : []),
-    ];
+    const controls: Node[] = props.source
+      ? [
+          ui.button('source-back', text.sourceBack),
+          ...(!props.source.atStart
+            ? [
+                ui.button('source-first', text.sourceFirst, props.source.loading),
+                ui.button('source-previous', text.sourcePrevious, props.source.loading),
+              ]
+            : []),
+          ...(!props.source.atEnd
+            ? [
+                ui.button('source-next', text.sourceNext, props.source.loading),
+                ui.button('source-last', text.sourceLast, props.source.loading),
+              ]
+            : []),
+          ...(props.source.failed ? [ui.button('source-retry', text.sourceRetry)] : []),
+        ]
+      : [
+          ...(props.older ? [ui.button('older', text.older, props.loading)] : []),
+          ...(props.newer ? [ui.button('newer', text.newer, props.loading)] : []),
+          ...(props.latest ? [ui.button('latest', text.latest, props.loading)] : []),
+          ...(target === 'desktop' &&
+          state.observation?.viewport &&
+          !state.observation.viewport.atEnd
+            ? [ui.button('end', text.toEnd, state.observation.pendingCommand != null)]
+            : []),
+        ];
     return output(
       state,
       ui.box(
         'timeline-frame',
         [
-          target === 'desktop'
-            ? slot(
-                'reading',
-                'reading',
-                { content, command: state.command },
-                { observed: 'reading-observed', input: 'reading-input' },
-              )
-            : content,
+          ui.box(
+            'retained-conversation',
+            [
+              target === 'desktop'
+                ? slot(
+                    'reading',
+                    'reading',
+                    { content, command: state.command },
+                    { observed: 'reading-observed', input: 'reading-input' },
+                  )
+                : content,
+            ],
+            { visible: !props.source, style: { width: fill, height: fill } },
+          ),
+          ...(props.source
+            ? [
+                (() => {
+                  const source = props.source;
+                  const sourceContent = ui.box(
+                    'source-document',
+                    [
+                      ui.text('source-heading', text.sourceTitle, 20, props.theme.text, 600),
+                      ui.text(
+                        'source-location',
+                        source.atStart && source.atEnd
+                          ? text.sourceComplete
+                          : source.atStart
+                            ? text.sourceBeginning
+                            : source.atEnd
+                              ? text.sourceEnding
+                              : text.partial,
+                        13,
+                        props.theme.muted,
+                      ),
+                      target === 'desktop'
+                        ? slot(
+                            'source-text-' + source.key,
+                            'source',
+                            {
+                              source: source.text,
+                              appearance: props.theme.markdown.body,
+                              selection: props.theme.markdown.selection,
+                              disabled: false,
+                            },
+                            {},
+                          )
+                        : ui.text('source-text', source.text, 16),
+                      ...(source.loading
+                        ? [ui.text('source-loading', text.loading, 13, props.theme.muted)]
+                        : []),
+                      ...(source.failed
+                        ? [ui.text('source-failed', text.sourceFailed, 13, props.theme.muted)]
+                        : []),
+                    ],
+                    {
+                      gap: target === 'desktop' ? 16 : 1,
+                      scroll: 'anchor',
+                      style: {
+                        width: fill,
+                        height: fill,
+                        padding: { top: 24, right: 24, bottom: 24, left: 24 },
+                      },
+                    },
+                  );
+                  return target === 'desktop'
+                    ? slot(
+                        'source-reading',
+                        'reading',
+                        {
+                          content: sourceContent,
+                          command: {
+                            sequence: source.navigation,
+                            target: { kind: source.landing },
+                          },
+                        },
+                        { input: 'source-input' },
+                      )
+                    : sourceContent;
+                })(),
+              ]
+            : []),
           ...(controls.length
             ? [
                 ui.box('reading-controls', controls, {
@@ -357,7 +452,10 @@ export function components(target: Target): {
       },
       event(state, input, props) {
         const next = { ...state, revision: state.revision + 1 };
-        if (input.kind === 'component' && input.child === 'reading') {
+        if (
+          input.kind === 'component' &&
+          (input.child === 'reading' || input.child === 'source-reading')
+        ) {
           if (input.name === 'observed') next.observation = input.event as ReadingObservation;
           if (input.name === 'input') input = input.event as ComponentInput;
         }
@@ -371,7 +469,28 @@ export function components(target: Target): {
         )
           next.command = { sequence: (next.command?.sequence ?? 0) + 1, target: { kind: 'end' } };
         const out = timelineFrame(next, props);
-        if (input.kind === 'raw' && !props.loading) {
+        if (input.kind === 'raw' && props.source) {
+          const source = props.source;
+          const event =
+            input.key === 'source-back'
+              ? 'sourceBack'
+              : !source.loading && input.key === 'source-first' && !source.atStart
+                ? 'sourceFirst'
+                : !source.loading && input.key === 'source-previous' && !source.atStart
+                  ? 'sourcePrevious'
+                  : !source.loading && input.key === 'source-next' && !source.atEnd
+                    ? 'sourceNext'
+                    : !source.loading && input.key === 'source-last' && !source.atEnd
+                      ? 'sourceLast'
+                      : !source.loading && source.failed && input.key === 'source-retry'
+                        ? 'sourceRetry'
+                        : null;
+          if (event) out.events.push({ name: event, value: {} });
+        } else if (input.kind === 'raw' && !props.loading) {
+          const message = props.messages.find(
+            (message) => message.source !== null && input.key === 'source-' + message.source,
+          );
+          if (message) out.events.push({ name: 'source', value: { sequence: message.source } });
           if (input.key === 'older' && props.older) out.events.push({ name: 'older', value: {} });
           if (input.key === 'newer' && props.newer) out.events.push({ name: 'newer', value: {} });
           if (input.key === 'latest' && props.latest)

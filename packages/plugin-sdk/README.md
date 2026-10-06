@@ -134,7 +134,10 @@ The ordinary agent product retains one exact canonical history window at a fixed
 fence. Earlier/Next replace that window; Latest explicitly captures a new fence.
 Watch progress never automatically replaces it. Live excerpts retain a bounded
 prefix after the displayed fence; complete canonical messages alone use Markdown.
-TUI ReadingArea/SourceText and complete-message source navigation remain unfinished.
+The product also opens a fixed-fence, single-message source reader with bounded
+beginning/previous/next/end excerpts, exact retry and Back to the retained
+conversation. Desktop selects literal source; TUI currently uses plain labels.
+TUI native ReadingArea/SourceText and actual whole-reader OS acceptance remain unfinished.
 
 Persisted UI components submit mutations, including declared captured resources, through their ordinary
 `actions`. The kernel generates the operation identity and records the original

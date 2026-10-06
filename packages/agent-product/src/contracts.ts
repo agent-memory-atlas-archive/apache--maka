@@ -60,6 +60,7 @@ export interface Message {
   role: Role;
   text: string;
   continued: boolean;
+  source: number | null;
 }
 export interface ModelsProps {
   catalogEpoch: number;
@@ -84,10 +85,21 @@ export interface NavigationProps {
   busy: boolean;
   more: boolean;
 }
+export interface SourcePage {
+  key: string;
+  text: string;
+  atStart: boolean;
+  atEnd: boolean;
+  loading: boolean;
+  failed: boolean;
+  navigation: number;
+  landing: 'start' | 'end';
+}
 export interface TimelineProps {
   theme: Theme;
   locale: string;
   messages: Message[];
+  source: SourcePage | null;
   loading: boolean;
   older: boolean;
   newer: boolean;
@@ -130,6 +142,7 @@ const messageSchema = object({
   role: { enum: ['user', 'assistant', 'tool_call', 'tool_result'] },
   text: { type: 'string', maxLength: 24000 },
   continued: { type: 'boolean' },
+  source: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
 });
 const withDefs = (schema: Schema) => ({
   ...schema,
@@ -165,6 +178,21 @@ export const timelineContract = component(
     theme: { $ref: '#/$defs/Theme' },
     locale,
     messages: { type: 'array', maxItems: 32, items: { $ref: '#/$defs/Message' } },
+    source: {
+      anyOf: [
+        object({
+          key: string,
+          text: { type: 'string', maxLength: 8192 },
+          atStart: { type: 'boolean' },
+          atEnd: { type: 'boolean' },
+          loading: { type: 'boolean' },
+          failed: { type: 'boolean' },
+          navigation: { type: 'integer', minimum: 1 },
+          landing: { enum: ['start', 'end'] },
+        }),
+        { type: 'null' },
+      ],
+    },
     loading: { type: 'boolean' },
     older: { type: 'boolean' },
     newer: { type: 'boolean' },
@@ -175,7 +203,18 @@ export const timelineContract = component(
     }),
     live: { type: 'boolean' },
   }),
-  { older: object({}), newer: object({}), latest: object({}) },
+  {
+    older: object({}),
+    newer: object({}),
+    latest: object({}),
+    source: object({ sequence: { type: 'integer', minimum: 1 } }),
+    sourceFirst: object({}),
+    sourcePrevious: object({}),
+    sourceNext: object({}),
+    sourceLast: object({}),
+    sourceBack: object({}),
+    sourceRetry: object({}),
+  },
 );
 export const composerContract = component(
   'maka.agent.Composer',

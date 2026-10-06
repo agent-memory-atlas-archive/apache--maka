@@ -73,9 +73,10 @@ const returned = (value) => ({
   },
 });
 class Client {
-  constructor() {
+  constructor(definition = product.component) {
+    this.definition = definition;
     this.actions = new Map();
-    this.output = product.component.mount({}, values);
+    this.output = this.definition.mount({}, values);
     this.save();
   }
 
@@ -83,7 +84,7 @@ class Client {
     for (const action of this.output.actions) this.actions.set(action.key, action);
   }
   input(input) {
-    this.output = product.component.event(
+    this.output = this.definition.event(
       structuredClone(this.output.frame.state),
       input,
       {},
@@ -110,7 +111,18 @@ class Client {
       key: name,
       child: ['send', 'draft', 'stop'].includes(name)
         ? 'composer'
-        : ['older', 'newer', 'latest'].includes(name)
+        : [
+              'older',
+              'newer',
+              'latest',
+              'source',
+              'sourceFirst',
+              'sourcePrevious',
+              'sourceNext',
+              'sourceLast',
+              'sourceBack',
+              'sourceRetry',
+            ].includes(name)
           ? 'timeline'
           : 'navigation',
       name: name === 'draft' ? 'changed' : name === 'sessions' ? 'more' : name,
@@ -2271,11 +2283,18 @@ test('prepending history preserves the streamed message presentation identity', 
   const { component: timeline } = await import(
     pathToFileURL(resolve(root, 'dist/packages/timeline/desktop.js'))
   );
-  const message = { id: uuid(400), role: 'assistant', text: '**流式** café 😀', continued: false };
+  const message = {
+    id: uuid(400),
+    role: 'assistant',
+    text: '**流式** café 😀',
+    continued: false,
+    source: null,
+  };
   const props = {
     theme: values.appearance[0],
     locale: 'en',
     messages: [message],
+    source: null,
     loading: false,
     older: false,
     newer: false,
@@ -2284,7 +2303,7 @@ test('prepending history preserves the streamed message presentation identity', 
     live: true,
   };
   const initial = timeline.mount(props, {});
-  const oldRow = initial.frame.view.children[0].props.content.children[0];
+  const oldRow = initial.frame.view.children[0].children[0].props.content.children[0];
   const oldBody = oldRow.children.find((node) => node.kind === 'component');
   assert.ok(oldBody);
   const next = timeline.update(
@@ -2292,19 +2311,19 @@ test('prepending history preserves the streamed message presentation identity', 
     {
       ...props,
       messages: [
-        { id: uuid(399), role: 'user', text: 'earlier', continued: false },
+        { id: uuid(399), role: 'user', text: 'earlier', continued: false, source: null },
         { ...message, text: message.text + ' continued' },
       ],
     },
     {},
   );
-  const row = next.frame.view.children[0].props.content.children[1];
+  const row = next.frame.view.children[0].children[0].props.content.children[1];
   const body = row.children.find((node) => node.kind === 'component');
   assert.equal(row.key, oldRow.key);
   assert.equal(body.key, oldBody.key);
   assert.equal(body.binding, oldBody.binding);
   assert.equal(body.props.source, message.text + ' continued');
-  assert.notEqual(next.frame.view.children[0].props.content.children[0].key, row.key);
+  assert.notEqual(next.frame.view.children[0].children[0].props.content.children[0].key, row.key);
 });
 
 test('desktop scroll-to-end uses native painted facts and preserves its accepted command', async () => {
@@ -2315,6 +2334,7 @@ test('desktop scroll-to-end uses native painted facts and preserves its accepted
     theme: values.appearance[0],
     locale: 'en',
     messages: [],
+    source: null,
     loading: false,
     older: false,
     newer: false,
@@ -2323,7 +2343,7 @@ test('desktop scroll-to-end uses native painted facts and preserves its accepted
     live: true,
   };
   let result = timeline.mount(props, {});
-  const reading = () => result.frame.view.children[0];
+  const reading = () => result.frame.view.children[0].children[0];
   assert.equal(reading().binding, 'reading');
   assert.equal(result.frame.view.children.length, 1);
   const observation = {
@@ -2582,7 +2602,7 @@ test('only a complete canonical UTF-8 message becomes Markdown; tail and live ex
   });
   assert.equal(client.messages[0].continued, true);
   const excerpt = timeline.mount(client.timeline, {});
-  const slots = modelSlots(excerpt.frame.view.children[0].props.content);
+  const slots = modelSlots(excerpt.frame.view.children[0].children[0].props.content);
   assert.equal(slots.find((node) => node.key === 'text-' + uuid(900)).binding, 'source');
   assert.equal(
     slots.some((node) => node.binding === 'markdown'),
@@ -2594,7 +2614,7 @@ test('only a complete canonical UTF-8 message becomes Markdown; tail and live ex
     {},
   );
   assert.equal(
-    modelSlots(complete.frame.view.children[0].props.content).find(
+    modelSlots(complete.frame.view.children[0].children[0].props.content).find(
       (node) => node.key === 'text-' + uuid(900),
     ).binding,
     'markdown',
@@ -2607,7 +2627,7 @@ test('only a complete canonical UTF-8 message becomes Markdown; tail and live ex
     },
     {},
   );
-  assert.equal(landing.frame.view.children[0].props.command.target.kind, 'start');
+  assert.equal(landing.frame.view.children[0].children[0].props.command.target.kind, 'start');
   assert.throws(
     () => timeline.update(landing.frame.state, client.timeline, {}),
     /landing sequence/,
@@ -2724,6 +2744,246 @@ for (const readyFirst of [false, true]) {
       assert.equal(client.liveMessages[0].text, 'new suffix');
       assert.equal(client.messages[0].text, 'canonical prefix');
       assert.equal(client.state.latestKnown, 101);
+    },
+  );
+}
+
+for (const target of ['desktop', 'tui']) {
+  test(
+    target +
+      ' whole-message source navigation reaches every UTF-8 byte at one fence without replacing the conversation',
+    async () => {
+      const module = await import(
+        pathToFileURL(resolve(root, 'dist/packages/workspace/' + target + '.js'))
+      );
+      module.activate({ locale: 'en' });
+      const body = '**原文**\n' + '中文😀\n'.repeat(3000);
+      const bytes = Buffer.from(body);
+      const sequence = 400;
+      const chunkAt = (start, end) =>
+        historyChunk(bytes.subarray(start, end).toString('utf8'), {
+          sequence,
+          offset: start,
+          totalBytes: bytes.length,
+        });
+      let tail = bytes.length - 8192;
+      while ((bytes[tail] & 0xc0) === 0x80) tail++;
+      const client = new Client(module.component).start({
+        through: 1000,
+        chunks: [chunkAt(tail, bytes.length)],
+      });
+      const original = structuredClone(client.state.window);
+      const landing = structuredClone(client.state.landing);
+      const watch = structuredClone(client.output.subscriptions);
+      client.component('source', { sequence });
+      assert.equal(client.timeline.source.atEnd, true);
+      assert.equal(client.timeline.source.atStart, false);
+      assert.equal(client.output.actions.length, 0);
+      client.page([fact(1001, { kind: 'opened' })], 1001);
+      const completePage = () => {
+        const action = client.find('history');
+        assert.equal(action.input.through, 1000);
+        assert.equal(action.input.position.cursor.sequence, sequence);
+        const { kind, cursor } = action.input.position;
+        let start = kind === 'after' ? cursor.offset : Math.max(0, cursor.offset - 8192);
+        let end = kind === 'before' ? cursor.offset : Math.min(bytes.length, start + 8192);
+        while ((bytes[start] & 0xc0) === 0x80) start++;
+        while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--;
+        client.complete(action, {
+          status: 'succeeded',
+          value: {
+            kind: 'ready',
+            through: 1000,
+            chunks: [chunkAt(start, end)],
+            before: null,
+            after: null,
+          },
+        });
+        assert.ok(client.state.source.chunk.text.isWellFormed());
+        assert.ok(Buffer.byteLength(client.state.source.chunk.text) <= 8192);
+      };
+      client.component('sourceFirst');
+      const initial = client.find('history');
+      const expected = structuredClone(initial.input);
+      const oldPage = structuredClone(client.timeline.source);
+      client.complete(initial, {
+        status: 'succeeded',
+        value: { kind: 'preparing', through: 1000 },
+      });
+      assert.deepEqual(client.find('history').input, expected);
+      assert.equal(client.timeline.source.text, oldPage.text);
+      assert.equal(client.timeline.source.navigation, oldPage.navigation);
+      completePage();
+      const forward = [client.timeline.source.text];
+      while (!client.timeline.source.atEnd) {
+        client.component('sourceNext');
+        completePage();
+        forward.push(client.timeline.source.text);
+      }
+      assert.equal(forward.join(''), body);
+      client.component('sourceFirst');
+      completePage();
+      client.component('sourceLast');
+      completePage();
+      const reverse = [client.timeline.source.text];
+      while (!client.timeline.source.atStart) {
+        client.component('sourcePrevious');
+        completePage();
+        reverse.unshift(client.timeline.source.text);
+      }
+      assert.equal(reverse.join(''), body);
+      assert.deepEqual(client.state.window, original);
+      assert.deepEqual(client.state.landing, landing);
+      assert.deepEqual(client.output.subscriptions, watch);
+      assert.equal(client.state.latestKnown, 1001);
+      client.component('sourceBack');
+      assert.equal(client.state.source, null);
+      assert.deepEqual(client.state.window, original);
+      assert.deepEqual(client.state.landing, landing);
+      assert.equal(client.timeline.latest, true);
+    },
+  );
+}
+
+test('source errors retain exact original text and retry; closed or reopened readers reject stale replies', () => {
+  const sequence = 400;
+  const chunk = historyChunk('tail', { sequence, offset: 100, totalBytes: 104 });
+  const client = new Client().start({ through: 1000, chunks: [chunk] });
+  client.component('source', { sequence });
+  client.component('sourceFirst');
+  const action = client.find('history');
+  client.complete(action, { status: 'failed', reason: 'not available' });
+  assert.equal(client.timeline.source.text, 'tail');
+  assert.equal(client.timeline.source.failed, true);
+  client.component('sourceRetry');
+  assert.deepEqual(client.find('history').input, action.input);
+  const stale = client.find('history');
+  client.component('sourceBack');
+  client.component('source', { sequence });
+  const reopened = structuredClone(client.state.source);
+  client.complete(stale, {
+    status: 'succeeded',
+    value: {
+      kind: 'ready',
+      through: 1000,
+      chunks: [historyChunk('wrong replacement', { sequence, totalBytes: 104 })],
+      before: null,
+      after: null,
+    },
+  });
+  assert.deepEqual(client.state.source, reopened);
+  client.component('sourceFirst');
+  client.query('history', {
+    kind: 'ready',
+    through: 1000,
+    chunks: [historyChunk('neighbor', { sequence: 401, totalBytes: 104 })],
+    before: null,
+    after: null,
+  });
+  assert.equal(client.timeline.source.text, 'tail');
+  assert.equal(client.timeline.source.failed, true);
+  client.component('sourceRetry');
+  client.query('history', {
+    kind: 'ready',
+    through: 1000,
+    chunks: [historyChunk('wrong size', { sequence, totalBytes: 105 })],
+    before: null,
+    after: null,
+  });
+  assert.equal(client.timeline.source.text, 'tail');
+  assert.equal(client.timeline.source.failed, true);
+});
+
+test('source entry waits for main navigation and invalidates an older main reply without moving the saved landing', () => {
+  const chunk = historyChunk('tail', { sequence: 400, offset: 100, totalBytes: 104 });
+  const client = new Client().start({ through: 1000, chunks: [chunk] });
+  client.state.window.page.before = { sequence: 400, offset: 100 };
+  client.component('older');
+  const old = client.find('history');
+  client.component('source', { sequence: 400 });
+  assert.equal(client.state.source, null);
+  // A separate observation failure can settle loading while that history intent remains pending.
+  client.state.loading = false;
+  const original = structuredClone(client.state.window);
+  const landing = structuredClone(client.state.landing);
+  client.component('source', { sequence: 400 });
+  client.complete(old, {
+    status: 'succeeded',
+    value: {
+      kind: 'ready',
+      through: 1000,
+      chunks: [historyChunk('older', { sequence: 399 })],
+      before: null,
+      after: null,
+    },
+  });
+  assert.deepEqual(client.state.window, original);
+  assert.deepEqual(client.state.landing, landing);
+  client.component('sourceBack');
+  assert.deepEqual(client.state.window, original);
+  assert.deepEqual(client.state.landing, landing);
+});
+
+for (const target of ['desktop', 'tui']) {
+  test(
+    target +
+      ' source presentation retains the conversation scene and keeps navigation outside the reader',
+    async () => {
+      const { component: timeline } = await import(
+        pathToFileURL(resolve(root, 'dist/packages/timeline/' + target + '.js'))
+      );
+      const client = new Client().start({
+        through: 1000,
+        chunks: [historyChunk('literal **tail**', { sequence: 400, offset: 100, totalBytes: 116 })],
+      });
+      const originalProps = structuredClone(client.timeline);
+      const original = timeline.mount(originalProps, {});
+      client.component('source', { sequence: 400 });
+      const opened = timeline.update(original.frame.state, client.timeline, {});
+      assert.equal(opened.frame.view.children[0].visible, false);
+      assert.deepEqual(
+        opened.frame.view.children[0].children,
+        original.frame.view.children[0].children,
+      );
+      const out = timeline.event(
+        opened.frame.state,
+        { kind: 'raw', key: 'source-first', event: {} },
+        client.timeline,
+        {},
+      );
+      assert.deepEqual(out.events, [{ name: 'sourceFirst', value: {} }]);
+      assert.equal(out.frame.view.children.at(-1).key, 'reading-controls');
+      if (target === 'desktop') {
+        const reader = out.frame.view.children[1];
+        assert.equal(reader.key, 'source-reading');
+        const body = modelSlots(reader.props.content).find((node) => node.binding === 'source');
+        assert.equal(body.props.source, 'literal **tail**');
+        assert.equal(
+          modelSlots(reader.props.content).some((node) => node.binding === 'markdown'),
+          false,
+        );
+        const next = timeline.update(
+          out.frame.state,
+          {
+            ...client.timeline,
+            source: { ...client.timeline.source, key: 'other-byte-range', text: body.props.source },
+          },
+          {},
+        );
+        assert.notEqual(
+          modelSlots(next.frame.view.children[1].props.content).find(
+            (node) => node.binding === 'source',
+          ).key,
+          body.key,
+        );
+      }
+      client.component('sourceBack');
+      const closed = timeline.update(out.frame.state, client.timeline, {});
+      assert.equal(closed.frame.view.children[0].visible, true);
+      assert.deepEqual(
+        closed.frame.view.children[0].children,
+        original.frame.view.children[0].children,
+      );
     },
   );
 }
