@@ -183,6 +183,8 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         "input",
         "navigation",
         "timeline",
+        "reading-area",
+        "source-text",
         "appearance",
         "surface",
         "editor",
@@ -352,8 +354,11 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
             .unwrap()
     };
     let mut presenter = start();
+    await_screen(&mut presenter, "[ Show sidebar ]");
+    click(&mut presenter, "[ Show sidebar ]");
     await_screen(&mut presenter, "[ New conversation ]");
     click(&mut presenter, "New conversation");
+    click(&mut presenter, "[ Hide sidebar ]");
     await_screen(&mut presenter, "A place to think.");
     // Native draft is the first editor hit. Focus it through its actual visible
     // placeholder, never inject component or forged action-result events.
@@ -658,7 +663,16 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     await_screen(&mut presenter, "[ Send ]");
     click(&mut presenter, "[ Send ]");
     await_screen(&mut presenter, "Elegant response");
-    assert!(screen(&draw(&mut presenter)).contains("Hello product"));
+    // Streaming does not replace the original fixed-fence reading window.
+    // Explicit Latest admits the now durable user/assistant rows.
+    await_screen(&mut presenter, "[ Latest messages ]");
+    click(&mut presenter, "[ Latest messages ]");
+    await_screen(&mut presenter, "[ Read message source ]");
+    // The bounded tail may contain only the assistant beside empty canonical
+    // boundaries; Earlier retrieves the user through the real sparse-row cursor.
+    await_screen(&mut presenter, "[ Earlier messages ]");
+    click(&mut presenter, "[ Earlier messages ]");
+    await_screen(&mut presenter, "Hello product");
     runtime.block_on(server).unwrap();
     runtime.block_on(fixture.drained());
     presenter.surface_closed(Ok(())).unwrap();
@@ -672,7 +686,9 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     drop(presenter);
     let mut reopened = start();
     await_screen(&mut reopened, "Elegant response");
+    click(&mut reopened, "[ Show sidebar ]");
     await_screen(&mut reopened, "[ New conversation ]");
+    click(&mut reopened, "[ Hide sidebar ]");
     assert!(screen(&draw(&mut reopened)).contains("What would you like to work on?"));
     click(&mut reopened, "[ Connections ]");
     await_screen(&mut reopened, "[ API key ]");

@@ -176,7 +176,7 @@ impl Handler for Agent {
                                 input.position,
                                 8192,
                                 2,
-                                1024 * 1024,
+                                64 * 1024,
                             )
                             .await
                             .map_err(|_| "agent_history_unavailable")?
@@ -198,6 +198,7 @@ impl Handler for Agent {
                                     offset: chunk.offset,
                                     total_bytes: chunk.total_bytes,
                                     text: chunk.text,
+                                    tool: chunk.tool,
                                 })
                                 .collect(),
                         }

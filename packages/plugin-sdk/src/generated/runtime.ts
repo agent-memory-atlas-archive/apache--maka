@@ -966,6 +966,24 @@ export type HistoryPosition =
  * not conversation text. Tool JSON contributes string values, never its keys.
  */
 export type Role = 'user' | 'assistant' | 'tool_call' | 'tool_result';
+/**
+ * Immutable canonical presentation facts, not execution or recovery authority.
+ */
+export type HistoryTool =
+  | {
+      toolUseId: string;
+      toolName: string;
+      kind: 'call';
+    }
+  | {
+      toolUseId: string;
+      toolName: string | null;
+      /**
+       * The presentation's error flag does not distinguish failed from unknown effects.
+       */
+      isError: boolean;
+      kind: 'result';
+    };
 export type AgentHistoryPage =
   | {
       through: number;
@@ -1956,6 +1974,7 @@ export interface AgentHistoryChunk {
   offset: number;
   totalBytes: number;
   text: string;
+  tool: HistoryTool | null;
 }
 /**
  * A stable raw-event fence prevents a window from chasing appended messages.

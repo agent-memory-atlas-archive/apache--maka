@@ -32,6 +32,7 @@ import {
   type EditorCommand,
   type EditorObservation,
   type Role,
+  type AgentHistoryChunk,
 } from '../../plugin-sdk/src/index.js';
 export type Schema = Record<string, unknown>;
 export const object = (properties: Schema, required = Object.keys(properties)): Schema => ({
@@ -61,6 +62,7 @@ export interface Message {
   contentKey: string;
   role: Role;
   text: string;
+  tool: AgentHistoryChunk['tool'];
   continued: boolean;
   source: number | null;
 }
@@ -125,6 +127,7 @@ const defs = {
   ...native.markdown.interface.props.$defs,
   ...native.secretInput.interface.props.$defs,
   ...session.$defs,
+  ...native.agent.interface.methods.history.output.$defs,
 };
 const themeSchema = object({
   background: { type: 'integer', minimum: 0, maximum: 4294967295 },
@@ -144,6 +147,7 @@ const messageSchema = object({
   contentKey: { type: 'string', minLength: 1, maxLength: 123, pattern: '^[A-Za-z0-9_-]+$' },
   role: { enum: ['user', 'assistant', 'tool_call', 'tool_result'] },
   text: { type: 'string', maxLength: 24000 },
+  tool: { anyOf: [{ $ref: '#/$defs/HistoryTool' }, { type: 'null' }] },
   continued: { type: 'boolean' },
   source: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
 });

@@ -188,6 +188,28 @@ pub enum Role {
     ToolCall,
     ToolResult,
 }
+/// Immutable canonical presentation facts, not execution or recovery authority.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename = "HistoryTool")]
+pub enum Tool {
+    Call {
+        tool_use_id: String,
+        tool_name: String,
+    },
+    Result {
+        tool_use_id: String,
+        #[schemars(with = "maka_runtime::schema::RequiredNullable<String>")]
+        tool_name: Option<String>,
+        /// The presentation's error flag does not distinguish failed from unknown effects.
+        is_error: bool,
+    },
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Chunk {
@@ -199,6 +221,8 @@ pub struct Chunk {
     pub offset: u64,
     pub total_bytes: u64,
     pub text: String,
+    /// Present on every tool fragment, including tools with no projected text.
+    pub tool: Option<Tool>,
     /// User attachment descriptors, present only on the first chunk of a message.
     pub attachments: Vec<AttachmentRef>,
 }

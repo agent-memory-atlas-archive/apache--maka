@@ -33,9 +33,15 @@ Wire 类型和内置契约由 Host/UI 实际执行所用的 Rust 类型生成。
 Ready 始终返回 `before`、`after`，其值为真实 sparse row/UTF-8 字节游标或 `null`；
 双向窗口都按源顺序返回。Session Host 每个窗口最多 128 KiB 文本、八块节选，
 包括全部附件描述的完整 JSON 最多 1 MiB；原生
-Agent 服务合计最多 8192 字节、两块节选，实际完整 JSON 还须通过 64 KiB 检查。
+Agent 服务合计最多 8192 字节、两块节选，完整源窗口预算为 64 KiB，实际输出另做交付检查。
 节选的 offset 与 `totalBytes` 表明是否为完整消息；部分消息不能冒称独立 Markdown。
 位置与水位只定位内容，不授予读取权限。
+
+Agent history 每块节选显式携带 `tool: HistoryTool | null`。工具片段保留 canonical
+调用身份和名称；结果另含 `isError` 及此前调用的名称，没有此前调用时名称为 `null`。
+空文本工具仍占一块节选并推进游标，数字 JSON 和图片结果不会仅因文本投影为空而消失。
+这些是呈现事实：`isError` 不区分执行失败与结果未知；工具身份不授予执行或重试权限。
+完整工具参数和结果 payload 不属于这个文本窗口 API。
 
 `configurations.agent` 是从原生 agent 类型生成的配置 schema，供包声明使用。
 与 `contracts.agent` 配合，不在产品构建器中维护第二份原生配置或服务协议。

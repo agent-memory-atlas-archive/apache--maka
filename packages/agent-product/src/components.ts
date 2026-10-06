@@ -164,12 +164,22 @@ export function components(target: Target): {
     const ui = paint(target, props.theme),
       text = copy(props.locale);
     const tools = props.messages.filter(
-      (message) => message.role === 'tool_call' || message.role === 'tool_result',
+      (message) =>
+        (message.role === 'tool_call' || message.role === 'tool_result') && message.text.length > 0,
     );
     state.expanded = state.expanded.filter((id) => tools.some((message) => message.id === id));
     const messages: Node[] = props.messages.map((message) => {
       const tool = message.role === 'tool_call' || message.role === 'tool_result';
       const expanded = state.expanded.includes(message.id);
+      const caption =
+        message.role === 'user'
+          ? text.you
+          : message.role === 'assistant'
+            ? text.assistant
+            : message.role === 'tool_call'
+              ? text.toolActivity
+              : text.toolOutput;
+      const name = tool && message.tool?.toolName;
       const body =
         target === 'desktop' && message.role === 'assistant' && !message.continued
           ? slot(
@@ -199,13 +209,7 @@ export function components(target: Target): {
         [
           ui.text(
             'role-' + message.id,
-            message.role === 'user'
-              ? text.you
-              : message.role === 'assistant'
-                ? text.assistant
-                : message.role === 'tool_call'
-                  ? text.toolActivity
-                  : text.toolOutput,
+            name ? caption + ' · ' + compactLabel(name, target === 'desktop' ? 64 : 24) : caption,
             13,
             props.theme.muted,
             550,
@@ -213,13 +217,18 @@ export function components(target: Target): {
           ...(message.continued
             ? [ui.text('continued-' + message.id, text.partial, 12, props.theme.muted)]
             : []),
+          ...(tool && message.tool?.kind === 'result' && message.tool.isError
+            ? [ui.text('tool-error-' + message.id, text.toolReportedError, 13, props.theme.muted)]
+            : []),
           ...(tool
             ? [
                 ...(!expanded
                   ? [
                       ui.text(
                         'summary-' + message.id,
-                        compactLabel(message.text, target === 'desktop' ? 96 : 72),
+                        message.text
+                          ? compactLabel(message.text, target === 'desktop' ? 96 : 72)
+                          : text.toolNoText,
                         14,
                         props.theme.muted,
                       ),
@@ -234,10 +243,14 @@ export function components(target: Target): {
                 ui.box(
                   'tool-actions-' + message.id,
                   [
-                    ui.button(
-                      'toggle-' + message.id,
-                      expanded ? text.collapseTool : text.expandTool,
-                    ),
+                    ...(message.text
+                      ? [
+                          ui.button(
+                            'toggle-' + message.id,
+                            expanded ? text.collapseTool : text.expandTool,
+                          ),
+                        ]
+                      : []),
                     ...(message.source !== null
                       ? [ui.button('source-' + message.source, text.readSource, props.loading)]
                       : []),
@@ -517,6 +530,7 @@ export function components(target: Target): {
           const tool = props.messages.find(
             (message) =>
               (message.role === 'tool_call' || message.role === 'tool_result') &&
+              message.text.length > 0 &&
               input.key === 'toggle-' + message.id,
           );
           if (tool)

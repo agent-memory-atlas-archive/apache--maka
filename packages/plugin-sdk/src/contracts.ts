@@ -2562,6 +2562,16 @@ export const contracts = {
                   text: {
                     type: 'string',
                   },
+                  tool: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/HistoryTool',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                 },
                 additionalProperties: false,
                 required: [
@@ -2573,6 +2583,7 @@ export const contracts = {
                   'offset',
                   'totalBytes',
                   'text',
+                  'tool',
                 ],
               },
               Role: {
@@ -2580,6 +2591,51 @@ export const contracts = {
                   'Text visible in the durable conversation; reasoning and runtime metadata are\nnot conversation text. Tool JSON contributes string values, never its keys.',
                 type: 'string',
                 enum: ['user', 'assistant', 'tool_call', 'tool_result'],
+              },
+              HistoryTool: {
+                description:
+                  'Immutable canonical presentation facts, not execution or recovery authority.',
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      toolUseId: {
+                        type: 'string',
+                      },
+                      toolName: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'call',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'toolUseId', 'toolName'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      toolUseId: {
+                        type: 'string',
+                      },
+                      toolName: {
+                        type: ['string', 'null'],
+                      },
+                      isError: {
+                        description:
+                          "The presentation's error flag does not distinguish failed from unknown effects.",
+                        type: 'boolean',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'result',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'toolUseId', 'toolName', 'isError'],
+                  },
+                ],
               },
               Cursor: {
                 description: "Byte offset in one message's UTF-8 text, not a bearer capability.",

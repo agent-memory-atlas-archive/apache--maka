@@ -155,8 +155,9 @@ function messages(state: State): Message[] {
     contentKey: `canonical-${chunk.sequence}-${chunk.offset}`,
     role: chunk.role,
     text: chunk.text,
+    tool: chunk.tool,
     continued: chunk.offset !== 0 || utf8Bytes(chunk.text) !== chunk.totalBytes,
-    source: chunk.sequence,
+    source: chunk.totalBytes > 0 ? chunk.sequence : null,
   }));
   if (!state.window?.latest) return canonical;
   const live = new Map<string, Message>();
@@ -169,6 +170,7 @@ function messages(state: State): Message[] {
         contentKey: 'live-' + fragment.messageId,
         role: 'assistant',
         text: '',
+        tool: null,
         continued: true,
         source: null,
       };

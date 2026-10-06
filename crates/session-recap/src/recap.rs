@@ -508,6 +508,7 @@ mod tests {
                         offset: 0,
                         total_bytes: text.len() as u64,
                         text,
+                        tool: None,
                         attachments: vec![],
                     }],
                     before: None,

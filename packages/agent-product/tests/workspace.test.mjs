@@ -309,6 +309,7 @@ test('bootstrap replays the original active prefix and does not render thinking 
       {
         messageId: 'answer',
         role: 'assistant',
+        tool: null,
         sequence: 3,
         offset: 0,
         totalBytes: 13,
@@ -346,7 +347,15 @@ test('opening a run leaves the reading window intact until explicit Latest and p
     kind: 'ready',
     through: 4,
     chunks: [
-      { messageId: 'user', role: 'user', sequence: 1, offset: 0, totalBytes: 5, text: 'Hello' },
+      {
+        messageId: 'user',
+        role: 'user',
+        tool: null,
+        sequence: 1,
+        offset: 0,
+        totalBytes: 5,
+        text: 'Hello',
+      },
     ],
     before: null,
     after: null,
@@ -392,7 +401,7 @@ test('live display is bounded and marks its truncated Unicode excerpt', () => {
 test('both product compositions use actual immutable package refs and check in the real CLI', {
   skip: !process.env.MAKA_PRODUCT_CLI_CHECK,
 }, async () => {
-  const binary = resolve(root, '../../target/debug/maka');
+  const binary = resolve(root, '../..', process.env.CARGO_TARGET_DIR ?? 'target', 'debug/maka');
   const { packageNames } = await import(
     pathToFileURL(resolve(root, 'dist/authoring/agent-product/src/composition.mjs'))
   );
@@ -465,6 +474,7 @@ test('reconnect replaces one canonical window without cross-page append', () => 
   const chunk = {
     messageId: 'user',
     role: 'user',
+    tool: null,
     sequence: 256,
     offset: 0,
     totalBytes: 5,
@@ -2178,11 +2188,15 @@ test('Timeline byte-segment identities leave room for the native key prefix', as
     pathToFileURL(resolve(root, 'dist/authoring/agent-product/src/contracts.mjs'))
   );
   const schema = timelineContract.interface.props.$defs.Message;
-  const validate = new Ajv({ strict: false }).compile(schema);
+  const validate = new Ajv({ strict: false }).compile({
+    ...schema,
+    $defs: timelineContract.interface.props.$defs,
+  });
   const message = {
     id: uuid(900),
     contentKey: 'a'.repeat(123),
     role: 'tool_result',
+    tool: null,
     text: 'literal output',
     continued: false,
     source: null,
@@ -2193,6 +2207,52 @@ test('Timeline byte-segment identities leave room for the native key prefix', as
 });
 
 for (const target of ['desktop', 'tui']) {
+  test(
+    target + ' canonical tools display names and reported errors even without text',
+    async () => {
+      const { component: timeline } = await import(
+        pathToFileURL(resolve(root, 'dist/packages/timeline/' + target + '.js'))
+      );
+      const client = new Client().start({
+        through: 100,
+        chunks: [
+          historyChunk('', {
+            messageId: uuid(901),
+            sequence: 39,
+            role: 'tool_call',
+            tool: { kind: 'call', toolUseId: uuid(901), toolName: 'Count' },
+          }),
+          historyChunk('', {
+            sequence: 40,
+            role: 'tool_result',
+            tool: { kind: 'result', toolUseId: uuid(901), toolName: 'Count', isError: true },
+          }),
+        ],
+      });
+      const out = timeline.mount({ ...client.timeline, locale: 'zh-CN' }, {});
+      const rows = out.frame.view.children[0].children[0].props.content.children;
+      assert.equal(rows.length, 2);
+      assert.equal(rows[0].children[0].text, '工具活动 · Count');
+      assert.equal(rows[1].children[0].text, '工具输出 · Count');
+      assert.equal(
+        rows[1].children.find((node) => node.key === 'tool-error-' + uuid(900)).text,
+        '工具报告错误',
+      );
+      for (const row of rows) {
+        assert.equal(
+          row.children.find((node) => node.key.startsWith('summary-')).text,
+          '无文本摘要',
+        );
+        assert.equal(
+          row.children.find((node) => node.key.startsWith('tool-actions-')).children.length,
+          0,
+        );
+      }
+      assert.equal(out.actions.length, 0);
+      assert.equal(out.events.length, 0);
+      assert.ok(client.messages.every((message) => message.source === null));
+    },
+  );
   test(target + ' suggests the exact saved default even beyond the first model page', async () => {
     const module = await import(
       pathToFileURL(resolve(root, 'dist/packages/models/' + target + '.js'))
@@ -2307,6 +2367,7 @@ test('prepending history preserves the streamed message presentation identity', 
     id: uuid(400),
     contentKey: 'live-' + uuid(400),
     role: 'assistant',
+    tool: null,
     text: '**流式** café 😀',
     continued: false,
     source: null,
@@ -2336,6 +2397,7 @@ test('prepending history preserves the streamed message presentation identity', 
           id: uuid(399),
           contentKey: 'canonical-399-0',
           role: 'user',
+          tool: null,
           text: 'earlier',
           continued: false,
           source: null,
@@ -2457,6 +2519,7 @@ const historyChunk = (text, overrides = {}) => ({
   turnId: uuid(901),
   timestamp: 1,
   role: 'assistant',
+  tool: null,
   sequence: 25600,
   offset: 0,
   totalBytes: Buffer.byteLength(text),
@@ -3108,6 +3171,7 @@ for (const target of ['desktop', 'tui']) {
         chunks: [
           historyChunk('line 1\n  **literal** 中😀\n' + 'long output '.repeat(100), {
             role: 'tool_result',
+            tool: null,
             sequence: 40,
           }),
         ],
@@ -3162,6 +3226,7 @@ for (const target of ['desktop', 'tui']) {
         chunks: [
           historyChunk('same bytes', {
             role: 'tool_call',
+            tool: null,
             sequence: 40,
             offset: 0,
             totalBytes: 200,
@@ -3173,6 +3238,7 @@ for (const target of ['desktop', 'tui']) {
         chunks: [
           historyChunk('same bytes', {
             role: 'tool_call',
+            tool: null,
             sequence: 40,
             offset: 80,
             totalBytes: 200,

@@ -275,6 +275,7 @@ mod tests {
                     offset: 0,
                     total_bytes: text.len() as u64,
                     text: text.into(),
+                    tool: None,
                     attachments: vec![],
                 },
                 &[term.into()],

@@ -36,10 +36,19 @@ fence. Ready windows always supply `before` and `after` as a real sparse-row/UTF
 byte cursor or `null`; chunks retain ascending source order in either direction.
 The Session Host budgets each window to 128 KiB of text and eight fragments,
 with a 1 MiB complete JSON limit including all attachment descriptors. The
-native Agent service uses two fragments and 8192 bytes in total, and checks its
-complete JSON response against 64 KiB. A fragment's offset and `totalBytes` identify
+native Agent service uses two fragments and 8192 bytes in total, with a 64 KiB
+complete source-window budget and a separate actual response check. A fragment's offset and `totalBytes` identify
 whether it is a complete message; a partial message is source, not standalone
 Markdown. Position and fence locate content and never grant access.
+
+Every Agent history chunk explicitly carries `tool: HistoryTool | null`. Tool
+fragments retain canonical call identity and name; results also carry `isError`
+and the preceding call's name, or `null` when no prior call is known. Empty-text
+tools still occupy one fragment and advance the cursor. Numeric JSON and image
+results therefore do not disappear merely because their text projection is empty.
+These are presentation facts: `isError` does not distinguish a failed effect from
+an unknown outcome, and tool identities grant no permission to execute or retry.
+Tool arguments and full result payloads are not part of this text-window API.
 
 `configurations.agent` is the generated native agent configuration schema for
 package declarations. Use it alongside `contracts.agent`; product builders do

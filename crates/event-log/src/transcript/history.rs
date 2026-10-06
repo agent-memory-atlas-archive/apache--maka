@@ -19,7 +19,7 @@
 
 use super::read::{prepared, sql_number};
 use crate::{EventLog, StoreError, sequence_number};
-use maka_plugins::session::history::{Chunk, Cursor, Page, Position, Role};
+use maka_plugins::session::history::{Chunk, Cursor, Page, Position, Role, Tool};
 use sqlx::{Connection, Row, SqliteConnection};
 
 impl EventLog {
@@ -143,7 +143,8 @@ impl EventLog {
                 let ending = (Cursor { sequence, offset: end }, row.total);
                 let candidate_left = if reverse { Some(beginning) } else { left.or(Some(beginning)) };
                 let candidate_right = if reverse { right.or(Some(ending)) } else { Some(ending) };
-                if row.total != 0 {
+                let emit = row.total != 0 || matches!(row.role.as_str(), "tool_call" | "tool_result");
+                if emit {
                 let role = match row.role.as_str() {
                     "user" => Role::User, "assistant" => Role::Assistant,
                     "tool_call" => Role::ToolCall, "tool_result" => Role::ToolResult,
@@ -155,9 +156,16 @@ impl EventLog {
                     ).bind(&session).bind(sql_number(sequence)?).fetch_one(&mut *tx).await?;
                     encoded.map(|value| serde_json::from_str(&value)).transpose()?.unwrap_or_default()
                 } else { Vec::new() };
+                let tool = if matches!(role, Role::ToolCall | Role::ToolResult) {
+                    let Some(tool) = tool_metadata(&mut tx, &session, sequence, through_sql, max_json_bytes).await? else {
+                        if left.is_none() { return Err(invalid("history fragment exceeds JSON window budget")); }
+                        break;
+                    };
+                    Some(tool)
+                } else { None };
                 chunks.push(Chunk {
                     message_id: row.message, turn_id: row.turn, timestamp: row.timestamp, role,
-                    sequence, offset: start, total_bytes: row.total, text: text.to_owned(), attachments,
+                    sequence, offset: start, total_bytes: row.total, text: text.to_owned(), attachments, tool,
                 });
                 }
                 // Bound the complete canonical delivery, including attachment
@@ -169,7 +177,7 @@ impl EventLog {
                 let Page::Ready { chunks: packed, .. } = candidate else { unreachable!() };
                 chunks = packed;
                 if !fits {
-                    if row.total != 0 { chunks.pop(); }
+                    if emit { chunks.pop(); }
                     if left.is_none() { return Err(invalid("history fragment exceeds JSON window budget")); }
                     break;
                 }
@@ -200,6 +208,47 @@ impl EventLog {
             Ok(Page::Ready { through, chunks, before, after })
         })).await
     }
+}
+
+async fn tool_metadata(
+    tx: &mut SqliteConnection,
+    session: &str,
+    sequence: u64,
+    through: i64,
+    budget: usize,
+) -> Result<Option<Tool>, StoreError> {
+    // Select scalar canonical facts only. A result's call must belong to this
+    // Session and be visible at this exact fence, including copied histories.
+    // Reject oversized metadata before transporting/allocating its JSON string.
+    let (bytes, encoded): (i64, Option<String>) = sqlx::query_as(
+        "WITH metadata AS (SELECT CASE json_extract(source.payload, '$.type')
+            WHEN 'tool_call' THEN json_object('kind', 'call',
+                'toolUseId', source.message_id, 'toolName', json_extract(source.payload, '$.toolName'))
+            WHEN 'tool_result' THEN json_object('kind', 'result',
+                'toolUseId', json_extract(source.payload, '$.toolUseId'),
+                'toolName', (SELECT json_extract(call.payload, '$.toolName') FROM transcript_rows call
+                    WHERE call.session_id = source.session_id AND call.sequence <= ?3 AND call.sequence < source.sequence
+                      AND call.message_id = json_extract(source.payload, '$.toolUseId')
+                      AND json_extract(call.payload, '$.type') = 'tool_call' LIMIT 1),
+                'isError', json(CASE json_extract(source.payload, '$.isError') WHEN 1 THEN 'true' ELSE 'false' END))
+            END AS value FROM transcript_rows source WHERE source.session_id = ?1 AND source.sequence = ?2)
+         SELECT length(CAST(value AS BLOB)), CASE WHEN length(CAST(value AS BLOB)) <= ?4 THEN value END FROM metadata",
+    )
+    .bind(session)
+    .bind(sql_number(sequence)?)
+    .bind(through)
+    .bind(budget as i64)
+    .fetch_one(tx)
+    .await?;
+    if bytes < 0 {
+        return Err(invalid("invalid history tool metadata size"));
+    }
+    if bytes as usize > budget {
+        return Ok(None);
+    }
+    Ok(Some(serde_json::from_str(&encoded.ok_or_else(|| {
+        invalid("missing history tool metadata")
+    })?)?))
 }
 
 async fn boundaries(

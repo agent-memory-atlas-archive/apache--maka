@@ -131,6 +131,27 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
             panic!("prepared")
         };
         for chunk in chunks {
+            match &chunk.tool {
+                Some(maka_plugins::session::history::Tool::Call {
+                    tool_use_id,
+                    tool_name,
+                }) => {
+                    assert_eq!(tool_use_id, &chunk.message_id);
+                    assert_eq!(tool_name, "Read");
+                    assert_eq!(chunk.role, Role::ToolCall);
+                }
+                Some(maka_plugins::session::history::Tool::Result {
+                    tool_use_id,
+                    tool_name,
+                    is_error,
+                }) => {
+                    assert_eq!(tool_name.as_deref(), Some("Read"));
+                    assert!(!is_error);
+                    assert!(messages.contains_key(tool_use_id));
+                    assert_eq!(chunk.role, Role::ToolResult);
+                }
+                None => assert!(matches!(chunk.role, Role::User | Role::Assistant)),
+            }
             let entry = messages
                 .entry(chunk.message_id)
                 .or_insert((chunk.role, String::new()));
@@ -258,6 +279,303 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
         panic!("prepared")
     };
     assert!(!chunks.is_empty(), "restart retains readable archive");
+    log.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen_windows() {
+    use maka_plugins::session::history::Tool;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("tools.sqlite");
+    let log = EventLog::open(&path).await.unwrap();
+    for session in ["numeric", "unknown"] {
+        log.create_session(session, session, &serde_json::json!({}), 1)
+            .await
+            .unwrap();
+        log.append(&event(session, opening())).await.unwrap();
+        log.append(&event(session, request(session))).await.unwrap();
+        let call = maka_runtime::model::ModelToolCall {
+            id: "count".into(),
+            name: "Count".into(),
+            input: serde_json::json!({"count": 42}),
+            provider_options: None,
+            provider_executed: false,
+        };
+        let step = format!("step-{session}");
+        log.append(&event(
+            session,
+            observe(session, ModelEvent::ToolCall(call.clone())),
+        ))
+        .await
+        .unwrap();
+        log.append(&event(
+            session,
+            Fact::ModelCompleted {
+                step_id: step.clone(),
+                output: ModelStep {
+                    parts: vec![ModelPart::ToolCall { call }],
+                    finish_reason: maka_runtime::model::ModelFinishReason::ToolCalls,
+                    usage: ModelUsage::default(),
+                    provider_options: None,
+                    response_id: None,
+                    model: None,
+                    timestamp: None,
+                },
+            },
+        ))
+        .await
+        .unwrap();
+        let operation = format!("{step}:count");
+        let before = log
+            .append(&event(
+                session,
+                Fact::ToolDispatched {
+                    title: None,
+                    operation_id: operation.clone(),
+                    call: maka_runtime::tool_call::ToolCallIdentity::provider(step, "count".into()),
+                    name: "Count".into(),
+                    input: serde_json::json!({"count": 42}),
+                },
+            ))
+            .await
+            .unwrap();
+        if session == "numeric" {
+            let template = event(
+                session,
+                Fact::InvocationEnded {
+                    outcome: InvocationOutcome::Completed,
+                },
+            );
+            let (result, _) = maka_runtime::event::EventWrite::tool_success(
+                "numeric-result".into(),
+                template.event().recorded_at,
+                template.event().invocation.clone(),
+                operation,
+                serde_json::json!({"count": 42, "ready": true}).into(),
+            )
+            .unwrap();
+            log.append(&result).await.unwrap();
+        } else {
+            log.append(&event(
+                session,
+                Fact::ToolSettled {
+                    operation_id: operation,
+                    outcome: maka_runtime::event::ToolOutcome::Unknown {
+                        message: "Result unknown; do not repeat".into(),
+                    },
+                },
+            ))
+            .await
+            .unwrap();
+        }
+        let through = end(&log, session, InvocationOutcome::Completed).await;
+        assert!(log.prepare_transcript(session, through, 32).await.unwrap());
+        let Page::Ready { chunks, .. } = log
+            .history_text(session, before, Position::Start, 8192, 8, 64 * 1024)
+            .await
+            .unwrap()
+        else {
+            panic!("ready")
+        };
+        assert!(chunks.iter().any(|chunk| chunk.role == Role::ToolCall
+            && chunk.text.is_empty()
+            && matches!(&chunk.tool, Some(Tool::Call { tool_name, .. }) if tool_name == "Count")));
+        assert!(
+            chunks.iter().all(|chunk| chunk.role != Role::ToolResult),
+            "old fence excludes settled result"
+        );
+        for reverse in [false, true] {
+            let mut position = if reverse {
+                Position::Tail
+            } else {
+                Position::Start
+            };
+            let mut tools = BTreeMap::new();
+            for _ in 0..16 {
+                let Page::Ready {
+                    chunks,
+                    before,
+                    after,
+                    ..
+                } = log
+                    .history_text(session, through, position, 8192, 1, 64 * 1024)
+                    .await
+                    .unwrap()
+                else {
+                    panic!("ready")
+                };
+                assert!(chunks.len() <= 1);
+                for chunk in chunks {
+                    if let Some(tool) = chunk.tool {
+                        tools.insert(chunk.role as u8, (chunk.text, tool));
+                    }
+                }
+                let next = if reverse { before } else { after };
+                let Some(cursor) = next else { break };
+                position = if reverse {
+                    Position::Before { cursor }
+                } else {
+                    Position::After { cursor }
+                };
+            }
+            assert_eq!(
+                tools.len(),
+                2,
+                "empty tool rows must not disappear or stall paging"
+            );
+            let (
+                text,
+                Tool::Result {
+                    tool_use_id,
+                    tool_name,
+                    is_error,
+                },
+            ) = &tools[&(Role::ToolResult as u8)]
+            else {
+                panic!("result")
+            };
+            assert_eq!(tool_name.as_deref(), Some("Count"));
+            assert_eq!(*is_error, session == "unknown");
+            assert_eq!(text.is_empty(), session == "numeric");
+            let (
+                _,
+                Tool::Call {
+                    tool_use_id: call_id,
+                    ..
+                },
+            ) = &tools[&(Role::ToolCall as u8)]
+            else {
+                panic!("call")
+            };
+            assert_eq!(tool_use_id, call_id);
+        }
+    }
+    log.close().await.unwrap();
+    let log = EventLog::open(&path).await.unwrap();
+    let through = *log.subscribe_commits().borrow();
+    assert!(
+        log.prepare_transcript("numeric", through, 32)
+            .await
+            .unwrap()
+    );
+    let Page::Ready { chunks, .. } = log
+        .history_text("numeric", through, Position::Tail, 8192, 8, 64 * 1024)
+        .await
+        .unwrap()
+    else {
+        panic!("ready")
+    };
+    assert!(chunks.iter().any(|chunk| matches!(&chunk.tool, Some(Tool::Result { tool_name, is_error: false, .. }) if tool_name.as_deref() == Some("Count"))));
+    log.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn oversized_tool_metadata_returns_accepted_window_without_consuming_its_boundary() {
+    use maka_plugins::{composition::Scope, storage::Namespace};
+    use maka_runtime::import::{Content, Record, Source};
+    let temp = tempfile::tempdir().unwrap();
+    let log = EventLog::open(&temp.path().join("tool-budget.sqlite"))
+        .await
+        .unwrap();
+    let owner = maka_event_log::sessions::PluginSession {
+        session_id: "budget".into(),
+        creator: Namespace::new("history.fixture", Scope::Profile).unwrap(),
+        fingerprint: "tool-budget".into(),
+        managed: false,
+        authority_session_id: None,
+    };
+    log.begin_session_import(
+        &owner,
+        &Source {
+            adapter: "fixture".into(),
+            session_id: "foreign".into(),
+        },
+        &serde_json::json!({}),
+        1,
+    )
+    .await
+    .unwrap();
+    let records = [
+        Content::User {
+            text: "accepted prefix".into(),
+        },
+        Content::ToolCall {
+            call_id: "call".into(),
+            name: "name".repeat(1024),
+            input: None,
+        },
+        Content::Assistant {
+            text: "accepted suffix".into(),
+            model: None,
+            thinking: None,
+        },
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, content)| Record {
+        source_message_id: format!("m{index}"),
+        source_turn_id: "turn".into(),
+        timestamp: Some(1),
+        content,
+    })
+    .collect::<Vec<_>>();
+    log.append_session_import("budget", 0, records)
+        .await
+        .unwrap();
+    log.publish_session_import("budget", 3).await.unwrap();
+    let through = *log.subscribe_commits().borrow();
+    assert!(log.prepare_transcript("budget", through, 32).await.unwrap());
+    for reverse in [false, true] {
+        let position = if reverse {
+            Position::Tail
+        } else {
+            Position::Start
+        };
+        let Page::Ready {
+            chunks,
+            before,
+            after,
+            ..
+        } = log
+            .history_text("budget", through, position, 8192, 8, 1024)
+            .await
+            .unwrap()
+        else {
+            panic!("ready")
+        };
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(
+            chunks[0].text,
+            if reverse {
+                "accepted suffix"
+            } else {
+                "accepted prefix"
+            }
+        );
+        let cursor = if reverse { before } else { after }.unwrap();
+        let position = if reverse {
+            Position::Before { cursor }
+        } else {
+            Position::After { cursor }
+        };
+        assert!(
+            log.history_text("budget", through, position, 8192, 8, 1024)
+                .await
+                .is_err(),
+            "indivisible first tool metadata must fail without being consumed"
+        );
+        let Page::Ready { chunks, .. } = log
+            .history_text("budget", through, position, 8192, 1, 64 * 1024)
+            .await
+            .unwrap()
+        else {
+            panic!("ready")
+        };
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].role, Role::ToolCall);
+        assert!(chunks[0].tool.is_some());
+        assert!(chunks[0].text.is_empty());
+    }
     log.close().await.unwrap();
 }
 

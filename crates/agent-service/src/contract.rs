@@ -231,6 +231,10 @@ pub struct HistoryChunk {
     pub offset: u64,
     pub total_bytes: u64,
     pub text: String,
+    #[schemars(
+        with = "maka_runtime::schema::RequiredNullable<maka_plugins::session::history::Tool>"
+    )]
+    pub tool: Option<maka_plugins::session::history::Tool>,
 }
 #[derive(Clone, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -331,6 +335,32 @@ mod tests {
             }),
         })
         .unwrap();
+        assert!(validator.is_valid(&page));
+        page["chunks"] = json!([{
+            "messageId":"result", "turnId":"turn", "timestamp":1, "role":"tool_result",
+            "sequence":1, "offset":0, "totalBytes":0, "text":"",
+            "tool":{"kind":"result", "toolUseId":"call", "toolName":null, "isError":true}
+        }]);
+        assert!(validator.is_valid(&page));
+        let tool = page["chunks"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("tool")
+            .unwrap();
+        assert!(
+            !validator.is_valid(&page),
+            "tool facts are explicit, including null"
+        );
+        page["chunks"][0]["tool"] = tool;
+        page["chunks"][0]["tool"]
+            .as_object_mut()
+            .unwrap()
+            .remove("toolName");
+        assert!(
+            !validator.is_valid(&page),
+            "missing tool name is not an observed absence"
+        );
+        page["chunks"][0]["tool"]["toolName"] = json!(null);
         assert!(validator.is_valid(&page));
         for field in ["before", "after"] {
             let value = page.as_object_mut().unwrap().remove(field).unwrap();
