@@ -373,6 +373,11 @@ export type FontFamily = string;
 export type Color = number;
 export type ScrollbarMode = 'scrolling' | 'hover' | 'always';
 export type ScrollbarEntrance = 'fade' | 'slide_and_fade';
+/**
+ * Product-selected native submit gesture. PrimaryEnter uses the platform
+ * accelerator on Desktop and Control+Enter in a terminal.
+ */
+export type SubmitKey = 'enter' | 'primary_enter' | 'control_enter';
 export type EditorEdit =
   | {
       text: string;
@@ -1465,6 +1470,10 @@ export interface TextareaProps {
   readOnly: boolean;
   disabled: boolean;
   softWrap: boolean;
+  /**
+   * None preserves native multiline editing without a submit shortcut.
+   */
+  submit?: SubmitKey | null;
   tabIndex: number;
   initialText?: string;
   placeholder?: string;

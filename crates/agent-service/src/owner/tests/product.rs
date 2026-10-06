@@ -698,7 +698,13 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     click(&mut presenter, "[ Close ]");
     assert!(screen(&draw(&mut presenter)).contains("Hello product"));
     await_screen(&mut presenter, "[ Send ]");
-    click(&mut presenter, "[ Send ]");
+    click(&mut presenter, "Hello product");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
     // The actual canonical user row must appear through guarded native follow
     // while the provider is still waiting; neither Latest nor a replayed action
     // is injected to expose it.

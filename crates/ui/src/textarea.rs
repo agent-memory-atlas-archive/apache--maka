@@ -43,6 +43,9 @@ pub struct TextareaProps {
     pub read_only: bool,
     pub disabled: bool,
     pub soft_wrap: bool,
+    /// None preserves native multiline editing without a submit shortcut.
+    #[serde(default)]
+    pub submit: Option<SubmitKey>,
     #[schemars(range(min = -1, max = 32767))]
     pub tab_index: i16,
     #[serde(default)]
@@ -105,6 +108,31 @@ pub struct TextareaMenuLabels {
     #[schemars(length(min = 1, max = 512))]
     pub select_all: String,
 }
+/// Product-selected native submit gesture. PrimaryEnter uses the platform
+/// accelerator on Desktop and Control+Enter in a terminal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SubmitKey {
+    Enter,
+    PrimaryEnter,
+    ControlEnter,
+}
+
+/// Submit carries the same original editor observation as a change; it grants
+/// no text read and adds no second buffer or command owner.
+pub fn reduce(
+    call: crate::ComponentCall<'_>,
+) -> crate::Result<crate::ComponentOutput<TextareaProps>> {
+    let submitted = matches!(&call, crate::ComponentCall::Event { key, .. } if *key == "submit");
+    let mut output = crate::editor::reduce::<TextareaProps>(call)?;
+    if submitted {
+        for event in &mut output.events {
+            event.name = "submitted".into();
+        }
+    }
+    Ok(output)
+}
+
 pub fn textarea_contract() -> Contract {
     Contract {
         name: "maka.ui.Textarea".into(),
@@ -113,7 +141,10 @@ pub fn textarea_contract() -> Contract {
         interface: Interface::Component {
             props: serde_json::to_value(schemars::schema_for!(TextareaProps))
                 .expect("editor props schema"),
-            events: BTreeMap::from([("changed".into(), observation_schema())]),
+            events: BTreeMap::from([
+                ("changed".into(), observation_schema()),
+                ("submitted".into(), observation_schema()),
+            ]),
             captures: BTreeMap::from([(
                 "snapshot".into(),
                 Capture {

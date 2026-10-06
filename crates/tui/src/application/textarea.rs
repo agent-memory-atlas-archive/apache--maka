@@ -21,7 +21,7 @@ use super::Placement;
 use super::editor::Owner;
 use super::{NativeInput, Slots, Widget, WidgetInput};
 use crate::editor::{Editor, Geometry};
-use crossterm::event::{Event, KeyCode, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use maka_ui::{
     ComponentCall, ComponentOutput, NativeCapability, NativeComponent, NativeExport,
     NativeRegistry, NativeView, editor::*, textarea::*,
@@ -77,6 +77,23 @@ impl Widget for Recipe {
             .expect("terminal editor owner");
         if self.props.disabled {
             return Ok(WidgetInput::Consumed(None));
+        }
+        if !self.props.read_only
+            && let Event::Key(key) = event
+            && key.kind == KeyEventKind::Press
+            && key.code == KeyCode::Enter
+            && match self.props.submit {
+                Some(SubmitKey::Enter) => key.modifiers.is_empty(),
+                Some(SubmitKey::ControlEnter | SubmitKey::PrimaryEnter) => {
+                    key.modifiers == KeyModifiers::CONTROL
+                }
+                None => false,
+            }
+        {
+            owner.refresh();
+            let mut observation = owner.observation();
+            observation.key = "submit".into();
+            return Ok(WidgetInput::Emitted(observation));
         }
         let handled = match event {
             Event::Key(key) => {
@@ -218,7 +235,7 @@ impl NativeComponent<dyn Widget> for Component {
         call: ComponentCall<'_>,
         _: &maka_ui::abi::ValueBindings,
     ) -> maka_ui::Result<ComponentOutput<NativeView<dyn Widget>>> {
-        let output = maka_ui::editor::reduce::<TextareaProps>(call)?;
+        let output = maka_ui::textarea::reduce(call)?;
         let props = output.frame.view.clone();
         if !props.soft_wrap {
             return Err(maka_ui::Error::Invalid(
@@ -232,7 +249,10 @@ impl NativeComponent<dyn Widget> for Component {
         }
         let view = NativeView::<dyn Widget>::new(
             Rc::new(Recipe { props }),
-            BTreeMap::from([("observe".into(), observation_schema())]),
+            BTreeMap::from([
+                ("observe".into(), observation_schema()),
+                ("submit".into(), observation_schema()),
+            ]),
             vec![],
         )?;
         Ok(output.map_view(|_| view))

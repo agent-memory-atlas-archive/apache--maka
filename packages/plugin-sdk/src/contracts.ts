@@ -906,6 +906,18 @@ export const contracts = {
           softWrap: {
             type: 'boolean',
           },
+          submit: {
+            description: 'None preserves native multiline editing without a submit shortcut.',
+            anyOf: [
+              {
+                $ref: '#/$defs/SubmitKey',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
           tabIndex: {
             type: 'integer',
             format: 'int16',
@@ -1337,6 +1349,12 @@ export const contracts = {
             additionalProperties: false,
             required: ['title', 'undo', 'redo', 'cut', 'copy', 'paste', 'selectAll'],
           },
+          SubmitKey: {
+            description:
+              'Product-selected native submit gesture. PrimaryEnter uses the platform\naccelerator on Desktop and Control+Enter in a terminal.',
+            type: 'string',
+            enum: ['enter', 'primary_enter', 'control_enter'],
+          },
           EditorCommand: {
             type: 'object',
             properties: {
@@ -1403,6 +1421,154 @@ export const contracts = {
       },
       events: {
         changed: {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          title: 'EditorObservation',
+          type: 'object',
+          properties: {
+            revision: {
+              type: 'integer',
+              format: 'uint64',
+              minimum: 0,
+            },
+            snapshot: {
+              $ref: '#/$defs/EditorSnapshot',
+            },
+            receipt: {
+              anyOf: [
+                {
+                  $ref: '#/$defs/EditorReceipt',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+            },
+          },
+          additionalProperties: false,
+          required: ['revision', 'snapshot', 'receipt'],
+          $defs: {
+            EditorSnapshot: {
+              type: 'object',
+              properties: {
+                text: {
+                  $ref: '#/$defs/EditorTextRef',
+                },
+                selection: {
+                  $ref: '#/$defs/TextRange',
+                },
+                reversed: {
+                  type: 'boolean',
+                },
+                marked: {
+                  anyOf: [
+                    {
+                      $ref: '#/$defs/TextRange',
+                    },
+                    {
+                      type: 'null',
+                    },
+                  ],
+                },
+              },
+              additionalProperties: false,
+              required: ['text', 'selection', 'reversed', 'marked'],
+            },
+            EditorTextRef: {
+              type: 'object',
+              properties: {
+                owner: {
+                  type: 'string',
+                },
+                revision: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                bytes: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+              },
+              additionalProperties: false,
+              required: ['owner', 'revision', 'bytes'],
+            },
+            TextRange: {
+              type: 'object',
+              properties: {
+                start: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+                end: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+              },
+              additionalProperties: false,
+              required: ['start', 'end'],
+            },
+            EditorReceipt: {
+              type: 'object',
+              properties: {
+                owner: {
+                  type: 'string',
+                },
+                sequence: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                revision: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                outcome: {
+                  $ref: '#/$defs/EditorOutcome',
+                },
+              },
+              additionalProperties: false,
+              required: ['owner', 'sequence', 'revision', 'outcome'],
+            },
+            EditorOutcome: {
+              oneOf: [
+                {
+                  type: 'object',
+                  properties: {
+                    status: {
+                      type: 'string',
+                      const: 'applied',
+                    },
+                  },
+                  required: ['status'],
+                  additionalProperties: false,
+                },
+                {
+                  type: 'object',
+                  properties: {
+                    reason: {
+                      $ref: '#/$defs/EditorConflict',
+                    },
+                    status: {
+                      type: 'string',
+                      const: 'conflict',
+                    },
+                  },
+                  additionalProperties: false,
+                  required: ['status', 'reason'],
+                },
+              ],
+            },
+            EditorConflict: {
+              type: 'string',
+              enum: ['owner', 'representation', 'revision', 'composition', 'sequence'],
+            },
+          },
+        },
+        submitted: {
           $schema: 'https://json-schema.org/draft/2020-12/schema',
           title: 'EditorObservation',
           type: 'object',

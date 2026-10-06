@@ -4028,3 +4028,68 @@ test('returning from an image follows new canonical facts, including an in-fligh
     assert.equal(client.state.window.page.through, 101);
   }
 });
+
+test('editor-local submission uses latest observation and the original send gates', async () => {
+  for (const target of ['desktop', 'tui']) {
+    const { component: composer } = await import(
+      pathToFileURL(resolve(root, `dist/packages/composer/${target}.js`))
+    );
+    const props = {
+      theme: values.appearance[0],
+      locale: 'en',
+      enabled: true,
+      busy: false,
+      running: false,
+      command: null,
+    };
+    let result = composer.mount(props, {});
+    assert.equal(
+      modelSlots(result.frame.view).find((n) => n.key === 'draft').props.submit,
+      target === 'desktop' ? 'primary_enter' : 'control_enter',
+      'the first native edit can submit before a changed observation is published',
+    );
+    const submit = (observation, configuration = props) =>
+      composer.event(
+        result.frame.state,
+        { kind: 'component', name: 'submitted', key: 'submitted', event: observation },
+        configuration,
+        {},
+      );
+    result = submit(draft);
+    assert.deepEqual(result.events, [{ name: 'send', value: draft }]);
+    const slot = modelSlots(result.frame.view).find((n) => n.key === 'draft');
+    assert.equal(slot.props.submit, target === 'desktop' ? 'primary_enter' : 'control_enter');
+    const latest = {
+      ...draft,
+      revision: 5,
+      snapshot: { ...draft.snapshot, text: { ...draft.snapshot.text, revision: 5, bytes: 8 } },
+    };
+    assert.deepEqual(submit(latest).events, [{ name: 'send', value: latest }]);
+    for (const override of [
+      { busy: true },
+      { running: true },
+      { enabled: false },
+      {
+        command: {
+          owner: 'original-editor',
+          sequence: 9,
+          basedOn: 4,
+          edit: { kind: 'reset', text: '' },
+        },
+      },
+    ]) {
+      assert.deepEqual(submit(latest, { ...props, ...override }).events, []);
+    }
+    assert.deepEqual(
+      submit({ ...latest, snapshot: { ...latest.snapshot, marked: { start: 0, end: 2 } } }).events,
+      [],
+    );
+    assert.deepEqual(
+      submit({
+        ...latest,
+        snapshot: { ...latest.snapshot, text: { ...latest.snapshot.text, bytes: 0 } },
+      }).events,
+      [],
+    );
+  }
+});

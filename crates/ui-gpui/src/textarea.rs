@@ -49,6 +49,8 @@ pub struct TextareaOwner {
     menu: Option<TextareaMenu>,
     open_menu: Option<menu::OpenMenu>,
     _menu_input: Option<Subscription>,
+    submit: Option<SubmitKey>,
+    _keyboard: Option<Subscription>,
 }
 impl TextareaOwner {
     /// Original editor correlation, including across application processes.
@@ -122,11 +124,79 @@ impl TextareaOwner {
                 menu: props.menu.clone(),
                 open_menu: None,
                 _menu_input: None,
+                submit: props.submit,
+                _keyboard: None,
             }
         });
         let subscription = Self::install_menu_input(&owner, cx);
         owner.update(cx, |owner, _| owner._menu_input = Some(subscription));
-        owner.update(cx, |owner, cx| owner.schedule(window, cx));
+        let weak = owner.downgrade();
+        let window_id = window.window_handle().window_id();
+        let keyboard = cx.intercept_keystrokes(move |event, window, cx| {
+            if event.keystroke.key != "enter" || window.window_handle().window_id() != window_id {
+                return;
+            }
+            let Ok(Some((input, observation))) = weak.update(cx, |owner, cx| {
+                let modifiers = &event.keystroke.modifiers;
+                let matches = match owner.submit {
+                    Some(SubmitKey::Enter) => !modifiers.modified(),
+                    Some(SubmitKey::ControlEnter) => {
+                        modifiers.control
+                            && !modifiers.platform
+                            && !modifiers.alt
+                            && !modifiers.shift
+                            && !modifiers.function
+                    }
+                    Some(SubmitKey::PrimaryEnter) => {
+                        modifiers.secondary()
+                            && !modifiers.alt
+                            && !modifiers.shift
+                            && !modifiers.function
+                            && if cfg!(target_os = "macos") {
+                                !modifiers.control
+                            } else {
+                                !modifiers.platform
+                            }
+                    }
+                    None => false,
+                };
+                if !matches || !owner.accepts_text_input(window, cx) {
+                    return None;
+                }
+                owner.refresh(false, window, cx);
+                if owner.snapshot.marked.is_some() {
+                    return None;
+                }
+                let input = owner.input.0.borrow().clone()?;
+                Some((
+                    input,
+                    EditorObservation {
+                        revision: owner.revision,
+                        snapshot: owner.observation_snapshot(),
+                        receipt: owner.receipt.clone(),
+                    },
+                ))
+            }) else {
+                return;
+            };
+            window.prevent_default();
+            cx.stop_propagation();
+            // Leave the entity borrow before the original component dispatch.
+            if (input.0)(
+                "submit",
+                serde_json::to_value(observation).expect("native submit observation"),
+                window,
+                cx,
+            )
+            .is_err()
+            {
+                eprintln!("editor submit rejected");
+            }
+        });
+        owner.update(cx, |owner, cx| {
+            owner._keyboard = Some(keyboard);
+            owner.schedule(window, cx);
+        });
         owner
     }
     fn read_snapshot(
@@ -250,6 +320,7 @@ impl TextareaOwner {
         // Notify observers may still be queued after keyboard/selection input.
         // This synchronous barrier is authoritative for command admission.
         self.refresh(false, window, cx);
+        self.submit = props.submit;
         let appearance_changed = self.projection.data != props.appearance;
         if appearance_changed {
             self.projection = super::appearance::TextareaProjection::new(&props.appearance);
@@ -743,6 +814,7 @@ impl Widget for TextareaRecipe {
             // The original LiveInput has already been revoked. Closing the
             // menu clears its own focus without restoring the retired editor.
             owner.close_menu(true, window, cx);
+            owner._keyboard.take();
             owner
                 .state
                 .update(cx, |state, cx| state.set_tab_index(-1, cx));
@@ -785,12 +857,15 @@ impl NativeComponent<dyn Widget> for TextareaComponent {
         call: ComponentCall<'_>,
         _values: &maka_ui::abi::ValueBindings,
     ) -> maka_ui::Result<ComponentOutput<NativeView<dyn Widget>>> {
-        let output = maka_ui::editor::reduce::<TextareaProps>(call)?;
+        let output = maka_ui::textarea::reduce(call)?;
         let view = NativeView::<dyn Widget>::new(
             Rc::new(TextareaRecipe {
                 props: output.frame.view.clone(),
             }),
-            BTreeMap::from([("observe".into(), observation_schema())]),
+            BTreeMap::from([
+                ("observe".into(), observation_schema()),
+                ("submit".into(), observation_schema()),
+            ]),
             vec![],
         )?
         // The original native edit menu may add one deferred layer.

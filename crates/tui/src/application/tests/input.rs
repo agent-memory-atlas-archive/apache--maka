@@ -60,7 +60,7 @@ fn input_presenter(secret: bool) -> (tokio::runtime::Runtime, Presenter) {
       .replace("appearance:state.brand.textarea", "appearance:Object.fromEntries(Object.entries(state.brand.textarea).filter(([key])=>key!=='scrollbar'))")
       .replace("on:{changed:'changed'}", "on:{changed:'changed',submitted:'submitted'}")
       .replace("name:'changed',value:event.event", "name:event.name,value:event.event")
-      .replace("else if(event.kind==='component')next.observation=event.event;", "else if(event.kind==='component'){if(event.name==='submitted')next.submits=(next.submits??0)+1;else next.observation=event.event;}");
+      .replace("else if(event.kind==='component'){next.observation=event.event;if(event.name==='submitted')next.submissions=(state.submissions??0)+1;}", "else if(event.kind==='component'){if(event.name==='submitted')next.submits=(next.submits??0)+1;else next.observation=event.event;}");
     files.insert(module.clone(),source.into_bytes());
    }
    _=>{}

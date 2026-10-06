@@ -90,6 +90,12 @@ export function components(target: Target): {
       readOnly: false,
       disabled: false,
       softWrap: true,
+      submit:
+        props.enabled && !props.busy && !props.running && !pending
+          ? target === 'desktop'
+            ? 'primary_enter'
+            : 'control_enter'
+          : null,
       tabIndex: 0,
       initialText: '',
       placeholder: text.placeholder,
@@ -100,13 +106,22 @@ export function components(target: Target): {
       ui.box(
         'composer',
         [
-          ui.box('editor-area', [slot('draft', 'editor', textarea, { changed: 'changed' })], {
-            style: { width: fill, height: pixels(112), shrink: 0 },
-          }),
+          ui.box(
+            'editor-area',
+            [slot('draft', 'editor', textarea, { changed: 'changed', submitted: 'submitted' })],
+            {
+              style: { width: fill, height: pixels(112), shrink: 0 },
+            },
+          ),
           ui.box(
             'composer-controls',
             [
-              ui.text('hint', text.enterHint, 12, props.theme.muted),
+              ui.text(
+                'hint',
+                target === 'desktop' ? text.enterHint : text.terminalEnterHint,
+                12,
+                props.theme.muted,
+              ),
               ...(props.running
                 ? [ui.button('stop', text.stop, props.busy)]
                 : [ui.button('send', text.send, !available || !state.observation, true)]),
@@ -468,17 +483,22 @@ export function components(target: Target): {
       update: (state, props) => composerFrame({ ...state, revision: state.revision + 1 }, props),
       event(state, input, props) {
         const next = { ...state, revision: state.revision + 1 };
-        if (input.kind === 'component' && input.name === 'changed') {
+        if (
+          input.kind === 'component' &&
+          (input.name === 'changed' || input.name === 'submitted')
+        ) {
           next.observation = input.event as EditorObservation;
-          return composerFrame(next, props, [{ name: 'changed', value: next.observation }]);
+          if (input.name === 'changed')
+            return composerFrame(next, props, [{ name: 'changed', value: next.observation }]);
         }
         if (
-          input.kind === 'raw' &&
-          input.key === 'send' &&
+          ((input.kind === 'raw' && input.key === 'send') ||
+            (input.kind === 'component' && input.name === 'submitted')) &&
           props.enabled &&
           !props.busy &&
           !props.running &&
           next.observation &&
+          next.observation.snapshot.text.bytes > 0 &&
           !next.observation.snapshot.marked &&
           (!props.command ||
             (next.observation.receipt?.owner === props.command.owner &&

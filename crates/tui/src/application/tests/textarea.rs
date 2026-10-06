@@ -52,6 +52,9 @@ pub(super) fn editor_fixture() -> (tokio::runtime::Runtime, Input, Vec<Package>)
                         .replace("{kind:'button',key:'remove'", "{kind:'button',key:'reject',label:'Reject observation'},{kind:'button',key:'configure',label:'Configure editor'},{kind:'button',key:'remove'");
                     source.push_str("const normalFrame=frame;frame=(state)=>{const out=normalFrame(state);const editor=out.frame.view.children.find(node=>node.key==='editor');if(editor){editor.props={...editor.props,...state.options};delete editor.props.visible;delete editor.props.prefix;delete editor.props.readingViewport;}out.frame.view.children=out.frame.view.children.map(node=>node.key==='editor'?{kind:'stack',key:'presentation',direction:'column',gap:0,padding:0,background:out.frame.view.background,visible:state.options?.visible!==false,children:[node]}:node);if(state.options?.prefix)out.frame.view.children.unshift({kind:'text',key:'prefix',text:state.options.prefix,color:0xffffff});if(state.options?.readingViewport){const pane=out.frame.view.children.find(node=>node.key==='presentation');pane.scroll='manual';pane.layout={basis:6};pane.children.push({kind:'text',key:'long-tail',text:'tail\\n'.repeat(30),color:0xffffff});}if(state.reject&&state.observation)out.frame.view={kind:'invalid'};return out;};");
                 }
+                source = source.replace("on:{changed:'changed'}", "on:{changed:'changed',submitted:'submitted'}")
+                    .replace("name:'changed',value:event.event", "name:event.name,value:event.event")
+                    .replace("else if(event.kind==='component')next.observation=event.event;", "else if(event.kind==='component'){next.observation=event.event;if(event.name==='submitted')next.submissions=(state.submissions??0)+1;}");
                 files.insert(module.clone(), source.into_bytes());
             }
             _ => {}
@@ -525,5 +528,109 @@ fn pointer_capture_survives_tab_focus_change_and_release_keeps_the_new_focus() {
     );
     assert!(tui.drag.is_none());
     assert!(tui.focus.as_ref().unwrap().same(&next));
+    close(&mut tui);
+}
+
+#[test]
+fn terminal_textarea_submit_keeps_native_draft_and_obeys_current_editor_policy() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 20);
+    dispatch(&mut tui, "configure", json!({"submit":"control_enter"}));
+    draw(&mut tui, 50, 20);
+    tui.input(Event::Paste("中文🙂".into())).unwrap();
+    let original = observation(&tui);
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["submissions"],
+        1
+    );
+    assert_eq!(observation(&tui), original);
+    tui.input(key(KeyCode::Enter)).unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["submissions"],
+        1
+    );
+    assert_eq!(
+        observation(&tui)["snapshot"]["text"]["bytes"],
+        original["snapshot"]["text"]["bytes"].as_u64().unwrap() + 1
+    );
+    for options in [
+        json!({"submit":null}),
+        json!({"submit":"control_enter","readOnly":true}),
+        json!({"submit":"control_enter","disabled":true}),
+    ] {
+        dispatch(&mut tui, "configure", options);
+        draw(&mut tui, 50, 20);
+        tui.input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+        assert_eq!(
+            tui.application.frame(&tui.root).unwrap().state["submissions"],
+            1
+        );
+    }
+    close(&mut tui);
+}
+
+#[test]
+fn failed_submit_is_not_replayed_and_preserves_unpublished_command_receipt() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 24);
+    let original = observation(&tui);
+    dispatch(&mut tui, "reject", json!({"reject":true}));
+    dispatch(
+        &mut tui,
+        "configure",
+        json!({"submit":"control_enter","command":{
+            "owner":original["snapshot"]["text"]["owner"],"sequence":1,
+            "basedOn":original["revision"],"edit":{"kind":"reset","text":"Ready"}
+        }}),
+    );
+    let editor = draft(&tui);
+    assert_eq!(
+        tui.application.frame(&editor).unwrap().state["pending"],
+        true
+    );
+    assert!(
+        tui.input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::CONTROL,
+        )))
+        .is_err()
+    );
+    assert!(!tui.closing);
+    assert_eq!(
+        tui.application.frame(&editor).unwrap().state["pending"],
+        true
+    );
+    tui.pump().unwrap();
+    dispatch(&mut tui, "reject", json!({"reject":false}));
+    let published = observation(&tui);
+    assert_eq!(published["receipt"]["sequence"], 1);
+    assert_eq!(published["receipt"]["outcome"]["status"], "applied");
+    assert_eq!(published["snapshot"]["text"]["bytes"], 5);
+    assert_eq!(
+        tui.application.frame(&editor).unwrap().state["pending"],
+        false
+    );
+    for _ in 0..3 {
+        tui.pump().unwrap();
+        assert!(tui.application.frame(&tui.root).unwrap().state["submissions"].is_null());
+    }
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["submissions"],
+        1
+    );
     close(&mut tui);
 }
