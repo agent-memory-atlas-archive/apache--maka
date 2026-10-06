@@ -35,6 +35,21 @@ pub(super) fn catalog() -> Value {
     let roots = vec![
         root::<composition::Input>(&mut g),
         root::<maka_plugin_core::deployment::Deployment>(&mut g),
+        root::<maka_plugin_core::deployment::management::DeploymentRead>(&mut g),
+        root::<maka_plugin_core::deployment::management::PackageInstall>(&mut g),
+        root::<maka_plugin_core::deployment::management::PackageInstalled>(&mut g),
+        root::<maka_plugin_core::deployment::management::DeploymentReplace>(&mut g),
+        root::<maka_plugin_core::deployment::management::ManagedDeployment>(&mut g),
+        root::<
+            maka_plugin_core::deployment::management::ManagementResult<
+                maka_plugin_core::deployment::management::PackageInstalled,
+            >,
+        >(&mut g),
+        root::<
+            maka_plugin_core::deployment::management::ManagementResult<
+                maka_plugin_core::deployment::DeploymentRef,
+            >,
+        >(&mut g),
         root::<package::Declaration>(&mut g),
         root::<package::PackageRef>(&mut g),
         root::<contract::Contract>(&mut g),
@@ -134,6 +149,7 @@ pub(super) fn catalog() -> Value {
             "settings": maka_settings_service::contract::contract(),
             "textReader": text::reader_contract(),
             "callerHistory": maka_ui::operations::caller_history_contract(),
+            "deploymentManager": maka_plugin_core::deployment::management::deployment_manager_contract(),
             "receiptReader": maka_plugin_core::operation::receipt_reader_contract(),
             "desktopSurface": maka_ui::surface_contract(PresentationTarget::Desktop),
             "terminalSurface": maka_ui::surface_contract(PresentationTarget::Tui),

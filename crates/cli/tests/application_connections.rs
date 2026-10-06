@@ -17,6 +17,8 @@
  * under the License.
  */
 
+#[path = "application_connections/management.rs"]
+mod management;
 #[path = "application_connections/resource_mutations.rs"]
 mod resource_mutations;
 #[path = "application_connections/subscriptions.rs"]

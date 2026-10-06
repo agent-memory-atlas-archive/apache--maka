@@ -1,0 +1,304 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+//! Explicitly composed management of the native owner's original deployment.
+use super::*;
+use maka_event_log::{EventLog, StoreError, applications::validate_application};
+use maka_plugin_core::deployment::management::{
+    DeploymentRead, DeploymentReplace, ManagementRejection, ManagementResult, PackageInstall,
+    PackageInstalled, deployment_manager_contract, package_bundle_type,
+};
+use serde::Deserialize;
+
+pub const DEPLOYMENT_MANAGER: &str = "maka.application.management";
+
+struct Manager {
+    source: DeploymentRef,
+    store: Arc<EventLog>,
+    writes: Arc<tokio::sync::Mutex<()>>,
+}
+impl Manager {
+    async fn metadata(
+        &self,
+    ) -> Result<maka_plugin_core::deployment::management::ManagedDeployment> {
+        self.store
+            .read_application_metadata(self.source.deployment)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or("managed deployment not found".into())
+    }
+    async fn install(&self, input: Value, context: Context) -> Result<Value> {
+        let request: PackageInstall =
+            serde_json::from_value(input).map_err(|error| error.to_string())?;
+        let _write = self.writes.lock().await;
+        let metadata = self.metadata().await?;
+        if request.expected_revision != metadata.source.reference.revision {
+            return conflict(metadata.source.reference.revision);
+        }
+        let resource = context
+            .attachments()
+            .get("package")
+            .ok_or("package bundle required")?
+            .clone();
+        let mut ticket = context
+            .scope()
+            .resources
+            .reserve()
+            .map_err(|error| error.to_string())?;
+        ticket.start();
+        let parsed = tokio::task::spawn_blocking(move || {
+            let parsed = read_bundle(&resource);
+            drop(resource);
+            ticket.complete(Ok(()));
+            parsed
+        })
+        .await
+        .map_err(|error| format!("package validation worker failed: {error}"))?;
+        let package = match parsed {
+            Ok(package) => package,
+            Err(_) => return rejected(ManagementRejection::InvalidBundle),
+        };
+        let reference = package.application_ref();
+        let mut loaded = self
+            .store
+            .load_application_at(&metadata.source.reference)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or("managed source not found")?;
+        if !loaded
+            .packages
+            .iter()
+            .any(|old| old.application_ref() == reference)
+        {
+            loaded.packages.push(package);
+        }
+        self.commit(
+            request.expected_revision,
+            loaded.source.input,
+            loaded.source.remote_exports,
+            loaded.packages,
+            move |source| PackageInstalled {
+                source,
+                package: reference,
+            },
+        )
+        .await
+    }
+    async fn replace(&self, input: Value) -> Result<Value> {
+        let request: DeploymentReplace =
+            serde_json::from_value(input).map_err(|error| error.to_string())?;
+        let _write = self.writes.lock().await;
+        let metadata = self.metadata().await?;
+        if request.expected_revision != metadata.source.reference.revision {
+            return conflict(metadata.source.reference.revision);
+        }
+        if request.input.environment.location != ExecutionLocation::Host
+            || request.input.environment.presentation.is_some()
+            || !request.remote_exports.is_empty()
+        {
+            return rejected(ManagementRejection::ExecutionEnvironment);
+        }
+        if request
+            .packages
+            .iter()
+            .any(|reference| !metadata.packages.contains(reference))
+        {
+            return rejected(ManagementRejection::PackageUnavailable);
+        }
+        let loaded = self
+            .store
+            .load_application_at(&metadata.source.reference)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or("managed source not found")?;
+        let available: BTreeMap<_, _> = loaded
+            .packages
+            .into_iter()
+            .map(|package| (package.application_ref(), package))
+            .collect();
+        let packages = request
+            .packages
+            .into_iter()
+            .map(|reference| {
+                available
+                    .get(&reference)
+                    .cloned()
+                    .ok_or("installed package disappeared".to_string())
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.commit(
+            request.expected_revision,
+            request.input,
+            request.remote_exports,
+            packages,
+            |source| source,
+        )
+        .await
+    }
+    async fn commit<T: serde::Serialize>(
+        &self,
+        expected: u64,
+        input: Input,
+        observations: Vec<maka_plugin_core::deployment::RemoteObservation>,
+        packages: Vec<Package>,
+        result: impl FnOnce(DeploymentRef) -> T,
+    ) -> Result<Value> {
+        if validate_application(&input, &observations, &packages).is_err() {
+            return rejected(ManagementRejection::InvalidSource);
+        }
+        match self
+            .store
+            .commit_application(
+                self.source.deployment,
+                expected,
+                input,
+                observations,
+                packages,
+            )
+            .await
+        {
+            Ok(source) => serde_json::to_value(ManagementResult::Committed {
+                value: result(source),
+            })
+            .map_err(|error| error.to_string()),
+            Err(StoreError::RevisionConflict { actual, .. }) => conflict(
+                actual
+                    .parse()
+                    .map_err(|_| "invalid managed revision conflict")?,
+            ),
+            // SQL and COMMIT uncertainty must never be converted to a known refusal.
+            Err(error) => Err(error.to_string()),
+        }
+    }
+}
+fn rejected(reason: ManagementRejection) -> Result<Value> {
+    serde_json::to_value(ManagementResult::<DeploymentRef>::Rejected { reason })
+        .map_err(|error| error.to_string())
+}
+fn conflict(current_revision: u64) -> Result<Value> {
+    serde_json::to_value(ManagementResult::<DeploymentRef>::Conflict { current_revision })
+        .map_err(|error| error.to_string())
+}
+
+impl Handler for Manager {
+    fn call(
+        &self,
+        method: String,
+        input: Value,
+        context: Context,
+    ) -> BoxFuture<'static, Result<Value>> {
+        let manager = Self {
+            source: self.source.clone(),
+            store: self.store.clone(),
+            writes: self.writes.clone(),
+        };
+        Box::pin(async move {
+            match method.as_str() {
+                "read" => {
+                    serde_json::from_value::<DeploymentRead>(input)
+                        .map_err(|error| error.to_string())?;
+                    serde_json::to_value(manager.metadata().await?)
+                        .map_err(|error| error.to_string())
+                }
+                "install" => manager.install(input, context).await,
+                "replace" => manager.replace(input).await,
+                _ => Err("unknown deployment management method".into()),
+            }
+        })
+    }
+}
+impl NativeOwner for Manager {
+    fn close(&self) -> BoxFuture<'static, Result<()>> {
+        // Accepted requests and their blocking/SQL work belong to original
+        // Host execution Scopes; no independent activation work is started.
+        Box::pin(async { Ok(()) })
+    }
+}
+fn read_bundle(resource: &Arc<dyn maka_plugins::call::ReadResource>) -> Result<Package> {
+    use maka_plugins::call::ResourceEncoding;
+    let length = resource.bytes();
+    if resource.resource_type() != package_bundle_type()
+        || resource.encoding() != ResourceEncoding::Bytes
+        || length > maka_plugins::package::MAX_PACKAGE_BYTES * 2
+    {
+        return Err("invalid immutable package bundle resource".into());
+    }
+    let mut bytes = Vec::with_capacity(length);
+    for offset in (0..length).step_by(RESOURCE_CHUNK_LIMIT) {
+        let end = (offset + RESOURCE_CHUNK_LIMIT).min(length);
+        let chunk = resource.read(offset..end)?;
+        if chunk.len() != end - offset {
+            return Err("package bundle snapshot length changed".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Package::from_bundle(&bytes).map_err(|error| error.to_string())
+}
+
+pub(super) fn provide(native: &mut NativeRegistry) -> Result<()> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Configuration {}
+    // All explicitly composed manager instances in this original Application
+    // share one bounded source-materialization lane. CAS remains the SQL authority.
+    let writes = Arc::new(tokio::sync::Mutex::new(()));
+    native.insert(
+        DEPLOYMENT_MANAGER.into(),
+        Arc::new(move |context, configuration| {
+            let writes = writes.clone();
+            Box::pin(async move {
+                let manager = (|| {
+                    serde_json::from_value::<Configuration>(configuration)
+                        .map_err(|error| error.to_string())?;
+                    let persistence = context
+                        .persistence()
+                        .ok_or("deployment management requires the original persisted Root")?;
+                    Ok::<_, String>(Arc::new(Manager {
+                        source: persistence.source().clone(),
+                        store: persistence.store().clone(),
+                        writes,
+                    }))
+                })();
+                match manager {
+                    Ok(manager) => NativeActivation {
+                        exports: Ok(BTreeMap::from([(
+                            "Management".into(),
+                            Published {
+                                contract: deployment_manager_contract(),
+                                value: manager.clone() as Arc<dyn Handler>,
+                            },
+                        )])),
+                        owner: manager,
+                    },
+                    Err(error) => NativeActivation {
+                        exports: Err(error),
+                        owner: Arc::new(Uninitialized),
+                    },
+                }
+            })
+        }),
+    )
+}
+
+struct Uninitialized;
+impl NativeOwner for Uninitialized {
+    fn close(&self) -> BoxFuture<'static, Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+}

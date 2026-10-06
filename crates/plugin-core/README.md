@@ -91,3 +91,9 @@ names/versions describe shapes, not grants; actual payloads and authorization be
 to the execution adapter's private request attachments. JSON metadata cannot mint
 these attachments. Declarations require explicit `captures` and `resources` maps;
 there is no decoding fallback for previous shapes.
+
+`deployment::management` owns the shared deployment-manager contract and closed
+read/install/replace outcomes. Package bundle resources are nominal immutable
+payloads; their type and input metadata grant no management access. Execution
+adapters bind the actual Root and enforce policy. Committed desired input, known
+rejection/conflict and unresolved operation outcome remain distinct.

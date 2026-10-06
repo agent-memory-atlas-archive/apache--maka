@@ -172,3 +172,24 @@ source SQL load 未完成时也可即时撤销。`Snapshot.loading` 报告实际
 激活收敛和资源清理独立报告。已接受工作与恢复引用保持原来源。本片接通 same-Root
 原生管理提交到 live Host owner；外部管理服务、UI 端点重新批准以及生产 TUI/Desktop
 更新准入仍待完成。
+
+## 部署管理
+
+持久应用提供原生实现 `maka.application.management` 的 availability；产品必须显式组合
+导出 `Management` 的实例及能力绑定，availability 不授予权限。Factory 绑定原
+NativePersistence 的 Root 和 deployment；请求不能选择文件路径、其他部署或执行角色。
+
+`read` 从有界原 SQL metadata 快照返回已提交输入和精确可用 PackageRefs，不加载包
+payload，不声称执行就绪。`install` 使用已有 digest 校验 bundle 格式验证实际 immutable
+`package` resource，再 CAS 提交原输入与可用包；安装不执行新包。`replace` 只选择已经
+安装的确切 revision，并以 expected revision 显式提交新输入；模板、绑定、覆盖仍走
+普通 core 验证，不增加业务路由或第二份可写计划。
+
+两种写入都经过普通 mutation 准入和原操作账本。封闭 `ManagementResult` 把 committed、
+conflict、rejected 记录成业务结果；确定的包、输入、角色、引用拒绝在 SQL 效果前完成。
+SQL、COMMIT、worker 或 cleanup 不确定性仍保原 Unknown/Failed 状态；提交确认只表示
+输入，不是实际收敛。原 Application 的全部管理实例共享 source 物化通道，CAS 权威仍在
+原 SQL。Blocking bundle worker 持实际 Scope ticket，直到原资源析构及 worker 完成。
+
+契约和类型来自 plugin-core，生成 TS SDK。Host 自动 head adoption 应用已提交来源；
+UI Root 管理及前台协调仍需继续接线。

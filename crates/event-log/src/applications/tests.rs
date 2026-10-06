@@ -444,3 +444,51 @@ async fn package_materialization_checks_remaining_deployment_budget() {
     );
     store.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn metadata_snapshot_never_materializes_package_payloads() {
+    let (_dir, store) = store().await;
+    let package = package(&"x".repeat(8 * 1024 * 1024));
+    let reference = package.application_ref();
+    let deployment = Uuid::new_v4();
+    let source = store
+        .commit_application(deployment, 0, selected(&package), vec![], vec![package])
+        .await
+        .unwrap();
+    let metadata = store
+        .read_application_metadata(deployment)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(metadata.source.reference, source);
+    assert_eq!(metadata.packages, vec![reference]);
+    let original = serde_json::to_vec(&metadata).unwrap();
+    assert!(original.len() < 4096);
+    // A payload that cannot be loaded still must not enter metadata reads. This
+    // tests the physical DAO boundary, not a profiler estimate or source string.
+    store.connection.run(|connection| Box::pin(async move {
+        sqlx::query("UPDATE application_package_files SET payload = zeroblob(8388609) WHERE path='host.mjs'").execute(connection).await?;
+        Ok(())
+    })).await.unwrap();
+    assert_eq!(
+        serde_json::to_vec(
+            &store
+                .read_application_metadata(deployment)
+                .await
+                .unwrap()
+                .unwrap()
+        )
+        .unwrap(),
+        original
+    );
+    assert!(store.load_application(deployment).await.is_err());
+    assert!(store.read_application_metadata(Uuid::nil()).await.is_err());
+    assert!(
+        store
+            .read_application_metadata(Uuid::new_v4())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    store.close().await.unwrap();
+}

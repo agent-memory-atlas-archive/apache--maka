@@ -17,6 +17,8 @@
  * under the License.
  */
 
+#[path = "application_services/management.rs"]
+mod management;
 #[path = "application_services/native_context.rs"]
 mod native_context;
 #[path = "application_services/operations.rs"]

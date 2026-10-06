@@ -22,6 +22,13 @@
 export type RuntimeProtocol =
   | CompositionInput
   | Deployment
+  | DeploymentRead
+  | PackageInstall
+  | PackageInstalled
+  | DeploymentReplace
+  | ManagedDeployment
+  | ManagementResultForPackageInstalled
+  | ManagementResultForDeploymentRef
   | PackageDeclaration
   | PackageRef
   | Contract
@@ -176,6 +183,45 @@ export type CaptureOutput =
       kind: 'continuation';
     };
 export type Availability = 'required' | 'optional';
+/**
+ * A deterministic refusal is a recorded business result. Uncertain SQL/worker
+ * failures remain in the original operation journal's Unknown outcome.
+ */
+export type ManagementResultForPackageInstalled =
+  | {
+      value: PackageInstalled;
+      status: 'committed';
+    }
+  | {
+      currentRevision: number;
+      status: 'conflict';
+    }
+  | {
+      reason: ManagementRejection;
+      status: 'rejected';
+    };
+export type ManagementRejection =
+  | 'invalid_bundle'
+  | 'invalid_source'
+  | 'package_unavailable'
+  | 'execution_environment';
+/**
+ * A deterministic refusal is a recorded business result. Uncertain SQL/worker
+ * failures remain in the original operation journal's Unknown outcome.
+ */
+export type ManagementResultForDeploymentRef =
+  | {
+      value: DeploymentRef;
+      status: 'committed';
+    }
+  | {
+      currentRevision: number;
+      status: 'conflict';
+    }
+  | {
+      reason: ManagementRejection;
+      status: 'rejected';
+    };
 export type Implementation =
   | {
       module: string;
@@ -1265,6 +1311,33 @@ export interface ResourceType {
 export interface Capture {
   input: unknown;
   output: CaptureOutput;
+}
+export interface DeploymentRead {}
+export interface PackageInstall {
+  expectedRevision: number;
+}
+export interface PackageInstalled {
+  source: DeploymentRef;
+  package: PackageRef;
+}
+export interface DeploymentReplace {
+  expectedRevision: number;
+  input: CompositionInput;
+  /**
+   * @maxItems 128
+   */
+  remoteExports: RemoteObservation[];
+  /**
+   * @maxItems 128
+   */
+  packages: PackageRef[];
+}
+/**
+ * Committed desired source and available immutable packages, not runtime readiness.
+ */
+export interface ManagedDeployment {
+  source: Deployment;
+  packages: PackageRef[];
 }
 export interface PackageDeclaration {
   entries?: {

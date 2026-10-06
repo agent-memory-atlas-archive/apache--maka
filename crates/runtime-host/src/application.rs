@@ -20,6 +20,7 @@
 //! Host service execution over the shared plugin lifecycle kernel.
 pub mod abi;
 mod context;
+pub mod management;
 mod native_context;
 pub mod operations;
 mod owner;
@@ -600,6 +601,7 @@ impl Application {
             return Err("remote Host executor is unavailable".into());
         }
         operations::provide(&mut native)?;
+        management::provide(&mut native)?;
         Self::start_owned(
             loaded.source.input,
             loaded.packages,

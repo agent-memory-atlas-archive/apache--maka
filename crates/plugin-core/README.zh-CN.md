@@ -73,3 +73,8 @@ maka application check --input deployment.json --package /absolute/package/path
 资源输入槽。资源名称/版本描述形状，不授予权限；实际 payload 与授权归执行适配器的
 请求私有附件，不能由 JSON metadata 伪造。声明必须显式提供 `captures` / `resources`
 map，不为旧格式保留解码回退。
+
+`deployment::management` 提供共享部署管理契约以及封闭 read/install/replace 结果。
+Package bundle resource 仅声明不可变 payload 的名义类型，不因类型或输入 metadata
+授予管理权限；执行适配器绑定实际 Root 并检查 policy。已提交输入、确定拒绝/冲突及
+未决操作结果保持区分。

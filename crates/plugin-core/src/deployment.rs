@@ -18,6 +18,7 @@
  */
 
 //! Durable deployment source identities. These data references grant no access.
+pub mod management;
 use crate::{composition::Input, contract::Export, plan::RemoteCapability};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

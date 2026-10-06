@@ -246,3 +246,33 @@ activation convergence and resource cleanup remain independent. Accepted work an
 original recovery references keep their original source. This wires same-Root
 native management commits to the live Host owner; external management services,
 UI endpoint reapproval and production TUI/Desktop update admission remain pending.
+
+## Deployment management
+
+Persisted applications make `maka.application.management` available as a native
+implementation. A product must explicitly compose an instance exporting
+`Management` and select its bindings; availability grants no permission. The
+factory uses its original `NativePersistence` Root and deployment. Requests cannot
+select a filesystem path, another deployment or a different execution role.
+
+`read` returns the committed input and exact available PackageRefs from a bounded
+SQL metadata snapshot. It never loads package payloads or claims execution
+readiness. `install` validates the actual immutable `package` resource using the
+existing digest-checked bundle format, then CAS-commits the unchanged input with
+those bytes available. It does not execute the new package. `replace` selects
+already installed exact revisions and explicitly submits a new input with its
+expected revision. Templates, bindings and overrides retain the ordinary core
+validation; the manager does not add business routes or a second editable plan.
+
+Both writes are ordinary journaled mutations. `ManagementResult` records
+`committed`, `conflict`, or `rejected` as closed business outcomes. Known bundle,
+input, role and package-reference rejection occurs before SQL effects. SQL,
+COMMIT, worker and cleanup uncertainty retain the original operation's unknown or
+failed-cleanup state. A commit acknowledgement is desired input, not convergence.
+All manager instances in the original application share a source-materialization
+lane; CAS remains the original SQL authority. Blocking bundle work holds its
+actual Scope ticket until its resource drops and worker completes.
+
+The contract and types live in plugin-core and generate the TS SDK. Host automatic
+head adoption applies committed sources; UI Root management and foreground
+coordination are separate integration work.

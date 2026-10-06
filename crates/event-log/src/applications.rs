@@ -25,7 +25,7 @@ use crate::{EventLog, StoreError};
 pub use changes::DeploymentChanges;
 use maka_plugin_core::{
     composition::Input,
-    deployment::{Deployment, DeploymentRef, RemoteObservation},
+    deployment::{Deployment, DeploymentRef, RemoteObservation, management::ManagedDeployment},
     package::{PackageRef, Packages},
     plan::{Plan, RemoteExports},
 };
@@ -67,7 +67,7 @@ impl Write for LimitedJson {
         Ok(())
     }
 }
-fn encode<T: serde::Serialize>(value: &T, limit: usize) -> Result<String, StoreError> {
+fn encode<T: serde::Serialize + ?Sized>(value: &T, limit: usize) -> Result<String, StoreError> {
     let mut writer = LimitedJson {
         bytes: Vec::new(),
         limit,
@@ -117,6 +117,17 @@ fn validate(
     }
     Plan::prepare(input, &packages, &remote).map_err(|e| invalid(e.to_string()))?;
     Ok(())
+}
+/// Shared deterministic source checks, before any SQL effect. This validates
+/// metadata and immutable bytes; it grants no deployment management authority.
+pub fn validate_application(
+    input: &Input,
+    observations: &[RemoteObservation],
+    bytes: &[Package],
+) -> Result<(), StoreError> {
+    let encoded = encode(input, MAX_JSON)?;
+    encode(observations, MAX_JSON - encoded.len())?;
+    validate(input, observations, bytes)
 }
 impl EventLog {
     fn application_domain(&self) -> Result<String, StoreError> {
@@ -203,6 +214,28 @@ impl EventLog {
             .await
     }
 
+    /// Bounded source and references from one original SQL snapshot. No package
+    /// payload is read or claimed validated; executors still load exact bytes.
+    pub async fn read_application_metadata(
+        &self,
+        deployment: Uuid,
+    ) -> Result<Option<ManagedDeployment>, StoreError> {
+        let domain = self.application_domain()?;
+        if deployment.is_nil() {
+            return Err(invalid("invalid deployment"));
+        }
+        self.connection
+            .run(move |connection| {
+                Box::pin(async move {
+                    let mut tx = connection.begin().await?;
+                    let metadata = read_metadata(&mut tx, domain, deployment, None).await?;
+                    tx.commit().await?;
+                    Ok(metadata)
+                })
+            })
+            .await
+    }
+
     async fn read_application(
         &self,
         deployment: Uuid,
@@ -212,50 +245,110 @@ impl EventLog {
         if deployment.is_nil() {
             return Err(invalid("invalid deployment"));
         }
-        self.connection.run(move |connection| Box::pin(async move {
-            let mut tx = connection.begin().await?;
-            let id = deployment.to_string();
-            let revision = match revision {
-                Some(revision) => revision,
-                None => match sqlx::query_scalar::<_, i64>("SELECT revision FROM application_deployments WHERE id = ?").bind(&id).fetch_optional(&mut *tx).await? {
-                    Some(revision) => revision as u64,
-                    None => return Ok(None),
-                },
-            };
-            let Some(row) = sqlx::query("SELECT revision,
+        self.connection
+            .run(move |connection| {
+                Box::pin(async move {
+                    let mut tx = connection.begin().await?;
+                    let Some(metadata) =
+                        read_metadata(&mut tx, domain, deployment, revision).await?
+                    else {
+                        return Ok(None);
+                    };
+                    let mut packages = Vec::new();
+                    let mut size = 0;
+                    for reference in metadata.packages {
+                        let package = read_package(&mut tx, &reference, MAX_BYTES - size).await?;
+                        size += package.files().values().map(Vec::len).sum::<usize>();
+                        if size > MAX_BYTES {
+                            return Err(invalid("application packages exceed 128 MiB"));
+                        }
+                        packages.push(package);
+                    }
+                    validate(
+                        &metadata.source.input,
+                        &metadata.source.remote_exports,
+                        &packages,
+                    )?;
+                    tx.commit().await?;
+                    Ok(Some(LoadedDeployment {
+                        source: metadata.source,
+                        packages,
+                    }))
+                })
+            })
+            .await
+    }
+}
+
+async fn read_metadata(
+    connection: &mut SqliteConnection,
+    domain: String,
+    deployment: Uuid,
+    revision: Option<u64>,
+) -> Result<Option<ManagedDeployment>, StoreError> {
+    let id = deployment.to_string();
+    let revision = match revision {
+        Some(revision) => revision,
+        None => match sqlx::query_scalar::<_, i64>(
+            "SELECT revision FROM application_deployments WHERE id = ?",
+        )
+        .bind(&id)
+        .fetch_optional(&mut *connection)
+        .await?
+        {
+            Some(revision) => revision as u64,
+            None => return Ok(None),
+        },
+    };
+    let Some(row) = sqlx::query("SELECT revision,
                 CASE WHEN length(CAST(input_json AS BLOB)) + length(CAST(remote_exports_json AS BLOB)) <= 524288 THEN input_json END AS input_json,
                 CASE WHEN length(CAST(input_json AS BLOB)) + length(CAST(remote_exports_json AS BLOB)) <= 524288 THEN remote_exports_json END AS remote_exports_json
                 FROM application_sources WHERE deployment = ? AND revision = ?")
-                .bind(&id).bind(revision as i64).fetch_optional(&mut *tx).await? else { return Ok(None); };
-            let input_json: String = row.try_get::<Option<String>, _>("input_json")?.ok_or_else(|| invalid("application source exceeds 512 KiB"))?;
-            let remote_json: String = row.try_get::<Option<String>, _>("remote_exports_json")?.ok_or_else(|| invalid("application source exceeds 512 KiB"))?;
-            let input: Input = serde_json::from_str(&input_json)?;
-            let observations: Vec<RemoteObservation> = serde_json::from_str(&remote_json)?;
-            let reference = DeploymentRef { state_domain: domain, deployment, revision: row.try_get::<i64, _>("revision")? as u64 };
-            reference.validate().map_err(invalid)?;
-            let refs = sqlx::query("SELECT CASE WHEN length(CAST(id AS BLOB)) <= 128 THEN id END AS id,
+                .bind(&id).bind(revision as i64).fetch_optional(&mut *connection).await? else { return Ok(None); };
+    let input_json: String = row
+        .try_get::<Option<String>, _>("input_json")?
+        .ok_or_else(|| invalid("application source exceeds 512 KiB"))?;
+    let remote_json: String = row
+        .try_get::<Option<String>, _>("remote_exports_json")?
+        .ok_or_else(|| invalid("application source exceeds 512 KiB"))?;
+    let input: Input = serde_json::from_str(&input_json)?;
+    let observations: Vec<RemoteObservation> = serde_json::from_str(&remote_json)?;
+    let reference = DeploymentRef {
+        state_domain: domain,
+        deployment,
+        revision: row.try_get::<i64, _>("revision")? as u64,
+    };
+    reference.validate().map_err(invalid)?;
+    let refs = sqlx::query("SELECT CASE WHEN length(CAST(id AS BLOB)) <= 128 THEN id END AS id,
                 CASE WHEN length(CAST(revision AS BLOB)) = 71 THEN revision END AS revision
                 FROM application_source_packages WHERE deployment = ? AND source_revision = ? ORDER BY id, revision LIMIT 129")
-                .bind(&id).bind(revision as i64).fetch_all(&mut *tx).await?;
-            if refs.len() > MAX_PACKAGES { return Err(invalid("application package count exceeds 128")); }
-            let mut packages = Vec::new();
-            let mut size = 0;
-            for row in refs {
-                let reference = PackageRef {
-                    id: row.try_get::<Option<String>, _>("id")?.ok_or_else(|| invalid("invalid stored package id"))?,
-                    revision: row.try_get::<Option<String>, _>("revision")?.ok_or_else(|| invalid("invalid stored package revision"))?,
-                };
-                reference.validate().map_err(|e| invalid(e.to_string()))?;
-                let package = read_package(&mut tx, &reference, MAX_BYTES - size).await?;
-                size += package.files().values().map(Vec::len).sum::<usize>();
-                if size > MAX_BYTES { return Err(invalid("application packages exceed 128 MiB")); }
-                packages.push(package);
-            }
-            validate(&input, &observations, &packages)?;
-            tx.commit().await?;
-            Ok(Some(LoadedDeployment { source: Deployment { reference, input, remote_exports: observations }, packages }))
-        })).await
+                .bind(&id).bind(revision as i64).fetch_all(&mut *connection).await?;
+    if refs.len() > MAX_PACKAGES {
+        return Err(invalid("application package count exceeds 128"));
     }
+    let mut packages = Vec::new();
+    for row in refs {
+        let reference = PackageRef {
+            id: row
+                .try_get::<Option<String>, _>("id")?
+                .ok_or_else(|| invalid("invalid stored package id"))?,
+            revision: row
+                .try_get::<Option<String>, _>("revision")?
+                .ok_or_else(|| invalid("invalid stored package revision"))?,
+        };
+        reference
+            .validate()
+            .map_err(|error| invalid(error.to_string()))?;
+        packages.push(reference);
+    }
+    Ok(Some(ManagedDeployment {
+        source: Deployment {
+            reference,
+            input,
+            remote_exports: observations,
+        },
+        packages,
+    }))
 }
 
 async fn read_package(
