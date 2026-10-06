@@ -220,6 +220,27 @@ impl EventLog {
         &self,
         deployment: Uuid,
     ) -> Result<Option<ManagedDeployment>, StoreError> {
+        self.read_metadata(deployment, None).await
+    }
+
+    /// Bounded metadata of the exact committed revision, independent of head.
+    pub async fn read_application_metadata_at(
+        &self,
+        reference: &DeploymentRef,
+    ) -> Result<Option<ManagedDeployment>, StoreError> {
+        reference.validate().map_err(invalid)?;
+        if reference.state_domain != self.application_domain()? {
+            return Err(invalid("foreign application state domain"));
+        }
+        self.read_metadata(reference.deployment, Some(reference.revision))
+            .await
+    }
+
+    async fn read_metadata(
+        &self,
+        deployment: Uuid,
+        revision: Option<u64>,
+    ) -> Result<Option<ManagedDeployment>, StoreError> {
         let domain = self.application_domain()?;
         if deployment.is_nil() {
             return Err(invalid("invalid deployment"));
@@ -228,7 +249,7 @@ impl EventLog {
             .run(move |connection| {
                 Box::pin(async move {
                     let mut tx = connection.begin().await?;
-                    let metadata = read_metadata(&mut tx, domain, deployment, None).await?;
+                    let metadata = read_metadata(&mut tx, domain, deployment, revision).await?;
                     tx.commit().await?;
                     Ok(metadata)
                 })

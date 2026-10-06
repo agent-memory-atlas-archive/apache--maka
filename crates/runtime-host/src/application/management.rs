@@ -17,7 +17,7 @@
  * under the License.
  */
 
-//! Explicitly composed management of the native owner's original deployment.
+//! Explicitly composed management of a fixed deployment in the original Root.
 use super::*;
 use maka_event_log::{EventLog, StoreError, applications::validate_application};
 use maka_plugin_core::deployment::management::{
@@ -28,9 +28,35 @@ use serde::Deserialize;
 
 pub const DEPLOYMENT_MANAGER: &str = "maka.application.management";
 
+/// Trusted launcher handle. The target and execution environment never come
+/// from guest configuration or mutation input; every operation uses Host admission.
+#[derive(Clone)]
+pub struct ManagementTarget(Manager);
+impl ManagementTarget {
+    pub async fn from_source(store: Arc<EventLog>, source: DeploymentRef) -> Result<Self> {
+        let metadata = store
+            .read_application_metadata_at(&source)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or("managed source not found")?;
+        let environment = metadata.source.input.environment;
+        environment
+            .entry_target()
+            .map_err(|error| error.to_string())?;
+        Ok(Self(Manager {
+            source,
+            store,
+            environment,
+            writes: Arc::new(tokio::sync::Mutex::new(())),
+        }))
+    }
+}
+
+#[derive(Clone)]
 struct Manager {
     source: DeploymentRef,
     store: Arc<EventLog>,
+    environment: maka_plugin_core::composition::Environment,
     writes: Arc<tokio::sync::Mutex<()>>,
 }
 impl Manager {
@@ -108,9 +134,9 @@ impl Manager {
         if request.expected_revision != metadata.source.reference.revision {
             return conflict(metadata.source.reference.revision);
         }
-        if request.input.environment.location != ExecutionLocation::Host
-            || request.input.environment.presentation.is_some()
-            || !request.remote_exports.is_empty()
+        if request.input.environment != self.environment
+            || (self.environment.location == ExecutionLocation::Host
+                && !request.remote_exports.is_empty())
         {
             return rejected(ManagementRejection::ExecutionEnvironment);
         }
@@ -159,6 +185,9 @@ impl Manager {
         packages: Vec<Package>,
         result: impl FnOnce(DeploymentRef) -> T,
     ) -> Result<Value> {
+        if input.environment != self.environment {
+            return rejected(ManagementRejection::ExecutionEnvironment);
+        }
         if validate_application(&input, &observations, &packages).is_err() {
             return rejected(ManagementRejection::InvalidSource);
         }
@@ -203,11 +232,7 @@ impl Handler for Manager {
         input: Value,
         context: Context,
     ) -> BoxFuture<'static, Result<Value>> {
-        let manager = Self {
-            source: self.source.clone(),
-            store: self.store.clone(),
-            writes: self.writes.clone(),
-        };
+        let manager = self.clone();
         Box::pin(async move {
             match method.as_str() {
                 "read" => {
@@ -252,6 +277,24 @@ fn read_bundle(resource: &Arc<dyn maka_plugins::call::ReadResource>) -> Result<P
 }
 
 pub(super) fn provide(native: &mut NativeRegistry) -> Result<()> {
+    provide_manager(native, DEPLOYMENT_MANAGER.into(), None)
+}
+
+/// Makes a fixed target available to an explicitly composed native entry. This
+/// does not start an entry, publish a binding, or grant a caller any permission.
+pub fn provide_target(
+    native: &mut NativeRegistry,
+    implementation: String,
+    target: ManagementTarget,
+) -> Result<()> {
+    provide_manager(native, implementation, Some(target))
+}
+
+fn provide_manager(
+    native: &mut NativeRegistry,
+    implementation: String,
+    target: Option<ManagementTarget>,
+) -> Result<()> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Configuration {}
@@ -259,9 +302,10 @@ pub(super) fn provide(native: &mut NativeRegistry) -> Result<()> {
     // share one bounded source-materialization lane. CAS remains the SQL authority.
     let writes = Arc::new(tokio::sync::Mutex::new(()));
     native.insert(
-        DEPLOYMENT_MANAGER.into(),
+        implementation,
         Arc::new(move |context, configuration| {
             let writes = writes.clone();
+            let target = target.clone();
             Box::pin(async move {
                 let manager = (|| {
                     serde_json::from_value::<Configuration>(configuration)
@@ -269,11 +313,27 @@ pub(super) fn provide(native: &mut NativeRegistry) -> Result<()> {
                     let persistence = context
                         .persistence()
                         .ok_or("deployment management requires the original persisted Root")?;
-                    Ok::<_, String>(Arc::new(Manager {
-                        source: persistence.source().clone(),
-                        store: persistence.store().clone(),
-                        writes,
-                    }))
+                    let manager = match target {
+                        Some(target) => {
+                            if !Arc::ptr_eq(persistence.store(), &target.0.store) {
+                                return Err(
+                                    "management target requires the same original Root owner"
+                                        .into(),
+                                );
+                            }
+                            target.0
+                        }
+                        None => Manager {
+                            source: persistence.source().clone(),
+                            store: persistence.store().clone(),
+                            environment: maka_plugin_core::composition::Environment {
+                                location: ExecutionLocation::Host,
+                                presentation: None,
+                            },
+                            writes,
+                        },
+                    };
+                    Ok::<_, String>(Arc::new(manager))
                 })();
                 match manager {
                     Ok(manager) => NativeActivation {

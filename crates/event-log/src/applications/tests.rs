@@ -462,6 +462,21 @@ async fn metadata_snapshot_never_materializes_package_payloads() {
         .unwrap();
     assert_eq!(metadata.source.reference, source);
     assert_eq!(metadata.packages, vec![reference]);
+    let mut empty = metadata.source.input.clone();
+    empty.instances.clear();
+    let next = store
+        .commit_application(deployment, 1, empty, vec![], vec![])
+        .await
+        .unwrap();
+    assert!(
+        store
+            .read_application_metadata_at(&next)
+            .await
+            .unwrap()
+            .unwrap()
+            .packages
+            .is_empty()
+    );
     let original = serde_json::to_vec(&metadata).unwrap();
     assert!(original.len() < 4096);
     // A payload that cannot be loaded still must not enter metadata reads. This
@@ -473,7 +488,7 @@ async fn metadata_snapshot_never_materializes_package_payloads() {
     assert_eq!(
         serde_json::to_vec(
             &store
-                .read_application_metadata(deployment)
+                .read_application_metadata_at(&source)
                 .await
                 .unwrap()
                 .unwrap()
@@ -481,7 +496,17 @@ async fn metadata_snapshot_never_materializes_package_payloads() {
         .unwrap(),
         original
     );
-    assert!(store.load_application(deployment).await.is_err());
+    assert!(store.load_application_at(&source).await.is_err());
+    assert_eq!(
+        store
+            .load_application(deployment)
+            .await
+            .unwrap()
+            .unwrap()
+            .source
+            .reference,
+        next
+    );
     assert!(store.read_application_metadata(Uuid::nil()).await.is_err());
     assert!(
         store

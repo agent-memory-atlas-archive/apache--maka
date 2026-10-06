@@ -29,13 +29,16 @@ use maka_plugin_core::{
 use maka_runtime_host::application::{Binding, management::DEPLOYMENT_MANAGER};
 
 fn sources() -> (Input, Vec<Package>) {
+    sources_for(DEPLOYMENT_MANAGER)
+}
+fn sources_for(implementation: &str) -> (Input, Vec<Package>) {
     let contract = deployment_manager_contract();
     let provider = package(
         "management",
         EntryDeclaration {
             scene: None,
             implementation: Implementation::Native {
-                implementation: DEPLOYMENT_MANAGER.into(),
+                implementation: implementation.into(),
             },
             configuration: json!({"type":"object","additionalProperties":false}),
             imports: BTreeMap::new(),
@@ -100,10 +103,16 @@ struct Fixture {
     app: Application,
     issuer: Issuer,
     source: DeploymentRef,
+    managed: DeploymentRef,
     binding: Binding,
 }
 impl Fixture {
     async fn new() -> Self {
+        Self::create(None).await
+    }
+    async fn create(
+        presentation: Option<maka_plugin_core::composition::PresentationTarget>,
+    ) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().join("root");
         let namespaces = RootNamespaces {
@@ -115,7 +124,46 @@ impl Fixture {
                 .await
                 .unwrap(),
         );
-        let (input, packages) = sources();
+        let mut native = NativeRegistry::default();
+        let ui = if let Some(presentation) = presentation {
+            let ui = store
+                .commit_application(
+                    Uuid::new_v4(),
+                    0,
+                    Input {
+                        environment: Environment {
+                            location: ExecutionLocation::Ui,
+                            presentation: Some(presentation),
+                        },
+                        instances: BTreeMap::new(),
+                        launch: None,
+                    },
+                    vec![],
+                    vec![],
+                )
+                .await
+                .unwrap();
+            let target = maka_runtime_host::application::management::ManagementTarget::from_source(
+                store.clone(),
+                ui.clone(),
+            )
+            .await
+            .unwrap();
+            maka_runtime_host::application::management::provide_target(
+                &mut native,
+                "test.ui.management".into(),
+                target,
+            )
+            .unwrap();
+            Some(ui)
+        } else {
+            None
+        };
+        let (input, packages) = sources_for(if ui.is_some() {
+            "test.ui.management"
+        } else {
+            DEPLOYMENT_MANAGER
+        });
         let source = store
             .commit_application(Uuid::new_v4(), 0, input, vec![], packages)
             .await
@@ -124,7 +172,7 @@ impl Fixture {
         let app = Application::start_from_store(
             store.clone(),
             source.deployment,
-            NativeRegistry::default(),
+            native,
             issuer.clone(),
             Arc::new(Grant(issuer.clone())),
             Limits::default(),
@@ -145,6 +193,7 @@ impl Fixture {
             store,
             app,
             issuer,
+            managed: ui.unwrap_or_else(|| source.clone()),
             source,
             binding,
         }
@@ -538,4 +587,171 @@ async fn concurrent_installation_commits_once_and_records_the_other_cas_as_confl
     );
     assert_eq!(f.read().await.source.reference.revision, 2);
     f.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ui_target_uses_original_root_but_keeps_host_journal_and_fixed_presentation() {
+    use maka_plugin_core::composition::PresentationTarget;
+    for presentation in [PresentationTarget::Tui, PresentationTarget::Desktop] {
+        let f = Fixture::create(Some(presentation)).await;
+        let current = f.read().await;
+        assert_eq!(current.source.reference, f.managed);
+        assert_ne!(f.managed.deployment, f.source.deployment);
+        assert!(
+            f.app
+                .client()
+                .prepare_mutation(
+                    f.binding.clone(),
+                    "install".into(),
+                    json!({"expectedRevision":1}),
+                    scope(&f.issuer, false),
+                    Uuid::new_v4(),
+                    resource(extension().to_bundle()).into(),
+                )
+                .await
+                .is_err()
+        );
+        let install = f
+            .mutate(
+                "install",
+                json!({"expectedRevision":1}),
+                resource(extension().to_bundle()),
+            )
+            .await;
+        let installed: PackageInstalled =
+            serde_json::from_value(returned(&install)["value"].clone()).unwrap();
+        assert_eq!(installed.source.deployment, f.managed.deployment);
+        assert_eq!(installed.source.revision, 2);
+        assert_eq!(install.reference.source, f.source);
+        assert_eq!(
+            f.app.client().snapshot().effective.as_ref(),
+            Some(&f.source)
+        );
+        let mut current = f.read().await;
+        assert_eq!(current.source.input.instances.len(), 0);
+        current.source.input.environment.presentation = Some(match presentation {
+            PresentationTarget::Tui => PresentationTarget::Desktop,
+            PresentationTarget::Desktop => PresentationTarget::Tui,
+        });
+        let refused = f
+            .mutate(
+                "replace",
+                serde_json::to_value(DeploymentReplace {
+                    expected_revision: 2,
+                    input: current.source.input,
+                    remote_exports: vec![],
+                    packages: current.packages,
+                })
+                .unwrap(),
+                Attachments::new(),
+            )
+            .await;
+        assert_eq!(
+            returned(&refused),
+            json!({"status":"rejected","reason":"execution_environment"})
+        );
+        let current = f.read().await;
+        let replaced = f
+            .mutate(
+                "replace",
+                serde_json::to_value(DeploymentReplace {
+                    expected_revision: 2,
+                    input: current.source.input,
+                    remote_exports: vec![],
+                    packages: current.packages,
+                })
+                .unwrap(),
+                Attachments::new(),
+            )
+            .await;
+        let next: DeploymentRef =
+            serde_json::from_value(returned(&replaced)["value"].clone()).unwrap();
+        assert_eq!(next.deployment, f.managed.deployment);
+        assert_eq!(next.revision, 3);
+        assert_eq!(
+            f.store.application_head(f.source.deployment).await.unwrap(),
+            Some(f.source.clone())
+        );
+        assert_eq!(
+            f.store
+                .operation_observation(&install.reference)
+                .await
+                .unwrap()
+                .unwrap()
+                .outcome,
+            OperationOutcome::Returned {
+                value: returned(&install)
+            }
+        );
+        let old = f
+            .store
+            .read_application_metadata_at(&f.managed)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(old.packages.is_empty());
+        let mut foreign = f.managed.clone();
+        foreign.state_domain = "0".repeat(64);
+        assert!(
+            maka_runtime_host::application::management::ManagementTarget::from_source(
+                f.store.clone(),
+                foreign
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            RootOwner::open(&f.root, &f.namespaces)
+                .err()
+                .unwrap()
+                .kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        f.close().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fixed_target_factory_rejects_another_original_root_owner() {
+    use maka_runtime_host::application::management::{ManagementTarget, provide_target};
+    let original = Fixture::create(Some(
+        maka_plugin_core::composition::PresentationTarget::Desktop,
+    ))
+    .await;
+    let target = ManagementTarget::from_source(original.store.clone(), original.managed.clone())
+        .await
+        .unwrap();
+    let foreign = Fixture::new().await;
+    let (input, packages) = sources_for("foreign.target");
+    let source = foreign
+        .store
+        .commit_application(Uuid::new_v4(), 0, input, vec![], packages)
+        .await
+        .unwrap();
+    let mut native = NativeRegistry::default();
+    provide_target(&mut native, "foreign.target".into(), target).unwrap();
+    let issuer = Issuer::default();
+    let app = Application::start_from_store(
+        foreign.store.clone(),
+        source.deployment,
+        native,
+        issuer.clone(),
+        Arc::new(Grant(issuer)),
+        Limits::default(),
+    )
+    .await
+    .unwrap();
+    assert!(app.ready().await.is_err());
+    assert_eq!(
+        original
+            .store
+            .application_head(original.managed.deployment)
+            .await
+            .unwrap(),
+        Some(original.managed.clone())
+    );
+    app.shutdown().await.unwrap();
+    drop(app);
+    foreign.close().await;
+    original.close().await;
 }

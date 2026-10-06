@@ -177,7 +177,11 @@ source SQL load 未完成时也可即时撤销。`Snapshot.loading` 报告实际
 
 持久应用提供原生实现 `maka.application.management` 的 availability；产品必须显式组合
 导出 `Management` 的实例及能力绑定，availability 不授予权限。Factory 绑定原
-NativePersistence 的 Root 和 deployment；请求不能选择文件路径、其他部署或执行角色。
+NativePersistence 的 Root 和 deployment。可信 launcher 可通过
+`ManagementTarget::from_source` 与 `provide_target` 注册固定目标，捕获确切已提交
+revision 的 deployment 与 environment；激活要求管理 Host 持有同一个原 EventLog owner。
+这样可管理原 Root 中独立的 UI 部署，无需重新打开 Root。请求不能选择文件路径、其他
+部署、执行角色或另一种 TUI/Desktop presentation。
 
 `read` 从有界原 SQL metadata 快照返回已提交输入和精确可用 PackageRefs，不加载包
 payload，不声称执行就绪。`install` 使用已有 digest 校验 bundle 格式验证实际 immutable
@@ -188,8 +192,9 @@ payload，不声称执行就绪。`install` 使用已有 digest 校验 bundle �
 两种写入都经过普通 mutation 准入和原操作账本。封闭 `ManagementResult` 把 committed、
 conflict、rejected 记录成业务结果；确定的包、输入、角色、引用拒绝在 SQL 效果前完成。
 SQL、COMMIT、worker 或 cleanup 不确定性仍保原 Unknown/Failed 状态；提交确认只表示
-输入，不是实际收敛。原 Application 的全部管理实例共享 source 物化通道，CAS 权威仍在
-原 SQL。Blocking bundle worker 持实际 Scope ticket，直到原资源析构及 worker 完成。
+输入，不是实际收敛。默认管理实例共享原 Application 的 source 物化通道；固定目标
+实例共享该可信目标 handle 的通道。CAS 权威仍在原 SQL。Blocking bundle worker 持实际 Scope ticket，直到原资源析构及 worker 完成。
 
 契约和类型来自 plugin-core，生成 TS SDK。Host 自动 head adoption 应用已提交来源；
-UI Root 管理及前台协调仍需继续接线。
+固定 UI 目标的调用仍使用管理 Host 原 operation namespace 和账本；业务结果中的 source
+指向独立的 UI desired 部署。显式同进程 Host 与前台协调仍需继续接线。

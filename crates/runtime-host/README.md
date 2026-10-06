@@ -252,8 +252,13 @@ UI endpoint reapproval and production TUI/Desktop update admission remain pendin
 Persisted applications make `maka.application.management` available as a native
 implementation. A product must explicitly compose an instance exporting
 `Management` and select its bindings; availability grants no permission. The
-factory uses its original `NativePersistence` Root and deployment. Requests cannot
-select a filesystem path, another deployment or a different execution role.
+default factory uses its original `NativePersistence` Root and deployment.
+A trusted launcher can instead construct `ManagementTarget::from_source` and
+register it with `provide_target`. The target captures an exact committed
+revision's deployment and environment; activation requires the same original
+EventLog owner as the management Host. This supports a distinct UI deployment in
+the owned Root without opening it again. Requests cannot select a filesystem path,
+another deployment, a different execution role or another presentation target.
 
 `read` returns the committed input and exact available PackageRefs from a bounded
 SQL metadata snapshot. It never loads package payloads or claims execution
@@ -269,10 +274,13 @@ Both writes are ordinary journaled mutations. `ManagementResult` records
 input, role and package-reference rejection occurs before SQL effects. SQL,
 COMMIT, worker and cleanup uncertainty retain the original operation's unknown or
 failed-cleanup state. A commit acknowledgement is desired input, not convergence.
-All manager instances in the original application share a source-materialization
-lane; CAS remains the original SQL authority. Blocking bundle work holds its
+Default manager instances in the original application share a source-materialization
+lane; fixed-target instances share the lane of their trusted target handle.
+CAS remains the original SQL authority. Blocking bundle work holds its
 actual Scope ticket until its resource drops and worker completes.
 
 The contract and types live in plugin-core and generate the TS SDK. Host automatic
-head adoption applies committed sources; UI Root management and foreground
-coordination are separate integration work.
+head adoption applies committed sources. A fixed UI target uses the management
+Host's original operation namespace and journal; its returned deployment reference
+identifies the distinct UI desired source. Explicit cohosting and foreground
+coordination remain separate integration work.
