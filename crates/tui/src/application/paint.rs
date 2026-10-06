@@ -600,13 +600,34 @@ impl Presenter {
                 color: rgb,
                 ..
             } => text(content, area, buffer, Style::default().fg(color(*rgb))),
-            Node::Button { key, label } => {
+            Node::Button {
+                key,
+                label,
+                disabled,
+                color: foreground,
+            } => {
                 let label = format!("[ {} ]", sanitize(label).replace('\n', " "));
+                let button_area =
+                    Placement::new(CellRect::new(area.x, area.y, area.width, 1), area.clip);
+                if button_area.is_empty() {
+                    return Ok(());
+                }
+                let mut style = Style::default().fg(Color::Reset);
+                if let Some(foreground) = foreground {
+                    style = style.fg(color(*foreground));
+                }
+                if *disabled {
+                    if foreground.is_none() {
+                        style = style.add_modifier(Modifier::DIM);
+                    }
+                    text(&label, button_area, buffer, style);
+                    return Ok(());
+                }
                 let target = Target {
                     kind: TargetKind::Action,
                     ancestors: scene.ancestry.clone(),
                     revision: self.application.frame(mount)?.revision,
-                    area: Placement::new(CellRect::new(area.x, area.y, area.width, 1), area.clip),
+                    area: button_area,
                     tab_index: 0,
                     identity: TargetIdentity {
                         mount: mount.clone(),
@@ -622,10 +643,6 @@ impl Presenter {
                             .clone(),
                     },
                 };
-                if target.area.is_empty() {
-                    return Ok(());
-                }
-                let mut style = Style::default().fg(Color::Rgb(156, 194, 230));
                 if self.focus.as_ref().is_some_and(|old| old.same(&target)) {
                     style = style.add_modifier(Modifier::REVERSED);
                 }

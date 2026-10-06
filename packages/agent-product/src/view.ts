@@ -41,32 +41,29 @@ export function paint(target: Target, theme: Theme) {
       color: rgba(color),
       ...(desktop ? { style: { text: font(size, weight, color) } } : {}),
     }),
-    button: (key: string, label: string, disabled = false, primary = false): Node =>
-      !desktop && disabled
-        ? { kind: 'text', key, text: label, color: rgba(theme.muted) }
-        : {
-            kind: 'button',
-            key,
-            label,
-            ...(desktop
-              ? {
-                  disabled,
-                  style: {
-                    text: font(
-                      14,
-                      500,
-                      disabled ? theme.muted : primary ? theme.background : theme.accent,
-                    ),
-                    background: disabled ? theme.surface : primary ? theme.accent : 0,
-                    padding: { top: 8, right: 12, bottom: 8, left: 12 },
-                    radius: 8,
-                  },
-                  hover: disabled ? {} : { background: primary ? theme.accent : theme.selected },
-                  focus: { border: theme.accent, borderWidth: 2 },
-                  active: disabled ? {} : { background: primary ? theme.accent : theme.selected },
-                }
-              : {}),
-          },
+    button: (key: string, label: string, disabled = false, primary = false): Node => ({
+      kind: 'button',
+      key,
+      label,
+      disabled,
+      ...(desktop
+        ? {
+            style: {
+              text: font(
+                14,
+                500,
+                disabled ? theme.muted : primary ? theme.background : theme.accent,
+              ),
+              background: disabled ? theme.surface : primary ? theme.accent : 0,
+              padding: { top: 8, right: 12, bottom: 8, left: 12 },
+              radius: 8,
+            },
+            hover: disabled ? {} : { background: primary ? theme.accent : theme.selected },
+            focus: { border: theme.accent, borderWidth: 2 },
+            active: disabled ? {} : { background: primary ? theme.accent : theme.selected },
+          }
+        : { color: rgba(disabled ? theme.muted : theme.accent) }),
+    }),
     box: (
       key: string,
       children: Node[],

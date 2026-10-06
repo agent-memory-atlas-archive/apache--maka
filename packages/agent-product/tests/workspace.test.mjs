@@ -32,6 +32,46 @@ const appearance = await import(
   pathToFileURL(resolve(root, 'dist/packages/appearance/desktop.js'))
 );
 const values = { appearance: [appearance.activate({ scheme: 'light' }).Appearance.value] };
+test('busy TUI navigation preserves native buttons and restores their original actions', async () => {
+  const { component: navigation } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/navigation/tui.js'))
+  );
+  const props = {
+    theme: values.appearance[0],
+    locale: 'en',
+    sessions: [],
+    active: null,
+    busy: false,
+    more: false,
+  };
+  let result = navigation.mount(props, {});
+  const button = () => result.frame.view.children.find((node) => node.key === 'new');
+  const original = button();
+  assert.equal(original.kind, 'button');
+  assert.equal(original.disabled, false);
+  assert.equal(original.color, props.theme.accent >>> 8);
+  result = navigation.update(result.frame.state, { ...props, busy: true }, {});
+  assert.equal(button().kind, original.kind);
+  assert.equal(button().key, original.key);
+  assert.equal(button().label, original.label);
+  assert.equal(button().disabled, true);
+  assert.equal(button().color, props.theme.muted >>> 8);
+  result = navigation.event(
+    result.frame.state,
+    { kind: 'raw', key: 'new', event: null },
+    { ...props, busy: true },
+    {},
+  );
+  assert.deepEqual(result.events, []);
+  result = navigation.update(result.frame.state, props, {});
+  result = navigation.event(
+    result.frame.state,
+    { kind: 'raw', key: 'new', event: null },
+    props,
+    {},
+  );
+  assert.deepEqual(result.events, [{ name: 'create', value: {} }]);
+});
 const sdk = await import(pathToFileURL(resolve(root, 'dist/authoring/plugin-sdk/src/index.mjs')));
 const uuid = (n) => `00000000-0000-0000-0000-${n.toString().padStart(12, '0')}`;
 const reference = {

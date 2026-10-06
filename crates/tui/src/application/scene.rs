@@ -89,6 +89,12 @@ pub enum Node {
     Button {
         key: String,
         label: String,
+        #[serde(default)]
+        disabled: bool,
+        /// Absent foreground uses the terminal's default text color.
+        #[serde(default)]
+        #[schemars(range(max = 0xffffff))]
+        color: Option<u32>,
     },
     Component(ComponentSlot),
 }
@@ -164,9 +170,9 @@ impl Node {
                     return Err("invalid text".into());
                 }
             }
-            Self::Button { label, .. } => {
-                if label.len() > 4096 {
-                    return Err("invalid button label".into());
+            Self::Button { label, color, .. } => {
+                if label.len() > 4096 || color.is_some_and(|color| color > 0xffffff) {
+                    return Err("invalid button".into());
                 }
             }
             Self::Component(slot) => {
@@ -199,12 +205,12 @@ impl Node {
                     hidden_slots.insert(slot.key.clone());
                 }
             }
-            Self::Button { key, .. } => {
+            Self::Button { key, disabled, .. } => {
                 *input_count += 1;
                 if *input_count > 64 {
                     return Err("scene input limit".into());
                 }
-                if visible && inputs.insert(key.clone(), json!(true)).is_some() {
+                if visible && !disabled && inputs.insert(key.clone(), json!(true)).is_some() {
                     return Err("reserved scene input identity".into());
                 }
             }

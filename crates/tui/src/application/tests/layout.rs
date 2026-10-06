@@ -23,6 +23,7 @@ use maka_ui::{
     ComponentCall, ComponentOutput, Frame, NativeCapability, NativeComponent, NativeExport,
     NativeView,
 };
+use ratatui::style::{Color, Modifier};
 use std::{any::Any, cell::Cell, collections::BTreeMap, rc::Rc};
 
 pub(super) enum View {
@@ -646,6 +647,102 @@ fn refresh(presenter: &mut Presenter) {
         .dispatch(&presenter.root, revision, "back", json!({"kind":"click"}))
         .unwrap();
     presenter.sync_native().unwrap();
+}
+
+#[test]
+fn disabled_buttons_retain_layout_but_revoke_click_dispatch_and_tab_targets() {
+    let source = Rc::new(std::cell::RefCell::new(json!({
+        "kind":"stack","key":"root","direction":"column","gap":0,"padding":0,"background":0,
+        "children":[
+            {"kind":"button","key":"save","label":"Save","color":0x416653},
+            {"kind":"button","key":"back","label":"Back"}
+        ]
+    })));
+    let (_runtime, mut presenter) = native(
+        View::ChangingScene(source.clone()),
+        Rc::new(Cell::new(true)),
+    );
+    let first = flushed(&mut presenter, 20, 3);
+    assert_eq!(first[(0, 0)].fg, Color::Rgb(0x41, 0x66, 0x53));
+    assert_eq!(first[(0, 1)].fg, Color::Reset);
+    let owner = presenter.resources.owners[&presenter.root.id()]
+        .identity
+        .clone();
+    assert_eq!(presenter.focus.as_ref().unwrap().key, "save");
+    source.borrow_mut()["children"][0]["disabled"] = json!(true);
+    refresh(&mut presenter);
+    let count = presenter.application.frame(&presenter.root).unwrap().state["count"].clone();
+    let revision = presenter
+        .application
+        .frame(&presenter.root)
+        .unwrap()
+        .revision;
+    assert!(
+        presenter
+            .application
+            .dispatch(&presenter.root, revision, "save", json!({"kind":"click"}))
+            .is_err()
+    );
+    assert!(
+        presenter.input(key(KeyCode::Enter)).is_err(),
+        "old flushed target cannot invoke a newly disabled action"
+    );
+    let disabled = flushed(&mut presenter, 20, 3);
+    for y in 0..3 {
+        for x in 0..20 {
+            assert_eq!(
+                first[(x, y)].symbol(),
+                disabled[(x, y)].symbol(),
+                "disabled retains button geometry"
+            );
+        }
+    }
+    assert!(
+        !disabled[(0, 0)].modifier.contains(Modifier::DIM),
+        "explicit theme color is not dimmed again"
+    );
+    assert_eq!(presenter.scene.len(), 1);
+    assert_eq!(presenter.focus.as_ref().unwrap().key, "back");
+    presenter
+        .input(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+    presenter.input(key(KeyCode::Tab)).unwrap();
+    assert_eq!(presenter.focus.as_ref().unwrap().key, "back");
+    assert_eq!(
+        presenter.application.frame(&presenter.root).unwrap().state["count"],
+        count
+    );
+    source.borrow_mut()["children"][0]["disabled"] = json!(false);
+    refresh(&mut presenter);
+    flushed(&mut presenter, 20, 3);
+    assert!(Rc::ptr_eq(
+        &owner,
+        &presenter.resources.owners[&presenter.root.id()].identity
+    ));
+    presenter.input(key(KeyCode::Tab)).unwrap();
+    assert_eq!(presenter.focus.as_ref().unwrap().key, "save");
+    let before = presenter.application.frame(&presenter.root).unwrap().state["count"]
+        .as_u64()
+        .unwrap();
+    presenter.input(key(KeyCode::Enter)).unwrap();
+    assert_eq!(
+        presenter.application.frame(&presenter.root).unwrap().state["count"],
+        before + 1
+    );
+    source.borrow_mut()["children"][1]["disabled"] = json!(true);
+    refresh(&mut presenter);
+    let default_disabled = flushed(&mut presenter, 20, 3);
+    assert_eq!(default_disabled[(0, 1)].fg, Color::Reset);
+    assert!(default_disabled[(0, 1)].modifier.contains(Modifier::DIM));
+    assert_eq!(presenter.scene.len(), 1);
+    assert_eq!(presenter.scene[0].key, "save");
+    presenter.surface_closed(Ok(())).unwrap();
+    presenter.shutdown().unwrap();
 }
 
 #[test]

@@ -272,6 +272,11 @@ export type TerminalScene =
   | {
       key: string;
       label: string;
+      disabled?: boolean;
+      /**
+       * Absent foreground uses the terminal's default text color.
+       */
+      color?: number | null;
       kind: 'button';
     }
   | {

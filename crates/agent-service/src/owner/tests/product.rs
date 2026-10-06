@@ -23,8 +23,8 @@ use crossterm::event::{
 };
 use maka_plugin_core::deployment::RemoteObservation;
 use maka_ui::actions::RemoteService;
-use ratatui::{buffer::Buffer, layout::Rect};
-use std::{path::PathBuf, process::Command};
+use ratatui::{buffer::Buffer, layout::Rect, style::Color};
+use std::{path::PathBuf, process::Command, sync::OnceLock};
 
 struct Physical {
     server: Arc<maka_application_bridge::transport::Server>,
@@ -73,16 +73,49 @@ fn click(presenter: &mut maka_tui::application::Presenter, label: &str) {
     click_nth(presenter, label, 0);
 }
 fn click_nth(presenter: &mut maka_tui::application::Presenter, label: &str, nth: usize) {
-    let buffer = draw(presenter);
-    let (x, y) = (0..buffer.area.height)
-        .filter_map(|y| {
-            let row = (0..buffer.area.width)
-                .map(|x| buffer[(x, y)].symbol())
-                .collect::<String>();
-            row.find(label).map(|x| (x as u16, y))
+    // Disabled buttons retain their label. This fixture uses the ordinary light
+    // theme, whose enabled button foreground is its accent. Await that painted
+    // state before one click; never replay a potentially committed operation.
+    static BUTTON_COLOR: OnceLock<Color> = OnceLock::new();
+    let enabled = label.starts_with("[ ").then(|| {
+        *BUTTON_COLOR.get_or_init(|| {
+            let module = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../packages/agent-product/dist/packages/appearance/tui.js");
+            let output = Command::new("node")
+                .args(["--input-type=module", "-e", "const {activate}=await import(process.argv[1]); const theme=activate({scheme:'light'}).Appearance.value; console.log(JSON.stringify({accent:theme.accent>>>8,muted:theme.muted>>>8}));"])
+                .arg(format!("file://{}", module.display()))
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            let colors: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_ne!(colors["accent"], colors["muted"], "fixture must distinguish enabled and disabled buttons");
+            let rgb = colors["accent"].as_u64().unwrap() as u32;
+            Color::Rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
         })
-        .nth(nth)
-        .unwrap_or_else(|| panic!("missing {label} #{nth} in {}", screen(&buffer)));
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let (x, y) = loop {
+        let buffer = draw(presenter);
+        let position = (0..buffer.area.height)
+            .filter_map(|y| {
+                let row = (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>();
+                row.find(label).map(|x| (x as u16, y))
+            })
+            .nth(nth);
+        if let Some((x, y)) = position
+            && enabled.is_none_or(|color| buffer[(x, y)].fg == color)
+        {
+            break (x, y);
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "missing enabled {label} #{nth} in {}",
+            screen(&buffer)
+        );
+        std::thread::yield_now();
+    };
     presenter
         .input(Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
