@@ -20,16 +20,17 @@
 # Application Host connections
 
 The Desktop and TUI launchers accept `--connections FILE`. This trusted input
-starts a separate shared Host child for each selected deployment. It does not edit
-either composition. Each child owns its original Application and Root; independent
-private IPC invocation streams share that same Host state. Network authentication
+explicitly chooses `process` or `cohost` for each selected deployment without
+editing either composition. Process Hosts own a separate Application and Root;
+cohosts run a distinct Host deployment in the UI's already owned EventLog. Both use
+the same Server, PeerPolicy and native invocation adapter. Network authentication
 remains separate work.
 
 ```json
 {
   "hosts": [{
     "name": "primary",
-    "root": "/path/to/host/root",
+    "location": { "kind": "process", "root": "/path/to/host/root" },
     "deployment": "00000000-0000-0000-0000-000000000010",
     "consumer": ["00000000-0000-0000-0000-000000000013"],
     "imports": {
@@ -198,3 +199,25 @@ retained live revisions keep their original ticket. Retained actors
 continue using their original source, so the manager must retain those revisions
 until their last executable consumer retires. Production plugin-management and
 foreground adoption coordination remain separate integration work.
+
+
+## Same-Root cohosts
+
+`location: { "kind": "cohost" }` explicitly borrows the launcher's original UI
+Store. It accepts no Root path, never opens a Root and requires a Host deployment
+UUID distinct from the UI and other cohosts. Compiled native availability comes
+from the embedding; composition, bindings, method and recovery grants still
+select every activation and call. Generic Duplex channels use the same tracked
+Server/native adapter as process Hosts, without sockets or a second call protocol.
+
+Cohost availability includes `maka.application.ui-management`, bound to the exact
+UI deployment and presentation. The product must explicitly compose and bind it.
+Install/replace operations retain the cohost's original Host operation namespace
+and journal; business results identify the UI desired source. Committing or
+watching that source does not approve endpoints or claim foreground convergence.
+
+Capture preserves actual Bindings for whole-batch approval; unchanged epochs keep
+the same service implementation. Startup observers may be dropped while the same
+owner retains original initialization and shutdown. The launcher drains UI work,
+then every original connection, Server and Host Application, and only then shuts
+down the shared SQL Store. Failed cleanup retains the original owners.

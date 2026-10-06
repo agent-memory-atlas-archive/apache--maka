@@ -504,7 +504,7 @@ fn capture_reply(nonce: Uuid, result: Result<Catalogue>) -> Event {
         },
     }
 }
-async fn capture_endpoints(
+pub(crate) async fn capture_endpoints(
     client: &Client,
     consumer: &InstanceId,
     imports: &BTreeMap<String, Grant>,

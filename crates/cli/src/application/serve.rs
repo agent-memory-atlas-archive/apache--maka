@@ -22,11 +22,14 @@ use clap::Args;
 use maka_runtime_host::{application::NativeRegistry, server::HostError};
 #[derive(Args)]
 pub(crate) struct Serve {}
-pub(super) async fn run(_: Serve) -> Result<(), HostError> {
+pub(super) fn native() -> Result<NativeRegistry, HostError> {
     let mut native = NativeRegistry::default();
     maka_agent_service::provide(&mut native)?;
     maka_settings_service::provide(&mut native)?;
-    maka_application_bridge::transport::process::serve(native)
+    Ok(native)
+}
+pub(super) async fn run(_: Serve) -> Result<(), HostError> {
+    maka_application_bridge::transport::process::serve(native()?)
         .await
         .map_err(Into::into)
 }

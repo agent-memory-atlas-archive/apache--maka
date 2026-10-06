@@ -232,7 +232,7 @@ export function composition(configuration: CompositionConfiguration): {
     hosts: [
       {
         name: 'local',
-        root: configuration.hostRoot,
+        location: { kind: 'process', root: configuration.hostRoot },
         deployment: configuration.hostDeployment,
         consumer: [keys.gateway],
         imports: {

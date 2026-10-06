@@ -293,18 +293,12 @@ pub(super) fn quit_when_drained(application: &Rc<RefCell<DesktopApplication>>, c
         let caller = owner.0.caller.clone();
         owner.0.draining.set(true);
         let task = application.borrow().scheduler().spawn(async move {
-            tokio::join!(
-                async {
-                    if let Some(connections) = connections {
-                        connections.lock().await.drain().await;
-                    }
-                },
-                async {
-                    if let Some(caller) = caller {
-                        maka_application_bridge::drain_store(&caller).await;
-                    }
-                }
-            );
+            if let Some(connections) = connections {
+                connections.lock().await.drain().await;
+            }
+            if let Some(caller) = caller {
+                maka_application_bridge::drain_store(&caller).await;
+            }
         });
         cx.spawn(async move |cx| {
             if let Err(error) = task.await {

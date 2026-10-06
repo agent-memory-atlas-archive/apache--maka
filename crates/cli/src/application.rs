@@ -177,14 +177,16 @@ impl Command {
                     std::env::current_exe()?,
                     vec!["application".into(), "serve".into()],
                 )?;
+                let cohost_native = serve::native()?;
                 let store = std::sync::Arc::new(open_store(args.root).await?);
                 let mut connections = match maka_application_bridge::Connections::prepare(
-                    &store,
+                    store.clone(),
                     args.deployment,
                     PresentationTarget::Tui,
                     configuration,
                     namespaces,
                     executable,
+                    cohost_native,
                 )
                 .await
                 {
@@ -195,10 +197,8 @@ impl Command {
                     }
                 };
                 if let Err(error) = connections.start().await {
-                    tokio::join!(
-                        connections.drain(),
-                        maka_application_bridge::drain_store(&store)
-                    );
+                    connections.drain().await;
+                    maka_application_bridge::drain_store(&store).await;
                     return Err(error.into());
                 }
                 let source = connections.source().clone();
@@ -215,10 +215,8 @@ impl Command {
                     eprintln!("terminal execution cleanup unconfirmed: {error}");
                     std::future::pending::<()>().await;
                 }
-                tokio::join!(
-                    connections.drain(),
-                    maka_application_bridge::drain_store(&store)
-                );
+                connections.drain().await;
+                maka_application_bridge::drain_store(&store).await;
                 result??;
             }
         }

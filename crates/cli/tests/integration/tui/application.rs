@@ -226,7 +226,7 @@ fn local_arguments(directory: &std::path::Path) -> Vec<String> {
     });
     let path = directory.join("connections.json");
     std::fs::write(&path,serde_json::to_vec(&serde_json::json!({"hosts":[{
-        "name":"local","root":directory.join("host"),"deployment":host,"consumer":local_fixture::identity(13),
+        "name":"local","location":{"kind":"process","root":directory.join("host")},"deployment":host,"consumer":local_fixture::identity(13),
         "imports":{"business":{"methods":["read","write"],"recovery":false},"receipts":{"methods":["read"],"recovery":true}}
     }]})).unwrap()).unwrap();
     vec![

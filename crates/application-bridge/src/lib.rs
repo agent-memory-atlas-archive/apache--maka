@@ -22,8 +22,10 @@ mod connections;
 mod gateway;
 pub mod stdio;
 pub mod transport;
-pub use connections::{Configuration, Connections, Grant, Host, HostExecutable};
+pub use connections::{Configuration, Connections, Grant, Host, HostExecutable, HostLocation};
 pub use gateway::{GATEWAY, with_gateway};
+/// Compiled fixed-UI-target management availability for explicit cohost entries.
+pub const UI_DEPLOYMENT_MANAGER: &str = "maka.application.ui-management";
 pub type Result<T> = std::result::Result<T, String>;
 
 /// Product startup must not exit after losing confirmation of an acquired SQL

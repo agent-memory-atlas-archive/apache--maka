@@ -169,6 +169,178 @@ fn startup_configuration_is_closed_and_bounded_before_opening_any_host() {
     }
     std::fs::write(&path, vec![b' '; 1_048_577]).unwrap();
     assert!(Configuration::read(&path).err().unwrap().contains("1 MiB"));
+    let mut cohost = json!({"hosts":[{
+        "name":"local", "location":{"kind":"cohost"}, "deployment":uuid::Uuid::new_v4(),
+        "consumer":support::identity(13), "imports":{"business":{"methods":["read"],"recovery":false}}
+    }]});
+    std::fs::write(&path, serde_json::to_vec(&cohost).unwrap()).unwrap();
+    Configuration::read(&path).unwrap();
+    cohost["hosts"][0]["location"]["root"] = json!("/guest/cannot/select/a/root");
+    std::fs::write(&path, serde_json::to_vec(&cohost).unwrap()).unwrap();
+    assert!(Configuration::read(&path).is_err());
     std::fs::write(&path, br#"{"hosts":[]}"#).unwrap();
     assert!(Configuration::read(&path).unwrap().hosts.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_cohost_start_keeps_original_initializer_native_file_and_sql_until_real_close() {
+    use maka_application_bridge::{Connections, HostExecutable};
+    use maka_plugin_core::{
+        composition::PresentationTarget,
+        package::{EntryTarget, Implementation},
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("cohost");
+    let namespaces = RootNamespaces {
+        ownership: directory.path().join("owners"),
+        control: directory.path().join("control"),
+    };
+    let store = Arc::new(
+        EventLog::for_root(Arc::new(RootOwner::create(&root, &namespaces).unwrap()))
+            .await
+            .unwrap(),
+    );
+    let (mut input, originals) = support::host();
+    let mut packages = Vec::new();
+    for old in originals {
+        if old.manifest().id != "local.business" {
+            packages.push(old);
+            continue;
+        }
+        let mut declaration = old.manifest().application.clone().unwrap();
+        declaration
+            .entries
+            .get_mut(&EntryTarget::Host)
+            .unwrap()
+            .implementation = Implementation::Native {
+            implementation: "cohost.gated".into(),
+        };
+        let package = support::counter::package("local.business", declaration, None);
+        input.instances.get_mut("business").unwrap().package = package.application_ref().into();
+        packages.push(package);
+    }
+    let host = uuid::Uuid::new_v4();
+    let host_source = store
+        .commit_application(host, 0, input, vec![], packages)
+        .await
+        .unwrap();
+    let (input, packages, observations) = support::ui(PresentationTarget::Desktop);
+    let ui = store
+        .commit_application(uuid::Uuid::new_v4(), 0, input, observations, packages)
+        .await
+        .unwrap();
+    let began = Arc::new(tokio::sync::Semaphore::new(0));
+    let initialized = Arc::new(tokio::sync::Semaphore::new(0));
+    let closing = Arc::new(tokio::sync::Semaphore::new(0));
+    let released = Arc::new(tokio::sync::Semaphore::new(0));
+    let file = Arc::new(Mutex::new(None));
+    let resource = Arc::new(FileOwner {
+        file: file.clone(),
+        closing: closing.clone(),
+        release: released.clone(),
+    });
+    let mut native = NativeRegistry::default();
+    let expected_store = store.clone();
+    let began_factory = began.clone();
+    let initialized_factory = initialized.clone();
+    let file_path = directory.path().join("owned-native-file");
+    native
+        .insert(
+            "cohost.gated".into(),
+            Arc::new(move |context, _| {
+                let expected_store = expected_store.clone();
+                let began = began_factory.clone();
+                let initialized = initialized_factory.clone();
+                let resource = resource.clone();
+                let path = file_path.clone();
+                Box::pin(async move {
+                    assert!(Arc::ptr_eq(
+                        context.persistence().unwrap().store(),
+                        &expected_store
+                    ));
+                    *resource.file.lock().unwrap() = Some(std::fs::File::create(path).unwrap());
+                    began.add_permits(1);
+                    initialized.acquire_owned().await.unwrap().forget();
+                    NativeActivation {
+                        exports: Ok(BTreeMap::from([(
+                            "Counter".into(),
+                            Published {
+                                contract: support::business(),
+                                value: resource.clone() as Arc<dyn Handler>,
+                            },
+                        )])),
+                        owner: resource,
+                    }
+                })
+            }),
+        )
+        .unwrap();
+    let configuration = serde_json::from_value(json!({"hosts":[{
+        "name":"local", "location":{"kind":"cohost"}, "deployment":host, "consumer":support::identity(13),
+        "imports":{"business":{"methods":["read","write"],"recovery":false}, "receipts":{"methods":["read"],"recovery":true}}
+    }]})).unwrap();
+    let mut connections = Connections::prepare(
+        store.clone(),
+        ui.deployment,
+        PresentationTarget::Desktop,
+        configuration,
+        namespaces.clone(),
+        HostExecutable::new("absent-cohost-executable".into(), vec![]).unwrap(),
+        native,
+    )
+    .await
+    .unwrap();
+    {
+        let starting = connections.start();
+        tokio::pin!(starting);
+        tokio::select! {
+            biased;
+            result = &mut starting => panic!("initializer must remain pending: {result:?}"),
+            permit = began.acquire() => permit.unwrap().forget(),
+        }
+    }
+    assert!(file.lock().unwrap().is_some());
+    {
+        let closed = connections.close();
+        tokio::pin!(closed);
+        assert!(futures_util::poll!(closed.as_mut()).is_pending());
+        assert_eq!(
+            store.application_head(host).await.unwrap(),
+            Some(host_source)
+        );
+        assert_eq!(
+            RootOwner::open(&root, &namespaces).err().unwrap().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        initialized.add_permits(1);
+        tokio::time::timeout(std::time::Duration::from_secs(10), closing.acquire())
+            .await
+            .unwrap()
+            .unwrap()
+            .forget();
+        assert!(futures_util::poll!(closed.as_mut()).is_pending());
+        file.lock().unwrap().as_ref().unwrap().metadata().unwrap();
+        // Original SQL remains usable while actual native close is held. No second
+        // writer or Root opens, and no aggregate UI receipt substitutes for it.
+        let (input, packages) = support::host();
+        store
+            .commit_application(uuid::Uuid::new_v4(), 0, input, vec![], packages)
+            .await
+            .unwrap();
+        released.add_permits(1);
+        tokio::time::timeout(std::time::Duration::from_secs(10), closed)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(file.lock().unwrap().is_none());
+        assert_eq!(
+            RootOwner::open(&root, &namespaces).err().unwrap().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+    store.shutdown().await.unwrap();
+    // SQL close does not drop the launcher's actual Store/factory handles.
+    drop(connections);
+    drop(store);
+    drop(RootOwner::open(&root, &namespaces).unwrap());
 }

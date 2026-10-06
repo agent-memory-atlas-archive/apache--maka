@@ -45,8 +45,11 @@ use std::{
     process::Stdio,
     sync::Arc,
 };
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::process::Command;
 use uuid::Uuid;
+
+mod host;
+use host::{Address, CohostConnector, HostOwner, OwnedHost};
 
 /// Trusted launcher input, never a guest-created credential or deployment edit.
 #[derive(Default, Deserialize)]
@@ -58,13 +61,22 @@ pub struct Configuration {
 #[serde(deny_unknown_fields)]
 pub struct Host {
     pub name: String,
-    pub root: PathBuf,
+    pub location: HostLocation,
     pub deployment: Uuid,
     pub consumer: InstanceId,
     pub imports: BTreeMap<String, Grant>,
     #[serde(default)]
     pub native: Vec<crate::transport::NativeGrant>,
 }
+/// Explicit executor location chosen by the trusted launcher. Cohost borrows
+/// the already owned UI Store; it never opens a filesystem Root.
+#[derive(Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum HostLocation {
+    Process { root: PathBuf },
+    Cohost {},
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Grant {
@@ -146,47 +158,6 @@ struct PreparedHost {
     configuration: Host,
     consumers: BTreeSet<InstanceId>,
 }
-struct Address {
-    path: PathBuf,
-    // The parent retains the private directory until this same child has closed
-    // and actually exited. Failed cleanup never recycles an old address.
-    #[cfg(unix)]
-    _directory: tempfile::TempDir,
-}
-impl Address {
-    fn create(nonce: Uuid) -> Result<Self> {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            // Short account-private paths also fit Darwin's sockaddr_un limit.
-            let directory = tempfile::Builder::new()
-                .prefix("maka-")
-                .permissions(std::fs::Permissions::from_mode(0o700))
-                .tempdir_in("/tmp")
-                .map_err(|e| e.to_string())?;
-            let _ = nonce;
-            Ok(Self {
-                path: directory.path().join("host"),
-                _directory: directory,
-            })
-        }
-        #[cfg(windows)]
-        {
-            Ok(Self {
-                path: PathBuf::from(format!(r"\\.\pipe\maka-application-{nonce}")),
-            })
-        }
-    }
-}
-struct OwnedHost {
-    child: Child,
-    control: Control<ChildStdout, ChildStdin>,
-    connection: Arc<native::Connection>,
-    _address: Address,
-    ready: bool,
-    configuration: Host,
-    peers: Arc<crate::transport::Peers>,
-}
 #[derive(PartialEq)]
 enum Phase {
     Prepared,
@@ -202,6 +173,8 @@ pub struct Connections {
     target: PresentationTarget,
     source: DeploymentRef,
     observations: Vec<RemoteObservation>,
+    store: Option<Arc<EventLog>>,
+    cohost_native: maka_runtime_host::application::NativeRegistry,
     namespaces: RootNamespaces,
     executable: HostExecutable,
     prepared: Vec<PreparedHost>,
@@ -213,12 +186,13 @@ impl Connections {
     /// Validate the exact presentation and resolved caller identities before any
     /// Host starts. This phase has no Host process or database effects.
     pub async fn prepare(
-        store: &EventLog,
+        store: Arc<EventLog>,
         deployment: Uuid,
         target: PresentationTarget,
         configuration: Configuration,
         namespaces: RootNamespaces,
         executable: HostExecutable,
+        mut cohost_native: maka_runtime_host::application::NativeRegistry,
     ) -> Result<Self> {
         configuration.validate()?;
         let loaded = store
@@ -254,6 +228,7 @@ impl Connections {
         let plan =
             Plan::prepare(&loaded.source.input, &packages, &remote).map_err(|e| e.to_string())?;
         let mut prepared = Vec::new();
+        let mut cohosts = BTreeSet::new();
         for mut host in configuration.hosts {
             let consumers: BTreeSet<_> = plan.instances().values()
                 .filter(|i| !i.disabled && i.entry.is_some())
@@ -263,13 +238,38 @@ impl Connections {
             if consumers.is_empty() {
                 return Err("configured Host has no enabled UI consumer".into());
             }
-            host.root = std::path::absolute(host.root).map_err(|e| e.to_string())?;
+            match &mut host.location {
+                HostLocation::Process { root } => {
+                    *root = std::path::absolute(&*root).map_err(|e| e.to_string())?
+                }
+                HostLocation::Cohost {} => {
+                    if host.deployment == deployment || !cohosts.insert(host.deployment) {
+                        return Err("cohost requires one distinct Host deployment executor".into());
+                    }
+                }
+            }
             prepared.push(PreparedHost {
                 configuration: host,
                 consumers,
             });
         }
+        if !cohosts.is_empty() {
+            cohost_native = crate::with_gateway(cohost_native)?;
+            let management =
+                maka_runtime_host::application::management::ManagementTarget::from_source(
+                    store.clone(),
+                    loaded.source.reference.clone(),
+                )
+                .await?;
+            maka_runtime_host::application::management::provide_target(
+                &mut cohost_native,
+                crate::UI_DEPLOYMENT_MANAGER.into(),
+                management,
+            )?;
+        }
         Ok(Self {
+            store: Some(store),
+            cohost_native,
             target,
             source: loaded.source.reference,
             observations: loaded.source.remote_exports,
@@ -291,55 +291,17 @@ impl Connections {
         let mut targets = BTreeSet::new();
         for prepared in std::mem::take(&mut self.prepared) {
             let host = prepared.configuration;
-            let configuration = host.clone();
-            let nonce = Uuid::new_v4();
-            let address = Address::create(nonce)?;
-            let bootstrap = Bootstrap {
-                root: host.root,
-                deployment: host.deployment,
-                namespaces: self.namespaces.clone(),
-                source: self.source.clone(),
-                consumers: prepared.consumers,
-                consumer: host.consumer,
-                imports: host.imports,
-                native: host.native,
-                address: address.path.clone(),
-                nonce,
+            let catalogue = match host.location.clone() {
+                HostLocation::Process { root } => {
+                    self.start_process(host.clone(), prepared.consumers, root)
+                        .await?
+                }
+                HostLocation::Cohost {} => {
+                    self.start_cohost(host.clone(), prepared.consumers).await?
+                }
             };
-            bootstrap.validate()?;
-            let connection = native::Connection::new(Arc::new(ipc::Connector::new(
-                address.path.clone(),
-                nonce,
-            )?));
-            let mut child = Command::new(&self.executable.path)
-                .args(&self.executable.arguments)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::inherit())
-                .spawn()
-                .map_err(|e| e.to_string())?;
-            let control = Control::new(
-                child.stdout.take().expect("piped child stdout"),
-                child.stdin.take().expect("piped child stdin"),
-                nonce,
-            )?;
-            // Publish actual custody before polling bootstrap IO.
-            self.hosts.push(OwnedHost {
-                child,
-                control,
-                connection,
-                _address: address,
-                ready: false,
-                configuration,
-                peers: crate::transport::Peers::new(crate::transport::Peer::new(
-                    bootstrap.source.clone(),
-                    bootstrap.consumers.clone(),
-                )?),
-            });
             let owned = self.hosts.last_mut().unwrap();
-            let catalogue = owned.control.start(&bootstrap).await?;
-            owned.ready = true;
-            for import in bootstrap.imports.keys() {
+            for import in host.imports.keys() {
                 let selection = catalogue.select(import)?;
                 let description = selection.description();
                 let target = RemoteCapability {
@@ -362,7 +324,7 @@ impl Connections {
                     registration_epoch: description.registration_epoch,
                     contract: description.contract.clone(),
                     implementation: Arc::new(native::Service::new(
-                        owned.connection.clone(),
+                        owned.connection.as_ref().unwrap().clone(),
                         selection,
                         owned.peers.clone(),
                     )?),
@@ -371,6 +333,126 @@ impl Connections {
         }
         self.phase = Phase::Started;
         Ok(())
+    }
+    async fn start_process(
+        &mut self,
+        host: Host,
+        consumers: BTreeSet<InstanceId>,
+        root: PathBuf,
+    ) -> Result<crate::transport::Catalogue> {
+        let configuration = host.clone();
+        let nonce = Uuid::new_v4();
+        let address = Address::create(nonce)?;
+        let bootstrap = Bootstrap {
+            root,
+            deployment: host.deployment,
+            namespaces: self.namespaces.clone(),
+            source: self.source.clone(),
+            consumers,
+            consumer: host.consumer.clone(),
+            imports: host.imports.clone(),
+            native: host.native.clone(),
+            address: address.path.clone(),
+            nonce,
+        };
+        bootstrap.validate()?;
+        let connection =
+            native::Connection::new(Arc::new(ipc::Connector::new(address.path.clone(), nonce)?));
+        let mut child = Command::new(&self.executable.path)
+            .args(&self.executable.arguments)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        let control = Control::new(
+            child.stdout.take().expect("piped child stdout"),
+            child.stdin.take().expect("piped child stdin"),
+            nonce,
+        )?;
+        // Publish actual custody before polling bootstrap IO.
+        self.hosts.push(OwnedHost {
+            owner: HostOwner::Process {
+                child,
+                control: Box::new(control),
+                _address: address,
+            },
+            connection: Some(connection),
+            ready: false,
+            configuration,
+            peers: crate::transport::Peers::new(crate::transport::Peer::new(
+                bootstrap.source.clone(),
+                bootstrap.consumers.clone(),
+            )?),
+        });
+        let owned = self.hosts.last_mut().unwrap();
+        let HostOwner::Process { control, .. } = &mut owned.owner else {
+            unreachable!()
+        };
+        let catalogue = control.start(&bootstrap).await?;
+        owned.ready = true;
+        Ok(catalogue)
+    }
+    async fn start_cohost(
+        &mut self,
+        configuration: Host,
+        consumers: BTreeSet<InstanceId>,
+    ) -> Result<crate::transport::Catalogue> {
+        let peers = crate::transport::Peers::new(crate::transport::Peer::new(
+            self.source.clone(),
+            consumers,
+        )?);
+        self.hosts.push(OwnedHost {
+            owner: HostOwner::Cohost {
+                application: None,
+                server: None,
+                captured: None,
+            },
+            connection: None,
+            ready: false,
+            configuration: configuration.clone(),
+            peers: peers.clone(),
+        });
+        let owned = self.hosts.last_mut().unwrap();
+        let HostOwner::Cohost {
+            application,
+            server,
+            ..
+        } = &mut owned.owner
+        else {
+            unreachable!()
+        };
+        let policy = Arc::new(crate::transport::PeerPolicy::with_native_grants(
+            configuration.native,
+        )?);
+        *application = Some(
+            maka_runtime_host::application::Application::start_from_store(
+                self.store.as_ref().ok_or("cohost Store is closed")?.clone(),
+                configuration.deployment,
+                self.cohost_native.clone(),
+                policy.issuer(),
+                policy.clone(),
+                Default::default(),
+            )
+            .await?,
+        );
+        let app = application.as_ref().unwrap();
+        app.ready().await?;
+        let endpoints = crate::transport::process::capture_endpoints(
+            &app.client(),
+            &configuration.consumer,
+            &configuration.imports,
+        )
+        .await?;
+        let actual = crate::transport::Server::new(app.client(), policy, endpoints)?;
+        let catalogue = actual.catalogue();
+        *server = Some(actual.clone());
+        owned.connection = Some(native::Connection::new(Arc::new(CohostConnector {
+            server: actual,
+            peers,
+        })));
+        owned.ready = true;
+        Ok(catalogue)
     }
     pub fn source(&self) -> &DeploymentRef {
         &self.source
@@ -449,9 +531,9 @@ impl Connections {
         let mut targets = BTreeSet::new();
         let mut staged = Vec::new();
         for owned in &mut self.hosts {
-            let name = &owned.configuration.name;
+            let name = owned.configuration.name.clone();
             let consumers: BTreeSet<_> = plan.instances().values().filter(|i| !i.disabled && i.entry.is_some())
-                .filter(|i| i.bindings.values().flatten().any(|binding| matches!(&binding.provider, Provider::Remote { capability } if &capability.deployment == name)))
+                .filter(|i| i.bindings.values().flatten().any(|binding| matches!(&binding.provider, Provider::Remote { capability } if capability.deployment == name)))
                 .map(|i| i.identity.clone()).collect();
             let approved = if consumers.is_empty() {
                 None
@@ -465,7 +547,7 @@ impl Connections {
             let catalogue = if consumers.is_empty() {
                 None
             } else {
-                Some(owned.control.capture().await?)
+                Some(owned.capture().await?)
             };
             if let Some(catalogue) = &catalogue {
                 for import in owned.configuration.imports.keys() {
@@ -502,7 +584,7 @@ impl Connections {
                             registration_epoch: description.registration_epoch,
                             contract: description.contract.clone(),
                             implementation: Arc::new(native::Service::new(
-                                owned.connection.clone(),
+                                owned.connection.as_ref().unwrap().clone(),
                                 selection,
                                 owned.peers.clone(),
                             )?),
@@ -511,9 +593,7 @@ impl Connections {
                     published.push(value);
                 }
             }
-            owned
-                .control
-                .check_approval(&source, &consumers, &retain, &catalogue)?;
+            owned.check_approval(&source, &consumers, &retain, &catalogue)?;
             staged.push((approved, consumers, catalogue));
         }
         if required.iter().any(|target| {
@@ -527,7 +607,6 @@ impl Connections {
         // Physical IO failure still belongs to each original child, not rollback.
         for (owned, (approved, consumers, catalogue)) in self.hosts.iter_mut().zip(staged) {
             owned
-                .control
                 .approve(source.clone(), consumers, retain.clone(), catalogue)
                 .await?;
             owned.peers.update(approved, &retain)?;
@@ -543,7 +622,11 @@ impl Connections {
         let physical: Vec<_> = self
             .hosts
             .iter()
-            .map(|host| host.connection.close())
+            .map(|host| {
+                host.connection
+                    .as_ref()
+                    .map(|connection| connection.close())
+            })
             .collect();
         async move {
             let closes: Vec<_> = self
@@ -551,16 +634,15 @@ impl Connections {
                 .iter_mut()
                 .zip(physical)
                 .map(|(host, physical)| async move {
-                    let (physical, process) = tokio::join!(physical, async {
-                        let closed = host.control.close().await;
-                        let exited = host.child.wait().await.map_err(|e| e.to_string());
-                        closed?;
-                        let status = exited?;
-                        if host.ready && !status.success() {
-                            return Err(format!("original Host exited unsuccessfully: {status}"));
-                        }
-                        Ok(())
-                    });
+                    let (physical, process) = tokio::join!(
+                        async {
+                            match physical {
+                                Some(physical) => physical.await,
+                                None => Ok(()),
+                            }
+                        },
+                        host.close_owner()
+                    );
                     physical.and(process)
                 })
                 .collect();
@@ -571,6 +653,11 @@ impl Connections {
             self.registrations.clear();
             self.hosts.clear();
             self.prepared.clear();
+            // Closed execution cannot reactivate factories. Release its borrowed
+            // Store and compiled target handles after all original cleanup; the
+            // launcher still owns and closes the independent SQL worker.
+            self.cohost_native = Default::default();
+            drop(self.store.take());
             self.phase = Phase::Closed;
             Ok(())
         }

@@ -503,9 +503,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?
         .run(),
         CommandLine::ApplicationHost => {
-            let mut native = maka_runtime_host::application::NativeRegistry::default();
-            maka_agent_service::provide(&mut native)?;
-            maka_settings_service::provide(&mut native)?;
+            let native = compiled_host()?;
             let timer = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(1)
                 .enable_all()
@@ -514,6 +512,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
     }
+}
+
+fn compiled_host() -> Result<maka_runtime_host::application::NativeRegistry, String> {
+    let mut native = maka_runtime_host::application::NativeRegistry::default();
+    maka_agent_service::provide(&mut native)?;
+    maka_settings_service::provide(&mut native)?;
+    Ok(native)
 }
 
 /// Trusted launcher owns the actual caller store and compiled availability.
@@ -542,18 +547,20 @@ impl Launcher {
             .map(maka_application_bridge::Configuration::read)
             .transpose()?
             .unwrap_or_default();
+        let cohost_native = compiled_host()?;
         let owner = Arc::new(maka_event_log::root::RootOwner::open(
             &args.root,
             &namespaces,
         )?);
         let store = Arc::new(timer.block_on(maka_application_bridge::open_store(owner))?);
         let mut connections = match timer.block_on(maka_application_bridge::Connections::prepare(
-            &store,
+            store.clone(),
             args.deployment,
             PresentationTarget::Desktop,
             configuration,
             namespaces,
             executable,
+            cohost_native,
         )) {
             Ok(connections) => connections,
             Err(error) => {
@@ -563,10 +570,8 @@ impl Launcher {
         };
         if let Err(error) = timer.block_on(connections.start()) {
             timer.block_on(async {
-                tokio::join!(
-                    connections.drain(),
-                    maka_application_bridge::drain_store(&store)
-                );
+                connections.drain().await;
+                maka_application_bridge::drain_store(&store).await;
             });
             return Err(error.into());
         }
@@ -585,10 +590,8 @@ impl Launcher {
             Ok(application) => application,
             Err(error) => {
                 timer.block_on(async {
-                    tokio::join!(
-                        connections.drain(),
-                        maka_application_bridge::drain_store(&store)
-                    );
+                    connections.drain().await;
+                    maka_application_bridge::drain_store(&store).await;
                 });
                 return Err(error.into());
             }
@@ -598,10 +601,8 @@ impl Launcher {
             Err(error) => {
                 drain_ui(&mut application, &timer, true);
                 timer.block_on(async {
-                    tokio::join!(
-                        connections.drain(),
-                        maka_application_bridge::drain_store(&store)
-                    );
+                    connections.drain().await;
+                    maka_application_bridge::drain_store(&store).await;
                 });
                 return Err(error.into());
             }
@@ -627,10 +628,8 @@ impl Launcher {
             Err(error) => {
                 drain_ui(&mut application, &timer, true);
                 timer.block_on(async {
-                    tokio::join!(
-                        connections.drain(),
-                        maka_application_bridge::drain_store(&store)
-                    );
+                    connections.drain().await;
+                    maka_application_bridge::drain_store(&store).await;
                 });
                 return Err(error.into());
             }
@@ -638,10 +637,8 @@ impl Launcher {
         if !matches!(&frame.surface, Some(SurfaceDeclaration::Window { .. })) {
             drain_ui(&mut application, &timer, true);
             timer.block_on(async {
-                tokio::join!(
-                    connections.drain(),
-                    maka_application_bridge::drain_store(&store)
-                );
+                connections.drain().await;
+                maka_application_bridge::drain_store(&store).await;
             });
             return Err("desktop launch component must request a window".into());
         }
@@ -695,10 +692,8 @@ impl Launcher {
                 .block_on(async { tokio::time::sleep(std::time::Duration::from_millis(50)).await });
         }
         timer.block_on(async {
-            tokio::join!(
-                async { connections.lock().await.drain().await },
-                maka_application_bridge::drain_store(&store)
-            );
+            connections.lock().await.drain().await;
+            maka_application_bridge::drain_store(&store).await;
         });
         if let Some(error) = execution_owner
             .borrow()
@@ -761,8 +756,11 @@ fn maka_js_limits() -> maka_js_runtime::plugin::Limits {
 }
 
 #[cfg(test)]
-#[path = "../../ui/examples/counter/support.rs"]
-mod support;
+#[allow(dead_code)]
+#[path = "../../application-bridge/tests/support/mod.rs"]
+mod bridge_support;
+#[cfg(test)]
+use bridge_support::counter as support;
 
 #[cfg(test)]
 mod tests {

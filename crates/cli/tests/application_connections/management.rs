@@ -30,6 +30,9 @@ use maka_ui::actions::*;
 use std::sync::Mutex;
 
 fn fixture() -> Fixture {
+    fixture_with(maka_runtime_host::application::management::DEPLOYMENT_MANAGER)
+}
+fn fixture_with(implementation: &str) -> Fixture {
     let contract = deployment_manager_contract();
     let (mut host, originals) = support::host();
     let mut packages = Vec::new();
@@ -42,8 +45,7 @@ fn fixture() -> Fixture {
         let entry = declaration.entries.get_mut(&EntryTarget::Host).unwrap();
         if old.manifest().id == "local.business" {
             entry.implementation = Implementation::Native {
-                implementation: maka_runtime_host::application::management::DEPLOYMENT_MANAGER
-                    .into(),
+                implementation: implementation.into(),
             };
             entry.exports = BTreeMap::from([(
                 "Management".into(),
@@ -289,5 +291,264 @@ fn actual_child_manager_install_uses_original_grants_dual_roots_and_journaled_im
         }
         f.timer.block_on(store.close()).unwrap();
         f.timer.block_on(f.caller.shutdown()).unwrap();
+    }
+}
+
+#[test]
+fn cohost_manager_installs_ui_bytes_and_adopts_without_reopening_root_or_replacing_host() {
+    for install_allowed in [false, true] {
+        let f = fixture_with(maka_application_bridge::UI_DEPLOYMENT_MANAGER);
+        let seed = f
+            .timer
+            .block_on(EventLog::for_root(Arc::new(
+                RootOwner::open(&f.directory.path().join("host"), &f.namespaces).unwrap(),
+            )))
+            .unwrap();
+        let loaded = f
+            .timer
+            .block_on(seed.load_application(f.host))
+            .unwrap()
+            .unwrap();
+        f.timer.block_on(seed.close()).unwrap();
+        let host = f
+            .timer
+            .block_on(f.caller.commit_application(
+                f.host,
+                0,
+                loaded.source.input,
+                loaded.source.remote_exports,
+                loaded.packages,
+            ))
+            .unwrap();
+        let mut config = f.configuration(true, true);
+        config.hosts[0].location = HostLocation::Cohost {};
+        config.hosts[0].imports.get_mut("business").unwrap().methods = if install_allowed {
+            BTreeSet::from(["read".into(), "install".into(), "replace".into()])
+        } else {
+            BTreeSet::from(["read".into()])
+        };
+        // No child executable exists. Cohost must use the original owned Store.
+        let mut connections = f
+            .timer
+            .block_on(Connections::prepare(
+                f.caller.clone(),
+                f.source.deployment,
+                f.target,
+                config,
+                f.namespaces.clone(),
+                HostExecutable::new("absent-cohost-executable".into(), vec![]).unwrap(),
+                Default::default(),
+            ))
+            .unwrap();
+        f.timer.block_on(connections.start()).unwrap();
+        f.reopened("host");
+        let mut registrations = connections.registrations();
+        let registration = registrations
+            .iter_mut()
+            .find(|r| r.target.export == "Management")
+            .unwrap();
+        let actual = registration.implementation.clone();
+        let epoch = registration.registration_epoch;
+        let captured = Arc::new(Mutex::new(None));
+        registration.implementation = Arc::new(Capture {
+            inner: actual.clone(),
+            source: captured.clone(),
+        });
+        let mut app = f
+            .timer
+            .block_on(Application::start_from_store(
+                f.caller.clone(),
+                f.source.clone(),
+                f.target,
+                f.timer.handle().clone(),
+                Default::default(),
+                support::counter::scene::registry(f.target),
+                registrations,
+            ))
+            .unwrap();
+        let mount = app.mount_launch(json!({})).unwrap();
+        let initial: ManagedDeployment =
+            serde_json::from_value(action(&f, &mut app, &mount, "read")["value"].clone()).unwrap();
+        assert_eq!(initial.source.reference, f.source);
+        let source = captured.lock().unwrap().take().unwrap();
+        let mut bytes = support::host().1.remove(0).files().clone();
+        let mut manifest: Value =
+            serde_json::from_slice(&bytes[maka_plugins::package::MANIFEST_FILE]).unwrap();
+        manifest["id"] = json!("cohost.installed.waits");
+        bytes.insert(
+            maka_plugins::package::MANIFEST_FILE.into(),
+            serde_json::to_vec(&manifest).unwrap(),
+        );
+        bytes.insert(
+            "index.mjs".into(),
+            b"throw Error('installation must not activate');".to_vec(),
+        );
+        let package = Package::new(bytes).unwrap();
+        let bundle = Arc::new(Bundle(package.to_bundle()));
+        let weak = Arc::downgrade(&bundle);
+        let session = actual
+            .mutation(ServiceRequest {
+                source,
+                method: "install".into(),
+                input: json!({"expectedRevision":1}),
+                resources: BTreeMap::from([("package".into(), bundle as Arc<dyn ReadResource>)]),
+            })
+            .unwrap();
+        let prepared = f.timer.block_on(session.clone().prepare());
+        let original = if install_allowed {
+            let reference = prepared.unwrap();
+            assert_eq!(reference.source, host);
+            let intent = f
+                .timer
+                .block_on(f.caller.record_application_intent(
+                    f.source.clone(),
+                    support::identity(2),
+                    reference,
+                ))
+                .unwrap();
+            let completion = f.timer.block_on(session.clone().dispatch(intent));
+            completion.cleanup.unwrap();
+            let Receipt::Recorded {
+                outcome: maka_plugin_core::operation::OperationOutcome::Returned { value },
+                cleanup: maka_plugin_core::operation::OperationCleanup::Confirmed,
+            } = &completion.reply.receipt
+            else {
+                panic!("{:?}", completion.reply)
+            };
+            let installed: PackageInstalled =
+                serde_json::from_value(value["value"].clone()).unwrap();
+            assert_eq!(installed.source.deployment, f.source.deployment);
+            assert_eq!(installed.source.state_domain, host.state_domain);
+            assert_eq!(installed.source.revision, 2);
+            assert_eq!(installed.package, package.application_ref());
+            let update = f
+                .timer
+                .block_on(app.load_committed_update(installed.source.clone()).unwrap())
+                .unwrap();
+            let refreshed = f
+                .timer
+                .block_on(connections.approve_source(
+                    &f.caller,
+                    installed.source,
+                    BTreeSet::from([1]),
+                ))
+                .unwrap();
+            let same = refreshed
+                .iter()
+                .find(|r| r.target.export == "Management")
+                .unwrap();
+            assert_eq!(same.registration_epoch, epoch);
+            assert!(Arc::ptr_eq(&same.implementation, &actual));
+            app.adopt_update(update, refreshed).unwrap();
+            assert!(
+                app.frame(&mount).is_ok(),
+                "original UI mount survives unchanged code"
+            );
+            Some(completion.reply)
+        } else {
+            assert!(prepared.err().unwrap().contains("granted"));
+            None
+        };
+        f.timer.block_on(session.clone().close()).unwrap();
+        assert!(weak.upgrade().is_none());
+        drop(session);
+        let current: ManagedDeployment =
+            serde_json::from_value(action(&f, &mut app, &mount, "read")["value"].clone()).unwrap();
+        assert_eq!(
+            current.source.reference.revision,
+            if install_allowed { 2 } else { 1 }
+        );
+        assert_eq!(
+            f.timer.block_on(f.caller.application_head(f.host)).unwrap(),
+            Some(host)
+        );
+        if install_allowed {
+            let request_source = captured.lock().unwrap().take().unwrap();
+            let caller_source = request_source.deployment().unwrap().clone();
+            let consumer = request_source.consumer().instance().clone();
+            let replace = actual
+                .mutation(ServiceRequest {
+                    source: request_source,
+                    method: "replace".into(),
+                    input: serde_json::to_value(
+                        maka_plugin_core::deployment::management::DeploymentReplace {
+                            expected_revision: 2,
+                            input: current.source.input,
+                            remote_exports: current.source.remote_exports,
+                            packages: current.packages,
+                        },
+                    )
+                    .unwrap(),
+                    resources: BTreeMap::new(),
+                })
+                .unwrap();
+            let reference = f.timer.block_on(replace.clone().prepare()).unwrap();
+            assert_eq!(reference.source.deployment, f.host);
+            let intent = f
+                .timer
+                .block_on(
+                    f.caller
+                        .record_application_intent(caller_source, consumer, reference),
+                )
+                .unwrap();
+            let completion = f.timer.block_on(replace.clone().dispatch(intent));
+            completion.cleanup.unwrap();
+            let Receipt::Recorded {
+                outcome: maka_plugin_core::operation::OperationOutcome::Returned { value },
+                cleanup: maka_plugin_core::operation::OperationCleanup::Confirmed,
+            } = completion.reply.receipt
+            else {
+                panic!("{:?}", completion.reply)
+            };
+            let next: DeploymentRef = serde_json::from_value(value["value"].clone()).unwrap();
+            assert_eq!(next.revision, 3);
+            assert_eq!(next.deployment, f.source.deployment);
+            f.timer.block_on(replace.clone().close()).unwrap();
+            drop(replace);
+            let update = f
+                .timer
+                .block_on(app.load_committed_update(next.clone()).unwrap())
+                .unwrap();
+            let registrations = f
+                .timer
+                .block_on(connections.approve_source(&f.caller, next, BTreeSet::from([1])))
+                .unwrap();
+            app.adopt_update(update, registrations).unwrap();
+            assert!(app.frame(&mount).is_ok());
+        }
+        if let Some(original) = original {
+            assert!(matches!(
+                f.timer
+                    .block_on(f.caller.operation_observation(&original.reference))
+                    .unwrap()
+                    .unwrap()
+                    .outcome,
+                maka_plugin_core::operation::OperationOutcome::Returned { .. }
+            ));
+        }
+        app.retire(&mount).unwrap();
+        app.close(&mount, Ok(())).unwrap();
+        app.shutdown().unwrap();
+        drop(app);
+        drop(actual);
+        f.timer.block_on(connections.close()).unwrap();
+        f.blocked("caller");
+        assert!(
+            f.timer
+                .block_on(f.caller.load_application(f.source.deployment))
+                .unwrap()
+                .is_some()
+        );
+        f.timer.block_on(f.caller.shutdown()).unwrap();
+        drop(connections);
+        let Fixture {
+            caller,
+            directory,
+            namespaces,
+            timer: _timer,
+            ..
+        } = f;
+        drop(caller);
+        drop(RootOwner::open(&directory.path().join("caller"), &namespaces).unwrap());
     }
 }

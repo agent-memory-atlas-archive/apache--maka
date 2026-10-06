@@ -20,12 +20,13 @@
 # 应用 Host 连接
 
 Desktop 与 TUI 启动器支持 `--connections FILE`。这份可信外部配置为每个选定部署
-启动独立的共享 Host 子进程，不修改双方组合。每个 child 拥有原 Application 与 Root，
-独立私有 IPC 调用流共享该 Host 状态。网络认证仍需继续。
+显式选择 process 或 cohost，不修改双方组合。process 拥有独立 Application 与 Root；
+cohost 在 UI 原 owned EventLog 中执行不同 UUID 的 Host 部署。两者复用同一个
+Server、PeerPolicy 和 native 调用 adapter。网络认证仍需继续。
 完整 JSON 示例见[英文说明](README.md)。
 
-`hosts[].name` 对应 UI remote observation 的 deployment alias；`root` 和
-`deployment` 选择实际 Host 来源；`consumer` 是已有 Host 消费者的 InstanceId 数组。
+`hosts[].name` 对应 UI remote observation 的 deployment alias；`location` 显式选择
+`{kind:"process",root:"..."}` 或 `{kind:"cohost"}`，`deployment` 选择实际 Host 来源；`consumer` 是已有 Host 消费者的 InstanceId 数组。
 `imports` 选择该消费者的显式绑定，每项提供明确的 `methods` 白名单和独立
 `recovery` 布尔。方法必须存在于实际捕获的服务契约，endpoint 必须匹配选定的 UI
 来源观察。启动捕获精确 `DeploymentRef`，后续 desired source 更新不能继承原批准。
@@ -140,3 +141,20 @@ ticket；撤销拒绝后续准入，包括已准备但尚未接受的 mutation�
 重装原内容必须提交新 revision，仍存活的来源保留原 ticket。未退休 actor 仍使用原 source，
 manager 须保留对应 revision，直到最后一个原 executable consumer 退休。生产插件
 管理与前台 adoption 协调仍需后续接线。
+
+
+## 原 Root 同进程 Host
+
+`location:{kind:"cohost"}` 借用 UI 启动器的原 Store，不接受 Root 路径、不重新打开 Root。
+Host deployment UUID 必须不同于 UI 和其他 cohost。编译可用实现仍由 embedding 提供，
+组合、绑定、方法和 recovery grant 才决定激活及调用；Duplex 复用原 Server/native adapter，
+不增加 socket 或另一调用协议。
+
+cohost 提供 `maka.application.ui-management` 的 compiled availability，固定原 UI deployment
+及 presentation；产品须显式组合并绑定。操作仍属该 Host 的原 namespace/journal，业务结果
+中的 source 属 UI desired 部署。提交或观察 source 不产生 endpoint 批准，也不表示前台收敛。
+
+capture 保存实际 Binding，whole-batch approval 复用；同 epoch 保持同 service implementation。
+取消 start 观察仍保原 initializer/owner。启动器依次等待 UI 工作、全部原 Connection/Server/Host
+Application 清理，再关闭唯一共享 SQL Store。失败保留原 owners，包括 startupErr 和实际 GPUI
+退出 owner。

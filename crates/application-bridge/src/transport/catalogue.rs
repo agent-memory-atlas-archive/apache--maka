@@ -55,7 +55,7 @@ impl Selection {
     }
 }
 impl Catalogue {
-    pub(super) fn captured(endpoints: &BTreeMap<String, Endpoint>) -> Self {
+    pub(crate) fn captured(endpoints: &BTreeMap<String, Endpoint>) -> Self {
         Self {
             endpoints: endpoints
                 .iter()

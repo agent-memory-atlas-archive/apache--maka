@@ -26,7 +26,9 @@ mod subscriptions;
 #[allow(dead_code)]
 #[path = "../../application-bridge/tests/support/mod.rs"]
 mod support;
-use maka_application_bridge::{Configuration, Connections, Grant, Host, HostExecutable};
+use maka_application_bridge::{
+    Configuration, Connections, Grant, Host, HostExecutable, HostLocation,
+};
 use maka_event_log::{
     EventLog,
     root::{RootNamespaces, RootOwner},
@@ -111,7 +113,9 @@ impl Fixture {
             hosts: vec![Host {
                 native: Vec::new(),
                 name: "local".into(),
-                root: self.directory.path().join("host"),
+                location: HostLocation::Process {
+                    root: self.directory.path().join("host"),
+                },
                 deployment: self.host,
                 consumer: support::identity(13),
                 imports: BTreeMap::from([
@@ -139,7 +143,7 @@ impl Fixture {
     }
     fn prepare(&self, config: Configuration) -> Result<Connections, String> {
         self.timer.block_on(Connections::prepare(
-            &self.caller,
+            self.caller.clone(),
             self.source.deployment,
             self.target,
             config,
@@ -149,6 +153,7 @@ impl Fixture {
                 vec!["application".into(), "serve".into()],
             )
             .unwrap(),
+            Default::default(),
         ))
     }
     fn connect(&self, config: Configuration) -> Connections {
@@ -340,12 +345,13 @@ fn preflight_and_failed_child_start_do_not_unlock_the_actual_caller() {
 fn presentation_is_rejected_before_a_child_or_host_root_is_opened() {
     let f = Fixture::new();
     let result = f.timer.block_on(Connections::prepare(
-        &f.caller,
+        f.caller.clone(),
         f.source.deployment,
         PresentationTarget::Tui,
         f.configuration(true, true),
         f.namespaces.clone(),
         HostExecutable::new("does-not-exist".into(), vec![]).unwrap(),
+        Default::default(),
     ));
     assert!(matches!(result, Err(reason) if reason.contains("presentation")));
     f.reopened("host");
@@ -453,7 +459,9 @@ fn failed_second_child_initialization_drains_the_first_actual_host() {
     let mut configuration = f.configuration(true, true);
     let mut second = f.configuration(true, true).hosts.pop().unwrap();
     second.name = "secondary".into();
-    second.root = f.directory.path().join("absent");
+    second.location = HostLocation::Process {
+        root: f.directory.path().join("absent"),
+    };
     configuration.hosts.push(second);
     let mut connections = f.prepare(configuration).unwrap();
     assert!(f.timer.block_on(connections.start()).is_err());

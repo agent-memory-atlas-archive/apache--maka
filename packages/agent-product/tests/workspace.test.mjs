@@ -491,6 +491,10 @@ test('both product compositions use actual immutable package refs and check in t
       assert.equal(ui.environment.presentation, presentation);
       assert.equal(ui.instances.workspace.key, keys.workspace);
       assert.equal(host.instances.agent.key, keys.agent);
+      assert.deepEqual(connections.hosts[0].location, {
+        kind: 'process',
+        root: configuration.hostRoot,
+      });
       assert.deepEqual(connections.hosts[0].consumer, [keys.gateway]);
       assert.equal(connections.hosts[0].deployment, configuration.hostDeployment);
       assert.deepEqual(
