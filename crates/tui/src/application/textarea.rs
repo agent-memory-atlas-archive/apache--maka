@@ -165,13 +165,14 @@ impl Widget for Recipe {
         }
         Ok(())
     }
-    fn present(&self, state: &mut dyn Any, geometry: Box<dyn Any>) {
+    fn present(&self, state: &mut dyn Any, geometry: Box<dyn Any>) -> Option<NativeInput> {
         let owner = state
             .downcast_mut::<Owner>()
             .expect("terminal editor owner");
         let geometry = *geometry.downcast::<Geometry>().expect("editor geometry");
         owner.editor.present_geometry(geometry.clone());
         owner.presented = Some(geometry);
+        None
     }
     fn deactivate(&self, state: &mut dyn Any) {
         let owner = state

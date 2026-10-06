@@ -18,7 +18,7 @@
  */
 
 use super::Presenter;
-use super::scene::{Direction, Node};
+use super::scene::Node;
 use maka_plugin_core::runtime::Mount;
 use ratatui::{
     buffer::Buffer,
@@ -112,6 +112,59 @@ pub struct PaintedScene {
     geometries: Vec<NativeGeometry>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum MeasurementKey {
+    Mount,
+    Node(usize),
+}
+type MeasurementCache = std::collections::BTreeMap<(uuid::Uuid, MeasurementKey, u16), (u16, u16)>;
+/// Derived, paint-local memoization. No entry survives the immutable render pass
+/// or participates in input/continuation/geometry admission.
+#[derive(Default)]
+pub(super) struct Measurements {
+    cache: std::cell::RefCell<MeasurementCache>,
+    #[cfg(test)]
+    requests: std::cell::Cell<usize>,
+    #[cfg(test)]
+    limit: std::cell::Cell<usize>,
+}
+impl Measurements {
+    fn get_or(
+        &self,
+        mount: uuid::Uuid,
+        key: MeasurementKey,
+        width: u16,
+        measure: impl FnOnce() -> maka_ui::Result<(u16, u16)>,
+    ) -> maka_ui::Result<(u16, u16)> {
+        #[cfg(test)]
+        {
+            let requests = self.requests.get() + 1;
+            self.requests.set(requests);
+            assert!(
+                self.limit.get() == 0 || requests <= self.limit.get(),
+                "measurement work exceeded fixture bound"
+            );
+        }
+        let key = (mount, key, width);
+        if let Some(size) = self.cache.borrow().get(&key).copied() {
+            return Ok(size);
+        }
+        let size = measure()?;
+        self.cache.borrow_mut().insert(key, size);
+        Ok(size)
+    }
+    #[cfg(test)]
+    pub(super) fn guarded(limit: usize) -> Self {
+        let value = Self::default();
+        value.limit.set(limit);
+        value
+    }
+    #[cfg(test)]
+    pub(super) fn requests(&self) -> usize {
+        self.requests.get()
+    }
+}
+
 /// Synchronous terminal geometry over one parent's committed component slots.
 /// Measuring is read-only; painting publishes hit geometry only after flush.
 pub struct Slots<'a> {
@@ -119,6 +172,7 @@ pub struct Slots<'a> {
     pub(super) parent: &'a Mount,
     declarations: &'a [maka_ui::ComponentSlot],
     pub(super) scene: Option<&'a mut PaintedScene>,
+    pub(super) measurements: &'a Measurements,
 }
 struct NativeGeometry {
     mount: Mount,
@@ -203,7 +257,8 @@ impl Slots<'_> {
         {
             return Ok((0, 0));
         }
-        self.presenter.measure_mount(child, width)
+        self.presenter
+            .measure_mount(child, width, self.measurements)
     }
     pub fn paint(&mut self, key: &str, area: Rect, buffer: &mut Buffer) -> maka_ui::Result<()> {
         let child = self.presenter.application.child_mount(self.parent, key)?;
@@ -221,8 +276,13 @@ impl Slots<'_> {
             .scene
             .as_deref_mut()
             .ok_or_else(|| maka_ui::Error::Invalid("cannot paint during measurement".into()))?;
-        self.presenter
-            .paint_mount(child, area.intersection(buffer.area), buffer, scene)
+        self.presenter.paint_mount(
+            child,
+            area.intersection(buffer.area),
+            buffer,
+            scene,
+            self.measurements,
+        )
     }
 }
 
@@ -246,7 +306,8 @@ impl Presenter {
             placed: Default::default(),
             geometries: Vec::new(),
         };
-        self.paint_mount(&self.root, area, buffer, &mut scene)?;
+        let measurements = Measurements::default();
+        self.paint_mount(&self.root, area, buffer, &mut scene, &measurements)?;
         Ok(scene)
     }
     pub fn present(&mut self, scene: PaintedScene) {
@@ -272,83 +333,93 @@ impl Presenter {
             });
         self.scene = scene.targets;
     }
-    pub(super) fn measure_mount(&self, mount: &Mount, width: u16) -> maka_ui::Result<(u16, u16)> {
-        let native = &self.application.frame(mount)?.view;
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            native.view.measure(
-                &Slots {
-                    presenter: self,
-                    parent: mount,
-                    declarations: native.slots(),
-                    scene: None,
-                },
-                width,
-            )
-        }))
-        .map_err(|_| maka_ui::Error::Invalid("terminal native measurement panicked".into()))?
+    pub(super) fn measure_mount(
+        &self,
+        mount: &Mount,
+        width: u16,
+        measurements: &Measurements,
+    ) -> maka_ui::Result<(u16, u16)> {
+        measurements.get_or(mount.id(), MeasurementKey::Mount, width, || {
+            let native = &self.application.frame(mount)?.view;
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                native.view.measure(
+                    &Slots {
+                        presenter: self,
+                        parent: mount,
+                        declarations: native.slots(),
+                        scene: None,
+                        measurements,
+                    },
+                    width,
+                )
+            }))
+            .map_err(|_| maka_ui::Error::Invalid("terminal native measurement panicked".into()))?
+        })
     }
     pub(super) fn measure(
         &self,
         mount: &Mount,
         node: &Node,
         width: u16,
+        measurements: &Measurements,
     ) -> maka_ui::Result<(u16, u16)> {
-        if !node.visible() {
-            return Ok((0, 0));
-        }
-        Ok(match node {
-            Node::Text { text, .. } => text_size(text, width),
-            Node::Button { label, .. } => (
-                sanitize(label)
-                    .replace('\n', " ")
-                    .width()
-                    .saturating_add(4)
-                    .min(usize::from(width)) as u16,
-                1,
-            ),
-            Node::Component(slot) => {
-                return self.measure_mount(self.application.child_mount(mount, &slot.key)?, width);
-            }
-            Node::Stack {
-                direction,
-                gap,
-                padding,
-                children,
-                ..
-            } => {
-                let inset = padding.saturating_mul(2);
-                let available = width.saturating_sub(inset);
-                let (mut w, mut h) = (0u16, 0u16);
-                let children: Vec<_> = children.iter().filter(|child| child.visible()).collect();
-                for (index, child) in children.iter().enumerate() {
-                    let remaining = match direction {
-                        Direction::Row => available.saturating_sub(w),
-                        Direction::Column => available,
-                    };
-                    if matches!(direction, Direction::Row) && remaining == 0 {
-                        break;
-                    }
-                    let size = self.measure(mount, child, remaining)?;
-                    match direction {
-                        Direction::Row => {
-                            w = w.saturating_add(size.0);
-                            h = h.max(size.1);
-                        }
-                        Direction::Column => {
-                            w = w.max(size.0);
-                            h = h.saturating_add(size.1);
-                        }
-                    }
-                    if index + 1 < children.len() {
-                        match direction {
-                            Direction::Row => w = w.saturating_add(*gap).min(available),
-                            Direction::Column => h = h.saturating_add(*gap),
-                        }
-                    }
+        measurements.get_or(
+            mount.id(),
+            MeasurementKey::Node(node as *const Node as usize),
+            width,
+            || {
+                if !node.visible() {
+                    return Ok((0, 0));
                 }
-                (w.saturating_add(inset).min(width), h.saturating_add(inset))
-            }
-        })
+                Ok(match node {
+                    Node::Text { text, .. } => text_size(text, width),
+                    Node::Button { label, .. } => (
+                        sanitize(label)
+                            .replace('\n', " ")
+                            .width()
+                            .saturating_add(4)
+                            .min(usize::from(width)) as u16,
+                        1,
+                    ),
+                    Node::Component(slot) => {
+                        return self.measure_mount(
+                            self.application.child_mount(mount, &slot.key)?,
+                            width,
+                            measurements,
+                        );
+                    }
+                    Node::Stack {
+                        direction,
+                        gap,
+                        padding,
+                        children,
+                        layout,
+                        ..
+                    } => {
+                        let inset = padding.saturating_mul(2);
+                        let available = width.saturating_sub(inset);
+                        let children: Vec<_> =
+                            children.iter().filter(|child| child.visible()).collect();
+                        let layouts: Vec<_> = children.iter().map(|child| child.layout()).collect();
+                        let flow = super::layout::measured(
+                            *direction,
+                            available,
+                            None,
+                            *gap,
+                            layout.wrap,
+                            &layouts,
+                            |index, width| {
+                                self.measure(mount, children[index], width, measurements)
+                            },
+                        )?;
+                        (
+                            flow.size.0.saturating_add(inset).min(width),
+                            flow.size.1.saturating_add(inset),
+                        )
+                    }
+                })
+            },
+        )
     }
     fn paint_mount(
         &self,
@@ -356,6 +427,7 @@ impl Presenter {
         area: Rect,
         buffer: &mut Buffer,
         scene: &mut PaintedScene,
+        measurements: &Measurements,
     ) -> maka_ui::Result<()> {
         if area.width == 0 || area.height == 0 {
             return Ok(());
@@ -373,6 +445,7 @@ impl Presenter {
                     parent: mount,
                     declarations: native.slots(),
                     scene: Some(scene),
+                    measurements,
                 },
                 area,
                 buffer,
@@ -387,6 +460,7 @@ impl Presenter {
         area: Rect,
         buffer: &mut Buffer,
         scene: &mut PaintedScene,
+        measurements: &Measurements,
     ) -> maka_ui::Result<()> {
         if !node.visible() || area.width == 0 || area.height == 0 {
             return Ok(());
@@ -430,6 +504,7 @@ impl Presenter {
                 area,
                 buffer,
                 scene,
+                measurements,
             )?,
             Node::Stack {
                 direction,
@@ -448,39 +523,32 @@ impl Presenter {
                     area.width - px * 2,
                     area.height - py * 2,
                 );
-                let mut offset = 0u16;
-                for child in children.iter().filter(|child| child.visible()) {
-                    let width = match direction {
-                        Direction::Row => inner.width.saturating_sub(offset),
-                        Direction::Column => inner.width,
-                    };
-                    let size = self.measure(mount, child, width)?;
-                    let child_area = match direction {
-                        Direction::Row => {
-                            Rect::new(inner.x + offset, inner.y, size.0.min(width), inner.height)
-                        }
-                        Direction::Column => Rect::new(
-                            inner.x,
-                            inner.y + offset,
-                            inner.width,
-                            size.1.min(inner.height.saturating_sub(offset)),
-                        ),
-                    };
-                    self.paint_node(mount, child, child_area.intersection(inner), buffer, scene)?;
-                    offset = offset
-                        .saturating_add(match direction {
-                            Direction::Row => size.0,
-                            Direction::Column => size.1,
-                        })
-                        .saturating_add(*gap);
-                    if offset
-                        >= match direction {
-                            Direction::Row => inner.width,
-                            Direction::Column => inner.height,
-                        }
-                    {
-                        break;
-                    }
+                let children: Vec<_> = children.iter().filter(|child| child.visible()).collect();
+                let layouts: Vec<_> = children.iter().map(|child| child.layout()).collect();
+                let flow = super::layout::measured(
+                    *direction,
+                    inner.width,
+                    Some(inner.height),
+                    *gap,
+                    node.layout().wrap,
+                    &layouts,
+                    |index, width| self.measure(mount, children[index], width, measurements),
+                )?;
+                for (child, relative) in children.into_iter().zip(flow.children) {
+                    let area = Rect::new(
+                        inner.x.saturating_add(relative.x),
+                        inner.y.saturating_add(relative.y),
+                        relative.width,
+                        relative.height,
+                    );
+                    self.paint_node(
+                        mount,
+                        child,
+                        area.intersection(inner),
+                        buffer,
+                        scene,
+                        measurements,
+                    )?;
                 }
             }
         }

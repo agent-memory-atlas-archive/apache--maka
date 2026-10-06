@@ -2987,3 +2987,71 @@ for (const target of ['desktop', 'tui']) {
     },
   );
 }
+
+test('TUI reader declares a flexible body and wrapped controls while keeping draft and navigation routes', async () => {
+  const module = await import(pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js')));
+  module.activate({ locale: 'en' });
+  const { component: timeline } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/timeline/tui.js'))
+  );
+  const client = new Client(module.component).start({
+    through: 1000,
+    chunks: [
+      historyChunk('中文😀\n'.repeat(700), { sequence: 400, offset: 100, totalBytes: 7800 }),
+    ],
+  });
+  const routes = () => client.output.frame.view.children[0].children;
+  assert.equal(client.state.navigationOpen, false);
+  assert.equal(routes().find((node) => node.key === 'main-route').visible, true);
+  const originalDraft = modelSlots(client.output.frame.view).find(
+    (node) => node.binding === 'composer',
+  );
+  client.component('source', { sequence: 400 });
+  const frame = timeline.mount(client.timeline, {}).frame.view;
+  assert.equal(frame.layout.grow, 1);
+  assert.equal(frame.children.find((node) => node.key === 'source-document').layout.grow, 1);
+  assert.equal(frame.children.at(-1).layout.wrap, true);
+  assert.equal(frame.children.at(-1).gap, 1);
+  const main = routes().find((node) => node.key === 'main-route').children[0];
+  const composer = main.children.find((node) => node.key === 'retained-composer');
+  assert.equal(composer.visible, false);
+  assert.deepEqual(modelSlots(composer)[0], originalDraft);
+  const originalSource = structuredClone(client.state.source);
+  client.raw('navigation-toggle');
+  assert.equal(routes().find((node) => node.key === 'main-route').visible, false);
+  assert.equal(routes().find((node) => node.key === 'navigation-route').visible, true);
+  client.raw('navigation-toggle');
+  assert.equal(routes().find((node) => node.key === 'main-route').visible, true);
+  assert.deepEqual(client.state.source, originalSource);
+  client.component('sourceBack');
+  assert.equal(
+    routes()
+      .find((node) => node.key === 'main-route')
+      .children[0].children.find((node) => node.key === 'retained-composer').visible,
+    true,
+  );
+  assert.deepEqual(
+    modelSlots(client.output.frame.view).find((node) => node.binding === 'composer'),
+    originalDraft,
+  );
+});
+
+test('all ordinary TUI node identities remain unique including hidden routes', async () => {
+  const module = await import(pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js')));
+  module.activate({ locale: 'en' });
+  const client = new Client(module.component).start();
+  const check = () => {
+    const keys = new Set();
+    const visit = (node) => {
+      assert.equal(keys.has(node.key), false, node.key);
+      keys.add(node.key);
+      for (const child of node.children ?? []) visit(child);
+    };
+    visit(client.output.frame.view);
+  };
+  check();
+  client.raw('navigation-toggle');
+  check();
+  client.raw('navigation-back');
+  check();
+});

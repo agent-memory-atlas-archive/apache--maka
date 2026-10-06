@@ -21,6 +21,7 @@
 //! 统一插件应用内核的原生终端呈现器。
 mod editor;
 mod input;
+mod layout;
 mod native;
 mod paint;
 mod resources;
@@ -42,6 +43,7 @@ pub use native::registry;
 pub use paint::{PaintedScene, Slots, sanitize};
 use ratatui::{buffer::Buffer, layout::Rect};
 pub use run::run;
+pub use scene::{Direction as TerminalDirection, Layout as TerminalLayout, Node as TerminalScene};
 use serde_json::{Value, json};
 use std::{future::Future, pin::Pin};
 use uuid::Uuid;
@@ -67,7 +69,11 @@ pub trait Widget: std::any::Any {
     ) -> maka_ui::Result<std::sync::Arc<dyn maka_plugins::call::ReadResource>> {
         Err(Error::Invalid("terminal widget capture unavailable".into()))
     }
-    fn present(&self, _: &mut dyn std::any::Any, _: Box<dyn std::any::Any>) {}
+    /// Called only after a successful native flush. The original resource queue
+    /// retains an observation until the ordinary component callback accepts it.
+    fn present(&self, _: &mut dyn std::any::Any, _: Box<dyn std::any::Any>) -> Option<NativeInput> {
+        None
+    }
     fn capture_continuation(
         &self,
         _: &dyn std::any::Any,

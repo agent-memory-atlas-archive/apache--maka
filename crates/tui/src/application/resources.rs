@@ -201,19 +201,25 @@ impl Resources {
         }
     }
     pub fn present(&mut self, mount: &Mount, identity: &Rc<()>, geometry: Box<dyn Any>) {
-        if let Some(owner) = self.owners.get_mut(&mount.id())
-            && owner.live
-            && Rc::ptr_eq(&owner.identity, identity)
-            && catch_unwind(AssertUnwindSafe(|| {
-                owner.recipe.present(owner.state.as_mut(), geometry)
-            }))
-            .is_err()
-        {
-            owner.live = false;
-            self.failed.insert(
-                mount.id(),
-                "terminal native presentation cleanup unconfirmed".into(),
-            );
+        let Some(owner) = self
+            .owners
+            .get_mut(&mount.id())
+            .filter(|owner| owner.live && owner.presented && Rc::ptr_eq(&owner.identity, identity))
+        else {
+            return;
+        };
+        match catch_unwind(AssertUnwindSafe(|| {
+            owner.recipe.present(owner.state.as_mut(), geometry)
+        })) {
+            Ok(Some(observed)) => owner.pending = Some(observed),
+            Ok(None) => {}
+            Err(_) => {
+                owner.live = false;
+                self.failed.insert(
+                    mount.id(),
+                    "terminal native presentation cleanup unconfirmed".into(),
+                );
+            }
         }
     }
     pub fn presentation(&mut self, placed: &std::collections::BTreeSet<Uuid>) {

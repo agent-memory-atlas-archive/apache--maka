@@ -34,9 +34,23 @@ pub fn language() -> maka_plugin_core::package::SceneLanguage {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(rename = "TerminalDirection")]
 pub enum Direction {
     Row,
     Column,
+}
+/// Native terminal cell constraints on a child in its parent's main axis.
+/// `grow` distributes remaining cells after fixed/intrinsic siblings; `basis`
+/// supplies an explicit base instead of intrinsic length. Row wrap preserves
+/// source order and measures its rows before allocating the parent viewport.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+#[schemars(rename = "TerminalLayout")]
+pub struct Layout {
+    #[schemars(range(max = 1024))]
+    pub grow: u16,
+    pub basis: Option<u16>,
+    pub wrap: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -49,6 +63,8 @@ pub enum Node {
         padding: u16,
         background: u32,
         children: Vec<Node>,
+        #[serde(default)]
+        layout: Layout,
         #[serde(default = "visible")]
         visible: bool,
     },
@@ -67,6 +83,12 @@ fn visible() -> bool {
     true
 }
 impl Node {
+    pub(super) fn layout(&self) -> Layout {
+        match self {
+            Self::Stack { layout, .. } => *layout,
+            _ => Layout::default(),
+        }
+    }
     pub(super) fn visible(&self) -> bool {
         !matches!(self, Self::Stack { visible: false, .. })
     }
@@ -100,8 +122,13 @@ impl Node {
                 padding,
                 background,
                 children,
+                layout,
+                direction,
                 ..
             } => {
+                if layout.grow > 1024 || (layout.wrap && !matches!(direction, Direction::Row)) {
+                    return Err("invalid terminal layout".into());
+                }
                 if *gap > 1024 || *padding > 1024 || *background > 0xffffff {
                     return Err("invalid UI style".into());
                 }
@@ -228,7 +255,9 @@ pub(super) fn compile(
 }
 impl super::Widget for Node {
     fn measure(&self, slots: &super::Slots<'_>, width: u16) -> maka_ui::Result<(u16, u16)> {
-        slots.presenter.measure(slots.parent, self, width)
+        slots
+            .presenter
+            .measure(slots.parent, self, width, slots.measurements)
     }
     fn paint(
         &self,
@@ -245,6 +274,7 @@ impl super::Widget for Node {
                 .scene
                 .as_deref_mut()
                 .ok_or_else(|| maka_ui::Error::Invalid("cannot paint while measuring".into()))?,
+            slots.measurements,
         )
     }
 }

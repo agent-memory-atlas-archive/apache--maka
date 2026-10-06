@@ -282,7 +282,7 @@ export function components(target: Target): {
                   )
                 : content,
             ],
-            { visible: !props.source, style: { width: fill, height: fill } },
+            { visible: !props.source, style: { width: fill, height: fill }, terminal: { grow: 1 } },
           ),
           ...(props.source
             ? [
@@ -327,6 +327,7 @@ export function components(target: Target): {
                     {
                       gap: target === 'desktop' ? 16 : 1,
                       scroll: 'anchor',
+                      terminal: { grow: 1 },
                       style: {
                         width: fill,
                         height: fill,
@@ -355,13 +356,18 @@ export function components(target: Target): {
             ? [
                 ui.box('reading-controls', controls, {
                   row: true,
-                  gap: 8,
+                  gap: target === 'desktop' ? 8 : 1,
+                  terminal: { wrap: true },
                   style: { width: fill, shrink: 0, wrap: 'wrap' },
                 }),
               ]
             : []),
         ],
-        { gap: 8, style: { width: fill, height: fill } },
+        {
+          gap: target === 'desktop' ? 8 : 1,
+          style: { width: fill, height: fill },
+          terminal: { grow: 1 },
+        },
       ),
     );
   };

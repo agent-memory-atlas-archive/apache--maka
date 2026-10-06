@@ -734,7 +734,12 @@ function frame(
                   { row: true, gap: 8, style: { width: fill, align: 'center' } },
                 ),
               ]
-            : [title, models, ui.button('settings', text.settings)]),
+            : [
+                title,
+                models,
+                ui.button('settings', text.settings),
+                ui.button('navigation-toggle', text.showSidebar),
+              ]),
           ...(status ? [ui.text('status', status, 13, theme.muted)] : []),
           ...(state.uncertain
             ? [
@@ -768,9 +773,13 @@ function frame(
               style: { width: fill, maxWidth: 808, shrink: 0 },
             }),
           ]
-        : [composer, timeline]),
+        : [
+            ui.box('retained-composer', [composer], { visible: !state.source }),
+            ui.box('conversation', [timeline], { terminal: { grow: 1 } }),
+          ]),
     ],
     {
+      terminal: { grow: 1 },
       style: {
         width: target === 'desktop' ? pixels(0) : fill,
         grow: 1,
@@ -790,11 +799,18 @@ function frame(
           }),
           main,
         ]
-      : [main, navigation],
+      : [
+          ui.box('main-route', [main], { visible: !state.navigationOpen, terminal: { grow: 1 } }),
+          ui.box('navigation-route', [ui.button('navigation-back', text.hideSidebar), navigation], {
+            visible: state.navigationOpen,
+            terminal: { grow: 1 },
+          }),
+        ],
     {
       row: target === 'desktop',
       gap: 0,
       visible: !state.settingsOpen,
+      terminal: { grow: 1 },
       style: { width: fill, height: fill },
     },
   );
@@ -815,7 +831,7 @@ function frame(
             ]
           : []),
       ],
-      { gap: 0, style: { width: fill, height: fill, align: 'center' } },
+      { gap: 0, style: { width: fill, height: fill, align: 'center' }, terminal: { grow: 1 } },
     ),
   );
   out.frame.surface =
@@ -852,7 +868,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         catalogEpoch: 0,
         modelRefreshing: false,
         settingsOpen: false,
-        navigationOpen: true,
+        navigationOpen: target === 'desktop',
         window: null,
         source: null,
         navigation: 0,
@@ -1071,8 +1087,8 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         }
       } else if (input.kind === 'raw') {
         if (input.key === 'settings') state.settingsOpen = true;
-        else if (input.key === 'navigation-toggle' && target === 'desktop')
-          state.navigationOpen = !state.navigationOpen;
+        else if (input.key === 'navigation-toggle') state.navigationOpen = !state.navigationOpen;
+        else if (input.key === 'navigation-back') state.navigationOpen = false;
         else if (
           input.key === 'check' &&
           state.uncertain &&

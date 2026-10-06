@@ -32,6 +32,7 @@ export type RuntimeProtocol =
   | ComponentInput
   | ComponentOutput
   | ComponentSlot
+  | TerminalScene
   | CapturePlan
   | ActionOutcome
   | CallerHistoryPage
@@ -240,6 +241,40 @@ export type Surface =
       binding: string;
       kind: 'terminal';
     };
+export type TerminalScene =
+  | {
+      key: string;
+      direction: TerminalDirection;
+      gap: number;
+      padding: number;
+      background: number;
+      children: TerminalScene[];
+      layout?: TerminalLayout;
+      visible?: boolean;
+      kind: 'stack';
+    }
+  | {
+      key: string;
+      text: string;
+      color: number;
+      kind: 'text';
+    }
+  | {
+      key: string;
+      label: string;
+      kind: 'button';
+    }
+  | {
+      key: string;
+      binding: string;
+      member: number;
+      props: unknown;
+      on: {
+        [k: string]: string | undefined;
+      };
+      kind: 'component';
+    };
+export type TerminalDirection = 'row' | 'column';
 export type CapturePlan =
   | {
       source: CaptureSource;
@@ -1252,6 +1287,17 @@ export interface ComponentSlot {
   on: {
     [k: string]: string | undefined;
   };
+}
+/**
+ * Native terminal cell constraints on a child in its parent's main axis.
+ * `grow` distributes remaining cells after fixed/intrinsic siblings; `basis`
+ * supplies an explicit base instead of intrinsic length. Row wrap preserves
+ * source order and measures its rows before allocating the parent viewport.
+ */
+export interface TerminalLayout {
+  grow?: number;
+  basis?: number | null;
+  wrap?: boolean;
 }
 export interface OperationReply {
   reference: RecoveryRef;

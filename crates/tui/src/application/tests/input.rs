@@ -121,8 +121,14 @@ fn retained_presentation_preserves_input_custody_and_only_successful_flush_hides
             .find(|target| target.mount == mount)
             .unwrap()
             .clone();
-        let before = tui.measure_mount(&tui.root, 80).unwrap().1;
-        let editor_height = tui.measure_mount(&outer, 78).unwrap().1;
+        let before = tui
+            .measure_mount(&tui.root, 80, &paint::Measurements::default())
+            .unwrap()
+            .1;
+        let editor_height = tui
+            .measure_mount(&outer, 78, &paint::Measurements::default())
+            .unwrap()
+            .1;
         dispatch(&mut tui, "configure", json!({"visible":false}));
         assert_eq!(
             tui.application.frame(&mount).unwrap().revision,
@@ -143,7 +149,11 @@ fn retained_presentation_preserves_input_custody_and_only_successful_flush_hides
         );
         assert_eq!(
             before,
-            tui.measure_mount(&tui.root, 80).unwrap().1 + editor_height + 1,
+            tui.measure_mount(&tui.root, 80, &paint::Measurements::default())
+                .unwrap()
+                .1
+                + editor_height
+                + 1,
             "hidden child occupies neither space nor gap"
         );
         let area = Rect::new(0, 0, 80, 24);

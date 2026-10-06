@@ -17,7 +17,12 @@
  * under the License.
  */
 
-import type { ComponentSlot, Emission, Output } from '../../plugin-sdk/src/index.js';
+import type {
+  ComponentSlot,
+  Emission,
+  Output,
+  TerminalLayout,
+} from '../../plugin-sdk/src/index.js';
 import type { Theme } from './contracts.js';
 export type Target = 'desktop' | 'tui';
 export type Node = Record<string, unknown>;
@@ -73,6 +78,7 @@ export function paint(target: Target, theme: Theme) {
         style?: Node;
         scroll?: 'none' | 'manual' | 'anchor' | 'follow_end';
         visible?: boolean;
+        terminal?: TerminalLayout;
       } = {},
     ): Node => ({
       kind: 'stack',
@@ -83,7 +89,9 @@ export function paint(target: Target, theme: Theme) {
       background: rgba(options.surface ? theme.surface : theme.background),
       children,
       visible: options.visible ?? true,
-      ...(desktop ? { style: options.style ?? {}, scroll: options.scroll ?? 'none' } : {}),
+      ...(desktop
+        ? { style: options.style ?? {}, scroll: options.scroll ?? 'none' }
+        : { layout: options.terminal ?? {} }),
     }),
   };
 }
