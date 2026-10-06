@@ -49,6 +49,10 @@ struct Owned {
     vm: Option<usize>,
 }
 enum Done {
+    Loaded {
+        loaded: Result<maka_event_log::applications::LoadedDeployment>,
+        reply: oneshot::Sender<Result<()>>,
+    },
     IntentRecorded {
         call: Box<Call>,
         recorded: Result<Box<maka_event_log::applications::intents::RecordedIntent>>,
@@ -101,6 +105,9 @@ pub(super) struct Owner {
     _input: Input,
     // This lease belongs to accepted work, including sticky cleanup failures.
     persisted: Option<(DeploymentRef, Arc<maka_event_log::EventLog>)>,
+    loading_adoption: bool,
+    effective: Option<DeploymentRef>,
+    origins: BTreeMap<InstanceId, DeploymentRef>,
     pending: Vec<Instance>,
     activations: BTreeMap<InstanceId, Activation>,
     owned: BTreeMap<InstanceId, Owned>,
@@ -110,7 +117,8 @@ pub(super) struct Owner {
     policy: Arc<dyn Policy>,
     limits: Limits,
     shared: Option<usize>,
-    vms: Vec<Vm>,
+    vms: BTreeMap<usize, Vm>,
+    next_vm: usize,
     jobs: Jobs,
     terminals: FuturesUnordered<BoxFuture<'static, (usize, String)>>,
     failed: Vec<Failed>,
@@ -149,6 +157,9 @@ impl Owner {
             runtime: Runtime::new(plan),
             _input: input,
             persisted,
+            loading_adoption: false,
+            effective: None,
+            origins: BTreeMap::new(),
             activations: BTreeMap::new(),
             owned: BTreeMap::new(),
             sources,
@@ -157,7 +168,8 @@ impl Owner {
             policy,
             limits,
             shared: None,
-            vms: Vec::new(),
+            vms: BTreeMap::new(),
+            next_vm: 0,
             jobs: Jobs::new(),
             terminals: FuturesUnordered::new(),
             failed: Vec::new(),
@@ -201,6 +213,28 @@ impl Owner {
                 Some(done) = self.jobs.next(), if !self.jobs.is_empty() => self.complete(done),
                 Some((vm, reason)) = self.terminals.next(), if !self.terminals.is_empty() => self.retire_vm(vm, reason),
                 command = control.recv(), if control_open => match command {
+                    Some(Control::Adopt { source, reply }) => {
+                        if self.closing {
+                            let _ = reply.send(Err("Host deployment is closing".into()));
+                        } else if self.loading_adoption {
+                            let _ = reply.send(Err("deployment source load already pending".into()));
+                        } else if let Some((current, store)) = &self.persisted {
+                            if source.state_domain != current.state_domain || source.deployment != current.deployment {
+                                let _ = reply.send(Err("foreign deployment source".into()));
+                            } else {
+                                let store = store.clone();
+                                self.loading_adoption = true;
+                                self.jobs.push(Box::pin(async move {
+                                    let loaded = store.load_application_at(&source).await
+                                        .map_err(|e| e.to_string())
+                                        .and_then(|loaded| loaded.ok_or("committed deployment not found".into()));
+                                    Done::Loaded { loaded, reply }
+                                }));
+                            }
+                        } else {
+                            let _ = reply.send(Err("persisted deployment required".into()));
+                        }
+                    }
                     Some(Control::Retire { activation, reply }) => {
                         let result = self.runtime.retire(&activation).map(|_| ()).map_err(|e| e.to_string());
                         let _ = reply.send(result);
@@ -215,6 +249,50 @@ impl Owner {
             }
         }
     }
+    fn adopt(&mut self, loaded: maka_event_log::applications::LoadedDeployment) -> Result<()> {
+        if self.closing {
+            return Err("Host deployment is closing".into());
+        }
+        let (current, _) = self
+            .persisted
+            .as_ref()
+            .ok_or("persisted deployment required")?;
+        let source = loaded.source.reference;
+        if source.revision < current.revision {
+            return Err("stale deployment source".into());
+        }
+        if source == *current {
+            return Ok(());
+        }
+        if !loaded.source.remote_exports.is_empty() {
+            return Err("remote Host executor is unavailable".into());
+        }
+        let input = loaded.source.input;
+        let (plan, sources) = prepare(&input, loaded.packages, &self.native, true)?;
+        let instances = plan
+            .instances()
+            .values()
+            .filter(|i| !i.disabled)
+            .cloned()
+            .collect::<Vec<_>>();
+        self.runtime.install(plan);
+        self.pending = instances
+            .into_iter()
+            .filter(|i| {
+                !self.activations.get(&i.identity).is_some_and(|a| {
+                    self.runtime
+                        .status(a)
+                        .is_ok_and(|s| s.phase == Phase::Active || s.phase == Phase::Loading)
+                })
+            })
+            .collect();
+        self.persisted.as_mut().expect("persisted deployment").0 = source;
+        self._input = input;
+        self.sources = sources;
+        self.startup_error = None;
+        self.starting = true;
+        Ok(())
+    }
     fn stop(&mut self) {
         self.closing = true;
         self.starting = false;
@@ -227,7 +305,21 @@ impl Owner {
     }
     fn fail_startup(&mut self, error: String) {
         self.startup_error.get_or_insert(error);
-        self.stop();
+        if self.effective.is_none() {
+            self.stop();
+        } else {
+            self.starting = false;
+            self.pending.clear();
+            for activation in self.activations.values() {
+                if self
+                    .runtime
+                    .status(activation)
+                    .is_ok_and(|s| s.phase == Phase::Loading)
+                {
+                    self.runtime.retire(activation).expect("owned activation");
+                }
+            }
+        }
     }
     fn drive(&mut self) {
         if self.starting {
@@ -235,8 +327,12 @@ impl Owner {
             while progressed {
                 progressed = false;
                 for instance in std::mem::take(&mut self.pending) {
-                    if self.closing {
+                    if self.closing || !self.starting {
                         break;
+                    }
+                    if self.activations.contains_key(&instance.identity) {
+                        self.pending.push(instance);
+                        continue;
                     }
                     let active = |id: &InstanceId| {
                         self.activations
@@ -264,9 +360,24 @@ impl Owner {
                     }
                 }
             }
-            if self.pending.is_empty() && self.owned.values().all(|o| !o.initializing) {
+            if self.starting
+                && self.pending.is_empty()
+                && self.activations.values().all(|a| {
+                    self.runtime
+                        .status(a)
+                        .is_ok_and(|s| s.phase == Phase::Active)
+                })
+            {
                 self.starting = false;
-            } else if !self.pending.is_empty() && self.jobs.is_empty() {
+                self.effective = self.persisted.as_ref().map(|(source, _)| source.clone());
+            } else if !self.pending.is_empty()
+                && self.jobs.is_empty()
+                && !self.activations.values().any(|a| {
+                    self.runtime
+                        .status(a)
+                        .is_ok_and(|s| s.phase == Phase::Retiring)
+                })
+            {
                 self.fail_startup("Host dependencies did not become ready".into());
             }
         }
@@ -291,6 +402,7 @@ impl Owner {
                 }));
             }
         }
+        let before_cleanup = self.activations.len();
         loop {
             let before = self.activations.len();
             for id in self.activations.keys().cloned().collect::<Vec<_>>() {
@@ -303,6 +415,7 @@ impl Owner {
                     match self.runtime.finish_cleanup(activation) {
                         Ok(()) => {
                             self.activations.remove(&id);
+                            self.origins.remove(&id);
                         }
                         Err(maka_plugin_core::Error::CleanupPending) => {}
                         Err(error) => {
@@ -315,6 +428,10 @@ impl Owner {
                 break;
             }
         }
+        if self.starting && before_cleanup != self.activations.len() {
+            self.drive();
+            return;
+        }
         if self.closing && self.activations.is_empty() && self.jobs.is_empty() && !self.closing_vms
         {
             self.closing_vms = true;
@@ -322,7 +439,7 @@ impl Owner {
             let vms = std::mem::take(&mut self.vms);
             self.shared = None;
             self.jobs.push(Box::pin(async move {
-                for vm in vms {
+                for vm in vms.into_values() {
                     vm.shutdown().await;
                 }
                 Done::VmsClosed
@@ -336,6 +453,10 @@ impl Owner {
             .map_err(|e| e.to_string())?;
         self.activations
             .insert(instance.identity.clone(), activation.clone());
+        if let Some((source, _)) = &self.persisted {
+            self.origins
+                .insert(instance.identity.clone(), source.clone());
+        }
         let Some(entry) = instance.entry else {
             return self
                 .runtime
@@ -434,7 +555,11 @@ impl Owner {
                 let load = (|| {
                     let vm_index = match realm {
                         Realm::Shared => match self.shared {
-                            Some(index) if !self.vms[index].is_terminated() => index,
+                            Some(index)
+                                if self.vms.get(&index).is_some_and(|vm| !vm.is_terminated()) =>
+                            {
+                                index
+                            }
                             _ => {
                                 let index = self.new_vm()?;
                                 self.shared = Some(index);
@@ -447,7 +572,7 @@ impl Owner {
                         .get_mut(&instance.identity)
                         .expect("initialization resource")
                         .vm = Some(vm_index);
-                    let vm = &self.vms[vm_index];
+                    let vm = &self.vms[&vm_index];
                     let source = std::str::from_utf8(
                         self.sources[&instance.package]
                             .file(module)
@@ -498,30 +623,37 @@ impl Owner {
         Ok(())
     }
     fn new_vm(&mut self) -> Result<usize> {
+        let index = self.next_vm;
+        let next = index.checked_add(1).ok_or("VM identity exhausted")?;
         let vm = Vm::scoped(self.limits.clone()).map_err(|e| e.to_string())?;
-        let index = self.vms.len();
+        self.next_vm = next;
         let observed = vm.clone();
         self.terminals.push(Box::pin(async move {
             (index, observed.failed().await.to_string())
         }));
-        self.vms.push(vm);
+        self.vms.insert(index, vm);
         Ok(index)
     }
     fn retire_vm(&mut self, vm: usize, reason: String) {
+        let mut affected = false;
         for (id, owned) in &self.owned {
             if owned.vm == Some(vm) {
+                affected |= self
+                    .runtime
+                    .status(&self.activations[id])
+                    .is_ok_and(|s| s.phase != Phase::Retiring);
                 self.runtime
                     .retire(&self.activations[id])
                     .expect("VM activation belongs to owner");
             }
         }
-        if self.starting {
+        if affected && self.starting {
             self.fail_startup(reason);
         }
     }
     fn check_vm(&mut self, provider: &Activation) -> Result<()> {
         if let Some(index) = self.owned.get(provider.instance()).and_then(|o| o.vm)
-            && self.vms[index].is_terminated()
+            && self.vms.get(&index).is_some_and(Vm::is_terminated)
         {
             self.retire_vm(index, "Host JavaScript execution domain terminated".into());
             return Err("Host JavaScript execution domain terminated".into());
@@ -617,9 +749,9 @@ impl Owner {
                     }
                     let request = operation
                         .map(|operation| {
-                            let (source, _) = self
-                                .persisted
-                                .as_ref()
+                            let source = self
+                                .origins
+                                .get(binding.0.consumer().instance())
                                 .ok_or("durable mutation requires original deployment source")?;
                             Ok::<OperationRequest, String>(OperationRequest {
                                 source: source.clone(),
@@ -984,6 +1116,12 @@ impl Owner {
     }
     fn complete(&mut self, done: Done) {
         match done {
+            Done::Loaded { loaded, reply } => {
+                self.loading_adoption = false;
+                let result = loaded.and_then(|loaded| self.adopt(loaded));
+                self.publish();
+                let _ = reply.send(result);
+            }
             Done::IntentRecorded { mut call, recorded } => match recorded {
                 Ok(intent) => {
                     let CallKind::Mutation { confirmation, .. } = &mut call.kind else {
@@ -1123,6 +1261,26 @@ impl Owner {
                 let _ = reply.send(result);
             }
             Done::Closed { activation, result } => {
+                // The last module owns actual domain shutdown under its original
+                // resource fence. An empty isolate is not settled code ownership.
+                if result.is_ok()
+                    && let Some(index) = self.owned[activation.instance()].vm
+                    && self.owned.values().filter(|o| o.vm == Some(index)).count() == 1
+                    && let Some(vm) = self.vms.remove(&index)
+                {
+                    self.owned
+                        .get_mut(activation.instance())
+                        .expect("owned module")
+                        .vm = None;
+                    if self.shared == Some(index) {
+                        self.shared = None;
+                    }
+                    self.jobs.push(Box::pin(async move {
+                        vm.shutdown().await;
+                        Done::Closed { activation, result }
+                    }));
+                    return;
+                }
                 let owned = &self.owned[activation.instance()];
                 let success = result.is_ok();
                 if let Err(error) = &result {
@@ -1140,6 +1298,8 @@ impl Owner {
     }
     fn snapshot(&self) -> Snapshot {
         Snapshot {
+            desired: self.persisted.as_ref().map(|(source, _)| source.clone()),
+            effective: self.effective.clone(),
             starting: self.starting,
             startup_error: self.startup_error.clone(),
             closing: self.closing,

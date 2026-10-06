@@ -316,6 +316,10 @@ impl Mutation {
 
 #[derive(Clone, Default)]
 pub struct Snapshot {
+    /// Latest validated committed source adopted by this owner.
+    pub desired: Option<DeploymentRef>,
+    /// Last source whose complete plan actually converged.
+    pub effective: Option<DeploymentRef>,
     pub starting: bool,
     pub startup_error: Option<String>,
     pub closing: bool,
@@ -552,6 +556,10 @@ impl Reply {
     }
 }
 pub(super) enum Control {
+    Adopt {
+        source: DeploymentRef,
+        reply: oneshot::Sender<Result<()>>,
+    },
     Retire {
         activation: Activation,
         reply: oneshot::Sender<Result<()>>,
@@ -602,6 +610,20 @@ impl Application {
         )
     }
 
+    /// Adopt exact committed bytes without granting plugin code a management capability.
+    /// Success acknowledges desired input, not activation or cleanup completion.
+    pub async fn adopt_committed(&self, source: DeploymentRef) -> Result<()> {
+        let (reply, result) = oneshot::channel();
+        self.client
+            .control
+            .try_send(Control::Adopt { source, reply })
+            .map_err(|e| e.to_string())?;
+        result
+            .await
+            .map_err(|_| "Host owner disappeared during adoption".to_string())?
+    }
+
+    /// The source this root originally started from; live progress is in Snapshot.
     pub fn source(&self) -> Option<&DeploymentRef> {
         self.source.as_ref()
     }
@@ -616,50 +638,7 @@ impl Application {
         limits: Limits,
         persisted: Option<(DeploymentRef, Arc<maka_event_log::EventLog>)>,
     ) -> Result<Self> {
-        if input.environment.location != ExecutionLocation::Host || input.launch.is_some() {
-            return Err("Host service deployment required".into());
-        }
-        let mut declarations = Packages::default();
-        let mut sources = BTreeMap::<PackageRef, Package>::new();
-        for package in packages {
-            let declaration = package
-                .manifest()
-                .application
-                .as_ref()
-                .ok_or("application package declaration required")?;
-            declarations
-                .insert(package.application_ref(), declaration.clone())
-                .map_err(|e| e.to_string())?;
-            sources.insert(package.application_ref(), package);
-        }
-        let plan = Plan::prepare(&input, &declarations, &RemoteExports::new())
-            .map_err(|e| e.to_string())?;
-        for instance in plan.instances().values().filter(|i| !i.disabled) {
-            check_json(&instance.configuration)?;
-            if let Some(entry) = &instance.entry {
-                for export in entry.exports.values() {
-                    let Interface::Service { methods } = &export.contract.interface else {
-                        return Err("Host service executor requires service exports".into());
-                    };
-                    if methods.values().any(|m| {
-                        m.mode == MethodMode::Mutation && persisted.is_none()
-                            || m.resources.len() > 16
-                    }) {
-                        return Err(
-                            "durable mutation requires a State Root; maximum 16 resource slots"
-                                .into(),
-                        );
-                    }
-                }
-                if let Implementation::Native { implementation } = &entry.implementation
-                    && !native.0.contains_key(implementation)
-                {
-                    return Err(format!(
-                        "native implementation unavailable: {implementation}"
-                    ));
-                }
-            }
-        }
+        let (plan, sources) = prepare(&input, packages, &native, persisted.is_some())?;
         let scheduler = tokio::runtime::Handle::try_current().map_err(|e| e.to_string())?;
         let (commands, receiver) = mpsc::channel(128);
         let (control, controls) = mpsc::channel(16);
@@ -735,6 +714,11 @@ impl Client {
         loop {
             let snapshot = updates.borrow().clone();
             if let Some(error) = snapshot.startup_error {
+                return Err(error);
+            }
+            if snapshot.starting
+                && let Some(error) = snapshot.cleanup_error
+            {
                 return Err(error);
             }
             if snapshot.closing {
@@ -1071,4 +1055,57 @@ impl Dispatch {
             .map_err(|e| e.to_string())?;
         Ok(result)
     }
+}
+
+/// Validate an entire candidate before changing any live activation.
+fn prepare(
+    input: &Input,
+    packages: Vec<Package>,
+    native: &NativeRegistry,
+    durable: bool,
+) -> Result<(Plan, BTreeMap<PackageRef, Package>)> {
+    if input.environment.location != ExecutionLocation::Host || input.launch.is_some() {
+        return Err("Host service deployment required".into());
+    }
+    let mut declarations = Packages::default();
+    let mut sources = BTreeMap::<PackageRef, Package>::new();
+    for package in packages {
+        let declaration = package
+            .manifest()
+            .application
+            .as_ref()
+            .ok_or("application package declaration required")?;
+        declarations
+            .insert(package.application_ref(), declaration.clone())
+            .map_err(|e| e.to_string())?;
+        sources.insert(package.application_ref(), package);
+    }
+    let plan =
+        Plan::prepare(input, &declarations, &RemoteExports::new()).map_err(|e| e.to_string())?;
+    for instance in plan.instances().values().filter(|i| !i.disabled) {
+        check_json(&instance.configuration)?;
+        if let Some(entry) = &instance.entry {
+            for export in entry.exports.values() {
+                let Interface::Service { methods } = &export.contract.interface else {
+                    return Err("Host service executor requires service exports".into());
+                };
+                if methods
+                    .values()
+                    .any(|m| m.mode == MethodMode::Mutation && !durable || m.resources.len() > 16)
+                {
+                    return Err(
+                        "durable mutation requires a State Root; maximum 16 resource slots".into(),
+                    );
+                }
+            }
+            if let Implementation::Native { implementation } = &entry.implementation
+                && !native.0.contains_key(implementation)
+            {
+                return Err(format!(
+                    "native implementation unavailable: {implementation}"
+                ));
+            }
+        }
+    }
+    Ok((plan, sources))
 }

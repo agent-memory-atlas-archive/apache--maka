@@ -149,6 +149,7 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
             launch: None,
         };
         let plan = Plan::prepare(&input, &packages, &RemoteExports::new()).unwrap();
+        let waiting_replacement = plan.instances()[&InstanceId(vec![Uuid::from_u128(2)])].clone();
         let issuer = Issuer::default();
         let mut owner = Owner::new(
             plan,
@@ -202,7 +203,7 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
             .own_resource(&consumer, "actual consumer module")
             .unwrap();
         let vm = owner.new_vm().unwrap();
-        let module = owner.vms[vm]
+        let module = owner.vms[&vm]
             .load(
                 "consumer.mjs".into(),
                 "export function activate(){return {}; }".into(),
@@ -229,8 +230,8 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
             .map_err(|e| e.error)
             .unwrap();
         let binding = owner.capture_bindings(&consumer, "echo").unwrap().remove(0);
-        owner.vms[vm].terminate("actual consumer execution domain failure");
-        owner.vms[vm].failed().await;
+        owner.vms[&vm].terminate("actual consumer execution domain failure");
+        owner.vms[&vm].failed().await;
         // Deliberately leave the notification unpolled. The command must check
         // actual domain health before accepting work from this consumer.
         assert_eq!(
@@ -279,6 +280,87 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
             owner.runtime.status(&consumer).unwrap().phase,
             Phase::Retiring
         );
+        // A new candidate is waiting on this old, already retiring domain.
+        // Its delayed actual failure must not erase that replacement.
+        owner.starting = true;
+        owner.pending.push(waiting_replacement);
+        owner.retire_vm(vm, "delayed original domain failure".into());
+        assert!(owner.starting);
+        assert_eq!(owner.pending.len(), 1);
+        assert!(owner.startup_error.is_none());
+        assert!(!owner.closing);
+        owner.pending.clear();
+        owner.starting = false;
+        let original_vm = owner.vms[&vm].clone();
+        owner.drive();
+        while !owner.jobs.is_empty() {
+            let done = owner.jobs.next().await.unwrap();
+            owner.complete(done);
+            owner.drive();
+        }
+        assert!(original_vm.is_terminated());
+        assert!(owner.vms.is_empty());
+        assert!(!owner.closing);
+        assert_eq!(
+            owner.runtime.status(&provider).unwrap().phase,
+            Phase::Active
+        );
+        // Healthy module replacement closes the real isolate, even while a
+        // later plan is starting; its terminal notification is not a failure.
+        for _ in 0..16 {
+            let activation = owner.runtime.begin(consumer.instance()).unwrap();
+            owner
+                .activations
+                .insert(activation.instance().clone(), activation.clone());
+            let resource = owner
+                .runtime
+                .own_resource(&activation, "healthy module")
+                .unwrap();
+            let index = owner.new_vm().unwrap();
+            let vm = owner.vms[&index].clone();
+            let module = vm
+                .load(
+                    "healthy.mjs".into(),
+                    "export function activate(){return {}; }".into(),
+                )
+                .unwrap();
+            module.call(vec!["activate".into()], vec![]).await.unwrap();
+            assert!(!vm.is_terminated());
+            owner.owned.insert(
+                activation.instance().clone(),
+                Owned {
+                    imports: Arc::new(BTreeMap::new()),
+                    resource,
+                    close: Some(Box::pin(async move {
+                        module.close().await.map_err(|e| e.to_string())
+                    })),
+                    initializing: false,
+                    closing: false,
+                    native_owner: None,
+                    vm: Some(index),
+                },
+            );
+            owner
+                .runtime
+                .publish(&activation, BTreeMap::new())
+                .map_err(|e| e.error)
+                .unwrap();
+            owner.runtime.retire(&activation).unwrap();
+            owner.drive();
+            while !owner.jobs.is_empty() {
+                let done = owner.jobs.next().await.unwrap();
+                owner.complete(done);
+                owner.drive();
+            }
+            assert!(vm.is_terminated());
+            assert!(owner.vms.is_empty());
+            assert!(owner.runtime.status(&activation).is_err());
+            owner.starting = true;
+            owner.retire_vm(index, "normal shutdown notification".into());
+            assert!(owner.starting);
+            assert!(owner.startup_error.is_none());
+            owner.starting = false;
+        }
         owner.stop();
         owner.drive();
         while let Some(done) = owner.jobs.next().await {

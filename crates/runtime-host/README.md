@@ -25,6 +25,25 @@ packages and an explicit native implementation registry; it does not activate
 built-in business plugins by default. The existing server entry point has not
 yet migrated to this adapter.
 
+`Application::adopt_committed` lets the trusted root owner adopt an exact committed
+revision in its existing State Root. It validates the full candidate before kernel
+installation, rejects foreign or older sources, and bounds source loading to one
+in-flight snapshot. An acknowledgement means desired input was adopted, not that
+activation or cleanup succeeded. `Client::snapshot` separates `desired` from
+`effective` (the last fully converged source), and reports current instance phases,
+startup failure and cleanup failure. `Application::source` is the original startup
+source. `ready` waits for convergence and returns an observed failure.
+
+Unchanged activations retain their original source, native context and captured
+bindings. Prepared and later mutations from those consumers keep that original
+receipt reference. Changed instances revoke new admission; already accepted work
+settles under its original owner. Replacement waits for actual call resources,
+module/native close and final VM shutdown. A shared VM remains while any module
+owns it. Initialization failure during an update preserves unrelated healthy
+instances; a later committed revision can recover. Package storage does not imply
+activation. This owner API does not provide a remote management grant or migrate
+the server and presentation executors to live updates.
+
 The owner task publishes an entire validated export batch. JavaScript services
 retain actual receiver/functions through `Captured`, in `Vm::scoped` realms
 without ambient Host routing or Deno globals. Native activation supplies an independent `NativeOwner` whose

@@ -17,6 +17,9 @@
  * under the License.
  */
 
+#[path = "reconciliation.rs"]
+mod reconciliation;
+
 #[path = "peer_confirmations.rs"]
 mod peer_confirmations;
 #[path = "receipts.rs"]

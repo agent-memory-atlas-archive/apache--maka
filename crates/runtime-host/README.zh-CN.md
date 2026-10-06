@@ -21,6 +21,18 @@
 
 `application::Application` 与 UI 使用同一个 plugin-core 组合和生命周期内核，执行服务部署。
 输入是不可变应用包与显式 native implementation registry，不默认启用内置业务。
+
+`Application::adopt_committed` 允许可信应用 root 所有者在同一 State Root 中接纳确切的
+已提交版本。完整候选先通过静态校验，再进入内核；拒绝其他来源和更早版本，最多同时读取
+一个候选快照。返回成功仅表示接纳期望输入，不证明激活或清理完成。`Client::snapshot`
+区分 `desired` 与 `effective`（上次完整收敛来源），并报告当前实例阶段、初始化失败和清理
+失败。`Application::source` 仍是最初启动来源；`ready` 等待收敛并返回已观察到的失败。
+
+不变实例保留原始来源、native context 和确切 binding，其准备中及后续 mutation 沿用原始
+receipt reference。变化实例撤销新准入，已接受工作仍由原 owner 结算。替代必须等待真实
+调用资源、module/native close 和最后的 VM shutdown；共享 VM 在仍有模块所有者时保留。
+运行中初始化失败保留无关健康实例，后续已提交版本可以恢复。包入库不等于激活；此 root
+API 尚未提供远程管理权限入口，也尚未让 server 和呈现执行器接入运行中更新。
 现有 server 入口尚未迁移到这个适配器。
 
 owner task 校验整批实际导出后一次发布。JavaScript 服务用 `Captured` 保留实际 receiver/functions，
