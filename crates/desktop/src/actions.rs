@@ -29,7 +29,7 @@ use gpui_kit::{App, Context, WeakEntity, Window};
 use maka_ui::actions::{ActionTask, TaskCompletion};
 use std::{
     cell::{Cell, RefCell},
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     rc::Rc,
     sync::Arc,
 };
@@ -48,13 +48,48 @@ struct State {
     quitting: Cell<bool>,
     launch: RefCell<Option<launch::State>>,
     failure: RefCell<Option<String>>,
+    updates: RefCell<Option<maka_application_bridge::Updates>>,
+    update_errors: RefCell<BTreeSet<String>>,
 }
 /// One actual foreground execution owner, shared by GPUI and its launcher.
 /// Join observers survive a lost platform loop; no completion is fabricated.
 #[derive(Clone)]
 pub(super) struct Owner(Rc<State>);
 impl gpui_kit::Global for Owner {}
+fn application_scheduler(owner: &Owner) -> tokio::runtime::Handle {
+    owner.0.application.borrow().scheduler().clone()
+}
 impl Owner {
+    pub(super) fn take_updates(&self) -> Option<maka_application_bridge::Updates> {
+        let mut updates = self.0.updates.borrow_mut().take();
+        if let Some(updates) = updates.as_mut() {
+            updates.stop();
+        }
+        updates
+    }
+    fn poll_updates(&self, cx: &mut App) {
+        let result = self
+            .0
+            .updates
+            .borrow_mut()
+            .as_mut()
+            .map(|updates| updates.poll(&self.0.application.borrow()));
+        match result {
+            Some(Ok(Some(update))) => {
+                if let Err(error) = self.adopt_prepared(update.prepared, update.registrations, cx) {
+                    eprintln!("deployment update rejected: {error}");
+                }
+            }
+            Some(Err(error)) => {
+                let mut errors = self.0.update_errors.borrow_mut();
+                if errors.len() < 64 && errors.insert(error.clone()) {
+                    eprintln!("deployment update rejected: {error}");
+                }
+            }
+            _ => {}
+        }
+        quit_when_drained(&self.0.application, cx);
+    }
     pub(super) fn start(&self, action: ActionTask) -> Observer {
         let worker = self.0.application.borrow().scheduler().spawn(action.future);
         let completion = Rc::new(RefCell::new(None));
@@ -128,6 +163,22 @@ pub(super) fn own(
         }
         return Ok(owner.clone());
     }
+    let updates = match (
+        &connections,
+        &caller,
+        application.borrow().deployment_status().desired,
+    ) {
+        (Some(connections), Some(store), Some(source)) => Some(
+            maka_application_bridge::Updates::new(
+                store.clone(),
+                source,
+                connections.clone(),
+                application.borrow().scheduler().clone(),
+            )
+            .map_err(maka_ui::Error::Invalid)?,
+        ),
+        _ => None,
+    };
     let owner = Owner(Rc::new(State {
         application,
         jobs: RefCell::new(BTreeMap::new()),
@@ -137,8 +188,47 @@ pub(super) fn own(
         quitting: Cell::new(false),
         launch: RefCell::new(None),
         failure: RefCell::new(None),
+        updates: RefCell::new(updates),
+        update_errors: RefCell::new(BTreeSet::new()),
     }));
     cx.set_global(owner.clone());
+    if owner.0.updates.borrow().is_some() {
+        let watched = Rc::downgrade(&owner.0);
+        let scheduler = application_scheduler(&owner);
+        cx.spawn(async move |cx| {
+            loop {
+                if scheduler
+                    .spawn(async { tokio::time::sleep(std::time::Duration::from_millis(30)).await })
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                let continuing = cx.update(|cx| {
+                    let Some(state) = watched.upgrade() else {
+                        return false;
+                    };
+                    let watched = Owner(state);
+                    if watched.0.quitting.get()
+                        || watched.0.draining.get()
+                        || !cx.has_global::<Owner>()
+                    {
+                        return false;
+                    }
+                    if cx.windows().is_empty() && !watched.replacing() {
+                        quit_when_drained(&watched.0.application, cx);
+                        return false;
+                    }
+                    watched.poll_updates(cx);
+                    true
+                });
+                if !continuing {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
     // Installed once per App. The callback captures no application/Root lease.
     if !cx.has_global::<QuitGate>() {
         cx.on_request_quit(request_quit)
@@ -155,6 +245,9 @@ pub(super) fn request_quit(cx: &mut App) -> bool {
     };
     // Prohibit replacement before removal can deliver a reentrant receipt.
     owner.0.quitting.set(true);
+    if let Some(updates) = owner.0.updates.borrow_mut().as_mut() {
+        updates.stop();
+    }
     // Stop all new kernel admission; pending physical mounts/work stay fenced.
     let _ = owner.0.application.borrow_mut().shutdown();
     // Logical removal only: actual window owners still report physical cleanup.
@@ -278,7 +371,16 @@ pub(super) fn quit_when_drained(application: &Rc<RefCell<DesktopApplication>>, c
         }
         return;
     }
-    if !cx.windows().is_empty() || !application.borrow().can_shutdown() {
+    if !cx.windows().is_empty() {
+        return;
+    }
+    // Logical last-window removal stops candidate admission immediately, even
+    // while original native entities or accepted work still hold cleanup fences.
+    owner.0.quitting.set(true);
+    if let Some(updates) = owner.0.updates.borrow_mut().as_mut() {
+        updates.stop();
+    }
+    if !application.borrow().can_shutdown() {
         return;
     }
     if owner.0.draining.get() {
@@ -291,8 +393,12 @@ pub(super) fn quit_when_drained(application: &Rc<RefCell<DesktopApplication>>, c
     if owner.0.connections.is_some() || owner.0.caller.is_some() {
         let connections = owner.0.connections.clone();
         let caller = owner.0.caller.clone();
+        let updates = owner.take_updates();
         owner.0.draining.set(true);
         let task = application.borrow().scheduler().spawn(async move {
+            if let Some(updates) = updates {
+                updates.drain().await;
+            }
             if let Some(connections) = connections {
                 connections.lock().await.drain().await;
             }

@@ -39,6 +39,27 @@ struct Scene {
     editor: Mount,
 }
 impl Scene {
+    fn from_launch(owner: &actions::Owner, cx: &mut TestAppContext) -> Self {
+        let (root, window, weak) = owner.current_launch().expect("managed live launch");
+        let surface = weak.upgrade().unwrap();
+        let app = cx.update(|cx| surface.read(cx).application.clone());
+        let resources = cx.update(|cx| surface.read(cx).resources.clone());
+        let outer = app.borrow().child_mount(&root, "editor").unwrap().clone();
+        let editor = app
+            .borrow()
+            .child_mount(&outer, "draft")
+            .cloned()
+            .unwrap_or(outer);
+        Self {
+            window,
+            surface,
+            app,
+            resources,
+            root,
+            editor,
+        }
+    }
+
     fn editor_owner(&self, cx: &App) -> String {
         // Some transaction tests deliberately reject publication of the native
         // observation. Use the actual original owner in those fixtures too.

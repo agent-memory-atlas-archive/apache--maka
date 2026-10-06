@@ -244,10 +244,10 @@ fn actual_quit_drains_cohost_native_sql_write_before_shared_store_close(cx: &mut
         ))
         .unwrap();
     timer.block_on(connections.start()).unwrap();
-    let application = timer
+    let mut application = timer
         .block_on(Application::start_from_store(
             store.clone(),
-            ui,
+            ui.clone(),
             PresentationTarget::Desktop,
             timer.handle().clone(),
             Default::default(),
@@ -256,19 +256,75 @@ fn actual_quit_drains_cohost_native_sql_write_before_shared_store_close(cx: &mut
         ))
         .unwrap();
     let connections = Arc::new(tokio::sync::Mutex::new(connections));
-    let scene = Scene::from_application(cx, application);
-    cx.update(|cx| {
-        actions::own(
-            scene.app.clone(),
+    let mount = application.mount_launch(serde_json::json!({})).unwrap();
+    let application = Rc::new(RefCell::new(application));
+    let owner = cx.update(|cx| {
+        gpui_kit::init(cx);
+        let owner = actions::own(
+            application.clone(),
             Some(connections.clone()),
             Some(store.clone()),
             cx,
         )
-        .unwrap()
+        .unwrap();
+        owner.open_launch(mount, serde_json::json!({}), cx).unwrap();
+        owner
     });
+    let scene = Scene::from_launch(&owner, cx);
     scene.draw(cx);
+    let editor = scene.owner();
+    let editor_id = editor.entity_id();
+    cx.update_window(scene.window, |_, window, cx| {
+        editor.update(cx, |state, cx| {
+            state
+                .state
+                .read(cx)
+                .presentation()
+                .focus_handle()
+                .focus(window, cx);
+            state.replace_text_in_range(Some(0..5), "原草稿🙂", window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(editor.read(cx).state.read(cx).value().as_ref(), "原草稿🙂"));
+    let loaded = timer
+        .block_on(store.load_application(ui.deployment))
+        .unwrap()
+        .unwrap();
+    let next = timer
+        .block_on(store.commit_application(
+            ui.deployment,
+            1,
+            loaded.source.input,
+            loaded.source.remote_exports,
+            loaded.packages,
+        ))
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while application.borrow().source() != Some(&next) {
+        cx.run_until_parked();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    scene.draw(cx);
+    let (original, original_window, _) = owner.current_launch().unwrap();
+    assert_eq!(original, scene.root);
+    assert_eq!(original_window, scene.window);
+    assert_eq!(scene.owner().entity_id(), editor_id);
+    cx.update(|cx| assert_eq!(editor.read(cx).state.read(cx).value().as_ref(), "原草稿🙂"));
     scene.close(cx);
-    assert!(scene.app.borrow().can_shutdown());
+    assert!(
+        !scene.app.borrow().can_shutdown(),
+        "held original native entity is not a cleanup receipt"
+    );
+    cx.update(|_| drop(editor));
+    cx.run_until_parked();
+    assert!(
+        scene.app.borrow().can_shutdown(),
+        "{}",
+        scene.resources.borrow().cleanup_diagnostics()
+    );
     cx.update(|cx| actions::quit_when_drained(&scene.app, cx));
     cx.run_until_parked();
     timer.block_on(async {
@@ -299,6 +355,8 @@ fn actual_quit_drains_cohost_native_sql_write_before_shared_store_close(cx: &mut
     use futures_util::FutureExt;
     assert!(matches!(store.shutdown().now_or_never(), Some(Ok(()))));
     drop(scene);
+    drop(owner);
+    drop(application);
     drop(connections);
     drop(store);
     cx.run_until_parked();

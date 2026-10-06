@@ -24,6 +24,7 @@ use maka_plugin_core::{
     plan::{Instance, RemoteCapability, RemoteExports},
     runtime::Status,
 };
+use std::collections::BTreeSet;
 
 pub struct DeploymentStatus {
     pub desired: Option<DeploymentRef>,
@@ -42,6 +43,19 @@ pub struct CommittedUpdate {
 impl CommittedUpdate {
     pub fn source(&self) -> &DeploymentRef {
         &self.loaded.source.reference
+    }
+}
+
+/// Immutable candidate preflighted by its original foreground owner. This is
+/// not an editable plan, connection approval or convergence acknowledgement.
+pub struct PreparedUpdate {
+    owner: Uuid,
+    source: DeploymentRef,
+    candidate: Candidate,
+}
+impl PreparedUpdate {
+    pub fn source(&self) -> &DeploymentRef {
+        &self.source
     }
 }
 
@@ -159,6 +173,27 @@ impl<V: ?Sized + 'static> Application<V> {
         }
     }
 
+    /// Original executable origins remain necessary through actual retirement
+    /// and cleanup. Structural origins confer no consumer approval; the current
+    /// desired revision also covers its not-yet-started executable instances.
+    pub fn live_source_revisions(&self) -> BTreeSet<u64> {
+        let mut revisions = BTreeSet::new();
+        if let Some(source) = &self.source {
+            revisions.insert(source.revision);
+        }
+        for activation in self.activations.values() {
+            if self
+                .runtime
+                .instance(activation)
+                .is_ok_and(|instance| instance.entry.is_some())
+                && let Some(source) = self.origins.get(&activation.epoch())
+            {
+                revisions.insert(source.revision);
+            }
+        }
+        revisions
+    }
+
     /// Root-owner operation. Remote registrations are trusted endpoints, never grants derived from JSON.
     /// Acknowledges desired input only; the renderer still owns actual native close acknowledgements.
     pub async fn adopt_committed(
@@ -208,12 +243,8 @@ impl<V: ?Sized + 'static> Application<V> {
         Ok(())
     }
 
-    /// Final owner turn rechecks origin/revision after the storage await.
-    pub fn adopt_update(
-        &mut self,
-        update: CommittedUpdate,
-        registrations: Vec<actions::RemoteService>,
-    ) -> Result<()> {
+    /// Preflight before the trusted launcher publishes any new connection grant.
+    pub fn prepare_update(&self, update: CommittedUpdate) -> Result<PreparedUpdate> {
         self.check_update_source(update.source())?;
         let loaded = update.loaded;
         let source = loaded.source.reference;
@@ -223,20 +254,50 @@ impl<V: ?Sized + 'static> Application<V> {
             .into_iter()
             .map(|r| (r.capability, r.declaration))
             .collect();
-        let Candidate {
-            plan,
-            sources,
-            instances,
-            target,
-        } = prepare(
+        let candidate = prepare(
             &loaded.source.input,
             loaded.packages,
             self.native.as_ref().expect("open UI registry"),
             &declarations,
         )?;
-        if target != self.target {
+        if candidate.target != self.target {
             return Err(Error::Invalid("stored presentation target mismatch".into()));
         }
+        Ok(PreparedUpdate {
+            owner: self.update_owner,
+            source,
+            candidate,
+        })
+    }
+
+    pub fn adopt_update(
+        &mut self,
+        update: CommittedUpdate,
+        registrations: Vec<actions::RemoteService>,
+    ) -> Result<()> {
+        let prepared = self.prepare_update(update)?;
+        self.adopt_prepared(prepared, registrations)
+    }
+
+    /// Final owner turn rechecks provenance and revision after physical approval.
+    pub fn adopt_prepared(
+        &mut self,
+        update: PreparedUpdate,
+        registrations: Vec<actions::RemoteService>,
+    ) -> Result<()> {
+        if update.owner != self.update_owner {
+            return Err(Error::Invalid("foreign foreground update owner".into()));
+        }
+        self.check_update_source(update.source())?;
+        let PreparedUpdate {
+            source, candidate, ..
+        } = update;
+        let Candidate {
+            plan,
+            sources,
+            instances,
+            ..
+        } = candidate;
         // Validate all endpoint shapes and their exact desired references before install.
         let mut check: Runtime<Export<V>> = Runtime::new(plan.clone());
         let mut supplied = BTreeMap::<RemoteCapability, Uuid>::new();

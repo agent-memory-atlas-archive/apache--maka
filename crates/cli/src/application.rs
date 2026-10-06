@@ -23,6 +23,7 @@ mod serve;
 use std::{
     io::Read,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use clap::{Args, Subcommand};
@@ -204,9 +205,23 @@ impl Command {
                 let source = connections.source().clone();
                 let registrations = connections.registrations();
                 let foreground_store = store.clone();
+                let connections = Arc::new(tokio::sync::Mutex::new(connections));
+                let updates = maka_application_bridge::Updates::new(
+                    store.clone(),
+                    source.clone(),
+                    connections.clone(),
+                    scheduler.clone(),
+                )
+                .map_err(HostError::from)?;
                 let result = tokio::task::spawn_blocking(move || -> Result<(), HostError> {
-                    maka_tui::application::run(foreground_store, source, registrations, scheduler)
-                        .map_err(Into::into)
+                    maka_tui::application::run(
+                        foreground_store,
+                        source,
+                        registrations,
+                        scheduler,
+                        updates,
+                    )
+                    .map_err(Into::into)
                 })
                 .await;
                 // A panic is not a terminal/module cleanup receipt. Preserve
@@ -215,7 +230,7 @@ impl Command {
                     eprintln!("terminal execution cleanup unconfirmed: {error}");
                     std::future::pending::<()>().await;
                 }
-                connections.drain().await;
+                connections.lock().await.drain().await;
                 maka_application_bridge::drain_store(&store).await;
                 result??;
             }

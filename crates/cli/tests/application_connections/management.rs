@@ -341,8 +341,18 @@ fn cohost_manager_installs_ui_bytes_and_adopts_without_reopening_root_or_replaci
             ))
             .unwrap();
         f.timer.block_on(connections.start()).unwrap();
+        let connections = Arc::new(tokio::sync::Mutex::new(connections));
+        let mut updates = maka_application_bridge::Updates::new(
+            f.caller.clone(),
+            f.source.clone(),
+            connections.clone(),
+            f.timer.handle().clone(),
+        )
+        .unwrap();
         f.reopened("host");
-        let mut registrations = connections.registrations();
+        let mut registrations = f
+            .timer
+            .block_on(async { connections.lock().await.registrations() });
         let registration = registrations
             .iter_mut()
             .find(|r| r.target.export == "Management")
@@ -421,25 +431,26 @@ fn cohost_manager_installs_ui_bytes_and_adopts_without_reopening_root_or_replaci
             assert_eq!(installed.source.state_domain, host.state_domain);
             assert_eq!(installed.source.revision, 2);
             assert_eq!(installed.package, package.application_ref());
-            let update = f
-                .timer
-                .block_on(app.load_committed_update(installed.source.clone()).unwrap())
-                .unwrap();
-            let refreshed = f
-                .timer
-                .block_on(connections.approve_source(
-                    &f.caller,
-                    installed.source,
-                    BTreeSet::from([1]),
-                ))
-                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let approved = loop {
+                if let Some(update) = updates.poll(&app).unwrap() {
+                    break update;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "original update did not complete"
+                );
+                std::thread::yield_now();
+            };
+            assert_eq!(approved.prepared.source(), &installed.source);
+            let refreshed = approved.registrations;
             let same = refreshed
                 .iter()
                 .find(|r| r.target.export == "Management")
                 .unwrap();
             assert_eq!(same.registration_epoch, epoch);
             assert!(Arc::ptr_eq(&same.implementation, &actual));
-            app.adopt_update(update, refreshed).unwrap();
+            app.adopt_prepared(approved.prepared, refreshed).unwrap();
             assert!(
                 app.frame(&mount).is_ok(),
                 "original UI mount survives unchanged code"
@@ -505,15 +516,74 @@ fn cohost_manager_installs_ui_bytes_and_adopts_without_reopening_root_or_replaci
             assert_eq!(next.deployment, f.source.deployment);
             f.timer.block_on(replace.clone().close()).unwrap();
             drop(replace);
-            let update = f
-                .timer
-                .block_on(app.load_committed_update(next.clone()).unwrap())
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let approved = loop {
+                if let Some(update) = updates.poll(&app).unwrap() {
+                    break update;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "original update did not complete"
+                );
+                std::thread::yield_now();
+            };
+            assert_eq!(approved.prepared.source(), &next);
+            app.adopt_prepared(approved.prepared, approved.registrations)
                 .unwrap();
-            let registrations = f
+            assert!(app.frame(&mount).is_ok());
+            let loaded = f
                 .timer
-                .block_on(connections.approve_source(&f.caller, next, BTreeSet::from([1])))
+                .block_on(f.caller.load_application(f.source.deployment))
+                .unwrap()
                 .unwrap();
-            app.adopt_update(update, registrations).unwrap();
+            let mut bad_input = loaded.source.input.clone();
+            let selected = loaded
+                .packages
+                .iter()
+                .find(|package| package.manifest().id == "local.ui")
+                .unwrap();
+            let mut declaration = selected.manifest().application.clone().unwrap();
+            for entry in declaration.entries.values_mut() {
+                entry.implementation = Implementation::Native {
+                    implementation: "unavailable.frontend".into(),
+                };
+                entry.scene = None;
+            }
+            let invalid = support::counter::package("local.ui", declaration, None);
+            for node in bad_input.instances.values_mut() {
+                if node.package == selected.application_ref().into() {
+                    node.package = invalid.application_ref().into();
+                }
+            }
+            let mut packages = loaded.packages.clone();
+            packages.push(invalid);
+            f.timer
+                .block_on(f.caller.commit_application(
+                    f.source.deployment,
+                    3,
+                    bad_input,
+                    loaded.source.remote_exports,
+                    packages,
+                ))
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                match updates.poll(&app) {
+                    Err(error) => {
+                        assert!(error.contains("unavailable.frontend"), "{error}");
+                        break;
+                    }
+                    Ok(None) => {}
+                    Ok(Some(_)) => panic!("known unavailable frontend must never be approved"),
+                }
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            assert_eq!(app.source(), Some(&next));
+            let still_live: ManagedDeployment =
+                serde_json::from_value(action(&f, &mut app, &mount, "read")["value"].clone())
+                    .unwrap();
+            assert_eq!(still_live.source.reference.revision, 4);
             assert!(app.frame(&mount).is_ok());
         }
         if let Some(original) = original {
@@ -526,12 +596,16 @@ fn cohost_manager_installs_ui_bytes_and_adopts_without_reopening_root_or_replaci
                 maka_plugin_core::operation::OperationOutcome::Returned { .. }
             ));
         }
+        updates.stop();
+        f.timer.block_on(updates.drain());
         app.retire(&mount).unwrap();
         app.close(&mount, Ok(())).unwrap();
         app.shutdown().unwrap();
         drop(app);
         drop(actual);
-        f.timer.block_on(connections.close()).unwrap();
+        f.timer
+            .block_on(async { connections.lock().await.close().await })
+            .unwrap();
         f.blocked("caller");
         assert!(
             f.timer

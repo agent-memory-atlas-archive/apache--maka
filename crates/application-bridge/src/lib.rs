@@ -22,8 +22,10 @@ mod connections;
 mod gateway;
 pub mod stdio;
 pub mod transport;
+mod updates;
 pub use connections::{Configuration, Connections, Grant, Host, HostExecutable, HostLocation};
 pub use gateway::{GATEWAY, with_gateway};
+pub use updates::{ApprovedUpdate, Updates};
 /// Compiled fixed-UI-target management availability for explicit cohost entries.
 pub const UI_DEPLOYMENT_MANAGER: &str = "maka.application.ui-management";
 pub type Result<T> = std::result::Result<T, String>;

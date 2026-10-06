@@ -31,6 +31,7 @@ pub fn run(
     source: maka_plugin_core::deployment::DeploymentRef,
     registrations: Vec<maka_ui::actions::RemoteService>,
     scheduler: tokio::runtime::Handle,
+    mut updates: maka_application_bridge::Updates,
 ) -> Result<(), String> {
     let mut presenter = scheduler
         .block_on(Presenter::start_from_store(
@@ -53,6 +54,26 @@ pub fn run(
     };
     let mut reported = BTreeSet::new();
     loop {
+        if failure.is_some()
+            || ((!presenter.surface.is_live()
+                || presenter.application.is_retiring(&presenter.root))
+                && !presenter.requires_surface_replacement())
+        {
+            updates.stop();
+            if let Err(error) = presenter.retire() {
+                report(&mut reported, &error.to_string());
+            }
+        }
+        match updates.poll(&presenter.application) {
+            Ok(Some(update)) => {
+                if let Err(error) = presenter.adopt_prepared(update.prepared, update.registrations)
+                {
+                    report(&mut reported, &error.to_string());
+                }
+            }
+            Ok(None) => {}
+            Err(error) => report(&mut reported, &error),
+        }
         if let Err(error) = presenter.pump() {
             let error = sanitize(&error.to_string());
             if reported.insert(error.clone()) {
@@ -140,6 +161,8 @@ pub fn run(
             }
         }
     }
+    updates.stop();
+    scheduler.block_on(updates.drain());
     // Failures remain inspectable in this owner; dropping it cannot substitute
     // for a service/terminal cleanup receipt. Hard process exit is not recovery.
     loop {

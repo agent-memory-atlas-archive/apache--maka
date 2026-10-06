@@ -691,7 +691,14 @@ impl Launcher {
             timer
                 .block_on(async { tokio::time::sleep(std::time::Duration::from_millis(50)).await });
         }
+        let updates = execution_owner
+            .borrow()
+            .as_ref()
+            .and_then(actions::Owner::take_updates);
         timer.block_on(async {
+            if let Some(updates) = updates {
+                updates.drain().await;
+            }
             connections.lock().await.drain().await;
             maka_application_bridge::drain_store(&store).await;
         });

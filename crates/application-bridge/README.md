@@ -197,8 +197,7 @@ Within the original controller incarnation, a revoked or superseded revision can
 be newly approved. Reinstalling its contents requires a fresh committed revision;
 retained live revisions keep their original ticket. Retained actors
 continue using their original source, so the manager must retain those revisions
-until their last executable consumer retires. Production plugin-management and
-foreground adoption coordination remain separate integration work.
+until their last executable consumer finishes actual retirement cleanup.
 
 
 ## Same-Root cohosts
@@ -221,3 +220,27 @@ the same service implementation. Startup observers may be dropped while the same
 owner retains original initialization and shutdown. The launcher drains UI work,
 then every original connection, Server and Host Application, and only then shuts
 down the shared SQL Store. Failed cleanup retains the original owners.
+
+
+## Foreground updates
+
+The production TUI and Desktop launchers own one `Updates` pipeline on the original
+Store and Connections. It watches a coalescing deployment cursor, loads one exact
+snapshot off the event loop, asks the original foreground Application to preflight
+native implementations and scene languages, then explicitly delegates the original
+connection configuration. `PreparedUpdate` is opaque and tied to that foreground
+owner; final adoption rechecks provenance, revision and closing state.
+
+Unchanged actors, registration epochs and physical surfaces retain their identity.
+Replacement still waits for the original terminal/window cleanup acknowledgements.
+Retention comes from the current desired revision and actual executable activation
+origins, including retiring owners; structural origins confer no consumer grant.
+Retention never binds endpoints or delegates new consumers. Local revocation does
+not depend on a healthy child controller; every original controller receives an
+independent retention attempt, and physical failures retain their original owners.
+
+Only one load, approval or retention exchange runs at a time. Known preflight errors
+leave the current frontend usable. Exit stops new adoption and waits for the original
+in-flight worker before Connections and SQL drain; it never aborts an exchange or
+turns an observer failure into a cleanup receipt. Product plugin-management screens
+and end-to-end visual acceptance remain separate product work.

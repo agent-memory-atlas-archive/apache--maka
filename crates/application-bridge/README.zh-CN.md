@@ -139,8 +139,7 @@ owner 继续承担实际状态与清理。
 ticket；撤销拒绝后续准入，包括已准备但尚未接受的 mutation，不丢弃已接受工作的原
 执行、资源及清理。同一 controller 生命周期内，已撤销或被越过的 revision 不可重新获批；
 重装原内容必须提交新 revision，仍存活的来源保留原 ticket。未退休 actor 仍使用原 source，
-manager 须保留对应 revision，直到最后一个原 executable consumer 退休。生产插件
-管理与前台 adoption 协调仍需后续接线。
+manager 须保留对应 revision，直到最后一个原 executable consumer 完成真实退休清理。
 
 
 ## 原 Root 同进程 Host
@@ -158,3 +157,20 @@ capture 保存实际 Binding，whole-batch approval 复用；同 epoch 保持同
 取消 start 观察仍保原 initializer/owner。启动器依次等待 UI 工作、全部原 Connection/Server/Host
 Application 清理，再关闭唯一共享 SQL Store。失败保留原 owners，包括 startupErr 和实际 GPUI
 退出 owner。
+
+
+## 前台更新
+
+生产 TUI/Desktop 启动器在原 Store/Connections 上持有唯一 `Updates` 管线：合并 head 观察、
+在事件循环外加载确切快照、由原 Application 预检 native 实现和 scene language，再明确委托
+原连接配置。`PreparedUpdate` 不可编辑并绑定原前台 owner；最终 adoption 重查来源、版本及
+关闭状态。已知预检错误保留当前可用界面。
+
+未变的 actor、registration epoch 和物理界面保持身份；替换仍等待原 terminal/window 的真实
+清理回执。保留集合来自当前 desired revision 与真实 executable activation 的原 origins，包含
+退休尚未清理的 owner；结构实例不产生消费者权限。Retention 不绑定 endpoint 或委托新消费者。
+本地撤销不依赖 child controller 健康；逐原 controller 尝试远端保留更新，失败保原 owner。
+
+同时最多一个 load/approval/retention。退出停止新 adoption，等待原在途 worker，再关闭
+Connections 与 SQL；不 abort 交换，也不把 observer 失败当作清理回执。产品插件管理界面和
+完整视觉验收仍属后续产品工作。

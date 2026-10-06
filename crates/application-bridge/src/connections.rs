@@ -614,6 +614,41 @@ impl Connections {
         self.registrations = published.clone();
         Ok(published)
     }
+    /// Retention only: removing a ticket never delegates new consumers or
+    /// changes an endpoint. Complete all known checks before revoking locally.
+    pub fn revoke_sources(&mut self, retain: &BTreeSet<u64>) -> Result<()> {
+        if self.phase != Phase::Started {
+            return Err("Host connections are not ready for retention".into());
+        }
+        for owned in &self.hosts {
+            owned.peers.check_update(None, retain)?;
+        }
+        for owned in &self.hosts {
+            owned.peers.update(None, retain)?;
+        }
+        Ok(())
+    }
+
+    /// Acknowledge retention on each original physical controller. Revocation
+    /// may already have happened locally; IO uncertainty stays in that owner.
+    pub async fn retain_sources(&mut self, retain: BTreeSet<u64>) -> Result<()> {
+        self.revoke_sources(&retain)?;
+        let mut failures = Vec::new();
+        for owned in &mut self.hosts {
+            if let Err(error) = owned
+                .approve(self.source.clone(), BTreeSet::new(), retain.clone(), None)
+                .await
+            {
+                failures.push(error);
+            }
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
+    }
+
     /// Revoke every connection synchronously, then drain all original children.
     /// Both same-child Closed and actual exit are necessary. Failed original
     /// Calls and caller tokens remain in their physical owner even after exit.

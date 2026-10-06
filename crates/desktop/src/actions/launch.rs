@@ -27,16 +27,12 @@ use gpui_kit::{
 use maka_plugin_core::deployment::DeploymentRef;
 use maka_plugin_core::runtime::Mount;
 #[cfg(test)]
-use maka_ui::{CommittedUpdate, actions::RemoteService};
-use maka_ui::{Error, Result, Surface as Declaration};
+use maka_ui::CommittedUpdate;
+use maka_ui::{Error, PreparedUpdate, Result, Surface as Declaration, actions::RemoteService};
 use serde_json::Value;
 use std::{cell::RefCell, rc::Rc};
 
 pub(super) enum Cleanup {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "external management admission is not wired yet")
-    )]
     Pending,
     Confirmed,
     Failed,
@@ -45,23 +41,12 @@ pub(super) enum State {
     Opening {
         mount: Mount,
     },
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "launch handles are read by the pending management admission"
-        )
-    )]
     Live {
         mount: Mount,
         window: AnyWindowHandle,
         surface: WeakEntity<Surface>,
         props: Value,
     },
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "external management admission is not wired yet")
-    )]
     Replacing {
         mount: Mount,
         props: Value,
@@ -114,6 +99,15 @@ impl Owner {
         registrations: Vec<RemoteService>,
         cx: &mut App,
     ) -> Result<()> {
+        let prepared = self.0.application.borrow().prepare_update(update)?;
+        self.adopt_prepared(prepared, registrations, cx)
+    }
+    pub(crate) fn adopt_prepared(
+        &self,
+        update: PreparedUpdate,
+        registrations: Vec<RemoteService>,
+        cx: &mut App,
+    ) -> Result<()> {
         if self.0.quitting.get() || self.0.draining.get() {
             return Err(Error::Invalid("desktop application is exiting".into()));
         }
@@ -135,7 +129,7 @@ impl Owner {
         self.0
             .application
             .borrow_mut()
-            .adopt_update(update, registrations)?;
+            .adopt_prepared(update, registrations)?;
         if let Some((mount, window, surface, props, was_live)) = live {
             let replacing = was_live && self.0.application.borrow().is_retiring(&mount);
             if replacing {

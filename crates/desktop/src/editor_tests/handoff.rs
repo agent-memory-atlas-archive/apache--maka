@@ -19,26 +19,6 @@
 
 use super::*;
 
-fn live(owner: &actions::Owner, cx: &mut TestAppContext) -> Scene {
-    let (root, window, weak) = owner.current_launch().expect("managed live launch");
-    let surface = weak.upgrade().unwrap();
-    let app = cx.update(|cx| surface.read(cx).application.clone());
-    let resources = cx.update(|cx| surface.read(cx).resources.clone());
-    let outer = app.borrow().child_mount(&root, "editor").unwrap().clone();
-    let editor = app
-        .borrow()
-        .child_mount(&outer, "draft")
-        .cloned()
-        .unwrap_or(outer);
-    Scene {
-        window,
-        surface,
-        app,
-        resources,
-        root,
-        editor,
-    }
-}
 fn replacement(
     mut input: maka_plugin_core::composition::Input,
     mut packages: Vec<maka_plugins::package::Package>,
@@ -102,7 +82,7 @@ fn replacement_waits_for_original_native_editor_release_and_opens_fresh_window(
             owner.open_launch(root, serde_json::json!({}), cx).unwrap();
             owner
         });
-        let old = live(&owner, cx);
+        let old = Scene::from_launch(&owner, cx);
         old.draw(cx);
         let native = old.owner();
         let engine = cx.update(|cx| native.read(cx).state.clone());
@@ -165,7 +145,7 @@ fn replacement_waits_for_original_native_editor_release_and_opens_fresh_window(
             owner.failure(),
             owner.replacing()
         );
-        let fresh = live(&owner, cx);
+        let fresh = Scene::from_launch(&owner, cx);
         fresh.draw(cx);
         assert!(old.resources.borrow().surface_closed);
         assert!(app.borrow().frame(&old.root).is_err());
@@ -265,7 +245,7 @@ fn replacement_preserves_original_snapshot_work_and_only_waits_for_its_provider(
             owner.open_launch(root, serde_json::json!({}), cx).unwrap();
             owner
         });
-        let old = live(&owner, cx);
+        let old = Scene::from_launch(&owner, cx);
         old.draw(cx);
         cx.update_window(old.window, |_, window, cx| {
             let revision = app.borrow().frame(&old.root).unwrap().revision;
@@ -366,7 +346,7 @@ fn replacement_preserves_original_snapshot_work_and_only_waits_for_its_provider(
                 .unwrap();
             continue;
         }
-        let fresh = live(&owner, cx);
+        let fresh = Scene::from_launch(&owner, cx);
         fresh.draw(cx);
         assert_ne!(fresh.root, old.root);
         assert!(Rc::ptr_eq(&fresh.app, &app));

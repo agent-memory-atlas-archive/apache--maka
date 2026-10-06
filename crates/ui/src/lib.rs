@@ -25,7 +25,7 @@ pub mod appearance;
 mod deployment;
 pub mod editor;
 mod frame;
-pub use deployment::{CommittedUpdate, DeploymentStatus};
+pub use deployment::{CommittedUpdate, DeploymentStatus, PreparedUpdate};
 pub mod image;
 pub mod input;
 pub mod markdown;
@@ -123,6 +123,7 @@ pub struct Application<V: ?Sized = ()> {
     target: PresentationTarget,
     scene_compiler: Option<Rc<native::SceneCompiler<V>>>,
     render_depth_limit: Option<u16>,
+    update_owner: Uuid,
     source: Option<maka_plugin_core::deployment::DeploymentRef>,
     store: Option<std::sync::Arc<maka_event_log::EventLog>>,
     origins: BTreeMap<Uuid, maka_plugin_core::deployment::DeploymentRef>,
@@ -235,6 +236,7 @@ impl<V: ?Sized + 'static> Application<V> {
             scene_compiler: native.scene_compiler.clone(),
             render_depth_limit: native.render_depth_limit,
             scheduler: timer.clone(),
+            update_owner: Uuid::new_v4(),
             effective: source.clone(),
             source,
             store,

@@ -8782,6 +8782,7 @@ dependencies = [
  "futures-util",
  "image",
  "libc",
+ "maka-application-bridge",
  "maka-client",
  "maka-event-log",
  "maka-plugin-core",

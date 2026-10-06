@@ -242,8 +242,16 @@ impl Presenter {
         update: maka_ui::CommittedUpdate,
         registrations: Vec<maka_ui::actions::RemoteService>,
     ) -> maka_ui::Result<()> {
+        let prepared = self.application.prepare_update(update)?;
+        self.adopt_prepared(prepared, registrations)
+    }
+    pub fn adopt_prepared(
+        &mut self,
+        update: maka_ui::PreparedUpdate,
+        registrations: Vec<maka_ui::actions::RemoteService>,
+    ) -> maka_ui::Result<()> {
         let was_live = self.surface.is_live() && !self.application.is_retiring(&self.root);
-        self.application.adopt_update(update, registrations)?;
+        self.application.adopt_prepared(update, registrations)?;
         if was_live && self.application.is_retiring(&self.root) {
             // Capture the install's effect now, not a later, unrelated realm fault.
             self.retire_surface(Retirement::Replace)?;

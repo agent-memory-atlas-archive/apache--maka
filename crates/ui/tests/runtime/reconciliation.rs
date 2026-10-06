@@ -18,6 +18,7 @@
  */
 
 use super::*;
+use crate::{Declaration, PackageUse, node, package};
 use maka_plugin_core::{composition::InstanceId, runtime::Phase};
 
 #[test]
@@ -27,7 +28,26 @@ fn committed_ui_addition_retains_original_mount_frame_and_then_replacement_waits
     let store = store(&timer, dir.path());
     let deployment = Uuid::new_v4();
     let handler = "return frame({...state,text:event.event.text,count:state.count+1,revision:state.revision+1});";
-    let (input, packages) = support::fixture(handler);
+    let (mut input, mut packages) = support::fixture(handler);
+    let structural = package(
+        "structural.empty",
+        Declaration {
+            entries: BTreeMap::new(),
+            composition: Some(maka_plugin_core::composition::Template {
+                parameters: BTreeMap::new(),
+                imports: BTreeMap::new(),
+                exports: BTreeMap::new(),
+                children: BTreeMap::new(),
+            }),
+        },
+        None,
+    );
+    let mut structural_node = node(&structural, 101);
+    structural_node.use_package = PackageUse::Composition;
+    input
+        .instances
+        .insert("structural".into(), structural_node.clone());
+    packages.push(structural.clone());
     let original = timer
         .block_on(store.commit_application(deployment, 0, input.clone(), vec![], packages.clone()))
         .unwrap();
@@ -64,7 +84,13 @@ fn committed_ui_addition_retains_original_mount_frame_and_then_replacement_waits
     desired.instances.insert("extra".into(), node);
     let mut bytes = packages.clone();
     bytes.push(added);
-    let stale_load = app.load_committed_update(original.clone()).unwrap();
+    let stale = app
+        .prepare_update(
+            timer
+                .block_on(app.load_committed_update(original.clone()).unwrap())
+                .unwrap(),
+        )
+        .unwrap();
     let next = timer
         .block_on(store.commit_application(deployment, 1, desired, vec![], bytes))
         .unwrap();
@@ -74,7 +100,19 @@ fn committed_ui_addition_retains_original_mount_frame_and_then_replacement_waits
     app.capture_actions(&root, |_| unreachable!("no queued capture"))
         .unwrap();
     let update = timer.block_on(load).unwrap();
-    app.adopt_update(update, vec![]).unwrap();
+    let prepared = app.prepare_update(update).unwrap();
+    let foreign = app
+        .prepare_update(
+            timer
+                .block_on(app.load_committed_update(next.clone()).unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+    let mut other = start(&timer, store.clone(), deployment);
+    assert!(other.adopt_prepared(foreign, vec![]).is_err());
+    other.shutdown().unwrap();
+    drop(other);
+    app.adopt_prepared(prepared, vec![]).unwrap();
     app.advance_deployment().unwrap();
     assert_eq!(app.deployment_status().effective, Some(next.clone()));
     assert_eq!(app.frame(&root).unwrap().state, state);
@@ -91,10 +129,17 @@ fn committed_ui_addition_retains_original_mount_frame_and_then_replacement_waits
             .block_on(app.adopt_committed(original, vec![]))
             .is_err()
     );
-    let stale = timer.block_on(stale_load).unwrap();
-    assert!(app.adopt_update(stale, vec![]).is_err());
-    let (input, packages) =
+    assert!(app.adopt_prepared(stale, vec![]).is_err());
+    let (mut input, mut packages) =
         support::fixture("return frame({count:state.count+100,revision:state.revision+1});");
+    input.instances.insert("structural".into(), structural_node);
+    packages.push(structural);
+    input
+        .instances
+        .get_mut("surface")
+        .unwrap()
+        .configuration
+        .values = BTreeMap::from([("replacement".into(), json!(true))]);
     let latest = timer
         .block_on(store.commit_application(deployment, 2, input, vec![], packages))
         .unwrap();
@@ -103,6 +148,10 @@ fn committed_ui_addition_retains_original_mount_frame_and_then_replacement_waits
         .unwrap();
     app.advance_deployment().unwrap();
     assert!(app.is_retiring(&root));
+    assert_eq!(
+        app.live_source_revisions(),
+        std::collections::BTreeSet::from([1, 3])
+    );
     assert_eq!(app.frame(&root).unwrap().state, state);
     assert_eq!(app.deployment_status().effective, Some(next));
     assert!(app.deployment_status().converging);
@@ -114,6 +163,11 @@ fn committed_ui_addition_retains_original_mount_frame_and_then_replacement_waits
     app.close(&root, Ok(())).unwrap();
     app.advance_deployment().unwrap();
     assert_eq!(app.deployment_status().effective, Some(latest));
+    assert_eq!(
+        app.live_source_revisions(),
+        std::collections::BTreeSet::from([3]),
+        "unchanged original structural epoch must not retain consumer authority"
+    );
     let fresh = app.mount_launch(json!({"count":7})).unwrap();
     assert_ne!(fresh, root);
     app.dispatch(&fresh, 0, "inc", json!({})).unwrap();
