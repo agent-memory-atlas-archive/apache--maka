@@ -180,7 +180,8 @@ export function components(target: Target): {
       text = copy(props.locale);
     const tools = props.messages.filter(
       (message) =>
-        (message.role === 'tool_call' || message.role === 'tool_result') && message.text.length > 0,
+        (message.role === 'tool_call' || message.role === 'tool_result') &&
+        (message.source !== null || message.text.length > 0),
     );
     state.expanded = state.expanded.filter((id) => tools.some((message) => message.id === id));
     const messages: Node[] = props.messages.map((message) => {
@@ -195,6 +196,27 @@ export function components(target: Target): {
               ? text.toolActivity
               : text.toolOutput;
       const name = tool && message.tool?.toolName;
+      const role = ui.text(
+        'role-' + message.id,
+        name ? caption + ' · ' + compactLabel(name, target === 'desktop' ? 64 : 24) : caption,
+        13,
+        props.theme.muted,
+        550,
+      );
+      const sourceAction = ui.button('source-' + message.source, text.readSource, props.loading);
+      if (target === 'desktop') {
+        const style = sourceAction.style as Node;
+        const typography = style.text as Node;
+        sourceAction.style = {
+          ...style,
+          padding: { top: 4, right: 0, bottom: 4, left: 0 },
+          text: {
+            ...typography,
+            foreground: props.theme.muted,
+            font: { ...(typography.font as Node), size: 12, weight: 400 },
+          },
+        };
+      }
       const body =
         target === 'desktop' && message.role === 'assistant' && !message.continued
           ? slot(
@@ -222,13 +244,29 @@ export function components(target: Target): {
       return ui.box(
         'message-' + message.id,
         [
-          ui.text(
-            'role-' + message.id,
-            name ? caption + ' · ' + compactLabel(name, target === 'desktop' ? 64 : 24) : caption,
-            13,
-            props.theme.muted,
-            550,
-          ),
+          tool
+            ? ui.box(
+                'tool-heading-' + message.id,
+                [
+                  role,
+                  ...(message.source !== null || message.text
+                    ? [
+                        ui.button(
+                          'toggle-' + message.id,
+                          expanded ? text.collapseTool : text.expandTool,
+                        ),
+                      ]
+                    : []),
+                ],
+                {
+                  row: true,
+                  gap: target === 'desktop' ? 12 : 1,
+                  surface: true,
+                  terminal: { wrap: true },
+                  style: { width: fill, wrap: true, align: 'center' },
+                },
+              )
+            : role,
           ...(message.continued
             ? [ui.text('continued-' + message.id, text.partial, 12, props.theme.muted)]
             : []),
@@ -249,50 +287,56 @@ export function components(target: Target): {
                       ),
                     ]
                   : []),
-                ui.box('details-' + message.id, [body], {
-                  visible: expanded,
-                  gap: 0,
-                  surface: true,
-                  style: { width: fill },
-                }),
                 ui.box(
-                  'tool-actions-' + message.id,
+                  'details-' + message.id,
                   [
-                    ...(message.image && message.source !== null
-                      ? [ui.button('image-' + message.source, text.viewImage, props.loading)]
-                      : []),
-                    ...(message.source !== null
-                      ? [
-                          ui.button(
-                            'tool-source-' + message.source,
-                            text.toolDetails,
-                            props.loading,
-                          ),
-                        ]
-                      : []),
-                    ...(message.text
-                      ? [
-                          ui.button(
-                            'toggle-' + message.id,
-                            expanded ? text.collapseTool : text.expandTool,
-                          ),
-                        ]
-                      : []),
-                    ...(message.source !== null && message.text
-                      ? [ui.button('source-' + message.source, text.readSource, props.loading)]
-                      : []),
+                    body,
+                    ui.box(
+                      'tool-actions-' + message.id,
+                      [
+                        ...(message.source !== null
+                          ? [
+                              ui.button(
+                                'tool-source-' + message.source,
+                                message.role === 'tool_call' ? text.toolArguments : text.toolResult,
+                                props.loading,
+                              ),
+                            ]
+                          : []),
+                        ...(message.image && message.source !== null
+                          ? [ui.button('image-' + message.source, text.viewImage, props.loading)]
+                          : []),
+                        ...(message.source !== null && message.text
+                          ? [ui.button('source-' + message.source, text.readSource, props.loading)]
+                          : []),
+                      ],
+                      {
+                        row: true,
+                        gap: target === 'desktop' ? 8 : 1,
+                        surface: true,
+                        terminal: { wrap: true },
+                        style: { width: fill, wrap: true },
+                      },
+                    ),
                   ],
                   {
-                    row: true,
+                    visible: expanded,
                     gap: target === 'desktop' ? 8 : 1,
                     surface: true,
-                    style: { width: fill, wrap: true },
+                    style: { width: fill },
                   },
                 ),
               ]
             : [body]),
           ...(!tool && message.source !== null
-            ? [ui.button('source-' + message.source, text.readSource, props.loading)]
+            ? [
+                ui.box('source-actions-' + message.id, [sourceAction], {
+                  row: true,
+                  gap: 0,
+                  style: { width: fill },
+                  surface: message.role === 'user',
+                }),
+              ]
             : []),
         ],
         {
@@ -375,7 +419,11 @@ export function components(target: Target): {
                 { observed: 'reading-observed', input: 'reading-input' },
               ),
             ],
-            { visible: !props.source, style: { width: fill, height: fill }, terminal: { grow: 1 } },
+            {
+              visible: !props.source,
+              style: { width: fill, height: pixels(0), grow: 1, shrink: 1, minHeight: 0 },
+              terminal: { grow: 1 },
+            },
           ),
           ...(props.source
             ? [
@@ -443,17 +491,26 @@ export function components(target: Target): {
                       },
                     },
                   );
-                  return slot(
-                    'source-reading',
-                    'reading',
+                  return ui.box(
+                    'source-pane',
+                    [
+                      slot(
+                        'source-reading',
+                        'reading',
+                        {
+                          content: sourceContent,
+                          command: {
+                            sequence: source.navigation,
+                            target: { kind: source.landing },
+                          },
+                        },
+                        { input: 'source-input' },
+                      ),
+                    ],
                     {
-                      content: sourceContent,
-                      command: {
-                        sequence: source.navigation,
-                        target: { kind: source.landing },
-                      },
+                      style: { width: fill, height: pixels(0), grow: 1, shrink: 1, minHeight: 0 },
+                      terminal: { grow: 1 },
                     },
-                    { input: 'source-input' },
                   );
                 })(),
               ]
@@ -589,7 +646,7 @@ export function components(target: Target): {
           const tool = props.messages.find(
             (message) =>
               (message.role === 'tool_call' || message.role === 'tool_result') &&
-              message.text.length > 0 &&
+              (message.source !== null || message.text.length > 0) &&
               input.key === 'toggle-' + message.id,
           );
           if (tool)
@@ -637,16 +694,24 @@ export function components(target: Target): {
             (message) =>
               message.source !== null &&
               (message.role === 'tool_call' || message.role === 'tool_result') &&
+              next.expanded.includes(message.id) &&
               input.key === 'tool-source-' + message.source,
           );
           const image = props.messages.find(
             (message) =>
-              message.image && message.source !== null && input.key === 'image-' + message.source,
+              message.image &&
+              message.source !== null &&
+              next.expanded.includes(message.id) &&
+              input.key === 'image-' + message.source,
           );
           if (image) out.events.push({ name: 'viewImage', value: { sequence: image.source } });
           if (tool) out.events.push({ name: 'toolSource', value: { sequence: tool.source } });
           const message = props.messages.find(
-            (message) => message.source !== null && input.key === 'source-' + message.source,
+            (message) =>
+              message.source !== null &&
+              ((message.role !== 'tool_call' && message.role !== 'tool_result') ||
+                (message.text.length > 0 && next.expanded.includes(message.id))) &&
+              input.key === 'source-' + message.source,
           );
           if (message) out.events.push({ name: 'source', value: { sequence: message.source } });
           if (input.key === 'older' && props.older) out.events.push({ name: 'older', value: {} });

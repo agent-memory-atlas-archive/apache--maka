@@ -2287,25 +2287,26 @@ for (const target of ['desktop', 'tui']) {
       const out = timeline.mount({ ...client.timeline, locale: 'zh-CN' }, {});
       const rows = out.frame.view.children[0].children[0].props.content.children;
       assert.equal(rows.length, 2);
-      assert.equal(rows[0].children[0].text, '工具活动 · Count');
-      assert.equal(rows[1].children[0].text, '工具输出 · Count');
+      assert.equal(rows[0].children[0].children[0].text, '工具活动 · Count');
+      assert.equal(rows[1].children[0].children[0].text, '工具输出 · Count');
       assert.equal(
         rows[1].children.find((node) => node.key === 'tool-error-' + uuid(900)).text,
         '工具报告错误',
       );
-      for (const row of rows) {
+      for (const [index, row] of rows.entries()) {
         assert.equal(
           row.children.find((node) => node.key.startsWith('summary-')).text,
           '无文本摘要',
         );
+        const details = row.children.find((node) => node.key.startsWith('details-'));
+        assert.equal(details.visible, false);
         assert.equal(
-          row.children.find((node) => node.key.startsWith('tool-actions-')).children.length,
-          1,
+          row.children[0].children.find((node) => node.key.startsWith('toggle-')).label,
+          '展开详情',
         );
-        assert.equal(
-          row.children.find((node) => node.key.startsWith('tool-actions-')).children[0].label,
-          '工具详情',
-        );
+        const actions = details.children.find((node) => node.key.startsWith('tool-actions-'));
+        assert.equal(actions.children.length, 1);
+        assert.equal(actions.children[0].label, index === 0 ? '工具参数' : '工具结果');
       }
       assert.equal(out.actions.length, 0);
       assert.equal(out.events.length, 0);
@@ -3110,7 +3111,7 @@ for (const target of ['desktop', 'tui']) {
       assert.deepEqual(out.events, [{ name: 'sourceFirst', value: {} }]);
       assert.equal(out.frame.view.children.at(-1).key, 'reading-controls');
       {
-        const reader = out.frame.view.children[1];
+        const reader = modelSlots(out.frame.view).find((node) => node.key === 'source-reading');
         assert.equal(reader.key, 'source-reading');
         const body = modelSlots(reader.props.content).find((node) => node.binding === 'source');
         assert.equal(body.props.source, 'literal **tail**');
@@ -3127,9 +3128,9 @@ for (const target of ['desktop', 'tui']) {
           {},
         );
         assert.notEqual(
-          modelSlots(next.frame.view.children[1].props.content).find(
-            (node) => node.binding === 'source',
-          ).key,
+          modelSlots(
+            modelSlots(next.frame.view).find((node) => node.key === 'source-reading').props.content,
+          ).find((node) => node.binding === 'source').key,
           body.key,
         );
       }
@@ -3170,7 +3171,7 @@ test('TUI reader declares a flexible body and wrapped controls while keeping dra
   client.component('source', { sequence: 400 });
   const frame = timeline.mount(client.timeline, {}).frame.view;
   assert.equal(frame.layout.grow, 1);
-  const reading = frame.children.find((node) => node.key === 'source-reading');
+  const reading = modelSlots(frame).find((node) => node.key === 'source-reading');
   assert.equal(reading.binding, 'reading');
   assert.equal(reading.props.content.layout.grow, 1);
   assert.equal(reading.props.content.scroll, 'anchor');
@@ -3221,6 +3222,120 @@ test('all ordinary TUI node identities remain unique including hidden routes', a
 });
 
 for (const target of ['desktop', 'tui']) {
+  test(target + ' empty ordinary canonical messages keep their visible source action', async () => {
+    const { component: timeline } = await import(
+      pathToFileURL(resolve(root, 'dist/packages/timeline/' + target + '.js'))
+    );
+    for (const role of ['user', 'assistant']) {
+      const client = new Client().start({
+        through: 100,
+        chunks: [historyChunk('', { role, sequence: 40 })],
+      });
+      const out = timeline.mount(client.timeline, {});
+      const row = out.frame.view.children[0].children[0].props.content.children[0];
+      assert.equal(
+        row.children.some((n) => n.children?.some((c) => c.key === 'source-40')),
+        true,
+      );
+      const opened = timeline.event(
+        out.frame.state,
+        { kind: 'raw', key: 'source-40', event: {} },
+        client.timeline,
+        {},
+      );
+      assert.deepEqual(opened.events, [{ name: 'source', value: { sequence: 40 } }]);
+    }
+  });
+  test(target + ' tool inspection has one disclosure and keeps hidden actions inert', async () => {
+    const { component: timeline } = await import(
+      pathToFileURL(resolve(root, 'dist/packages/timeline/' + target + '.js'))
+    );
+    const visibleButtons = (node) =>
+      node.visible === false
+        ? []
+        : [
+            ...(node.kind === 'button' ? [node] : []),
+            ...(node.children ?? []).flatMap(visibleButtons),
+          ];
+    for (const role of ['tool_call', 'tool_result']) {
+      for (const bodyText of ['', 'Literal tool output **中🙂**']) {
+        const client = new Client().start({
+          through: 100,
+          chunks: [
+            historyChunk(bodyText, {
+              sequence: 40,
+              role,
+              tool: {
+                kind: role === 'tool_call' ? 'call' : 'result',
+                toolUseId: uuid(901),
+                toolName: 'Draw',
+                ...(role === 'tool_result' ? { isError: true, image: true } : {}),
+              },
+            }),
+          ],
+        });
+        const props = client.timeline;
+        let out = timeline.mount(props, {});
+        const row = () => out.frame.view.children[0].children[0].props.content.children[0];
+        const originalBody = structuredClone(
+          row().children.find((node) => node.key.startsWith('details-')).children[0],
+        );
+        const input = (key) => {
+          out = timeline.event(
+            out.frame.state,
+            {
+              kind: 'component',
+              child: 'reading',
+              name: 'input',
+              key: 'reading-input',
+              event: { kind: 'raw', key, event: { kind: 'click' } },
+            },
+            props,
+            {},
+          );
+          return out.events;
+        };
+        const toggle = 'toggle-' + client.messages[0].id;
+        assert.deepEqual(
+          visibleButtons(row()).map((n) => n.key),
+          [toggle],
+        );
+        for (const hidden of ['tool-source-40', 'image-40', 'source-40'])
+          assert.deepEqual(input(hidden), [], 'a collapsed inspector has no active actions');
+        input(toggle);
+        const expanded = visibleButtons(row());
+        assert.equal(
+          expanded.find((n) => n.key === 'tool-source-40').label,
+          role === 'tool_call' ? 'Tool arguments' : 'Tool result',
+        );
+        assert.deepEqual(input('tool-source-40'), [
+          { name: 'toolSource', value: { sequence: 40 } },
+        ]);
+        assert.deepEqual(
+          input('image-40'),
+          role === 'tool_result' ? [{ name: 'viewImage', value: { sequence: 40 } }] : [],
+        );
+        assert.deepEqual(
+          input('source-40'),
+          bodyText ? [{ name: 'source', value: { sequence: 40 } }] : [],
+        );
+        const loading = timeline.update(out.frame.state, { ...props, loading: true }, {});
+        const loadingRow = loading.frame.view.children[0].children[0].props.content.children[0];
+        for (const action of visibleButtons(loadingRow).filter((n) => n.key !== toggle))
+          assert.equal(action.disabled, true);
+        input(toggle);
+        assert.deepEqual(
+          visibleButtons(row()).map((n) => n.key),
+          [toggle],
+        );
+        assert.deepEqual(
+          row().children.find((node) => node.key.startsWith('details-')).children[0],
+          originalBody,
+          'disclosure preserves the original SourceText declaration',
+        );
+      }
+    }
+  });
   test(
     target +
       ' tool text stays mounted while collapsed and expands through its checked reading input',
@@ -3243,7 +3358,7 @@ for (const target of ['desktop', 'tui']) {
       const row = () => out.frame.view.children[0].children[0].props.content.children[0];
       const details = () => row().children.find((node) => node.key === 'details-' + uuid(900));
       const source = structuredClone(details().children[0]);
-      assert.equal(row().children[0].text, '工具输出');
+      assert.equal(row().children[0].children[0].text, '工具输出');
       assert.equal(details().visible, false);
       assert.ok(
         row().children.find((node) => node.key === 'summary-' + uuid(900)).text.length < 170,

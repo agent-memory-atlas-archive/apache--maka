@@ -813,18 +813,27 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     let mut reopened = start();
     await_screen(&mut reopened, "[ Show sidebar ]");
     click(&mut reopened, "[ Show sidebar ]");
-    // A disabled catalog entry is currently painted as plain text. Its title
-    // alone does not prove the actual native action is enabled after recovery.
+    // Wait for the enabled native action after catalog recovery, not just its
+    // title in the loading frame.
     await_screen(&mut reopened, "[ Native tool inspection ]");
     click(&mut reopened, "[ Native tool inspection ]");
     click(&mut reopened, "[ Hide sidebar ]");
     await_screen(&mut reopened, "Tool output · Count");
-    await_screen(&mut reopened, "[ Tool details ]");
+    await_screen(&mut reopened, "[ Show details ]");
     for (nth, heading, beginning, ending) in [
         (0, "Tool arguments", "\"count\":42", "99999"),
         (1, "Tool result", "\"count\":43", "99998"),
     ] {
-        click_nth(&mut reopened, "[ Tool details ]", nth);
+        click_nth(&mut reopened, "[ Show details ]", nth);
+        let action = format!("[ {heading} ]");
+        // Expansion can move the next card's controls outside this 80x24
+        // viewport. Reveal them through the original native scroll command.
+        if !screen(&draw(&mut reopened)).contains(&action) {
+            await_screen(&mut reopened, "[ Scroll to end ]");
+            click(&mut reopened, "[ Scroll to end ]");
+        }
+        await_screen(&mut reopened, &action);
+        click(&mut reopened, &action);
         await_screen(&mut reopened, beginning);
         let source_screen = screen(&draw(&mut reopened));
         assert!(source_screen.contains(heading));
@@ -837,7 +846,9 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         click(&mut reopened, "[ Beginning ]");
         await_screen(&mut reopened, beginning);
         click(&mut reopened, "[ Back to conversation ]");
-        await_screen(&mut reopened, "[ Tool details ]");
+        await_screen(&mut reopened, "[ Hide details ]");
+        click(&mut reopened, "[ Hide details ]");
+        await_screen(&mut reopened, "[ Show details ]");
     }
     assert!(
         runtime
