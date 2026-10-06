@@ -113,4 +113,12 @@ TUI 仅在成功 flush 后切换几何准入。自定义原生布局也通过公
 推进计划，即使收敛失败也先撤销退休控件的原生输入。未变控件保留原草稿、选区、
 焦点和撤销 owner；独立插件初始化失败仅记录有界诊断，健康终端继续运行。
 根退休仍需要原终端恢复回执，由 `requires_surface_replacement` 报告；启动器
-尚未实现运行中根交接或生产更新管理入口。
+先恢复旧终端，再为新 launch 进入终端。生产更新管理入口仍待接入。
+
+根交接保留同一 Application 和已接受任务的原观察器。adoption 仅在退休原 live root
+时记录替换，无关 adoption 不会把原 realm fault 变成交接。`surface_closed` 接收
+确切原 Mount 及实际恢复结果；重复或迟到旧回执不能关闭新根，清理失败保留 fence。
+`surface_recovered` 是同一失败物理界面的显式成功恢复重试。确认旧清理后，
+`try_replace_surface` 等待相关 provider 结算，再用全新原生状态挂载 desired launch；
+未替换 provider 的原已接受任务可以与新根并存。不把旧草稿、焦点和选区默认为
+新实现的数据。

@@ -720,7 +720,9 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     await_screen(&mut presenter, "Hello product");
     runtime.block_on(server).unwrap();
     runtime.block_on(fixture.drained());
-    presenter.surface_closed(Ok(())).unwrap();
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while !presenter.can_shutdown() {
         presenter.pump().unwrap();
@@ -733,7 +735,9 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     // newer fixture Session that can legitimately become the catalog's latest.
     let mut restored = start();
     await_screen(&mut restored, "Elegant response");
-    restored.surface_closed(Ok(())).unwrap();
+    restored
+        .surface_closed(&restored.surface(), Ok(()))
+        .unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while !restored.can_shutdown() {
         restored.pump().unwrap();
@@ -1000,7 +1004,9 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         }
         assert!(count > 0, "actual journal must contain persisted facts");
     }
-    reopened.surface_closed(Ok(())).unwrap();
+    reopened
+        .surface_closed(&reopened.surface(), Ok(()))
+        .unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while !reopened.can_shutdown() {
         reopened.pump().unwrap();

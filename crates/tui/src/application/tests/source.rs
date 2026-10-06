@@ -64,7 +64,9 @@ fn refresh(presenter: &mut Presenter) {
     presenter.sync_native().unwrap();
 }
 fn close(presenter: &mut Presenter) {
-    presenter.surface_closed(Ok(())).unwrap();
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
     presenter.shutdown().unwrap();
 }
 fn mouse(presenter: &mut Presenter, kind: MouseEventKind, x: u16, y: u16) {
@@ -212,7 +214,7 @@ fn copy_writer_failure_preserves_selection_and_application_owner() {
     draw(&mut presenter, 20, 4);
     select_all(&mut presenter);
     assert!(presenter.copy(&mut Refused).is_err());
-    assert!(!presenter.closing);
+    assert!(presenter.surface.is_live());
     assert_eq!(copied(&mut presenter).unwrap(), b"selected");
     close(&mut presenter);
 }

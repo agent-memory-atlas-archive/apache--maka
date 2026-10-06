@@ -60,18 +60,43 @@ pub fn run(
             }
             failure.get_or_insert(error);
         }
-        if failure.is_some() || presenter.application.is_retiring(&presenter.root) {
-            if let Err(error) = presenter.retire() {
+        if failure.is_some()
+            || !presenter.surface.is_live()
+            || presenter.application.is_retiring(&presenter.root)
+        {
+            if (failure.is_some() || !presenter.requires_surface_replacement())
+                && let Err(error) = presenter.retire()
+            {
                 report(&mut reported, &error.to_string());
             }
-            // Drop the backend before acknowledging restoration; no paint/input
-            // references or terminal writes remain after this point.
-            screen.take();
-            let cleanup = guard.finish().map_err(|e| sanitize(&e.to_string()));
-            if let Err(error) = presenter.surface_closed(cleanup) {
-                report(&mut reported, &error.to_string());
+            if let super::SurfaceState::Retiring { cleanup: None, .. } = &presenter.surface {
+                let original = presenter.surface();
+                // Backend destruction and Guard restoration belong to this exact
+                // original root. A late receipt cannot close a replacement.
+                screen.take();
+                let cleanup = guard.finish().map_err(|e| sanitize(&e.to_string()));
+                if let Err(error) = presenter.surface_closed(&original, cleanup) {
+                    report(&mut reported, &error.to_string());
+                    failure.get_or_insert(sanitize(&error.to_string()));
+                }
             }
-            break;
+            if failure.is_some() || !presenter.requires_surface_replacement() {
+                break;
+            }
+            match presenter.try_replace_surface(json!({})) {
+                Ok(true) => match guard.setup("an interactive terminal is required") {
+                    Ok(replacement) => screen = Some(replacement),
+                    Err(error) => {
+                        failure = Some(sanitize(&error.to_string()));
+                    }
+                },
+                Ok(false) => std::thread::sleep(Duration::from_millis(10)),
+                Err(error) => {
+                    report(&mut reported, &error.to_string());
+                    failure = Some(sanitize(&error.to_string()));
+                }
+            }
+            continue;
         }
         let result = (|| -> Result<bool, String> {
             let screen = screen.as_mut().expect("active terminal");

@@ -91,7 +91,7 @@ fn dispatch(tui: &mut Presenter, key: &str, value: Value) {
     tui.pump().unwrap();
 }
 fn close(tui: &mut Presenter) {
-    tui.surface_closed(Ok(())).unwrap();
+    tui.surface_closed(&tui.surface(), Ok(())).unwrap();
     assert!(tui.can_shutdown());
     tui.shutdown().unwrap();
 }

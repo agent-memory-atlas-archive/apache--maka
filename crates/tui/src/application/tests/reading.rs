@@ -87,7 +87,9 @@ fn refresh(presenter: &mut Presenter) {
     presenter.sync_native().unwrap();
 }
 fn close(presenter: &mut Presenter) {
-    presenter.surface_closed(Ok(())).unwrap();
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
     presenter.shutdown().unwrap();
 }
 #[test]

@@ -132,7 +132,7 @@ fn terminal_task_owner_delivers_each_item_then_drains_real_close_after_restorati
     assert_eq!(tui.application.accepted_action_count(), 1);
     let payload = state.payload.lock().unwrap().as_ref().unwrap().clone();
     assert!(payload.upgrade().is_some());
-    tui.surface_closed(Ok(())).unwrap();
+    tui.surface_closed(&tui.surface(), Ok(())).unwrap();
     while state.closing.available_permits() == 0 {
         tui.pump().unwrap();
         assert!(Instant::now() < deadline);

@@ -369,7 +369,7 @@ fn color(rgb: u32) -> Color {
 }
 impl Presenter {
     pub fn paint(&self, area: Rect, buffer: &mut Buffer) -> maka_ui::Result<PaintedScene> {
-        if self.closing {
+        if !self.surface.is_live() {
             return Err(maka_ui::Error::Invalid("terminal surface retired".into()));
         }
         let area = area.intersection(buffer.area);
@@ -392,7 +392,7 @@ impl Presenter {
         Ok(scene)
     }
     pub fn present(&mut self, scene: PaintedScene) {
-        if self.closing {
+        if !self.surface.is_live() {
             return;
         }
         self.resources.presentation(&scene.placed);

@@ -141,6 +141,38 @@ pub enum WidgetInput {
     Emitted(NativeInput),
 }
 type Job = Pin<Box<dyn Future<Output = (Uuid, TaskCompletion)> + Send>>;
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Retirement {
+    Exit,
+    Replace,
+}
+enum SurfaceState {
+    Live,
+    Retiring {
+        cause: Retirement,
+        cleanup: Option<Result<(), String>>,
+    },
+    Closed {
+        cause: Retirement,
+    },
+}
+impl SurfaceState {
+    fn is_live(&self) -> bool {
+        matches!(self, Self::Live)
+    }
+    fn replacing(&self) -> bool {
+        matches!(
+            self,
+            Self::Retiring {
+                cause: Retirement::Replace,
+                ..
+            } | Self::Closed {
+                cause: Retirement::Replace
+            }
+        )
+    }
+}
+
 pub struct Presenter {
     application: Application<dyn Widget>,
     root: Mount,
@@ -149,8 +181,7 @@ pub struct Presenter {
     focus: Option<paint::Target>,
     drag: Option<paint::Target>,
     jobs: FuturesUnordered<Job>,
-    closing: bool,
-    surface_cleanup: Option<Result<(), String>>,
+    surface: SurfaceState,
     reported: std::collections::BTreeSet<String>,
 }
 impl Presenter {
@@ -211,15 +242,50 @@ impl Presenter {
         update: maka_ui::CommittedUpdate,
         registrations: Vec<maka_ui::actions::RemoteService>,
     ) -> maka_ui::Result<()> {
+        let was_live = self.surface.is_live() && !self.application.is_retiring(&self.root);
         self.application.adopt_update(update, registrations)?;
+        if was_live && self.application.is_retiring(&self.root) {
+            // Capture the install's effect now, not a later, unrelated realm fault.
+            self.retire_surface(Retirement::Replace)?;
+        }
         self.resources.deactivate(&self.application);
         Ok(())
     }
     pub fn deployment_status(&self) -> maka_ui::DeploymentStatus {
         self.application.deployment_status()
     }
+    pub fn surface(&self) -> Mount {
+        self.root.clone()
+    }
     pub fn requires_surface_replacement(&self) -> bool {
-        !self.closing && self.application.is_retiring(&self.root)
+        self.surface.replacing()
+    }
+    /// Resume the same application after actual old-surface cleanup. Pending
+    /// original service work and its observers remain with this presenter.
+    pub fn try_replace_surface(&mut self, props: Value) -> maka_ui::Result<bool> {
+        if !matches!(
+            self.surface,
+            SurfaceState::Closed {
+                cause: Retirement::Replace
+            }
+        ) {
+            return Err(Error::Invalid(
+                "original terminal cleanup not confirmed for replacement".into(),
+            ));
+        }
+        self.application.advance_deployment()?;
+        let status = self.application.deployment_status();
+        if let Some(error) = status.error {
+            return Err(Error::Invalid(error));
+        }
+        if status.converging {
+            return Ok(false);
+        }
+        let root = self.application.mount_launch(props)?;
+        self.root = root;
+        self.surface = SurfaceState::Live;
+        self.sync_native()?;
+        Ok(true)
     }
 
     fn mount(mut application: Application<dyn Widget>, props: Value) -> maka_ui::Result<Self> {
@@ -255,8 +321,7 @@ impl Presenter {
             focus: None,
             drag: None,
             jobs: FuturesUnordered::new(),
-            closing: false,
-            surface_cleanup: None,
+            surface: SurfaceState::Live,
             reported: Default::default(),
         };
         if let Err(error) = presenter.sync_native() {
@@ -264,7 +329,7 @@ impl Presenter {
             // acquired resources: retain this actual owner until cleanup is
             // confirmed, including a failed native initialization fence.
             let mut reported = std::collections::BTreeSet::new();
-            if let Err(failure) = presenter.surface_closed(Ok(())) {
+            if let Err(failure) = presenter.surface_closed(&presenter.surface(), Ok(())) {
                 reported.insert(sanitize(&failure.to_string()));
                 eprintln!("{}", sanitize(&failure.to_string()));
             }
@@ -296,7 +361,7 @@ impl Presenter {
     /// scene. Crossterm supplies no screen epoch; never re-resolve a captured key.
     /// 输入立即绑定到最后成功输出的场景和真实 mount/revision。
     pub fn input(&mut self, event: Event) -> maka_ui::Result<()> {
-        if self.closing {
+        if !self.surface.is_live() {
             return Ok(());
         }
         let target = match &event {
@@ -457,7 +522,7 @@ impl Presenter {
         }
     }
     pub fn pump(&mut self) -> maka_ui::Result<()> {
-        let advancement = if !self.closing && !self.application.is_retiring(&self.root) {
+        let advancement = if self.surface.is_live() && !self.application.is_retiring(&self.root) {
             self.application.advance_deployment()
         } else {
             Ok(())
@@ -473,7 +538,7 @@ impl Presenter {
                 self.execute(task);
             }
         }
-        if !self.closing && !self.application.is_retiring(&self.root) {
+        if self.surface.is_live() && !self.application.is_retiring(&self.root) {
             while let Some(action) = self.application.start_task(&self.root)? {
                 self.execute(action);
             }
@@ -505,10 +570,17 @@ impl Presenter {
         let mut failure = None;
         for mount in retired {
             if mount == self.root {
-                if let Some(cleanup) = self.surface_cleanup.take() {
+                if let SurfaceState::Retiring { cause, cleanup } = &mut self.surface
+                    && let Some(cleanup) = cleanup.as_ref()
+                {
+                    let cause = *cause;
+                    let cleanup = cleanup.clone();
                     let native = self.resources.close(&mount);
-                    if let Err(error) = self.application.close(&mount, native.and(cleanup)) {
-                        failure.get_or_insert(error);
+                    match self.application.close(&mount, native.and(cleanup)) {
+                        Ok(()) => self.surface = SurfaceState::Closed { cause },
+                        Err(error) => {
+                            failure.get_or_insert(error);
+                        }
                     }
                 }
             } else {
@@ -518,7 +590,8 @@ impl Presenter {
                 }
             }
         }
-        if !self.closing && failure.is_none() && !self.application.is_retiring(&self.root) {
+        if self.surface.is_live() && failure.is_none() && !self.application.is_retiring(&self.root)
+        {
             let advancement = self.application.advance_deployment();
             self.resources.deactivate(&self.application);
             if let Err(error) = advancement {
@@ -529,7 +602,28 @@ impl Presenter {
         failure.map_or(Ok(()), Err)
     }
     pub fn retire(&mut self) -> maka_ui::Result<()> {
-        self.closing = true;
+        self.retire_surface(Retirement::Exit)
+    }
+    fn retire_surface(&mut self, cause: Retirement) -> maka_ui::Result<()> {
+        match &mut self.surface {
+            SurfaceState::Live => {
+                self.surface = SurfaceState::Retiring {
+                    cause,
+                    cleanup: None,
+                }
+            }
+            SurfaceState::Retiring { cause: current, .. } => {
+                if cause == Retirement::Exit {
+                    *current = cause;
+                }
+            }
+            SurfaceState::Closed { cause: current } => {
+                if cause == Retirement::Exit {
+                    *current = cause;
+                }
+                return Ok(());
+            }
+        }
         self.scene.clear();
         self.focus = None;
         self.drag = None;
@@ -549,9 +643,53 @@ impl Presenter {
     }
     /// Actual terminal restoration acknowledgement, not logical retirement.
     /// 接收实际终端恢复回执，不以逻辑退休冒充恢复完成。
-    pub fn surface_closed(&mut self, result: Result<(), String>) -> maka_ui::Result<()> {
-        self.retire()?;
-        self.surface_cleanup = Some(result);
+    pub fn surface_closed(
+        &mut self,
+        surface: &Mount,
+        result: Result<(), String>,
+    ) -> maka_ui::Result<()> {
+        if surface != &self.root {
+            return Err(Error::Invalid(
+                "terminal cleanup belongs to another surface".into(),
+            ));
+        }
+        if self.surface.is_live() {
+            self.retire_surface(Retirement::Exit)?;
+        }
+        let SurfaceState::Retiring { cleanup, .. } = &mut self.surface else {
+            return Err(Error::Invalid("terminal cleanup already confirmed".into()));
+        };
+        if cleanup.is_some() {
+            return Err(Error::Invalid(
+                "terminal cleanup receipt already received".into(),
+            ));
+        }
+        *cleanup = Some(result);
+        self.pump()
+    }
+    /// Explicit successful restoration retry of the same failed physical surface.
+    /// This cannot recover a different mount or acknowledge failed native resources.
+    pub fn surface_recovered(&mut self, surface: &Mount) -> maka_ui::Result<()> {
+        if surface != &self.root {
+            return Err(Error::Invalid(
+                "terminal recovery belongs to another surface".into(),
+            ));
+        }
+        let SurfaceState::Retiring {
+            cleanup: Some(cleanup),
+            ..
+        } = &mut self.surface
+        else {
+            return Err(Error::Invalid(
+                "failed terminal restoration required".into(),
+            ));
+        };
+        if cleanup.is_ok() {
+            return Err(Error::Invalid(
+                "failed terminal restoration required".into(),
+            ));
+        }
+        *cleanup = Ok(());
         self.pump()
     }
     pub fn can_shutdown(&self) -> bool {

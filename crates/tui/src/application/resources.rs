@@ -360,7 +360,7 @@ impl Resources {
 impl Presenter {
     pub(super) fn sync_native(&mut self) -> maka_ui::Result<()> {
         self.resources.deactivate(&self.application);
-        if self.closing || self.application.is_retiring(&self.root) {
+        if !self.surface.is_live() || self.application.is_retiring(&self.root) {
             return Ok(());
         }
         self.resources.prepare(&self.application, &self.root)?;

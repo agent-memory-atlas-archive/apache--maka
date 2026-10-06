@@ -161,7 +161,7 @@ fn dispatch(tui: &mut Presenter, key: &str, value: Value) {
     tui.pump().unwrap();
 }
 fn close(tui: &mut Presenter) {
-    tui.surface_closed(Ok(())).unwrap();
+    tui.surface_closed(&tui.surface(), Ok(())).unwrap();
     assert!(tui.can_shutdown());
     tui.shutdown().unwrap();
 }
@@ -324,10 +324,10 @@ fn failed_observation_preserves_edits_and_original_command_receipt_until_publica
         "read",
         json!({"command":{"owner":original_owner,"sequence":1,"basedOn":revision,"edit":{"kind":"reset","text":""}}}),
     );
-    assert!(!tui.closing);
+    assert!(tui.surface.is_live());
     assert!(observation(&tui).is_null());
     tui.input(Event::Paste("Later".into())).unwrap();
-    assert!(!tui.closing);
+    assert!(tui.surface.is_live());
     dispatch(&mut tui, "reject", json!({"reject":false}));
     let observed = observation(&tui);
     assert_eq!(observed["receipt"]["sequence"], 1);
@@ -604,7 +604,7 @@ fn failed_submit_is_not_replayed_and_preserves_unpublished_command_receipt() {
         )))
         .is_err()
     );
-    assert!(!tui.closing);
+    assert!(tui.surface.is_live());
     assert_eq!(
         tui.application.frame(&editor).unwrap().state["pending"],
         true

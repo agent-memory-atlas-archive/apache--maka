@@ -23,6 +23,8 @@ mod continuations;
 mod layout;
 #[path = "tests/reading.rs"]
 mod reading;
+#[path = "tests/reconciliation.rs"]
+mod reconciliation;
 
 use super::*;
 use crossterm::event::{KeyEvent, MouseEvent};
@@ -106,7 +108,7 @@ fn same_package_has_native_surfaces_and_distinct_layouts_and_paint_never_calls_g
     }))
     .unwrap();
     assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 2);
-    tui.surface_closed(Ok(())).unwrap();
+    tui.surface_closed(&tui.surface(), Ok(())).unwrap();
     assert!(tui.can_shutdown());
     tui.shutdown().unwrap();
     desktop.close(&mount, Ok(())).unwrap();
@@ -131,7 +133,7 @@ fn unflushed_geometry_is_not_interactive_and_failure_receipt_preserves_owner() {
     assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 0);
     draw(&mut tui, 30, 12);
     assert!(
-        tui.surface_closed(Err("native restore failed".into()))
+        tui.surface_closed(&tui.surface(), Err("native restore failed".into()))
             .is_err()
     );
     assert!(!tui.can_shutdown());
@@ -139,8 +141,10 @@ fn unflushed_geometry_is_not_interactive_and_failure_receipt_preserves_owner() {
     assert!(tui.scene.is_empty());
     tui.input(key(KeyCode::Enter)).unwrap();
     assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 0);
-    // A later real receipt may recover the same actual mount, never replace it.
-    tui.surface_closed(Ok(())).unwrap();
+    // Duplicate close cannot turn the original failure into a success.
+    assert!(tui.surface_closed(&tui.surface(), Ok(())).is_err());
+    // A later explicit real restoration retry recovers this exact physical owner.
+    tui.surface_recovered(&tui.surface()).unwrap();
     assert!(tui.can_shutdown());
     tui.shutdown().unwrap();
 }
@@ -258,7 +262,7 @@ fn accepted_worker_survives_surface_close_and_cleanup_failure_keeps_actual_capac
         tui.pump().unwrap();
         let actual_payload = rx.recv_timeout(Duration::from_secs(5)).unwrap();
         assert_eq!(tui.application.accepted_action_count(), 1);
-        tui.surface_closed(Ok(())).unwrap();
+        tui.surface_closed(&tui.surface(), Ok(())).unwrap();
         assert!(tui.application.frame(&tui.root).is_err());
         assert!(!tui.can_shutdown());
         assert!(actual_payload.upgrade().is_some());
@@ -459,7 +463,7 @@ fn imported_native_recipe_child_state_and_focus_use_real_mount_lifetimes() {
         tui.application.frame(&replacement).unwrap().state["count"],
         20
     );
-    tui.surface_closed(Ok(())).unwrap();
+    tui.surface_closed(&tui.surface(), Ok(())).unwrap();
     assert!(tui.can_shutdown());
     tui.shutdown().unwrap();
 }
@@ -516,7 +520,7 @@ fn narrow_row_uses_the_same_remaining_width_for_measure_and_unicode_paint() {
     assert_eq!(buffer[(7, 1)].symbol(), "d");
     assert_eq!(buffer[(0, 2)].symbol(), "a");
     assert_eq!(buffer[(4, 2)].symbol(), "r");
-    tui.surface_closed(Ok(())).unwrap();
+    tui.surface_closed(&tui.surface(), Ok(())).unwrap();
     tui.shutdown().unwrap();
 }
 
@@ -806,7 +810,7 @@ fn native_terminal_slots_measure_and_paint_js_children_with_original_input_mount
         tui.application.frame(&left).unwrap().state["label"],
         "left 1"
     );
-    tui.surface_closed(Ok(())).unwrap();
+    tui.surface_closed(&tui.surface(), Ok(())).unwrap();
     tui.shutdown().unwrap();
 }
 #[test]
@@ -880,7 +884,7 @@ fn native_terminal_hidden_slots_override_custom_parent_measurement_and_paint() {
         &owner,
         &tui.resources.owners[&left.id()].identity
     ));
-    tui.surface_closed(Ok(())).unwrap();
+    tui.surface_closed(&tui.surface(), Ok(())).unwrap();
     tui.shutdown().unwrap();
 }
 #[test]
@@ -896,7 +900,7 @@ fn duplicate_native_terminal_placement_rejects_pending_scene_before_input_public
     assert!(tui.paint(area, &mut buffer).is_err());
     assert!(tui.scene.is_empty());
     assert_eq!(tui.application.frame(&tui.root).unwrap().revision, 0);
-    tui.surface_closed(Ok(())).unwrap();
+    tui.surface_closed(&tui.surface(), Ok(())).unwrap();
     tui.shutdown().unwrap();
 }
 
@@ -939,7 +943,7 @@ fn raw_click_focus_is_a_default_after_successful_commit() {
             tui.application.frame(&tui.root).unwrap().revision,
             u64::from(accepts)
         );
-        tui.surface_closed(Ok(())).unwrap();
+        tui.surface_closed(&tui.surface(), Ok(())).unwrap();
         tui.shutdown().unwrap();
     }
 }
@@ -1022,7 +1026,7 @@ fn pure_native_paint_panics_drain_original_state_and_failed_drop_keeps_root() {
         let area = Rect::new(0, 0, 30, 12);
         assert!(tui.paint(area, &mut Buffer::empty(area)).is_err());
         assert_eq!(drops.load(Ordering::SeqCst), 0);
-        assert_eq!(tui.surface_closed(Ok(())).is_ok(), !failed);
+        assert_eq!(tui.surface_closed(&tui.surface(), Ok(())).is_ok(), !failed);
         assert_eq!(drops.load(Ordering::SeqCst), 1);
         assert_eq!(tui.can_shutdown(), !failed);
         if failed {
@@ -1117,6 +1121,8 @@ fn retired_target_cleanup_preserves_the_original_nested_scroll_ancestor_identity
         .unwrap();
     assert_eq!(state.scrolls["inner"].offset, 3);
     assert_eq!(state.scrolls["outer"].offset, 0);
-    presenter.surface_closed(Ok(())).unwrap();
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
     presenter.shutdown().unwrap();
 }

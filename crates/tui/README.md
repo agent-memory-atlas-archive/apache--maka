@@ -140,5 +140,16 @@ retired native inputs even if convergence fails. Unchanged native draft,
 selection, focus and undo owners survive; an independent plugin initialization
 failure is a bounded diagnostic and leaves the healthy terminal running. Root
 retirement requires the original terminal-restoration receipt and is reported
-by `requires_surface_replacement`; the launcher does not yet perform live root
-handoff or expose production update management.
+by `requires_surface_replacement`. The launcher restores the old terminal before
+entering for a fresh launch; production update management is still pending.
+
+Root handoff retains the same Application and accepted-work observers. An adoption
+records replacement only if it retires the original live root; an unrelated
+adoption cannot turn a realm fault into a handoff. `surface_closed` takes the exact
+original Mount and actual restoration result. Duplicate or old receipts cannot
+close a new root, and cleanup failures keep their fence. `surface_recovered` is
+an explicit successful restoration retry of that same failed physical surface.
+After confirmed old cleanup, `try_replace_surface` waits for related provider
+settlement and mounts the desired launch with fresh native state. Accepted work
+on unchanged providers may coexist with the new root. This does not transfer
+old draft/focus/selection into a replacement implementation.

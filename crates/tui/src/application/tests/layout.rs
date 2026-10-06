@@ -352,7 +352,9 @@ fn actual_long_scene_keeps_footer_painted_and_native_click_bound_to_flush() {
         presenter.application.frame(&presenter.root).unwrap().state["count"],
         1
     );
-    presenter.surface_closed(Ok(())).unwrap();
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
     presenter.shutdown().unwrap();
 }
 #[test]
@@ -367,7 +369,9 @@ fn narrow_wrapped_footer_is_measured_before_the_body_viewport() {
             .collect::<Vec<_>>(),
         [("back", 7), ("next", 7), ("last", 9)]
     );
-    presenter.surface_closed(Ok(())).unwrap();
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
     presenter.shutdown().unwrap();
 }
 #[test]
@@ -412,7 +416,9 @@ fn post_flush_native_observation_coalesces_and_retries_without_guest_paint() {
         &original,
         &presenter.resources.owners[&presenter.root.id()].identity
     ));
-    presenter.surface_closed(Ok(())).unwrap();
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
     presenter.shutdown().unwrap();
 }
 
@@ -441,7 +447,9 @@ fn allocated_row_width_remeasures_wrapped_body_before_footer_placement() {
                 .y,
             footer_y
         );
-        presenter.surface_closed(Ok(())).unwrap();
+        presenter
+            .surface_closed(&presenter.surface(), Ok(()))
+            .unwrap();
         presenter.shutdown().unwrap();
     }
 }
@@ -474,7 +482,9 @@ fn deep_legal_rows_share_one_measurement_pass_instead_of_expanding_recursively()
         presenter.application.frame(&presenter.root).unwrap().state,
         before
     );
-    presenter.surface_closed(Ok(())).unwrap();
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
     presenter.shutdown().unwrap();
 }
 
@@ -536,7 +546,9 @@ fn native_scroll_has_real_clipped_cells_and_does_not_ack_unflushed_or_superseded
     let next = flushed(&mut presenter, 12, 6);
     assert_eq!(next[(5, 0)].symbol(), "6");
     assert_eq!(scroll_state(&presenter, "body"), (6, 6));
-    presenter.surface_closed(Ok(())).unwrap();
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
     presenter.shutdown().unwrap();
 }
 #[test]
@@ -563,7 +575,9 @@ fn wheel_and_page_keys_bubble_from_the_original_button_target() {
         presenter.application.frame(&presenter.root).unwrap().state["count"],
         0
     );
-    presenter.surface_closed(Ok(())).unwrap();
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
     presenter.shutdown().unwrap();
 }
 #[test]
@@ -596,7 +610,9 @@ fn follow_end_uses_actual_flush_and_manual_interaction_survives_recipe_updates()
         &owner,
         &presenter.resources.owners[&presenter.root.id()].identity
     ));
-    presenter.surface_closed(Ok(())).unwrap();
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
     presenter.shutdown().unwrap();
 }
 #[test]
@@ -632,7 +648,9 @@ fn anchor_keeps_gap_offset_and_original_child_after_hide_and_prepend() {
     refresh(&mut presenter);
     flushed(&mut presenter, 10, 5);
     assert_eq!(scroll_state(&presenter, "body"), (114, 114));
-    presenter.surface_closed(Ok(())).unwrap();
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
     presenter.shutdown().unwrap();
 }
 
@@ -741,7 +759,9 @@ fn disabled_buttons_retain_layout_but_revoke_click_dispatch_and_tab_targets() {
     assert!(default_disabled[(0, 1)].modifier.contains(Modifier::DIM));
     assert_eq!(presenter.scene.len(), 1);
     assert_eq!(presenter.scene[0].key, "save");
-    presenter.surface_closed(Ok(())).unwrap();
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
     presenter.shutdown().unwrap();
 }
 
@@ -766,7 +786,9 @@ fn native_scroll_reaches_content_beyond_u16_terminal_height() {
     assert_eq!(scroll_state(&presenter, "body"), (79999, 79999));
     assert_eq!(end[(0, 0)].symbol(), "p");
     assert_eq!(end[(0, 5)].symbol(), "[");
-    presenter.surface_closed(Ok(())).unwrap();
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
     presenter.shutdown().unwrap();
 }
 #[test]
@@ -788,6 +810,8 @@ fn nested_scroll_consumes_innermost_wheel_then_bubbles_at_its_boundary() {
     flushed(&mut presenter, 10, 6);
     assert_eq!(scroll_state(&presenter, "body"), (3, 3));
     assert_eq!(scroll_state(&presenter, "inner"), (7, 7));
-    presenter.surface_closed(Ok(())).unwrap();
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
     presenter.shutdown().unwrap();
 }

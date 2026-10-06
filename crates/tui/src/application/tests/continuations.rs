@@ -321,7 +321,9 @@ fn terminal_pump_uses_original_native_continuation_before_feedback_publication()
         assert!(!presenter.application.is_retiring(&presenter.root));
         assert_eq!(presenter.application.accepted_action_count(), 0);
         drop(retained);
-        presenter.surface_closed(Ok(())).unwrap();
+        presenter
+            .surface_closed(&presenter.surface(), Ok(()))
+            .unwrap();
         presenter.pump().unwrap();
         presenter.shutdown().unwrap();
     }

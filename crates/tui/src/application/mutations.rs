@@ -181,7 +181,7 @@ fn terminal_restoration_during_preparation_runs_close_successor_before_root_rele
     tui.pump().unwrap();
     let payload = rx.recv_timeout(Duration::from_secs(3)).unwrap();
     assert_eq!(tui.application.accepted_action_count(), 0);
-    tui.surface_closed(Ok(())).unwrap();
+    tui.surface_closed(&tui.surface(), Ok(())).unwrap();
     assert!(!tui.can_shutdown());
     assert!(payload.upgrade().is_some());
     assert!(RootOwner::open(&root, &ns).is_err());
