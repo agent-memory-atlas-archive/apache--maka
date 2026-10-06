@@ -188,6 +188,10 @@ export const en = {
 
   you: 'You',
   assistant: 'Maka',
+  toolActivity: 'Tool activity',
+  toolOutput: 'Tool output',
+  expandTool: 'Show details',
+  collapseTool: 'Hide details',
   working: 'Working…',
   waiting: 'Waiting for your input',
   stopping: 'Stopping…',
@@ -366,6 +370,10 @@ const zhCN: Copy = {
 
   you: '你',
   assistant: 'Maka',
+  toolActivity: '工具活动',
+  toolOutput: '工具输出',
+  expandTool: '展开详情',
+  collapseTool: '收起详情',
   working: '正在处理…',
   waiting: '等待你的输入',
   stopping: '正在停止…',
@@ -543,6 +551,10 @@ const zhTW: Copy = {
 
   you: '你',
   assistant: 'Maka',
+  toolActivity: '工具活動',
+  toolOutput: '工具輸出',
+  expandTool: '展開詳情',
+  collapseTool: '收起詳情',
   working: '正在處理…',
   waiting: '等待你的輸入',
   stopping: '正在停止…',

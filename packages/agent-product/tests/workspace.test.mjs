@@ -2172,6 +2172,26 @@ function modelSlots(node, result = []) {
     modelSlots(child, result);
   return result;
 }
+test('Timeline byte-segment identities leave room for the native key prefix', async () => {
+  const { default: Ajv } = await import('ajv/dist/2020.js');
+  const { timelineContract } = await import(
+    pathToFileURL(resolve(root, 'dist/authoring/agent-product/src/contracts.mjs'))
+  );
+  const schema = timelineContract.interface.props.$defs.Message;
+  const validate = new Ajv({ strict: false }).compile(schema);
+  const message = {
+    id: uuid(900),
+    contentKey: 'a'.repeat(123),
+    role: 'tool_result',
+    text: 'literal output',
+    continued: false,
+    source: null,
+  };
+  assert.equal(validate(message), true);
+  for (const contentKey of ['', 'a'.repeat(124), '😀'.repeat(31), 'key.with.dot'])
+    assert.equal(validate({ ...message, contentKey }), false, contentKey);
+});
+
 for (const target of ['desktop', 'tui']) {
   test(target + ' suggests the exact saved default even beyond the first model page', async () => {
     const module = await import(
@@ -2285,6 +2305,7 @@ test('prepending history preserves the streamed message presentation identity', 
   );
   const message = {
     id: uuid(400),
+    contentKey: 'live-' + uuid(400),
     role: 'assistant',
     text: '**流式** café 😀',
     continued: false,
@@ -2311,7 +2332,14 @@ test('prepending history preserves the streamed message presentation identity', 
     {
       ...props,
       messages: [
-        { id: uuid(399), role: 'user', text: 'earlier', continued: false, source: null },
+        {
+          id: uuid(399),
+          contentKey: 'canonical-399-0',
+          role: 'user',
+          text: 'earlier',
+          continued: false,
+          source: null,
+        },
         { ...message, text: message.text + ' continued' },
       ],
     },
@@ -2603,7 +2631,10 @@ test('only a complete canonical UTF-8 message becomes Markdown; tail and live ex
   assert.equal(client.messages[0].continued, true);
   const excerpt = timeline.mount(client.timeline, {});
   const slots = modelSlots(excerpt.frame.view.children[0].children[0].props.content);
-  assert.equal(slots.find((node) => node.key === 'text-' + uuid(900)).binding, 'source');
+  assert.equal(
+    slots.find((node) => node.key === 'text-' + client.messages[0].contentKey).binding,
+    'source',
+  );
   assert.equal(
     slots.some((node) => node.binding === 'markdown'),
     false,
@@ -2615,7 +2646,7 @@ test('only a complete canonical UTF-8 message becomes Markdown; tail and live ex
   );
   assert.equal(
     modelSlots(complete.frame.view.children[0].children[0].props.content).find(
-      (node) => node.key === 'text-' + uuid(900),
+      (node) => node.key === 'text-' + client.messages[0].contentKey,
     ).binding,
     'markdown',
   );
@@ -3063,3 +3094,130 @@ test('all ordinary TUI node identities remain unique including hidden routes', a
   client.raw('navigation-back');
   check();
 });
+
+for (const target of ['desktop', 'tui']) {
+  test(
+    target +
+      ' tool text stays mounted while collapsed and expands through its checked reading input',
+    async () => {
+      const { component: timeline } = await import(
+        pathToFileURL(resolve(root, 'dist/packages/timeline/' + target + '.js'))
+      );
+      const client = new Client().start({
+        through: 100,
+        chunks: [
+          historyChunk('line 1\n  **literal** 中😀\n' + 'long output '.repeat(100), {
+            role: 'tool_result',
+            sequence: 40,
+          }),
+        ],
+      });
+      const props = { ...client.timeline, locale: 'zh-CN' };
+      let out = timeline.mount(props, {});
+      const row = () => out.frame.view.children[0].children[0].props.content.children[0];
+      const details = () => row().children.find((node) => node.key === 'details-' + uuid(900));
+      const source = structuredClone(details().children[0]);
+      assert.equal(row().children[0].text, '工具输出');
+      assert.equal(details().visible, false);
+      assert.ok(
+        row().children.find((node) => node.key === 'summary-' + uuid(900)).text.length < 170,
+      );
+      assert.equal(source.binding, 'source');
+      assert.equal(source.props.source, client.messages[0].text);
+      const toggle = () => {
+        out = timeline.event(
+          out.frame.state,
+          {
+            kind: 'component',
+            child: 'reading',
+            name: 'input',
+            key: 'reading-input',
+            event: { kind: 'raw', key: 'toggle-' + uuid(900), event: { kind: 'click' } },
+          },
+          props,
+          {},
+        );
+      };
+      toggle();
+      assert.equal(details().visible, true);
+      assert.deepEqual(details().children[0], source);
+      assert.equal(out.events.length, 0);
+      assert.equal(out.actions.length, 0);
+      toggle();
+      assert.equal(details().visible, false);
+      assert.deepEqual(details().children[0], source);
+      out = timeline.update(out.frame.state, { ...props, messages: [] }, {});
+      assert.deepEqual(out.frame.state.expanded, []);
+    },
+  );
+  test(
+    target +
+      ' identical text at another canonical byte offset creates a different native body identity',
+    async () => {
+      const { component: timeline } = await import(
+        pathToFileURL(resolve(root, 'dist/packages/timeline/' + target + '.js'))
+      );
+      const first = new Client().start({
+        through: 100,
+        chunks: [
+          historyChunk('same bytes', {
+            role: 'tool_call',
+            sequence: 40,
+            offset: 0,
+            totalBytes: 200,
+          }),
+        ],
+      });
+      const next = new Client().start({
+        through: 100,
+        chunks: [
+          historyChunk('same bytes', {
+            role: 'tool_call',
+            sequence: 40,
+            offset: 80,
+            totalBytes: 200,
+          }),
+        ],
+      });
+      const before = timeline.mount(first.timeline, {});
+      const expanded = timeline.event(
+        before.frame.state,
+        { kind: 'raw', key: 'toggle-' + uuid(900), event: {} },
+        first.timeline,
+        {},
+      );
+      const after = timeline.update(expanded.frame.state, next.timeline, {});
+      const row = (out) => out.frame.view.children[0].children[0].props.content.children[0];
+      const body = (out) =>
+        row(out).children.find((node) => node.key === 'details-' + uuid(900)).children[0];
+      assert.equal(row(expanded).key, row(after).key);
+      assert.equal(body(expanded).props.source, body(after).props.source);
+      assert.notEqual(body(expanded).key, body(after).key);
+      assert.equal(
+        row(after).children.find((node) => node.key === 'details-' + uuid(900)).visible,
+        true,
+      );
+      const sourceRoute = {
+        ...next.timeline,
+        source: {
+          key: 'source-page',
+          text: 'source',
+          atStart: true,
+          atEnd: true,
+          loading: false,
+          failed: false,
+          navigation: 1,
+          landing: 'start',
+        },
+      };
+      const hidden = timeline.update(after.frame.state, sourceRoute, {});
+      const staleToggle = timeline.event(
+        hidden.frame.state,
+        { kind: 'raw', key: 'toggle-' + uuid(900), event: {} },
+        sourceRoute,
+        {},
+      );
+      assert.deepEqual(staleToggle.frame.state.expanded, hidden.frame.state.expanded);
+    },
+  );
+}

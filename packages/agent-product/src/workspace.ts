@@ -152,6 +152,7 @@ function appendLive(state: State, sequence: number, messageId: string, text: str
 function messages(state: State): Message[] {
   const canonical = (state.window?.page.chunks ?? []).map((chunk) => ({
     id: chunk.messageId,
+    contentKey: `canonical-${chunk.sequence}-${chunk.offset}`,
     role: chunk.role,
     text: chunk.text,
     continued: chunk.offset !== 0 || utf8Bytes(chunk.text) !== chunk.totalBytes,
@@ -165,6 +166,7 @@ function messages(state: State): Message[] {
     if (!message) {
       message = {
         id: 'live-' + fragment.messageId,
+        contentKey: 'live-' + fragment.messageId,
         role: 'assistant',
         text: '',
         continued: true,

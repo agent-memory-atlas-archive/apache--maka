@@ -44,6 +44,7 @@ interface Draft extends Revision {
   observation: EditorObservation | null;
 }
 interface Reading extends Revision {
+  expanded: string[];
   observation: ReadingObservation | null;
   command: ReadingCommand | null;
   landing: TimelineProps['landing'];
@@ -162,8 +163,38 @@ export function components(target: Target): {
   const timelineFrame = (state: Reading, props: TimelineProps) => {
     const ui = paint(target, props.theme),
       text = copy(props.locale);
-    const messages: Node[] = props.messages.map((message) =>
-      ui.box(
+    const tools = props.messages.filter(
+      (message) => message.role === 'tool_call' || message.role === 'tool_result',
+    );
+    state.expanded = state.expanded.filter((id) => tools.some((message) => message.id === id));
+    const messages: Node[] = props.messages.map((message) => {
+      const tool = message.role === 'tool_call' || message.role === 'tool_result';
+      const expanded = state.expanded.includes(message.id);
+      const body =
+        target === 'desktop' && message.role === 'assistant' && !message.continued
+          ? slot(
+              'text-' + message.contentKey,
+              'markdown',
+              {
+                source: message.text,
+                appearance: props.theme.markdown,
+                selectable: true,
+                disabled: false,
+              } satisfies MarkdownProps,
+              {},
+            )
+          : slot(
+              'text-' + message.contentKey,
+              'source',
+              {
+                source: message.text,
+                appearance: props.theme.markdown.body,
+                selection: props.theme.markdown.selection,
+                disabled: false,
+              },
+              {},
+            );
+      return ui.box(
         'message-' + message.id,
         [
           ui.text(
@@ -172,7 +203,9 @@ export function components(target: Target): {
               ? text.you
               : message.role === 'assistant'
                 ? text.assistant
-                : message.role,
+                : message.role === 'tool_call'
+                  ? text.toolActivity
+                  : text.toolOutput,
             13,
             props.theme.muted,
             550,
@@ -180,41 +213,56 @@ export function components(target: Target): {
           ...(message.continued
             ? [ui.text('continued-' + message.id, text.partial, 12, props.theme.muted)]
             : []),
-          target === 'desktop' && message.role === 'assistant' && !message.continued
-            ? slot(
-                'text-' + message.id,
-                'markdown',
-                {
-                  source: message.text,
-                  appearance: props.theme.markdown,
-                  selectable: true,
-                  disabled: false,
-                } satisfies MarkdownProps,
-                {},
-              )
-            : slot(
-                'text-' + message.id,
-                'source',
-                {
-                  source: message.text,
-                  appearance: props.theme.markdown.body,
-                  selection: props.theme.markdown.selection,
-                  disabled: false,
-                },
-                {},
-              ),
-          ...(message.source !== null
+          ...(tool
+            ? [
+                ...(!expanded
+                  ? [
+                      ui.text(
+                        'summary-' + message.id,
+                        compactLabel(message.text, target === 'desktop' ? 96 : 72),
+                        14,
+                        props.theme.muted,
+                      ),
+                    ]
+                  : []),
+                ui.box('details-' + message.id, [body], {
+                  visible: expanded,
+                  gap: 0,
+                  surface: true,
+                  style: { width: fill },
+                }),
+                ui.box(
+                  'tool-actions-' + message.id,
+                  [
+                    ui.button(
+                      'toggle-' + message.id,
+                      expanded ? text.collapseTool : text.expandTool,
+                    ),
+                    ...(message.source !== null
+                      ? [ui.button('source-' + message.source, text.readSource, props.loading)]
+                      : []),
+                  ],
+                  {
+                    row: true,
+                    gap: target === 'desktop' ? 8 : 1,
+                    surface: true,
+                    style: { width: fill, wrap: true },
+                  },
+                ),
+              ]
+            : [body]),
+          ...(!tool && message.source !== null
             ? [ui.button('source-' + message.source, text.readSource, props.loading)]
             : []),
         ],
         {
           gap: target === 'desktop' ? 8 : 0,
-          style: { width: fill, maxWidth: 760, shrink: 0 },
-          surface: message.role === 'user',
-          padding: target === 'desktop' && message.role === 'user' ? 16 : 0,
+          style: { width: fill, maxWidth: 760, shrink: 0, radius: tool ? 8 : 0 },
+          surface: message.role === 'user' || tool,
+          padding: target === 'desktop' && (message.role === 'user' || tool) ? 16 : 0,
         },
-      ),
-    );
+      );
+    });
     const content = ui.box(
       'timeline',
       [
@@ -415,6 +463,7 @@ export function components(target: Target): {
         timelineFrame(
           {
             revision: 0,
+            expanded: [],
             observation: null,
             command:
               props.landing.sequence > 0
@@ -464,6 +513,17 @@ export function components(target: Target): {
           next.observation.pendingCommand == null
         )
           next.command = { sequence: (next.command?.sequence ?? 0) + 1, target: { kind: 'end' } };
+        if (input.kind === 'raw' && !props.source) {
+          const tool = props.messages.find(
+            (message) =>
+              (message.role === 'tool_call' || message.role === 'tool_result') &&
+              input.key === 'toggle-' + message.id,
+          );
+          if (tool)
+            next.expanded = next.expanded.includes(tool.id)
+              ? next.expanded.filter((id) => id !== tool.id)
+              : [...next.expanded, tool.id];
+        }
         const out = timelineFrame(next, props);
         if (input.kind === 'raw' && props.source) {
           const source = props.source;

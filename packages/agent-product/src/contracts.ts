@@ -57,6 +57,8 @@ export interface Theme {
 }
 export interface Message {
   id: string;
+  // Immutable byte-segment identity; 1–123 ASCII letters, digits, underscores or hyphens.
+  contentKey: string;
   role: Role;
   text: string;
   continued: boolean;
@@ -139,6 +141,7 @@ const themeSchema = object({
 });
 const messageSchema = object({
   id: string,
+  contentKey: { type: 'string', minLength: 1, maxLength: 123, pattern: '^[A-Za-z0-9_-]+$' },
   role: { enum: ['user', 'assistant', 'tool_call', 'tool_result'] },
   text: { type: 'string', maxLength: 24000 },
   continued: { type: 'boolean' },
