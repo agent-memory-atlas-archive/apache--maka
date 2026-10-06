@@ -298,7 +298,7 @@ export const contracts = {
         properties: {
           content: {
             description:
-              "The presenter's scene language; Desktop requires a scrolling column Stack.\nIts scroll policy and layout are the only presentation authority.",
+              "The presenter's scene language; each requires a scrolling column Stack.\nIts scroll policy and layout are the only presentation authority.",
           },
           command: {
             description:

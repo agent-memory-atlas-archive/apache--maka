@@ -39,6 +39,7 @@ pub struct NativeView<V: ?Sized> {
     schemas: Rc<BTreeMap<String, Value>>,
     slots: Rc<Vec<ComponentSlot>>,
     hidden_slots: Rc<BTreeSet<String>>,
+    root_visible: bool,
     inputs: Rc<BTreeMap<String, jsonschema::Validator>>,
     pub(crate) render_depth: u16,
     pub(crate) slot_render_depth: Rc<BTreeMap<String, u16>>,
@@ -80,6 +81,7 @@ impl<V: ?Sized> NativeView<V> {
             schemas: Rc::new(schemas),
             slots: Rc::new(slots),
             hidden_slots: Rc::new(BTreeSet::new()),
+            root_visible: true,
             inputs: Rc::new(inputs),
             render_depth: 0,
             slot_render_depth: Rc::new(BTreeMap::new()),
@@ -127,16 +129,26 @@ impl<V: ?Sized> NativeView<V> {
         super::tree::check_call_bytes(&self.metadata())?;
         Ok(self)
     }
+    /// Mechanical projection of the recipe's declared root visibility, distinct
+    /// from physical clipping/minimization. It retains all original mounted slots.
+    pub fn with_root_visibility(mut self, visible: bool) -> Self {
+        self.root_visible = visible;
+        self
+    }
+    pub fn root_visible(&self) -> bool {
+        self.root_visible
+    }
     pub fn visible_slots(&self) -> impl Iterator<Item = &ComponentSlot> {
         self.slots
             .iter()
-            .filter(|slot| !self.hidden_slots.contains(&slot.key))
+            .filter(|slot| self.root_visible && !self.hidden_slots.contains(&slot.key))
     }
     pub(crate) fn metadata(&self) -> impl serde::Serialize + '_ {
         (
             &*self.schemas,
             &*self.slots,
             &*self.hidden_slots,
+            self.root_visible,
             self.declaration.as_deref(),
             self.render_depth,
             &*self.slot_render_depth,
@@ -158,6 +170,7 @@ impl<V: ?Sized> Clone for NativeView<V> {
             schemas: self.schemas.clone(),
             slots: self.slots.clone(),
             hidden_slots: self.hidden_slots.clone(),
+            root_visible: self.root_visible,
             inputs: self.inputs.clone(),
             render_depth: self.render_depth,
             slot_render_depth: self.slot_render_depth.clone(),

@@ -1509,7 +1509,7 @@ export interface SourceTextProps {
 }
 export interface ReadingProps {
   /**
-   * The presenter's scene language; Desktop requires a scrolling column Stack.
+   * The presenter's scene language; each requires a scrolling column Stack.
    * Its scroll policy and layout are the only presentation authority.
    */
   content: {

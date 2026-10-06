@@ -181,27 +181,19 @@ export function composition(configuration: CompositionConfiguration): {
       ),
       composer: node('composer', {}, { editor: [local('editor', 'Textarea')] }),
       navigation: node('navigation'),
-      timeline: node(
-        'timeline',
+      timeline: node('timeline', {}, { reading: [local('reading-area', 'ReadingArea')] }),
+      'source-text': node('source-text'),
+      'reading-area': node(
+        'reading-area',
         {},
-        configuration.presentation === 'desktop'
-          ? { reading: [local('reading-area', 'ReadingArea')] }
-          : {},
+        {
+          source: [local('source-text', 'SourceText')],
+          ...(configuration.presentation === 'desktop'
+            ? { markdown: [local('markdown', 'Markdown')] }
+            : {}),
+        },
       ),
-      ...(configuration.presentation === 'desktop'
-        ? {
-            markdown: node('markdown'),
-            'source-text': node('source-text'),
-            'reading-area': node(
-              'reading-area',
-              {},
-              {
-                markdown: [local('markdown', 'Markdown')],
-                source: [local('source-text', 'SourceText')],
-              },
-            ),
-          }
-        : {}),
+      ...(configuration.presentation === 'desktop' ? { markdown: node('markdown') } : {}),
       appearance: node('appearance', { scheme: configuration.scheme }),
       surface: node('surface'),
       editor: node('editor'),

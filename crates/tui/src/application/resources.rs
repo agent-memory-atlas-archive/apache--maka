@@ -121,6 +121,18 @@ impl Resources {
                     owner.pending = Some(observed);
                 }
             }
+            match catch_unwind(AssertUnwindSafe(|| {
+                owner.recipe.observe(owner.state.as_mut())
+            })) {
+                Ok(Some(observed)) => owner.pending = Some(observed),
+                Ok(None) => {}
+                Err(_) => {
+                    owner.live = false;
+                    let error = "terminal native observation cleanup unconfirmed".to_owned();
+                    self.failed.insert(mount.id(), error.clone());
+                    return Err(Error::Invalid(error));
+                }
+            }
             if let Some(observed) = &owner.pending {
                 observations.push((mount, observed.clone()));
             }
@@ -228,9 +240,8 @@ impl Resources {
             .unwrap_or(false))
     }
     pub fn copy(&mut self, target: &paint::TargetIdentity) -> maka_ui::Result<Option<String>> {
-        Ok(self
-            .read_native(target, |recipe, state| recipe.copy(state))?
-            .flatten())
+        self.read_native(target, |recipe, state| recipe.copy(state))?
+            .unwrap_or(Ok(None))
     }
     pub fn present(&mut self, mount: &Mount, identity: &Rc<()>, geometry: Box<dyn Any>) {
         let Some(owner) = self

@@ -140,6 +140,8 @@ impl Target {
 pub struct PaintedScene {
     pub(super) targets: Vec<Target>,
     placed: std::collections::BTreeSet<uuid::Uuid>,
+    laid_out: std::collections::BTreeSet<uuid::Uuid>,
+    pub(super) scope: Option<super::selection::ScopePaint>,
     geometries: Vec<NativeGeometry>,
     ancestry: Vec<TargetIdentity>,
 }
@@ -288,6 +290,18 @@ impl Slots<'_> {
             .push(target);
         Ok(())
     }
+    pub(super) fn participant(
+        &mut self,
+        document: &super::selection::DocumentRef,
+    ) -> Option<super::selection::SelectionScope> {
+        self.scene
+            .as_mut()
+            .and_then(|scene| scene.scope.as_mut())
+            .map(|scope| {
+                scope.documents.push(std::rc::Rc::downgrade(document));
+                scope.scope.clone()
+            })
+    }
     pub fn focused(&self) -> bool {
         self.presenter.focus.as_ref().is_some_and(|target| {
             target.mount == *self.parent
@@ -368,6 +382,8 @@ impl Presenter {
         let mut scene = PaintedScene {
             targets: Vec::new(),
             placed: Default::default(),
+            laid_out: Default::default(),
+            scope: None,
             geometries: Vec::new(),
             ancestry: Vec::new(),
         };
@@ -427,6 +443,38 @@ impl Presenter {
             .map_err(|_| maka_ui::Error::Invalid("terminal native measurement panicked".into()))?
         })
     }
+    fn visible_children<'a>(
+        &self,
+        mount: &Mount,
+        children: &'a [Node],
+    ) -> maka_ui::Result<Vec<&'a Node>> {
+        let mut visible = Vec::with_capacity(children.len());
+        for child in children {
+            let shown = match child {
+                Node::Component(slot) => self
+                    .application
+                    .frame(self.application.child_mount(mount, &slot.key)?)?
+                    .view
+                    .root_visible(),
+                _ => child.visible(),
+            };
+            if shown {
+                visible.push(child);
+            }
+        }
+        Ok(visible)
+    }
+    fn node_layout(&self, mount: &Mount, node: &Node) -> maka_ui::Result<super::scene::Layout> {
+        match node {
+            Node::Component(slot) => Ok(self
+                .application
+                .frame(self.application.child_mount(mount, &slot.key)?)?
+                .view
+                .view
+                .layout()),
+            _ => Ok(node.layout()),
+        }
+    }
     pub(super) fn measure(
         &self,
         mount: &Mount,
@@ -469,9 +517,11 @@ impl Presenter {
                     } => {
                         let inset = padding.saturating_mul(2);
                         let available = width.saturating_sub(inset);
-                        let children: Vec<_> =
-                            children.iter().filter(|child| child.visible()).collect();
-                        let layouts: Vec<_> = children.iter().map(|child| child.layout()).collect();
+                        let children = self.visible_children(mount, children)?;
+                        let layouts: Vec<_> = children
+                            .iter()
+                            .map(|child| self.node_layout(mount, child))
+                            .collect::<maka_ui::Result<Vec<_>>>()?;
                         let flow = super::layout::measured(
                             *direction,
                             available,
@@ -500,13 +550,19 @@ impl Presenter {
         scene: &mut PaintedScene,
         measurements: &Measurements,
     ) -> maka_ui::Result<()> {
-        if area.is_empty() {
+        if area.width == 0
+            || area.height == 0
+            || !self.application.frame(mount)?.view.root_visible()
+        {
             return Ok(());
         }
-        if !scene.placed.insert(mount.id()) {
+        if !scene.laid_out.insert(mount.id()) {
             return Err(maka_ui::Error::Invalid(
                 "component placed twice in terminal scene".into(),
             ));
+        }
+        if !area.is_empty() {
+            scene.placed.insert(mount.id());
         }
         let native = &self.application.frame(mount)?.view;
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -535,7 +591,7 @@ impl Presenter {
         pass: &mut NodePaint<'_>,
     ) -> maka_ui::Result<()> {
         let measurements = pass.measurements;
-        if !node.visible() || area.is_empty() {
+        if !node.visible() || area.width == 0 || area.height == 0 {
             return Ok(());
         }
         match node {
@@ -596,8 +652,11 @@ impl Presenter {
             } => {
                 buffer.set_style(area.visible(), Style::default().bg(color(*background)));
                 let inner = area.inner(ratatui::layout::Margin::new(*padding, *padding));
-                let children: Vec<_> = children.iter().filter(|child| child.visible()).collect();
-                let layouts: Vec<_> = children.iter().map(|child| child.layout()).collect();
+                let children = self.visible_children(mount, children)?;
+                let layouts: Vec<_> = children
+                    .iter()
+                    .map(|child| self.node_layout(mount, child))
+                    .collect::<maka_ui::Result<Vec<_>>>()?;
                 let flow = super::layout::measured(
                     *direction,
                     inner.width,
@@ -611,7 +670,7 @@ impl Presenter {
                     &layouts,
                     |index, width| self.measure(mount, children[index], width, measurements),
                 )?;
-                let scrolling = *scroll != super::scene::ScrollPolicy::None && !inner.is_empty();
+                let scrolling = *scroll != super::scene::ScrollPolicy::None;
                 let offset = if scrolling {
                     let identities: Vec<_> = children
                         .iter()
@@ -630,14 +689,16 @@ impl Presenter {
                         key: key.clone(),
                         owner: self.resources.owners[&mount.id()].identity.clone(),
                     };
-                    scene.targets.push(Target {
-                        identity: identity.clone(),
-                        revision: self.application.frame(mount)?.revision,
-                        area: inner,
-                        tab_index: -1,
-                        kind: TargetKind::Scroll,
-                        ancestors: scene.ancestry.clone(),
-                    });
+                    if !inner.is_empty() {
+                        scene.targets.push(Target {
+                            identity: identity.clone(),
+                            revision: self.application.frame(mount)?.revision,
+                            area: inner,
+                            tab_index: -1,
+                            kind: TargetKind::Scroll,
+                            ancestors: scene.ancestry.clone(),
+                        });
+                    }
                     scene.ancestry.push(identity);
                     offset
                 } else {

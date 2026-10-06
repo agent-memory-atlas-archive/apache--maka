@@ -25,10 +25,12 @@ mod input;
 mod layout;
 mod native;
 mod paint;
+mod reading;
 mod resources;
 mod run;
 mod scene;
 mod scroll;
+mod selection;
 mod source;
 mod textarea;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
@@ -59,11 +61,19 @@ use uuid::Uuid;
 /// run against the original presenter-owned state, never a replacement frame.
 /// 可信不可变 recipe；资源由独立原生 owner 持有，绘制不创建资源或执行命令。
 pub trait Widget: std::any::Any {
+    /// Immutable root constraints participate in the parent's original cell flow.
+    fn layout(&self) -> TerminalLayout {
+        TerminalLayout::default()
+    }
     fn create(&self) -> Box<dyn std::any::Any> {
         Box::new(())
     }
     fn commit(&self, _: &mut dyn std::any::Any) -> maka_ui::Result<Option<NativeInput>> {
         Ok(None)
+    }
+    /// Poll original native observations independently of recipe revisions.
+    fn observe(&self, _: &mut dyn std::any::Any) -> Option<NativeInput> {
+        None
     }
     fn input(&self, _: &mut dyn std::any::Any, _: &str, _: &Event) -> maka_ui::Result<WidgetInput> {
         Ok(WidgetInput::Unhandled)
@@ -71,8 +81,8 @@ pub trait Widget: std::any::Any {
     fn pointer_capture(&self, _: &dyn std::any::Any) -> bool {
         false
     }
-    fn copy(&self, _: &dyn std::any::Any) -> Option<String> {
-        None
+    fn copy(&self, _: &dyn std::any::Any) -> maka_ui::Result<Option<String>> {
+        Ok(None)
     }
     fn capture(
         &self,
@@ -109,6 +119,8 @@ pub trait Widget: std::any::Any {
     fn presentation(&self, _: &mut dyn std::any::Any, _: bool) {}
     fn deactivate(&self, _: &mut dyn std::any::Any) {}
     fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)>;
+    /// Logical traversal includes fully clipped placements; writes and physical
+    /// targets must honor Placement.clip. Only successful flush admits geometry.
     fn paint(
         &self,
         slots: &mut Slots<'_>,

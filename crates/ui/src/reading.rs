@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReadingProps {
-    /// The presenter's scene language; Desktop requires a scrolling column Stack.
+    /// The presenter's scene language; each requires a scrolling column Stack.
     /// Its scroll policy and layout are the only presentation authority.
     pub content: Value,
     /// Omission retains an accepted command; numbers increase per original mount.

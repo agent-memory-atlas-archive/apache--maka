@@ -134,6 +134,9 @@ impl Widget for Recipe {
         area: Placement,
         buffer: &mut Buffer,
     ) -> maka_ui::Result<()> {
+        if area.is_empty() {
+            return Ok(());
+        }
         let owner = slots.native_state::<Owner>()?;
         let focused = slots.focused();
         let appearance = &self.props.appearance;

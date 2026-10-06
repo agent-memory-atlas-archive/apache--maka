@@ -105,8 +105,8 @@ recipe。失效返回 `{ status: 'stale' }`，不发布业务值、不撤销执�
 原生 widget 实现实际观察检查；缺少捕获会返回 `not_accepted`。这些机械边界本身不代表
 产品历史导航已完成。
 
-Desktop 提供 `contracts.readingArea`（`maka.ui.reading`，导出 `ReadingArea`）。
-`content` 使用经过检查的 Desktop scene：带滚动策略的 column Stack，子组件通过本实例
+Desktop 和 TUI 提供 `contracts.readingArea`（`maka.ui.reading`，导出 `ReadingArea`）。
+`content` 使用所选呈现器经过检查的 scene：带滚动策略的 column Stack，子组件通过本实例
 声明的绑定组合。原生滚动与文本选区 owner 保留几何和选区；插件只接收 `observed` 事实
 和 `input` 事件，不保存像素 offset。递增编号的 `start`、`end`、`reveal_child` 命令结算为
 `applied`、`cancelled` 或 `rejected`；省略命令不会重放已接受的命令，只保留当前命令与最近回执。
@@ -121,12 +121,14 @@ Desktop 还提供 `contracts.sourceText`（`maka.ui.source`，导出 `SourceText
 Latest 显式捕获新 fence。Watch 进度不自动替换正在阅读的窗口。实时节选只保留显示 fence
 之后的有界前缀；仅完整 canonical 消息使用 Markdown。产品还提供固定 fence 的单消息原文
 阅读器，以有界开头/上一段/下一段/末尾导航访问完整原文，失败保留当前段并可精确重试，
-返回时保留原对话窗口。Desktop 支持原文选择，TUI 当前使用普通 label。
+返回时保留原对话窗口。两种呈现器均组合原生 ReadingArea 和 SourceText；完整 Desktop assistant 消息额外使用 Markdown。
 
-TUI 已提供同契约、同实现名的 standalone 原生 `SourceText`。选区保留原始 UTF-8 字节，
+TUI 提供同契约、同实现名的原生 `SourceText`。选区保留原始 UTF-8 字节，
 包括 CRLF、tab 与控制字符；控制字符安全显示，Ctrl+Shift+C 通过有界 OSC52 请求复制，
 不表示操作系统已确认写入。追加文本保留原端点，替换/禁用撤销旧选区。TUI ReadingArea
-跨参与者选择、普通产品接入与完整阅读器实窗验收仍待完成。
+将逻辑 SourceText 纳入同一个选区，包含被裁剪原文的全选。选区和正在进行的鼠标选择
+阻止自动 tail 替换；超过 64 KiB 的 Copy 在分配或输出前拒绝并保留原选区。
+完整阅读器的真实 OS 验收仍待完成。
 
 持久 UI component 通过普通 `actions` 提交 mutation（可携带声明的原捕获资源）；内核生成 operation
 identity，先记录原 caller intent 再派发。feedback 的 `ActionOutcome` 使用

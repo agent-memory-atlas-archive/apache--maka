@@ -204,8 +204,8 @@ impl Node {
                 if *input_count > 64 {
                     return Err("scene input limit".into());
                 }
-                if visible {
-                    inputs.insert(key.clone(), json!(true));
+                if visible && inputs.insert(key.clone(), json!(true)).is_some() {
+                    return Err("reserved scene input identity".into());
                 }
             }
             Self::Stack {
@@ -233,6 +233,13 @@ impl Node {
 pub(super) fn compile(
     source: &Value,
     deadline: Instant,
+) -> maka_ui::Result<NativeView<dyn super::Widget>> {
+    compile_with_inputs(source, deadline, BTreeMap::new())
+}
+pub(super) fn compile_with_inputs(
+    source: &Value,
+    deadline: Instant,
+    mut inputs: BTreeMap<String, Value>,
 ) -> maka_ui::Result<NativeView<dyn super::Widget>> {
     if Instant::now() >= deadline {
         return Err(maka_ui::Error::Invalid("terminal scene deadline".into()));
@@ -262,7 +269,6 @@ pub(super) fn compile(
     node.validate_root(deadline)
         .map_err(maka_ui::Error::Invalid)?;
     let mut slots = vec![];
-    let mut inputs = BTreeMap::new();
     let mut hidden_slots = BTreeSet::new();
     node.metadata(
         &mut slots,
@@ -273,10 +279,15 @@ pub(super) fn compile(
         deadline,
     )
     .map_err(maka_ui::Error::Invalid)?;
+    let visible = node.visible();
     NativeView::new(Rc::new(node) as Rc<dyn super::Widget>, inputs, slots)?
         .with_hidden_slots(hidden_slots)
+        .map(|view| view.with_root_visibility(visible))
 }
 impl super::Widget for Node {
+    fn layout(&self) -> Layout {
+        Node::layout(self)
+    }
     fn create(&self) -> Box<dyn std::any::Any> {
         Box::<super::scroll::SceneState>::default()
     }

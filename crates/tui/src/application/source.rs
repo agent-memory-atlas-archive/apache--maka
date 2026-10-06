@@ -17,129 +17,52 @@
  * under the License.
  */
 
-//! Literal source with a standalone native byte-selection scope.
+//! Literal original source participates in the nearest native reading boundary.
 use super::{NativeInput, Placement, Slots, Widget, WidgetInput};
 use crate::editor::layout::Layout;
-use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
+use crossterm::event::Event;
 use maka_ui::{
     ComponentCall, ComponentOutput, Frame, NativeCapability, NativeComponent, NativeExport,
     NativeRegistry, NativeView, source::*,
 };
 use ratatui::{
     buffer::Buffer,
-    layout::Position,
     style::{Color, Modifier, Style},
 };
 use serde_json::json;
-use std::{any::Any, collections::BTreeMap, ops::Range, rc::Rc, sync::Arc};
+use std::{any::Any, collections::BTreeMap, rc::Rc, sync::Arc};
 use unicode_width::UnicodeWidthStr;
 
-#[derive(Clone)]
+use super::selection::{Document, DocumentRef, Glyphs, SelectionScope};
 struct Geometry {
-    source: Arc<str>,
-    layout: Layout,
-    area: Placement,
+    glyphs: Glyphs,
+    parent: Option<SelectionScope>,
 }
 struct Owner {
-    source: Arc<str>,
-    anchor: Option<usize>,
-    cursor: usize,
-    dragging: bool,
-    disabled: bool,
-    geometry: Option<Geometry>,
+    document: DocumentRef,
 }
 impl Owner {
-    fn range(&self) -> Range<usize> {
-        let anchor = self.anchor.unwrap_or(self.cursor);
-        anchor.min(self.cursor)..anchor.max(self.cursor)
-    }
-    fn clear(&mut self) {
-        self.anchor = None;
-        self.cursor = 0;
-        self.dragging = false;
-    }
     fn apply(&mut self, props: &SourceTextProps) {
-        if self.source.as_ref() != props.source {
-            if !props.source.starts_with(self.source.as_ref()) {
-                self.clear();
-                self.geometry = None;
-            }
-            self.source = Arc::from(props.source.as_str());
-        }
-        self.disabled = props.disabled;
-        if self.disabled {
-            self.clear();
-            self.geometry = None;
-        }
-    }
-    fn input(&mut self, event: &Event) -> bool {
-        if self.disabled {
-            return false;
-        }
-        let Some(geometry) = &self.geometry else {
-            return false;
+        let changed = {
+            let doc = self.document.borrow();
+            !props.source.starts_with(doc.source.as_ref()) || props.disabled
         };
-        match event {
-            Event::Mouse(mouse) => {
-                if geometry.source.as_ref() != self.source.as_ref() {
-                    self.dragging = false;
-                    return false;
-                }
-                let point = Position::new(mouse.column, mouse.row);
-                match mouse.kind {
-                    MouseEventKind::Down(MouseButton::Left) if geometry.area.contains(point) => {
-                        let byte = geometry.layout.pointer(geometry.area, 0, point).0;
-                        if mouse.modifiers.contains(KeyModifiers::SHIFT) {
-                            self.anchor.get_or_insert(self.cursor);
-                        } else {
-                            self.anchor = Some(byte);
-                        }
-                        self.cursor = byte;
-                        self.dragging = true;
-                    }
-                    MouseEventKind::Drag(MouseButton::Left) if self.dragging => {
-                        self.cursor = geometry.layout.pointer(geometry.area, 0, point).0;
-                    }
-                    MouseEventKind::Up(MouseButton::Left) if self.dragging => {
-                        self.dragging = false;
-                    }
-                    _ => return false,
-                }
+        if let Some(scope) = SelectionScope::active(&self.document) {
+            if self.document.borrow().source.as_ref() != props.source || props.disabled {
+                scope.release_pointer(&self.document);
             }
-            Event::Key(key) if key.kind != KeyEventKind::Release => {
-                if matches!(key.code, KeyCode::Char('a' | 'A'))
-                    && key.modifiers == KeyModifiers::CONTROL
-                {
-                    self.anchor = Some(0);
-                    self.cursor = self.source.len();
-                    self.dragging = false;
-                    return true;
-                }
-                if key.code == KeyCode::Esc {
-                    self.clear();
-                    return true;
-                }
-                if !key.modifiers.intersects(KeyModifiers::SHIFT) {
-                    return false;
-                }
-                let layout = Layout::literal(&self.source, geometry.area.width);
-                let (row, column) = layout.cursor(self.cursor, false);
-                let next = match key.code {
-                    KeyCode::Left => layout.previous(self.cursor),
-                    KeyCode::Right => layout.next(self.cursor),
-                    KeyCode::Up => layout.byte_at(row.saturating_sub(1), column),
-                    KeyCode::Down => layout.byte_at(row.saturating_add(1), column),
-                    KeyCode::Home => layout.rows[row].start,
-                    KeyCode::End => layout.rows[row].end,
-                    _ => return false,
-                };
-                self.anchor.get_or_insert(self.cursor);
-                self.cursor = next;
-                self.dragging = false;
+            if changed {
+                scope.withdraw(&self.document);
             }
-            _ => return false,
         }
-        true
+        let mut doc = self.document.borrow_mut();
+        if changed {
+            doc.glyphs = None;
+        }
+        if doc.source.as_ref() != props.source {
+            doc.source = Arc::from(props.source.as_str());
+        }
+        doc.disabled = props.disabled;
     }
 }
 struct Recipe(SourceTextProps);
@@ -149,12 +72,15 @@ fn color(rgba: u32) -> Color {
 impl Widget for Recipe {
     fn create(&self) -> Box<dyn Any> {
         Box::new(Owner {
-            source: Arc::from(self.0.source.as_str()),
-            anchor: None,
-            cursor: 0,
-            dragging: false,
-            disabled: self.0.disabled,
-            geometry: None,
+            document: Rc::new(std::cell::RefCell::new(Document {
+                source: Arc::from(self.0.source.as_str()),
+                disabled: self.0.disabled,
+                alive: true,
+                physical: false,
+                glyphs: None,
+                binding: std::rc::Weak::new(),
+                standalone: None,
+            })),
         })
     }
     fn commit(&self, state: &mut dyn Any) -> maka_ui::Result<Option<NativeInput>> {
@@ -163,43 +89,66 @@ impl Widget for Recipe {
     }
     fn input(&self, state: &mut dyn Any, _: &str, event: &Event) -> maka_ui::Result<WidgetInput> {
         let owner = state.downcast_mut::<Owner>().unwrap();
-        Ok(
-            if !self.0.disabled && self.0.source == owner.source.as_ref() && owner.input(event) {
-                WidgetInput::Consumed(None)
-            } else {
-                WidgetInput::Unhandled
-            },
-        )
+        let enabled = !self.0.disabled && self.0.source == owner.document.borrow().source.as_ref();
+        let handled = enabled
+            && SelectionScope::active(&owner.document)
+                .is_some_and(|scope| scope.input(&owner.document, event));
+        Ok(if handled {
+            WidgetInput::Consumed(None)
+        } else {
+            WidgetInput::Unhandled
+        })
     }
     fn pointer_capture(&self, state: &dyn Any) -> bool {
         let owner = state.downcast_ref::<Owner>().unwrap();
+        let doc = owner.document.borrow();
         !self.0.disabled
-            && self.0.source == owner.source.as_ref()
-            && owner.dragging
-            && owner
-                .geometry
+            && doc.alive
+            && doc.physical
+            && self.0.source == doc.source.as_ref()
+            && doc
+                .glyphs
                 .as_ref()
-                .is_some_and(|geometry| geometry.source.as_ref() == owner.source.as_ref())
+                .is_some_and(|glyphs| glyphs.source.as_ref() == doc.source.as_ref())
+            && SelectionScope::active(&owner.document)
+                .is_some_and(|scope| scope.pointer_capture(&owner.document))
     }
-    fn copy(&self, state: &dyn Any) -> Option<String> {
+    fn copy(&self, state: &dyn Any) -> maka_ui::Result<Option<String>> {
         let owner = state.downcast_ref::<Owner>().unwrap();
-        (!self.0.disabled
-            && !owner.disabled
-            && self.0.source.starts_with(owner.source.as_ref())
-            && !owner.range().is_empty())
-        .then(|| owner.source[owner.range()].to_owned())
+        let doc = owner.document.borrow();
+        if self.0.disabled
+            || doc.disabled
+            || !doc.alive
+            || !self.0.source.starts_with(doc.source.as_ref())
+        {
+            return Ok(None);
+        }
+        match SelectionScope::active(&owner.document) {
+            Some(scope) => scope.copy(),
+            None => Ok(None),
+        }
     }
     fn presentation(&self, state: &mut dyn Any, visible: bool) {
+        let owner = state.downcast_mut::<Owner>().unwrap();
+        if !visible && let Some(scope) = SelectionScope::active(&owner.document) {
+            scope.release_pointer(&owner.document);
+        }
+        let mut doc = owner.document.borrow_mut();
+        doc.physical = visible;
         if !visible {
-            let owner = state.downcast_mut::<Owner>().unwrap();
-            owner.geometry = None;
-            owner.dragging = false;
+            doc.glyphs = None;
         }
     }
     fn deactivate(&self, state: &mut dyn Any) {
         let owner = state.downcast_mut::<Owner>().unwrap();
-        owner.clear();
-        owner.geometry = None;
+        if let Some(scope) = SelectionScope::active(&owner.document) {
+            scope.withdraw(&owner.document);
+        }
+        let mut doc = owner.document.borrow_mut();
+        doc.alive = false;
+        doc.physical = false;
+        doc.glyphs = None;
+        doc.standalone = None;
     }
     fn measure(&self, _: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
         let layout = Layout::literal(&self.0.source, width);
@@ -220,9 +169,19 @@ impl Widget for Recipe {
         area: Placement,
         buffer: &mut Buffer,
     ) -> maka_ui::Result<()> {
-        let owner = slots.native_state::<Owner>()?;
-        let layout = Layout::literal(&owner.source, area.width);
-        let range = owner.range();
+        let document = slots.native_state::<Owner>()?.document.clone();
+        let parent = if !self.0.disabled {
+            slots.participant(&document)
+        } else {
+            None
+        };
+        if area.is_empty() {
+            return Ok(());
+        }
+        let doc = document.borrow();
+        let scope = parent.clone().or_else(|| SelectionScope::active(&document));
+        let layout = Layout::literal(&doc.source, area.width);
+        let range = scope.as_ref().map_or(0..0, |scope| scope.range(&document));
         let mut normal = Style::default().fg(color(self.0.appearance.foreground.0));
         if self.0.appearance.font.weight >= 600 {
             normal = normal.add_modifier(Modifier::BOLD);
@@ -247,7 +206,7 @@ impl Widget for Recipe {
                 {
                     continue;
                 }
-                let literal = &owner.source[cell.bytes.clone()];
+                let literal = &doc.source[cell.bytes.clone()];
                 let style = if cell.bytes.start < range.end && cell.bytes.end > range.start {
                     selected
                 } else {
@@ -286,15 +245,21 @@ impl Widget for Recipe {
             }
         }
         if slots.focused() && range.is_empty() {
-            let (row, column) = layout.cursor(owner.cursor, false);
+            let (row, column) = layout.cursor(
+                scope.as_ref().map_or(0, |scope| scope.cursor(&document)),
+                false,
+            );
             if let Some(point) = area.point(column, row) {
                 buffer[(point.x, point.y)].set_style(normal.add_modifier(Modifier::UNDERLINED));
             }
         }
         let geometry = Geometry {
-            source: owner.source.clone(),
-            layout,
-            area,
+            glyphs: Glyphs {
+                source: doc.source.clone(),
+                layout,
+                area,
+            },
+            parent,
         };
         slots.native_geometry(Box::new(geometry))?;
         if !self.0.disabled {
@@ -305,8 +270,18 @@ impl Widget for Recipe {
     fn present(&self, state: &mut dyn Any, geometry: Box<dyn Any>) -> Option<NativeInput> {
         let owner = state.downcast_mut::<Owner>().unwrap();
         let geometry = *geometry.downcast::<Geometry>().unwrap();
-        if !owner.disabled && owner.source.starts_with(geometry.source.as_ref()) {
-            owner.geometry = Some(geometry);
+        if !owner.document.borrow().disabled
+            && owner
+                .document
+                .borrow()
+                .source
+                .starts_with(geometry.glyphs.source.as_ref())
+        {
+            let area = geometry.glyphs.area;
+            owner.document.borrow_mut().glyphs = Some(geometry.glyphs);
+            if geometry.parent.is_none() {
+                SelectionScope::standalone(&owner.document, area);
+            }
         }
         None
     }

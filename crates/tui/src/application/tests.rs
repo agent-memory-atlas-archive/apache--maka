@@ -21,6 +21,8 @@
 mod continuations;
 #[path = "tests/layout.rs"]
 mod layout;
+#[path = "tests/reading.rs"]
+mod reading;
 
 use super::*;
 use crossterm::event::{KeyEvent, MouseEvent};

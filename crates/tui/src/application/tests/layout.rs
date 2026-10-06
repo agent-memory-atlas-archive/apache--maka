@@ -29,6 +29,8 @@ pub(super) enum View {
     Scene(Value),
     ChangingScene(Rc<std::cell::RefCell<Value>>),
     StandaloneSource(Rc<std::cell::RefCell<Value>>),
+    Reading(Rc<std::cell::RefCell<Value>>),
+    ReadingSlot(Rc<std::cell::RefCell<Value>>),
     Flush,
 }
 struct Root {
@@ -41,6 +43,17 @@ impl NativeComponent<dyn Widget> for Root {
         call: ComponentCall<'_>,
         _: &maka_ui::abi::ValueBindings,
     ) -> maka_ui::Result<ComponentOutput<NativeView<dyn Widget>>> {
+        let observation = match &call {
+            ComponentCall::Event { key, input, .. }
+                if matches!(*key, "__reading_observation" | "reading-observed") =>
+            {
+                (*input).clone()
+            }
+            ComponentCall::Update { state, .. } | ComponentCall::Event { state, .. } => {
+                state["observation"].clone()
+            }
+            _ => Value::Null,
+        };
         let (revision, count) = match call {
             ComponentCall::Mount { .. } => (0, 0),
             ComponentCall::Update { state, .. } => (
@@ -80,6 +93,26 @@ impl NativeComponent<dyn Widget> for Root {
                 )?
                 .with_declaration(source.borrow().clone())?
             }
+            View::ReadingSlot(props) => super::super::scene::compile(
+                &json!({
+                    "kind":"stack","key":"container","direction":"column","gap":0,"padding":0,"background":0,"children":[
+                        {"kind":"component","key":"reader","binding":"reading","member":0,"props":props.borrow().clone(),"on":{"observed":"reading-observed"}},
+                        {"kind":"button","key":"back","label":"Back"}
+                    ]
+                }),
+                std::time::Instant::now() + std::time::Duration::from_secs(1),
+            )?,
+            View::Reading(props) => {
+                super::super::reading::Component
+                    .call(
+                        ComponentCall::Mount {
+                            props: &props.borrow(),
+                        },
+                        &Default::default(),
+                    )?
+                    .frame
+                    .view
+            }
             View::Flush => NativeView::<dyn Widget>::new(
                 Rc::new(Flush),
                 BTreeMap::from([("flushed".into(), json!({"type":"integer","minimum":0}))]),
@@ -88,7 +121,7 @@ impl NativeComponent<dyn Widget> for Root {
         };
         Ok(Frame {
             revision,
-            state: json!({"revision":revision,"count":count}),
+            state: json!({"revision":revision,"count":count,"observation":observation}),
             surface: Some(Surface::Terminal {
                 binding: "surface".into(),
             }),
@@ -134,6 +167,115 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
     entry.implementation = Implementation::Native {
         implementation: "test.layout".into(),
     };
+    if matches!(view, View::Reading(_) | View::ReadingSlot(_)) {
+        use maka_plugin_core::{
+            composition::Target,
+            contract::{Availability, Cardinality, Export, Import},
+            package::{Declaration, EntryDeclaration},
+        };
+        let source_contract = maka_ui::source::source_contract();
+        entry.imports.insert(
+            "source".into(),
+            Import {
+                contract: source_contract.clone(),
+                cardinality: Cardinality::One,
+            },
+        );
+        let source = support::package(
+            "test.source",
+            Declaration {
+                entries: BTreeMap::from([(
+                    EntryTarget::Tui,
+                    EntryDeclaration {
+                        scene: None,
+                        implementation: Implementation::Native {
+                            implementation: "maka.ui.source".into(),
+                        },
+                        configuration: json!({"type":"object"}),
+                        imports: BTreeMap::new(),
+                        exports: BTreeMap::from([(
+                            "SourceText".into(),
+                            Export {
+                                contract: source_contract,
+                                availability: Availability::Required,
+                            },
+                        )]),
+                    },
+                )]),
+                composition: None,
+            },
+            None,
+        );
+        input.instances.get_mut("app").unwrap().bindings.insert(
+            "source".into(),
+            vec![Target::Instance {
+                path: vec!["source".into()],
+                export: "SourceText".into(),
+            }],
+        );
+        input
+            .instances
+            .insert("source".into(), support::node(&source, 150));
+        packages.push(source);
+        if matches!(view, View::ReadingSlot(_)) {
+            let contract = maka_ui::reading::reading_contract();
+            entry.imports.insert(
+                "reading".into(),
+                Import {
+                    contract: contract.clone(),
+                    cardinality: Cardinality::One,
+                },
+            );
+            let reading = support::package(
+                "test.reading",
+                Declaration {
+                    entries: BTreeMap::from([(
+                        EntryTarget::Tui,
+                        EntryDeclaration {
+                            scene: None,
+                            implementation: Implementation::Native {
+                                implementation: "maka.ui.reading".into(),
+                            },
+                            configuration: json!({"type":"object"}),
+                            imports: BTreeMap::from([(
+                                "source".into(),
+                                Import {
+                                    contract: maka_ui::source::source_contract(),
+                                    cardinality: Cardinality::One,
+                                },
+                            )]),
+                            exports: BTreeMap::from([(
+                                "ReadingArea".into(),
+                                Export {
+                                    contract,
+                                    availability: Availability::Required,
+                                },
+                            )]),
+                        },
+                    )]),
+                    composition: None,
+                },
+                None,
+            );
+            let mut node = support::node(&reading, 151);
+            node.bindings.insert(
+                "source".into(),
+                vec![Target::Instance {
+                    path: vec!["source".into()],
+                    export: "SourceText".into(),
+                }],
+            );
+            input.instances.insert("reading".into(), node);
+            input.instances.get_mut("app").unwrap().bindings.insert(
+                "reading".into(),
+                vec![Target::Instance {
+                    path: vec!["reading".into()],
+                    export: "ReadingArea".into(),
+                }],
+            );
+            packages.push(reading);
+        }
+    }
     let contract = entry.exports["App"].contract.clone();
     let package = support::package(
         "dynamic.app",

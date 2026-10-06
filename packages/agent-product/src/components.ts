@@ -192,19 +192,17 @@ export function components(target: Target): {
                 } satisfies MarkdownProps,
                 {},
               )
-            : target === 'desktop'
-              ? slot(
-                  'text-' + message.id,
-                  'source',
-                  {
-                    source: message.text,
-                    appearance: props.theme.markdown.body,
-                    selection: props.theme.markdown.selection,
-                    disabled: false,
-                  },
-                  {},
-                )
-              : ui.text('text-' + message.id, message.text, 16),
+            : slot(
+                'text-' + message.id,
+                'source',
+                {
+                  source: message.text,
+                  appearance: props.theme.markdown.body,
+                  selection: props.theme.markdown.selection,
+                  disabled: false,
+                },
+                {},
+              ),
           ...(message.source !== null
             ? [ui.button('source-' + message.source, text.readSource, props.loading)]
             : []),
@@ -260,9 +258,7 @@ export function components(target: Target): {
           ...(props.older ? [ui.button('older', text.older, props.loading)] : []),
           ...(props.newer ? [ui.button('newer', text.newer, props.loading)] : []),
           ...(props.latest ? [ui.button('latest', text.latest, props.loading)] : []),
-          ...(target === 'desktop' &&
-          state.observation?.viewport &&
-          !state.observation.viewport.atEnd
+          ...(state.observation?.viewport && !state.observation.viewport.atEnd
             ? [ui.button('end', text.toEnd, state.observation.pendingCommand != null)]
             : []),
         ];
@@ -274,14 +270,12 @@ export function components(target: Target): {
           ui.box(
             'retained-conversation',
             [
-              target === 'desktop'
-                ? slot(
-                    'reading',
-                    'reading',
-                    { content, command: state.command },
-                    { observed: 'reading-observed', input: 'reading-input' },
-                  )
-                : content,
+              slot(
+                'reading',
+                'reading',
+                { content, command: state.command },
+                { observed: 'reading-observed', input: 'reading-input' },
+              ),
             ],
             { visible: !props.source, style: { width: fill, height: fill }, terminal: { grow: 1 } },
           ),
@@ -305,19 +299,17 @@ export function components(target: Target): {
                         13,
                         props.theme.muted,
                       ),
-                      target === 'desktop'
-                        ? slot(
-                            'source-text-' + source.key,
-                            'source',
-                            {
-                              source: source.text,
-                              appearance: props.theme.markdown.body,
-                              selection: props.theme.markdown.selection,
-                              disabled: false,
-                            },
-                            {},
-                          )
-                        : ui.text('source-text', source.text, 16),
+                      slot(
+                        'source-text-' + source.key,
+                        'source',
+                        {
+                          source: source.text,
+                          appearance: props.theme.markdown.body,
+                          selection: props.theme.markdown.selection,
+                          disabled: false,
+                        },
+                        {},
+                      ),
                       ...(source.loading
                         ? [ui.text('source-loading', text.loading, 13, props.theme.muted)]
                         : []),
@@ -336,20 +328,18 @@ export function components(target: Target): {
                       },
                     },
                   );
-                  return target === 'desktop'
-                    ? slot(
-                        'source-reading',
-                        'reading',
-                        {
-                          content: sourceContent,
-                          command: {
-                            sequence: source.navigation,
-                            target: { kind: source.landing },
-                          },
-                        },
-                        { input: 'source-input' },
-                      )
-                    : sourceContent;
+                  return slot(
+                    'source-reading',
+                    'reading',
+                    {
+                      content: sourceContent,
+                      command: {
+                        sequence: source.navigation,
+                        target: { kind: source.landing },
+                      },
+                    },
+                    { input: 'source-input' },
+                  );
                 })(),
               ]
             : []),
@@ -469,7 +459,6 @@ export function components(target: Target): {
         if (
           input.kind === 'raw' &&
           input.key === 'end' &&
-          target === 'desktop' &&
           next.observation?.viewport &&
           !next.observation.viewport.atEnd &&
           next.observation.pendingCommand == null

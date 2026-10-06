@@ -26,6 +26,7 @@ use std::collections::BTreeMap;
 #[derive(Default)]
 pub(super) struct SceneState {
     pub generation: u64,
+    pub reading: Option<super::reading::ReadingState>,
     pub scrolls: BTreeMap<String, ScrollState>,
 }
 #[derive(Default)]
@@ -42,6 +43,10 @@ pub(super) struct Viewport {
     pub offset: u32,
     pub intent: u64,
     pub anchor: Option<(String, i64)>,
+    pub reading_revision: Option<u64>,
+    pub reading_intent: Option<u64>,
+    pub command: Option<(u64, bool)>,
+    pub visible_child_keys: Vec<String>,
 }
 pub(super) struct Geometry {
     pub generation: u64,
@@ -51,7 +56,7 @@ impl Viewport {
     pub fn end(&self) -> u32 {
         self.content.saturating_sub(self.area.height)
     }
-    fn at_end(&self) -> bool {
+    pub fn at_end(&self) -> bool {
         let visible_rows = (i64::from(self.area.visible().bottom()) - self.area.y).max(0) as u32;
         self.offset.saturating_add(visible_rows) >= self.content
     }
@@ -111,6 +116,43 @@ impl SceneState {
                 offset = (i64::from(*start) + *delta).clamp(0, i64::from(end)) as u32;
             }
         }
+        let reading = self
+            .reading
+            .as_ref()
+            .filter(|reading| reading.root_key == key);
+        let command = reading
+            .and_then(|reading| {
+                reading
+                    .pending
+                    .as_ref()
+                    .filter(|pending| pending.intent == reading.scope.intent())
+            })
+            .map(|pending| {
+                let command = &pending.command;
+                use maka_ui::reading::ReadingTarget;
+                let target = match &command.target {
+                    ReadingTarget::Start => Some(0),
+                    ReadingTarget::End => Some(end),
+                    ReadingTarget::RevealChild { key } => children
+                        .iter()
+                        .find(|(candidate, _, _)| candidate == key)
+                        .map(|(_, start, _)| (*start).min(end)),
+                };
+                if let Some(target) = target {
+                    offset = target;
+                }
+                (command.sequence, target.is_some())
+            });
+        let visible_start =
+            offset.saturating_add((i64::from(area.visible().y) - area.y).max(0) as u32);
+        let visible_end = visible_start.saturating_add(u32::from(area.visible().height));
+        let visible_child_keys = children
+            .iter()
+            .filter(|(_, start, height)| {
+                *start < visible_end && start.saturating_add(*height) > visible_start
+            })
+            .map(|(key, _, _)| key.clone())
+            .collect();
         let anchor = children
             .iter()
             .find(|(_, start, height)| start.saturating_add(*height) > offset)
@@ -121,6 +163,10 @@ impl SceneState {
             offset,
             intent: state.intent,
             anchor,
+            reading_revision: reading.map(|reading| reading.scope.revision()),
+            reading_intent: reading.map(|reading| reading.scope.intent()),
+            command,
+            visible_child_keys,
         }
     }
     pub fn present(&mut self, geometry: Geometry) {
@@ -129,8 +175,18 @@ impl SceneState {
         }
         for (key, viewport) in geometry.viewports {
             if let Some(state) = self.scrolls.get_mut(&key) {
-                if state.intent != viewport.intent {
+                if viewport.area.is_empty() || state.intent != viewport.intent {
                     continue;
+                }
+                if let Some(reading) = self
+                    .reading
+                    .as_mut()
+                    .filter(|reading| reading.root_key == key)
+                {
+                    reading.accept(&viewport);
+                    if viewport.reading_revision != Some(reading.scope.revision()) {
+                        continue;
+                    }
                 }
                 state.offset = viewport.offset;
                 state.initialized = true;
@@ -167,6 +223,10 @@ impl SceneState {
         };
         let next = (i64::from(state.offset) + delta).clamp(0, i64::from(viewport.end())) as u32;
         state.intent += 1;
+        if let Some(reading) = &mut self.reading {
+            reading.scope.touch();
+            reading.cancel();
+        }
         let changed = state.offset != next;
         state.offset = next;
         changed

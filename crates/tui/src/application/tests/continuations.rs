@@ -82,7 +82,9 @@ impl maka_plugins::call::ReadResource for Text {
             .ok_or_else(|| "range".into())
     }
 }
-struct Component;
+struct Component {
+    visible: Rc<Cell<bool>>,
+}
 impl NativeComponent<dyn Widget> for Component {
     fn call(
         &self,
@@ -99,7 +101,8 @@ impl NativeComponent<dyn Widget> for Component {
             revision,
             state: json!({"revision":revision}),
             surface: None,
-            view: NativeView::<dyn Widget>::new(Rc::new(Probe), BTreeMap::new(), vec![])?,
+            view: NativeView::<dyn Widget>::new(Rc::new(Probe), BTreeMap::new(), vec![])?
+                .with_root_visibility(self.visible.get()),
         }
         .output(vec![]))
     }
@@ -127,10 +130,17 @@ fn terminal_fixture() -> (Input, Vec<Package>, maka_plugin_core::contract::Contr
         }
         declaration.entries.insert(EntryTarget::Tui, entry);
         let source = original.file("index.mjs").map(|bytes| {
-            std::str::from_utf8(bytes).unwrap().replace(
+            let source = std::str::from_utf8(bytes).unwrap().replace(
                 "{kind:'window',binding:'surface',title:'Immutable draft',width:640,height:480}",
                 "{kind:'terminal',binding:'surface'}",
-            )
+            );
+            if original.manifest().id == "dynamic.app" {
+                source.replace("initialText:'Start'", "initialText:state.label??'Start'")
+                    .replace("else if(event.key==='remove')next.show=false;", "else if(event.key==='refresh')next.label=event.event.label;else if(event.key==='remove')next.show=false;")
+                    .replace("{kind:'button',key:'read',label:'Capture draft'}", "{kind:'button',key:'refresh',label:'Refresh'},{kind:'button',key:'read',label:'Capture draft'}")
+                    .replace("...(state.show?[{kind:'component',key:'editor'", "...[{kind:'stack',key:'editor-route',direction:'column',padding:0,gap:0,background:0,visible:state.show,children:[{kind:'component',key:'editor'")
+                    .replace("command:state.command??null}}]:[])", "command:state.command??null}}]}]")
+            } else { source }
         });
         let replacement = support::package(&original.manifest().id, declaration, source);
         for instance in input.instances.values_mut() {
@@ -149,18 +159,30 @@ fn terminal_pump_uses_original_native_continuation_before_feedback_publication()
         .enable_all()
         .build()
         .unwrap();
-    for change in ["none", "reading", "owner", "retained_owner"] {
+    for change in [
+        "none",
+        "reading",
+        "owner",
+        "retained_owner",
+        "hidden",
+        "hidden_restored",
+        "own_hidden_restored",
+    ] {
         let (input, packages, contract) = terminal_fixture();
         let mut registry = NativeRegistry::with_surface(PresentationTarget::Tui)
             .with_scene_compiler(scene::language(), scene::compile)
             .unwrap();
+        let visible = Rc::new(Cell::new(true));
+        let component_visible = visible.clone();
         registry
             .register("maka.ui.textarea", move |_, _| {
                 Ok(BTreeMap::from([(
                     "Textarea".into(),
                     NativeExport {
                         contract: contract.clone(),
-                        value: NativeCapability::Component(Rc::new(Component)),
+                        value: NativeCapability::Component(Rc::new(Component {
+                            visible: component_visible.clone(),
+                        })),
                     },
                 )]))
             })
@@ -217,6 +239,64 @@ fn terminal_pump_uses_original_native_continuation_before_feedback_publication()
                 let original = Rc::downgrade(&owner.identity);
                 owner.identity = Rc::new(());
                 assert_eq!(original.upgrade().is_some(), retained.is_some());
+            }
+            "own_hidden_restored" => {
+                let identity = presenter.resources.owners[&leaf.id()].identity.clone();
+                for show in [false, true] {
+                    visible.set(show);
+                    let revision = presenter.application.frame(&leaf).unwrap().revision;
+                    let revision_root = presenter
+                        .application
+                        .frame(&presenter.root)
+                        .unwrap()
+                        .revision;
+                    presenter
+                        .application
+                        .dispatch(
+                            &presenter.root,
+                            revision_root,
+                            "refresh",
+                            json!({"label":if show { "restored" } else { "hidden" }}),
+                        )
+                        .unwrap();
+                    assert!(presenter.application.frame(&leaf).unwrap().revision > revision);
+                }
+                draw(&mut presenter, 80, 60);
+                assert!(Rc::ptr_eq(
+                    &identity,
+                    &presenter.resources.owners[&leaf.id()].identity
+                ));
+            }
+            "hidden" | "hidden_restored" => {
+                let identity = presenter.resources.owners[&leaf.id()].identity.clone();
+                let revision = presenter
+                    .application
+                    .frame(&presenter.root)
+                    .unwrap()
+                    .revision;
+                presenter
+                    .application
+                    .dispatch(&presenter.root, revision, "remove", json!({}))
+                    .unwrap();
+                if change == "hidden_restored" {
+                    let revision = presenter
+                        .application
+                        .frame(&presenter.root)
+                        .unwrap()
+                        .revision;
+                    presenter
+                        .application
+                        .dispatch(&presenter.root, revision, "restore", json!({}))
+                        .unwrap();
+                }
+                assert!(Rc::ptr_eq(
+                    &identity,
+                    &presenter.resources.owners[&leaf.id()].identity
+                ));
+                assert_eq!(
+                    presenter.application.child_mount(&outer, "draft").unwrap(),
+                    &leaf
+                );
             }
             _ => {}
         }

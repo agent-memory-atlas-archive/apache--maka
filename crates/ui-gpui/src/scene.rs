@@ -463,8 +463,10 @@ pub(crate) fn compile_with_inputs(
             "native scene render depth limit".into(),
         ));
     }
+    let visible = !matches!(&node, Node::Stack { visible: false, .. });
     NativeView::new(Rc::new(node) as Rc<dyn super::Widget>, inputs, slots)?
         .with_hidden_slots(hidden_slots)?
+        .with_root_visibility(visible)
         .with_render_depth(depth, slot_depth)
 }
 // The mount owns mechanical state. Layout ancestry is not focus/scroll identity.

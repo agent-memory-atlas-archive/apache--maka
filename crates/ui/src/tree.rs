@@ -364,7 +364,7 @@ impl<V: ?Sized + 'static> Application<V> {
             .pop()
             .expect("nonempty mount chain"))
     }
-    fn mount_chain(&self, mount: &Mount) -> Result<Vec<Mount>> {
+    pub(super) fn mount_chain(&self, mount: &Mount) -> Result<Vec<Mount>> {
         let parents: BTreeMap<_, _> = self
             .runtime
             .mount_statuses()

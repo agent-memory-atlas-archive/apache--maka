@@ -2953,7 +2953,7 @@ for (const target of ['desktop', 'tui']) {
       );
       assert.deepEqual(out.events, [{ name: 'sourceFirst', value: {} }]);
       assert.equal(out.frame.view.children.at(-1).key, 'reading-controls');
-      if (target === 'desktop') {
+      {
         const reader = out.frame.view.children[1];
         assert.equal(reader.key, 'source-reading');
         const body = modelSlots(reader.props.content).find((node) => node.binding === 'source');
@@ -3006,16 +3006,18 @@ test('TUI reader declares a flexible body and wrapped controls while keeping dra
   const originalTimeline = timeline.mount(client.timeline, {}).frame.view;
   const retained = originalTimeline.children.find((node) => node.key === 'retained-conversation');
   assert.equal(retained.layout.grow, 1);
-  assert.equal(retained.children[0].layout.grow, 1);
-  assert.ok(['anchor', 'follow_end'].includes(retained.children[0].scroll));
+  assert.equal(retained.children[0].props.content.layout.grow, 1);
+  assert.ok(['anchor', 'follow_end'].includes(retained.children[0].props.content.scroll));
   const originalDraft = modelSlots(client.output.frame.view).find(
     (node) => node.binding === 'composer',
   );
   client.component('source', { sequence: 400 });
   const frame = timeline.mount(client.timeline, {}).frame.view;
   assert.equal(frame.layout.grow, 1);
-  assert.equal(frame.children.find((node) => node.key === 'source-document').layout.grow, 1);
-  assert.equal(frame.children.find((node) => node.key === 'source-document').scroll, 'anchor');
+  const reading = frame.children.find((node) => node.key === 'source-reading');
+  assert.equal(reading.binding, 'reading');
+  assert.equal(reading.props.content.layout.grow, 1);
+  assert.equal(reading.props.content.scroll, 'anchor');
   assert.equal(frame.children.at(-1).layout.wrap, true);
   assert.equal(frame.children.at(-1).gap, 1);
   const main = routes().find((node) => node.key === 'main-route').children[0];

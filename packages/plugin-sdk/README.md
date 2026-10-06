@@ -126,8 +126,8 @@ without publishing the service value, undoing execution, or confirming cleanup. 
 widgets implement the observation check; a missing capture is `not_accepted`. These mechanics
 do not by themselves implement product history navigation.
 
-Desktop provides `contracts.readingArea` (`maka.ui.reading`, export `ReadingArea`).
-Its `content` uses the checked Desktop scene language: a scrolling column Stack,
+Desktop and TUI provide `contracts.readingArea` (`maka.ui.reading`, export `ReadingArea`).
+Its `content` uses the selected presenter's checked scene language: a scrolling column Stack,
 with its own declared component bindings. The original native scroll and text
 selection owners retain geometry and selection; plugins receive `observed` facts
 and `input` events, never pixel offsets. Numbered `start`, `end`, and `reveal_child`
@@ -148,13 +148,16 @@ Watch progress never automatically replaces it. Live excerpts retain a bounded
 prefix after the displayed fence; complete canonical messages alone use Markdown.
 The product also opens a fixed-fence, single-message source reader with bounded
 beginning/previous/next/end excerpts, exact retry and Back to the retained
-conversation. Desktop selects literal source; TUI currently uses plain labels.
-TUI provides standalone native `SourceText` with the same contract and implementation name.
+conversation. Both presenters use native ReadingArea and literal SourceText; complete
+Desktop assistant messages additionally use Markdown. TUI provides native SourceText with
+the same contract and implementation name.
 It preserves literal UTF-8 selection bytes (including CRLF, tabs and controls), displays controls
 safely, and copies through Ctrl+Shift+C; Copy is a bounded OSC52 write, not an OS acknowledgement.
 Prefix append preserves existing byte endpoints; replacement/disabled revokes the old selection.
-TUI ReadingArea aggregate selection, ordinary product integration and actual whole-reader OS
-acceptance remain unfinished.
+TUI ReadingArea shares one selection across logical SourceText participants, including clipped
+source in Select All. Selection and active pointer gestures invalidate automatic tail replacement.
+Copy rejects a selection over 64 KiB before allocating or writing, preserving its original range.
+Actual whole-reader OS acceptance remains unfinished.
 
 Persisted UI components submit mutations, including declared captured resources, through their ordinary
 `actions`. The kernel generates the operation identity and records the original

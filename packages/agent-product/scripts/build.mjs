@@ -210,7 +210,9 @@ for (const [name, spec] of Object.entries(specifications)) {
       ...(name === 'appearance' ? {} : { scene: { name: `maka.${target}.scene`, version: 1 } }),
     };
   }
-  if (name === 'timeline') entries.desktop.imports.reading = one(sdk.contracts.readingArea);
+  if (name === 'timeline')
+    for (const target of ['desktop', 'tui'])
+      entries[target].imports.reading = one(sdk.contracts.readingArea);
   // A surface is an explicit capability in the root's checked plan.
   if (name === 'workspace')
     for (const target of ['desktop', 'tui'])
@@ -235,11 +237,16 @@ const mechanical = {
         ...native('maka.ui.reading', { ReadingArea: required(sdk.contracts.readingArea) }),
         imports: { markdown: one(sdk.contracts.markdown), source: one(sdk.contracts.sourceText) },
       },
+      tui: {
+        ...native('maka.ui.reading', { ReadingArea: required(sdk.contracts.readingArea) }),
+        imports: { source: one(sdk.contracts.sourceText) },
+      },
     },
   },
   'source-text': {
     entries: {
       desktop: native('maka.ui.source', { SourceText: required(sdk.contracts.sourceText) }),
+      tui: native('maka.ui.source', { SourceText: required(sdk.contracts.sourceText) }),
     },
   },
   markdown: {
