@@ -114,6 +114,7 @@ impl Drop for NativeInstance {
 }
 
 pub(super) struct NativeResources {
+    pub budget: super::widgets::NativeBudget,
     pub owners: BTreeMap<String, NativeInstance>,
     // The root also owns a platform window. Renderer-resource release alone
     // cannot confirm its cleanup; retain that fence pending a platform receipt.
@@ -191,6 +192,7 @@ impl NativeResources {
     }
     pub fn new(surface: Mount, wake: UnboundedSender<()>) -> Self {
         Self {
+            budget: super::widgets::NativeBudget::default(),
             surface,
             removed: false,
             platform_confirmed: false,

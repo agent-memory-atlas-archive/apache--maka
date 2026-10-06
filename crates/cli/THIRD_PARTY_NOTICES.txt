@@ -13996,7 +13996,6 @@ https://crates.io/api/v1/crates/gix-worktree/0.56.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/gix-zlib/0.1.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/gix/0.87.1/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/half/2.7.1/download :: LICENSE-APACHE
-https://crates.io/api/v1/crates/image-webp/0.2.4/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/image/0.25.10/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/miniz_oxide/0.8.9/download :: LICENSE-APACHE.md
 https://crates.io/api/v1/crates/miniz_oxide/0.9.1/download :: LICENSE-APACHE.md
@@ -14010,6 +14009,7 @@ https://crates.io/api/v1/crates/time-core/0.1.9/download :: LICENSE-Apache
 https://crates.io/api/v1/crates/time-macros/0.2.32/download :: LICENSE-Apache
 https://crates.io/api/v1/crates/time/0.3.55/download :: LICENSE-Apache
 https://crates.io/api/v1/crates/widestring/1.2.1/download :: LICENSE-APACHE
+https://github.com/image-rs/image-webp#08b57d473c90148dd4b37a075df365afc3dfcc2b (adapted; third-party/image-webp) :: LICENSE-APACHE
 
 Apache License
                            Version 2.0, January 2004
@@ -14196,9 +14196,9 @@ image@0.25.10 (MIT OR Apache-2.0); authors declared by package: The image-rs Dev
 io-close@0.3.7 (MIT OR Apache-2.0); authors declared by package: wufz
 
 https://crates.io/api/v1/crates/fdeflate/0.3.7/download :: LICENSE-MIT
-https://crates.io/api/v1/crates/image-webp/0.2.4/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/image/0.25.10/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/io-close/0.3.7/download :: LICENSE-MIT
+https://github.com/image-rs/image-webp#08b57d473c90148dd4b37a075df365afc3dfcc2b (adapted; third-party/image-webp) :: LICENSE-MIT
 
 MIT License
 

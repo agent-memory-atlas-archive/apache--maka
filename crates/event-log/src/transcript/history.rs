@@ -230,6 +230,7 @@ pub(super) async fn tool_metadata(
                     WHERE call.session_id = source.session_id AND call.sequence <= ?3 AND call.sequence < source.sequence
                       AND call.message_id = json_extract(source.payload, '$.toolUseId')
                       AND json_extract(call.payload, '$.type') = 'tool_call' LIMIT 1),
+                'image', json(CASE json_extract(source.payload, '$.content.kind') WHEN 'image' THEN 'true' ELSE 'false' END),
                 'isError', json(CASE json_extract(source.payload, '$.isError') WHEN 1 THEN 'true' ELSE 'false' END))
             END AS value FROM transcript_rows source WHERE source.session_id = ?1 AND source.sequence = ?2)
          SELECT length(CAST(value AS BLOB)), CASE WHEN length(CAST(value AS BLOB)) <= ?4 THEN value END FROM metadata",

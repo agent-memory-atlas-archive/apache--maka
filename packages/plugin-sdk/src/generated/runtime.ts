@@ -41,6 +41,8 @@ export type RuntimeProtocol =
   | TextareaProps
   | MarkdownProps
   | MarkdownLink
+  | ImageProps
+  | ImageObservation
   | SourceTextProps
   | ReadingProps
   | ReadingObservation
@@ -375,6 +377,17 @@ export type EditorEdit =
       text: string;
       kind: 'reset';
     };
+export type ImageFit = 'contain' | 'cover';
+export type ImagePhase = 'empty' | 'receiving' | 'decoding' | 'ready' | 'failed';
+export type ImageError =
+  | 'budget_exhausted'
+  | 'limit_exceeded'
+  | 'source_conflict'
+  | 'packet_rejected'
+  | 'digest_mismatch'
+  | 'unsupported_format'
+  | 'invalid_image'
+  | 'decode_failed';
 export type ReadingTarget =
   | {
       kind: 'start';
@@ -986,6 +999,10 @@ export type HistoryTool =
        * The presentation's error flag does not distinguish failed from unknown effects.
        */
       isError: boolean;
+      /**
+       * Canonical content is an image; this does not grant artifact reads.
+       */
+      image: boolean;
       kind: 'result';
     };
 export type AgentHistoryPage =
@@ -1570,6 +1587,47 @@ export interface MarkdownAppearance {
 }
 export interface MarkdownLink {
   url: string;
+}
+export interface ImageProps {
+  source?: ImageDescriptor | null;
+  packet?: ImagePacket | null;
+  alt: string;
+  fit: ImageFit;
+  height: number;
+  background: Color;
+  border: Color;
+  radius: number;
+}
+export interface ImageDescriptor {
+  key: string;
+  digest: string;
+  mimeType: string;
+  totalBytes: number;
+}
+export interface ImagePacket {
+  owner: string;
+  source: string;
+  sequence: number;
+  offset: number;
+  data: string;
+}
+export interface ImageObservation {
+  owner: string;
+  revision: number;
+  source?: string | null;
+  received: number;
+  phase: ImagePhase;
+  width?: number | null;
+  height?: number | null;
+  error?: ImageError | null;
+  receipt?: ImageReceipt | null;
+}
+export interface ImageReceipt {
+  owner: string;
+  source: string;
+  sequence: number;
+  accepted: boolean;
+  error?: ImageError | null;
 }
 export interface SourceTextProps {
   source: string;

@@ -442,4 +442,6 @@ test('vendored provenance is finite and does not exempt Maka additions', () => {
   assert.equal(classifyPath('third-party/gpui-kit/crates/base/src/new.rs').status, 'covered');
   assert.equal(classifyPath('third-party/sqlx-sqlite/src/connection/mod.rs').status, 'excluded');
   assert.equal(classifyPath('third-party/sqlx-sqlite/src/new.rs').status, 'covered');
+  assert.equal(classifyPath('third-party/image-webp/src/vp8.rs').status, 'excluded');
+  assert.equal(classifyPath('third-party/image-webp/src/new.rs').status, 'covered');
 });

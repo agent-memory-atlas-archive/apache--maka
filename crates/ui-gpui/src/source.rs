@@ -269,9 +269,12 @@ mod tests {
             "selection":0x4466ff55u32,"disabled":false })).unwrap();
         let scope = TextSelectionScopeId::new();
         let (root, window_cx) = cx.add_window_view(|window, cx| {
-            let input = LiveInput(Rc::new(std::cell::RefCell::new(Some(crate::Input(
-                Rc::new(|_, _, _, _| Ok(Default::default())),
-            )))));
+            let input = LiveInput::new(
+                Rc::new(std::cell::RefCell::new(Some(crate::Input(Rc::new(
+                    |_, _, _, _| Ok(Default::default()),
+                ))))),
+                crate::NativeBudget::default(),
+            );
             Root {
                 owner: Owner::new(&props, input, window, cx),
                 scope,
@@ -402,9 +405,12 @@ mod tests {
                 ("two", scope),
                 ("other", TextSelectionScopeId::new()),
             ] {
-                let input = LiveInput(Rc::new(std::cell::RefCell::new(Some(crate::Input(
-                    Rc::new(|_, _, _, _| Ok(Default::default())),
-                )))));
+                let input = LiveInput::new(
+                    Rc::new(std::cell::RefCell::new(Some(crate::Input(Rc::new(
+                        |_, _, _, _| Ok(Default::default()),
+                    ))))),
+                    crate::NativeBudget::default(),
+                );
                 owners.push((Owner::new(&make(source), input, window, cx), scope));
             }
             Peers {
@@ -456,9 +462,12 @@ mod tests {
         let props: SourceTextProps=serde_json::from_value(json!({"source":"alpha wor",
             "appearance":{"font":{"family":"Helvetica","fallbacks":[],"size":16,"lineHeight":1.5,"weight":400},"foreground":0x242724ffu32},"selection":0x4466ff55u32,"disabled":false})).unwrap();
         let (root, w) = cx.add_window_view(|window, cx| {
-            let input = LiveInput(Rc::new(std::cell::RefCell::new(Some(crate::Input(
-                Rc::new(|_, _, _, _| Ok(Default::default())),
-            )))));
+            let input = LiveInput::new(
+                Rc::new(std::cell::RefCell::new(Some(crate::Input(Rc::new(
+                    |_, _, _, _| Ok(Default::default()),
+                ))))),
+                crate::NativeBudget::default(),
+            );
             Peers {
                 owners: vec![(
                     Owner::new(&props, input, window, cx),
@@ -560,9 +569,12 @@ mod tests {
             "appearance":{"body":text,"code":text,"headings":[text,text,text,text,text,text],"muted":0x444444ffu32,"link":0x004499ffu32,"selection":0x4466ff55u32,"codeBackground":0,"tableBackground":0,"border":0,"dark":false,"paragraphGap":8}})).unwrap();
         let (root, w) = cx.add_window_view(|window, cx| {
             let input = || {
-                LiveInput(Rc::new(std::cell::RefCell::new(Some(crate::Input(
-                    Rc::new(|_, _, _, _| Ok(Default::default())),
-                )))))
+                LiveInput::new(
+                    Rc::new(std::cell::RefCell::new(Some(crate::Input(Rc::new(
+                        |_, _, _, _| Ok(Default::default()),
+                    ))))),
+                    crate::NativeBudget::default(),
+                )
             };
             Mixed {
                 source: Owner::new(&props, input(), window, cx),

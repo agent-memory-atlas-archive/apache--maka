@@ -243,6 +243,9 @@ export function components(target: Target): {
                 ui.box(
                   'tool-actions-' + message.id,
                   [
+                    ...(message.image && message.source !== null
+                      ? [ui.button('image-' + message.source, text.viewImage, props.loading)]
+                      : []),
                     ...(message.source !== null
                       ? [
                           ui.button(
@@ -606,6 +609,11 @@ export function components(target: Target): {
               (message.role === 'tool_call' || message.role === 'tool_result') &&
               input.key === 'tool-source-' + message.source,
           );
+          const image = props.messages.find(
+            (message) =>
+              message.image && message.source !== null && input.key === 'image-' + message.source,
+          );
+          if (image) out.events.push({ name: 'viewImage', value: { sequence: image.source } });
           if (tool) out.events.push({ name: 'toolSource', value: { sequence: tool.source } });
           const message = props.messages.find(
             (message) => message.source !== null && input.key === 'source-' + message.source,

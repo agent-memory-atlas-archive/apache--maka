@@ -109,6 +109,7 @@ export interface State {
   navigationOpen: boolean;
   window: { page: Extract<AgentHistoryPage, { kind: 'ready' }>; latest: boolean } | null;
   navigation: number;
+  image: { sessionId: string; through: number; sequence: number } | null;
   source: {
     through: number;
     chunk: AgentHistoryChunk;
@@ -208,6 +209,7 @@ function messages(state: State): Message[] {
     tool: chunk.tool,
     continued: chunk.offset !== 0 || utf8Bytes(chunk.text) !== chunk.totalBytes,
     source: chunk.sequence,
+    image: chunk.tool?.kind === 'result' && chunk.tool.image,
   }));
   if (!state.window?.latest) return canonical;
   const live = new Map<string, Message>();
@@ -227,6 +229,7 @@ function messages(state: State): Message[] {
         tool: null,
         continued: true,
         source: null,
+        image: false,
       };
       live.set(fragment.messageId, message);
     }
@@ -281,6 +284,7 @@ function follow(state: State, actions: Action[]) {
   if (
     receipt?.landing === state.landing.sequence &&
     !state.source &&
+    !state.image &&
     !state.loading &&
     state.window?.latest &&
     (state.latestKnown > state.window.page.through ||
@@ -308,6 +312,7 @@ function select(state: State, actions: Action[], sessionId: string) {
   state.epoch++;
   state.window = null;
   state.source = null;
+  state.image = null;
   state.tailReceipt = null;
   state.followAttempt = null;
   state.navigation++;
@@ -852,6 +857,7 @@ function frame(
       latest: 'latest',
       source: 'source',
       toolSource: 'tool-source',
+      viewImage: 'view-image',
       sourceFirst: 'source-first',
       sourcePrevious: 'source-previous',
       sourceNext: 'source-next',
@@ -860,6 +866,18 @@ function frame(
       sourceRetry: 'source-retry',
       tailReady: 'tail-ready',
     },
+  );
+  const imageViewer = slot(
+    'image-viewer',
+    'imageViewer',
+    {
+      theme,
+      locale,
+      image: state.image,
+      active:
+        !!state.image && !state.settingsOpen && (target === 'desktop' || !state.navigationOpen),
+    },
+    { closed: 'image-closed' },
   );
   const composer = slot(
     'composer',
@@ -974,17 +992,40 @@ function frame(
       ),
       ...(target === 'desktop'
         ? [
-            ui.box('conversation', [timeline], {
-              style: { width: fill, height: pixels(0), grow: 1, shrink: 1, minHeight: 0 },
-            }),
+            ui.box(
+              'conversation',
+              [
+                ui.box('retained-timeline', [timeline], {
+                  visible: !state.image,
+                  style: { width: fill, height: fill },
+                  terminal: { grow: 1 },
+                }),
+                imageViewer,
+              ],
+              {
+                style: { width: fill, height: pixels(0), grow: 1, shrink: 1, minHeight: 0 },
+              },
+            ),
             ui.box('input-area', [composer], {
+              visible: !state.image,
               padding: 24,
               style: { width: fill, maxWidth: 808, shrink: 0 },
             }),
           ]
         : [
-            ui.box('retained-composer', [composer], { visible: !state.source }),
-            ui.box('conversation', [timeline], { terminal: { grow: 1 } }),
+            ui.box('retained-composer', [composer], { visible: !state.source && !state.image }),
+            ui.box(
+              'conversation',
+              [
+                ui.box('retained-timeline', [timeline], {
+                  visible: !state.image,
+                  style: { width: fill, height: fill },
+                  terminal: { grow: 1 },
+                }),
+                imageViewer,
+              ],
+              { terminal: { grow: 1 } },
+            ),
           ]),
     ],
     {
@@ -1078,6 +1119,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         modelRefreshing: false,
         settingsOpen: false,
         navigationOpen: target === 'desktop',
+        image: null,
         window: null,
         source: null,
         navigation: 0,
@@ -1233,7 +1275,32 @@ export function workspace(target: Target, locale: string): Component<State, Reco
             revision: state.listRevision,
             cursor: state.listCursor,
           });
-        else if (input.child === 'timeline' && state.source) {
+        else if (input.child === 'image-viewer' && input.name === 'closed') {
+          state.image = null;
+          state.followAttempt = null;
+          follow(state, actions);
+        } else if (
+          input.child === 'timeline' &&
+          input.name === 'viewImage' &&
+          state.selected &&
+          state.window &&
+          !state.loading
+        ) {
+          const sequence = (input.event as { sequence: number }).sequence;
+          const chunk = state.window.page.chunks.find(
+            (c) =>
+              c.sequence === sequence &&
+              c.role === 'tool_result' &&
+              c.tool?.kind === 'result' &&
+              c.tool.image,
+          );
+          if (chunk)
+            state.image = {
+              sessionId: state.selected,
+              through: state.window.page.through,
+              sequence,
+            };
+        } else if (input.child === 'timeline' && state.source) {
           const source = state.source;
           if (input.name === 'sourceBack') state.source = null;
           else if (!source.loading && source.toolSource) {

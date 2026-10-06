@@ -144,9 +144,11 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
                     tool_use_id,
                     tool_name,
                     is_error,
+                    image,
                 }) => {
                     assert_eq!(tool_name.as_deref(), Some("Read"));
                     assert!(!is_error);
+                    assert!(!image);
                     assert!(messages.contains_key(tool_use_id));
                     assert_eq!(chunk.role, Role::ToolResult);
                 }
@@ -497,6 +499,7 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
                     tool_use_id,
                     tool_name,
                     is_error,
+                    image,
                 },
             ) = &tools[&(Role::ToolResult as u8)]
             else {
@@ -504,6 +507,7 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
             };
             assert_eq!(tool_name.as_deref(), Some("Count"));
             assert_eq!(*is_error, session == "unknown");
+            assert_eq!(*image, session == "image");
             assert_eq!(text.is_empty(), session != "unknown");
             let (
                 _,

@@ -55,12 +55,15 @@ struct MountedInput {
 fn harness(cx: &mut TestAppContext, secret: bool) -> MountedInput {
     let events = Rc::new(RefCell::new(Vec::new()));
     let seen = events.clone();
-    let live = LiveInput(Rc::new(RefCell::new(Some(Input(Rc::new(
-        move |key, value, _, _| {
-            seen.borrow_mut().push((key.to_owned(), value));
-            Ok(Default::default())
-        },
-    ))))));
+    let live = LiveInput::new(
+        Rc::new(RefCell::new(Some(Input(Rc::new(
+            move |key, value, _, _| {
+                seen.borrow_mut().push((key.to_owned(), value));
+                Ok(Default::default())
+            },
+        ))))),
+        crate::NativeBudget::default(),
+    );
     let bound = live.clone();
     let bubble = Rc::new(Cell::new(0));
     let parent = bubble.clone();

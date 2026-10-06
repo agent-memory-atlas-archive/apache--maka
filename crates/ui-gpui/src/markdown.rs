@@ -370,9 +370,12 @@ mod tests {
     #[gpui::test]
     fn committed_recipe_keeps_original_document_focus_and_native_copy(cx: &mut TestAppContext) {
         cx.update(gpui_kit::base::init);
-        let input = LiveInput(Rc::new(RefCell::new(Some(crate::Input(Rc::new(
-            |_, _, _, _| Ok(Default::default()),
-        ))))));
+        let input = LiveInput::new(
+            Rc::new(RefCell::new(Some(crate::Input(Rc::new(|_, _, _, _| {
+                Ok(Default::default())
+            }))))),
+            crate::NativeBudget::default(),
+        );
         let (root, cx) = cx.add_window_view(|_, cx| Root(Owner::new(&props(), input, cx)));
         let owner = root.read_with(cx, |r, _| r.0.clone());
         cx.run_until_parked();
@@ -440,34 +443,37 @@ mod tests {
         let locator = Rc::new(RefCell::new(None::<WeakEntity<Owner>>));
         let decision = mode.clone();
         let target = locator.clone();
-        let input = LiveInput(Rc::new(RefCell::new(Some(crate::Input(Rc::new(
-            move |key, event, window, cx| {
-                assert_eq!(key, "link");
-                assert!(
-                    [
-                        "https://example.test",
-                        "javascript:alert(1)",
-                        "file:///private/secret"
-                    ]
-                    .contains(&event["url"].as_str().unwrap())
-                );
-                match decision.get() {
-                    0 => Ok(maka_ui::InputDecision {
-                        prevent_default: true,
-                        stop_propagation: false,
-                    }),
-                    1 => Err(maka_ui::Error::Invalid("failed plugin batch".into())),
-                    2 => {
-                        let owner = target.borrow().as_ref().unwrap().upgrade().unwrap();
-                        let mut disabled = props();
-                        disabled.disabled = true;
-                        owner.update(cx, |o, cx| o.apply(&disabled, window, cx));
-                        Ok(Default::default())
+        let input = LiveInput::new(
+            Rc::new(RefCell::new(Some(crate::Input(Rc::new(
+                move |key, event, window, cx| {
+                    assert_eq!(key, "link");
+                    assert!(
+                        [
+                            "https://example.test",
+                            "javascript:alert(1)",
+                            "file:///private/secret"
+                        ]
+                        .contains(&event["url"].as_str().unwrap())
+                    );
+                    match decision.get() {
+                        0 => Ok(maka_ui::InputDecision {
+                            prevent_default: true,
+                            stop_propagation: false,
+                        }),
+                        1 => Err(maka_ui::Error::Invalid("failed plugin batch".into())),
+                        2 => {
+                            let owner = target.borrow().as_ref().unwrap().upgrade().unwrap();
+                            let mut disabled = props();
+                            disabled.disabled = true;
+                            owner.update(cx, |o, cx| o.apply(&disabled, window, cx));
+                            Ok(Default::default())
+                        }
+                        _ => Ok(Default::default()),
                     }
-                    _ => Ok(Default::default()),
-                }
-            },
-        ))))));
+                },
+            ))))),
+            crate::NativeBudget::default(),
+        );
         let (root, cx) = cx.add_window_view(|_, cx| Root(Owner::new(&props(), input, cx)));
         let owner = root.read_with(cx, |r, _| r.0.clone());
         *locator.borrow_mut() = Some(owner.downgrade());

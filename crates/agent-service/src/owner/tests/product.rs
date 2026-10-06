@@ -177,6 +177,7 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     let directory = repository.join("packages/agent-product/dist/packages");
     let names = [
         "workspace",
+        "image-viewer",
         "composer",
         "models",
         "model-default",

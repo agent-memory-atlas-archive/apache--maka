@@ -18,6 +18,11 @@
  */
 
 export const en = {
+  viewImage: 'View image',
+  imageTitle: 'Image',
+  imageLoading: 'Loading image…',
+  imageFailed: 'This image could not be displayed.',
+  imageTerminal: 'Image preview is available in the desktop app.',
   defaultModel: 'Default model',
   makeDefault: 'Set selected as default',
   clearDefault: 'Clear default',
@@ -217,6 +222,11 @@ export const en = {
 } as const;
 export type Copy = { [K in keyof typeof en]: string };
 const zhCN: Copy = {
+  viewImage: '查看图片',
+  imageTitle: '图片',
+  imageLoading: '正在加载图片…',
+  imageFailed: '暂时无法显示这张图片。',
+  imageTerminal: '可在桌面应用中查看图片预览。',
   defaultModel: '默认模型',
   makeDefault: '将已选模型设为默认',
   clearDefault: '清除默认项',
@@ -403,6 +413,11 @@ const zhCN: Copy = {
   connecting: '正在连接…',
 };
 const zhTW: Copy = {
+  viewImage: '查看圖片',
+  imageTitle: '圖片',
+  imageLoading: '正在載入圖片…',
+  imageFailed: '暫時無法顯示這張圖片。',
+  imageTerminal: '可在桌面應用程式中查看圖片預覽。',
   defaultModel: '預設模型',
   makeDefault: '將已選模型設為預設',
   clearDefault: '清除預設項',

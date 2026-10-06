@@ -28,6 +28,8 @@ import {
 } from '../../plugin-sdk/src/index.js';
 export const packageNames = [
   'workspace',
+  'image-viewer',
+  'image',
   'composer',
   'navigation',
   'timeline',
@@ -126,6 +128,7 @@ export function composition(configuration: CompositionConfiguration): {
           connections: [local('connections', 'Connections')],
           navigation: [local('navigation', 'Navigation')],
           timeline: [local('timeline', 'Timeline')],
+          imageViewer: [local('image-viewer', 'ImageViewer')],
           appearance: [local('appearance', 'Appearance')],
           surface: [local('surface', 'Surface')],
         },
@@ -181,6 +184,15 @@ export function composition(configuration: CompositionConfiguration): {
       ),
       composer: node('composer', {}, { editor: [local('editor', 'Textarea')] }),
       navigation: node('navigation'),
+      'image-viewer': node(
+        'image-viewer',
+        {},
+        {
+          agent: [remote('agent', 'agent')],
+          ...(configuration.presentation === 'desktop' ? { image: [local('image', 'Image')] } : {}),
+        },
+      ),
+      ...(configuration.presentation === 'desktop' ? { image: node('image') } : {}),
       timeline: node('timeline', {}, { reading: [local('reading-area', 'ReadingArea')] }),
       'source-text': node('source-text'),
       'reading-area': node(

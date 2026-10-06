@@ -95,9 +95,12 @@ impl Render for Harness {
     }
 }
 fn input() -> LiveInput {
-    LiveInput(Rc::new(RefCell::new(Some(Input(Rc::new(|_, _, _, _| {
-        Ok(Default::default())
-    }))))))
+    LiveInput::new(
+        Rc::new(RefCell::new(Some(Input(Rc::new(|_, _, _, _| {
+            Ok(Default::default())
+        }))))),
+        crate::NativeBudget::default(),
+    )
 }
 fn scene_source(children: Value) -> Value {
     json!({"kind":"stack","key":"reading","direction":"column","gap":0,"padding":0,
@@ -423,11 +426,11 @@ fn native_commands_settle_only_on_paint_and_observations_do_not_poll(cx: &mut Te
         ]));
         let observations = Rc::new(RefCell::new(Vec::new()));
         let out = observations.clone();
-        let live = LiveInput(Rc::new(RefCell::new(Some(Input(Rc::new(move |key, value, _, _| {
+        let live = LiveInput::new(Rc::new(RefCell::new(Some(Input(Rc::new(move |key, value, _, _| {
             assert_eq!(key, OBSERVED);
             out.borrow_mut().push(serde_json::from_value::<ReadingObservation>(value).unwrap());
             Ok(Default::default())
-        }))))));
+        }))))), crate::NativeBudget::default());
         let initial = compile_recipe(&source, None);
         let (view, window_cx) = cx.add_window_view(move |window, cx| {
             let mut state = initial.create(live, window, cx);

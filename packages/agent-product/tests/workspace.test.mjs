@@ -2202,6 +2202,7 @@ test('Timeline byte-segment identities leave room for the native key prefix', as
   const message = {
     id: uuid(900),
     contentKey: 'a'.repeat(123),
+    image: false,
     role: 'tool_result',
     tool: null,
     text: 'literal output',
@@ -2232,7 +2233,13 @@ for (const target of ['desktop', 'tui']) {
           historyChunk('', {
             sequence: 40,
             role: 'tool_result',
-            tool: { kind: 'result', toolUseId: uuid(901), toolName: 'Count', isError: true },
+            tool: {
+              kind: 'result',
+              toolUseId: uuid(901),
+              toolName: 'Count',
+              isError: true,
+              image: false,
+            },
           }),
         ],
       });
@@ -3572,7 +3579,7 @@ for (const target of ['desktop', 'tui']) {
           historyChunk('', {
             sequence: 401,
             role: 'tool_result',
-            tool: { ...tool, kind: 'result', isError: false },
+            tool: { ...tool, kind: 'result', isError: false, image: false },
           }),
         ],
       });
@@ -3685,7 +3692,7 @@ for (const target of ['desktop', 'tui']) {
           offset: 0,
           totalBytes: 2,
           text: '{}',
-          tool: { ...tool, kind: 'result', isError: false },
+          tool: { ...tool, kind: 'result', isError: false, image: false },
         },
       });
       assert.equal(client.timeline.source.kind, 'result');
@@ -3697,3 +3704,286 @@ for (const target of ['desktop', 'tui']) {
     },
   );
 }
+
+async function imageClient(target = 'desktop', overrides = {}) {
+  const { component } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/image-viewer/' + target + '.js'))
+  );
+  let props = {
+    theme: values.appearance[0],
+    locale: 'en',
+    active: true,
+    image: { sessionId: 'session', through: 100, sequence: 40 },
+    ...overrides,
+  };
+  let out = component.mount(props, {});
+  return {
+    get out() {
+      return out;
+    },
+    get state() {
+      return out.frame.state;
+    },
+    update(change) {
+      props = { ...props, ...change };
+      out = component.update(structuredClone(out.frame.state), props, {});
+      return out;
+    },
+    event(input) {
+      out = component.event(structuredClone(out.frame.state), input, props, {});
+      return out;
+    },
+    answer(action, page) {
+      return this.event({
+        kind: 'action',
+        key: action.key,
+        event: { status: 'succeeded', value: page },
+      });
+    },
+    observe(change = {}) {
+      return this.event({
+        kind: 'component',
+        key: 'image-observed',
+        child: 'pixels',
+        name: 'observed',
+        event: {
+          owner: 'native-original',
+          revision: (this.state.observation?.revision ?? 0) + 1,
+          source: this.state.descriptor?.key ?? null,
+          received: this.state.received,
+          phase: 'receiving',
+          width: null,
+          height: null,
+          error: null,
+          receipt: null,
+          ...change,
+        },
+      });
+    },
+  };
+}
+function imagePage(offset, total = 5 * 32768 + 3, overrides = {}) {
+  return {
+    kind: 'ready',
+    through: 100,
+    sequence: 40,
+    offset,
+    totalBytes: total,
+    mimeType: 'image/png',
+    digest: 'sha256:' + 'a'.repeat(64),
+    data: Buffer.alloc(Math.min(32768, total - offset), 42).toString('base64'),
+    ...overrides,
+  };
+}
+function imageOccupancy(state) {
+  return (
+    Object.keys(state.pending).length +
+    state.waiting.length +
+    state.queue.length +
+    (state.packet ? 1 : 0)
+  );
+}
+test('image viewer keeps four bounded chunks, ordered delivery and original-owner ACK', async () => {
+  const client = await imageClient();
+  const first = client.out.actions[0];
+  assert.deepEqual(first.input, { sessionId: 'session', through: 100, sequence: 40, offset: 0 });
+  client.answer(first, imagePage(0));
+  const prefetch = client.out.actions;
+  assert.equal(prefetch.length, 3);
+  assert.equal(imageOccupancy(client.state), 4);
+  client.observe();
+  const original = client.state.packet;
+  assert.equal(original.offset, 0);
+  for (const action of [...prefetch].reverse())
+    client.answer(action, imagePage(action.input.offset));
+  assert.equal(imageOccupancy(client.state), 4);
+  assert.deepEqual(client.state.packet, original);
+  client.observe({
+    receipt: {
+      owner: 'different',
+      source: original.source,
+      sequence: original.sequence,
+      accepted: true,
+      error: null,
+    },
+  });
+  assert.deepEqual(client.state.packet, original);
+  const ack = () => {
+    const packet = client.state.packet;
+    return client.observe({
+      receipt: {
+        owner: packet.owner,
+        source: packet.source,
+        sequence: packet.sequence,
+        accepted: true,
+        error: null,
+      },
+    });
+  };
+  ack();
+  assert.equal(client.state.packet.offset, 32768);
+  assert.equal(client.out.actions.length, 1);
+  assert.equal(imageOccupancy(client.state), 4);
+  const next = client.out.actions[0];
+  client.update({ active: false });
+  ack();
+  assert.equal(client.state.packet, null);
+  assert.equal(client.out.actions.length, 0);
+  client.answer(next, imagePage(next.input.offset));
+  assert.equal(client.out.actions.length, 0);
+  assert.equal(imageOccupancy(client.state), 3);
+  client.update({ active: true });
+  assert.equal(client.state.packet.offset, 65536);
+  assert.equal(imageOccupancy(client.state), 4);
+});
+test('image viewer pauses preparing requests while hidden and ignores old source replies', async () => {
+  const client = await imageClient();
+  const original = client.out.actions[0];
+  client.update({ active: false });
+  client.answer(original, { kind: 'preparing', through: 100 });
+  assert.equal(client.out.actions.length, 0);
+  assert.equal(client.state.waiting.length, 1);
+  client.update({ active: true });
+  const retry = client.out.actions[0];
+  assert.deepEqual(retry.input, original.input);
+  client.answer(retry, imagePage(0));
+  const old = client.out.actions;
+  client.update({ image: null });
+  assert.equal(client.state.descriptor, null);
+  client.update({ image: { sessionId: 'different', through: 200, sequence: 140 } });
+  assert.equal(client.out.actions.length, 0);
+  for (const action of old) client.answer(action, imagePage(action.input.offset));
+  assert.equal(client.state.descriptor, null);
+  const fresh = client.out.actions[0];
+  assert.deepEqual(fresh.input, { sessionId: 'different', through: 200, sequence: 140, offset: 0 });
+});
+test('image errors stop prefetch, preserve original fence on retry and reject mixed metadata', async () => {
+  const client = await imageClient();
+  client.answer(client.out.actions[0], imagePage(0));
+  const old = client.out.actions;
+  client.observe({ phase: 'failed', error: 'unsupported_format' });
+  assert.equal(client.state.failed, true);
+  assert.equal(client.out.actions.length, 0);
+  client.event({ kind: 'raw', key: 'image-retry', event: {} });
+  assert.equal(client.state.failed, false);
+  assert.equal(client.state.descriptor, null);
+  for (const action of old) client.answer(action, imagePage(action.input.offset));
+  assert.deepEqual(client.out.actions[0].input, {
+    sessionId: 'session',
+    through: 100,
+    sequence: 40,
+    offset: 0,
+  });
+  client.answer(client.out.actions[0], imagePage(0));
+  const next = client.out.actions[0];
+  client.answer(
+    next,
+    imagePage(next.input.offset, 5 * 32768 + 3, { digest: 'sha256:' + 'b'.repeat(64) }),
+  );
+  assert.equal(client.state.failed, true);
+  assert.equal(client.out.actions.length, 0);
+});
+test('image semantic TUI has no pixel loader and Desktop back retains conversation mount', async () => {
+  const terminal = await imageClient('tui');
+  assert.equal(terminal.out.actions.length, 0);
+  assert.equal(modelSlots(terminal.out.frame.view).length, 0);
+  assert.match(JSON.stringify(terminal.out.frame.view), /desktop app/);
+  const client = new Client().start({
+    through: 100,
+    chunks: [
+      historyChunk('', {
+        sequence: 40,
+        role: 'tool_result',
+        tool: {
+          kind: 'result',
+          toolUseId: uuid(901),
+          toolName: 'Draw',
+          isError: false,
+          image: true,
+        },
+      }),
+    ],
+  });
+  const before = client.timeline;
+  client.input({
+    kind: 'component',
+    key: 'view-image',
+    child: 'timeline',
+    name: 'viewImage',
+    event: { sequence: 40 },
+  });
+  const slots = modelSlots(client.output.frame.view);
+  assert.deepEqual(slots.find((s) => s.key === 'image-viewer').props.image, {
+    sessionId: 'session',
+    through: 100,
+    sequence: 40,
+  });
+  assert.deepEqual(client.timeline, before);
+  client.input({
+    kind: 'component',
+    key: 'image-closed',
+    child: 'image-viewer',
+    name: 'closed',
+    event: {},
+  });
+  assert.equal(client.output.frame.state.image, null);
+  assert.deepEqual(client.timeline, before);
+});
+
+test('returning from an image follows new canonical facts, including an in-flight hidden rejection', () => {
+  for (const inFlight of [false, true]) {
+    const client = new Client().start({
+      through: 100,
+      chunks: [
+        historyChunk('', {
+          sequence: 40,
+          role: 'tool_result',
+          tool: {
+            kind: 'result',
+            toolUseId: uuid(901),
+            toolName: 'Draw',
+            isError: false,
+            image: true,
+          },
+        }),
+      ],
+    });
+    const oldWindow = structuredClone(client.state.window);
+    if (inFlight) client.page([fact(101, { kind: 'transcript_changed' })], 101);
+    const admitted = inFlight ? client.find('history') : null;
+    client.input({
+      kind: 'component',
+      key: 'view-image',
+      child: 'timeline',
+      name: 'viewImage',
+      event: { sequence: 40 },
+    });
+    if (admitted) client.complete(admitted, { status: 'stale' });
+    else client.page([fact(101, { kind: 'transcript_changed' })], 101);
+    assert.equal(client.output.actions.length, 0);
+    assert.deepEqual(client.state.window, oldWindow);
+    client.input({
+      kind: 'component',
+      key: 'image-closed',
+      child: 'image-viewer',
+      name: 'closed',
+      event: {},
+    });
+    const follow = client.output.actions;
+    assert.equal(follow.length, 1);
+    assert.equal(follow[0].input.through, 101);
+    assert.deepEqual(follow[0].continuations, [{ child: 'timeline', method: 'tail', input: null }]);
+    assert.deepEqual(client.state.window, oldWindow);
+    client.complete(follow[0], {
+      status: 'succeeded',
+      value: {
+        kind: 'ready',
+        through: 101,
+        chunks: [historyChunk('Completed')],
+        before: null,
+        after: null,
+      },
+    });
+    assert.equal(client.state.window.page.through, 101);
+  }
+});

@@ -67,6 +67,13 @@ export interface Message {
   tool: AgentHistoryChunk['tool'];
   continued: boolean;
   source: number | null;
+  image: boolean;
+}
+export interface ImageViewerProps {
+  theme: Theme;
+  locale: string;
+  active: boolean;
+  image: { sessionId: string; through: number; sequence: number } | null;
 }
 export interface ModelsProps {
   catalogEpoch: number;
@@ -155,6 +162,7 @@ const messageSchema = object({
   text: { type: 'string', maxLength: 24000 },
   tool: { anyOf: [{ $ref: '#/$defs/HistoryTool' }, { type: 'null' }] },
   continued: { type: 'boolean' },
+  image: { type: 'boolean' },
   source: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
 });
 const withDefs = (schema: Schema, additional: Schema = {}): Schema => {
@@ -206,6 +214,25 @@ export const navigationContract = component(
   }),
   { create: object({}), select: object({ sessionId: string }), more: object({}) },
 );
+export const imageViewerContract = component(
+  'maka.agent.ImageViewer',
+  object({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    active: { type: 'boolean' },
+    image: {
+      anyOf: [
+        object({
+          sessionId: string,
+          through: { type: 'integer', minimum: 1 },
+          sequence: { type: 'integer', minimum: 1 },
+        }),
+        { type: 'null' },
+      ],
+    },
+  }),
+  { closed: object({}) },
+);
 export const timelineContract = component(
   'maka.agent.Timeline',
   object({
@@ -246,6 +273,7 @@ export const timelineContract = component(
     latest: object({}),
     source: object({ sequence: { type: 'integer', minimum: 1 } }),
     toolSource: object({ sequence: { type: 'integer', minimum: 1 } }),
+    viewImage: object({ sequence: { type: 'integer', minimum: 1 } }),
     sourceFirst: object({}),
     sourcePrevious: object({}),
     sourceNext: object({}),

@@ -81,7 +81,10 @@ fn harness(cx: &mut TestAppContext) -> (Entity<Harness>, AnyWindowHandle, Rc<Cel
         )
         .unwrap()
         .view;
-        let live = LiveInput(Rc::new(RefCell::new(Some(input.clone()))));
+        let live = LiveInput::new(
+            Rc::new(RefCell::new(Some(input.clone()))),
+            crate::NativeBudget::default(),
+        );
         let mut state = recipe.create(live, window, cx);
         recipe.presentation(state.as_mut(), true, window, cx);
         Harness {
@@ -371,7 +374,14 @@ fn scene_slot_render_errors_are_returned_before_publication(cx: &mut TestAppCont
     let recipe=compile(&json!({"kind":"component","key":"missing","binding":"child","member":0,"props":{},"on":{}}),Instant::now()+std::time::Duration::from_secs(1)).unwrap().view;
     cx.update_window(window, |_, w, cx| {
         let input = Input(Rc::new(|_, _, _, _| Ok(Default::default())));
-        let mut state = recipe.create(LiveInput(Rc::new(RefCell::new(Some(input.clone())))), w, cx);
+        let mut state = recipe.create(
+            LiveInput::new(
+                Rc::new(RefCell::new(Some(input.clone()))),
+                crate::NativeBudget::default(),
+            ),
+            w,
+            cx,
+        );
         recipe.presentation(state.as_mut(), true, w, cx);
         let slots = Slots::new(vec!["missing".into()], input, |_, _, _| {
             Err(maka_ui::Error::Invalid("detached exact child".into()))
@@ -627,7 +637,10 @@ fn popup_harness(
         .unwrap()
         .view;
         let mut state = recipe.create(
-            LiveInput(Rc::new(RefCell::new(Some(input.clone())))),
+            LiveInput::new(
+                Rc::new(RefCell::new(Some(input.clone()))),
+                crate::NativeBudget::default(),
+            ),
             window,
             cx,
         );

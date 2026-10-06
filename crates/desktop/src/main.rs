@@ -148,8 +148,10 @@ impl Surface {
                 }
                 resources.owners.remove(&id);
             }
+            let budget = resources.budget.clone();
             let owner = resources.owners.entry(id).or_insert_with(|| {
-                let input = widgets::LiveInput(Rc::new(RefCell::new(Some(input.clone()))));
+                let input =
+                    widgets::LiveInput::new(Rc::new(RefCell::new(Some(input.clone()))), budget);
                 resources::NativeInstance {
                     kind,
                     identity: Rc::new(()),

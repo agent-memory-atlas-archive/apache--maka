@@ -44,12 +44,24 @@ impl Scene {
             Vec<maka_plugins::package::Package>,
         ),
     ) -> Self {
+        Self::with_registry(cx, timer, mode, (input, packages), widgets::registry())
+    }
+    fn with_registry(
+        cx: &mut TestAppContext,
+        timer: &tokio::runtime::Runtime,
+        mode: &str,
+        (input, packages): (
+            maka_plugin_core::composition::Input,
+            Vec<maka_plugins::package::Package>,
+        ),
+        registry: maka_ui::NativeRegistry<dyn widgets::Widget>,
+    ) -> Self {
         let mut application = Application::new(
             &input,
             packages,
             timer.handle().clone(),
             Default::default(),
-            widgets::registry(),
+            registry,
             Default::default(),
         )
         .unwrap();
@@ -464,3 +476,5 @@ app.event = (state, input) => {
         scene.close(cx);
     }
 }
+
+mod image;

@@ -123,7 +123,10 @@ fn harness(cx: &mut TestAppContext, move_rule: bool) -> TestHarness {
         )
         .unwrap()
         .view;
-        let live = LiveInput(Rc::new(RefCell::new(Some(dispatcher.clone()))));
+        let live = LiveInput::new(
+            Rc::new(RefCell::new(Some(dispatcher.clone()))),
+            crate::NativeBudget::default(),
+        );
         let mut state = recipe.create(live.clone(), window, cx);
         recipe.presentation(state.as_mut(), true, window, cx);
         Harness {

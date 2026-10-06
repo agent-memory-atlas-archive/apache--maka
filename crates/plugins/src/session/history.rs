@@ -208,6 +208,8 @@ pub enum Tool {
         tool_name: Option<String>,
         /// The presentation's error flag does not distinguish failed from unknown effects.
         is_error: bool,
+        /// Canonical content is an image; this does not grant artifact reads.
+        image: bool,
     },
 }
 

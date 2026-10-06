@@ -85,9 +85,16 @@ const specifications = {
       composer: one(own.composerContract),
       navigation: one(own.navigationContract),
       timeline: one(own.timelineContract),
+      imageViewer: one(own.imageViewerContract),
       appearance: one(own.themeContract),
     },
     configuration: own.object({ locale: own.locale }),
+  },
+  'image-viewer': {
+    contract: own.imageViewerContract,
+    export: 'ImageViewer',
+    module: 'image-viewer',
+    imports: { agent: one(sdk.contracts.agent) },
   },
   composer: {
     contract: own.composerContract,
@@ -178,6 +185,8 @@ for (const [name, spec] of Object.entries(specifications)) {
       contents = `export {activate} from '${resolve(root, 'src/theme.ts')}';`;
     else if (name === 'workspace')
       contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace('${target}',configuration.locale);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
+    else if (name === 'image-viewer')
+      contents = `import {imageViewer,activate} from '${resolve(root, 'src/image-viewer.ts')}';export const component=imageViewer('${target}');export {activate};`;
     else if (name === 'connection-form')
       contents = `import {connectionForm,activate} from '${resolve(root, 'src/connection-form.ts')}';import * as validation from '${validationPath}';export const component=connectionForm('${target}',validation);export {activate};`;
     else if (name === 'model-default')
@@ -210,6 +219,7 @@ for (const [name, spec] of Object.entries(specifications)) {
       ...(name === 'appearance' ? {} : { scene: { name: `maka.${target}.scene`, version: 1 } }),
     };
   }
+  if (name === 'image-viewer') entries.desktop.imports.image = one(sdk.contracts.image);
   if (name === 'timeline')
     for (const target of ['desktop', 'tui'])
       entries[target].imports.reading = one(sdk.contracts.readingArea);
@@ -231,6 +241,9 @@ for (const [name, spec] of Object.entries(specifications)) {
   packages.push(name);
 }
 const mechanical = {
+  image: {
+    entries: { desktop: native('maka.ui.image', { Image: required(sdk.contracts.image) }) },
+  },
   'reading-area': {
     entries: {
       desktop: {
