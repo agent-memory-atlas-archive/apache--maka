@@ -196,6 +196,7 @@ impl Fixture {
         #[cfg(windows)]
         let address = PathBuf::from(format!(r"\\.\pipe\maka-application-test-{nonce}"));
         let bootstrap = Bootstrap {
+            native: Vec::new(),
             root: self.host_path(),
             deployment: self.host,
             namespaces: self.namespaces.clone(),

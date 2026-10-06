@@ -62,6 +62,8 @@ pub struct Host {
     pub deployment: Uuid,
     pub consumer: InstanceId,
     pub imports: BTreeMap<String, Grant>,
+    #[serde(default)]
+    pub native: Vec<crate::transport::NativeGrant>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -104,6 +106,12 @@ impl Configuration {
                 || host.consumer.0.iter().any(Uuid::is_nil)
             {
                 return Err("invalid Host consumer identity".into());
+            }
+            if host.native.len() > 128 {
+                return Err("maximum 128 native service grants".into());
+            }
+            for grant in &host.native {
+                grant.validate()?;
             }
             for (name, grant) in &host.imports {
                 if name.is_empty()
@@ -289,6 +297,7 @@ impl Connections {
                 consumers: prepared.consumers,
                 consumer: host.consumer,
                 imports: host.imports,
+                native: host.native,
                 address: address.path.clone(),
                 nonce,
             };

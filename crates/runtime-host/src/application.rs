@@ -25,7 +25,7 @@ pub mod operations;
 mod owner;
 mod resource_ingress;
 pub use context::Context;
-pub use native_context::{NativeContext, NativePersistence};
+pub use native_context::{NativeContext, NativePersistence, NativeRequest, NativeServices};
 pub use resource_ingress::{
     CallResources, RESOURCE_CHUNK_LIMIT, ResourceCapture, ResourceDescriptor,
 };
@@ -101,6 +101,9 @@ pub trait Policy: Send + Sync + 'static {
 #[derive(Clone, Copy)]
 pub struct Invocation<'a> {
     pub scope: &'a Scope,
+    /// Host-verified original native activation, if this call belongs to native
+    /// domain work. This observation does not grant any imported method.
+    pub native_origin: Option<&'a Activation>,
     pub consumer: &'a Activation,
     pub provider: &'a Activation,
     pub export: &'a str,
@@ -112,6 +115,7 @@ pub struct Invocation<'a> {
 
 pub struct RecoveryInvocation<'a> {
     pub scope: &'a Scope,
+    pub native_origin: Option<&'a Activation>,
     pub consumer: &'a Activation,
     pub reference: &'a RecoveryRef,
 }

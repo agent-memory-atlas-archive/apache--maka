@@ -107,6 +107,7 @@ impl Fixture {
     fn configuration(&self, read: bool, recovery: bool) -> Configuration {
         Configuration {
             hosts: vec![Host {
+                native: Vec::new(),
                 name: "local".into(),
                 root: self.directory.path().join("host"),
                 deployment: self.host,

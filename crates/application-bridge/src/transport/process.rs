@@ -51,6 +51,7 @@ pub struct Bootstrap {
     pub consumers: BTreeSet<InstanceId>,
     pub consumer: InstanceId,
     pub imports: BTreeMap<String, Grant>,
+    pub native: Vec<super::NativeGrant>,
     pub address: PathBuf,
     pub nonce: Uuid,
 }
@@ -73,6 +74,12 @@ impl Bootstrap {
             })
         {
             return Err("invalid Host bootstrap".into());
+        }
+        if self.native.len() > 128 {
+            return Err("maximum 128 native service grants".into());
+        }
+        for grant in &self.native {
+            grant.validate()?;
         }
         // The parent checks the actual wire bound before spawning any child.
         // An oversized bootstrap must not leave a child waiting on partial IO.
@@ -243,7 +250,7 @@ pub async fn serve(native: NativeRegistry) -> Result<()> {
             return Err(error);
         }
     };
-    let policy = Arc::new(PeerPolicy::default());
+    let policy = Arc::new(PeerPolicy::with_native_grants(bootstrap.native)?);
     let application = Application::start_from_store(
         store.clone(),
         bootstrap.deployment,

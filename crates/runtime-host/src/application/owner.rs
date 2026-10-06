@@ -375,6 +375,12 @@ impl Owner {
                 let context = NativeContext {
                     activation: activation.clone(),
                     package: instance.package.clone(),
+                    services: NativeServices {
+                        activation: activation.clone(),
+                        imports: self.owned[activation.instance()].imports.clone(),
+                        dispatch: self.dispatch.clone(),
+                        issuer: self.issuer.clone(),
+                    },
                     persistence: self
                         .persisted
                         .as_ref()
@@ -578,6 +584,7 @@ impl Owner {
                     {
                         return Err("foreign or closed Host invocation".into());
                     }
+                    self.check_native_origin(&scope)?;
                     self.check_vm(binding.0.consumer())?;
                     self.check_vm(binding.provider())?;
                     let service = self
@@ -666,6 +673,7 @@ impl Owner {
                         }
                         let invocation = Invocation {
                             scope: &scope,
+                            native_origin: self.native_origin(&scope),
                             consumer: binding.0.consumer(),
                             provider: binding.provider(),
                             export: binding.export(),
@@ -920,6 +928,26 @@ impl Owner {
             }
         }
     }
+    fn native_origin<'a>(&self, scope: &'a Scope) -> Option<&'a Activation> {
+        self.issuer
+            .evidence::<native_context::NativeOrigin>(scope)
+            .map(|origin| &origin.0)
+    }
+    fn check_native_origin(&mut self, scope: &Scope) -> Result<()> {
+        if let Some(origin) = self.native_origin(scope) {
+            self.check_vm(origin)?;
+            if self
+                .runtime
+                .status(origin)
+                .map_err(|error| error.to_string())?
+                .phase
+                != Phase::Active
+            {
+                return Err("native work origin is not active".into());
+            }
+        }
+        Ok(())
+    }
     fn recovery_gate(
         &mut self,
         consumer: &Activation,
@@ -929,6 +957,7 @@ impl Owner {
         if self.closing || !self.issuer.owns(scope) || scope.cancellation.is_cancelled() {
             return Err("foreign or closed Host recovery invocation".into());
         }
+        self.check_native_origin(scope)?;
         self.check_vm(consumer)?;
         if self
             .runtime
@@ -942,6 +971,7 @@ impl Owner {
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
             self.policy.recover(RecoveryInvocation {
                 scope,
+                native_origin: self.native_origin(scope),
                 consumer,
                 reference,
             })

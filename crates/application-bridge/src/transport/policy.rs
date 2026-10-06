@@ -28,6 +28,7 @@ use maka_plugin_core::{
 };
 use maka_plugins::call::{Identity, Issuer, Scope};
 use maka_runtime_host::application::{Binding, Invocation, Policy, RecoveryInvocation};
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
@@ -71,6 +72,37 @@ impl Endpoint {
         Ok(Self { binding, grant })
     }
 }
+/// Explicit trusted launcher approval for one edge of native domain work.
+/// Imports select providers; this separate declaration authorizes calls.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeGrant {
+    pub origin: InstanceId,
+    pub consumer: InstanceId,
+    pub provider: InstanceId,
+    pub export: String,
+    pub methods: BTreeSet<String>,
+    pub recovery: bool,
+}
+impl NativeGrant {
+    pub fn validate(&self) -> Result<()> {
+        if [&self.origin, &self.consumer, &self.provider]
+            .iter()
+            .any(|id| id.0.is_empty() || id.0.len() > 64 || id.0.iter().any(uuid::Uuid::is_nil))
+            || self.export.is_empty()
+            || self.export.len() > 256
+            || self.methods.is_empty()
+            || self.methods.len() > 64
+            || self
+                .methods
+                .iter()
+                .any(|method| method.is_empty() || method.len() > 256)
+        {
+            return Err("invalid native service grant".into());
+        }
+        Ok(())
+    }
+}
 struct Evidence {
     source: Source,
     endpoint: Endpoint,
@@ -78,8 +110,21 @@ struct Evidence {
 #[derive(Default)]
 pub struct PeerPolicy {
     issuer: Issuer,
+    native: Vec<NativeGrant>,
 }
 impl PeerPolicy {
+    pub fn with_native_grants(native: Vec<NativeGrant>) -> Result<Self> {
+        if native.len() > 128 {
+            return Err("maximum 128 native service grants".into());
+        }
+        for grant in &native {
+            grant.validate()?;
+        }
+        Ok(Self {
+            native,
+            ..Self::default()
+        })
+    }
     pub fn issuer(&self) -> Issuer {
         self.issuer.clone()
     }
@@ -123,6 +168,20 @@ impl PeerPolicy {
 }
 impl Policy for PeerPolicy {
     fn admit(&self, invocation: Invocation<'_>) -> Result<()> {
+        if let Some(origin) = invocation.native_origin {
+            return self
+                .native
+                .iter()
+                .any(|grant| {
+                    &grant.origin == origin.instance()
+                        && &grant.consumer == invocation.consumer.instance()
+                        && &grant.provider == invocation.provider.instance()
+                        && grant.export == invocation.export
+                        && grant.methods.contains(invocation.method)
+                })
+                .then_some(())
+                .ok_or("native service invocation is not granted".into());
+        }
         let e = self.evidence(invocation.scope)?;
         if invocation.consumer != e.endpoint.binding.consumer()
             || invocation.provider != e.endpoint.binding.provider()
@@ -149,6 +208,21 @@ impl Policy for PeerPolicy {
         Ok(())
     }
     fn recover(&self, invocation: RecoveryInvocation<'_>) -> Result<()> {
+        if let Some(origin) = invocation.native_origin {
+            return self
+                .native
+                .iter()
+                .any(|grant| {
+                    grant.recovery
+                        && &grant.origin == origin.instance()
+                        && &grant.consumer == invocation.consumer.instance()
+                        && grant.provider == invocation.reference.namespace
+                        && grant.export == invocation.reference.export
+                        && grant.methods.contains(&invocation.reference.method)
+                })
+                .then_some(())
+                .ok_or("native operation recovery is not granted".into());
+        }
         let e = self.evidence(invocation.scope)?;
         if !e.endpoint.grant.recovery || invocation.consumer != e.endpoint.binding.provider() {
             return Err("original receipt recovery is not granted".into());

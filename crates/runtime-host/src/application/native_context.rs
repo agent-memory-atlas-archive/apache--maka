@@ -27,6 +27,7 @@ pub struct NativeContext {
     pub(super) activation: Activation,
     pub(super) package: PackageRef,
     pub(super) persistence: Option<NativePersistence>,
+    pub(super) services: NativeServices,
 }
 impl NativeContext {
     /// Exact immutable package selected by the actual deployment plan.
@@ -36,6 +37,11 @@ impl NativeContext {
 
     pub fn activation(&self) -> &Activation {
         &self.activation
+    }
+    /// Captured imports for work owned by this actual native plugin. This is
+    /// not a grant; every invocation still passes the embedding's Host policy.
+    pub fn services(&self) -> NativeServices {
+        self.services.clone()
     }
     /// Ephemeral applications have no persistence. A native service requiring
     /// persistence must reject initialization rather than open a fallback Root.
@@ -58,5 +64,75 @@ impl NativePersistence {
     }
     pub fn store(&self) -> &Arc<maka_event_log::EventLog> {
         &self.store
+    }
+}
+
+/// Frozen bindings and a dispatch handle for the original native activation.
+/// Unlike a request Context, this handle does not inherit a peer's cancellation
+/// or permission evidence. It cannot redirect retired imports to a replacement.
+#[derive(Clone)]
+pub struct NativeServices {
+    pub(super) activation: Activation,
+    pub(super) imports: Arc<BTreeMap<String, Vec<Binding>>>,
+    pub(super) dispatch: Weak<Dispatch>,
+    pub(super) issuer: Issuer,
+}
+/// Private origin evidence can only be created through the Host's native factory
+/// context. Public Identity remains observation and is never an authorization.
+pub(super) struct NativeOrigin(pub Activation);
+impl NativeServices {
+    pub fn imports(&self) -> impl Iterator<Item = (&str, &[Binding])> {
+        self.imports
+            .iter()
+            .map(|(name, bindings)| (name.as_str(), bindings.as_slice()))
+    }
+    /// The native owner supplies its domain work's identity and cancellation.
+    /// A request is inert until ordinary call/mutate/recover admission succeeds.
+    pub fn request(
+        &self,
+        identity: maka_plugins::call::Identity,
+        cancellation: CancellationToken,
+    ) -> Result<NativeRequest> {
+        let scope = self
+            .issuer
+            .issue_with(
+                identity,
+                NativeOrigin(self.activation.clone()),
+                cancellation,
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(NativeRequest(Context {
+            stream: None,
+            scope,
+            consumer: self.activation.clone(),
+            operation: None,
+            attachments: Attachments::default(),
+            imports: self.imports.clone(),
+            dispatch: self.dispatch.clone(),
+        }))
+    }
+}
+/// Owned domain request, independent of the service call that started the work.
+/// NativeOwner must finish all such requests before confirming its own cleanup.
+/// Drop only requests cancellation; it cannot acknowledge executor cleanup.
+pub struct NativeRequest(Context);
+impl std::ops::Deref for NativeRequest {
+    type Target = Context;
+    fn deref(&self) -> &Context {
+        &self.0
+    }
+}
+impl NativeRequest {
+    pub async fn finish(&self) -> Result<()> {
+        self.0
+            .scope
+            .finish()
+            .await
+            .map_err(|error| error.to_string())
+    }
+}
+impl Drop for NativeRequest {
+    fn drop(&mut self) {
+        self.0.scope.cancellation.cancel();
     }
 }
