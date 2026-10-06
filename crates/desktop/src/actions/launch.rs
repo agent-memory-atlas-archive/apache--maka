@@ -1,0 +1,347 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::super::{Surface, resources::NativeResources, window_owner};
+use super::Owner;
+use gpui_kit::{
+    AnyWindowHandle, App, AppContext, Bounds, TitlebarOptions, WeakEntity, WindowBounds,
+    WindowOptions, px, size,
+};
+#[cfg(test)]
+use maka_plugin_core::deployment::DeploymentRef;
+use maka_plugin_core::runtime::Mount;
+#[cfg(test)]
+use maka_ui::{CommittedUpdate, actions::RemoteService};
+use maka_ui::{Error, Result, Surface as Declaration};
+use serde_json::Value;
+use std::{cell::RefCell, rc::Rc};
+
+pub(super) enum Cleanup {
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "external management admission is not wired yet")
+    )]
+    Pending,
+    Confirmed,
+    Failed,
+}
+pub(super) enum State {
+    Opening {
+        mount: Mount,
+    },
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "launch handles are read by the pending management admission"
+        )
+    )]
+    Live {
+        mount: Mount,
+        window: AnyWindowHandle,
+        surface: WeakEntity<Surface>,
+        props: Value,
+    },
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "external management admission is not wired yet")
+    )]
+    Replacing {
+        mount: Mount,
+        props: Value,
+        cleanup: Cleanup,
+    },
+    Failed {
+        mount: Mount,
+    },
+}
+impl Owner {
+    #[cfg(test)]
+    pub(crate) fn current_launch(&self) -> Option<(Mount, AnyWindowHandle, WeakEntity<Surface>)> {
+        match &*self.0.launch.borrow() {
+            Some(State::Live {
+                mount,
+                window,
+                surface,
+                ..
+            }) => Some((mount.clone(), *window, surface.clone())),
+            _ => None,
+        }
+    }
+    pub(crate) fn failure(&self) -> Option<String> {
+        self.0.failure.borrow().clone()
+    }
+    fn fail_launch(&self, mount: &Mount, error: String) {
+        self.0.failure.borrow_mut().get_or_insert(error);
+        *self.0.launch.borrow_mut() = Some(State::Failed {
+            mount: mount.clone(),
+        });
+    }
+    pub(crate) fn replacing(&self) -> bool {
+        matches!(*self.0.launch.borrow(), Some(State::Replacing { .. }))
+    }
+    #[cfg(test)]
+    pub(crate) fn load_committed_update(
+        &self,
+        source: DeploymentRef,
+    ) -> Result<impl std::future::Future<Output = Result<CommittedUpdate>> + Send + 'static + use<>>
+    {
+        if self.0.quitting.get() || self.0.draining.get() {
+            return Err(Error::Invalid("desktop application is exiting".into()));
+        }
+        self.0.application.borrow().load_committed_update(source)
+    }
+    #[cfg(test)]
+    pub(crate) fn adopt_update(
+        &self,
+        update: CommittedUpdate,
+        registrations: Vec<RemoteService>,
+        cx: &mut App,
+    ) -> Result<()> {
+        if self.0.quitting.get() || self.0.draining.get() {
+            return Err(Error::Invalid("desktop application is exiting".into()));
+        }
+        let live = match &*self.0.launch.borrow() {
+            Some(State::Live {
+                mount,
+                window,
+                surface,
+                props,
+            }) => Some((
+                mount.clone(),
+                *window,
+                surface.clone(),
+                props.clone(),
+                !self.0.application.borrow().is_retiring(mount),
+            )),
+            _ => None,
+        };
+        self.0
+            .application
+            .borrow_mut()
+            .adopt_update(update, registrations)?;
+        if let Some((mount, window, surface, props, was_live)) = live {
+            let replacing = was_live && self.0.application.borrow().is_retiring(&mount);
+            if replacing {
+                *self.0.launch.borrow_mut() = Some(State::Replacing {
+                    mount: mount.clone(),
+                    props,
+                    cleanup: Cleanup::Pending,
+                });
+            }
+            let result = window.update(cx, |_, window, cx| {
+                // Even failed advancement first revokes retired native inputs.
+                let result = surface.update(cx, |surface, cx| surface.sync_native(window, cx));
+                if replacing {
+                    window.remove_window();
+                }
+                result
+            });
+            match result {
+                Err(error) | Ok(Err(error)) => self.fail_launch(&mount, error.to_string()),
+                Ok(Ok(Err(error))) => {
+                    eprintln!("deployment native synchronization failed: {error}")
+                }
+                Ok(Ok(Ok(()))) => {}
+            }
+        }
+        super::quit_when_drained(&self.0.application, cx);
+        Ok(())
+    }
+    pub(crate) fn resume_launch(&self, cx: &mut App) -> Result<bool> {
+        if self.0.quitting.get() || self.0.draining.get() {
+            return Ok(false);
+        }
+        let props = match &*self.0.launch.borrow() {
+            Some(State::Replacing {
+                cleanup: Cleanup::Confirmed,
+                props,
+                ..
+            }) => props.clone(),
+            _ => return Ok(false),
+        };
+        self.0.application.borrow_mut().advance_deployment()?;
+        let status = self.0.application.borrow().deployment_status();
+        if let Some(error) = status.error {
+            return Err(Error::Invalid(error));
+        }
+        if status.converging {
+            return Ok(false);
+        }
+        let mount = self
+            .0
+            .application
+            .borrow_mut()
+            .mount_launch(props.clone())?;
+        self.open_launch(mount, props, cx)?;
+        Ok(true)
+    }
+    fn window_finished(
+        &self,
+        mount: &Mount,
+        outcome: std::result::Result<(), String>,
+        cx: &mut App,
+    ) {
+        let matched = {
+            let mut launch = self.0.launch.borrow_mut();
+            match launch.as_mut() {
+                Some(State::Replacing {
+                    mount: original,
+                    cleanup,
+                    ..
+                }) if original == mount && matches!(cleanup, Cleanup::Pending) => {
+                    // The independent window owner confirms platform AND every lease.
+                    *cleanup = if outcome.is_ok() {
+                        Cleanup::Confirmed
+                    } else {
+                        Cleanup::Failed
+                    };
+                    true
+                }
+                Some(
+                    State::Live {
+                        mount: original, ..
+                    }
+                    | State::Opening { mount: original },
+                ) if original == mount => {
+                    *launch = None;
+                    true
+                }
+                Some(State::Failed { mount: original }) if original == mount => true,
+                _ => false,
+            }
+        };
+        if !matched {
+            return;
+        }
+        if let Err(error) = outcome {
+            self.0.failure.borrow_mut().get_or_insert(error);
+        }
+        // All native/kernel/launch-state borrows ended before possible reentry.
+        super::quit_when_drained(&self.0.application, cx);
+    }
+    pub(crate) fn open_launch(&self, mount: Mount, props: Value, cx: &mut App) -> Result<()> {
+        if self.0.quitting.get() || self.0.draining.get() {
+            return Err(Error::Invalid("desktop application is exiting".into()));
+        }
+        let (title, width, height) = {
+            let app = self.0.application.borrow();
+            let Some(Declaration::Window {
+                title,
+                width,
+                height,
+                ..
+            }) = &app.frame(&mount)?.surface
+            else {
+                return Err(Error::Invalid(
+                    "desktop launch component must request a window".into(),
+                ));
+            };
+            (title.clone(), *width, *height)
+        };
+        *self.0.launch.borrow_mut() = Some(State::Opening {
+            mount: mount.clone(),
+        });
+        let (wake, receipts) = tokio::sync::mpsc::unbounded_channel();
+        let resources = Rc::new(RefCell::new(NativeResources::new(mount.clone(), wake)));
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                None,
+                size(px(width as f32), px(height as f32)),
+                cx,
+            ))),
+            titlebar: Some(TitlebarOptions {
+                title: Some(title.into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let owner = self.clone();
+        let original = mount.clone();
+        let failed = Rc::new(RefCell::new(None));
+        let failure = failed.clone();
+        let result = gpui_kit::open_window(options, cx, move |window, cx| {
+            let finished = owner.clone();
+            let closed_mount = original.clone();
+            let closing = window_owner::start(
+                window,
+                cx,
+                resources.clone(),
+                owner.0.application.clone(),
+                receipts,
+                move |outcome, cx| finished.window_finished(&closed_mount, outcome, cx),
+            );
+            let surface = cx.new(|_| Surface {
+                application: owner.0.application.clone(),
+                resources: resources.clone(),
+                mount: original.clone(),
+            });
+            match closing {
+                Ok(task) => {
+                    task.detach();
+                    *owner.0.launch.borrow_mut() = Some(State::Live {
+                        mount: original.clone(),
+                        window: window.window_handle(),
+                        surface: surface.downgrade(),
+                        props,
+                    });
+                    let native = surface.update(cx, |surface, cx| surface.sync_native(window, cx));
+                    if let Err(error) = native {
+                        let error = error.to_string();
+                        owner.fail_launch(&original, error.clone());
+                        *failure.borrow_mut() = Some(error);
+                        let _ = resources
+                            .borrow_mut()
+                            .window_removed(&mut owner.0.application.borrow_mut());
+                        window.remove_window();
+                    }
+                }
+                Err(error) => {
+                    owner.fail_launch(&original, error.clone());
+                    *failure.borrow_mut() = Some(error.clone());
+                    let _ = resources
+                        .borrow_mut()
+                        .window_removed(&mut owner.0.application.borrow_mut());
+                    let _ = owner
+                        .0
+                        .application
+                        .borrow_mut()
+                        .close(&original, Err(error));
+                    window.remove_window();
+                }
+            }
+            surface
+        });
+        if let Err(error) = result {
+            let message = format!("native window creation failed; cleanup unconfirmed: {error}");
+            self.fail_launch(&mount, message.clone());
+            let _ = self
+                .0
+                .application
+                .borrow_mut()
+                .close(&mount, Err(message.clone()));
+            return Err(Error::Invalid(message));
+        }
+        if let Some(error) = failed.borrow_mut().take() {
+            return Err(Error::Invalid(error));
+        }
+        cx.activate(true);
+        Ok(())
+    }
+}

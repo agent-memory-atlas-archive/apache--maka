@@ -84,5 +84,10 @@ availability 在 child 内登记，持久组合决定实例。父子 runtime 均
 前台原生 pump 在 paint 外推进已接纳的 committed plan，并在继续资源准备和动作处理前
 撤销退休控件的原生输入。未改变的 Mount 保留原 editor entity 和阅读作用域。
 独立新插件初始化失败是部署诊断，不关闭仍健康的原窗口；实际原生同步与清理错误
-仍保留原错误和 fence 语义。生产管理准入与物理根窗口替换仍待接入，目前 adoption
-入口仅由可信 owner 测试接缝验证。原生 entity 测试不替代 OS 输入法验收。
+仍保留原错误和 fence 语义。生产管理准入仍待接入，目前 adoption 入口仅由可信
+owner 测试接缝验证。生产 launch owner 对初始和替代根共用窗口创建路径；替换须等
+原窗口 owner 确认平台销毁、实际 entity 释放和 mount 清理，再以同一 application 和
+已接受任务 owner 打开全新根。无关已接受任务可与新根并存；替换其 provider 才等待
+原结算。清理失败不能放行替换。显式原生退出先禁止新准入与替换，再移除窗口。
+GPUI 测试覆盖真实 Kit entity 持有、原快照、provider fence 及交接期间退出；实际 OS
+根窗口交接和输入法验收仍待完成。

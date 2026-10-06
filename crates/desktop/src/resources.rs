@@ -126,6 +126,18 @@ pub(super) struct NativeResources {
     wake: UnboundedSender<()>,
 }
 impl NativeResources {
+    #[cfg(test)]
+    pub fn cleanup_diagnostics(&self) -> String {
+        format!(
+            "removed={} platform={} scopes={:?}",
+            self.removed,
+            self.platform_confirmed,
+            self.scopes
+                .iter()
+                .map(|(id, scope)| (id.clone(), scope.leases.get(), scope.ready()))
+                .collect::<Vec<_>>()
+        )
+    }
     pub fn capture(
         &mut self,
         target: &maka_ui::actions::CaptureTarget,

@@ -24,12 +24,12 @@ mod resources;
 use maka_ui_gpui as widgets;
 mod window_owner;
 use clap::Parser;
-use gpui_kit::{
-    AnyElement, AppContext, Bounds, Context, IntoElement, ParentElement, Render, Styled,
-    TitlebarOptions, WindowBounds, WindowOptions, div, px, size,
-};
+use gpui_kit::{AnyElement, Context, IntoElement, ParentElement, Render, Styled, div};
 #[cfg(test)]
-use gpui_kit::{App, InteractiveElement, TestAppContext, point};
+use gpui_kit::{
+    App, AppContext, Bounds, InteractiveElement, TestAppContext, WindowBounds, WindowOptions,
+    point, px, size,
+};
 use maka_plugin_core::{composition::PresentationTarget, runtime::Mount};
 use maka_ui::{Application, NativeView, Surface as SurfaceDeclaration};
 type DesktopApplication = Application<dyn widgets::Widget>;
@@ -635,13 +635,7 @@ impl Launcher {
                 return Err(error.into());
             }
         };
-        let Some(SurfaceDeclaration::Window {
-            title,
-            width,
-            height,
-            ..
-        }) = &frame.surface
-        else {
+        if !matches!(&frame.surface, Some(SurfaceDeclaration::Window { .. })) {
             drain_ui(&mut application, &timer, true);
             timer.block_on(async {
                 tokio::join!(
@@ -650,9 +644,7 @@ impl Launcher {
                 );
             });
             return Err("desktop launch component must request a window".into());
-        };
-        let dimensions = size(px(*width as f32), px(*height as f32));
-        let title = title.clone();
+        }
         let application = Rc::new(RefCell::new(application));
         let shutdown_application = application.clone();
         let connections = Arc::new(tokio::sync::Mutex::new(connections));
@@ -660,90 +652,20 @@ impl Launcher {
         let platform_store = store.clone();
         let execution_owner = Rc::new(RefCell::new(None));
         let platform_owner = execution_owner.clone();
-        let startup_error = Rc::new(RefCell::new(None));
-        let startup_result = startup_error.clone();
         gpui_kit::application()
             .with_quit_mode(gpui_kit::QuitMode::Explicit)
             .run(move |cx| {
                 gpui_kit::init(cx);
-                let (wake, receipts) = tokio::sync::mpsc::unbounded_channel();
-                let resources = Rc::new(RefCell::new(resources::NativeResources::new(
-                    mount.clone(),
-                    wake,
-                )));
-                let bounds = Bounds::centered(None, dimensions, cx);
-                let options = WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some(title.into()),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                };
-                *platform_owner.borrow_mut() = Some(
-                    actions::own(
-                        application.clone(),
-                        Some(platform_connections),
-                        Some(platform_store),
-                        cx,
-                    )
-                    .expect("unique UI application owner"),
-                );
-                let content = application.clone();
-                let content_mount = mount.clone();
-                let content_error = startup_error.clone();
-                let quit_application = application.clone();
-                if let Err(error) = gpui_kit::open_window(options, cx, move |window, cx| {
-                    let result = content_error.clone();
-                    match window_owner::start(
-                        window,
-                        cx,
-                        resources.clone(),
-                        content.clone(),
-                        receipts,
-                        move |outcome, cx| {
-                            if let Err(error) = outcome {
-                                eprintln!("native cleanup unconfirmed: {error}");
-                                *result.borrow_mut() =
-                                    Some(format!("native cleanup unconfirmed: {error}"));
-                            }
-                            actions::quit_when_drained(&quit_application, cx);
-                        },
-                    ) {
-                        Ok(task) => task.detach(),
-                        Err(error) => {
-                            eprintln!("native window cleanup unavailable: {error}");
-                            let _ = resources
-                                .borrow_mut()
-                                .window_removed(&mut content.borrow_mut());
-                            let _ = content
-                                .borrow_mut()
-                                .close(&content_mount, Err(error.clone()));
-                            *content_error.borrow_mut() = Some(error);
-                            window.remove_window();
-                        }
-                    }
-                    let surface = cx.new(|_| Surface {
-                        application: content,
-                        resources,
-                        mount: content_mount,
-                    });
-                    surface.update(cx, |surface, cx| {
-                        surface
-                            .sync_native(window, cx)
-                            .expect("committed native mounts")
-                    });
-                    surface
-                }) {
-                    let _ = application.borrow_mut().retire(&mount);
-                    let _ = application
-                        .borrow_mut()
-                        .close(&mount, Err(error.to_string()));
-                    *startup_error.borrow_mut() =
-                        Some(format!("native window creation failed: {error}"));
-                    eprintln!("native window creation failed; cleanup unconfirmed: {error}");
-                } else {
-                    cx.activate(true);
+                let owner = actions::own(
+                    application.clone(),
+                    Some(platform_connections),
+                    Some(platform_store),
+                    cx,
+                )
+                .expect("unique UI application owner");
+                *platform_owner.borrow_mut() = Some(owner.clone());
+                if let Err(error) = owner.open_launch(mount, serde_json::json!({}), cx) {
+                    eprintln!("native launch failed: {error}");
                 }
             });
         // GPUI's ordinary exit already drained the UI. An unexpected platform exit
@@ -778,7 +700,11 @@ impl Launcher {
                 maka_application_bridge::drain_store(&store)
             );
         });
-        if let Some(error) = startup_result.borrow_mut().take() {
+        if let Some(error) = execution_owner
+            .borrow()
+            .as_ref()
+            .and_then(actions::Owner::failure)
+        {
             return Err(error.into());
         }
         Ok(())

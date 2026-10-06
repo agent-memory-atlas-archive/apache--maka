@@ -111,6 +111,13 @@ Unchanged Mounts retain their original editor entities and reading scopes. An
 independent new plugin's initialization failure is a deployment diagnostic; it
 does not close a healthy existing window. Actual native synchronization and
 cleanup failures retain their original error/fence semantics. Production
-management admission and physical root-window replacement are still pending;
-the current adoption entry exercised here is a trusted owner test seam. Native
-entity tests do not substitute for operating-system IME acceptance.
+management admission is still pending; the current adoption entry exercised here
+is a trusted owner test seam. The production launch owner uses one window creation
+path for initial and replacement roots. Replacement waits for the original window
+owner's platform destruction, real entity release and mount cleanup, then opens a
+fresh root with the same application and accepted-work owner. Unrelated accepted
+work may coexist with the new root; replacing its provider waits for its original
+settlement. Failed cleanup cannot permit replacement. Explicit native quit stops
+new admission and replacement before window removal. GPUI tests exercise held Kit
+entities, original snapshots, provider fences and quit during handoff; actual OS
+root-window replacement and IME acceptance remain pending.

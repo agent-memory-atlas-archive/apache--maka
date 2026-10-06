@@ -18,6 +18,8 @@
  */
 
 //! Accepted work survives its originating Surface and window.
+mod launch;
+
 use super::{DesktopApplication, Surface};
 use futures_util::{
     FutureExt,
@@ -43,6 +45,9 @@ struct State {
     connections: Option<Connections>,
     caller: Option<Arc<maka_event_log::EventLog>>,
     draining: Cell<bool>,
+    quitting: Cell<bool>,
+    launch: RefCell<Option<launch::State>>,
+    failure: RefCell<Option<String>>,
 }
 /// One actual foreground execution owner, shared by GPUI and its launcher.
 /// Join observers survive a lost platform loop; no completion is fabricated.
@@ -129,6 +134,9 @@ pub(super) fn own(
         connections,
         caller,
         draining: Cell::new(false),
+        quitting: Cell::new(false),
+        launch: RefCell::new(None),
+        failure: RefCell::new(None),
     }));
     cx.set_global(owner.clone());
     // Installed once per App. The callback captures no application/Root lease.
@@ -141,10 +149,14 @@ pub(super) fn own(
 }
 struct QuitGate;
 impl gpui_kit::Global for QuitGate {}
-fn request_quit(cx: &mut App) -> bool {
+pub(super) fn request_quit(cx: &mut App) -> bool {
     let Some(owner) = cx.try_global::<Owner>().cloned() else {
         return true;
     };
+    // Prohibit replacement before removal can deliver a reentrant receipt.
+    owner.0.quitting.set(true);
+    // Stop all new kernel admission; pending physical mounts/work stay fenced.
+    let _ = owner.0.application.borrow_mut().shutdown();
     // Logical removal only: actual window owners still report physical cleanup.
     for window in cx.windows() {
         let _ = window.update(cx, |_, window, _| window.remove_window());
@@ -256,12 +268,19 @@ fn execute(
 /// Last-window removal alone is not platform cleanup. Both all real mount
 /// receipts and independent accepted Work must finish before automatic exit.
 pub(super) fn quit_when_drained(application: &Rc<RefCell<DesktopApplication>>, cx: &mut App) {
-    if !cx.windows().is_empty() || !application.borrow().can_shutdown() {
-        return;
-    }
     let Some(owner) = cx.try_global::<Owner>().cloned() else {
         return;
     };
+    // Handoff is independent of unrelated windows and accepted work.
+    if owner.replacing() && !owner.0.quitting.get() {
+        if let Err(error) = owner.resume_launch(cx) {
+            eprintln!("launch convergence failed: {error}");
+        }
+        return;
+    }
+    if !cx.windows().is_empty() || !application.borrow().can_shutdown() {
+        return;
+    }
     if owner.0.draining.get() {
         return;
     }
