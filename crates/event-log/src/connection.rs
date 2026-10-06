@@ -298,10 +298,16 @@ impl OwnedConnection {
                                     .catch_unwind()
                                     .await
                                     .unwrap_or(Err(StoreError::OperationUnknown));
-                            let closed = connection
-                                .close()
+                            let closed = AssertUnwindSafe(connection.close())
+                                .catch_unwind()
                                 .await
-                                .map_err(|error| StoreError::CloseFailed(error.to_string()));
+                                .map_err(|_| {
+                                    StoreError::CloseFailed("reader close panicked".into())
+                                })
+                                .and_then(|result| {
+                                    result
+                                        .map_err(|error| StoreError::CloseFailed(error.to_string()))
+                                });
                             let result = match result {
                                 Err(error) => Err(error),
                                 Ok(value) => match &closed {
