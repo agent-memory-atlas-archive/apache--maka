@@ -87,7 +87,7 @@ pub(super) async fn read(
         let outcome: &str = row.try_get("outcome").ok()?;
         let projection = match outcome {
             "succeeded" => serde_json::from_str(row.try_get::<&str, _>("projection").ok()?).ok()?,
-            "failed" => DurableToolProjection::Text {
+            "failed" | "unknown" => DurableToolProjection::Text {
                 text: row.try_get("message").ok()?,
             },
             _ => return None,

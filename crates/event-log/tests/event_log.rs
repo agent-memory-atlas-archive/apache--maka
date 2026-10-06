@@ -100,7 +100,7 @@ async fn settled_uncertainty_survives_reopen_without_abandoning_the_invocation()
         "settled uncertainty is a recorded result, not a missing worker"
     );
     assert!(prefix.events.iter().any(|row| matches!(&row.event.fact,
-        Fact::ToolSettled { operation_id, outcome: ToolOutcome::Unknown { message } }
+        Fact::ToolSettled { operation_id, outcome: ToolOutcome::Unknown { message, .. } }
             if operation_id == "publish" && message.contains("directory sync failed")
     )));
     reopened.close().await.unwrap();

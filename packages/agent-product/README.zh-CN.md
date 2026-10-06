@@ -47,7 +47,7 @@ node packages/agent-product/scripts/compose.mjs \
 
 类型检查和测试使用 `npm --workspace @maka-agent/product run typecheck` / `test`。设置 `MAKA_PRODUCT_CLI_CHECK=1` 额外验证实际包引用与两端组合。原生 opt-in 测试使用实际打包 guest、TUI 编辑器、持久调用意图、已授权原生服务和本地 HTTP provider，命令见英文文档；最终桌面视觉和三平台交互需要另行实际验收。
 
-普通 `models` 组件从显式绑定的 Root 设置能力读取有界模型选项，默认投影独立于选项分页，首屏十六项之外的默认模型也能准确建议；仅在尚未选择模型时建议已保存默认项。每次发送固定该次选择的连接 revision；Desktop 使用滚动列表，TUI 每屏三个选项并保留导航。宿主不隐式替换模型，未知结果不自动重发；目录刷新保留原 connection/model 身份并核验实际 revision，不改选无关默认项。`agent` 配置仅包含 `maxActiveRuns` 与 `maxSteps`。
+普通 `models` 组件从显式绑定的 Root 设置能力读取有界模型选项，默认投影独立于选项分页，首屏十六项之外的默认模型也能准确建议；仅在尚未选择模型时建议已保存默认项。每次发送固定该次选择的连接 revision；Desktop 使用滚动列表，TUI 每屏三个选项并保留导航。宿主不隐式替换模型，未知结果不自动重发；目录刷新保留原 connection/model 身份并核验实际 revision，不改选无关默认项。`agent` 配置包含 `maxActiveRuns`、`maxSteps` 与显式 `tools`；纯文本产品填写 `tools: []`。工具须由 Agent 原生条目声明服务 import，并由 Host 独立授权具体调用边。
 
 `connection-form` 从实际提供商描述创建连接，编辑时只提交显式选中的公开字段。未读取的模型集合、覆盖配置与请求体附加配置保持原值，只有用户选择完整替换才提交。编辑端点保留其他配置键，完整配置是独立选项。原生编辑器跨 TUI 字段分页和确认保留全部草稿；保存按每个原 owner/revision 捕获，并使用原 Rust 契约在构建期生成的校验函数检查最终输入。字段类型错误和 CAS 拒绝不会退休表单。冲突需要复核并确认当前连接或目录版本；未知结果查询原操作，不自动重试。此组件拥有读取公开字段的 Reader，不导入 SecretInput。 编辑字段限制为 64 KiB UTF-8；JSON 非有限数值及超过 64 层容器嵌套在提交前拒绝。 移除已保存连接复用同一表单，以准确观察版本和已保存身份明确确认；关联密钥及该连接的默认模型会清除，会话保留。取消保留原生草稿，冲突须复核并再次确认；结果未知仅查询原回执，不重新删除。历史删除回执独立于当前草稿。
 

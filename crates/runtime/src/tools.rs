@@ -77,6 +77,18 @@ pub enum ToolError {
     /// The worker has stopped; its external effect cannot be confirmed.
     #[error("tool effect outcome unknown: {0}")]
     OutcomeUnknown(String),
+    /// Exact application receipt is durable evidence, never model error text.
+    #[error("tool effect outcome unknown: {message}")]
+    OperationUnknown {
+        message: String,
+        observation: Box<maka_plugin_core::operation::OperationReply>,
+    },
+    /// Preserve the receipt without claiming tool settlement or resource release.
+    #[error("tool cleanup unconfirmed: {message}")]
+    OperationCleanupUnconfirmed {
+        message: String,
+        observation: Box<maka_plugin_core::operation::OperationReply>,
+    },
     /// The worker or its resources may still be active. Do not admit more work.
     #[error("tool cleanup unconfirmed: {0}")]
     CleanupUnconfirmed(String),

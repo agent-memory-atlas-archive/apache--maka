@@ -120,6 +120,7 @@ async fn tool_accounting_preserves_dispatch_truth_and_snapshot_without_private_b
             "unknown",
             ToolOutcome::Unknown {
                 message: private.clone(),
+                operation: None,
             },
         ),
     ] {

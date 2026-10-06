@@ -43,6 +43,19 @@ pub(crate) async fn validate(
 ) -> Result<(), StoreError> {
     let invocation = &event.invocation.invocation_id;
     match &event.fact {
+        Fact::ToolOperationObserved { operation_id, .. } => {
+            identity(operation_id)?;
+            let live: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM runtime_events d
+                WHERE d.invocation_id=? AND d.operation_id=? AND d.kind='tool_dispatched'
+                  AND NOT EXISTS(SELECT 1 FROM runtime_events s WHERE s.invocation_id=d.invocation_id
+                    AND s.operation_id=d.operation_id AND s.kind='tool_settled'))")
+                .bind(invocation).bind(operation_id).fetch_one(&mut *tx).await?;
+            if !live {
+                return Err(invalid(
+                    "service observation requires a dispatched unsettled tool",
+                ));
+            }
+        }
         Fact::ToolNotified {
             operation_id,
             text,

@@ -211,7 +211,7 @@ impl ToolContent {
                     },
                 },
             ),
-            ToolOutcome::Failed { message } | ToolOutcome::Unknown { message } => (
+            ToolOutcome::Failed { message } | ToolOutcome::Unknown { message, .. } => (
                 true,
                 Self::Text {
                     text: message.clone(),

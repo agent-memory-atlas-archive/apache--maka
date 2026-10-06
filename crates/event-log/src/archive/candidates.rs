@@ -100,7 +100,7 @@ async fn scan(
          WHERE t.kind='tool_settled' AND t.sequence>?1 AND t.sequence<=?3 AND t.owner_session_id=?2
            AND {filter} AND json_extract(d.event_json,'$.fact.call.origin.kind')='provider'
            AND NOT EXISTS(SELECT 1 FROM runtime_events a WHERE a.kind='tool_result_archived' AND json_extract(a.event_json,'$.fact.placeholder.identity.runtime_event_id')=t.event_id AND {archive_filter})
-           AND (json_extract(t.event_json,'$.fact.outcome.kind')!='failed' OR length(CAST(json_extract(t.event_json,'$.fact.outcome.message') AS BLOB))<=262144)
+           AND (json_extract(t.event_json,'$.fact.outcome.kind')='succeeded' OR length(CAST(json_extract(t.event_json,'$.fact.outcome.message') AS BLOB))<=262144)
          ORDER BY t.sequence LIMIT 1"
     );
     let mut after = cursor.after_sequence as i64;

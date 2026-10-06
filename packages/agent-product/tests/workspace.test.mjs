@@ -464,6 +464,7 @@ test('both product compositions use actual immutable package refs and check in t
         agent: {
           maxActiveRuns: 1,
           maxSteps: 1,
+          tools: [],
         },
         hostRoot: '/private/product-fixture',
         hostDeployment: uuid(80),

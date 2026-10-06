@@ -377,6 +377,7 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
                     operation_id: operation,
                     outcome: maka_runtime::event::ToolOutcome::Unknown {
                         message: "Result unknown; do not repeat".into(),
+                        operation: None,
                     },
                 },
             ))

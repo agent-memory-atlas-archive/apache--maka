@@ -67,6 +67,7 @@ pub(crate) struct Owner {
     revision: SourceRevision,
     cwd: String,
     engine: Engine,
+    tools: maka_tools::ToolCatalog,
     runs: Mutex<Runs>,
     permits: Arc<Semaphore>,
     workers: TaskTracker,
@@ -79,6 +80,7 @@ impl Owner {
         }
         let settings: Configuration =
             serde_json::from_value(input).map_err(|_| "agent_configuration_invalid")?;
+        let tools = crate::tools::catalog(context.services(), &settings.tools)?;
         let persistence = context.persistence().ok_or("agent_requires_persistence")?;
         let root = persistence
             .store()
@@ -123,6 +125,7 @@ impl Owner {
             settings,
             configuration,
             engine,
+            tools,
             runs: Mutex::default(),
             workers: TaskTracker::new(),
             stop: CancellationToken::new(),
@@ -225,6 +228,7 @@ impl Owner {
             )
             .await
             .map_err(|_| "agent_admission_failed")?;
+        let cancellation = self.stop.child_token();
         let input = RunInput {
             model_source: Some(source),
             model_revision: Some(prepared.revision),
@@ -254,12 +258,12 @@ impl Owner {
             work: RunWork::Message {
                 message,
                 source_messages: vec![delivered],
-                tools: maka_tools::ToolCatalog::new([]).expect("empty tool catalog"),
+                tools: self.tools.clone(),
                 max_steps: self.settings.max_steps,
                 allow_prior_unknown: false,
             },
         };
-        let running = match self.engine.start(input, self.stop.clone()).await {
+        let running = match self.engine.start(input, cancellation.clone()).await {
             Ok(running) => running,
             Err(error) => {
                 if error.is_cleanup_unconfirmed() {
@@ -272,7 +276,7 @@ impl Owner {
             id.clone(),
             Control {
                 invocation: invocation.invocation_id.clone(),
-                cancellation: running.cancellation(),
+                cancellation,
             },
         );
         let owner = self.clone();

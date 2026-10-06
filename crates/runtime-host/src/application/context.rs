@@ -77,6 +77,9 @@ impl Context {
                 .await
         }))
     }
+    /// The observer's outer Err is admission failure. Once accepted, business
+    /// uncertainty is always an OperationReply with its original RecoveryRef.
+    /// A clean refusal additionally requires this request Scope's real finish.
     #[allow(clippy::too_many_arguments)]
     pub fn mutate(
         &self,

@@ -1742,6 +1742,18 @@ export interface TextChunk {
 export interface AgentConfiguration {
   maxActiveRuns: number;
   maxSteps: number;
+  /**
+   * Only explicitly selected, frozen application service methods become tools.
+   *
+   * @maxItems 128
+   */
+  tools: AgentServiceTool[];
+}
+export interface AgentServiceTool {
+  name: string;
+  description: string;
+  import: string;
+  method: string;
 }
 /**
  * Exact public selection observed by a caller, checked once at run admission.

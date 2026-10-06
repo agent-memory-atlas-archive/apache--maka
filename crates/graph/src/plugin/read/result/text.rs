@@ -115,7 +115,7 @@ impl Window {
                 }
             }
             Fact::ToolSettled { outcome, .. } => match outcome {
-                ToolOutcome::Failed { message } | ToolOutcome::Unknown { message } => {
+                ToolOutcome::Failed { message } | ToolOutcome::Unknown { message, .. } => {
                     text.push(message)
                 }
                 ToolOutcome::Succeeded {

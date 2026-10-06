@@ -77,10 +77,12 @@ impl From<ToolError> for Failure {
     fn from(error: ToolError) -> Self {
         match error {
             ToolError::Failed(message) => Self::Failed(message),
-            ToolError::OutcomeUnknown(message) => Self::OutcomeUnknown(message),
-            ToolError::CleanupUnconfirmed(message) | ToolError::Persistence(message) => {
-                Self::CleanupUnconfirmed(message)
+            ToolError::OutcomeUnknown(message) | ToolError::OperationUnknown { message, .. } => {
+                Self::OutcomeUnknown(message)
             }
+            ToolError::OperationCleanupUnconfirmed { message, .. }
+            | ToolError::CleanupUnconfirmed(message)
+            | ToolError::Persistence(message) => Self::CleanupUnconfirmed(message),
             ToolError::Io { message, .. } => Self::Failed(message),
         }
     }

@@ -98,14 +98,21 @@ impl RunError {
     pub fn is_cleanup_unconfirmed(&self) -> bool {
         matches!(
             self,
-            Self::CleanupUnconfirmed | Self::Tool(ToolError::CleanupUnconfirmed(_))
+            Self::CleanupUnconfirmed
+                | Self::Tool(
+                    ToolError::CleanupUnconfirmed(_)
+                        | ToolError::OperationCleanupUnconfirmed { .. }
+                )
         )
     }
 }
 
 impl From<ToolError> for RunError {
     fn from(error: ToolError) -> Self {
-        if matches!(error, ToolError::CleanupUnconfirmed(_)) {
+        if matches!(
+            error,
+            ToolError::CleanupUnconfirmed(_) | ToolError::OperationCleanupUnconfirmed { .. }
+        ) {
             cleanup::unconfirmed();
         }
         Self::Tool(error)

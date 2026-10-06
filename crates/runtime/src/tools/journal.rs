@@ -174,6 +174,36 @@ impl ToolJournal {
             };
             let id = uuid::Uuid::new_v4().to_string();
             let recorded_at = std::time::SystemTime::now();
+            if let Err(ToolError::OperationCleanupUnconfirmed {
+                message,
+                observation,
+            }) = result
+            {
+                let write = EventWrite::plain(RuntimeEvent {
+                    id,
+                    recorded_at,
+                    invocation,
+                    fact: Fact::ToolOperationObserved {
+                        operation_id,
+                        observation,
+                    },
+                });
+                // Recording an observation never releases the real cleanup fence.
+                let recorded = match write {
+                    Ok(write) => sink
+                        .commit(write)
+                        .await
+                        .map(|_| ())
+                        .map_err(|error| error.to_string()),
+                    Err(error) => Err(error.to_string()),
+                };
+                return Err(ToolError::CleanupUnconfirmed(match recorded {
+                    Ok(()) => message,
+                    Err(_) => {
+                        format!("{message}; original service observation could not be persisted")
+                    }
+                }));
+            }
             let (write, result) = match result {
                 Ok(value) => {
                     EventWrite::tool_success(id, recorded_at, invocation, operation_id, value)
@@ -182,11 +212,20 @@ impl ToolJournal {
                 Err(
                     error @ (ToolError::Failed(_)
                     | ToolError::Io { .. }
-                    | ToolError::OutcomeUnknown(_)),
+                    | ToolError::OutcomeUnknown(_)
+                    | ToolError::OperationUnknown { .. }),
                 ) => {
                     let outcome = match &error {
                         ToolError::OutcomeUnknown(message) => ToolOutcome::Unknown {
                             message: message.clone(),
+                            operation: None,
+                        },
+                        ToolError::OperationUnknown {
+                            message,
+                            observation,
+                        } => ToolOutcome::Unknown {
+                            message: message.clone(),
+                            operation: Some(observation.clone()),
                         },
                         ToolError::Failed(message) => ToolOutcome::Failed {
                             message: message.clone(),

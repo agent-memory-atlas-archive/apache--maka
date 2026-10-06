@@ -196,6 +196,7 @@ fn retained(event: &RuntimeEvent) -> Value {
         | Fact::ContextCheckpointRecorded { .. }
         | Fact::ToolResultArchived { .. }
         | Fact::ModelObserved { .. }
+        | Fact::ToolOperationObserved { .. }
         | Fact::ToolNotified { .. } => json!({}),
     };
     json!({"id":event.id,"invocation":event.invocation,"recorded_at":event.recorded_at,"fact":fact})

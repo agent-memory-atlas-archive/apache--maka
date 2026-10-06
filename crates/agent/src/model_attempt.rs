@@ -630,9 +630,13 @@ fn tool_result(
 ) -> Result<(), RunError> {
     use maka_runtime::tools::ToolError;
     match result {
-        Ok(_) | Err(ToolError::Failed(_) | ToolError::Io { .. } | ToolError::OutcomeUnknown(_)) => {
-            Ok(())
-        }
+        Ok(_)
+        | Err(
+            ToolError::Failed(_)
+            | ToolError::Io { .. }
+            | ToolError::OutcomeUnknown(_)
+            | ToolError::OperationUnknown { .. },
+        ) => Ok(()),
         Err(error) => Err(error.into()),
     }
 }

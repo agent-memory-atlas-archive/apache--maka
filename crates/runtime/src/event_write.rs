@@ -102,6 +102,35 @@ impl EventWrite {
             }
             _ => {}
         }
+        let operation = match &event.fact {
+            Fact::ToolOperationObserved { observation, .. } => Some(observation.as_ref()),
+            Fact::ToolSettled {
+                outcome:
+                    ToolOutcome::Unknown {
+                        operation: Some(operation),
+                        ..
+                    },
+                ..
+            } => Some(operation.as_ref()),
+            _ => None,
+        };
+        if let Some(operation) = operation {
+            operation
+                .reference
+                .validate()
+                .map_err(|error| CommitError::Rejected(error.to_string()))?;
+            if serde_json::to_vec(operation)
+                .map_err(|error| CommitError::Rejected(error.to_string()))?
+                .len()
+                // Host business JSON may itself reach 1 MiB; its original
+                // bounded Ref/receipt adds independent envelope bytes.
+                > 2 * 1024 * 1024
+            {
+                return Err(CommitError::Rejected(
+                    "service operation observation exceeds 2 MiB".into(),
+                ));
+            }
+        }
         if let Fact::InvocationOpened { input, .. } = &event.fact {
             input
                 .validate_inheritance(&event.invocation)

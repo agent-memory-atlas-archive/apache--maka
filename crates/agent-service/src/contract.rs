@@ -33,6 +33,22 @@ pub struct Configuration {
     pub max_active_runs: usize,
     #[schemars(range(min = 1, max = 16))]
     pub max_steps: usize,
+    /// Only explicitly selected, frozen application service methods become tools.
+    #[schemars(length(max = 128))]
+    pub tools: Vec<ServiceTool>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentServiceTool")]
+pub struct ServiceTool {
+    #[schemars(length(min = 1, max = 128))]
+    pub name: String,
+    #[schemars(length(min = 1, max = 4096))]
+    pub description: String,
+    #[schemars(length(min = 1, max = 256))]
+    pub import: String,
+    #[schemars(length(min = 1, max = 256))]
+    pub method: String,
 }
 pub fn configuration_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(Configuration)).expect("configuration schema")

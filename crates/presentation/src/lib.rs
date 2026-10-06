@@ -382,6 +382,7 @@ impl InvocationView {
                     Fact::InvocationOpened { .. } | Fact::MessageImported { .. } => unreachable!(),
                     Fact::ContextCheckpointRecorded { .. }
                     | Fact::ToolResultArchived { .. }
+                    | Fact::ToolOperationObserved { .. }
                     | Fact::ToolNotified { .. } => {}
                 }
             }

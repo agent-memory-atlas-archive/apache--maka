@@ -34,7 +34,7 @@ pub fn outcome_projection(outcome: &ToolOutcome) -> Cow<'_, DurableToolProjectio
         ToolOutcome::Succeeded {
             model_projection, ..
         } => Cow::Borrowed(model_projection),
-        ToolOutcome::Failed { message } | ToolOutcome::Unknown { message } => {
+        ToolOutcome::Failed { message } | ToolOutcome::Unknown { message, .. } => {
             Cow::Owned(DurableToolProjection::Text {
                 text: message.clone(),
             })

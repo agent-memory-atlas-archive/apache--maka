@@ -229,7 +229,7 @@ fn increment(fact: &Fact, basis: &AcceptedMainContext) -> Option<u64> {
                 ToolOutcome::Succeeded {
                     model_projection, ..
                 } => projection_units(model_projection)?,
-                ToolOutcome::Failed { message } | ToolOutcome::Unknown { message } => {
+                ToolOutcome::Failed { message } | ToolOutcome::Unknown { message, .. } => {
                     text_units(message)
                 }
             }

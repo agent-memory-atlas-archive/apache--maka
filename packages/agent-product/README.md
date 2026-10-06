@@ -37,7 +37,7 @@ node packages/agent-product/scripts/compose.mjs \
   --maka /absolute/path/to/maka
 ```
 
-`installation.json` supplies `presentation` (`desktop` or `tui`), the full `locale` tag, `scheme` (`light` or `dark`), `hostRoot`, `hostDeployment`, `agent` and `keys`. `agent` is the SDK's generated `AgentConfiguration`: finite `maxActiveRuns`/`maxSteps`. Credentials and endpoint settings belong to that Host Root; they do not belong in the product source.
+`installation.json` supplies `presentation` (`desktop` or `tui`), the full `locale` tag, `scheme` (`light` or `dark`), `hostRoot`, `hostDeployment`, `agent` and `keys`. `agent` is the SDK's generated `AgentConfiguration`: finite `maxActiveRuns`/`maxSteps` and explicit `tools` (use `[]` for a text-only composition). Credentials and endpoint settings belong to that Host Root; they do not belong in the product source.
 
 `keys` maps all nineteen names exported by `src/composition.ts` (`workspace`, `composer`, `navigation`, `timeline`, `appearance`, `surface`, `editor`, `reader`, `history`, `models`, `model-default`, `settings`, `connections`, `credential`, `connection-form`, `input`, `agent`, `receipts`, `gateway`) to nonnil UUIDs. Allocate these once for an installation and keep them across rebuilds. Deployment UUIDs are likewise stable installation identities. New package revisions do not imply new data namespaces.
 

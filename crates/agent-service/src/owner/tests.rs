@@ -17,6 +17,9 @@
  * under the License.
  */
 
+#[path = "tests/service_tools.rs"]
+mod service_tools;
+
 #[path = "tests/selection.rs"]
 mod selection;
 
@@ -54,7 +57,10 @@ use std::sync::Mutex as StdMutex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-struct Grant(Issuer);
+struct Grant(
+    Issuer,
+    Option<Arc<maka_application_bridge::transport::PeerPolicy>>,
+);
 impl Policy for Grant {
     fn recover(
         &self,
@@ -67,6 +73,13 @@ impl Policy for Grant {
         }
     }
     fn admit(&self, invocation: HostInvocation<'_>) -> Result<(), String> {
+        if invocation.native_origin.is_some() {
+            return self
+                .1
+                .as_ref()
+                .ok_or("native tools denied")?
+                .admit(invocation);
+        }
         if self.0.evidence::<bool>(invocation.scope) == Some(&true) {
             Ok(())
         } else {
@@ -343,6 +356,15 @@ impl Fixture {
         model: Option<ModelExecutor>,
         peer: Option<Arc<maka_application_bridge::transport::PeerPolicy>>,
     ) -> Self {
+        Self::with_services(base, cap, model, peer, None).await
+    }
+    async fn with_services(
+        base: &str,
+        cap: usize,
+        model: Option<ModelExecutor>,
+        peer: Option<Arc<maka_application_bridge::transport::PeerPolicy>>,
+        tooling: Option<service_tools::Setup>,
+    ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("root");
         let namespaces = RootNamespaces {
@@ -399,11 +421,24 @@ impl Fixture {
                 .unwrap(),
             maka_config::oauth::enrollment::LoginCompletion::Committed(_)
         ));
-        let settings = Configuration {
+        let mut settings = Configuration {
             max_active_runs: cap,
             max_steps: 1,
+            tools: vec![],
         };
-        let (input, packages) = input(&settings);
+        if let Some(tooling) = &tooling {
+            settings.max_steps = 2;
+            settings.tools = vec![contract::ServiceTool {
+                name: "Counter".into(),
+                description: "Increment the explicitly selected counter.".into(),
+                import: "counter".into(),
+                method: tooling.method().into(),
+            }];
+        }
+        let (mut input, mut packages) = input(&settings);
+        if let Some(tooling) = &tooling {
+            tooling.install(&mut input, &mut packages);
+        }
         let deployment = Uuid::new_v4();
         store
             .commit_application(deployment, 0, input, vec![], packages)
@@ -414,6 +449,9 @@ impl Fixture {
         let replacement = Arc::new(StdMutex::new(model));
         let mut native = NativeRegistry::default();
         maka_settings_service::provide(&mut native).unwrap();
+        if let Some(tooling) = &tooling {
+            tooling.provide(&mut native);
+        }
         // Actual Host NativeContext and original NativeOwner; only the model
         // implementation is controlled in failure tests, never Root/admission.
         native
@@ -452,8 +490,12 @@ impl Fixture {
         let (issuer, policy): (Issuer, Arc<dyn Policy>) = match peer {
             Some(peer) => (peer.issuer(), peer),
             None => {
-                let issuer = Issuer::default();
-                (issuer.clone(), Arc::new(Grant(issuer)))
+                let native = tooling.as_ref().map(service_tools::Setup::policy);
+                let issuer = native
+                    .as_ref()
+                    .map(|policy| policy.issuer())
+                    .unwrap_or_default();
+                (issuer.clone(), Arc::new(Grant(issuer, native)))
             }
         };
         let app = Application::start_from_store(
@@ -1054,7 +1096,7 @@ async fn public_availability_resumes_stable_sessions_and_separates_deployments()
             deployment,
             native,
             fixture.issuer.clone(),
-            Arc::new(Grant(fixture.issuer.clone())),
+            Arc::new(Grant(fixture.issuer.clone(), None)),
             Default::default(),
         )
         .await
@@ -1095,7 +1137,7 @@ async fn public_availability_resumes_stable_sessions_and_separates_deployments()
             other_deployment,
             native,
             fixture.issuer.clone(),
-            Arc::new(Grant(fixture.issuer.clone())),
+            Arc::new(Grant(fixture.issuer.clone(), None)),
             Default::default(),
         )
         .await

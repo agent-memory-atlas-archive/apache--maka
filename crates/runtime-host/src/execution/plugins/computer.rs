@@ -442,6 +442,20 @@ fn with_partial_observations(
         },
         ToolError::Persistence(message) => ToolError::Persistence(message + &suffix),
         ToolError::OutcomeUnknown(message) => ToolError::OutcomeUnknown(message + &suffix),
+        ToolError::OperationUnknown {
+            message,
+            observation,
+        } => ToolError::OperationUnknown {
+            message: message + &suffix,
+            observation,
+        },
+        ToolError::OperationCleanupUnconfirmed {
+            message,
+            observation,
+        } => ToolError::OperationCleanupUnconfirmed {
+            message: message + &suffix,
+            observation,
+        },
         ToolError::CleanupUnconfirmed(message) => ToolError::CleanupUnconfirmed(message + &suffix),
     }
 }

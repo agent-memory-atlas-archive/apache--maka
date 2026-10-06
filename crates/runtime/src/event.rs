@@ -89,6 +89,9 @@ pub enum ToolOutcome {
     },
     Unknown {
         message: String,
+        /// Original service outcome/namespace; this is observation, not a grant.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        operation: Option<Box<maka_plugin_core::operation::OperationReply>>,
     },
 }
 
@@ -178,6 +181,11 @@ pub enum Fact {
         name: String,
         input: Value,
     },
+    /// Original service observation while this tool remains physically unsettled.
+    ToolOperationObserved {
+        operation_id: String,
+        observation: Box<maka_plugin_core::operation::OperationReply>,
+    },
     ToolSettled {
         operation_id: String,
         outcome: ToolOutcome,
@@ -240,6 +248,7 @@ impl Fact {
             Self::ModelInterrupted { .. } => "model_interrupted",
             Self::ModelCompleted { .. } => "model_completed",
             Self::ToolDispatched { .. } => "tool_dispatched",
+            Self::ToolOperationObserved { .. } => "tool_operation_observed",
             Self::ToolSettled { .. } => "tool_settled",
             Self::ToolNotified { .. } => "tool_notified",
             Self::ToolRejected { .. } => "tool_rejected",
@@ -250,6 +259,7 @@ impl Fact {
     pub fn operation_id(&self) -> Option<&str> {
         match self {
             Self::ToolDispatched { operation_id, .. }
+            | Self::ToolOperationObserved { operation_id, .. }
             | Self::ToolSettled { operation_id, .. }
             | Self::ToolRejected { operation_id, .. } => Some(operation_id),
             Self::ModelRequested { step_id, .. }
@@ -367,7 +377,7 @@ impl LogPrefix {
                 | Fact::ExecutorObserved { .. }
                 | Fact::ModelObserved { .. }
                 | Fact::ToolRejected { .. } => {}
-                Fact::ToolNotified { .. } => {}
+                Fact::ToolNotified { .. } | Fact::ToolOperationObserved { .. } => {}
                 Fact::ModelRequested { step_id, .. } => {
                     model_steps.insert(step_id.clone());
                 }

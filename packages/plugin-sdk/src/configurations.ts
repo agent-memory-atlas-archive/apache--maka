@@ -36,8 +36,45 @@ export const configurations = {
         minimum: 1,
         maximum: 16,
       },
+      tools: {
+        description: 'Only explicitly selected, frozen application service methods become tools.',
+        type: 'array',
+        items: {
+          $ref: '#/$defs/AgentServiceTool',
+        },
+        maxItems: 128,
+      },
     },
     additionalProperties: false,
-    required: ['maxActiveRuns', 'maxSteps'],
+    required: ['maxActiveRuns', 'maxSteps', 'tools'],
+    $defs: {
+      AgentServiceTool: {
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+          },
+          description: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 4096,
+          },
+          import: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 256,
+          },
+          method: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 256,
+          },
+        },
+        additionalProperties: false,
+        required: ['name', 'description', 'import', 'method'],
+      },
+    },
   },
 } as const;
