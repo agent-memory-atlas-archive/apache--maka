@@ -375,3 +375,76 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn retained_old_head_after_new_explicit_adoption_does_not_poison_readiness() {
+    use maka_event_log::root::{RootNamespaces, RootOwner};
+    use maka_plugin_core::composition::{Environment, ExecutionLocation};
+    let dir = tempfile::tempdir().unwrap();
+    let ns = RootNamespaces {
+        ownership: dir.path().join("owners"),
+        control: dir.path().join("control"),
+    };
+    let store = Arc::new(
+        maka_event_log::EventLog::for_root(Arc::new(
+            RootOwner::create(&dir.path().join("root"), &ns).unwrap(),
+        ))
+        .await
+        .unwrap(),
+    );
+    let input = Input {
+        environment: Environment {
+            location: ExecutionLocation::Host,
+            presentation: None,
+        },
+        instances: BTreeMap::new(),
+        launch: None,
+    };
+    let id = Uuid::new_v4();
+    let first = store
+        .commit_application(id, 0, input.clone(), vec![], vec![])
+        .await
+        .unwrap();
+    let cursor = store.subscribe_application(first.clone()).unwrap();
+    let second = store
+        .commit_application(id, 1, input.clone(), vec![], vec![])
+        .await
+        .unwrap();
+    // This is a real completed SQL head read retained across another owner turn.
+    let (cursor, observed) = next_change(cursor).await;
+    assert_eq!(observed.as_ref().unwrap(), &second);
+    let third = store
+        .commit_application(id, 2, input.clone(), vec![], vec![])
+        .await
+        .unwrap();
+    let native = NativeRegistry::default();
+    let (plan, sources) = prepare(&input, vec![], &native, true).unwrap();
+    let (updates, _) = watch::channel(Snapshot::default());
+    let mut owner = Owner::new(
+        plan,
+        input,
+        sources,
+        native,
+        Issuer::default(),
+        Arc::new(Allowed),
+        Limits::default(),
+        updates,
+        Weak::new(),
+        Some((first, store.clone())),
+    );
+    owner
+        .adopt(store.load_application_at(&third).await.unwrap().unwrap())
+        .unwrap();
+    owner.drive();
+    owner.observe_source(observed.unwrap());
+    let (_, latest) = next_change(cursor).await;
+    owner.observe_source(latest.unwrap());
+    let snapshot = owner.snapshot();
+    assert_eq!(snapshot.desired, Some(third.clone()));
+    assert_eq!(snapshot.effective, Some(third));
+    assert!(snapshot.startup_error.is_none());
+    assert!(owner.loading_adoption.is_none());
+    assert!(owner.check_adoption_source(&second).is_err());
+    drop(owner);
+    Arc::try_unwrap(store).ok().unwrap().close().await.unwrap();
+}

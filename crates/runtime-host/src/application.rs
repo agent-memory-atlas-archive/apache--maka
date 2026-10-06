@@ -316,6 +316,8 @@ impl Mutation {
 
 #[derive(Clone, Default)]
 pub struct Snapshot {
+    /// Exact source currently being read/preflighted; not an adopted input or grant.
+    pub loading: Option<DeploymentRef>,
     /// Latest validated committed source adopted by this owner.
     pub desired: Option<DeploymentRef>,
     /// Last source whose complete plan actually converged.
@@ -332,6 +334,7 @@ pub struct Snapshot {
 /// root alive; root Drop requests retirement, never acknowledges cleanup.
 pub struct Application {
     client: Client,
+    adoptions: mpsc::Sender<Adoption>,
     stop: CancellationToken,
     source: Option<DeploymentRef>,
 }
@@ -343,7 +346,7 @@ impl Drop for Application {
 #[derive(Clone)]
 pub struct Client {
     dispatch: Arc<Dispatch>,
-    control: mpsc::Sender<Control>,
+    control: mpsc::Sender<Retirement>,
     updates: watch::Receiver<Snapshot>,
 }
 
@@ -555,15 +558,13 @@ impl Reply {
         }
     }
 }
-pub(super) enum Control {
-    Adopt {
-        source: DeploymentRef,
-        reply: oneshot::Sender<Result<()>>,
-    },
-    Retire {
-        activation: Activation,
-        reply: oneshot::Sender<Result<()>>,
-    },
+pub(super) struct Adoption {
+    source: DeploymentRef,
+    reply: oneshot::Sender<Result<()>>,
+}
+pub(super) struct Retirement {
+    activation: Activation,
+    reply: oneshot::Sender<Result<()>>,
 }
 
 impl Application {
@@ -614,9 +615,8 @@ impl Application {
     /// Success acknowledges desired input, not activation or cleanup completion.
     pub async fn adopt_committed(&self, source: DeploymentRef) -> Result<()> {
         let (reply, result) = oneshot::channel();
-        self.client
-            .control
-            .try_send(Control::Adopt { source, reply })
+        self.adoptions
+            .try_send(Adoption { source, reply })
             .map_err(|e| e.to_string())?;
         result
             .await
@@ -642,6 +642,7 @@ impl Application {
         let scheduler = tokio::runtime::Handle::try_current().map_err(|e| e.to_string())?;
         let (commands, receiver) = mpsc::channel(128);
         let (control, controls) = mpsc::channel(16);
+        let (adoptions, adoption_requests) = mpsc::channel(16);
         let (updates, observations) = watch::channel(Snapshot {
             starting: true,
             ..Default::default()
@@ -673,10 +674,11 @@ impl Application {
                 Arc::downgrade(&dispatch),
                 persisted,
             )
-            .run(receiver, controls, stop.clone()),
+            .run(receiver, controls, adoption_requests, stop.clone()),
         );
         Ok(Self {
             client,
+            adoptions,
             stop,
             source,
         })
@@ -929,7 +931,7 @@ impl Client {
     pub async fn retire(&self, activation: Activation) -> Result<()> {
         let (reply, result) = oneshot::channel();
         self.control
-            .try_send(Control::Retire { activation, reply })
+            .try_send(Retirement { activation, reply })
             .map_err(|e| e.to_string())?;
         result
             .await

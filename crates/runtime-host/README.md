@@ -228,3 +228,21 @@ provider. Current consumer lifetime, the original issuer, revocation and explici
 denied by default, including duplicate result release. References grant no access.
 Recovery remains available after replacing the deployment or removing its provider,
 provided the new consumer has a real recovery grant in the original State Root.
+
+
+A persisted application now observes committed heads in its same owned Root and
+adopts exact immutable revisions without restart. `EventLog::subscribe_application`
+returns a coalescing cursor; commit wakes cause a head-only SQL read, not package
+copies or grants. The original SQL worker's real close result ends idle observation.
+The owner retains one observation future across business turns and ignores delayed
+heads already superseded by its adopted source. Actual candidate errors remain
+visible without retiring unrelated healthy activations.
+
+Only `Application` owns the bounded adoption ingress. `Client::retire` uses a
+separate bounded lifecycle ingress and remains immediate while a source SQL load
+is pending. `Snapshot.loading` reports the exact source being read/preflighted and grants no
+access. Explicit adoption acknowledges its actual load/preflight/install;
+activation convergence and resource cleanup remain independent. Accepted work and
+original recovery references keep their original source. This wires same-Root
+native management commits to the live Host owner; external management services,
+UI endpoint reapproval and production TUI/Desktop update admission remain pending.

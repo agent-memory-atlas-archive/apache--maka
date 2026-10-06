@@ -18,9 +18,11 @@
  */
 
 //! Atomic durable application sources; no legacy composition translation.
+mod changes;
 pub mod intents;
 pub mod operations;
 use crate::{EventLog, StoreError};
+pub use changes::DeploymentChanges;
 use maka_plugin_core::{
     composition::Input,
     deployment::{Deployment, DeploymentRef, RemoteObservation},

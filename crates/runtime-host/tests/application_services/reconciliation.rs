@@ -43,99 +43,107 @@ fn js_provider(label: &str) -> Package {
 #[tokio::test]
 async fn live_adoption_preserves_original_mutation_preparation_and_unchanged_activations() {
     tokio::time::timeout(Duration::from_secs(20), async {
-        let (_dir, _namespaces, store) = store().await;
-        let issuer = Issuer::default();
-        let calls = Arc::new(AtomicUsize::new(0));
-        let (app, deployment) = launch(
-            store.clone(),
-            &issuer,
-            Arc::new(AtomicBool::new(true)),
-            Arc::new(Echo {
-                calls: calls.clone(),
-            }),
-        )
-        .await;
-        let original = app.source().unwrap().clone();
-        let client = app.client();
-        let consumer_activation = client.activation(&id(2)).unwrap();
-        let provider_activation = client.activation(&id(1)).unwrap();
-        let binding = client
-            .bind(consumer_activation.clone(), "echo".into())
-            .await
-            .unwrap()
-            .remove(0);
-        let prepared = client
-            .prepare_mutation(
-                binding.clone(),
+        for automatic in [false, true] {
+            let (_dir, _namespaces, store) = store().await;
+            let issuer = Issuer::default();
+            let calls = Arc::new(AtomicUsize::new(0));
+            let (app, deployment) = launch(
+                store.clone(),
+                &issuer,
+                Arc::new(AtomicBool::new(true)),
+                Arc::new(Echo {
+                    calls: calls.clone(),
+                }),
+            )
+            .await;
+            let original = app.source().unwrap().clone();
+            let client = app.client();
+            let consumer_activation = client.activation(&id(2)).unwrap();
+            let provider_activation = client.activation(&id(1)).unwrap();
+            let binding = client
+                .bind(consumer_activation.clone(), "echo".into())
+                .await
+                .unwrap()
+                .remove(0);
+            let prepared = client
+                .prepare_mutation(
+                    binding.clone(),
+                    "echo".into(),
+                    json!("prepared"),
+                    scope(&issuer, true),
+                    Uuid::new_v4(),
+                    Attachments::new().into(),
+                )
+                .await
+                .unwrap();
+            let reference = prepared.reference().clone();
+            let recorded = store
+                .record_application_intent(original.clone(), id(2), reference.clone())
+                .await
+                .unwrap();
+            let (provider, consumer) = mutation_packages();
+            let addition = js_provider("installed");
+            let mut desired = input(&provider, &consumer);
+            desired
+                .instances
+                .insert("addition".into(), node(&addition, 4, true));
+            let next = store
+                .commit_application(
+                    deployment,
+                    1,
+                    desired,
+                    vec![],
+                    vec![provider, consumer, addition],
+                )
+                .await
+                .unwrap();
+            if automatic {
+                while client.snapshot().desired != Some(next.clone()) {
+                    tokio::task::yield_now().await;
+                }
+            } else {
+                app.adopt_committed(next.clone()).await.unwrap();
+            }
+            app.ready().await.unwrap();
+            assert_eq!(client.snapshot().desired, Some(next.clone()));
+            assert_eq!(client.snapshot().effective, Some(next.clone()));
+            assert_eq!(client.activation(&id(2)).unwrap(), consumer_activation);
+            assert_eq!(client.activation(&id(1)).unwrap(), provider_activation);
+            let reply = client
+                .mutate(prepared, recorded)
+                .await
+                .unwrap()
+                .result()
+                .await;
+            assert_eq!(reply.reference, reference);
+            assert!(matches!(
+                reply.receipt,
+                Receipt::Recorded {
+                    outcome: OperationOutcome::Returned { .. },
+                    ..
+                }
+            ));
+            let second = mutate(
+                &client,
+                &store,
+                binding,
                 "echo".into(),
-                json!("prepared"),
+                json!("new call"),
                 scope(&issuer, true),
                 Uuid::new_v4(),
-                Attachments::new().into(),
             )
-            .await
-            .unwrap();
-        let reference = prepared.reference().clone();
-        let recorded = store
-            .record_application_intent(original.clone(), id(2), reference.clone())
-            .await
-            .unwrap();
-        let (provider, consumer) = mutation_packages();
-        let addition = js_provider("installed");
-        let mut desired = input(&provider, &consumer);
-        desired
-            .instances
-            .insert("addition".into(), node(&addition, 4, true));
-        let next = store
-            .commit_application(
-                deployment,
-                1,
-                desired,
-                vec![],
-                vec![provider, consumer, addition],
-            )
-            .await
-            .unwrap();
-        app.adopt_committed(next.clone()).await.unwrap();
-        app.ready().await.unwrap();
-        assert_eq!(client.snapshot().desired, Some(next.clone()));
-        assert_eq!(client.snapshot().effective, Some(next.clone()));
-        assert_eq!(client.activation(&id(2)).unwrap(), consumer_activation);
-        assert_eq!(client.activation(&id(1)).unwrap(), provider_activation);
-        let reply = client
-            .mutate(prepared, recorded)
             .await
             .unwrap()
             .result()
             .await;
-        assert_eq!(reply.reference, reference);
-        assert!(matches!(
-            reply.receipt,
-            Receipt::Recorded {
-                outcome: OperationOutcome::Returned { .. },
-                ..
-            }
-        ));
-        let second = mutate(
-            &client,
-            &store,
-            binding,
-            "echo".into(),
-            json!("new call"),
-            scope(&issuer, true),
-            Uuid::new_v4(),
-        )
-        .await
-        .unwrap()
-        .result()
-        .await;
-        assert_eq!(second.reference.source, original);
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
-        assert!(app.adopt_committed(original).await.is_err());
-        assert_eq!(client.snapshot().desired, Some(next));
-        app.shutdown().await.unwrap();
-        drop((app, client));
-        close(store).await;
+            assert_eq!(second.reference.source, original);
+            assert_eq!(calls.load(Ordering::SeqCst), 2);
+            assert!(app.adopt_committed(original).await.is_err());
+            assert_eq!(client.snapshot().desired, Some(next));
+            app.shutdown().await.unwrap();
+            drop((app, client));
+            close(store).await;
+        }
     })
     .await
     .unwrap();
@@ -505,6 +513,99 @@ async fn failed_live_initializer_preserves_healthy_instances_and_later_revision_
                 .unwrap(),
             json!("recovered:input")
         );
+        app.shutdown().await.unwrap();
+        drop((app, client));
+        close(store).await;
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn retirement_does_not_wait_for_a_blocked_actual_source_sql_load() {
+    use sqlx::{Connection, Executor, SqliteConnection, sqlite::SqliteConnectOptions};
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let (dir, _ns, store) = store().await;
+        let issuer = Issuer::default();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (app, _) = launch(
+            store.clone(),
+            &issuer,
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(Echo {
+                calls: calls.clone(),
+            }),
+        )
+        .await;
+        let client = app.client();
+        let activation = client.activation(&id(2)).unwrap();
+        let binding = client
+            .bind(activation.clone(), "echo".into())
+            .await
+            .unwrap()
+            .remove(0);
+        let mut blocker = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new().filename(
+                dir.path()
+                    .join("root")
+                    .join(maka_event_log::root::ROOT_DATABASE),
+            ),
+        )
+        .await
+        .unwrap();
+        blocker.execute("BEGIN IMMEDIATE").await.unwrap();
+        let (provider, consumer) = mutation_packages();
+        let mut writer = Box::pin(store.commit_application(
+            Uuid::new_v4(),
+            0,
+            input(&provider, &consumer),
+            vec![],
+            vec![provider, consumer],
+        ));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), &mut writer)
+                .await
+                .is_err()
+        );
+        let mut uncommitted = app.source().unwrap().clone();
+        uncommitted.revision += 1;
+        let loading_source = uncommitted.clone();
+        let mut load = Box::pin(app.adopt_committed(uncommitted));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), &mut load)
+                .await
+                .is_err()
+        );
+        while client.snapshot().loading != Some(loading_source.clone()) {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::timeout(Duration::from_secs(2), client.retire(activation))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            client
+                .prepare_mutation(
+                    binding,
+                    "echo".into(),
+                    json!("retired"),
+                    scope(&issuer, true),
+                    Uuid::new_v4(),
+                    Attachments::new().into()
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), &mut load)
+                .await
+                .is_err()
+        );
+        blocker.execute("ROLLBACK").await.unwrap();
+        writer.await.unwrap();
+        assert!(load.await.is_err());
+        blocker.close().await.unwrap();
         app.shutdown().await.unwrap();
         drop((app, client));
         close(store).await;

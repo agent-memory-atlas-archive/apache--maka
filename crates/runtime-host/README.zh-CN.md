@@ -158,3 +158,17 @@ Ref 不产生授权；替换组合或移除原 provider 后，新 consumer 获�
 Host 仅把原 bundle 的私有 nonce 纳入操作 fingerprint，不记录快照字节或 metadata。
 同 operation UUID 的新 bundle 是冲突的新原请求；原 recovery reference 不授予资源读取。
 JavaScript 的 `mutate` 必须显式提供目标槽到当前源槽的 `attachments` map。
+
+
+持久 application 现在观察同一 owned Root 的已提交 head，按确切不可变 revision 接纳，
+无需重启。`EventLog::subscribe_application` 提供可合并 cursor；commit wake 只触发
+head SQL 读取，不复制包或产生 grant。原 SQL worker 的真实关闭结果会结束空闲订阅。
+owner 跨业务 turn 保留同一观察 future，忽略已被当前 adopted source 超过的迟到 head。
+实际候选错误可见，但不退休无关健康激活。
+
+只有 `Application` 持有有界 adoption 入口；`Client::retire` 使用独立有界生命周期入口，
+source SQL load 未完成时也可即时撤销。`Snapshot.loading` 报告实际读取/preflight中的确切来源，不产生授权。
+显式 adoption 确认实际 load/preflight/install；
+激活收敛和资源清理独立报告。已接受工作与恢复引用保持原来源。本片接通 same-Root
+原生管理提交到 live Host owner；外部管理服务、UI 端点重新批准以及生产 TUI/Desktop
+更新准入仍待完成。

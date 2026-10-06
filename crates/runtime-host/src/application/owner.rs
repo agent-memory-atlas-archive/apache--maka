@@ -30,6 +30,21 @@ use std::panic::AssertUnwindSafe;
 
 type Close = BoxFuture<'static, Result<()>>;
 type Jobs = FuturesUnordered<BoxFuture<'static, Done>>;
+fn next_change(
+    mut cursor: maka_event_log::applications::DeploymentChanges,
+) -> BoxFuture<
+    'static,
+    (
+        maka_event_log::applications::DeploymentChanges,
+        Result<DeploymentRef>,
+    ),
+> {
+    Box::pin(async move {
+        let source = cursor.next().await.map_err(|error| error.to_string());
+        (cursor, source)
+    })
+}
+
 struct Failed {
     _execution: Execution<Service>,
     _scope: Scope,
@@ -51,7 +66,7 @@ struct Owned {
 enum Done {
     Loaded {
         loaded: Result<maka_event_log::applications::LoadedDeployment>,
-        reply: oneshot::Sender<Result<()>>,
+        reply: Option<oneshot::Sender<Result<()>>>,
     },
     IntentRecorded {
         call: Box<Call>,
@@ -105,7 +120,7 @@ pub(super) struct Owner {
     _input: Input,
     // This lease belongs to accepted work, including sticky cleanup failures.
     persisted: Option<(DeploymentRef, Arc<maka_event_log::EventLog>)>,
-    loading_adoption: bool,
+    loading_adoption: Option<DeploymentRef>,
     effective: Option<DeploymentRef>,
     origins: BTreeMap<InstanceId, DeploymentRef>,
     pending: Vec<Instance>,
@@ -157,7 +172,7 @@ impl Owner {
             runtime: Runtime::new(plan),
             _input: input,
             persisted,
-            loading_adoption: false,
+            loading_adoption: None,
             effective: None,
             origins: BTreeMap::new(),
             activations: BTreeMap::new(),
@@ -185,11 +200,26 @@ impl Owner {
     pub async fn run(
         mut self,
         mut commands: mpsc::Receiver<Command>,
-        mut control: mpsc::Receiver<Control>,
+        mut control: mpsc::Receiver<Retirement>,
+        mut adoptions: mpsc::Receiver<Adoption>,
         stop: CancellationToken,
     ) {
         let mut commands_open = true;
         let mut control_open = true;
+        let mut adoptions_open = true;
+        let mut changes = match self
+            .persisted
+            .as_ref()
+            .map(|(source, store)| store.subscribe_application(source.clone()))
+            .transpose()
+        {
+            Ok(changes) => changes.map(next_change),
+            Err(error) => {
+                self.startup_error = Some(error.to_string());
+                self.stop();
+                None
+            }
+        };
         loop {
             self.drive();
             if self.closed {
@@ -199,7 +229,9 @@ impl Owner {
                 // including native factories that may retain a store themselves.
                 drop(commands);
                 drop(control);
+                drop(adoptions);
                 drop(stop);
+                drop(changes);
                 drop(self);
                 updates.send_replace(snapshot);
                 return;
@@ -212,34 +244,42 @@ impl Owner {
                 },
                 Some(done) = self.jobs.next(), if !self.jobs.is_empty() => self.complete(done),
                 Some((vm, reason)) = self.terminals.next(), if !self.terminals.is_empty() => self.retire_vm(vm, reason),
-                command = control.recv(), if control_open => match command {
-                    Some(Control::Adopt { source, reply }) => {
-                        if self.closing {
-                            let _ = reply.send(Err("Host deployment is closing".into()));
-                        } else if self.loading_adoption {
-                            let _ = reply.send(Err("deployment source load already pending".into()));
-                        } else if let Some((current, store)) = &self.persisted {
-                            if source.state_domain != current.state_domain || source.deployment != current.deployment {
-                                let _ = reply.send(Err("foreign deployment source".into()));
-                            } else {
-                                let store = store.clone();
-                                self.loading_adoption = true;
-                                self.jobs.push(Box::pin(async move {
-                                    let loaded = store.load_application_at(&source).await
-                                        .map_err(|e| e.to_string())
-                                        .and_then(|loaded| loaded.ok_or("committed deployment not found".into()));
-                                    Done::Loaded { loaded, reply }
-                                }));
-                            }
-                        } else {
-                            let _ = reply.send(Err("persisted deployment required".into()));
+                // Desired-source reads serialize independently of immediate
+                // lifecycle revocation. Only the application root owns ingress.
+                adoption = adoptions.recv(), if adoptions_open && self.loading_adoption.is_none() => match adoption {
+                    Some(Adoption { source, reply }) => {
+                        match self.check_adoption_source(&source) {
+                            Err(error) => { let _ = reply.send(Err(error)); }
+                            Ok(false) => { let _ = reply.send(Ok(())); }
+                            Ok(true) => self.load_adoption(source, Some(reply)),
                         }
                     }
-                    Some(Control::Retire { activation, reply }) => {
+                    None => adoptions_open = false,
+                },
+                command = control.recv(), if control_open => match command {
+                    Some(Retirement { activation, reply }) => {
                         let result = self.runtime.retire(&activation).map(|_| ()).map_err(|e| e.to_string());
                         let _ = reply.send(result);
                     }
                     None => control_open = false,
+                },
+                change = async {
+                    match &mut changes {
+                        Some(next) => next.await,
+                        None => std::future::pending().await,
+                    }
+                }, if !self.closing && self.loading_adoption.is_none() => {
+                    let (cursor, source) = change;
+                    match source {
+                        Ok(source) => {
+                            changes = Some(next_change(cursor));
+                            self.observe_source(source);
+                        }
+                        Err(error) => {
+                            changes = None;
+                            self.startup_error = Some(error);
+                        }
+                    }
                 },
                 command = commands.recv(), if commands_open => match command {
                     Some(command) => self.command(command),
@@ -248,6 +288,55 @@ impl Owner {
                 else => std::future::pending::<()>().await,
             }
         }
+    }
+    fn check_adoption_source(&self, source: &DeploymentRef) -> Result<bool> {
+        if self.closing {
+            return Err("Host deployment is closing".into());
+        }
+        let (current, _) = self
+            .persisted
+            .as_ref()
+            .ok_or("persisted deployment required")?;
+        if source.state_domain != current.state_domain || source.deployment != current.deployment {
+            return Err("foreign deployment source".into());
+        }
+        if source.revision < current.revision {
+            return Err("stale deployment source".into());
+        }
+        Ok(source != current)
+    }
+    fn observe_source(&mut self, source: DeploymentRef) {
+        // A retained SQL observation can arrive after a newer explicit adoption.
+        // It is not a failed candidate and must not poison healthy readiness.
+        if self
+            .persisted
+            .as_ref()
+            .is_some_and(|(current, _)| source.revision <= current.revision)
+        {
+            return;
+        }
+        match self.check_adoption_source(&source) {
+            Ok(true) => self.load_adoption(source, None),
+            Ok(false) => {}
+            Err(error) => self.startup_error = Some(error),
+        }
+    }
+    fn load_adoption(&mut self, source: DeploymentRef, reply: Option<oneshot::Sender<Result<()>>>) {
+        let store = self
+            .persisted
+            .as_ref()
+            .expect("validated persisted source")
+            .1
+            .clone();
+        self.loading_adoption = Some(source.clone());
+        self.jobs.push(Box::pin(async move {
+            let loaded = store
+                .load_application_at(&source)
+                .await
+                .map_err(|e| e.to_string())
+                .and_then(|loaded| loaded.ok_or("committed deployment not found".into()));
+            Done::Loaded { loaded, reply }
+        }));
     }
     fn adopt(&mut self, loaded: maka_event_log::applications::LoadedDeployment) -> Result<()> {
         if self.closing {
@@ -1130,10 +1219,15 @@ impl Owner {
     fn complete(&mut self, done: Done) {
         match done {
             Done::Loaded { loaded, reply } => {
-                self.loading_adoption = false;
+                self.loading_adoption = None;
                 let result = loaded.and_then(|loaded| self.adopt(loaded));
+                if let Err(error) = &result {
+                    self.startup_error = Some(error.clone());
+                }
                 self.publish();
-                let _ = reply.send(result);
+                if let Some(reply) = reply {
+                    let _ = reply.send(result);
+                }
             }
             Done::IntentRecorded { mut call, recorded } => match recorded {
                 Ok(intent) => {
@@ -1311,6 +1405,7 @@ impl Owner {
     }
     fn snapshot(&self) -> Snapshot {
         Snapshot {
+            loading: self.loading_adoption.clone(),
             desired: self.persisted.as_ref().map(|(source, _)| source.clone()),
             effective: self.effective.clone(),
             starting: self.starting,

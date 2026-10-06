@@ -576,12 +576,9 @@ async fn original_receipt_survives_restart_and_new_composition_without_provider(
             instances: BTreeMap::from([("recovery-client".into(), replacement_node)]),
             launch: None,
         };
-        store
-            .commit_application(deployment, 1, replacement_input, vec![], vec![replacement])
-            .await
-            .unwrap();
-        // The accepted original owner can still dispatch against source revision one
-        // after revision two has replaced desired composition and removed its provider.
+        // Acceptance precedes committed withdrawal; new admission is revoked
+        // when the live owner adopts the new source automatically.
+        let original_consumer = client.activation(&id(2)).unwrap();
         let old_binding = client
             .bind(client.activation(&id(2)).unwrap(), "echo".into())
             .await
@@ -598,6 +595,15 @@ async fn original_receipt_survives_restart_and_new_composition_without_provider(
         )
         .await
         .unwrap();
+        let replacement_source = store
+            .commit_application(deployment, 1, replacement_input, vec![], vec![replacement])
+            .await
+            .unwrap();
+        while client.snapshot().desired != Some(replacement_source.clone()) {
+            tokio::task::yield_now().await;
+        }
+        client.ready().await.unwrap();
+        assert!(client.bind(original_consumer, "echo".into()).await.is_err());
         assert_eq!(old_accepted.reference.source, reference.source);
         assert_eq!(returned(old_accepted.result().await), json!("old-owner"));
         assert_eq!(

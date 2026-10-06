@@ -53,6 +53,11 @@ pub struct OwnedConnection {
 }
 
 impl OwnedConnection {
+    /// Observe the original worker's actual terminal result without closing ingress.
+    pub(crate) fn close_receipt(&self) -> Shared<BoxFuture<'static, Result<(), String>>> {
+        self.closed.clone()
+    }
+
     pub async fn open(
         options: SqliteConnectOptions,
         authority: ConnectionAuthority,
