@@ -1255,3 +1255,133 @@ async fn disabled_selected_connection_does_not_use_an_authenticated_default_or_o
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn tool_source_uses_original_agent_grant_and_frozen_canonical_fields() {
+    use maka_event_log::sessions::PluginSession;
+    use maka_plugins::{composition::Scope as StorageScope, storage::Namespace};
+    use maka_runtime::import::{Content, Record, Source};
+    let fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+    let session = format!("{}{}", fixture.owner.prefix, Uuid::new_v4().simple());
+    let plugin = PluginSession {
+        session_id: session.clone(),
+        creator: Namespace::new("tool.source.fixture", StorageScope::Profile).unwrap(),
+        fingerprint: "tool-source-import".into(),
+        managed: false,
+        authority_session_id: None,
+    };
+    fixture
+        .store
+        .begin_session_import(
+            &plugin,
+            &Source {
+                adapter: "fixture".into(),
+                session_id: "foreign".into(),
+            },
+            &json!({"schemaVersion":1,"title":"Tool source"}),
+            1,
+        )
+        .await
+        .unwrap();
+    let input = json!({"count":42,"flag":false,"text":"中😀\0".repeat(2000)});
+    let records = [
+        Content::User {
+            text: "Inspect tools".into(),
+        },
+        Content::ToolCall {
+            call_id: "call".into(),
+            name: "Count".into(),
+            input: Some(input.clone()),
+        },
+        Content::ToolResult {
+            call_id: "call".into(),
+            output: json!(null),
+            is_error: false,
+        },
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, content)| Record {
+        source_message_id: format!("m{i}"),
+        source_turn_id: "turn".into(),
+        timestamp: Some(1),
+        content,
+    })
+    .collect();
+    fixture
+        .store
+        .append_session_import(&session, 0, records)
+        .await
+        .unwrap();
+    fixture
+        .store
+        .publish_session_import(&session, 3)
+        .await
+        .unwrap();
+    let fence = *fixture.store.subscribe_commits().borrow();
+    let history = loop {
+        let value = fixture
+            .query(
+                "history",
+                json!({"sessionId":session,"through":fence,"position":{"kind":"start"}}),
+            )
+            .await
+            .unwrap();
+        if value["kind"] == "ready" {
+            break value;
+        }
+    };
+    let sequence = history["chunks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|chunk| chunk["role"] == "tool_call")
+        .unwrap()["sequence"]
+        .as_u64()
+        .unwrap();
+    let mut position = json!({"kind":"start"});
+    let mut complete = String::new();
+    loop {
+        let page = fixture.query("toolSource", json!({"sessionId":session,"through":fence,"sequence":sequence,"field":"arguments","position":position})).await.unwrap();
+        assert!(serde_json::to_vec(&page).unwrap().len() <= 64 * 1024);
+        assert_eq!(page["kind"], "ready");
+        assert_eq!(page["through"], fence);
+        let source = &page["source"];
+        assert_eq!(source["format"], "json");
+        assert_eq!(source["tool"]["toolName"], "Count");
+        let text = source["text"].as_str().unwrap();
+        assert!(text.len() <= 8192);
+        complete.push_str(text);
+        let end = source["offset"].as_u64().unwrap() + text.len() as u64;
+        if end == source["totalBytes"].as_u64().unwrap() {
+            break;
+        }
+        position = json!({"kind":"after","offset":end});
+    }
+    assert_eq!(serde_json::from_str::<Value>(&complete).unwrap(), input);
+    let request = json!({"sessionId":session,"through":fence,"sequence":sequence,"field":"arguments","position":{"kind":"start"}});
+    for (key, value) in [
+        ("sessionId", json!("foreign_session")),
+        ("through", json!(fence + 1)),
+        ("through", json!(0)),
+        ("field", json!("result")),
+    ] {
+        let mut invalid = request.clone();
+        invalid[key] = value;
+        assert!(fixture.query("toolSource", invalid).await.is_err());
+    }
+    let denied = fixture
+        .app
+        .client()
+        .start(
+            fixture.binding(2).await,
+            "toolSource".into(),
+            request,
+            scope(&fixture.issuer, false),
+            Attachments::new().into(),
+        )
+        .await;
+    assert!(denied.is_err());
+    fixture.app.shutdown().await.unwrap();
+    fixture.config.shutdown().await.unwrap();
+}

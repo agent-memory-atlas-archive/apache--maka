@@ -212,6 +212,48 @@ impl Handler for Agent {
                         .map_err(|_| "agent_history_unavailable")?;
                     Ok(result)
                 }
+                "toolSource" => {
+                    let input: ToolSourceRead = decode(input)?;
+                    owner.session(&input.session_id).await?;
+                    if input.through > *owner.store.subscribe_commits().borrow() {
+                        return Err("agent_cursor_invalid".into());
+                    }
+                    let page = if owner
+                        .store
+                        .prepare_transcript(&input.session_id, input.through, 32)
+                        .await
+                        .map_err(|_| "agent_history_unavailable")?
+                    {
+                        ToolSourcePage::Ready {
+                            through: input.through,
+                            source: owner
+                                .store
+                                .tool_source(
+                                    &input.session_id,
+                                    input.through,
+                                    input.sequence,
+                                    input.field,
+                                    input.position,
+                                    8192,
+                                    64 * 1024,
+                                )
+                                .await
+                                .map_err(|_| "agent_history_unavailable")?,
+                        }
+                    } else {
+                        ToolSourcePage::Preparing {
+                            through: input.through,
+                        }
+                    };
+                    owner.session(&input.session_id).await?;
+                    if context.scope().cancellation.is_cancelled() {
+                        return Err("agent_observation_cancelled".into());
+                    }
+                    let result = encode(page)?;
+                    maka_js_runtime::plugin::check_json_delivery(&result, 64 * 1024)
+                        .map_err(|_| "agent_history_unavailable")?;
+                    Ok(result)
+                }
                 "send" => {
                     let input: Send = decode(input)?;
                     let operation = context.operation().ok_or("agent_mutation_required")?;

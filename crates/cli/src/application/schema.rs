@@ -100,6 +100,8 @@ pub(super) fn catalog() -> Value {
         root::<maka_agent_service::contract::DeliveryPage>(&mut g),
         root::<maka_agent_service::contract::HistoryChunk>(&mut g),
         root::<maka_agent_service::contract::HistoryPage>(&mut g),
+        root::<maka_agent_service::contract::ToolSourceRead>(&mut g),
+        root::<maka_agent_service::contract::ToolSourcePage>(&mut g),
         root::<maka_plugins::session::history::Read>(&mut g),
         root::<HostActivation>(&mut g),
         root::<HostRequest>(&mut g),

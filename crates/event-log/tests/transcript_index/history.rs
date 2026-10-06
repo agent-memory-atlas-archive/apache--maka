@@ -288,7 +288,7 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("tools.sqlite");
     let log = EventLog::open(&path).await.unwrap();
-    for session in ["numeric", "unknown"] {
+    for session in ["numeric", "unknown", "image"] {
         log.create_session(session, session, &serde_json::json!({}), 1)
             .await
             .unwrap();
@@ -326,7 +326,7 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
         .await
         .unwrap();
         let operation = format!("{step}:count");
-        let before = log
+        let call_fence = log
             .append(&event(
                 session,
                 Fact::ToolDispatched {
@@ -339,19 +339,32 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
             ))
             .await
             .unwrap();
-        if session == "numeric" {
+        if session != "unknown" {
             let template = event(
                 session,
                 Fact::InvocationEnded {
                     outcome: InvocationOutcome::Completed,
                 },
             );
+            let output = if session == "image" {
+                maka_runtime::tool_output::ToolOutput::Image(
+                    maka_runtime::tool_output::ImageOutput {
+                        detail: None,
+                        mime_type: "image/png".into(),
+                        reference: maka_runtime::attachment::StorageRef::WorkspaceFile {
+                            relative_path: "unread-image.png".into(),
+                        },
+                    },
+                )
+            } else {
+                serde_json::json!({"count": 42, "ready": true}).into()
+            };
             let (result, _) = maka_runtime::event::EventWrite::tool_success(
-                "numeric-result".into(),
+                format!("{session}-result"),
                 template.event().recorded_at,
                 template.event().invocation.clone(),
                 operation,
-                serde_json::json!({"count": 42, "ready": true}).into(),
+                output.into(),
             )
             .unwrap();
             log.append(&result).await.unwrap();
@@ -371,7 +384,7 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
         let through = end(&log, session, InvocationOutcome::Completed).await;
         assert!(log.prepare_transcript(session, through, 32).await.unwrap());
         let Page::Ready { chunks, .. } = log
-            .history_text(session, before, Position::Start, 8192, 8, 64 * 1024)
+            .history_text(session, call_fence, Position::Start, 8192, 8, 64 * 1024)
             .await
             .unwrap()
         else {
@@ -406,6 +419,61 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
                 };
                 assert!(chunks.len() <= 1);
                 for chunk in chunks {
+                    if matches!(chunk.role, Role::ToolCall | Role::ToolResult) {
+                        use maka_plugins::session::history::{
+                            SourceFormat, SourcePosition, ToolSourceField,
+                        };
+                        let field = if chunk.role == Role::ToolCall {
+                            ToolSourceField::Arguments
+                        } else {
+                            ToolSourceField::Result
+                        };
+                        let source = log
+                            .tool_source(
+                                session,
+                                through,
+                                chunk.sequence,
+                                field,
+                                SourcePosition::Start,
+                                8192,
+                                64 * 1024,
+                            )
+                            .await
+                            .unwrap();
+                        assert_eq!(Some(&source.tool), chunk.tool.as_ref());
+                        if chunk.role == Role::ToolResult {
+                            assert!(
+                                log.tool_source(
+                                    session,
+                                    call_fence,
+                                    chunk.sequence,
+                                    field,
+                                    SourcePosition::Start,
+                                    8192,
+                                    64 * 1024
+                                )
+                                .await
+                                .is_err()
+                            );
+                            if session == "numeric" {
+                                assert_eq!(source.format, SourceFormat::Json);
+                                assert_eq!(
+                                    serde_json::from_str::<Value>(&source.text).unwrap(),
+                                    serde_json::json!({"count":42,"ready":true})
+                                );
+                            } else if session == "image" {
+                                assert_eq!(source.format, SourceFormat::ImageDescriptor);
+                                let descriptor: Value = serde_json::from_str(&source.text).unwrap();
+                                assert_eq!(descriptor["kind"], "image");
+                                assert_eq!(descriptor["mimeType"], "image/png");
+                                assert!(source.text.contains("unread-image.png"));
+                                assert!(!temp.path().join("unread-image.png").exists());
+                            } else {
+                                assert_eq!(source.format, SourceFormat::Text);
+                                assert_eq!(source.text, "Result unknown; do not repeat");
+                            }
+                        }
+                    }
                     if let Some(tool) = chunk.tool {
                         tools.insert(chunk.role as u8, (chunk.text, tool));
                     }
@@ -436,7 +504,7 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
             };
             assert_eq!(tool_name.as_deref(), Some("Count"));
             assert_eq!(*is_error, session == "unknown");
-            assert_eq!(text.is_empty(), session == "numeric");
+            assert_eq!(text.is_empty(), session != "unknown");
             let (
                 _,
                 Tool::Call {

@@ -210,6 +210,51 @@ pub enum Tool {
         is_error: bool,
     },
 }
+
+/// An explicitly selected canonical tool field, never an execution grant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolSourceField {
+    Arguments,
+    Result,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SourcePosition {
+    Start,
+    Tail,
+    Before {
+        #[schemars(range(max = 9_007_199_254_740_991u64))]
+        offset: u64,
+    },
+    After {
+        #[schemars(range(max = 9_007_199_254_740_991u64))]
+        offset: u64,
+    },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceFormat {
+    Text,
+    Json,
+    ImageDescriptor,
+}
+/// One literal UTF-8 excerpt of an immutable field. JSON excerpts need not be
+/// standalone JSON. Image descriptors carry no artifact read authorization.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ToolSource {
+    #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
+    pub sequence: u64,
+    pub field: ToolSourceField,
+    pub format: SourceFormat,
+    #[schemars(range(max = 9_007_199_254_740_991u64))]
+    pub offset: u64,
+    #[schemars(range(max = 9_007_199_254_740_991u64))]
+    pub total_bytes: u64,
+    pub text: String,
+    pub tool: Tool,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Chunk {

@@ -87,6 +87,8 @@ export type RuntimeProtocol =
   | AgentDeliveryPage
   | AgentHistoryChunk
   | AgentHistoryPage
+  | AgentToolSourceRead
+  | AgentToolSourcePage
   | Read
   | HostActivation
   | HostRequest
@@ -996,6 +998,36 @@ export type AgentHistoryPage =
       after: Cursor | null;
       kind: 'ready';
     };
+/**
+ * An explicitly selected canonical tool field, never an execution grant.
+ */
+export type ToolSourceField = 'arguments' | 'result';
+export type SourcePosition =
+  | {
+      kind: 'start';
+    }
+  | {
+      kind: 'tail';
+    }
+  | {
+      offset: number;
+      kind: 'before';
+    }
+  | {
+      offset: number;
+      kind: 'after';
+    };
+export type AgentToolSourcePage =
+  | {
+      through: number;
+      kind: 'preparing';
+    }
+  | {
+      through: number;
+      source: ToolSource;
+      kind: 'ready';
+    };
+export type SourceFormat = 'text' | 'json' | 'image_descriptor';
 /**
  * Resource names select slots in the current request, not durable grants.
  */
@@ -1975,6 +2007,26 @@ export interface AgentHistoryChunk {
   totalBytes: number;
   text: string;
   tool: HistoryTool | null;
+}
+export interface AgentToolSourceRead {
+  sessionId: string;
+  through: number;
+  sequence: number;
+  field: ToolSourceField;
+  position: SourcePosition;
+}
+/**
+ * One literal UTF-8 excerpt of an immutable field. JSON excerpts need not be
+ * standalone JSON. Image descriptors carry no artifact read authorization.
+ */
+export interface ToolSource {
+  sequence: number;
+  field: ToolSourceField;
+  format: SourceFormat;
+  offset: number;
+  totalBytes: number;
+  text: string;
+  tool: HistoryTool;
 }
 /**
  * A stable raw-event fence prevents a window from chasing appended messages.

@@ -25,6 +25,10 @@ import type {
   AgentDeliveryPage,
   AgentHistoryPage,
   AgentHistoryChunk,
+  AgentToolSourcePage,
+  ToolSourceField,
+  SourceFormat,
+  SourcePosition,
   HistoryPosition,
   AgentObservation,
   AgentPart,
@@ -67,6 +71,15 @@ type Request =
       position: HistoryPosition;
     }
   | { kind: 'read'; draft: EditorObservation; sessionId: string; model: ModelSelection }
+  | {
+      kind: 'toolSource';
+      epoch: number;
+      navigation: number;
+      through: number;
+      sequence: number;
+      field: ToolSourceField;
+      position: SourcePosition;
+    }
   | { kind: 'create' }
   | { kind: 'send'; draft: EditorObservation; sessionId: string; model: ModelSelection }
   | { kind: 'stop'; sessionId: string }
@@ -104,6 +117,12 @@ export interface State {
     loading: boolean;
     failed: boolean;
     position: HistoryPosition | null;
+    toolSource: {
+      field: ToolSourceField;
+      format: SourceFormat | null;
+      ready: boolean;
+      position: SourcePosition;
+    } | null;
   } | null;
   landing: { sequence: number; edge: 'start' | 'end' };
   tailReceipt: { landing: number; readingRevision: number } | null;
@@ -188,7 +207,7 @@ function messages(state: State): Message[] {
     text: chunk.text,
     tool: chunk.tool,
     continued: chunk.offset !== 0 || utf8Bytes(chunk.text) !== chunk.totalBytes,
-    source: chunk.totalBytes > 0 ? chunk.sequence : null,
+    source: chunk.sequence,
   }));
   if (!state.window?.latest) return canonical;
   const live = new Map<string, Message>();
@@ -302,6 +321,36 @@ function select(state: State, actions: Action[], sessionId: string) {
   state.notice = null;
   observe(state, actions);
 }
+function readToolSource(state: State, actions: Action[], position: SourcePosition) {
+  const source = state.source;
+  if (!source?.toolSource || !state.selected) return;
+  source.navigation = ++state.navigation;
+  source.loading = true;
+  source.failed = false;
+  source.toolSource.position = position;
+  intent(
+    state,
+    actions,
+    {
+      kind: 'toolSource',
+      epoch: state.epoch,
+      navigation: source.navigation,
+      through: source.through,
+      sequence: source.chunk.sequence,
+      field: source.toolSource.field,
+      position,
+    },
+    'agent',
+    'toolSource',
+    {
+      sessionId: state.selected,
+      through: source.through,
+      sequence: source.chunk.sequence,
+      field: source.toolSource.field,
+      position,
+    },
+  );
+}
 function mutationPending(state: State) {
   return (
     state.restoring ||
@@ -367,7 +416,7 @@ function receipt(state: State, actions: Action[], request: Mutation, reply: Oper
 function queryFailed(state: State, request: Request) {
   // Optional presentation work does not disable input or change execution facts.
   if (request.kind === 'history' && request.implicit) return;
-  if (request.kind === 'source') {
+  if (request.kind === 'source' || request.kind === 'toolSource') {
     if (request.epoch === state.epoch && request.navigation === state.source?.navigation) {
       state.source.loading = false;
       state.source.failed = true;
@@ -489,6 +538,59 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
       source.landing = {
         sequence: request.navigation,
         edge: position.kind === 'before' ? 'end' : 'start',
+      };
+      break;
+    }
+    case 'toolSource': {
+      const source = state.source;
+      if (
+        request.epoch !== state.epoch ||
+        !source?.toolSource ||
+        request.navigation !== source.navigation ||
+        request.field !== source.toolSource.field
+      )
+        break;
+      const page = value as AgentToolSourcePage;
+      if (page.through !== request.through) {
+        queryFailed(state, request);
+        break;
+      }
+      if (page.kind === 'preparing') {
+        intent(state, actions, request, 'agent', 'toolSource', {
+          sessionId: state.selected,
+          through: request.through,
+          sequence: request.sequence,
+          field: request.field,
+          position: request.position,
+        });
+        break;
+      }
+      const next = page.source;
+      const end = next.offset + utf8Bytes(next.text);
+      if (
+        next.sequence !== request.sequence ||
+        next.field !== request.field ||
+        end > next.totalBytes ||
+        (source.toolSource.ready &&
+          (next.totalBytes !== source.chunk.totalBytes ||
+            next.format !== source.toolSource.format)) ||
+        (request.position.kind === 'after' && next.offset !== request.position.offset) ||
+        (request.position.kind === 'before' && end !== request.position.offset) ||
+        (request.position.kind === 'start' && next.offset !== 0) ||
+        (request.position.kind === 'tail' && end !== next.totalBytes)
+      ) {
+        queryFailed(state, request);
+        break;
+      }
+      source.chunk = { ...source.chunk, ...next };
+      source.toolSource.format = next.format;
+      source.toolSource.ready = true;
+      source.loading = false;
+      source.failed = false;
+      source.landing = {
+        sequence: request.navigation,
+        edge:
+          request.position.kind === 'before' || request.position.kind === 'tail' ? 'end' : 'start',
       };
       break;
     }
@@ -715,7 +817,10 @@ function frame(
       messages: messages(state),
       source: state.source
         ? {
-            key: `${state.source.through}-${state.source.chunk.sequence}-${state.source.chunk.offset}`,
+            kind: state.source.toolSource?.field ?? 'message',
+            format: state.source.toolSource?.format ?? 'text',
+            ready: state.source.toolSource?.ready ?? true,
+            key: `${state.source.toolSource ? state.source.toolSource.field + '-' : ''}${state.source.through}-${state.source.chunk.sequence}-${state.source.chunk.offset}`,
             text: state.source.chunk.text,
             atStart: state.source.chunk.offset === 0,
             atEnd:
@@ -746,6 +851,7 @@ function frame(
       newer: 'newer',
       latest: 'latest',
       source: 'source',
+      toolSource: 'tool-source',
       sourceFirst: 'source-first',
       sourcePrevious: 'source-previous',
       sourceNext: 'source-next',
@@ -1130,7 +1236,24 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         else if (input.child === 'timeline' && state.source) {
           const source = state.source;
           if (input.name === 'sourceBack') state.source = null;
-          else if (!source.loading) {
+          else if (!source.loading && source.toolSource) {
+            const tool = source.toolSource;
+            const chunk = source.chunk;
+            const end = chunk.offset + utf8Bytes(chunk.text);
+            const position: SourcePosition | null =
+              input.name === 'sourceRetry' && source.failed
+                ? tool.position
+                : input.name === 'sourceFirst'
+                  ? { kind: 'start' }
+                  : input.name === 'sourceLast'
+                    ? { kind: 'tail' }
+                    : input.name === 'sourcePrevious' && chunk.offset > 0
+                      ? { kind: 'before', offset: chunk.offset }
+                      : input.name === 'sourceNext' && end < chunk.totalBytes
+                        ? { kind: 'after', offset: end }
+                        : null;
+            if (position) readToolSource(state, actions, position);
+          } else if (!source.loading) {
             const chunk = source.chunk;
             const end = chunk.offset + utf8Bytes(chunk.text);
             const offset =
@@ -1193,7 +1316,30 @@ export function workspace(target: Target, locale: string): Component<State, Reco
                 loading: false,
                 failed: false,
                 position: null,
+                toolSource: null,
               };
+          } else if (input.name === 'toolSource') {
+            const chunk = page.chunks.find(
+              (chunk) => chunk.sequence === (input.event as { sequence: number }).sequence,
+            );
+            if (chunk && (chunk.role === 'tool_call' || chunk.role === 'tool_result')) {
+              state.source = {
+                through: page.through,
+                chunk: { ...chunk, offset: 0, totalBytes: 0, text: '' },
+                navigation: state.navigation,
+                landing: { sequence: state.navigation, edge: 'start' },
+                loading: false,
+                failed: false,
+                position: null,
+                toolSource: {
+                  field: chunk.role === 'tool_call' ? 'arguments' : 'result',
+                  format: null,
+                  ready: false,
+                  position: { kind: 'start' },
+                },
+              };
+              readToolSource(state, actions, { kind: 'start' });
+            }
           } else if (input.name === 'older' && page.before)
             history(state, actions, { kind: 'before', cursor: page.before }, page.through, false);
           else if (input.name === 'newer' && page.after)

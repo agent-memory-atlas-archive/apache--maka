@@ -270,6 +270,32 @@ pub enum HistoryPage {
     },
 }
 
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentToolSourceRead")]
+pub struct ToolSourceRead {
+    #[schemars(length(min = 1, max = 128))]
+    pub session_id: String,
+    #[schemars(range(max = 9_007_199_254_740_991u64))]
+    pub through: u64,
+    #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
+    pub sequence: u64,
+    pub field: maka_plugins::session::history::ToolSourceField,
+    pub position: maka_plugins::session::history::SourcePosition,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "AgentToolSourcePage")]
+pub enum ToolSourcePage {
+    Preparing {
+        through: u64,
+    },
+    Ready {
+        through: u64,
+        source: maka_plugins::session::history::ToolSource,
+    },
+}
+
 pub fn contract() -> Contract {
     fn method<I: JsonSchema, O: JsonSchema>(mode: MethodMode) -> Method {
         Method {
@@ -296,6 +322,10 @@ pub fn contract() -> Contract {
                 (
                     "history".into(),
                     method::<History, HistoryPage>(MethodMode::Query),
+                ),
+                (
+                    "toolSource".into(),
+                    method::<ToolSourceRead, ToolSourcePage>(MethodMode::Query),
                 ),
                 (
                     "create".into(),

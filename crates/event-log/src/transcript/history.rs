@@ -210,7 +210,7 @@ impl EventLog {
     }
 }
 
-async fn tool_metadata(
+pub(super) async fn tool_metadata(
     tx: &mut SqliteConnection,
     session: &str,
     sequence: u64,

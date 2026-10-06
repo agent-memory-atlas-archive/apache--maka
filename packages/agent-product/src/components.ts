@@ -243,6 +243,15 @@ export function components(target: Target): {
                 ui.box(
                   'tool-actions-' + message.id,
                   [
+                    ...(message.source !== null
+                      ? [
+                          ui.button(
+                            'tool-source-' + message.source,
+                            text.toolDetails,
+                            props.loading,
+                          ),
+                        ]
+                      : []),
                     ...(message.text
                       ? [
                           ui.button(
@@ -251,7 +260,7 @@ export function components(target: Target): {
                           ),
                         ]
                       : []),
-                    ...(message.source !== null
+                    ...(message.source !== null && message.text
                       ? [ui.button('source-' + message.source, text.readSource, props.loading)]
                       : []),
                   ],
@@ -347,16 +356,30 @@ export function components(target: Target): {
                   const sourceContent = ui.box(
                     'source-document',
                     [
-                      ui.text('source-heading', text.sourceTitle, 20, props.theme.text, 600),
+                      ui.text(
+                        'source-heading',
+                        source.kind === 'arguments'
+                          ? text.toolArguments
+                          : source.kind === 'result'
+                            ? text.toolResult
+                            : text.sourceTitle,
+                        20,
+                        props.theme.text,
+                        600,
+                      ),
                       ui.text(
                         'source-location',
-                        source.atStart && source.atEnd
-                          ? text.sourceComplete
-                          : source.atStart
-                            ? text.sourceBeginning
-                            : source.atEnd
-                              ? text.sourceEnding
-                              : text.partial,
+                        !source.ready
+                          ? source.failed
+                            ? text.sourceFailed
+                            : text.loading
+                          : source.atStart && source.atEnd
+                            ? text.sourceComplete
+                            : source.atStart
+                              ? text.sourceBeginning
+                              : source.atEnd
+                                ? text.sourceEnding
+                                : text.partial,
                         13,
                         props.theme.muted,
                       ),
@@ -365,7 +388,10 @@ export function components(target: Target): {
                         'source',
                         {
                           source: source.text,
-                          appearance: props.theme.markdown.body,
+                          appearance:
+                            source.format === 'text'
+                              ? props.theme.markdown.body
+                              : props.theme.markdown.code,
                           selection: props.theme.markdown.selection,
                           disabled: false,
                         },
@@ -574,6 +600,13 @@ export function components(target: Target): {
                         : null;
           if (event) out.events.push({ name: event, value: {} });
         } else if (input.kind === 'raw' && !props.loading) {
+          const tool = props.messages.find(
+            (message) =>
+              message.source !== null &&
+              (message.role === 'tool_call' || message.role === 'tool_result') &&
+              input.key === 'tool-source-' + message.source,
+          );
+          if (tool) out.events.push({ name: 'toolSource', value: { sequence: tool.source } });
           const message = props.messages.find(
             (message) => message.source !== null && input.key === 'source-' + message.source,
           );

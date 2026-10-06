@@ -33,6 +33,8 @@ import {
   type EditorObservation,
   type Role,
   type AgentHistoryChunk,
+  type ToolSourceField,
+  type SourceFormat,
 } from '../../plugin-sdk/src/index.js';
 export type Schema = Record<string, unknown>;
 export const object = (properties: Schema, required = Object.keys(properties)): Schema => ({
@@ -90,6 +92,9 @@ export interface NavigationProps {
   more: boolean;
 }
 export interface SourcePage {
+  kind: 'message' | ToolSourceField;
+  format: SourceFormat;
+  ready: boolean;
   key: string;
   text: string;
   atStart: boolean;
@@ -128,6 +133,7 @@ const defs = {
   ...native.secretInput.interface.props.$defs,
   ...session.$defs,
   ...native.agent.interface.methods.history.output.$defs,
+  ...native.agent.interface.methods.toolSource.output.$defs,
 };
 const themeSchema = object({
   background: { type: 'integer', minimum: 0, maximum: 4294967295 },
@@ -151,10 +157,31 @@ const messageSchema = object({
   continued: { type: 'boolean' },
   source: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
 });
-const withDefs = (schema: Schema) => ({
-  ...schema,
-  $defs: { ...defs, Theme: themeSchema, Message: messageSchema },
-});
+const withDefs = (schema: Schema, additional: Schema = {}): Schema => {
+  const { $defs: local, ...body } = schema;
+  const available: Record<string, unknown> = {
+    ...defs,
+    Theme: themeSchema,
+    Message: messageSchema,
+    ...additional,
+    ...(local as Record<string, unknown>),
+  };
+  const used: Record<string, unknown> = {};
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return;
+    if ('$ref' in value && typeof value.$ref === 'string' && value.$ref.startsWith('#/$defs/')) {
+      const name = value.$ref.slice('#/$defs/'.length);
+      if (!Object.hasOwn(used, name)) {
+        if (!Object.hasOwn(available, name)) throw new Error('Missing schema definition: ' + name);
+        used[name] = available[name];
+        visit(available[name]);
+      }
+    }
+    for (const child of Object.values(value)) visit(child);
+  };
+  visit(body);
+  return Object.keys(used).length ? { ...body, $defs: used } : body;
+};
 const component = (
   name: string,
   props: Schema,
@@ -188,6 +215,9 @@ export const timelineContract = component(
     source: {
       anyOf: [
         object({
+          kind: { anyOf: [{ const: 'message' }, { $ref: '#/$defs/ToolSourceField' }] },
+          format: { $ref: '#/$defs/SourceFormat' },
+          ready: { type: 'boolean' },
           key: string,
           text: { type: 'string', maxLength: 8192 },
           atStart: { type: 'boolean' },
@@ -215,6 +245,7 @@ export const timelineContract = component(
     newer: object({}),
     latest: object({}),
     source: object({ sequence: { type: 'integer', minimum: 1 } }),
+    toolSource: object({ sequence: { type: 'integer', minimum: 1 } }),
     sourceFirst: object({}),
     sourcePrevious: object({}),
     sourceNext: object({}),
@@ -266,8 +297,8 @@ export const modelsContract: Contract = {
           selection: { anyOf: [{ $ref: '#/$defs/SettingsModelChoice' }, { type: 'null' }] },
           busy: { type: 'boolean' },
         }),
+        modelDefs,
       ),
-      $defs: { ...defs, Theme: themeSchema, ...modelDefs },
     },
     events: { selected: { ...modelChoice, $defs: modelDefs } },
     captures: {},
@@ -290,8 +321,8 @@ export const modelDefaultContract: Contract = {
           catalogRevision: { anyOf: [{ type: 'integer', minimum: 0 }, { type: 'null' }] },
           busy: { type: 'boolean' },
         }),
+        modelDefs,
       ),
-      $defs: { ...defs, Theme: themeSchema, ...modelDefs },
     },
     events: { changed: object({}) },
     captures: {},

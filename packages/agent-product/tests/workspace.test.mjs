@@ -124,6 +124,7 @@ class Client {
               'sourceLast',
               'sourceBack',
               'sourceRetry',
+              'toolSource',
               'tailReady',
             ].includes(name)
           ? 'timeline'
@@ -2251,12 +2252,19 @@ for (const target of ['desktop', 'tui']) {
         );
         assert.equal(
           row.children.find((node) => node.key.startsWith('tool-actions-')).children.length,
-          0,
+          1,
+        );
+        assert.equal(
+          row.children.find((node) => node.key.startsWith('tool-actions-')).children[0].label,
+          '工具详情',
         );
       }
       assert.equal(out.actions.length, 0);
       assert.equal(out.events.length, 0);
-      assert.ok(client.messages.every((message) => message.source === null));
+      assert.deepEqual(
+        client.messages.map((message) => message.source),
+        [39, 40],
+      );
     },
   );
   test(target + ' suggests the exact saved default even beyond the first model page', async () => {
@@ -3537,6 +3545,155 @@ for (const target of ['desktop', 'tui']) {
         after: null,
       });
       assert.equal(client.liveMessages.length, 0, 'explicit navigation may retire the old prefix');
+    },
+  );
+}
+
+for (const target of ['desktop', 'tui']) {
+  test(
+    target + ' tool fields read literal JSON at one fence with retry and bidirectional paging',
+    async () => {
+      const module = await import(
+        pathToFileURL(resolve(root, 'dist/packages/workspace/' + target + '.js'))
+      );
+      module.activate({ locale: 'en' });
+      const body = JSON.stringify({
+        count: 42,
+        ready: false,
+        empty: null,
+        text: '中文😀\u0000\r\n'.repeat(1000),
+      });
+      const bytes = Buffer.from(body);
+      const tool = { kind: 'call', toolUseId: uuid(902), toolName: 'Count' };
+      const client = new Client(module.component).start({
+        through: 1000,
+        chunks: [
+          historyChunk('', { sequence: 400, role: 'tool_call', tool }),
+          historyChunk('', {
+            sequence: 401,
+            role: 'tool_result',
+            tool: { ...tool, kind: 'result', isError: false },
+          }),
+        ],
+      });
+      const window = structuredClone(client.state.window);
+      const landing = structuredClone(client.state.landing);
+      client.component('toolSource', { sequence: 400 });
+      assert.equal(client.timeline.source.kind, 'arguments');
+      assert.equal(client.timeline.source.ready, false);
+      assert.equal(client.timeline.source.text, '');
+      const first = client.find('toolSource');
+      assert.deepEqual(first.input, {
+        sessionId: session.id,
+        through: 1000,
+        sequence: 400,
+        field: 'arguments',
+        position: { kind: 'start' },
+      });
+      client.query('toolSource', { kind: 'preparing', through: 1000 });
+      assert.deepEqual(client.find('toolSource').input, first.input);
+      client.complete(client.find('toolSource'), { status: 'failed', reason: 'unavailable' });
+      assert.equal(client.timeline.source.failed, true);
+      assert.equal(client.timeline.source.ready, false);
+      client.component('sourceRetry');
+      assert.deepEqual(client.find('toolSource').input, first.input);
+      const complete = () => {
+        const action = client.find('toolSource');
+        assert.equal(action.input.through, 1000);
+        const position = action.input.position;
+        const reverse = ['before', 'tail'].includes(position.kind);
+        let end = reverse
+          ? position.kind === 'tail'
+            ? bytes.length
+            : position.offset
+          : Math.min(bytes.length, (position.offset ?? 0) + 8192);
+        let start = reverse ? Math.max(0, end - 8192) : (position.offset ?? 0);
+        while ((bytes[start] & 0xc0) === 0x80) start++;
+        while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--;
+        client.complete(action, {
+          status: 'succeeded',
+          value: {
+            kind: 'ready',
+            through: 1000,
+            source: {
+              sequence: 400,
+              field: 'arguments',
+              format: 'json',
+              offset: start,
+              totalBytes: bytes.length,
+              text: bytes.subarray(start, end).toString('utf8'),
+              tool,
+            },
+          },
+        });
+        assert.equal(client.timeline.source.ready, true);
+        assert.equal(client.timeline.source.format, 'json');
+        assert.ok(client.timeline.source.text.isWellFormed());
+      };
+      complete();
+      client.page([fact(1001, { kind: 'opened' })], 1001);
+      const forward = [client.timeline.source.text];
+      while (!client.timeline.source.atEnd) {
+        client.component('sourceNext');
+        const old = client.timeline.source.text;
+        client.complete(client.find('toolSource'), { status: 'failed', reason: 'interrupted' });
+        assert.equal(client.timeline.source.text, old);
+        client.component('sourceRetry');
+        complete();
+        forward.push(client.timeline.source.text);
+      }
+      assert.equal(forward.join(''), body);
+      client.component('sourceLast');
+      complete();
+      const reverse = [client.timeline.source.text];
+      while (!client.timeline.source.atStart) {
+        client.component('sourcePrevious');
+        complete();
+        reverse.unshift(client.timeline.source.text);
+      }
+      assert.equal(reverse.join(''), body);
+      const argumentKey = client.timeline.source.key;
+      client.component('sourceNext');
+      const stale = client.find('toolSource');
+      client.component('sourceBack');
+      client.component('toolSource', { sequence: 401 });
+      const reopened = structuredClone(client.state.source);
+      client.complete(stale, {
+        status: 'succeeded',
+        value: {
+          kind: 'ready',
+          through: 1000,
+          source: {
+            sequence: 400,
+            field: 'arguments',
+            format: 'json',
+            offset: 0,
+            totalBytes: 2,
+            text: '{}',
+            tool,
+          },
+        },
+      });
+      assert.deepEqual(client.state.source, reopened);
+      client.query('toolSource', {
+        kind: 'ready',
+        through: 1000,
+        source: {
+          sequence: 401,
+          field: 'result',
+          format: 'json',
+          offset: 0,
+          totalBytes: 2,
+          text: '{}',
+          tool: { ...tool, kind: 'result', isError: false },
+        },
+      });
+      assert.equal(client.timeline.source.kind, 'result');
+      assert.notEqual(client.timeline.source.key, argumentKey);
+      client.component('sourceBack');
+      assert.deepEqual(client.state.window, window);
+      assert.deepEqual(client.state.landing, landing);
+      assert.equal(client.state.latestKnown, 1001);
     },
   );
 }

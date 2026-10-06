@@ -2957,6 +2957,247 @@ export const contracts = {
           },
           resources: {},
         },
+        toolSource: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentToolSourceRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              through: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+              sequence: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 1,
+                maximum: 9007199254740991,
+              },
+              field: {
+                $ref: '#/$defs/ToolSourceField',
+              },
+              position: {
+                $ref: '#/$defs/SourcePosition',
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'through', 'sequence', 'field', 'position'],
+            $defs: {
+              ToolSourceField: {
+                description:
+                  'An explicitly selected canonical tool field, never an execution grant.',
+                type: 'string',
+                enum: ['arguments', 'result'],
+              },
+              SourcePosition: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'start',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'tail',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      offset: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'before',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'offset'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      offset: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'after',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'offset'],
+                  },
+                ],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentToolSourcePage',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  through: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'preparing',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'through'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  through: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  source: {
+                    $ref: '#/$defs/ToolSource',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'ready',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'through', 'source'],
+              },
+            ],
+            $defs: {
+              ToolSource: {
+                description:
+                  'One literal UTF-8 excerpt of an immutable field. JSON excerpts need not be\nstandalone JSON. Image descriptors carry no artifact read authorization.',
+                type: 'object',
+                properties: {
+                  sequence: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  field: {
+                    $ref: '#/$defs/ToolSourceField',
+                  },
+                  format: {
+                    $ref: '#/$defs/SourceFormat',
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  totalBytes: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  text: {
+                    type: 'string',
+                  },
+                  tool: {
+                    $ref: '#/$defs/HistoryTool',
+                  },
+                },
+                additionalProperties: false,
+                required: ['sequence', 'field', 'format', 'offset', 'totalBytes', 'text', 'tool'],
+              },
+              ToolSourceField: {
+                description:
+                  'An explicitly selected canonical tool field, never an execution grant.',
+                type: 'string',
+                enum: ['arguments', 'result'],
+              },
+              SourceFormat: {
+                type: 'string',
+                enum: ['text', 'json', 'image_descriptor'],
+              },
+              HistoryTool: {
+                description:
+                  'Immutable canonical presentation facts, not execution or recovery authority.',
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      toolUseId: {
+                        type: 'string',
+                      },
+                      toolName: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'call',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'toolUseId', 'toolName'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      toolUseId: {
+                        type: 'string',
+                      },
+                      toolName: {
+                        type: ['string', 'null'],
+                      },
+                      isError: {
+                        description:
+                          "The presentation's error flag does not distinguish failed from unknown effects.",
+                        type: 'boolean',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'result',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'toolUseId', 'toolName', 'isError'],
+                  },
+                ],
+              },
+            },
+          },
+          resources: {},
+        },
         watch: {
           mode: 'subscription',
           input: {
