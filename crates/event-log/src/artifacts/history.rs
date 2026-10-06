@@ -204,8 +204,8 @@ async fn retain_one(
         return Err(StoreError::ArtifactConflict);
     }
     let copied = sqlx::query(
-        "INSERT INTO artifacts (session_id, id, created_at, record_json, content_sha256, payload)
-         SELECT ?3, ?4, ?5, ?6, content_sha256, payload FROM artifacts
+        "INSERT INTO artifacts (session_id, id, created_at, record_json, content_sha256, payload, canonical_at)
+         SELECT ?3, ?4, ?5, ?6, content_sha256, payload, canonical_at FROM artifacts
          WHERE session_id = ?1 AND id = ?2 AND length(payload) = ?7",
     )
     .bind(source)

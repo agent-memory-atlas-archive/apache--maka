@@ -7892,6 +7892,7 @@ dependencies = [
 name = "maka-agent-service"
 version = "0.2.0"
 dependencies = [
+ "base64 0.22.1",
  "crossterm",
  "futures-util",
  "jsonschema 0.56.0",

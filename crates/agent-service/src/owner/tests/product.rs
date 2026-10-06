@@ -360,7 +360,7 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     await_screen(&mut presenter, "[ Show sidebar ]");
     click(&mut presenter, "[ Show sidebar ]");
     await_screen(&mut presenter, "[ New conversation ]");
-    click(&mut presenter, "New conversation");
+    click(&mut presenter, "[ New conversation ]");
     click(&mut presenter, "[ Hide sidebar ]");
     await_screen(&mut presenter, "A place to think.");
     // Native draft is the first editor hit. Focus it through its actual visible
@@ -773,8 +773,10 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     let mut reopened = start();
     await_screen(&mut reopened, "[ Show sidebar ]");
     click(&mut reopened, "[ Show sidebar ]");
-    await_screen(&mut reopened, "Native tool inspection");
-    click(&mut reopened, "Native tool inspection");
+    // A disabled catalog entry is currently painted as plain text. Its title
+    // alone does not prove the actual native action is enabled after recovery.
+    await_screen(&mut reopened, "[ Native tool inspection ]");
+    click(&mut reopened, "[ Native tool inspection ]");
     click(&mut reopened, "[ Hide sidebar ]");
     await_screen(&mut reopened, "Tool output · Count");
     await_screen(&mut reopened, "[ Tool details ]");
@@ -803,10 +805,10 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
             .is_ok()
     );
     click(&mut reopened, "[ Show sidebar ]");
-    await_screen(&mut reopened, "New conversation");
-    // Both the creation button and the original session have this label.
-    // Select the ordinary catalog row before continuing original recovery/CAS.
-    click_nth(&mut reopened, "New conversation", 1);
+    await_screen(&mut reopened, "[ New conversation ]");
+    // Both enabled creation action and original catalog row have this label;
+    // the plain header is not an action and must not affect the occurrence.
+    click_nth(&mut reopened, "[ New conversation ]", 1);
     click(&mut reopened, "[ Hide sidebar ]");
     assert!(screen(&draw(&mut reopened)).contains("What would you like to work on?"));
     click(&mut reopened, "[ Connections ]");

@@ -89,6 +89,8 @@ export type RuntimeProtocol =
   | AgentHistoryPage
   | AgentToolSourceRead
   | AgentToolSourcePage
+  | AgentToolImageRead
+  | AgentToolImagePage
   | Read
   | HostActivation
   | HostRequest
@@ -1028,6 +1030,24 @@ export type AgentToolSourcePage =
       kind: 'ready';
     };
 export type SourceFormat = 'text' | 'json' | 'image_descriptor';
+export type AgentToolImagePage =
+  | {
+      through: number;
+      kind: 'preparing';
+    }
+  | {
+      through: number;
+      sequence: number;
+      offset: number;
+      totalBytes: number;
+      mimeType: string;
+      digest: string;
+      /**
+       * Standard padded Base64 of at most 32KiB of encoded image bytes.
+       */
+      data: string;
+      kind: 'ready';
+    };
 /**
  * Resource names select slots in the current request, not durable grants.
  */
@@ -2027,6 +2047,12 @@ export interface ToolSource {
   totalBytes: number;
   text: string;
   tool: HistoryTool;
+}
+export interface AgentToolImageRead {
+  sessionId: string;
+  through: number;
+  sequence: number;
+  offset: number;
 }
 /**
  * A stable raw-event fence prevents a window from chasing appended messages.

@@ -2957,6 +2957,119 @@ export const contracts = {
           },
           resources: {},
         },
+        toolImage: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentToolImageRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              through: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+              sequence: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 1,
+                maximum: 9007199254740991,
+              },
+              offset: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 5242880,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'through', 'sequence', 'offset'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentToolImagePage',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  through: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'preparing',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'through'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  through: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  sequence: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  totalBytes: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 5242880,
+                  },
+                  mimeType: {
+                    type: 'string',
+                    pattern: '^image/(png|jpeg|gif|webp|avif)$',
+                  },
+                  digest: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  data: {
+                    description: 'Standard padded Base64 of at most 32KiB of encoded image bytes.',
+                    type: 'string',
+                    maxLength: 43692,
+                    pattern: '^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'ready',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'kind',
+                  'through',
+                  'sequence',
+                  'offset',
+                  'totalBytes',
+                  'mimeType',
+                  'digest',
+                  'data',
+                ],
+              },
+            ],
+          },
+          resources: {},
+        },
         toolSource: {
           mode: 'query',
           input: {

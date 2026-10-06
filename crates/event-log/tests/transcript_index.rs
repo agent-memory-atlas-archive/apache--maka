@@ -33,6 +33,8 @@ use sha2::{Digest, Sha256};
 mod fixtures;
 #[path = "transcript_index/history.rs"]
 mod history;
+#[path = "transcript_index/image.rs"]
+mod image;
 #[path = "transcript_index/source.rs"]
 mod source;
 use fixtures::*;

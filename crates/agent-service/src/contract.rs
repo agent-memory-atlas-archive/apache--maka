@@ -296,6 +296,50 @@ pub enum ToolSourcePage {
     },
 }
 
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentToolImageRead")]
+pub struct ToolImageRead {
+    #[schemars(length(min = 1, max = 128))]
+    pub session_id: String,
+    #[schemars(range(max = 9_007_199_254_740_991u64))]
+    pub through: u64,
+    #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
+    pub sequence: u64,
+    #[schemars(range(max = 5_242_880u64))]
+    pub offset: u64,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename = "AgentToolImagePage")]
+pub enum ToolImagePage {
+    Preparing {
+        through: u64,
+    },
+    Ready {
+        through: u64,
+        sequence: u64,
+        offset: u64,
+        #[schemars(range(min = 1, max = 5_242_880u64))]
+        total_bytes: u64,
+        #[schemars(regex(pattern = "^image/(png|jpeg|gif|webp|avif)$"))]
+        mime_type: String,
+        #[schemars(regex(pattern = "^sha256:[a-f0-9]{64}$"))]
+        digest: String,
+        /// Standard padded Base64 of at most 32KiB of encoded image bytes.
+        #[schemars(
+            length(max = 43692),
+            regex(pattern = "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$")
+        )]
+        data: String,
+    },
+}
+
 pub fn contract() -> Contract {
     fn method<I: JsonSchema, O: JsonSchema>(mode: MethodMode) -> Method {
         Method {
@@ -326,6 +370,10 @@ pub fn contract() -> Contract {
                 (
                     "toolSource".into(),
                     method::<ToolSourceRead, ToolSourcePage>(MethodMode::Query),
+                ),
+                (
+                    "toolImage".into(),
+                    method::<ToolImageRead, ToolImagePage>(MethodMode::Query),
                 ),
                 (
                     "create".into(),

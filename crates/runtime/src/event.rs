@@ -78,8 +78,9 @@ pub enum ToolOutcome {
     Succeeded {
         raw: crate::tool_output::RawToolResultRef,
         model_projection: crate::tool_output::DurableToolProjection,
-        /// Generated material must survive with this fact; ordinary references
-        /// may instead point to user-deletable uploads.
+        /// Generated material must survive with this fact. Borrowed artifact
+        /// media that exists in the same Session is frozen at original settlement.
+        /// Unavailable borrowed media does not change the effect outcome.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         artifacts: Vec<crate::artifact::ArtifactEvidence>,
     },

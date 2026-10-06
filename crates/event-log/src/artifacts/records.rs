@@ -73,15 +73,21 @@ pub(super) async fn read_record(
     session_id: &str,
     artifact_id: &str,
 ) -> Result<Option<(Artifact, String)>, StoreError> {
-    let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT record_json, content_sha256 FROM artifacts WHERE session_id = ? AND id = ?",
+    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT CASE WHEN length(CAST(record_json AS BLOB)) <= 16384 THEN record_json END,
+         CASE WHEN length(CAST(content_sha256 AS BLOB)) = 71 THEN content_sha256 END
+         FROM artifacts WHERE session_id = ? AND id = ?",
     )
     .bind(session_id)
     .bind(artifact_id)
     .fetch_optional(connection)
     .await?;
-    row.map(|(raw, digest)| Ok((decode(&raw, session_id, artifact_id)?, digest)))
-        .transpose()
+    row.map(|(raw, digest)| {
+        let raw = raw.ok_or_else(|| invalid("Stored artifact metadata exceeds limit"))?;
+        let digest = digest.ok_or_else(|| invalid("Stored artifact digest exceeds limit"))?;
+        Ok((decode(&raw, session_id, artifact_id)?, digest))
+    })
+    .transpose()
 }
 
 pub(super) async fn revision(

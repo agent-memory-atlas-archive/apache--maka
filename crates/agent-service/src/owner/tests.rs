@@ -23,6 +23,9 @@ mod selection;
 #[path = "tests/settings.rs"]
 mod settings;
 
+#[path = "tests/images.rs"]
+mod images;
+
 #[path = "tests/product.rs"]
 mod product;
 

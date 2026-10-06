@@ -169,6 +169,7 @@ impl EventLog {
         let sequence = sequence_number(inserted.last_insert_rowid())?;
         crate::message_sources::insert(transaction, event).await?;
         crate::tool_payloads::insert(transaction, write).await?;
+        crate::artifacts::freeze_tool_media(transaction, event, sequence).await?;
         crate::composition::insert(transaction, write).await?;
         crate::usage::valuation::append(transaction, write).await?;
         if matches!(event.fact, Fact::InvocationEnded { .. }) {

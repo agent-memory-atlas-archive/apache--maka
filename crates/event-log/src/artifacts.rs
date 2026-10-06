@@ -103,7 +103,10 @@ impl EventLog {
                     let retained: bool = sqlx::query_scalar(
                         "SELECT EXISTS(SELECT 1 FROM session_history_artifacts WHERE session_id = ? AND artifact_id = ?)",
                     ).bind(&session_id).bind(&artifact_id).fetch_one(&mut *tx).await?;
-                    if !artifact.source.user_deletable() || retained {
+                    if !artifact.source.user_deletable() || retained
+                        || sqlx::query_scalar::<_, bool>("SELECT canonical_at IS NOT NULL FROM artifacts WHERE session_id = ? AND id = ?")
+                            .bind(&session_id).bind(&artifact_id).fetch_one(&mut *tx).await?
+                    {
                         return Ok(ArtifactDeletion::Protected);
                     }
                     sqlx::query("DELETE FROM artifacts WHERE session_id = ? AND id = ?")
@@ -212,6 +215,123 @@ async fn verify_payload(
     .await?;
     if !matches {
         return Err(StoreError::ArtifactConflict);
+    }
+    Ok(())
+}
+
+/// Bounded immutable encoded image material; no filesystem path or bearer handle.
+#[derive(Debug)]
+pub struct ImageChunk {
+    pub total_bytes: u64,
+    pub mime_type: String,
+    pub digest: String,
+    pub bytes: Vec<u8>,
+}
+
+pub(crate) async fn read_image(
+    connection: &mut sqlx::SqliteConnection,
+    session: &str,
+    id: &str,
+    mime: &str,
+    offset: u64,
+    limit: usize,
+    row_event: u64,
+) -> Result<ImageChunk, StoreError> {
+    records::ids(session, Some(id))?;
+    require_session(connection, session).await?;
+    let (artifact, digest) = read_record(connection, session, id)
+        .await?
+        .ok_or_else(|| invalid("tool image artifact not found"))?;
+    let canonical_at: Option<i64> =
+        sqlx::query_scalar("SELECT canonical_at FROM artifacts WHERE session_id = ? AND id = ?")
+            .bind(session)
+            .bind(id)
+            .fetch_one(&mut *connection)
+            .await?;
+    if !canonical_at.is_some_and(|at| at > 0 && at as u64 <= row_event) {
+        return Err(invalid(
+            "tool image bytes were not frozen at their canonical row",
+        ));
+    }
+    if artifact.kind != maka_runtime::artifact::ArtifactKind::Image
+        || artifact.mime_type.as_deref() != Some(mime)
+        || !matches!(
+            mime,
+            "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/avif"
+        )
+        || artifact.size_bytes == 0
+        || artifact.size_bytes > 5 * 1024 * 1024
+        || !digest.strip_prefix("sha256:").is_some_and(|value| {
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        })
+    {
+        return Err(invalid("invalid retained tool image metadata"));
+    }
+    if offset > artifact.size_bytes {
+        return Err(StoreError::ArtifactOffset);
+    }
+    let (total, bytes): (i64, Vec<u8>) = sqlx::query_as(
+        "SELECT length(payload), substr(payload, ?, ?) FROM artifacts WHERE session_id = ? AND id = ?"
+    ).bind(offset as i64 + 1).bind(limit as i64).bind(session).bind(id).fetch_one(&mut *connection).await?;
+    if total as u64 != artifact.size_bytes
+        || bytes.len() as u64 != (artifact.size_bytes - offset).min(limit as u64)
+    {
+        return Err(invalid("tool image artifact size mismatch"));
+    }
+    Ok(ImageChunk {
+        total_bytes: artifact.size_bytes,
+        mime_type: mime.to_owned(),
+        digest,
+        bytes,
+    })
+}
+
+/// Consume artifact-backed media in the same transaction as original settlement.
+/// The private artifact owner field survives pruning and is inherited by copies;
+/// a later copy/consumer cannot retroactively establish an earlier byte identity.
+pub(crate) async fn freeze_tool_media(
+    connection: &mut sqlx::SqliteConnection,
+    event: &maka_runtime::event::RuntimeEvent,
+    sequence: u64,
+) -> Result<(), StoreError> {
+    use maka_runtime::{
+        attachment::StorageRef,
+        event::{Fact, ToolOutcome},
+        tool_output::DurableToolProjection,
+    };
+    let Fact::ToolSettled {
+        outcome:
+            ToolOutcome::Succeeded {
+                model_projection: DurableToolProjection::Content { parts },
+                ..
+            },
+        ..
+    } = &event.fact
+    else {
+        return Ok(());
+    };
+    for part in parts {
+        let Some((
+            StorageRef::SessionFile {
+                session_id,
+                relative_path,
+            },
+            _,
+        )) = part.media()
+        else {
+            continue;
+        };
+        if session_id != &event.invocation.session_id {
+            continue;
+        }
+        sqlx::query("UPDATE artifacts SET canonical_at=COALESCE(canonical_at, ?) WHERE session_id=? AND id=?")
+            .bind(sequence as i64).bind(session_id).bind(relative_path).execute(&mut *connection).await?;
+        // Unavailable borrowed media does not revoke the successful effect or
+        // its exact raw result. No freeze/read grant is created for a missing
+        // artifact; replay already renders unavailable media explicitly.
     }
     Ok(())
 }

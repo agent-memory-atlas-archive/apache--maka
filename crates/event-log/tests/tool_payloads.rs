@@ -328,3 +328,88 @@ async fn session_binding_missing_payload_and_corrupt_raw_fail_closed() {
     assert!(log.append(&outcome).await.is_err());
     log.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn unavailable_borrowed_media_preserves_the_completed_effect_and_raw_result() {
+    use maka_runtime::{attachment::StorageRef, tool_output::ImageOutput, tools::ToolJournal};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use tokio_util::sync::CancellationToken;
+
+    for media_session in ["session", "foreign"] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("events.sqlite");
+        let log = Arc::new(open(&path).await);
+        let output = ToolOutput::Image(ImageOutput {
+            detail: None,
+            mime_type: "image/gif".into(),
+            reference: StorageRef::SessionFile {
+                session_id: media_session.into(),
+                relative_path: "absent-image".into(),
+            },
+        });
+        let effects = Arc::new(AtomicUsize::new(0));
+        let effect_count = effects.clone();
+        let effect_output = output.clone();
+        let actual = ToolJournal::new(log.clone(), invocation())
+            .invoke_call_with(
+                "missing-image".into(),
+                ToolCallIdentity::standalone("image-call".into()),
+                "Read".into(),
+                json!({}),
+                CancellationToken::new(),
+                move |_| {
+                    Box::pin(async move {
+                        effect_count.fetch_add(1, Ordering::SeqCst);
+                        Ok(effect_output)
+                    })
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(actual, output.clone().into_json());
+        assert_eq!(effects.load(Ordering::SeqCst), 1);
+        let through = *log.subscribe_commits().borrow();
+        let page = log
+            .session_events("session", 0, through, 32, 64 * 1024)
+            .await
+            .unwrap();
+        let settlement = page
+            .events
+            .iter()
+            .find(|stored| {
+                matches!(
+                    stored.event.fact,
+                    Fact::ToolSettled {
+                        outcome: ToolOutcome::Succeeded { .. },
+                        ..
+                    }
+                )
+            })
+            .expect("successful effect must have a durable successful settlement");
+        let event_id = settlement.event.id.clone();
+        assert_eq!(
+            log.resolve_tool_result("session", &event_id).await.unwrap(),
+            output
+        );
+        assert_eq!(
+            log.delete_user_artifact("session", "absent-image")
+                .await
+                .unwrap(),
+            ArtifactDeletion::NotFound
+        );
+        let log = Arc::try_unwrap(log).ok().unwrap();
+        log.close().await.unwrap();
+        let reopened = EventLog::open(&path).await.unwrap();
+        assert_eq!(
+            reopened
+                .resolve_tool_result("session", &event_id)
+                .await
+                .unwrap(),
+            output
+        );
+        reopened.close().await.unwrap();
+    }
+}

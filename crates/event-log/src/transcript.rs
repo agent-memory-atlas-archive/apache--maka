@@ -22,6 +22,7 @@ mod active;
 pub(crate) use active::interrupted_messages;
 mod evidence;
 mod history;
+mod image;
 pub mod navigation;
 mod read;
 pub mod search;
