@@ -293,8 +293,17 @@ export function components(target: Target): {
       [
         ...(!messages.length && !props.loading
           ? [
-              ui.text('welcome', text.welcome, 30, props.theme.text, 600),
-              ui.text('welcome-copy', text.welcomeCopy, 16, props.theme.muted),
+              ui.box(
+                'welcome-column',
+                [
+                  ui.text('welcome', text.welcome, 30, props.theme.text, 600),
+                  ui.text('welcome-copy', text.welcomeCopy, 16, props.theme.muted),
+                ],
+                {
+                  gap: target === 'desktop' ? 12 : 1,
+                  style: { width: fill, maxWidth: 760, shrink: 0 },
+                },
+              ),
             ]
           : messages),
         ...(props.loading ? [ui.text('loading', text.loading, 14, props.theme.muted)] : []),
@@ -304,6 +313,7 @@ export function components(target: Target): {
         style: {
           width: fill,
           height: fill,
+          align: 'center',
           padding: { top: 24, right: 24, bottom: 24, left: 24 },
         },
         scroll: props.live ? 'follow_end' : 'anchor',
