@@ -21,8 +21,9 @@
 use super::*;
 use maka_event_log::{EventLog, StoreError, applications::validate_application};
 use maka_plugin_core::deployment::management::{
-    DeploymentRead, DeploymentReplace, ManagementRejection, ManagementResult, PackageInstall,
-    PackageInstalled, deployment_manager_contract, package_bundle_type,
+    DeploymentInstances, DeploymentRead, DeploymentReplace, InstanceSetEnabled, ManagedInstance,
+    ManagedInstancesPage, ManagementRejection, ManagementResult, PackageInstall, PackageInstalled,
+    deployment_manager_contract, package_bundle_type,
 };
 use serde::Deserialize;
 
@@ -68,6 +69,126 @@ impl Manager {
             .await
             .map_err(|error| error.to_string())?
             .ok_or("managed deployment not found".into())
+    }
+    async fn instances(&self, input: Value) -> Result<Value> {
+        let request: DeploymentInstances =
+            serde_json::from_value(input).map_err(|e| e.to_string())?;
+        let _materialize = self.writes.lock().await;
+        let (source, after) = match request {
+            DeploymentInstances::Start {} => (self.metadata().await?.source.reference, None),
+            DeploymentInstances::Continue { source, after } => (source, after),
+        };
+        if source.state_domain != self.source.state_domain
+            || source.deployment != self.source.deployment
+        {
+            return Err("foreign managed deployment source".into());
+        }
+        let loaded = self
+            .store
+            .load_application_at(&source)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or("managed source not found")?;
+        let plan = desired_plan(&loaded)?;
+        if after
+            .as_ref()
+            .is_some_and(|after| !plan.instances().contains_key(after))
+        {
+            return Err("managed instance cursor not found".into());
+        }
+        let mut remaining = plan.instances().values().filter(|instance| {
+            after
+                .as_ref()
+                .is_none_or(|after| &instance.identity > after)
+        });
+        let instances: Vec<_> = remaining
+            .by_ref()
+            .take(8)
+            .map(|instance| ManagedInstance {
+                instance: instance.identity.clone(),
+                path: instance.path.clone(),
+                package: instance.package.clone(),
+                structural: instance.entry.is_none(),
+                disabled: instance.disabled,
+                parent_disabled: instance
+                    .parent
+                    .as_ref()
+                    .is_some_and(|parent| plan.instances()[parent].disabled),
+            })
+            .collect();
+        let next = remaining.next().map(|_| {
+            instances
+                .last()
+                .expect("full managed page")
+                .instance
+                .clone()
+        });
+        serde_json::to_value(ManagedInstancesPage {
+            source,
+            instances,
+            next,
+        })
+        .map_err(|e| e.to_string())
+    }
+    async fn set_enabled(&self, input: Value) -> Result<Value> {
+        let request: InstanceSetEnabled =
+            serde_json::from_value(input).map_err(|e| e.to_string())?;
+        let _write = self.writes.lock().await;
+        let metadata = self.metadata().await?;
+        if request.expected_revision != metadata.source.reference.revision {
+            return conflict(metadata.source.reference.revision);
+        }
+        let mut loaded = self
+            .store
+            .load_application_at(&metadata.source.reference)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or("managed source not found")?;
+        let plan = desired_plan(&loaded)?;
+        let Some(instance) = plan.instances().get(&request.instance) else {
+            return rejected(ManagementRejection::InstanceUnavailable);
+        };
+        if request.enabled
+            && instance
+                .parent
+                .as_ref()
+                .is_some_and(|parent| plan.instances()[parent].disabled)
+        {
+            return rejected(ManagementRejection::ParentDisabled);
+        }
+        let [root, path @ ..] = instance.path.as_slice() else {
+            return Err("invalid actual managed path".into());
+        };
+        let node = loaded
+            .source
+            .input
+            .instances
+            .get_mut(root)
+            .ok_or("managed root disappeared")?;
+        if path.is_empty() {
+            node.disabled = !request.enabled;
+        } else {
+            if let Some(patch) = node.overrides.iter_mut().find(|patch| patch.path == path) {
+                patch.disabled = Some(!request.enabled);
+            } else {
+                node.overrides
+                    .push(maka_plugin_core::composition::Override {
+                        path: path.to_vec(),
+                        disabled: Some(!request.enabled),
+                        ..Default::default()
+                    });
+            }
+        }
+        // Effective disabled may come from an ancestor. Persist the user's own
+        // explicit intent even when that effective projection already matches.
+        self.commit(
+            request.expected_revision,
+            loaded.source.input,
+            loaded.source.remote_exports,
+            loaded.packages,
+            |source| source,
+        )
+        .await
     }
     async fn install(&self, input: Value, context: Context) -> Result<Value> {
         let request: PackageInstall =
@@ -216,6 +337,28 @@ impl Manager {
         }
     }
 }
+fn desired_plan(loaded: &maka_event_log::applications::LoadedDeployment) -> Result<Plan> {
+    let mut packages = maka_plugin_core::package::Packages::default();
+    for package in &loaded.packages {
+        packages
+            .insert(
+                package.application_ref(),
+                package
+                    .manifest()
+                    .application
+                    .clone()
+                    .ok_or("application declaration required")?,
+            )
+            .map_err(|e| e.to_string())?;
+    }
+    let declarations = loaded
+        .source
+        .remote_exports
+        .iter()
+        .map(|r| (r.capability.clone(), r.declaration.clone()))
+        .collect();
+    Plan::prepare(&loaded.source.input, &packages, &declarations).map_err(|e| e.to_string())
+}
 fn rejected(reason: ManagementRejection) -> Result<Value> {
     serde_json::to_value(ManagementResult::<DeploymentRef>::Rejected { reason })
         .map_err(|error| error.to_string())
@@ -241,6 +384,8 @@ impl Handler for Manager {
                     serde_json::to_value(manager.metadata().await?)
                         .map_err(|error| error.to_string())
                 }
+                "instances" => manager.instances(input).await,
+                "setEnabled" => manager.set_enabled(input).await,
                 "install" => manager.install(input, context).await,
                 "replace" => manager.replace(input).await,
                 _ => Err("unknown deployment management method".into()),

@@ -71,6 +71,16 @@ const native = (implementation, exports, configuration = empty) => ({
   exports,
 });
 const specifications = {
+  deployment: {
+    contract: own.deploymentContract,
+    export: 'Deployment',
+    module: 'deployment',
+    imports: {
+      management: one(sdk.contracts.deploymentManager),
+      receipts: one(sdk.contracts.receiptReader),
+      history: one(sdk.contracts.callerHistory),
+    },
+  },
   workspace: {
     contract: own.workspaceContract,
     export: 'Workspace',
@@ -79,6 +89,7 @@ const specifications = {
       agent: one(sdk.contracts.agent),
       models: one(own.modelsContract),
       connections: one(own.connectionsContract),
+      deployment: one(own.deploymentContract),
       receipts: one(sdk.contracts.receiptReader),
       history: one(sdk.contracts.callerHistory),
       reader: one(sdk.contracts.textReader),
@@ -191,7 +202,7 @@ for (const [name, spec] of Object.entries(specifications)) {
       contents = `import {connectionForm,activate} from '${resolve(root, 'src/connection-form.ts')}';import * as validation from '${validationPath}';export const component=connectionForm('${target}',validation);export {activate};`;
     else if (name === 'model-default')
       contents = `import {modelDefault,activate} from '${resolve(root, 'src/model-default.ts')}';export const component=modelDefault('${target}');export {activate};`;
-    else if (['models', 'connections', 'credential'].includes(name))
+    else if (['models', 'connections', 'credential', 'deployment'].includes(name))
       contents = `import {${name},activate} from '${resolve(root, 'src/' + name + '.ts')}';export const component=${name}('${target}');export {activate};`;
     else
       contents = `import {components,exports} from '${resolve(root, 'src/components.ts')}';export const component=components('${target}').${name};export function activate(){const declaration=exports().${spec.export};return {${spec.export}:{...declaration,component:['component']}};}`;
@@ -241,6 +252,24 @@ for (const [name, spec] of Object.entries(specifications)) {
   packages.push(name);
 }
 const mechanical = {
+  'deployment-manager': {
+    entries: {
+      host: native('maka.application.ui-management', {
+        Management: required(sdk.contracts.deploymentManager),
+      }),
+    },
+  },
+  'deployment-gateway': {
+    entries: {
+      host: {
+        ...native('maka.application.gateway', {}),
+        imports: {
+          management: one(sdk.contracts.deploymentManager),
+          receipts: one(sdk.contracts.receiptReader),
+        },
+      },
+    },
+  },
   image: {
     entries: { desktop: native('maka.ui.image', { Image: required(sdk.contracts.image) }) },
   },

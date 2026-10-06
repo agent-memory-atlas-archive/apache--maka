@@ -468,6 +468,7 @@ test('both product compositions use actual immutable package refs and check in t
         },
         hostRoot: '/private/product-fixture',
         hostDeployment: uuid(80),
+        managementDeployment: uuid(81),
       };
       const configurationFile = resolve(directory, 'installation.json');
       const output = resolve(directory, presentation);
@@ -491,17 +492,23 @@ test('both product compositions use actual immutable package refs and check in t
       assert.equal(ui.environment.presentation, presentation);
       assert.equal(ui.instances.workspace.key, keys.workspace);
       assert.equal(host.instances.agent.key, keys.agent);
-      assert.deepEqual(connections.hosts[0].location, {
+      const business = connections.hosts.find((host) => host.name === 'local');
+      const manager = connections.hosts.find((host) => host.name === 'manager');
+      assert.deepEqual(manager.location, { kind: 'cohost' });
+      assert.equal(manager.deployment, configuration.managementDeployment);
+      assert.deepEqual(manager.imports.management.methods, ['instances', 'setEnabled']);
+      assert.equal(manager.imports.receipts.recovery, true);
+      assert.deepEqual(business.location, {
         kind: 'process',
         root: configuration.hostRoot,
       });
-      assert.deepEqual(connections.hosts[0].consumer, [keys.gateway]);
-      assert.equal(connections.hosts[0].deployment, configuration.hostDeployment);
+      assert.deepEqual(business.consumer, [keys.gateway]);
+      assert.equal(business.deployment, configuration.hostDeployment);
       assert.deepEqual(
-        connections.hosts[0].imports.settings.methods,
+        business.imports.settings.methods,
         Object.keys(sdk.contracts.settings.interface.methods),
       );
-      assert.equal(connections.hosts[0].imports.settings.recovery, true);
+      assert.equal(business.imports.settings.recovery, true);
       const secret = JSON.parse(
         readFileSync(resolve(root, 'dist/packages/credential/maka.extension.json')),
       );
@@ -4212,3 +4219,147 @@ test('editor-local submission uses latest observation and the original send gate
     );
   }
 });
+
+for (const target of ['desktop', 'tui']) {
+  test(`${target} deployment paging keeps the exact source and changes navigation only after success`, async () => {
+    const { component } = await import(
+      pathToFileURL(resolve(root, `dist/packages/deployment/${target}.js`))
+    );
+    const props = { theme: values.appearance[0], locale: 'en' };
+    const source = { stateDomain: 'a'.repeat(64), deployment: uuid(80), revision: 7 };
+    const item = (n) => ({
+      instance: [uuid(n)],
+      path: ['component-' + n],
+      package: { id: 'component.' + n, revision: 'sha256-' + 'b'.repeat(64) },
+      structural: false,
+      disabled: false,
+      parentDisabled: false,
+    });
+    let result = component.mount(props, {});
+    const complete = (value, status = 'succeeded') => {
+      const key = result.actions[0].key;
+      result = component.event(
+        result.frame.state,
+        {
+          kind: 'action',
+          key,
+          event:
+            status === 'succeeded' ? { status, value } : { status: 'failed', message: 'transport' },
+        },
+        props,
+        {},
+      );
+    };
+    const press = (key) =>
+      (result = component.event(result.frame.state, { kind: 'raw', key, event: null }, props, {}));
+    complete({ source, instances: [item(1)], next: [uuid(1)] });
+    press('deployment-next');
+    assert.deepEqual(result.actions[0].input, { kind: 'continue', source, after: [uuid(1)] });
+    const original = result.frame.state.page;
+    complete(null, 'failed');
+    assert.deepEqual(result.frame.state.page, original);
+    assert.deepEqual(result.frame.state.previous, []);
+    assert.equal(result.frame.state.after, null);
+    press('deployment-next');
+    complete({ source, instances: [item(2)], next: null });
+    assert.deepEqual(result.frame.state.previous, [null]);
+    press('deployment-previous');
+    assert.deepEqual(result.actions[0].input, { kind: 'continue', source, after: null });
+    complete({ source: { ...source, revision: 8 }, instances: [item(1)], next: [uuid(1)] });
+    assert.deepEqual(result.frame.state.page.instances, [item(2)]);
+    assert.deepEqual(result.frame.state.previous, [null]);
+    press('deployment-previous');
+    complete({ source, instances: [item(1)], next: [uuid(1)] });
+    assert.deepEqual(result.frame.state.previous, []);
+    assert.equal(result.frame.state.page.source.revision, 7);
+  });
+  test(`${target} deployment confirmation uses one CAS intent and unknown checks only the original operation`, async () => {
+    const { component } = await import(
+      pathToFileURL(resolve(root, `dist/packages/deployment/${target}.js`))
+    );
+    const props = { theme: values.appearance[0], locale: 'en' };
+    const source = { stateDomain: 'a'.repeat(64), deployment: uuid(80), revision: 7 };
+    const instance = {
+      instance: [uuid(1)],
+      path: ['optional'],
+      package: { id: 'optional', revision: 'sha256-' + 'b'.repeat(64) },
+      structural: false,
+      disabled: false,
+      parentDisabled: false,
+    };
+    let result = component.mount(props, {});
+    const complete = (outcome) => {
+      const key = result.actions[0].key;
+      result = component.event(
+        result.frame.state,
+        { kind: 'action', key, event: outcome },
+        props,
+        {},
+      );
+    };
+    const press = (key) =>
+      (result = component.event(result.frame.state, { kind: 'raw', key, event: null }, props, {}));
+    complete({ status: 'succeeded', value: { source, instances: [instance], next: null } });
+    press('deployment-toggle-0');
+    assert.equal(result.actions.length, 0);
+    press('deployment-cancel');
+    assert.equal(result.frame.state.confirmation, null);
+    press('deployment-toggle-0');
+    press('deployment-confirm');
+    assert.equal(result.actions[0].method, 'setEnabled');
+    assert.deepEqual(result.actions[0].input, {
+      expectedRevision: 7,
+      instance: instance.instance,
+      enabled: false,
+    });
+    const original = {
+      ...reference,
+      source: { ...source, deployment: uuid(81) },
+      namespace: [uuid(90)],
+      export: 'Management',
+      method: 'setEnabled',
+      contract: sdk.contracts.deploymentManager,
+    };
+    complete({ status: 'operation', reply: { reference: original, receipt: { kind: 'unknown' } } });
+    assert.ok(result.frame.state.current);
+    press('deployment-toggle-0');
+    assert.equal(result.actions.length, 0);
+    press('deployment-refresh');
+    assert.equal(result.actions.length, 0);
+    press('deployment-check');
+    assert.equal(result.actions[0].method, 'read');
+    assert.deepEqual(result.actions[0].input, original);
+    complete({
+      status: 'succeeded',
+      value: {
+        reference: original,
+        receipt: {
+          kind: 'recorded',
+          outcome: { kind: 'returned', value: { status: 'conflict', currentRevision: 8 } },
+          cleanup: { kind: 'confirmed' },
+        },
+      },
+    });
+    assert.equal(result.frame.state.current, null);
+    assert.equal(result.frame.state.conflict, true);
+    press('deployment-toggle-0');
+    assert.equal(result.frame.state.confirmation, null);
+    press('deployment-refresh');
+    assert.deepEqual(result.actions[0].input, { kind: 'start' });
+    complete({
+      status: 'succeeded',
+      value: {
+        source: { ...source, revision: 8 },
+        instances: [{ ...instance, disabled: true }],
+        next: null,
+      },
+    });
+    press('deployment-toggle-0');
+    press('deployment-confirm');
+    assert.deepEqual(result.actions[0].input, {
+      expectedRevision: 8,
+      instance: instance.instance,
+      enabled: true,
+    });
+  });
+}

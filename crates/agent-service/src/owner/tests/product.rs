@@ -28,7 +28,7 @@ use std::{path::PathBuf, process::Command, sync::OnceLock};
 
 struct Physical {
     server: Arc<maka_application_bridge::transport::Server>,
-    peer: maka_application_bridge::transport::Peer,
+    peer: Arc<maka_application_bridge::transport::Peers>,
 }
 impl maka_application_bridge::transport::native::Connector for Physical {
     fn connect(
@@ -210,6 +210,10 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     let directory = repository.join("packages/agent-product/dist/packages");
     let names = [
         "workspace",
+        "deployment",
+        "deployment-manager",
+        "deployment-gateway",
+        "receipts",
         "image-viewer",
         "composer",
         "models",
@@ -243,7 +247,7 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         .collect::<BTreeMap<_, _>>();
     // The authoring function accepts actual Rust-computed package refs. Do not
     // duplicate package hashing or native manifest schemas in a fixture.
-    let script = r#"const {composition,packageNames}=await import(process.argv[1]);const refs=JSON.parse(process.argv[2]);const keys=Object.fromEntries(packageNames.map((name,i)=>[name,'00000000-0000-0000-0000-'+String(i+20).padStart(12,'0')]));keys.agent='00000000-0000-0000-0000-000000000001';keys.receipts='00000000-0000-0000-0000-000000000004';keys.settings='00000000-0000-0000-0000-000000000005';for(const name of packageNames)refs[name]??={id:'unused.'+name,revision:'sha256-'+ 'a'.repeat(64)};const result=composition({presentation:'tui',locale:'en',scheme:'light',packages:refs,keys,agent:{maxActiveRuns:1,maxSteps:1,tools:[]},hostRoot:'/fixture',hostDeployment:'00000000-0000-0000-0000-000000000080'});console.log(JSON.stringify({input:result.ui,observations:result.remoteExports}));"#;
+    let script = r#"const {composition,packageNames}=await import(process.argv[1]);const refs=JSON.parse(process.argv[2]);const keys=Object.fromEntries(packageNames.map((name,i)=>[name,'00000000-0000-0000-0000-'+String(i+20).padStart(12,'0')]));keys.agent='00000000-0000-0000-0000-000000000001';keys.receipts='00000000-0000-0000-0000-000000000004';keys.settings='00000000-0000-0000-0000-000000000005';for(const name of packageNames)refs[name]??={id:'unused.'+name,revision:'sha256-'+ 'a'.repeat(64)};const result=composition({presentation:'tui',locale:'en',scheme:'light',packages:refs,keys,agent:{maxActiveRuns:1,maxSteps:1,tools:[]},hostRoot:'/fixture',hostDeployment:'00000000-0000-0000-0000-000000000080',managementDeployment:'00000000-0000-0000-0000-000000000081'});console.log(JSON.stringify({input:result.ui,observations:result.remoteExports,managementHost:result.managementHost,managementConfiguration:result.connections.hosts.find(h=>h.name==='manager')}));"#;
     let authored = Command::new("node")
         .arg("--input-type=module")
         .arg("-e")
@@ -319,7 +323,7 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         settings_binding,
     ];
     use maka_application_bridge::transport::{
-        Endpoint, Peer, Server,
+        Endpoint, Peer, Peers, Server,
         native::{Connection, Service},
     };
     let endpoints = bindings
@@ -347,25 +351,114 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         })
         .collect();
     let wire_server = Server::new(fixture.app.client(), peer, endpoints).unwrap();
+    let callers = Peers::new(Peer::new(deployment.clone(), consumers).unwrap());
     let connection = Connection::new(Arc::new(Physical {
         server: wire_server.clone(),
-        peer: Peer::new(deployment.clone(), consumers).unwrap(),
+        peer: callers.clone(),
+    }));
+    let manager_input: Input = serde_json::from_value(authored["managementHost"].clone()).unwrap();
+    let manager_configuration: maka_application_bridge::Host =
+        serde_json::from_value(authored["managementConfiguration"].clone()).unwrap();
+    let manager_packages = ["deployment-manager", "deployment-gateway", "receipts"]
+        .iter()
+        .map(|name| Package::read_from(&directory.join(name)).unwrap())
+        .collect();
+    runtime
+        .block_on(caller.commit_application(
+            manager_configuration.deployment,
+            0,
+            manager_input,
+            vec![],
+            manager_packages,
+        ))
+        .unwrap();
+    let target = runtime
+        .block_on(
+            maka_runtime_host::application::management::ManagementTarget::from_source(
+                caller.clone(),
+                deployment.clone(),
+            ),
+        )
+        .unwrap();
+    let mut manager_native = maka_application_bridge::with_gateway(Default::default()).unwrap();
+    maka_runtime_host::application::management::provide_target(
+        &mut manager_native,
+        maka_application_bridge::UI_DEPLOYMENT_MANAGER.into(),
+        target,
+    )
+    .unwrap();
+    let manager_policy = Arc::new(maka_application_bridge::transport::PeerPolicy::default());
+    let manager_app = runtime
+        .block_on(
+            maka_runtime_host::application::Application::start_from_store(
+                caller.clone(),
+                manager_configuration.deployment,
+                manager_native,
+                manager_policy.issuer(),
+                manager_policy.clone(),
+                Default::default(),
+            ),
+        )
+        .unwrap();
+    runtime.block_on(manager_app.ready()).unwrap();
+    let manager_client = manager_app.client();
+    let mut manager_endpoints = BTreeMap::new();
+    for (name, grant) in &manager_configuration.imports {
+        let binding = runtime
+            .block_on(
+                manager_client.bind(
+                    manager_client
+                        .activation(&manager_configuration.consumer)
+                        .unwrap(),
+                    name.clone(),
+                ),
+            )
+            .unwrap()
+            .remove(0);
+        manager_endpoints.insert(name.clone(), Endpoint::new(binding, grant.clone()).unwrap());
+    }
+    let manager_server = Server::new(manager_client, manager_policy, manager_endpoints).unwrap();
+    let manager_consumers = plan.instances().values().filter(|instance| !instance.disabled && instance.entry.is_some())
+        .filter(|instance| instance.bindings.values().flatten().any(|binding|
+            matches!(&binding.provider,maka_plugin_core::plan::Provider::Remote {capability} if capability.deployment=="manager")))
+        .map(|instance|instance.identity.clone()).collect();
+    let manager_callers = Peers::new(Peer::new(deployment.clone(), manager_consumers).unwrap());
+    let manager_connection = Connection::new(Arc::new(Physical {
+        server: manager_server.clone(),
+        peer: manager_callers.clone(),
     }));
     let registrations: Vec<_> = observations
         .iter()
         .enumerate()
         .map(|(index, observation)| {
-            let selected = wire_server
-                .catalogue()
-                .select(&format!("service-{index}"))
-                .unwrap();
+            let (server, connection, peers, alias) =
+                if observation.capability.deployment == "manager" {
+                    (
+                        &manager_server,
+                        &manager_connection,
+                        &manager_callers,
+                        if observation.capability.export == "Management" {
+                            "management".to_string()
+                        } else {
+                            "receipts".to_string()
+                        },
+                    )
+                } else {
+                    (
+                        &wire_server,
+                        &connection,
+                        &callers,
+                        format!("service-{index}"),
+                    )
+                };
+            let selected = server.catalogue().select(&alias).unwrap();
             let description = selected.description();
             RemoteService {
                 target: observation.capability.clone(),
                 registration_epoch: description.registration_epoch,
                 contract: description.contract.clone(),
                 implementation: Arc::new(
-                    Service::new(connection.clone(), selected, deployment.clone()).unwrap(),
+                    Service::new(connection.clone(), selected, peers.clone()).unwrap(),
                 ),
             }
         })
@@ -403,6 +496,23 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     presenter
         .input(Event::Paste("Hello product".into()))
         .unwrap();
+    click(&mut presenter, "[ Plugins ]");
+    await_screen(&mut presenter, "[ Refresh components ]");
+    // The first requested component is the required Workspace. A recorded
+    // refusal must preserve the real product and its retained native draft.
+    await_screen(&mut presenter, "[ Disable ]");
+    click(&mut presenter, "[ Disable ]");
+    await_screen(&mut presenter, "Disable this component?");
+    click(&mut presenter, "[ Confirm ]");
+    await_screen(&mut presenter, "not allowed by the composition");
+    assert_eq!(
+        runtime
+            .block_on(caller.application_head(deployment.deployment))
+            .unwrap(),
+        Some(deployment.clone())
+    );
+    click(&mut presenter, "[ Back ]");
+    await_screen(&mut presenter, "Hello product");
     // Ordinary settings owns the route; the original conversation editor is
     // retained while a distinct native SecretInput is captured by Settings.
     click(&mut presenter, "[ Connections ]");
@@ -1020,9 +1130,17 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         physical.unwrap();
         host_wire.unwrap();
     });
+    runtime.block_on(async {
+        manager_connection.close().await.unwrap();
+        manager_server.close().await.unwrap();
+    });
     drop(connection);
     drop(wire_server);
+    drop(manager_connection);
+    drop(manager_server);
     drop(registrations);
+    runtime.block_on(manager_app.shutdown()).unwrap();
+    drop(manager_app);
     runtime.block_on(fixture.app.shutdown()).unwrap();
     runtime.block_on(fixture.config.shutdown()).unwrap();
     runtime.block_on(caller.shutdown()).unwrap();

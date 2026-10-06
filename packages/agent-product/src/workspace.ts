@@ -106,6 +106,7 @@ export interface State {
   catalogEpoch: number;
   modelRefreshing: boolean;
   settingsOpen: boolean;
+  deploymentOpen: boolean;
   navigationOpen: boolean;
   window: { page: Extract<AgentHistoryPage, { kind: 'ready' }>; latest: boolean } | null;
   navigation: number;
@@ -875,7 +876,10 @@ function frame(
       locale,
       image: state.image,
       active:
-        !!state.image && !state.settingsOpen && (target === 'desktop' || !state.navigationOpen),
+        !!state.image &&
+        !state.settingsOpen &&
+        !state.deploymentOpen &&
+        (target === 'desktop' || !state.navigationOpen),
     },
     { closed: 'image-closed' },
   );
@@ -957,6 +961,7 @@ function frame(
                       style: { width: pixels(0), grow: 1, minWidth: 0 },
                     }),
                     ui.button('settings', text.settings),
+                    ui.button('deployment-open', text.deploymentTitle),
                   ],
                   { row: true, gap: 8, style: { width: fill, align: 'center' } },
                 ),
@@ -964,8 +969,15 @@ function frame(
             : [
                 title,
                 models,
-                ui.button('settings', text.settings),
-                ui.button('navigation-toggle', text.showSidebar),
+                ui.box(
+                  'toolbar',
+                  [
+                    ui.button('settings', text.settings),
+                    ui.button('deployment-open', text.deploymentTitle),
+                    ui.button('navigation-toggle', text.showSidebar),
+                  ],
+                  { row: true, gap: 1 },
+                ),
               ]),
           ...(status ? [ui.text('status', status, 13, theme.muted)] : []),
           ...(state.uncertain
@@ -1059,7 +1071,7 @@ function frame(
     {
       row: target === 'desktop',
       gap: 0,
-      visible: !state.settingsOpen,
+      visible: !state.settingsOpen && !state.deploymentOpen,
       terminal: { grow: 1 },
       style: { width: fill, height: fill },
     },
@@ -1070,6 +1082,9 @@ function frame(
       'product',
       [
         conversation,
+        ...(state.deploymentOpen
+          ? [slot('deployment', 'deployment', { theme, locale }, { closed: 'deployment-closed' })]
+          : []),
         ...(state.settingsOpen
           ? [
               slot(
@@ -1118,6 +1133,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         catalogEpoch: 0,
         modelRefreshing: false,
         settingsOpen: false,
+        deploymentOpen: false,
         navigationOpen: target === 'desktop',
         image: null,
         window: null,
@@ -1188,7 +1204,9 @@ export function workspace(target: Target, locale: string): Component<State, Reco
             state.tailReceipt = receipt;
             follow(state, actions);
           }
-        } else if (input.child === 'connections' && input.name === 'closed')
+        } else if (input.child === 'deployment' && input.name === 'closed')
+          state.deploymentOpen = false;
+        else if (input.child === 'connections' && input.name === 'closed')
           state.settingsOpen = false;
         else if (input.child === 'connections' && input.name === 'changed') {
           state.catalogEpoch++;
@@ -1415,8 +1433,14 @@ export function workspace(target: Target, locale: string): Component<State, Reco
             history(state, actions, { kind: 'tail' }, state.latestKnown, true);
         }
       } else if (input.kind === 'raw') {
-        if (input.key === 'settings') state.settingsOpen = true;
-        else if (input.key === 'navigation-toggle') state.navigationOpen = !state.navigationOpen;
+        if (input.key === 'settings') {
+          state.settingsOpen = true;
+          state.deploymentOpen = false;
+        }
+        if (input.key === 'deployment-open') {
+          state.deploymentOpen = true;
+          state.settingsOpen = false;
+        } else if (input.key === 'navigation-toggle') state.navigationOpen = !state.navigationOpen;
         else if (input.key === 'navigation-back') state.navigationOpen = false;
         else if (
           input.key === 'check' &&

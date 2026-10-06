@@ -419,3 +419,9 @@ export const connectionsContract = component(
   object({ theme: { $ref: '#/$defs/Theme' }, locale }),
   { closed: object({}), changed: object({}) },
 );
+
+export const deploymentContract = component(
+  'maka.agent.Deployment',
+  object({ theme: { $ref: '#/$defs/Theme' }, locale }),
+  { closed: object({}) },
+);

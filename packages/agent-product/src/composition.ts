@@ -28,6 +28,9 @@ import {
 } from '../../plugin-sdk/src/index.js';
 export const packageNames = [
   'workspace',
+  'deployment',
+  'deployment-manager',
+  'deployment-gateway',
   'image-viewer',
   'image',
   'composer',
@@ -62,12 +65,14 @@ export interface CompositionConfiguration {
   agent: AgentConfiguration;
   hostRoot: string;
   hostDeployment: string;
+  managementDeployment: string;
 }
 /** Product source assembled exclusively from ordinary checked plugin bindings.
  * Keys and the Host deployment belong to the installation, not to a build.
  */
 export function composition(configuration: CompositionConfiguration): {
   host: CompositionInput;
+  managementHost: CompositionInput;
   ui: CompositionInput;
   remoteExports: RemoteObservation[];
   connections: unknown;
@@ -112,6 +117,21 @@ export function composition(configuration: CompositionConfiguration): {
       ),
     },
   };
+  const managementHost: CompositionInput = {
+    environment: { location: 'host' },
+    instances: {
+      management: node('deployment-manager'),
+      receipts: node('receipts'),
+      gateway: node(
+        'deployment-gateway',
+        {},
+        {
+          management: [{ kind: 'instance', path: ['management'], export: 'Management' }],
+          receipts: [local('receipts', 'Receipts')],
+        },
+      ),
+    },
+  };
   const ui: CompositionInput = {
     environment: { location: 'ui', presentation: configuration.presentation },
     instances: {
@@ -126,11 +146,35 @@ export function composition(configuration: CompositionConfiguration): {
           composer: [local('composer', 'Composer')],
           models: [local('models', 'Models')],
           connections: [local('connections', 'Connections')],
+          deployment: [local('deployment', 'Deployment')],
           navigation: [local('navigation', 'Navigation')],
           timeline: [local('timeline', 'Timeline')],
           imageViewer: [local('image-viewer', 'ImageViewer')],
           appearance: [local('appearance', 'Appearance')],
           surface: [local('surface', 'Surface')],
+        },
+      ),
+      deployment: node(
+        'deployment',
+        {},
+        {
+          management: [
+            {
+              kind: 'remote',
+              deployment: 'manager',
+              instance: [keys['deployment-manager']],
+              export: 'Management',
+            },
+          ],
+          receipts: [
+            {
+              kind: 'remote',
+              deployment: 'manager',
+              instance: [keys.receipts],
+              export: 'Receipts',
+            },
+          ],
+          history: [local('history', 'History')],
         },
       ),
       connections: node(
@@ -228,8 +272,32 @@ export function composition(configuration: CompositionConfiguration): {
     capability: { deployment: 'local', instance: [keys.settings], export: 'Settings' },
     declaration: { contract: contracts.settings, availability: 'required' },
   });
+  remoteExports.push(
+    {
+      capability: {
+        deployment: 'manager',
+        instance: [keys['deployment-manager']],
+        export: 'Management',
+      },
+      declaration: { contract: contracts.deploymentManager, availability: 'required' },
+    },
+    {
+      capability: { deployment: 'manager', instance: [keys.receipts], export: 'Receipts' },
+      declaration: { contract: contracts.receiptReader, availability: 'required' },
+    },
+  );
   const connections = {
     hosts: [
+      {
+        name: 'manager',
+        location: { kind: 'cohost' },
+        deployment: configuration.managementDeployment,
+        consumer: [keys['deployment-gateway']],
+        imports: {
+          management: { methods: ['instances', 'setEnabled'], recovery: false },
+          receipts: { methods: ['read'], recovery: true },
+        },
+      },
       {
         name: 'local',
         location: { kind: 'process', root: configuration.hostRoot },
@@ -243,5 +311,5 @@ export function composition(configuration: CompositionConfiguration): {
       },
     ],
   };
-  return { host, ui, remoteExports, connections };
+  return { host, managementHost, ui, remoteExports, connections };
 }

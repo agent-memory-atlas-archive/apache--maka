@@ -229,6 +229,24 @@ impl Fixture {
         completed.cleanup.unwrap();
         completed.reply
     }
+    async fn query(&self, method: &str, input: Value) -> Result<Value> {
+        let result = self
+            .app
+            .client()
+            .start(
+                self.binding.clone(),
+                method.into(),
+                input,
+                scope(&self.issuer, true),
+                Default::default(),
+            )
+            .await
+            .unwrap()
+            .completion()
+            .await;
+        result.cleanup.unwrap();
+        result.result
+    }
     async fn read(&self) -> ManagedDeployment {
         let result = self
             .app
@@ -754,4 +772,229 @@ async fn fixed_target_factory_rejects_another_original_root_owner() {
     drop(app);
     foreign.close().await;
     original.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn instance_pages_freeze_source_and_nested_enabled_intents_preserve_original_overrides() {
+    use maka_plugin_core::composition::{Override, Parameter, PresentationTarget, Template};
+    let f = Fixture::create(Some(PresentationTarget::Desktop)).await;
+    let leaf = Package::new(BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({
+        "schemaVersion":2,"id":"nested.leaf","application":Declaration {
+            entries: BTreeMap::from([(EntryTarget::Desktop, EntryDeclaration {
+                scene: None, implementation: Implementation::Native { implementation:"unused.ui.availability".into() },
+                configuration: json!({"type":"object"}), imports: BTreeMap::new(), exports: BTreeMap::new(),
+            })]), composition: None,
+        }
+    })).unwrap())])).unwrap();
+    let children = (0..10)
+        .map(|at| {
+            let mut child = node(&leaf, 100 + at, true);
+            child
+                .configuration
+                .parameters
+                .insert("inherited".into(), "label".into());
+            (format!("child{at}"), child)
+        })
+        .collect();
+    let product = Package::new(BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({
+        "schemaVersion":2,"id":"nested.product","application":Declaration {
+            entries:BTreeMap::new(), composition:Some(Template {
+                parameters:BTreeMap::from([("label".into(), Parameter { schema:json!({"type":"string"}), default:None })]),
+                imports:BTreeMap::new(), exports:BTreeMap::new(), children,
+            }),
+        }
+    })).unwrap())])).unwrap();
+    let mut root = node(&product, 10, true);
+    root.use_package = PackageUse::Composition;
+    root.parameters
+        .values
+        .insert("label".into(), json!("用户原参数🙂"));
+    root.overrides.push(Override {
+        path: vec!["child1".into()],
+        configuration: BTreeMap::from([("keep".into(), json!("original"))]),
+        ..Default::default()
+    });
+    let original_root = root.clone();
+    let basis = f
+        .store
+        .commit_application(
+            f.managed.deployment,
+            1,
+            Input {
+                environment: Environment {
+                    location: ExecutionLocation::Ui,
+                    presentation: Some(PresentationTarget::Desktop),
+                },
+                instances: BTreeMap::from([("product".into(), root)]),
+                launch: None,
+            },
+            vec![],
+            vec![leaf, product],
+        )
+        .await
+        .unwrap();
+    let page: ManagedInstancesPage =
+        serde_json::from_value(f.query("instances", json!({"kind":"start"})).await.unwrap())
+            .unwrap();
+    assert_eq!(page.source, basis);
+    assert_eq!(page.instances.len(), 8);
+    assert!(page.next.is_some());
+    assert!(serde_json::to_vec(&page).unwrap().len() < 64 * 1024);
+    let child = InstanceId(vec![Uuid::from_u128(10), Uuid::from_u128(101)]);
+    let change = f
+        .mutate(
+            "setEnabled",
+            json!({"expectedRevision":2,"instance":child,"enabled":false}),
+            Attachments::new(),
+        )
+        .await;
+    let next: DeploymentRef = serde_json::from_value(returned(&change)["value"].clone()).unwrap();
+    assert_eq!(next.revision, 3);
+    assert_eq!(change.reference.source, f.source);
+    let current = f.read().await;
+    let changed = &current.source.input.instances["product"];
+    assert_eq!(changed.parameters, original_root.parameters);
+    assert_eq!(
+        changed.overrides[0].configuration,
+        original_root.overrides[0].configuration
+    );
+    assert_eq!(
+        changed.overrides[0].bindings,
+        original_root.overrides[0].bindings
+    );
+    assert_eq!(changed.overrides[0].disabled, Some(true));
+    let frozen: ManagedInstancesPage = serde_json::from_value(
+        f.query(
+            "instances",
+            json!({"kind":"continue","source":basis,"after":page.next}),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(frozen.source.revision, 2);
+    assert_eq!(frozen.instances.len(), 3);
+    assert!(frozen.next.is_none());
+    assert!(frozen.instances.iter().all(|instance| !instance.disabled));
+    let first: ManagedInstancesPage = serde_json::from_value(
+        f.query(
+            "instances",
+            json!({"kind":"continue","source":basis,"after":null}),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(first.source.revision, 2);
+    assert!(
+        first
+            .instances
+            .iter()
+            .find(|instance| instance.instance == child)
+            .is_some_and(|instance| !instance.disabled)
+    );
+    assert!(
+        f.query(
+            "instances",
+            json!({"kind":"continue","source":f.source,"after":id(10)})
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        f.query(
+            "instances",
+            json!({"kind":"continue","source":next,"after":id(999)})
+        )
+        .await
+        .is_err()
+    );
+    let root_change = f
+        .mutate(
+            "setEnabled",
+            json!({"expectedRevision":3,"instance":id(10),"enabled":false}),
+            Attachments::new(),
+        )
+        .await;
+    assert_eq!(returned(&root_change)["value"]["revision"], 4);
+    let second_child = InstanceId(vec![Uuid::from_u128(10), Uuid::from_u128(102)]);
+    let inherited = f
+        .mutate(
+            "setEnabled",
+            json!({"expectedRevision":4,"instance":second_child,"enabled":false}),
+            Attachments::new(),
+        )
+        .await;
+    assert_eq!(
+        returned(&inherited)["value"]["revision"],
+        5,
+        "own intent must persist despite inherited disabled"
+    );
+    let refused = f
+        .mutate(
+            "setEnabled",
+            json!({"expectedRevision":5,"instance":second_child,"enabled":true}),
+            Attachments::new(),
+        )
+        .await;
+    assert_eq!(
+        returned(&refused),
+        json!({"status":"rejected","reason":"parent_disabled"})
+    );
+    let enabled = f
+        .mutate(
+            "setEnabled",
+            json!({"expectedRevision":5,"instance":id(10),"enabled":true}),
+            Attachments::new(),
+        )
+        .await;
+    assert_eq!(returned(&enabled)["value"]["revision"], 6);
+    let page: ManagedInstancesPage =
+        serde_json::from_value(f.query("instances", json!({"kind":"start"})).await.unwrap())
+            .unwrap();
+    assert!(
+        page.instances
+            .iter()
+            .find(|instance| instance.instance == second_child)
+            .unwrap()
+            .disabled
+    );
+    let conflict = f
+        .mutate(
+            "setEnabled",
+            json!({"expectedRevision":2,"instance":child,"enabled":true}),
+            Attachments::new(),
+        )
+        .await;
+    assert_eq!(
+        returned(&conflict),
+        json!({"status":"conflict","currentRevision":6})
+    );
+    let absent = f
+        .mutate(
+            "setEnabled",
+            json!({"expectedRevision":6,"instance":id(999),"enabled":false}),
+            Attachments::new(),
+        )
+        .await;
+    assert_eq!(
+        returned(&absent),
+        json!({"status":"rejected","reason":"instance_unavailable"})
+    );
+    assert_eq!(
+        f.store.application_head(f.source.deployment).await.unwrap(),
+        Some(f.source.clone())
+    );
+    assert_eq!(
+        f.store
+            .operation_observation(&change.reference)
+            .await
+            .unwrap()
+            .unwrap()
+            .outcome,
+        OperationOutcome::Returned {
+            value: returned(&change)
+        }
+    );
+    f.close().await;
 }

@@ -37,13 +37,13 @@ node packages/agent-product/scripts/compose.mjs \
   --maka /absolute/path/to/maka
 ```
 
-`installation.json` supplies `presentation` (`desktop` or `tui`), the full `locale` tag, `scheme` (`light` or `dark`), `hostRoot`, `hostDeployment`, `agent` and `keys`. `agent` is the SDK's generated `AgentConfiguration`: finite `maxActiveRuns`/`maxSteps` and explicit `tools` (use `[]` for a text-only composition). Credentials and endpoint settings belong to that Host Root; they do not belong in the product source.
+`installation.json` supplies `presentation` (`desktop` or `tui`), the full `locale` tag, `scheme` (`light` or `dark`), `hostRoot`, `hostDeployment`, `managementDeployment`, `agent` and `keys`. `agent` is the SDK's generated `AgentConfiguration`: finite `maxActiveRuns`/`maxSteps` and explicit `tools` (use `[]` for a text-only composition). Credentials and endpoint settings belong to that Host Root; they do not belong in the product source.
 
-`keys` maps all nineteen names exported by `src/composition.ts` (`workspace`, `composer`, `navigation`, `timeline`, `appearance`, `surface`, `editor`, `reader`, `history`, `models`, `model-default`, `settings`, `connections`, `credential`, `connection-form`, `input`, `agent`, `receipts`, `gateway`) to nonnil UUIDs. Allocate these once for an installation and keep them across rebuilds. Deployment UUIDs are likewise stable installation identities. New package revisions do not imply new data namespaces.
+`keys` maps every name exported by `src/composition.ts` to a nonnil UUID. Allocate these once for an installation and keep them across rebuilds. `managementDeployment` is a stable Host UUID in the UI Root, distinct from the UI and business Host deployment. New package revisions do not imply new data namespaces.
 
-The authoring command asks the actual Rust CLI to validate every package and compute its pinned reference. It writes and checks `host.json`, `ui.json`, `remote-exports.json`, `connections.json` and `packages.json`. It does not initialize a Root, commit a deployment or start execution. `connections.json` is trusted launcher configuration; inspect its explicit method and recovery grants before use.
+The authoring command asks the actual Rust CLI to validate every package and compute its pinned reference. It writes and checks `host.json`, `management-host.json`, `ui.json`, `remote-exports.json`, `connections.json` and `packages.json`. It does not initialize a Root, commit a deployment or start execution. `connections.json` is trusted launcher configuration; inspect its explicit method and recovery grants before use.
 
-For installation, initialize separate owned Host/UI Roots with `maka host init --root PATH`, then commit each source with `maka application commit`. Supply the selected deployment UUID, the current `--expected-revision`, and each built directory with `--package PATH`; UI also takes `--remote-exports product-source/remote-exports.json`. A first commit uses expected revision zero. Launch the committed UI with:
+For installation, initialize separate owned Host/UI Roots with `maka host init --root PATH`, then commit each source with `maka application commit`. Supply the selected deployment UUID, the current `--expected-revision`, and each built directory with `--package PATH`; UI also takes `--remote-exports product-source/remote-exports.json`. A first commit uses expected revision zero. Commit `management-host.json` into the **same UI Root**, using `managementDeployment`; it contains the explicitly selected UI manager, receipt service and gateway. Its connection is a cohost, so it borrows that launcher's original Store. The business Host remains a separate owned Root. Launch the committed UI with:
 
 ```sh
 maka application run --root UI_ROOT --deployment UI_DEPLOYMENT \
@@ -89,3 +89,15 @@ outside click asks the plugin to close. The default child stays mounted across
 close/reopen. Terminal entries keep paged in-flow presentation.
 
 Desktop navigation can be collapsed without unmounting its component or the composer. Context and model controls use separate rows; long titles and model triggers are measured and truncated by the native renderer, with complete accessible values. Terminal navigation labels remain bounded by its own presentation.
+
+
+## Plugin controls
+
+The ordinary Deployment component provides Desktop/TUI variants for fixed-source,
+eight-instance pages and confirmed enable/disable intents. The management Host changes
+the original input on CAS, preserving template parameters and unrelated overrides;
+required connections must remain valid. Desired input is distinct from runtime readiness.
+Conflicts require refresh and a new confirmation. Unknown results expose only original
+operation checks and durable earlier intents, never automatic replay. The current screen
+covers existing instances; importing bundles, editing bindings/configuration and selecting
+new product roots remain required work.

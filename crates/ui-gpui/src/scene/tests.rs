@@ -28,6 +28,63 @@ use std::{
     any::Any,
     cell::{Cell, RefCell},
 };
+
+#[gpui::test]
+#[ignore = "opt-in ordinary deployment component build and native scene ABI"]
+fn packaged_deployment_pages_render_all_locales_and_operation_states(cx: &mut TestAppContext) {
+    let repository = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let build = std::process::Command::new("node")
+        .arg("packages/agent-product/scripts/build.mjs")
+        .current_dir(&repository)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let output = std::process::Command::new("node")
+        .args(["--input-type=module", "-e", r#"
+        import {component} from './packages/agent-product/dist/packages/deployment/desktop.js';
+        import {activate} from './packages/agent-product/dist/packages/appearance/desktop.js';
+        const frames=[];
+        const source={stateDomain:'a'.repeat(64),deployment:'00000000-0000-0000-0000-000000000080',revision:7};
+        const instances=Array.from({length:8},(_,i)=>({
+          instance:['00000000-0000-0000-0000-'+String(i+1).padStart(12,'0')],
+          path:['workspace','optional-'+i],package:{id:'component.optional-'+i,revision:'sha256-'+'b'.repeat(64)},
+          structural:i===2,disabled:i===1,parentDisabled:i===1
+        }));
+        for(const scheme of ['light','dark']) for(const locale of ['en','zh-CN','zh-TW']) {
+          const props={theme:activate({scheme}).Appearance.value,locale};
+          let result=component.mount(props,{});
+          const save=()=>frames.push(result.frame.view);
+          const press=key=>{result=component.event(result.frame.state,{kind:'raw',key,event:null},props,{});save();};
+          save();
+          result=component.event(result.frame.state,{kind:'action',key:result.actions[0].key,event:{status:'succeeded',value:{source,instances,next:instances[7].instance}}},props,{}); save();
+          press('deployment-toggle-0');
+          press('deployment-confirm');
+          result=component.event(result.frame.state,{kind:'action',key:result.actions[0].key,event:{status:'failed',message:'transport'}},props,{});save();
+          press('deployment-history');
+        }
+        console.log(JSON.stringify(frames));
+        "#])
+        .current_dir(repository)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frames: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(frames.len(), 36);
+    let (entity, window, _) = harness(cx);
+    for frame in frames {
+        replace(cx, window, &entity, frame);
+        draw(cx, window);
+    }
+}
+
 struct Harness {
     recipe: Rc<dyn Widget>,
     state: Box<dyn Any>,

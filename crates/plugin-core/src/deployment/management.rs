@@ -19,7 +19,7 @@
 
 //! Same-Root deployment management contracts; metadata never grants access.
 use crate::{
-    composition::Input,
+    composition::{Input, InstanceId},
     contract::{Contract, Interface, Method, MethodMode, ResourceType, Transport},
     deployment::{Deployment, DeploymentRef, RemoteObservation},
     package::PackageRef,
@@ -58,6 +58,43 @@ pub struct DeploymentReplace {
     pub packages: Vec<PackageRef>,
 }
 
+/// A fixed committed source for continuation; no runtime or permission claim.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DeploymentInstances {
+    Start {},
+    Continue {
+        source: DeploymentRef,
+        after: Option<InstanceId>,
+    },
+}
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManagedInstance {
+    pub instance: InstanceId,
+    pub path: Vec<String>,
+    pub package: PackageRef,
+    pub structural: bool,
+    pub disabled: bool,
+    pub parent_disabled: bool,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ManagedInstancesPage {
+    pub source: DeploymentRef,
+    #[schemars(length(max = 8))]
+    pub instances: Vec<ManagedInstance>,
+    pub next: Option<InstanceId>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InstanceSetEnabled {
+    #[schemars(range(min = 1, max = 9_007_199_254_740_990_u64))]
+    pub expected_revision: u64,
+    pub instance: InstanceId,
+    pub enabled: bool,
+}
+
 /// Committed desired source and available immutable packages, not runtime readiness.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -90,6 +127,8 @@ pub enum ManagementRejection {
     InvalidSource,
     PackageUnavailable,
     ExecutionEnvironment,
+    InstanceUnavailable,
+    ParentDisabled,
 }
 
 pub fn package_bundle_type() -> ResourceType {
@@ -125,6 +164,16 @@ pub fn deployment_manager_contract() -> Contract {
                     method::<DeploymentRead, ManagedDeployment>(MethodMode::Query),
                 ),
                 ("install".into(), install),
+                (
+                    "instances".into(),
+                    method::<DeploymentInstances, ManagedInstancesPage>(MethodMode::Query),
+                ),
+                (
+                    "setEnabled".into(),
+                    method::<InstanceSetEnabled, ManagementResult<DeploymentRef>>(
+                        MethodMode::Mutation,
+                    ),
+                ),
                 (
                     "replace".into(),
                     method::<DeploymentReplace, ManagementResult<DeploymentRef>>(

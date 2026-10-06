@@ -55,11 +55,13 @@ const write = async (name, value) => {
   return path;
 };
 const host = await write('host', result.host);
+const management = await write('management-host', result.managementHost);
 const ui = await write('ui', result.ui);
 const remote = await write('remote-exports', result.remoteExports);
 await write('connections', result.connections);
 await write('packages', packages);
 const arguments_ = paths.flatMap((path) => ['--package', path]);
 run(['check', '--input', host, ...arguments_]);
+run(['check', '--input', management, ...arguments_]);
 run(['check', '--input', ui, '--remote-exports', remote, ...arguments_]);
 console.log(`Checked Host and ${configuration.presentation} compositions written to ${output}`);

@@ -27,6 +27,9 @@ export type RuntimeProtocol =
   | PackageInstalled
   | DeploymentReplace
   | ManagedDeployment
+  | DeploymentInstances
+  | ManagedInstancesPage
+  | InstanceSetEnabled
   | ManagementResultForPackageInstalled
   | ManagementResultForDeploymentRef
   | PackageDeclaration
@@ -184,6 +187,18 @@ export type CaptureOutput =
     };
 export type Availability = 'required' | 'optional';
 /**
+ * A fixed committed source for continuation; no runtime or permission claim.
+ */
+export type DeploymentInstances =
+  | {
+      kind: 'start';
+    }
+  | {
+      source: DeploymentRef;
+      after?: InstanceId | null;
+      kind: 'continue';
+    };
+/**
  * A deterministic refusal is a recorded business result. Uncertain SQL/worker
  * failures remain in the original operation journal's Unknown outcome.
  */
@@ -204,7 +219,9 @@ export type ManagementRejection =
   | 'invalid_bundle'
   | 'invalid_source'
   | 'package_unavailable'
-  | 'execution_environment';
+  | 'execution_environment'
+  | 'instance_unavailable'
+  | 'parent_disabled';
 /**
  * A deterministic refusal is a recorded business result. Uncertain SQL/worker
  * failures remain in the original operation journal's Unknown outcome.
@@ -1338,6 +1355,60 @@ export interface DeploymentReplace {
 export interface ManagedDeployment {
   source: Deployment;
   packages: PackageRef[];
+}
+export interface ManagedInstancesPage {
+  source: DeploymentRef;
+  /**
+   * @maxItems 8
+   */
+  instances:
+    | []
+    | [ManagedInstance]
+    | [ManagedInstance, ManagedInstance]
+    | [ManagedInstance, ManagedInstance, ManagedInstance]
+    | [ManagedInstance, ManagedInstance, ManagedInstance, ManagedInstance]
+    | [ManagedInstance, ManagedInstance, ManagedInstance, ManagedInstance, ManagedInstance]
+    | [
+        ManagedInstance,
+        ManagedInstance,
+        ManagedInstance,
+        ManagedInstance,
+        ManagedInstance,
+        ManagedInstance,
+      ]
+    | [
+        ManagedInstance,
+        ManagedInstance,
+        ManagedInstance,
+        ManagedInstance,
+        ManagedInstance,
+        ManagedInstance,
+        ManagedInstance,
+      ]
+    | [
+        ManagedInstance,
+        ManagedInstance,
+        ManagedInstance,
+        ManagedInstance,
+        ManagedInstance,
+        ManagedInstance,
+        ManagedInstance,
+        ManagedInstance,
+      ];
+  next?: InstanceId | null;
+}
+export interface ManagedInstance {
+  instance: InstanceId;
+  path: string[];
+  package: PackageRef;
+  structural: boolean;
+  disabled: boolean;
+  parentDisabled: boolean;
+}
+export interface InstanceSetEnabled {
+  expectedRevision: number;
+  instance: InstanceId;
+  enabled: boolean;
 }
 export interface PackageDeclaration {
   entries?: {
