@@ -1,0 +1,441 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+//! Owner-thread reconciliation of exact committed UI sources.
+use super::*;
+use maka_plugin_core::{
+    deployment::DeploymentRef,
+    plan::{Instance, RemoteCapability, RemoteExports},
+    runtime::Status,
+};
+
+pub struct DeploymentStatus {
+    pub desired: Option<DeploymentRef>,
+    /// Last source whose activation plan fully converged, not platform readiness.
+    pub effective: Option<DeploymentRef>,
+    pub converging: bool,
+    pub error: Option<String>,
+    pub closing: bool,
+    pub instances: Vec<Status>,
+}
+
+/// Exact bytes from one owned storage snapshot. This is input evidence, not a grant.
+pub struct CommittedUpdate {
+    loaded: maka_event_log::applications::LoadedDeployment,
+}
+impl CommittedUpdate {
+    pub fn source(&self) -> &DeploymentRef {
+        &self.loaded.source.reference
+    }
+}
+
+pub(super) struct Candidate {
+    pub plan: Plan,
+    pub sources: BTreeMap<PackageRef, Package>,
+    pub instances: Vec<Instance>,
+    pub target: PresentationTarget,
+}
+
+pub(super) fn prepare<V: ?Sized + 'static>(
+    input: &Input,
+    bytes: Vec<Package>,
+    native: &NativeRegistry<V>,
+    declarations: &RemoteExports,
+) -> Result<Candidate> {
+    if input.environment.location != ExecutionLocation::Ui {
+        return Err(Error::Invalid("UI deployment required".into()));
+    }
+    let target = input
+        .environment
+        .presentation
+        .ok_or_else(|| Error::Invalid("presentation target required".into()))?;
+    let mut packages = Packages::default();
+    let mut sources: BTreeMap<PackageRef, Package> = BTreeMap::new();
+    for package in bytes {
+        let declaration = package
+            .manifest()
+            .application
+            .as_ref()
+            .ok_or_else(|| Error::Invalid("application declaration required".into()))?;
+        packages.insert(package.application_ref(), declaration.clone())?;
+        sources.insert(package.application_ref(), package);
+    }
+    let plan = Plan::prepare(input, &packages, declarations)?;
+    let pending: Vec<_> = plan
+        .instances()
+        .values()
+        .filter(|instance| !instance.disabled)
+        .cloned()
+        .collect();
+    // Reject known unavailable implementations before any guest or factory
+    // activation. Runtime factory/script failures remain execution failures.
+    for instance in &pending {
+        if let Some(entry) = &instance.entry {
+            match &entry.implementation {
+                Implementation::Native { implementation } => {
+                    native.validate_implementation(implementation)?
+                }
+                Implementation::JavaScript { module, .. } => {
+                    if let Some(language) = &entry.scene {
+                        let compiler = native.scene_compiler.as_ref().ok_or_else(|| {
+                            Error::Invalid("presenter scene compiler required".into())
+                        })?;
+                        if compiler.language != *language {
+                            return Err(Error::Invalid(format!(
+                                "unsupported scene language: {} v{}",
+                                language.name, language.version
+                            )));
+                        }
+                    }
+                    std::str::from_utf8(
+                        sources[&instance.package]
+                            .file(module)
+                            .ok_or_else(|| Error::Invalid("entry bytes missing".into()))?,
+                    )
+                    .map_err(|error| Error::Invalid(error.to_string()))?;
+                }
+            }
+        }
+    }
+    Ok(Candidate {
+        plan,
+        sources,
+        instances: pending,
+        target,
+    })
+}
+
+impl<V: ?Sized + 'static> Application<V> {
+    fn plan_active(&self) -> bool {
+        self.runtime
+            .desired()
+            .instances()
+            .values()
+            .filter(|i| !i.disabled)
+            .all(|instance| {
+                self.activations.get(&instance.identity).is_some_and(|a| {
+                    self.runtime
+                        .status(a)
+                        .is_ok_and(|s| s.phase == Phase::Active)
+                })
+            })
+    }
+
+    pub fn deployment_status(&self) -> DeploymentStatus {
+        DeploymentStatus {
+            desired: self.source.clone(),
+            effective: self.effective.clone(),
+            converging: !self.plan_active()
+                || !self.pending.is_empty()
+                || !self.pending_remotes.is_empty()
+                || self.runtime.activations().any(|a| {
+                    self.runtime
+                        .status(a)
+                        .is_ok_and(|s| s.phase != Phase::Active)
+                }),
+            error: self.deployment_error.clone(),
+            closing: self.closing,
+            instances: self
+                .runtime
+                .activations()
+                .map(|a| self.runtime.status(a).expect("live UI activation"))
+                .collect(),
+        }
+    }
+
+    /// Root-owner operation. Remote registrations are trusted endpoints, never grants derived from JSON.
+    /// Acknowledges desired input only; the renderer still owns actual native close acknowledgements.
+    pub async fn adopt_committed(
+        &mut self,
+        source: DeploymentRef,
+        registrations: Vec<actions::RemoteService>,
+    ) -> Result<()> {
+        let update = self.load_committed_update(source)?.await?;
+        self.adopt_update(update, registrations)
+    }
+
+    /// Storage work does not borrow the foreground owner. Render/input may continue
+    /// while an embedding awaits this bounded immutable snapshot off its event loop.
+    pub fn load_committed_update(
+        &self,
+        source: DeploymentRef,
+    ) -> Result<impl std::future::Future<Output = Result<CommittedUpdate>> + Send + 'static> {
+        self.check_update_source(&source)?;
+        let store = self.store.as_ref().expect("paired UI store").clone();
+        Ok(async move {
+            let loaded = store
+                .load_application_at(&source)
+                .await
+                .map_err(|e| Error::Invalid(e.to_string()))?
+                .ok_or_else(|| Error::Invalid("committed UI source not found".into()))?;
+            Ok(CommittedUpdate { loaded })
+        })
+    }
+
+    fn check_update_source(&self, source: &DeploymentRef) -> Result<()> {
+        if self.closing {
+            return Err(Error::Invalid("UI deployment is closing".into()));
+        }
+        let current = self
+            .source
+            .as_ref()
+            .ok_or_else(|| Error::Invalid("persisted UI source required".into()))?;
+        if source.state_domain != current.state_domain
+            || source.deployment != current.deployment
+            || source.revision < current.revision
+        {
+            return Err(Error::Invalid(
+                "foreign or stale UI deployment source".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Final owner turn rechecks origin/revision after the storage await.
+    pub fn adopt_update(
+        &mut self,
+        update: CommittedUpdate,
+        registrations: Vec<actions::RemoteService>,
+    ) -> Result<()> {
+        self.check_update_source(update.source())?;
+        let loaded = update.loaded;
+        let source = loaded.source.reference;
+        let declarations = loaded
+            .source
+            .remote_exports
+            .into_iter()
+            .map(|r| (r.capability, r.declaration))
+            .collect();
+        let Candidate {
+            plan,
+            sources,
+            instances,
+            target,
+        } = prepare(
+            &loaded.source.input,
+            loaded.packages,
+            self.native.as_ref().expect("open UI registry"),
+            &declarations,
+        )?;
+        if target != self.target {
+            return Err(Error::Invalid("stored presentation target mismatch".into()));
+        }
+        // Validate all endpoint shapes and their exact desired references before install.
+        let mut check: Runtime<Export<V>> = Runtime::new(plan.clone());
+        let mut supplied = BTreeMap::<RemoteCapability, Uuid>::new();
+        for remote in &registrations {
+            if supplied
+                .insert(remote.target.clone(), remote.registration_epoch)
+                .is_some()
+            {
+                return Err(Error::Invalid("duplicate remote registration".into()));
+            }
+            let value = service_export(remote.implementation.clone(), &remote.contract)?;
+            check
+                .attach_remote(
+                    remote.target.clone(),
+                    remote.registration_epoch,
+                    Published {
+                        contract: remote.contract.clone(),
+                        value,
+                    },
+                )
+                .map_err(|rejected| Error::Core(rejected.error))?;
+        }
+        self.runtime.install(plan);
+        for activation in self.runtime.activations().cloned().collect::<Vec<_>>() {
+            if let Some(target) = activation.remote_target()
+                && self.remote_epochs.get(target) != supplied.get(target)
+            {
+                self.runtime.retire(&activation)?;
+            }
+        }
+        self.pending_remotes = registrations
+            .into_iter()
+            .filter(|remote| {
+                !self.runtime.activations().any(|a| {
+                    a.remote_target() == Some(&remote.target)
+                        && self.remote_epochs.get(&remote.target)
+                            == Some(&remote.registration_epoch)
+                        && self
+                            .runtime
+                            .status(a)
+                            .is_ok_and(|s| s.phase == Phase::Active)
+                })
+            })
+            .collect();
+        self.pending = instances
+            .into_iter()
+            .filter(|i| {
+                !self.activations.get(&i.identity).is_some_and(|a| {
+                    self.runtime
+                        .status(a)
+                        .is_ok_and(|s| s.phase == Phase::Active)
+                })
+            })
+            .collect();
+        self.source = Some(source);
+        self.sources = sources;
+        self.deployment_error = None;
+        self.invalidate_pending_captures();
+        self.sync_subscription_demand();
+        Ok(())
+    }
+
+    pub(super) fn dependencies_ready(&self, instance: &Instance) -> bool {
+        let active = |id: &InstanceId| {
+            self.activations.get(id).is_some_and(|a| {
+                self.runtime
+                    .status(a)
+                    .is_ok_and(|s| s.phase == Phase::Active)
+            })
+        };
+        !instance.parent.as_ref().is_some_and(|id| !active(id))
+            && (instance.entry.is_none()
+                || instance
+                    .bindings
+                    .values()
+                    .flatten()
+                    .all(|b| match &b.provider {
+                        Provider::Local { instance, .. } => active(instance),
+                        Provider::Remote { capability } => !self
+                            .pending_remotes
+                            .iter()
+                            .any(|remote| &remote.target == capability),
+                    }))
+    }
+
+    /// Call after original task settlement and renderer acknowledgements. Never closes native resources.
+    pub fn advance_deployment(&mut self) -> Result<()> {
+        if self.closing {
+            return Err(Error::Invalid("UI deployment is closing".into()));
+        }
+        // Foreground realms share their actual failure fate, while already
+        // retiring original domains do not cancel a newer candidate.
+        for (id, loaded) in &self.modules {
+            if let Some(error) = loaded.realm.borrow().failure() {
+                let activation = &self.activations[id];
+                if self.runtime.status(activation)?.phase != Phase::Retiring {
+                    self.deployment_error.get_or_insert(error.to_string());
+                }
+                self.runtime.retire(activation)?;
+            }
+        }
+        self.invalidate_pending_captures();
+        self.sync_subscription_demand();
+        loop {
+            let mut progressed = false;
+            for id in self.modules.keys().cloned().collect::<Vec<_>>() {
+                let activation = &self.activations[&id];
+                if self.runtime.status(activation).is_ok_and(|s| {
+                    s.phase == Phase::Retiring && s.calls == 0 && s.failures.is_empty()
+                }) && !self
+                    .runtime
+                    .mount_statuses()
+                    .iter()
+                    .any(|m| m.provider == *activation)
+                {
+                    let loaded = &self.modules[&id];
+                    let result = loaded.realm.borrow_mut().close(&loaded.module);
+                    self.runtime.complete_resource(
+                        &loaded.resource,
+                        result.as_ref().map(|_| ()).map_err(|e| e.to_string()),
+                    )?;
+                    if let Err(error) = result {
+                        self.deployment_error.get_or_insert(error.to_string());
+                        return Err(error.into());
+                    }
+                    self.modules.remove(&id);
+                    progressed = true;
+                }
+            }
+            for activation in self.runtime.activations().cloned().collect::<Vec<_>>() {
+                if self.runtime.status(&activation)?.phase != Phase::Retiring {
+                    continue;
+                }
+                match self.runtime.finish_cleanup(&activation) {
+                    Ok(()) => {
+                        if let Some(target) = activation.remote_target() {
+                            self.remote_epochs.remove(target);
+                        } else {
+                            self.activations.remove(activation.instance());
+                            self.values.remove(&activation.epoch());
+                            self.value_bytes.remove(&activation.epoch());
+                            self.origins.remove(&activation.epoch());
+                        }
+                        progressed = true;
+                    }
+                    Err(maka_plugin_core::Error::CleanupPending) => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            for remote in std::mem::take(&mut self.pending_remotes) {
+                if self
+                    .runtime
+                    .activations()
+                    .any(|a| a.remote_target() == Some(&remote.target))
+                {
+                    self.pending_remotes.push(remote);
+                    continue;
+                }
+                let value = service_export(remote.implementation, &remote.contract)?;
+                self.runtime
+                    .attach_remote(
+                        remote.target.clone(),
+                        remote.registration_epoch,
+                        Published {
+                            contract: remote.contract,
+                            value,
+                        },
+                    )
+                    .map_err(|rejected| Error::Core(rejected.error))?;
+                self.remote_epochs
+                    .insert(remote.target, remote.registration_epoch);
+                progressed = true;
+            }
+            if self.deployment_error.is_none() {
+                for instance in std::mem::take(&mut self.pending) {
+                    if self.activations.contains_key(&instance.identity)
+                        || !self.dependencies_ready(&instance)
+                    {
+                        self.pending.push(instance);
+                        continue;
+                    }
+                    let id = instance.identity.clone();
+                    if let Err(error) = self.activate_instance(instance) {
+                        if let Some(activation) = self.activations.get(&id) {
+                            self.runtime.retire(activation)?;
+                        }
+                        self.deployment_error = Some(error.to_string());
+                        self.pending.clear();
+                        return Err(error);
+                    }
+                    progressed = true;
+                }
+            }
+            if !progressed {
+                break;
+            }
+        }
+        if self.deployment_error.is_none() && !self.deployment_status().converging {
+            self.effective = self.source.clone();
+        }
+        Ok(())
+    }
+}

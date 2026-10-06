@@ -361,6 +361,19 @@ impl Owner {
                 }
             }
             if self.starting
+                && self
+                    .runtime
+                    .desired()
+                    .instances()
+                    .values()
+                    .filter(|i| !i.disabled)
+                    .all(|instance| {
+                        self.activations.get(&instance.identity).is_some_and(|a| {
+                            self.runtime
+                                .status(a)
+                                .is_ok_and(|s| s.phase == Phase::Active)
+                        })
+                    })
                 && self.pending.is_empty()
                 && self.activations.values().all(|a| {
                     self.runtime

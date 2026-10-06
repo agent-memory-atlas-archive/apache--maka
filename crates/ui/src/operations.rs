@@ -74,7 +74,10 @@ impl NativeService for History {
             let result = async {
                 if request.method != "page"
                     || !request.resources.is_empty()
-                    || request.source.deployment() != Some(&source)
+                    || request.source.deployment().is_none_or(|caller| {
+                        caller.state_domain != source.state_domain
+                            || caller.deployment != source.deployment
+                    })
                 {
                     return Err("caller history requires its original persisted UI source".into());
                 }

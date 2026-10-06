@@ -31,6 +31,36 @@ callback is also captured before publication. Renderers read committed
 Each mount has independent state and a revision, so old view events cannot invoke
 new handlers. A realm failure retires every registration and mount in that realm.
 
+Persisted UI roots can load an exact same-Root committed revision with
+`load_committed_update` without borrowing the foreground application. The embedding
+can continue input/rendering while awaiting that storage future, then call
+`adopt_update` in its owner turn. `adopt_committed` combines these operations.
+Final adoption rechecks deployment identity and monotonic revision, validates
+packages, target and trusted endpoint shapes, then installs the plan in the same
+kernel. Remote observations do not create registrations or permission grants.
+
+`advance_deployment` runs after original task settlement and renderer close
+acknowledgements. It keeps unchanged activation, frame, module and mount identity;
+changed instances wait for original calls, native mount cleanup and module close.
+Changed remote registration epochs retire the original attachment before replacement.
+Optional missing endpoints remain optional. The endpoint vector is the trusted
+owner's complete registration selection for this plan.
+
+`deployment_status` separates desired input, last completely converged activation
+plan, pending convergence and observed failure; it does not assert window, IME or
+accessibility readiness. Convergence checks every enabled desired instance, including
+ones absent after a failure. A current foreground failure remains an error; subsequent
+explicit committed input can recover. Normal failure of an already retiring original
+domain does not cancel a replacement. The embedding still owns surface replacement
+and physical resource acknowledgements; production launcher live-update integration
+remains required work.
+
+Each prepared action freezes the original source of its exact consumer activation.
+Retained consumers keep that source for later requests too; newly activated consumers
+use the adopted source. The local history implementation fixes its original Root and
+deployment identity, accepts exact original request references within that identity,
+and never permits guest JSON to select another caller namespace.
+
 A raw input callback may return `decision: { preventDefault, stopPropagation }`; omitted flags are false. The kernel returns this decision only after the entire causal batch commits. Lifecycle callbacks, component notifications and asynchronous action results cannot supply a decision. Decisions are bounded transaction data, never retained in `Frame`. A platform applies them at its actual listener phase; they cannot cancel native behavior that already happened.
 
 `NativeRegistry<V>` supplies compiled implementation factories; only selected

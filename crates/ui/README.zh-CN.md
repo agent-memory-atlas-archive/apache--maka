@@ -27,6 +27,25 @@
 `Frame`。有界批次完整校验后原子替换，每个挂载有独立状态与 revision，旧视图事件
 不会调用新处理器。执行域故障撤销该域全部注册与挂载。
 
+持久 UI root 可用 `load_committed_update` 读取同 Root 确切的已提交版本；返回的存储 future
+不借用前台 Application，embedding 等待期间仍能处理输入和呈现，再在原 owner turn
+调用 `adopt_update`。`adopt_committed` 组合这两步。最终接纳重查来源与单调 revision，
+校验包、目标和可信 endpoint 形状，再在同一内核 install；静态 remote observation
+不能创造 registration 或权限。endpoint vector 是可信 owner 对该计划的完整实际注册选择。
+
+`advance_deployment` 在原任务结算和呈现器真实 close 回执之后推进。未变 activation、frame、
+module、mount 保持身份；变化实例等待原调用、原生 mount 清理和 module close。变化的
+remote registration epoch 先退休原 attachment，再替代。可选的缺席 endpoint 仍是可选。
+`deployment_status` 区分期望来源、上次完整收敛的激活计划、正在收敛与已观察失败；
+不据此宣称 window、IME 或可访问性 ready。收敛核对全部 enabled desired instance，
+包括失败后已消失的实例。当前域失败保留 error，后续显式 committed input 可以恢复；
+已退休旧域的延迟失败不取消替代。embedding 仍负责 surface 替换和真实资源回执，
+生产 launcher 的 live-update 接入尚待完成。
+
+每个 prepared action 冻结确切 consumer activation 的原 source；保留的 consumer 的
+后续请求也继续使用它，新 activation 才使用新 source。历史服务固定原 Root 与 deployment
+身份，接受该身份内请求的确切原始引用，不允许 guest JSON 选择其他 caller namespace。
+
 原始输入回调可返回 `decision: { preventDefault, stopPropagation }`，省略的标志为 false。只有整个因果批次提交成功，内核才返回决定。生命周期回调、组件通知与异步 action 结果不能返回决定。决定受事务限额约束，不保留在 `Frame`；平台仅在实际监听阶段采用，不能撤销已经发生的原生行为。
 
 `NativeRegistry<V>` 提供随构建编译的工厂；只有组合选中的 entry 才会激活，实际导出

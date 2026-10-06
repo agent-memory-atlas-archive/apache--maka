@@ -579,3 +579,110 @@ fn accepted_history_waiting_behind_real_sql_writer_retains_root_after_surface_ex
     assert!(weak.upgrade().is_none());
     assert!(RootOwner::open(&dir.path().join("root"), &namespaces(dir.path())).is_ok());
 }
+
+#[test]
+fn live_adoption_keeps_queued_history_source_and_retained_history_serves_new_consumer_epochs() {
+    let timer = timer();
+    let (template, packages) = fixture();
+    for target in [PresentationTarget::Desktop, PresentationTarget::Tui] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(&timer, dir.path(), true);
+        let deployment = Uuid::new_v4();
+        let mut input = template.clone();
+        input.environment.presentation = Some(target);
+        let first = timer
+            .block_on(store.commit_application(
+                deployment,
+                0,
+                input.clone(),
+                vec![],
+                packages.clone(),
+            ))
+            .unwrap();
+        let mine = timer
+            .block_on(store.record_application_intent(first.clone(), identity(2), reference(0)))
+            .unwrap()
+            .intent()
+            .clone();
+        let (mut app, root) = start(&timer, store.clone(), deployment, target);
+        let history = app
+            .deployment_status()
+            .instances
+            .into_iter()
+            .find(|s| s.activation.instance() == &identity(3))
+            .unwrap()
+            .activation;
+        app.dispatch(&root, 0, "inc", json!({"after":0,"limit":128}))
+            .unwrap();
+        app.capture_actions(&root, |_| unreachable!()).unwrap();
+        let mut unrelated = input.clone();
+        unrelated
+            .instances
+            .get_mut("other")
+            .unwrap()
+            .configuration
+            .values
+            .insert("unrelated".into(), json!(true));
+        let next = timer
+            .block_on(store.commit_application(
+                deployment,
+                1,
+                unrelated.clone(),
+                vec![],
+                packages.clone(),
+            ))
+            .unwrap();
+        timer
+            .block_on(app.adopt_committed(next.clone(), vec![]))
+            .unwrap();
+        app.advance_deployment().unwrap();
+        assert!(!app.is_retiring(&root));
+        let task = app.start_task(&root).unwrap().unwrap();
+        let completion = timer.block_on(task.future);
+        app.finish_task(task.id, completion).unwrap();
+        assert_eq!(
+            app.deliver_action_results(&root, |_, _, _| Ok(false))
+                .unwrap(),
+            1
+        );
+        let read: Vec<CallerIntent> =
+            serde_json::from_value(app.frame(&root).unwrap().state["outcome"]["value"].clone())
+                .unwrap();
+        assert_eq!(read, vec![mine.clone()]);
+        assert_eq!(app.deployment_status().effective, Some(next));
+        unrelated
+            .instances
+            .get_mut("app")
+            .unwrap()
+            .configuration
+            .values
+            .insert("new_epoch".into(), json!(true));
+        let latest = timer
+            .block_on(store.commit_application(deployment, 2, unrelated, vec![], packages.clone()))
+            .unwrap();
+        timer
+            .block_on(app.adopt_committed(latest.clone(), vec![]))
+            .unwrap();
+        app.advance_deployment().unwrap();
+        assert!(app.is_retiring(&root));
+        app.close(&root, Ok(())).unwrap();
+        app.advance_deployment().unwrap();
+        assert_eq!(app.deployment_status().effective, Some(latest));
+        assert!(
+            app.deployment_status()
+                .instances
+                .iter()
+                .any(|s| s.activation == history)
+        );
+        let fresh = app.mount_launch(json!({})).unwrap();
+        let out = page(&timer, &mut app, &fresh, 0, 128);
+        assert_eq!(out["status"], "succeeded");
+        let read: Vec<CallerIntent> = serde_json::from_value(out["value"].clone()).unwrap();
+        assert_eq!(read, vec![mine]);
+        close(&mut app, &fresh);
+        drop(app);
+        timer
+            .block_on(Arc::try_unwrap(store).ok().unwrap().close())
+            .unwrap();
+    }
+}

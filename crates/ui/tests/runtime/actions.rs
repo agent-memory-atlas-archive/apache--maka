@@ -1340,3 +1340,159 @@ fn feedback_can_atomically_reissue_its_original_key() {
     assert_eq!(app.pending_action_count(), 0);
     close_all(&mut app, &[root]);
 }
+
+struct RecordingSource {
+    sources: Arc<std::sync::Mutex<Vec<maka_plugin_core::deployment::DeploymentRef>>>,
+}
+impl NativeService for RecordingSource {
+    fn call(&self, request: ServiceRequest) -> ServiceFuture {
+        self.sources.lock().unwrap().push(
+            request
+                .source
+                .deployment()
+                .expect("actual owned UI source")
+                .clone(),
+        );
+        Box::pin(async {
+            ServiceCompletion {
+                result: Ok(json!({"text":"Start","metadata":{}})),
+                cleanup: Ok(()),
+            }
+        })
+    }
+}
+
+#[test]
+fn live_remote_epoch_update_preserves_original_query_source_and_waits_for_accepted_work() {
+    use maka_event_log::{
+        EventLog,
+        root::{RootNamespaces, RootOwner},
+    };
+    use maka_plugin_core::{
+        contract::{Cardinality, MethodMode},
+        deployment::RemoteObservation,
+    };
+    let timer = timer();
+    let dir = tempfile::tempdir().unwrap();
+    let ns = RootNamespaces {
+        ownership: dir.path().join("owners"),
+        control: dir.path().join("control"),
+    };
+    let store = Arc::new(
+        timer
+            .block_on(EventLog::for_root(Arc::new(
+                RootOwner::create(&dir.path().join("root"), &ns).unwrap(),
+            )))
+            .unwrap(),
+    );
+    let (input, packages, native, mut remotes, target) =
+        remote_fixture(MethodMode::Query, Cardinality::One, true);
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let service: Arc<dyn NativeService> = Arc::new(RecordingSource {
+        sources: seen.clone(),
+    });
+    let wire = remotes.registrations[0].registration_epoch;
+    let contract = remotes.registrations[0].contract.clone();
+    remotes.registrations[0].implementation = service.clone();
+    let observations = remotes
+        .declarations
+        .into_iter()
+        .map(|(capability, declaration)| RemoteObservation {
+            capability,
+            declaration,
+        })
+        .collect::<Vec<_>>();
+    let deployment = uuid::Uuid::new_v4();
+    let original = timer
+        .block_on(store.commit_application(
+            deployment,
+            0,
+            input.clone(),
+            observations.clone(),
+            packages.clone(),
+        ))
+        .unwrap();
+    let mut app = timer
+        .block_on(Application::start_from_store(
+            store.clone(),
+            original.clone(),
+            PresentationTarget::Desktop,
+            timer.handle().clone(),
+            Default::default(),
+            native,
+            remotes.registrations,
+        ))
+        .unwrap();
+    let root = app.mount_launch(json!({})).unwrap();
+    let registration = |epoch| RemoteService {
+        target: target.clone(),
+        registration_epoch: epoch,
+        contract: contract.clone(),
+        implementation: service.clone(),
+    };
+    app.dispatch(&root, 0, "read", Value::Null).unwrap();
+    let snapshot = capture(&mut app, &root, "Start");
+    let mut desired = input.clone();
+    let mut extra = desired.instances["surface"].clone();
+    extra.key = uuid::Uuid::from_u128(19);
+    desired.instances.insert("extra".into(), extra);
+    let next = timer
+        .block_on(store.commit_application(
+            deployment,
+            1,
+            desired.clone(),
+            observations.clone(),
+            packages.clone(),
+        ))
+        .unwrap();
+    timer
+        .block_on(app.adopt_committed(next.clone(), vec![registration(wire)]))
+        .unwrap();
+    app.advance_deployment().unwrap();
+    assert!(!app.is_retiring(&root));
+    let task = app.start_task(&root).unwrap().unwrap();
+    let done = timer.block_on(task.future);
+    app.finish_task(task.id, done).unwrap();
+    app.deliver_action_results(&root, |_, _, _| Ok(false))
+        .unwrap();
+    assert_eq!(*seen.lock().unwrap(), vec![original.clone()]);
+    let rev = app.frame(&root).unwrap().revision;
+    app.dispatch(&root, rev, "read", Value::Null).unwrap();
+    let held = capture(&mut app, &root, "Start");
+    let old_task = app.start_task(&root).unwrap().unwrap();
+    let attachment = app.remote_activation(&target).unwrap();
+    let latest = timer
+        .block_on(store.commit_application(deployment, 2, desired, observations, packages))
+        .unwrap();
+    let new_wire = uuid::Uuid::new_v4();
+    timer
+        .block_on(app.adopt_committed(latest.clone(), vec![registration(new_wire)]))
+        .unwrap();
+    app.advance_deployment().unwrap();
+    assert!(app.is_retiring(&root));
+    assert_eq!(app.remote_activation(&target).unwrap(), attachment);
+    for mount in app.retiring_mounts() {
+        app.close(&mount, Ok(())).unwrap();
+    }
+    app.advance_deployment().unwrap();
+    assert_eq!(app.remote_activation(&target).unwrap(), attachment);
+    assert!(app.deployment_status().converging);
+    let done = timer.block_on(old_task.future);
+    app.finish_task(old_task.id, done).unwrap();
+    assert_eq!(*seen.lock().unwrap(), vec![original.clone(), original]);
+    app.advance_deployment().unwrap();
+    assert_eq!(app.deployment_status().effective, Some(latest.clone()));
+    assert_ne!(app.remote_activation(&target).unwrap(), attachment);
+    let fresh = app.mount_launch(json!({})).unwrap();
+    app.dispatch(&fresh, 0, "read", Value::Null).unwrap();
+    let new_snapshot = capture(&mut app, &fresh, "Start");
+    let task = app.start_task(&fresh).unwrap().unwrap();
+    let done = timer.block_on(task.future);
+    app.finish_task(task.id, done).unwrap();
+    assert_eq!(seen.lock().unwrap().last(), Some(&latest));
+    close_all(&mut app, &[fresh]);
+    drop((app, snapshot, held, new_snapshot, service));
+    timer
+        .block_on(Arc::try_unwrap(store).ok().unwrap().close())
+        .unwrap();
+}

@@ -59,7 +59,7 @@ impl Session {
 
 impl<V: ?Sized + 'static> Application<V> {
     pub(super) fn start_mutation(&mut self, action: Prepared<V>) -> Result<Option<ActionTask>> {
-        let (Some(source), Some(store)) = (self.source.clone(), self.store.clone()) else {
+        let (Some(source), Some(store)) = (action.source.clone(), self.store.clone()) else {
             self.reject_action(action, "mutation requires a persisted UI source".into());
             return Ok(None);
         };

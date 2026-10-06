@@ -22,8 +22,10 @@
 pub mod abi;
 pub mod actions;
 pub mod appearance;
+mod deployment;
 pub mod editor;
 mod frame;
+pub use deployment::{CommittedUpdate, DeploymentStatus};
 pub mod image;
 pub mod input;
 pub mod markdown;
@@ -123,6 +125,17 @@ pub struct Application<V: ?Sized = ()> {
     render_depth_limit: Option<u16>,
     source: Option<maka_plugin_core::deployment::DeploymentRef>,
     store: Option<std::sync::Arc<maka_event_log::EventLog>>,
+    origins: BTreeMap<Uuid, maka_plugin_core::deployment::DeploymentRef>,
+    effective: Option<maka_plugin_core::deployment::DeploymentRef>,
+    deployment_error: Option<String>,
+    pending: Vec<maka_plugin_core::plan::Instance>,
+    sources: BTreeMap<PackageRef, Package>,
+    native: Option<NativeRegistry<V>>,
+    limits: Limits,
+    shared: std::rc::Weak<RefCell<Foreground>>,
+    remote_epochs: BTreeMap<maka_plugin_core::plan::RemoteCapability, Uuid>,
+    pending_remotes: Vec<actions::RemoteService>,
+    closing: bool,
 }
 
 impl<V: ?Sized + 'static> Application<V> {
@@ -182,7 +195,7 @@ impl<V: ?Sized + 'static> Application<V> {
         )
     }
 
-    /// The immutable source this execution actually loaded, not the latest desire.
+    /// The committed source adopted by this executor; status reports convergence.
     pub fn source(&self) -> Option<&maka_plugin_core::deployment::DeploymentRef> {
         self.source.as_ref()
     }
@@ -199,61 +212,12 @@ impl<V: ?Sized + 'static> Application<V> {
             std::sync::Arc<maka_event_log::EventLog>,
         )>,
     ) -> Result<Self> {
-        if input.environment.location != ExecutionLocation::Ui {
-            return Err(Error::Invalid("UI deployment required".into()));
-        }
-        let target = input
-            .environment
-            .presentation
-            .ok_or_else(|| Error::Invalid("presentation target required".into()))?;
-        let mut packages = Packages::default();
-        let mut sources: BTreeMap<PackageRef, Package> = BTreeMap::new();
-        for package in bytes {
-            let declaration = package
-                .manifest()
-                .application
-                .as_ref()
-                .ok_or_else(|| Error::Invalid("application declaration required".into()))?;
-            packages.insert(package.application_ref(), declaration.clone())?;
-            sources.insert(package.application_ref(), package);
-        }
-        let plan = Plan::prepare(input, &packages, &remotes.declarations)?;
-        let mut pending: Vec<_> = plan
-            .instances()
-            .values()
-            .filter(|instance| !instance.disabled)
-            .cloned()
-            .collect();
-        // Reject known unavailable implementations before any guest or factory
-        // activation. Runtime factory/script failures remain execution failures.
-        for instance in &pending {
-            if let Some(entry) = &instance.entry {
-                match &entry.implementation {
-                    Implementation::Native { implementation } => {
-                        native.validate_implementation(implementation)?
-                    }
-                    Implementation::JavaScript { module, .. } => {
-                        if let Some(language) = &entry.scene {
-                            let compiler = native.scene_compiler.as_ref().ok_or_else(|| {
-                                Error::Invalid("presenter scene compiler required".into())
-                            })?;
-                            if compiler.language != *language {
-                                return Err(Error::Invalid(format!(
-                                    "unsupported scene language: {} v{}",
-                                    language.name, language.version
-                                )));
-                            }
-                        }
-                        std::str::from_utf8(
-                            sources[&instance.package]
-                                .file(module)
-                                .ok_or_else(|| Error::Invalid("entry bytes missing".into()))?,
-                        )
-                        .map_err(|error| Error::Invalid(error.to_string()))?;
-                    }
-                }
-            }
-        }
+        let deployment::Candidate {
+            plan,
+            sources,
+            instances: pending,
+            target,
+        } = deployment::prepare(input, bytes, &native, &remotes.declarations)?;
         let (source, store) = match persisted {
             Some((source, store)) => (Some(source), Some(store)),
             None => (None, None),
@@ -271,10 +235,23 @@ impl<V: ?Sized + 'static> Application<V> {
             scene_compiler: native.scene_compiler.clone(),
             render_depth_limit: native.render_depth_limit,
             scheduler: timer.clone(),
+            effective: source.clone(),
             source,
             store,
+            origins: BTreeMap::new(),
+            deployment_error: None,
+            pending,
+            sources,
+            native: Some(native),
+            limits,
+            shared: std::rc::Weak::new(),
+            remote_epochs: BTreeMap::new(),
+            pending_remotes: Vec::new(),
+            closing: false,
         };
         for remote in remotes.registrations {
+            app.remote_epochs
+                .insert(remote.target.clone(), remote.registration_epoch);
             let value = service_export(remote.implementation, &remote.contract)?;
             app.runtime
                 .attach_remote(
@@ -287,204 +264,200 @@ impl<V: ?Sized + 'static> Application<V> {
                 )
                 .map_err(|rejected| Error::Core(rejected.error))?;
         }
-        let mut shared: Option<ExecutionRealm> = None;
-        while !pending.is_empty() {
-            let before = pending.len();
-            for instance in std::mem::take(&mut pending) {
-                if instance
-                    .parent
-                    .as_ref()
-                    .is_some_and(|id| !app.activations.contains_key(id))
-                    || (instance.entry.is_some()
-                        && instance.bindings.values().flatten().any(|binding| {
-                            match &binding.provider {
-                                Provider::Local { instance, .. } => {
-                                    !app.activations.contains_key(instance)
-                                }
-                                Provider::Remote { .. } => false,
-                            }
-                        }))
-                {
-                    pending.push(instance);
+        while !app.pending.is_empty() {
+            let before = app.pending.len();
+            for instance in std::mem::take(&mut app.pending) {
+                if !app.dependencies_ready(&instance) {
+                    app.pending.push(instance);
                     continue;
                 }
-                let activation = app.runtime.begin(&instance.identity)?;
-                if let Some(entry) = &instance.entry {
-                    app.capture_values(&activation, &entry.imports)?;
-                }
-                let mut batch = BTreeMap::new();
-                if let Some(entry) = &instance.entry {
-                    match &entry.implementation {
-                        Implementation::Native { implementation } => {
-                            let values =
-                                app.values_snapshot(&activation, &instance.configuration)?;
-                            for (name, actual) in
-                                native.activate(implementation, &instance.configuration, &values)?
-                            {
-                                let value = match actual.value {
-                                    NativeCapability::Surface(target) => Export::Surface(target),
-                                    NativeCapability::Value(value) => {
-                                        values::export(value, &actual.contract)?
-                                    }
-                                    NativeCapability::Service(implementation) => {
-                                        service_export(implementation, &actual.contract)?
-                                    }
-                                    NativeCapability::Component(component) => {
-                                        let Interface::Component {
-                                            props,
-                                            events,
-                                            captures,
-                                        } = &actual.contract.interface
-                                        else {
-                                            unreachable!()
-                                        };
-                                        Export::Component {
-                                            implementation: Component::Native(component),
-                                            props: jsonschema::validator_for(props).map_err(
-                                                |error| Error::Invalid(error.to_string()),
-                                            )?,
-                                            events: event_schemas(events)?,
-                                            captures: capture_schemas(captures)?,
-                                        }
-                                    }
-                                };
-                                batch.insert(
-                                    name,
-                                    Published {
-                                        contract: actual.contract,
-                                        value,
-                                    },
-                                );
-                            }
-                        }
-                        Implementation::JavaScript { module, realm } => {
-                            let realm = match realm {
-                                Realm::Shared => shared.clone(),
-                                Realm::Dedicated => None,
-                            };
-                            let realm = match realm {
-                                Some(realm) => realm,
-                                None => Rc::new(RefCell::new(Foreground::new(
-                                    limits.clone(),
-                                    timer.clone(),
-                                )?)),
-                            };
-                            if matches!(
-                                entry.implementation,
-                                Implementation::JavaScript {
-                                    realm: Realm::Shared,
-                                    ..
-                                }
-                            ) {
-                                shared = Some(realm.clone());
-                            }
-                            let package = &sources[&instance.package];
-                            let source = std::str::from_utf8(
-                                package
-                                    .file(module)
-                                    .ok_or_else(|| Error::Invalid("entry bytes missing".into()))?,
-                            )
-                            .map_err(|error| Error::Invalid(error.to_string()))?;
-                            let loaded = realm.borrow_mut().load(module, source)?;
-                            let values =
-                                app.values_snapshot(&activation, &instance.configuration)?;
-                            let args = vec![
-                                instance.configuration.clone(),
-                                serde_json::to_value(values)
-                                    .map_err(|e| Error::Invalid(e.to_string()))?,
-                            ];
-                            maka_js_runtime::plugin::check_json_delivery(
-                                &Value::Array(args.clone()),
-                                1024 * 1024,
-                            )?;
-                            let value =
-                                realm
-                                    .borrow_mut()
-                                    .call(&loaded, &["activate".into()], &args)?;
-                            tree::check_call_bytes(&value)?;
-                            let actual: BTreeMap<String, abi::UiExport> =
-                                serde_json::from_value(value)
-                                    .map_err(|error| Error::Invalid(error.to_string()))?;
-                            for (name, actual) in actual {
-                                let (contract, component) = match actual {
-                                    abi::UiExport::Value { contract, value } => {
-                                        let value = values::export(value, &contract)?;
-                                        batch.insert(name, Published { contract, value });
-                                        continue;
-                                    }
-                                    abi::UiExport::Component {
-                                        contract,
-                                        component,
-                                    } => (contract, component),
-                                };
-                                if !matches!(contract.interface, Interface::Component { .. })
-                                    || component.is_empty()
-                                {
-                                    return Err(Error::Invalid(
-                                        "local JS export must declare a component".into(),
-                                    ));
-                                }
-                                let Interface::Component {
-                                    props,
-                                    events,
-                                    captures,
-                                } = &contract.interface
-                                else {
-                                    unreachable!()
-                                };
-                                let props = jsonschema::validator_for(props)
-                                    .map_err(|error| Error::Invalid(error.to_string()))?;
-                                let events = event_schemas(events)?;
-                                let callback_methods = if captures.is_empty() {
-                                    vec!["mount", "event", "update"]
-                                } else {
-                                    vec!["mount", "event", "update", "capture"]
-                                };
-                                let compiled_captures = capture_schemas(captures)?;
-                                batch.insert(
-                                    name,
-                                    Published {
-                                        contract,
-                                        value: Export::Component {
-                                            props,
-                                            events,
-                                            captures: compiled_captures,
-                                            implementation: Component::JavaScript {
-                                                realm: realm.clone(),
-                                                callbacks: realm.borrow_mut().capture(
-                                                    &loaded,
-                                                    &component,
-                                                    &callback_methods,
-                                                )?,
-                                            },
-                                        },
-                                    },
-                                );
-                            }
-                            let resource =
-                                app.runtime.own_resource(&activation, "foreground module")?;
-                            app.modules.insert(
-                                instance.identity.clone(),
-                                Loaded {
-                                    realm,
-                                    module: loaded,
-                                    resource,
-                                },
-                            );
-                        }
-                    }
-                }
-                app.charge_values(&activation, &batch)?;
-                app.runtime
-                    .publish(&activation, batch)
-                    .map_err(|rejected| Error::Core(rejected.error))?;
-                app.activations.insert(instance.identity, activation);
+                app.activate_instance(instance)?;
             }
-            if pending.len() == before {
+            if app.pending.len() == before {
                 return Err(Error::Invalid("UI dependencies are not ready".into()));
             }
         }
         Ok(app)
+    }
+
+    fn activate_instance(&mut self, instance: maka_plugin_core::plan::Instance) -> Result<()> {
+        let activation = self.runtime.begin(&instance.identity)?;
+        self.activations
+            .insert(instance.identity.clone(), activation.clone());
+        if let Some(source) = &self.source {
+            self.origins.insert(activation.epoch(), source.clone());
+        }
+        if let Some(entry) = &instance.entry {
+            self.capture_values(&activation, &entry.imports)?;
+        }
+        let mut batch = BTreeMap::new();
+        if let Some(entry) = &instance.entry {
+            match &entry.implementation {
+                Implementation::Native { implementation } => {
+                    let values = self.values_snapshot(&activation, &instance.configuration)?;
+                    for (name, actual) in self.native.as_ref().expect("open UI registry").activate(
+                        implementation,
+                        &instance.configuration,
+                        &values,
+                    )? {
+                        let value = match actual.value {
+                            NativeCapability::Surface(target) => Export::Surface(target),
+                            NativeCapability::Value(value) => {
+                                values::export(value, &actual.contract)?
+                            }
+                            NativeCapability::Service(implementation) => {
+                                service_export(implementation, &actual.contract)?
+                            }
+                            NativeCapability::Component(component) => {
+                                let Interface::Component {
+                                    props,
+                                    events,
+                                    captures,
+                                } = &actual.contract.interface
+                                else {
+                                    unreachable!()
+                                };
+                                Export::Component {
+                                    implementation: Component::Native(component),
+                                    props: jsonschema::validator_for(props)
+                                        .map_err(|error| Error::Invalid(error.to_string()))?,
+                                    events: event_schemas(events)?,
+                                    captures: capture_schemas(captures)?,
+                                }
+                            }
+                        };
+                        batch.insert(
+                            name,
+                            Published {
+                                contract: actual.contract,
+                                value,
+                            },
+                        );
+                    }
+                }
+                Implementation::JavaScript { module, realm } => {
+                    let realm = match realm {
+                        Realm::Shared => self
+                            .shared
+                            .upgrade()
+                            .filter(|realm| realm.borrow().failure().is_none()),
+                        Realm::Dedicated => None,
+                    };
+                    let realm = match realm {
+                        Some(realm) => realm,
+                        None => Rc::new(RefCell::new(Foreground::new(
+                            self.limits.clone(),
+                            self.scheduler.clone(),
+                        )?)),
+                    };
+                    if matches!(
+                        entry.implementation,
+                        Implementation::JavaScript {
+                            realm: Realm::Shared,
+                            ..
+                        }
+                    ) {
+                        self.shared = Rc::downgrade(&realm);
+                    }
+                    let package = &self.sources[&instance.package];
+                    let source = std::str::from_utf8(
+                        package
+                            .file(module)
+                            .ok_or_else(|| Error::Invalid("entry bytes missing".into()))?,
+                    )
+                    .map_err(|error| Error::Invalid(error.to_string()))?;
+                    let loaded = realm.borrow_mut().load(module, source)?;
+                    let resource = self
+                        .runtime
+                        .own_resource(&activation, "foreground module")?;
+                    self.modules.insert(
+                        instance.identity.clone(),
+                        Loaded {
+                            realm: realm.clone(),
+                            module: loaded,
+                            resource,
+                        },
+                    );
+                    let loaded = &self.modules[&instance.identity].module;
+                    let values = self.values_snapshot(&activation, &instance.configuration)?;
+                    let args = vec![
+                        instance.configuration.clone(),
+                        serde_json::to_value(values).map_err(|e| Error::Invalid(e.to_string()))?,
+                    ];
+                    maka_js_runtime::plugin::check_json_delivery(
+                        &Value::Array(args.clone()),
+                        1024 * 1024,
+                    )?;
+                    let value = realm
+                        .borrow_mut()
+                        .call(loaded, &["activate".into()], &args)?;
+                    tree::check_call_bytes(&value)?;
+                    let actual: BTreeMap<String, abi::UiExport> = serde_json::from_value(value)
+                        .map_err(|error| Error::Invalid(error.to_string()))?;
+                    for (name, actual) in actual {
+                        let (contract, component) = match actual {
+                            abi::UiExport::Value { contract, value } => {
+                                let value = values::export(value, &contract)?;
+                                batch.insert(name, Published { contract, value });
+                                continue;
+                            }
+                            abi::UiExport::Component {
+                                contract,
+                                component,
+                            } => (contract, component),
+                        };
+                        if !matches!(contract.interface, Interface::Component { .. })
+                            || component.is_empty()
+                        {
+                            return Err(Error::Invalid(
+                                "local JS export must declare a component".into(),
+                            ));
+                        }
+                        let Interface::Component {
+                            props,
+                            events,
+                            captures,
+                        } = &contract.interface
+                        else {
+                            unreachable!()
+                        };
+                        let props = jsonschema::validator_for(props)
+                            .map_err(|error| Error::Invalid(error.to_string()))?;
+                        let events = event_schemas(events)?;
+                        let callback_methods = if captures.is_empty() {
+                            vec!["mount", "event", "update"]
+                        } else {
+                            vec!["mount", "event", "update", "capture"]
+                        };
+                        let compiled_captures = capture_schemas(captures)?;
+                        batch.insert(
+                            name,
+                            Published {
+                                contract,
+                                value: Export::Component {
+                                    props,
+                                    events,
+                                    captures: compiled_captures,
+                                    implementation: Component::JavaScript {
+                                        realm: realm.clone(),
+                                        callbacks: realm.borrow_mut().capture(
+                                            loaded,
+                                            &component,
+                                            &callback_methods,
+                                        )?,
+                                    },
+                                },
+                            },
+                        );
+                    }
+                }
+            }
+        }
+        self.charge_values(&activation, &batch)?;
+        self.runtime
+            .publish(&activation, batch)
+            .map_err(|rejected| Error::Core(rejected.error))?;
+        Ok(())
     }
 
     fn invoke(
@@ -635,6 +608,15 @@ impl<V: ?Sized + 'static> Application<V> {
         if let Some(realm) = failed_realm {
             for (id, loaded) in &self.modules {
                 if Rc::ptr_eq(&loaded.realm, &realm) {
+                    if self.runtime.status(&self.activations[id])?.phase != Phase::Retiring {
+                        self.deployment_error.get_or_insert_with(|| {
+                            result
+                                .as_ref()
+                                .err()
+                                .map(ToString::to_string)
+                                .unwrap_or_else(|| "foreground domain failed".into())
+                        });
+                    }
                     self.runtime.retire(&self.activations[id])?;
                 }
             }
@@ -741,6 +723,9 @@ impl<V: ?Sized + 'static> Application<V> {
     /// first confirm each mount's actual close through `close`; pending native
     /// cleanup remains an error rather than an implicit shutdown acknowledgement.
     pub fn shutdown(&mut self) -> Result<()> {
+        self.closing = true;
+        self.pending.clear();
+        self.pending_remotes.clear();
         for activation in self.runtime.activations().cloned().collect::<Vec<_>>() {
             self.runtime.retire(&activation)?;
         }
@@ -775,6 +760,7 @@ impl<V: ?Sized + 'static> Application<V> {
                             self.activations.remove(activation.instance());
                             self.values.remove(&activation.epoch());
                             self.value_bytes.remove(&activation.epoch());
+                            self.origins.remove(&activation.epoch());
                         }
                     }
                     Err(maka_plugin_core::Error::CleanupPending) => {}
@@ -785,6 +771,9 @@ impl<V: ?Sized + 'static> Application<V> {
             if remaining == 0 {
                 // EventLog's independent owner confirms its actual SQL close.
                 // This only releases the UI execution's custody after cleanup.
+                self.native.take();
+                self.sources.clear();
+                self.remote_epochs.clear();
                 self.store.take();
                 return Ok(());
             }

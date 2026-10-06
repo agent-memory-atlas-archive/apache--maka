@@ -17,6 +17,9 @@
  * under the License.
  */
 
+#[path = "reconciliation.rs"]
+mod reconciliation;
+
 use super::{support, timer};
 use maka_event_log::{
     EventLog,

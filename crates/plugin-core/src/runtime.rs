@@ -212,6 +212,11 @@ impl<T> Runtime<T> {
 
     /// Input durability belongs to the embedding deployment. Install only a
     /// checked plan after committing its input, then drive retirement/activation.
+    /// Immutable derived plan, for executors to compare desired and actual owners.
+    pub fn desired(&self) -> &Plan {
+        &self.desired
+    }
+
     pub fn install(&mut self, plan: Plan) -> Vec<Activation> {
         if self.desired.launch() != plan.launch() {
             self.retire_launch_mounts();
