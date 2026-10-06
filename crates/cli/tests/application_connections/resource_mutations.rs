@@ -281,6 +281,7 @@ fn resource_ui(
             .contract = declared.clone();
         let source=std::str::from_utf8(old.file("index.mjs").unwrap()).unwrap()
             .replace("method:'read'","method:'write'")
+            .replace("key:'read_done'", "key:'read_done-'+next.revision")
             .replace("else if(event.key==='remove')next.show=false;", "else if(event.key==='remove')next.show=false;else if(event.key==='restore')next.show=true;")
             .replace("{kind:'button',key:'remove',label:'Remove composer'}", "{kind:'button',key:'remove',label:'Remove composer'},{kind:'button',key:'restore',label:'Restore composer'}");
         let new = support::counter::package(&old.manifest().id, declaration, Some(source));
@@ -392,8 +393,10 @@ fn actual_resource_mutation_counts_preparing_running_and_closing_and_rechecks_or
     dispatch(&mut app, &root, "read");
     let (resource, weak) = snapshot(64 * 1024 * 1024);
     assert_eq!(
-        app.capture_actions(&root, |_| Ok(resource.clone()))
-            .unwrap(),
+        app.capture_actions(&root, |_| Ok(maka_ui::actions::NativeCapture::Resource(
+            resource.clone()
+        )))
+        .unwrap(),
         1
     );
     drop(resource);
@@ -402,8 +405,10 @@ fn actual_resource_mutation_counts_preparing_running_and_closing_and_rechecks_or
         dispatch(&mut app, &root, "read");
         let (resource, rejected) = snapshot(1);
         assert_eq!(
-            app.capture_actions(&root, |_| Ok(resource.clone()))
-                .unwrap(),
+            app.capture_actions(&root, |_| Ok(maka_ui::actions::NativeCapture::Resource(
+                resource.clone()
+            )))
+            .unwrap(),
             0
         );
         drop(resource);
@@ -423,8 +428,10 @@ fn actual_resource_mutation_counts_preparing_running_and_closing_and_rechecks_or
     dispatch(&mut app, &root, "read");
     let (resource, rejected) = snapshot(1);
     assert_eq!(
-        app.capture_actions(&root, |_| Ok(resource.clone()))
-            .unwrap(),
+        app.capture_actions(&root, |_| Ok(maka_ui::actions::NativeCapture::Resource(
+            resource.clone()
+        )))
+        .unwrap(),
         0
     );
     drop(resource);
@@ -436,8 +443,10 @@ fn actual_resource_mutation_counts_preparing_running_and_closing_and_rechecks_or
     dispatch(&mut app, &root, "read");
     let (resource, weak) = snapshot(64 * 1024 * 1024);
     assert_eq!(
-        app.capture_actions(&root, |_| Ok(resource.clone()))
-            .unwrap(),
+        app.capture_actions(&root, |_| Ok(maka_ui::actions::NativeCapture::Resource(
+            resource.clone()
+        )))
+        .unwrap(),
         1
     );
     drop(resource);
@@ -447,8 +456,10 @@ fn actual_resource_mutation_counts_preparing_running_and_closing_and_rechecks_or
     dispatch(&mut app, &root, "read");
     let (resource, rejected) = snapshot(1);
     assert_eq!(
-        app.capture_actions(&root, |_| Ok(resource.clone()))
-            .unwrap(),
+        app.capture_actions(&root, |_| Ok(maka_ui::actions::NativeCapture::Resource(
+            resource.clone()
+        )))
+        .unwrap(),
         0
     );
     drop(resource);
@@ -456,7 +467,11 @@ fn actual_resource_mutation_counts_preparing_running_and_closing_and_rechecks_or
     app.finish_task(running.id, f.timer.block_on(running.future))
         .unwrap();
     assert!(weak.upgrade().is_none());
-    assert!(app.deliver_action_results(&root).unwrap() > 0);
+    assert!(
+        app.deliver_action_results(&root, |_, _, _| Ok(false))
+            .unwrap()
+            > 0
+    );
     let history = f
         .timer
         .block_on(

@@ -1003,9 +1003,12 @@ export const contracts = {
               },
             ],
           },
-          resource: {
-            name: 'maka.text.utf8',
-            version: 1,
+          output: {
+            kind: 'resource',
+            resource: {
+              name: 'maka.text.utf8',
+              version: 1,
+            },
           },
         },
       },
@@ -1466,9 +1469,12 @@ export const contracts = {
               },
             ],
           },
-          resource: {
-            name: 'maka.text.utf8',
-            version: 1,
+          output: {
+            kind: 'resource',
+            resource: {
+              name: 'maka.text.utf8',
+              version: 1,
+            },
           },
         },
       },
@@ -1929,9 +1935,12 @@ export const contracts = {
               },
             ],
           },
-          resource: {
-            name: 'maka.text.utf8',
-            version: 1,
+          output: {
+            kind: 'resource',
+            resource: {
+              name: 'maka.text.utf8',
+              version: 1,
+            },
           },
         },
       },
@@ -5640,12 +5649,43 @@ export const contracts = {
                 type: 'object',
                 properties: {
                   input: true,
-                  resource: {
-                    $ref: '#/$defs/ResourceType',
+                  output: {
+                    $ref: '#/$defs/CaptureOutput',
                   },
                 },
                 additionalProperties: false,
-                required: ['input', 'resource'],
+                required: ['input', 'output'],
+              },
+              CaptureOutput: {
+                description:
+                  'Resource captures enter checked service slots; continuations remain in the\noriginal presentation owner and only decide admission of query feedback.',
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      resource: {
+                        $ref: '#/$defs/ResourceType',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'resource',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'resource'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'continuation',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                ],
               },
               RecoveryProtocol: {
                 type: 'string',
@@ -5878,12 +5918,43 @@ export const contracts = {
                 type: 'object',
                 properties: {
                   input: true,
-                  resource: {
-                    $ref: '#/$defs/ResourceType',
+                  output: {
+                    $ref: '#/$defs/CaptureOutput',
                   },
                 },
                 additionalProperties: false,
-                required: ['input', 'resource'],
+                required: ['input', 'output'],
+              },
+              CaptureOutput: {
+                description:
+                  'Resource captures enter checked service slots; continuations remain in the\noriginal presentation owner and only decide admission of query feedback.',
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      resource: {
+                        $ref: '#/$defs/ResourceType',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'resource',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'resource'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'continuation',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                ],
               },
               RecoveryProtocol: {
                 type: 'string',
@@ -6115,12 +6186,43 @@ export const contracts = {
                 type: 'object',
                 properties: {
                   input: true,
-                  resource: {
-                    $ref: '#/$defs/ResourceType',
+                  output: {
+                    $ref: '#/$defs/CaptureOutput',
                   },
                 },
                 additionalProperties: false,
-                required: ['input', 'resource'],
+                required: ['input', 'output'],
+              },
+              CaptureOutput: {
+                description:
+                  'Resource captures enter checked service slots; continuations remain in the\noriginal presentation owner and only decide admission of query feedback.',
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      resource: {
+                        $ref: '#/$defs/ResourceType',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'resource',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'resource'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'continuation',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                ],
               },
               RecoveryProtocol: {
                 type: 'string',

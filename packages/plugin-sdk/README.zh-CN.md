@@ -82,6 +82,20 @@ Query/Mutation 的 `actions` 分开。key 在本组件内唯一；key 与完整�
 下一项。替换或退休会丢弃旧反馈，原执行仍须完成真实 cleanup。Desktop/TUI 共用这套
 机制；认证跨进程 transport 仍待实现。
 
+一次性 `Action.key` 是原 component Mount 内的反馈相关性。排队、准备、执行或等待反馈
+期间不能重用；需要并发时使用不同 key。反馈事务可以原子地以自己的 key 发起下一次请求。
+未完成的 cleanup 仍由原执行独立持有；释放 key 不恢复已撤销的准入。一次性 action key
+不能同时作为订阅需求的 key。
+
+Component capture 声明 `output: { kind: 'resource', resource: { name, version } }`
+或 `output: { kind: 'continuation' }`。Resource source 填充服务精确声明的附件槽；可选
+`Action.continuations: CaptureSource[]` 仅用于 Query。两者复用已检查的 child/forwarding
+路径，并终止于原生捕获，JavaScript 不能提供原生见证。Continuation 快照留在原前台请求中，
+执行结算后也保留到反馈前。Desktop/TUI 在调用反馈前检查原路径、原生 owner 和当前提交的
+recipe。失效返回 `{ status: 'stale' }`，不发布业务值、不撤销执行，也不确认 cleanup。
+原生 widget 实现实际观察检查；缺少捕获会返回 `not_accepted`。这些机械边界本身不代表
+阅读区 widget 或滚动/选区策略已实现。
+
 持久 UI component 通过普通 `actions` 提交 mutation（可携带声明的原捕获资源）；内核生成 operation
 identity，先记录原 caller intent 再派发。feedback 的 `ActionOutcome` 使用
 `status: 'operation'` 和原 `OperationReply`；组件应处理 unknown/unavailable 回执，

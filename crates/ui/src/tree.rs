@@ -479,6 +479,27 @@ impl<V: ?Sized + 'static> Application<V> {
         update.charge_intent(&output.actions)?;
         update.charge_intent(&output.decision)?;
         let actions = output.actions;
+        // No one-shot feedback can be confused with a second request or a
+        // subscription. Distinct keys permit independent concurrent requests.
+        let mut keys = std::collections::BTreeSet::new();
+        for action in &actions {
+            if !keys.insert(&action.key)
+                || declarations.iter().any(|s| s.key == action.key)
+                || previous_subscriptions.contains_key(&action.key)
+            {
+                return Err(Error::Invalid("action feedback key already in use".into()));
+            }
+        }
+        for action in actions.iter().chain(&declarations) {
+            if self.actions.key_pending(mount, &action.key)
+                || update
+                    .actions
+                    .iter()
+                    .any(|a| !a.subscription && a.consumer == *mount && a.key == action.key)
+            {
+                return Err(Error::Invalid("action feedback key already in use".into()));
+            }
+        }
         update.emit(mount, subscription, output.events)?;
         let frame = output.frame;
         let mut previous = update

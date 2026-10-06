@@ -201,7 +201,11 @@ fn action(
         }
     }
     assert!(app.start_task(mount).unwrap().is_none());
-    assert_eq!(app.deliver_action_results(mount).unwrap(), 1);
+    assert_eq!(
+        app.deliver_action_results(mount, |_, _, _| Ok(false))
+            .unwrap(),
+        1
+    );
     app.frame(mount).unwrap().state["outcome"].clone()
 }
 fn stop(

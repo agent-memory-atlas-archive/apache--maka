@@ -134,7 +134,7 @@ fn each_queued_receipt_checks_the_latest_state_at_actual_delivery(cx: &mut TestA
         h.scene
             .app
             .borrow_mut()
-            .deliver_action_results(&h.scene.root)
+            .deliver_action_results(&h.scene.root, |_, _, _| Ok(false))
             .unwrap(),
         2
     );
@@ -405,7 +405,11 @@ fn ui_fixture() -> (
         "method:'read',input:{start:event.event?.start??0,end:event.event?.end??5},resources:{text:{child:'editor',method:'snapshot',input:event.event?.capture??{kind:'current'}}}",
         "method:'save',input:'draft',resources:{}",
     );
-    let package = support::package("dynamic.app", declaration, Some(source));
+    let package = support::package(
+        "dynamic.app",
+        declaration,
+        Some(source.replace("key:'read_done'", "key:'read_done-'+next.revision")),
+    );
     let app = input.instances.get_mut("app").unwrap();
     app.package = package.application_ref().into();
     let target = RemoteCapability {

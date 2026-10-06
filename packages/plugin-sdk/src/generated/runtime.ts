@@ -153,6 +153,18 @@ export type Interface =
       kind: 'resource';
     };
 export type MethodMode = 'query' | 'mutation' | 'subscription';
+/**
+ * Resource captures enter checked service slots; continuations remain in the
+ * original presentation owner and only decide admission of query feedback.
+ */
+export type CaptureOutput =
+  | {
+      resource: ResourceType;
+      kind: 'resource';
+    }
+  | {
+      kind: 'continuation';
+    };
 export type Availability = 'required' | 'optional';
 export type Implementation =
   | {
@@ -249,6 +261,9 @@ export type ActionOutcome =
   | {
       reason: string;
       status: 'failed';
+    }
+  | {
+      status: 'stale';
     }
   | {
       reply: OperationReply;
@@ -1098,7 +1113,7 @@ export interface ResourceType {
 }
 export interface Capture {
   input: unknown;
-  resource: ResourceType;
+  output: CaptureOutput;
 }
 export interface PackageDeclaration {
   entries?: {
@@ -1199,6 +1214,7 @@ export interface Action {
   resources: {
     [k: string]: CaptureSource | undefined;
   };
+  continuations?: CaptureSource[];
 }
 export interface CaptureSource {
   child: string;

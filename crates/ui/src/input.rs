@@ -95,7 +95,9 @@ fn contract(name: &str) -> Contract {
                 Capture {
                     input: serde_json::to_value(schemars::schema_for!(EditorCapture))
                         .expect("input capture"),
-                    resource: text_resource_type(),
+                    output: maka_plugin_core::contract::CaptureOutput::Resource {
+                        resource: text_resource_type(),
+                    },
                 },
             )]),
         },

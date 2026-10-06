@@ -147,7 +147,8 @@ fn finish(
     loop {
         let (id, completion) = run(f, task);
         let next = app.finish_task(id, completion).unwrap();
-        app.deliver_action_results(root).unwrap();
+        app.deliver_action_results(root, |_, _, _| Ok(false))
+            .unwrap();
         match next {
             Some(value) => task = value,
             None => break,
@@ -204,10 +205,18 @@ fn feedback_backpressure_and_changed_request_do_not_redirect_old_items_or_termin
     });
     // Replace after item receipt but before its feedback callback runs.
     dispatch(&mut app, &root, "replace");
-    assert_eq!(app.deliver_action_results(&root).unwrap(), 0);
+    assert_eq!(
+        app.deliver_action_results(&root, |_, _, _| Ok(false))
+            .unwrap(),
+        0
+    );
     let old = run(&f, ActionTask { id, future });
     assert!(app.finish_task(old.0, old.1).unwrap().is_none());
-    assert_eq!(app.deliver_action_results(&root).unwrap(), 0);
+    assert_eq!(
+        app.deliver_action_results(&root, |_, _, _| Ok(false))
+            .unwrap(),
+        0
+    );
     assert_eq!(app.frame(&root).unwrap().state["seen"], json!([]));
     let next = start(&mut app, &root);
     assert_ne!(next.id, id);
@@ -235,7 +244,11 @@ fn healthy_rollback_keeps_original_demand_and_failed_realm_cancels_waiting_ack()
         .is_err()
     );
     assert!(!app.is_retiring(&root));
-    assert_eq!(app.deliver_action_results(&root).unwrap(), 1);
+    assert_eq!(
+        app.deliver_action_results(&root, |_, _, _| Ok(false))
+            .unwrap(),
+        1
+    );
     let (id, item) = run(&f, successor);
     let successor = app.finish_task(id, item).unwrap().unwrap();
     assert_eq!(
@@ -258,7 +271,8 @@ fn healthy_rollback_keeps_original_demand_and_failed_realm_cancels_waiting_ack()
     let (id, completion) = run(&f, successor);
     assert!(app.finish_task(id, completion).unwrap().is_none());
     assert_eq!(app.accepted_action_count(), 0);
-    app.deliver_action_results(&root).unwrap();
+    app.deliver_action_results(&root, |_, _, _| Ok(false))
+        .unwrap();
     stop(&f, app, &root, &mut connections);
 }
 
@@ -277,7 +291,11 @@ fn retired_surface_cancels_stream_but_work_requires_original_host_completion() {
     assert!(!app.can_shutdown());
     let (id, completion) = run(&f, successor);
     assert!(app.finish_task(id, completion).unwrap().is_none());
-    assert_eq!(app.deliver_action_results(&root).unwrap(), 0);
+    assert_eq!(
+        app.deliver_action_results(&root, |_, _, _| Ok(false))
+            .unwrap(),
+        0
+    );
     assert!(app.can_shutdown());
     app.shutdown().unwrap();
     drop(app);

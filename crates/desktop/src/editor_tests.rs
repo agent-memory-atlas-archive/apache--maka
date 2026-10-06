@@ -17,6 +17,8 @@
  * under the License.
  */
 
+mod continuations;
+
 use super::*;
 use gpui_kit::{AnyWindowHandle, Entity, EntityInputHandler};
 use maka_ui::editor::{

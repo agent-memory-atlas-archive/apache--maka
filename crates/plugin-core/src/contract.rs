@@ -82,7 +82,15 @@ pub struct ResourceType {
 #[serde(deny_unknown_fields)]
 pub struct Capture {
     pub input: Value,
-    pub resource: ResourceType,
+    pub output: CaptureOutput,
+}
+/// Resource captures enter checked service slots; continuations remain in the
+/// original presentation owner and only decide admission of query feedback.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CaptureOutput {
+    Resource { resource: ResourceType },
+    Continuation,
 }
 impl ResourceType {
     pub fn validate(&self) -> Result<(), Error> {
@@ -162,7 +170,9 @@ impl Contract {
                 for (name, capture) in captures {
                     crate::name(name)?;
                     crate::schema(&capture.input)?;
-                    capture.resource.validate()?;
+                    if let CaptureOutput::Resource { resource } = &capture.output {
+                        resource.validate()?;
+                    }
                 }
                 for (name, schema) in events {
                     crate::name(name)?;

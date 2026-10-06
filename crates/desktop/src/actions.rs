@@ -177,7 +177,13 @@ pub(super) fn pump(
     // entity borrows finish. Native input cannot address these internal keys.
     let app = application.clone();
     window.defer(cx, move |window, cx| {
-        let result = app.borrow_mut().deliver_action_results(&root);
+        let result =
+            match surface.update(cx, |surface, cx| surface.deliver_action_results(window, cx)) {
+                Ok(result) => result,
+                Err(_) => app
+                    .borrow_mut()
+                    .deliver_action_results(&root, |_, _, _| Ok(false)),
+            };
         match result {
             Ok(0) => {}
             result => {
@@ -217,18 +223,24 @@ fn execute(
                         None
                     }
                 };
-                if let Err(error) = application.borrow_mut().deliver_action_results(&root) {
-                    eprintln!("action result rejected: {error}");
-                }
-                let _ = surface.update(cx, |_, cx| cx.notify());
-                let _ = window.update(cx, |_, window, cx| {
+                let delivered = window.update(cx, |_, window, cx| {
                     let _ = surface.update(cx, |surface, cx| {
+                        if let Err(error) = surface.deliver_action_results(window, cx) {
+                            eprintln!("action result rejected: {error}");
+                        }
                         if let Err(error) = surface.sync_native(window, cx) {
                             eprintln!("native action completion failed: {error}");
                         }
                         cx.notify();
                     });
                 });
+                if delivered.is_err()
+                    && let Err(error) = application
+                        .borrow_mut()
+                        .deliver_action_results(&root, |_, _, _| Ok(false))
+                {
+                    eprintln!("action result rejected: {error}");
+                }
                 quit_when_drained(&application, cx);
                 next
             });

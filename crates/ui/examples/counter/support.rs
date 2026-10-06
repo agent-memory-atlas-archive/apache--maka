@@ -650,6 +650,68 @@ pub(crate) fn resource_fixture() -> (Input, Vec<Package>) {
     (input, packages)
 }
 
+/// Real wrapper/native capture declarations shared by continuation regressions.
+// The example and other fixture consumers select different subsets.
+#[allow(dead_code)]
+pub(crate) fn continuation_fixture() -> (Input, Vec<Package>, maka_plugin_core::contract::Contract)
+{
+    let (mut input, mut packages) = resource_fixture();
+    let mut contract = maka_ui::textarea::textarea_contract();
+    let original = serde_json::to_string(&contract).unwrap();
+    let maka_plugin_core::contract::Interface::Component { captures, .. } = &mut contract.interface
+    else {
+        unreachable!()
+    };
+    captures.insert(
+        "reading".into(),
+        maka_plugin_core::contract::Capture {
+            input: json!({"type":"null"}),
+            output: maka_plugin_core::contract::CaptureOutput::Continuation,
+        },
+    );
+    let changed = serde_json::to_string(&contract).unwrap();
+    for package in &mut packages {
+        let mut declaration = package.manifest().application.clone().unwrap();
+        let mut updated = false;
+        for entry in declaration.entries.values_mut() {
+            for import in entry.imports.values_mut() {
+                if import.contract.name == contract.name {
+                    import.contract = contract.clone();
+                    updated = true;
+                }
+            }
+            for export in entry.exports.values_mut() {
+                if export.contract.name == contract.name {
+                    export.contract = contract.clone();
+                    updated = true;
+                }
+            }
+        }
+        let source = package.file("index.mjs").map(|bytes| {
+                let mut source = std::str::from_utf8(bytes).unwrap().replace(&original, &changed);
+                if package.manifest().id == "dynamic.app" {
+                    updated = true;
+                    source = source.replace("out.actions.push({key:'read_done'", "out.actions.push({continuations:[{child:'editor',method:'reading',input:null}],key:event.event?.key??'read_done'")
+                        .replace("if(event.kind==='action')next.outcome=event.event;", "if(event.kind==='action'){next.outcome=event.event;next.results=[...(state.results??[]),{key:event.key,outcome:event.event}];}")
+                        .replace("else if(event.key==='remove')next.show=false;", "else if(event.key==='remove')next.show=false;else if(event.key==='restore')next.show=true;")
+                        .replace("{kind:'button',key:'remove',label:'Remove composer'}", "{kind:'button',key:'remove',label:'Remove composer'},{kind:'button',key:'restore',label:'Restore composer'}");
+                }
+                source
+            });
+        if updated {
+            let old = package.application_ref();
+            let replacement = self::package(&package.manifest().id, declaration, source);
+            for instance in input.instances.values_mut() {
+                if instance.package == old.clone().into() {
+                    instance.package = replacement.application_ref().into();
+                }
+            }
+            *package = replacement;
+        }
+    }
+    (input, packages, contract)
+}
+
 /// One immutable package revision provides distinct desktop and terminal entries.
 // Shared fixture modules intentionally select different subsets in each binary.
 #[allow(dead_code)]

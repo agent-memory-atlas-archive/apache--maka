@@ -35,6 +35,10 @@ JavaScript 组件 entry 另声明名义 `scene: { name, version }`，由执行�
 检查本地 presenter 是否支持；内核只校验元数据，不解释语言。该本地要求与公开组件
 契约分离，TUI/Desktop variant 可以不同。原生、纯 Value/Service 与 Host entry 不声明 scene。
 
+Component capture 的 output 区分业务 `resource` 与呈现 `continuation`，两者保留同一套
+输入 schema 和显式 forwarding 路径。Continuation 是本地原生观察，不进入远端服务附件，
+也不授予权限；执行适配器在发布 Query 反馈前检查它。核心只声明结构，不持有原生 UI 状态。
+
 `runtime::Runtime<T>` 管理激活和注册 epoch、原子检查实际导出批次、撤销消费者，
 并跟踪已接受执行及资源清理。执行适配器负责运行、取消和关闭确认；核心没有执行器，
 不要求原生值实现 `Send`/`Sync`。初始化中的消费者可以调用就绪依赖，然后才发布自身导出。

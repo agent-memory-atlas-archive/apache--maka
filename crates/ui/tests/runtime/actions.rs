@@ -80,7 +80,23 @@ fn fixture(
     NativeRegistry<()>,
     Rc<Cell<usize>>,
 ) {
-    let (input, packages) = support::resource_fixture();
+    fixture_with_continuation(large, false)
+}
+fn fixture_with_continuation(
+    large: bool,
+    guarded: bool,
+) -> (
+    Input,
+    Vec<maka_plugins::package::Package>,
+    NativeRegistry<()>,
+    Rc<Cell<usize>>,
+) {
+    let (input, packages, contract) = if guarded {
+        support::continuation_fixture()
+    } else {
+        let (input, packages) = support::resource_fixture();
+        (input, packages, maka_ui::textarea::textarea_contract())
+    };
     let calls = Rc::new(Cell::new(0));
     let observed = calls.clone();
     let mut native = crate::support::scene::registry(PresentationTarget::Desktop);
@@ -89,7 +105,7 @@ fn fixture(
             Ok(BTreeMap::from([(
                 "Textarea".into(),
                 NativeExport {
-                    contract: maka_ui::textarea::textarea_contract(),
+                    contract: contract.clone(),
                     value: NativeCapability::Component(Rc::new(Leaf {
                         captures: observed.clone(),
                         large,
@@ -122,8 +138,13 @@ fn capture(app: &mut Application, root: &Mount, text: &str) -> Arc<dyn ReadResou
     let result = snapshot.clone();
     app.capture_actions(root, |target| {
         assert_eq!(target.method(), "snapshot");
-        assert_eq!(target.resource_type(), &maka_ui::text::text_resource_type());
-        Ok(snapshot.clone())
+        assert_eq!(
+            target.output(),
+            &maka_plugin_core::contract::CaptureOutput::Resource {
+                resource: maka_ui::text::text_resource_type()
+            }
+        );
+        Ok(NativeCapture::Resource(snapshot.clone()))
     })
     .unwrap();
     result
@@ -151,7 +172,7 @@ fn mounted_wrapper_capture_and_typed_resource_action_keep_exact_root_and_interna
     assert_eq!(calls.get(), 1);
     app.capture_actions(&a, |target| {
         assert_eq!(target.mount(), &inner);
-        Ok(Arc::new(Text("Start".into())))
+        Ok(NativeCapture::Resource(Arc::new(Text("Start".into()))))
     })
     .unwrap();
     assert!(app.start_task(&b).unwrap().is_none());
@@ -162,9 +183,15 @@ fn mounted_wrapper_capture_and_typed_resource_action_keep_exact_root_and_interna
     };
     assert_eq!(completion.result.as_ref().unwrap()["text"], "Start");
     app.finish_task(accepted.id, done).unwrap();
-    assert_eq!(app.deliver_action_results(&b).unwrap(), 0);
+    assert_eq!(
+        app.deliver_action_results(&b, |_, _, _| Ok(false)).unwrap(),
+        0
+    );
     assert_eq!(app.frame(&b).unwrap().revision, 0);
-    assert_eq!(app.deliver_action_results(&a).unwrap(), 1);
+    assert_eq!(
+        app.deliver_action_results(&a, |_, _, _| Ok(false)).unwrap(),
+        1
+    );
     assert_eq!(
         app.frame(&a).unwrap().state["outcome"]["value"]["text"],
         "Start"
@@ -242,7 +269,8 @@ fn capture_failure_is_an_owned_not_accepted_outcome_after_scene_commit() {
     })
     .unwrap();
     assert!(app.start_task(&root).unwrap().is_none());
-    app.deliver_action_results(&root).unwrap();
+    app.deliver_action_results(&root, |_, _, _| Ok(false))
+        .unwrap();
     assert_eq!(
         app.frame(&root).unwrap().state["outcome"]["status"],
         "not_accepted"
@@ -278,7 +306,8 @@ fn source_removal_before_admission_cancels_but_accepted_snapshot_outlives_remove
         } else {
             assert!(app.start_task(&root).unwrap().is_none());
         }
-        app.deliver_action_results(&root).unwrap();
+        app.deliver_action_results(&root, |_, _, _| Ok(false))
+            .unwrap();
         assert_eq!(
             app.frame(&root).unwrap().state["outcome"]["status"],
             if accepted_first {
@@ -306,7 +335,7 @@ fn specific_consumer_mount_is_checked_even_when_same_provider_has_another_live_r
     let work = app.start_task(&b).unwrap().unwrap();
     let done = timer.block_on(work.future);
     app.finish_task(work.id, done).unwrap();
-    app.deliver_action_results(&b).unwrap();
+    app.deliver_action_results(&b, |_, _, _| Ok(false)).unwrap();
     close_all(&mut app, &[a, b]);
 }
 #[test]
@@ -374,7 +403,10 @@ fn failed_or_lost_result_handlers_do_not_hold_accepted_work_or_healthy_pending_m
         let done = timer.block_on(work.future);
         app.finish_task(work.id, done).unwrap();
         assert_eq!(app.accepted_action_count(), 0);
-        assert!(app.deliver_action_results(&root).is_err());
+        assert!(
+            app.deliver_action_results(&root, |_, _, _| Ok(false))
+                .is_err()
+        );
         assert!(app.is_retiring(&root));
         close_all(&mut app, &[root]);
     }
@@ -491,7 +523,11 @@ fn cleanup_failure_preserves_work_and_input_until_explicit_recovery_without_repl
     assert!(app.finish_task(work.id, done).is_err());
     assert_eq!(app.accepted_action_count(), 1);
     assert!(weak.upgrade().is_some());
-    assert_eq!(app.deliver_action_results(&root).unwrap(), 0);
+    assert_eq!(
+        app.deliver_action_results(&root, |_, _, _| Ok(false))
+            .unwrap(),
+        0
+    );
     assert!(
         app.is_retiring(&root),
         "cleanup failure retires service consumers"
@@ -524,7 +560,10 @@ fn oversized_feedback_envelope_delivers_failure_after_independent_settlement() {
     let done = timer.block_on(work.future);
     app.finish_task(work.id, done).unwrap();
     assert_eq!(app.accepted_action_count(), 0);
-    assert_eq!(app.deliver_action_results(&a).unwrap(), 1);
+    assert_eq!(
+        app.deliver_action_results(&a, |_, _, _| Ok(false)).unwrap(),
+        1
+    );
     assert!(!app.is_retiring(&a));
     assert_eq!(app.frame(&a).unwrap().state["outcome"]["status"], "failed");
     assert!(
@@ -587,6 +626,7 @@ impl NativeComponent<()> for ExactFeedback {
         .output(vec![]);
         if initial {
             output.actions.push(Action {
+                continuations: Vec::new(),
                 key: "read".into(),
                 binding: "reader".into(),
                 member: 0,
@@ -738,7 +778,11 @@ fn actual_native_query_preserves_exact_integer_while_javascript_fails_without_re
         let task = app.start_task(&mount).unwrap().unwrap();
         let completion = timer.block_on(task.future);
         assert!(app.finish_task(task.id, completion).unwrap().is_none());
-        assert_eq!(app.deliver_action_results(&mount).unwrap(), 1);
+        assert_eq!(
+            app.deliver_action_results(&mount, |_, _, _| Ok(false))
+                .unwrap(),
+            1
+        );
         assert!(!app.is_retiring(&mount));
         assert_eq!(app.accepted_action_count(), 0);
         let state = &app.frame(&mount).unwrap().state;
@@ -764,11 +808,14 @@ fn actual_snapshot_byte_budget_rejects_before_business_admission() {
     let (mut app, root, _) = application(false, &timer);
     app.dispatch(&root, 0, "read", Value::Null).unwrap();
     let bytes = "x".repeat(64 * 1024 * 1024 + 1);
-    app.capture_actions(&root, |_| Ok(Arc::new(Text(bytes.clone()))))
-        .unwrap();
+    app.capture_actions(&root, |_| {
+        Ok(NativeCapture::Resource(Arc::new(Text(bytes.clone()))))
+    })
+    .unwrap();
     assert!(app.start_task(&root).unwrap().is_none());
     assert_eq!(app.accepted_action_count(), 0);
-    app.deliver_action_results(&root).unwrap();
+    app.deliver_action_results(&root, |_, _, _| Ok(false))
+        .unwrap();
     assert_eq!(
         app.frame(&root).unwrap().state["outcome"]["status"],
         "not_accepted"
@@ -1010,4 +1057,286 @@ fn delayed_disconnect_token_cannot_retire_same_target_in_a_replacement_ui_kernel
     assert!(replacement.is_retiring(&root));
     close_all(&mut replacement, &[root]);
     close_all(&mut old, &[old_root]);
+}
+
+fn guarded_application(timer: &tokio::runtime::Runtime) -> (Application, Mount) {
+    guarded_application_with(timer, |source| source)
+}
+fn guarded_application_with(
+    timer: &tokio::runtime::Runtime,
+    change: impl FnOnce(String) -> String,
+) -> (Application, Mount) {
+    let (mut input, mut packages, native, _) = fixture_with_continuation(false, true);
+    let index = packages
+        .iter()
+        .position(|p| p.manifest().id == "dynamic.app")
+        .unwrap();
+    let old = packages.remove(index);
+    let source = change(
+        std::str::from_utf8(old.file("index.mjs").unwrap())
+            .unwrap()
+            .to_owned(),
+    );
+    let package = support::package(
+        "dynamic.app",
+        old.manifest().application.clone().unwrap(),
+        Some(source),
+    );
+    input.instances.get_mut("app").unwrap().package = package.application_ref().into();
+    packages.push(package);
+    let mut app = Application::new(
+        &input,
+        packages,
+        timer.handle().clone(),
+        Default::default(),
+        native,
+        Default::default(),
+    )
+    .unwrap();
+    let root = app.mount_launch(json!({})).unwrap();
+    (app, root)
+}
+fn capture_guarded(app: &mut Application, root: &Mount, bytes: usize) {
+    app.capture_actions(root, |target| match target.method() {
+        "snapshot" => Ok(NativeCapture::Resource(Arc::new(Text("Start".into())))),
+        "reading" => Ok(NativeCapture::Continuation(ContinuationWitness::new(
+            7u64, bytes,
+        ))),
+        _ => unreachable!(),
+    })
+    .unwrap();
+}
+fn guarded_request(app: &mut Application, root: &Mount, key: &str, bytes: usize) -> ActionTask {
+    let revision = app.frame(root).unwrap().revision;
+    app.dispatch(root, revision, "read", json!({"key":key}))
+        .unwrap();
+    capture_guarded(app, root, bytes);
+    app.start_task(root).unwrap().unwrap()
+}
+#[test]
+fn continuation_checks_precede_publication_and_preserve_business_completion() {
+    let timer = timer();
+    let (mut app, root) = guarded_application(&timer);
+    let original = app.child_mount(&root, "editor").unwrap().clone();
+    let task = guarded_request(&mut app, &root, "read_done", 8);
+    let done = timer.block_on(task.future);
+    let TaskCompletion::Query(ref completion) = done else {
+        panic!("query")
+    };
+    assert_eq!(completion.result.as_ref().unwrap()["text"], "Start");
+    app.finish_task(task.id, done).unwrap();
+    assert_eq!(app.accepted_action_count(), 0);
+    assert!(app.frame(&root).unwrap().state.get("outcome").is_none());
+    let checked = Cell::new(0);
+    assert_eq!(
+        app.deliver_action_results(&root, |target, _, witness| {
+            assert_eq!(target.method(), "reading");
+            assert_eq!(witness.downcast_ref::<u64>(), Some(&7));
+            checked.set(checked.get() + 1);
+            Ok(false)
+        })
+        .unwrap(),
+        1
+    );
+    assert_eq!(checked.get(), 1);
+    assert_eq!(
+        app.frame(&root).unwrap().state["outcome"]["status"],
+        "stale"
+    );
+    assert_eq!(app.child_mount(&root, "editor").unwrap(), &original);
+    assert!(!app.is_retiring(&root));
+    close_all(&mut app, &[root]);
+}
+#[test]
+fn action_keys_correlate_out_of_order_stale_feedback_and_remain_reserved_until_delivery() {
+    let timer = timer();
+    let (mut app, root) = guarded_application(&timer);
+    let a = guarded_request(&mut app, &root, "A", 8);
+    for _ in 0..2 {
+        let revision = app.frame(&root).unwrap().revision;
+        assert!(
+            app.dispatch(&root, revision, "read", json!({"key":"A"}))
+                .is_err()
+        );
+        assert_eq!(app.frame(&root).unwrap().revision, revision);
+        assert!(!app.is_retiring(&root));
+    }
+    let b = guarded_request(&mut app, &root, "B", 8);
+    app.finish_task(b.id, timer.block_on(b.future)).unwrap();
+    let revision = app.frame(&root).unwrap().revision;
+    assert!(
+        app.dispatch(&root, revision, "read", json!({"key":"B"}))
+            .is_err()
+    );
+    app.deliver_action_results(&root, |_, _, _| Ok(true))
+        .unwrap();
+    app.finish_task(a.id, timer.block_on(a.future)).unwrap();
+    app.deliver_action_results(&root, |_, _, _| Ok(false))
+        .unwrap();
+    let results = &app.frame(&root).unwrap().state["results"];
+    assert_eq!(results[0]["key"], "B");
+    assert_eq!(results[0]["outcome"]["status"], "succeeded");
+    assert_eq!(results[1]["key"], "A");
+    assert_eq!(results[1]["outcome"]["status"], "stale");
+    let next = guarded_request(&mut app, &root, "A", 8);
+    app.finish_task(next.id, timer.block_on(next.future))
+        .unwrap();
+    app.deliver_action_results(&root, |_, _, _| Ok(true))
+        .unwrap();
+    close_all(&mut app, &[root]);
+}
+#[test]
+fn original_continuation_edges_cannot_revive_after_source_replacement() {
+    let timer = timer();
+    for completed_first in [false, true] {
+        let (mut app, root) = guarded_application(&timer);
+        let original = app.child_mount(&root, "editor").unwrap().clone();
+        let task = guarded_request(&mut app, &root, "read_done", 8);
+        let mut done = Some(timer.block_on(task.future));
+        if completed_first {
+            app.finish_task(task.id, done.take().unwrap()).unwrap();
+        }
+        let revision = app.frame(&root).unwrap().revision;
+        app.dispatch(&root, revision, "remove", Value::Null)
+            .unwrap();
+        app.dispatch(&root, revision + 1, "restore", Value::Null)
+            .unwrap();
+        assert_ne!(app.child_mount(&root, "editor").unwrap(), &original);
+        if !completed_first {
+            app.finish_task(task.id, done.take().unwrap()).unwrap();
+        }
+        app.deliver_action_results(&root, |_, _, _| {
+            panic!("broken original edge cannot reach native validation")
+        })
+        .unwrap();
+        assert_eq!(
+            app.frame(&root).unwrap().state["outcome"]["status"],
+            "stale"
+        );
+        assert!(!app.is_retiring(&root));
+        close_all(&mut app, &[root]);
+    }
+}
+#[test]
+fn stale_continuation_does_not_confirm_failed_executor_cleanup_or_revive_consumer() {
+    let timer = timer();
+    let (mut app, root) = guarded_application(&timer);
+    let task = guarded_request(&mut app, &root, "read_done", 8);
+    let TaskCompletion::Query(mut done) = timer.block_on(task.future) else {
+        panic!("query")
+    };
+    assert_eq!(done.result.as_ref().unwrap()["text"], "Start");
+    done.cleanup = Err("actual executor close failed".into());
+    assert!(
+        app.finish_task(task.id, TaskCompletion::Query(done))
+            .is_err()
+    );
+    assert_eq!(app.failed_action_ids(), vec![task.id]);
+    assert!(app.is_retiring(&root));
+    assert_eq!(
+        app.deliver_action_results(&root, |_, _, _| panic!("retired consumer is not admitted"))
+            .unwrap(),
+        0
+    );
+    assert_eq!(app.failed_action_ids(), vec![task.id]);
+    assert_eq!(app.accepted_action_count(), 1);
+    app.complete_action_cleanup(task.id, Ok(())).unwrap();
+    assert_eq!(app.accepted_action_count(), 0);
+    close_all(&mut app, &[root]);
+}
+
+#[test]
+fn completed_undelivered_witnesses_count_toward_the_same_capture_budget() {
+    let timer = timer();
+    let (mut app, root) = guarded_application(&timer);
+    let task = guarded_request(&mut app, &root, "A", 32 * 1024 * 1024);
+    app.finish_task(task.id, timer.block_on(task.future))
+        .unwrap();
+    let revision = app.frame(&root).unwrap().revision;
+    app.dispatch(&root, revision, "read", json!({"key":"B"}))
+        .unwrap();
+    app.capture_actions(&root, |target| match target.method() {
+        "snapshot" => Ok(NativeCapture::Resource(Arc::new(Text("Start".into())))),
+        "reading" => Ok(NativeCapture::Continuation(ContinuationWitness::new(
+            7u64,
+            32 * 1024 * 1024,
+        ))),
+        _ => unreachable!(),
+    })
+    .unwrap();
+    assert!(app.start_task(&root).unwrap().is_none());
+    app.deliver_action_results(&root, |_, _, _| Ok(true))
+        .unwrap();
+    let results = &app.frame(&root).unwrap().state["results"];
+    assert_eq!(results[0]["outcome"]["status"], "succeeded");
+    assert_eq!(results[1]["outcome"]["status"], "not_accepted");
+    assert!(
+        results[1]["outcome"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("64 MiB")
+    );
+    let next = guarded_request(&mut app, &root, "B", 32 * 1024 * 1024);
+    app.finish_task(next.id, timer.block_on(next.future))
+        .unwrap();
+    app.deliver_action_results(&root, |_, _, _| Ok(true))
+        .unwrap();
+    close_all(&mut app, &[root]);
+}
+
+#[test]
+fn duplicate_action_keys_in_one_callback_do_not_publish_or_start_capture() {
+    let timer = timer();
+    let (mut app, root) = guarded_application_with(&timer, |source| {
+        source.replace(
+            "return out;",
+            "out.actions.push({...out.actions[0]});return out;",
+        )
+    });
+    let before = app.frame(&root).unwrap().revision;
+    assert!(
+        app.dispatch(&root, before, "read", Value::Null)
+            .unwrap_err()
+            .to_string()
+            .contains("feedback key already in use")
+    );
+    assert_eq!(app.frame(&root).unwrap().revision, before);
+    assert_eq!(app.pending_action_count(), 0);
+    app.capture_actions(&root, |_| panic!("no capture admitted"))
+        .unwrap();
+    assert!(!app.is_retiring(&root));
+    close_all(&mut app, &[root]);
+}
+#[test]
+fn feedback_can_atomically_reissue_its_original_key() {
+    let timer = timer();
+    let (mut app, root) = guarded_application_with(&timer, |source| {
+        source.replace("if(event.kind==='action'){", "if(event.kind==='action'&&!state.reissued){next.reissued=true;const out=frame(next);out.actions.push({key:event.key,binding:'reader',member:0,method:'read',input:{start:0,end:5},resources:{text:{child:'editor',method:'snapshot',input:{kind:'current'}}},continuations:[{child:'editor',method:'reading',input:null}]});return out;}if(event.kind==='action'){")
+    });
+    let task = guarded_request(&mut app, &root, "same_key", 8);
+    app.finish_task(task.id, timer.block_on(task.future))
+        .unwrap();
+    assert_eq!(
+        app.deliver_action_results(&root, |_, _, _| Ok(true))
+            .unwrap(),
+        1
+    );
+    assert_eq!(app.pending_action_count(), 1);
+    assert_eq!(app.frame(&root).unwrap().state["reissued"], true);
+    capture_guarded(&mut app, &root, 8);
+    let next = app.start_task(&root).unwrap().unwrap();
+    assert_ne!(task.id, next.id);
+    app.finish_task(next.id, timer.block_on(next.future))
+        .unwrap();
+    assert_eq!(
+        app.deliver_action_results(&root, |_, _, _| Ok(true))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        app.frame(&root).unwrap().state["results"][0]["key"],
+        "same_key"
+    );
+    assert_eq!(app.pending_action_count(), 0);
+    close_all(&mut app, &[root]);
 }

@@ -35,6 +35,10 @@ pub(super) struct Owner {
     presented: bool,
     pending: Option<NativeInput>,
 }
+struct OwnerWitness {
+    identity: std::rc::Weak<()>,
+    value: maka_ui::actions::ContinuationWitness,
+}
 #[derive(Default)]
 pub(super) struct Resources {
     pub owners: BTreeMap<Uuid, Owner>,
@@ -235,18 +239,69 @@ impl Resources {
     pub fn capture(
         &mut self,
         target: &maka_ui::actions::CaptureTarget,
-    ) -> maka_ui::Result<std::sync::Arc<dyn maka_plugins::call::ReadResource>> {
+    ) -> maka_ui::Result<maka_ui::actions::NativeCapture> {
         let owner = self
             .owners
             .get(&target.mount().id())
             .filter(|owner| owner.live)
             .ok_or_else(|| Error::Invalid("terminal native owner unavailable".into()))?;
         match catch_unwind(AssertUnwindSafe(|| {
-            owner.recipe.capture(owner.state.as_ref(), target)
+            use maka_ui::actions::{ContinuationWitness, NativeCapture};
+            match target.output() {
+                maka_plugin_core::contract::CaptureOutput::Resource { .. } => owner
+                    .recipe
+                    .capture(owner.state.as_ref(), target)
+                    .map(NativeCapture::Resource),
+                maka_plugin_core::contract::CaptureOutput::Continuation => {
+                    let value = owner
+                        .recipe
+                        .capture_continuation(owner.state.as_ref(), target)?;
+                    let bytes = value
+                        .bytes()
+                        .checked_add(std::mem::size_of::<OwnerWitness>())
+                        .ok_or_else(|| Error::Invalid("continuation byte overflow".into()))?;
+                    Ok(NativeCapture::Continuation(ContinuationWitness::new(
+                        OwnerWitness {
+                            identity: Rc::downgrade(&owner.identity),
+                            value,
+                        },
+                        bytes,
+                    )))
+                }
+            }
         })) {
             Ok(result) => result,
             Err(_) => {
                 let error = "terminal native capture cleanup unconfirmed".to_owned();
+                self.failed.insert(target.mount().id(), error.clone());
+                Err(Error::Invalid(error))
+            }
+        }
+    }
+    pub fn validate_continuation(
+        &mut self,
+        target: &maka_ui::actions::CaptureTarget,
+        recipe: &dyn Widget,
+        witness: &maka_ui::actions::ContinuationWitness,
+    ) -> maka_ui::Result<bool> {
+        let Some(witness) = witness.downcast_ref::<OwnerWitness>() else {
+            return Ok(false);
+        };
+        let Some(identity) = witness.identity.upgrade() else {
+            return Ok(false);
+        };
+        let Some(owner) = self.owners.get_mut(&target.mount().id()).filter(|owner| {
+            owner.live && Rc::ptr_eq(&owner.identity, &identity) && owner.kind == recipe.type_id()
+        }) else {
+            return Ok(false);
+        };
+        match catch_unwind(AssertUnwindSafe(|| {
+            recipe.validate_continuation(owner.state.as_ref(), target, &witness.value)
+        })) {
+            Ok(result) => result,
+            Err(_) => {
+                owner.live = false;
+                let error = "terminal native continuation cleanup unconfirmed".to_owned();
                 self.failed.insert(target.mount().id(), error.clone());
                 Err(Error::Invalid(error))
             }

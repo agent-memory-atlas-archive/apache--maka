@@ -165,6 +165,20 @@ impl Surface {
         }
         Ok(())
     }
+    fn deliver_action_results(
+        &self,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) -> maka_ui::Result<usize> {
+        self.application.borrow_mut().deliver_action_results(
+            &self.mount,
+            |target, recipe, witness| {
+                self.resources
+                    .borrow()
+                    .validate_continuation(target, recipe, witness, window, cx)
+            },
+        )
+    }
     fn sync_native(
         &self,
         window: &mut gpui_kit::Window,
@@ -177,15 +191,7 @@ impl Surface {
         self.application
             .borrow_mut()
             .capture_actions(&self.mount, |target| {
-                let mut resources = self.resources.borrow_mut();
-                let owner = resources
-                    .owners
-                    .get_mut(&target.mount().id().to_string())
-                    .ok_or_else(|| {
-                        maka_ui::Error::Invalid("native capture owner unavailable".into())
-                    })?;
-                let recipe = owner.recipe.clone();
-                recipe.capture(owner.state.as_mut(), target, window, cx)
+                self.resources.borrow_mut().capture(target, window, cx)
             })?;
         let application = self.application.borrow();
         let mut visible_mounts = std::collections::BTreeSet::from([self.mount.id()]);

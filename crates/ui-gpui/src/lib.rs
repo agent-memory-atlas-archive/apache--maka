@@ -59,6 +59,29 @@ pub trait Widget: Any {
         Err(maka_ui::Error::Invalid("widget capture unavailable".into()))
     }
     fn commit(&self, _: &mut dyn Any, _: &mut Window, _: &mut App) {}
+    fn capture_continuation(
+        &self,
+        _: &dyn Any,
+        _: &maka_ui::actions::CaptureTarget,
+        _: &mut Window,
+        _: &mut App,
+    ) -> maka_ui::Result<maka_ui::actions::ContinuationWitness> {
+        Err(maka_ui::Error::Invalid(
+            "widget continuation unavailable".into(),
+        ))
+    }
+    /// Read native evidence only. This runs before the feedback transaction;
+    /// it must not dispatch input or publish observations from inside the check.
+    fn validate_continuation(
+        &self,
+        _: &dyn Any,
+        _: &maka_ui::actions::CaptureTarget,
+        _: &maka_ui::actions::ContinuationWitness,
+        _: &mut Window,
+        _: &mut App,
+    ) -> maka_ui::Result<bool> {
+        Ok(false)
+    }
     /// Reversible mechanical visibility. This does not retire the owner, revoke
     /// capture, or stop native observation and command receipt settlement.
     fn presentation(&self, _: &mut dyn Any, _: bool, _: &mut Window, _: &mut App) {}

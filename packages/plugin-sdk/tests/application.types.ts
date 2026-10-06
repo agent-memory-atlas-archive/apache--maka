@@ -36,6 +36,7 @@ import type {
   CredentialMutationResult,
   CatalogMutationResult,
   Action,
+  Capture,
   ActionOutcome,
   CallerHistoryPage,
   CallerIntent,
@@ -438,3 +439,28 @@ const removedHistoryPosition = {
   cursor: { sequence: 4096, offset: 0 },
 } satisfies HistoryPosition;
 void [historyWindow, missingHistoryBoundary, removedHistoryPosition];
+
+const nativeContinuation = {
+  input: { type: 'null' },
+  output: { kind: 'continuation' },
+} satisfies Capture;
+const capturedResource = {
+  input: {},
+  output: { kind: 'resource', resource: { name: 'text', version: 1 } },
+} satisfies Capture;
+const removedCapture: Capture = {
+  input: {},
+  // @ts-expect-error Removed resource-only capture declaration has no output kind.
+  resource: { name: 'text', version: 1 },
+};
+const stalePresentation = { status: 'stale' } satisfies ActionOutcome;
+const guardedQuery = {
+  key: 'history-1',
+  binding: 'history',
+  member: 0,
+  method: 'read',
+  input: null,
+  resources: {},
+  continuations: [{ child: 'reader', method: 'reading', input: null }],
+} satisfies Action;
+void [nativeContinuation, capturedResource, removedCapture, stalePresentation, guardedQuery];

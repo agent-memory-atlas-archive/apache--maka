@@ -97,6 +97,23 @@ the next is consumed. Replacement and retirement discard old feedback while the
 original executor still completes actual cleanup. This supports both Desktop and TUI;
 authenticated cross-process transport remains unfinished.
 
+One-shot `Action.key` is the feedback correlation within its original component Mount.
+Do not reuse it while queued, preparing, executing, or waiting for feedback. Overlapping
+requests use different keys. A feedback transaction may atomically issue the next request
+with its own key. Pending cleanup retains the original executor independently; freeing a
+key does not restore revoked admission. Action keys cannot also name subscription demand.
+
+Component captures declare `output: { kind: 'resource', resource: { name, version } }`
+or `output: { kind: 'continuation' }`. Resource sources fill the service's exact declared
+slots. Optional `Action.continuations: CaptureSource[]` is available only to Queries.
+The same checked child/forwarding path terminates at a native capture; JavaScript cannot
+supply native evidence. Continuation snapshots stay in the original foreground request,
+including after execution settles. Before invoking feedback, Desktop/TUI check the original
+route, native owner and current committed recipe. Invalid evidence produces `{ status: 'stale' }`
+without publishing the service value, undoing execution, or confirming cleanup. Native
+widgets implement the observation check; a missing capture is `not_accepted`. These mechanics
+do not by themselves provide a reading-area widget or scroll/selection policy.
+
 Persisted UI components submit mutations, including declared captured resources, through their ordinary
 `actions`. The kernel generates the operation identity and records the original
 caller intent before dispatch. Feedback uses `ActionOutcome` with

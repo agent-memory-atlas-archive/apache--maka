@@ -23,7 +23,7 @@ pub(super) mod subscriptions;
 use super::*;
 use maka_event_log::applications::intents::RecordedIntent;
 use maka_plugin_core::{
-    contract::{MethodMode, ResourceType},
+    contract::{CaptureOutput, MethodMode},
     operation::{OperationReply, Receipt, RecoveryRef},
     runtime::{Capability, Execution},
 };
@@ -50,6 +50,8 @@ pub struct Action {
     pub method: String,
     pub input: Value,
     pub resources: BTreeMap<String, CaptureSource>,
+    #[serde(default)]
+    pub continuations: Vec<CaptureSource>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -158,11 +160,24 @@ pub struct ServiceCompletion {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ActionOutcome {
-    NotAccepted { reason: String },
-    Succeeded { value: Value },
-    Updated { value: Value },
-    Failed { reason: String },
-    Operation { reply: Box<OperationReply> },
+    NotAccepted {
+        reason: String,
+    },
+    Succeeded {
+        value: Value,
+    },
+    Updated {
+        value: Value,
+    },
+    Failed {
+        reason: String,
+    },
+    /// Business execution settled, but original presentation evidence no longer
+    /// admits this result. This is feedback to a live consumer, not a UI fault.
+    Stale,
+    Operation {
+        reply: Box<OperationReply>,
+    },
 }
 /// A presenter can resolve only this exact already-checked native leaf.
 /// Construction is private: plugin JSON cannot supply a Mount or resource grant.
@@ -170,7 +185,7 @@ pub struct CaptureTarget {
     pub(crate) mount: Mount,
     pub(crate) method: String,
     pub(crate) input: Value,
-    pub(crate) resource: ResourceType,
+    output: CaptureOutput,
     edges: Vec<Edge>,
 }
 impl CaptureTarget {
@@ -183,9 +198,39 @@ impl CaptureTarget {
     pub fn input(&self) -> &Value {
         &self.input
     }
-    pub fn resource_type(&self) -> &ResourceType {
-        &self.resource
+    pub fn output(&self) -> &CaptureOutput {
+        &self.output
     }
+}
+/// An opaque, bounded native snapshot. It stays on the foreground thread and
+/// is never serialized, attached to a service request, or treated as authority.
+/// Retain observations/identity only, not Entity/Input/subscription/lease owners.
+pub struct ContinuationWitness {
+    value: Box<dyn std::any::Any>,
+    bytes: usize,
+}
+impl ContinuationWitness {
+    pub fn new<T: 'static>(value: T, bytes: usize) -> Self {
+        Self {
+            value: Box::new(value),
+            bytes,
+        }
+    }
+    pub fn downcast_ref<T: 'static>(&self) -> Option<&T> {
+        self.value.downcast_ref()
+    }
+    pub fn bytes(&self) -> usize {
+        self.bytes
+    }
+}
+pub enum NativeCapture {
+    Resource(Arc<dyn ReadResource>),
+    Continuation(ContinuationWitness),
+}
+struct Continuation {
+    target: CaptureTarget,
+    witness: ContinuationWitness,
+    invalidated: bool,
 }
 pub struct CaptureCall<'a> {
     pub values: &'a abi::ValueBindings,
@@ -223,6 +268,8 @@ pub(super) struct Prepared<V: ?Sized> {
     pub input: Value,
     pub capability: Capability<Export<V>>,
     pub captures: BTreeMap<String, CaptureTarget>,
+    continuations: Vec<CaptureTarget>,
+    witnesses: Vec<Continuation>,
     pub invalidated: bool,
     pub subscription: bool,
     resources: Option<Attachments>,
@@ -236,12 +283,14 @@ struct Running<V: ?Sized> {
     resources: Attachments,
     mutation: Option<mutations::Session>,
     stream: Option<subscriptions::Flow>,
+    continuations: Vec<Continuation>,
 }
 pub(super) struct Outcome {
     pub consumer: Mount,
     pub key: String,
     pub outcome: ActionOutcome,
     pub request: Option<Uuid>,
+    continuations: Vec<Continuation>,
 }
 pub(super) struct Actions<V: ?Sized> {
     pub queue: VecDeque<Prepared<V>>,
@@ -260,6 +309,24 @@ impl<V: ?Sized> Default for Actions<V> {
     }
 }
 impl<V: ?Sized> Actions<V> {
+    /// The handler key is also the author's correlation for one-shot feedback.
+    /// Completed cleanup failures no longer reserve it after feedback delivery.
+    pub(super) fn key_pending(&self, consumer: &Mount, key: &str) -> bool {
+        self.queue
+            .iter()
+            .any(|a| !a.subscription && a.consumer == *consumer && a.key == key)
+            || self
+                .preparing
+                .values()
+                .any(|p| !p.failed() && p.action.consumer == *consumer && p.action.key == key)
+            || self.running.values().any(|r| {
+                !r.completed && r.stream.is_none() && r.consumer == *consumer && r.key == key
+            })
+            || self
+                .outcomes
+                .iter()
+                .any(|o| o.request.is_none() && o.consumer == *consumer && o.key == key)
+    }
     pub fn accepted_count(&self) -> usize {
         self.running.len() + self.preparing.len()
     }
@@ -285,7 +352,15 @@ impl<V: ?Sized> Actions<V> {
             .chain(self.running.values().map(|r| &r.resources))
             .flat_map(|r| r.values())
             .map(|r| r.bytes())
-            .sum()
+            .sum::<usize>()
+            + self
+                .queue
+                .iter()
+                .flat_map(|a| &a.witnesses)
+                .chain(self.running.values().flat_map(|a| &a.continuations))
+                .chain(self.outcomes.iter().flat_map(|a| &a.continuations))
+                .map(|c| c.witness.bytes())
+                .sum::<usize>()
     }
 }
 fn unavailable(reference: RecoveryRef, diagnostic: String) -> ActionOutcome {
@@ -303,6 +378,8 @@ impl<V: ?Sized> Prepared<V> {
         if self
             .captures
             .values()
+            .chain(&self.continuations)
+            .chain(self.witnesses.iter().map(|c| &c.target))
             .flat_map(|t| &t.edges)
             .any(|edge| !exists(edge))
         {
@@ -380,6 +457,9 @@ impl<V: ?Sized + 'static> Application<V> {
         if action.resources.len() > 16 {
             return Err(Error::Invalid("action resource limit".into()));
         }
+        if action.continuations.len() > 16 {
+            return Err(Error::Invalid("action continuation limit".into()));
+        }
         let provider = self.provider(consumer)?;
         let caps = self.runtime.bind(&provider, &action.binding)?;
         let capability = caps
@@ -411,6 +491,9 @@ impl<V: ?Sized + 'static> Application<V> {
                 "mutation requires a persisted UI source".into(),
             ));
         }
+        if mode != MethodMode::Query && !action.continuations.is_empty() {
+            return Err(Error::Invalid("continuations require a query".into()));
+        }
         if resources.keys().ne(action.resources.keys()) {
             return Err(Error::Invalid("action resource slots mismatch".into()));
         }
@@ -418,8 +501,26 @@ impl<V: ?Sized + 'static> Application<V> {
         for (slot, source) in action.resources {
             captures.insert(
                 slot.clone(),
-                self.prepare_capture(consumer, source, &resources[&slot], Vec::new(), update)?,
+                self.prepare_capture(
+                    consumer,
+                    source,
+                    &CaptureOutput::Resource {
+                        resource: resources[&slot].clone(),
+                    },
+                    Vec::new(),
+                    update,
+                )?,
             );
+        }
+        let mut continuations = Vec::new();
+        for source in action.continuations {
+            continuations.push(self.prepare_capture(
+                consumer,
+                source,
+                &CaptureOutput::Continuation,
+                Vec::new(),
+                update,
+            )?);
         }
         Ok(Prepared {
             id: Uuid::new_v4(),
@@ -429,6 +530,8 @@ impl<V: ?Sized + 'static> Application<V> {
             input: action.input,
             capability,
             captures,
+            continuations,
+            witnesses: Vec::new(),
             invalidated: false,
             subscription,
             resources: None,
@@ -438,7 +541,7 @@ impl<V: ?Sized + 'static> Application<V> {
         &mut self,
         parent: &Mount,
         source: CaptureSource,
-        resource: &ResourceType,
+        output: &CaptureOutput,
         mut edges: Vec<Edge>,
         update: &mut tree::Update<V>,
     ) -> Result<CaptureTarget> {
@@ -490,8 +593,8 @@ impl<V: ?Sized + 'static> Application<V> {
             let definition = captures
                 .get(&source.method)
                 .ok_or_else(|| Error::Invalid("undeclared capture method".into()))?;
-            if &definition.resource != resource {
-                return Err(Error::Invalid("capture resource type mismatch".into()));
+            if &definition.output != output {
+                return Err(Error::Invalid("capture output type mismatch".into()));
             }
             definition
                 .input
@@ -538,7 +641,7 @@ impl<V: ?Sized + 'static> Application<V> {
         update.charge_intent(&plan)?;
         match plan {
             CapturePlan::Forward { source } => {
-                self.prepare_capture(&child, source, resource, edges, update)
+                self.prepare_capture(&child, source, output, edges, update)
             }
             CapturePlan::Native => {
                 if !matches!(
@@ -556,7 +659,7 @@ impl<V: ?Sized + 'static> Application<V> {
                     mount: child,
                     method: source.method,
                     input: source.input,
-                    resource: resource.clone(),
+                    output: output.clone(),
                     edges,
                 })
             }
@@ -574,6 +677,8 @@ impl<V: ?Sized + 'static> Application<V> {
                 action
                     .captures
                     .values()
+                    .chain(&action.continuations)
+                    .chain(action.witnesses.iter().map(|c| &c.target))
                     .any(|target| !self.target_valid(target))
             })
             .map(|action| action.id)
@@ -583,6 +688,45 @@ impl<V: ?Sized + 'static> Application<V> {
         }
         for preparing in self.actions.preparing.values_mut() {
             preparing.action.invalidated |= invalid.contains(&preparing.action.id);
+        }
+        let running: Vec<_> = self
+            .actions
+            .running
+            .iter()
+            .filter(|(_, r)| {
+                r.continuations
+                    .iter()
+                    .any(|c| !self.target_valid(&c.target))
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in running {
+            for c in &mut self
+                .actions
+                .running
+                .get_mut(&id)
+                .expect("original running query")
+                .continuations
+            {
+                c.invalidated = true;
+            }
+        }
+        let outcomes: Vec<_> = self
+            .actions
+            .outcomes
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| {
+                o.continuations
+                    .iter()
+                    .any(|c| !self.target_valid(&c.target))
+            })
+            .map(|(index, _)| index)
+            .collect();
+        for index in outcomes {
+            for c in &mut self.actions.outcomes[index].continuations {
+                c.invalidated = true;
+            }
         }
     }
     fn target_valid(&self, target: &CaptureTarget) -> bool {
@@ -600,6 +744,7 @@ impl<V: ?Sized + 'static> Application<V> {
             key: action.key,
             outcome: ActionOutcome::NotAccepted { reason },
             request: action.subscription.then_some(action.id),
+            continuations: Vec::new(),
         });
     }
     /// Run after native owners are prepared, before native commands/cleanup.
@@ -607,7 +752,7 @@ impl<V: ?Sized + 'static> Application<V> {
     pub fn capture_actions(
         &mut self,
         root: &Mount,
-        mut capture: impl FnMut(&CaptureTarget) -> Result<Arc<dyn ReadResource>>,
+        mut capture: impl FnMut(&CaptureTarget) -> Result<NativeCapture>,
     ) -> Result<usize> {
         let mut captured = 0;
         for _ in 0..self.actions.queue.len() {
@@ -625,7 +770,11 @@ impl<V: ?Sized + 'static> Application<V> {
                 || action.subscription
                     && !self.subscription_wanted(&action.consumer, &action.key, action.id)
                 || self.is_retiring(&action.consumer)
-                || action.captures.values().any(|t| !self.target_valid(t))
+                || action
+                    .captures
+                    .values()
+                    .chain(&action.continuations)
+                    .any(|t| !self.target_valid(t))
             {
                 self.reject_action(action, "capture source or consumer retired".into());
                 continue;
@@ -634,8 +783,14 @@ impl<V: ?Sized + 'static> Application<V> {
                 let mut resources = Attachments::new();
                 let mut bytes = self.actions.bytes();
                 for (slot, target) in &action.captures {
-                    let resource = capture(target)?;
-                    if resource.resource_type() != target.resource {
+                    let NativeCapture::Resource(resource) = capture(target)? else {
+                        return Err(Error::Invalid("native capture output mismatch".into()));
+                    };
+                    if target.output
+                        != (CaptureOutput::Resource {
+                            resource: resource.resource_type(),
+                        })
+                    {
                         return Err(Error::Invalid("native resource type mismatch".into()));
                     }
                     bytes = bytes
@@ -647,11 +802,34 @@ impl<V: ?Sized + 'static> Application<V> {
                     tree::check_call_bytes(&resource.metadata())?;
                     resources.insert(slot.clone(), resource);
                 }
-                Ok(resources)
+                let mut witnesses = Vec::new();
+                for target in &action.continuations {
+                    let NativeCapture::Continuation(witness) = capture(target)? else {
+                        return Err(Error::Invalid("native capture output mismatch".into()));
+                    };
+                    bytes = bytes
+                        .checked_add(witness.bytes())
+                        .ok_or_else(|| Error::Invalid("continuation byte overflow".into()))?;
+                    if bytes > 64 * 1024 * 1024 {
+                        return Err(Error::Invalid("action resources exceed 64 MiB".into()));
+                    }
+                    witnesses.push(witness);
+                }
+                Ok((resources, witnesses))
             })();
             match result {
-                Ok(resources) => {
+                Ok((resources, witnesses)) => {
                     action.resources = Some(resources);
+                    action.witnesses = action
+                        .continuations
+                        .drain(..)
+                        .zip(witnesses)
+                        .map(|(target, witness)| Continuation {
+                            target,
+                            witness,
+                            invalidated: false,
+                        })
+                        .collect();
                     self.actions.queue.push_back(action);
                     captured += 1;
                 }
@@ -678,7 +856,11 @@ impl<V: ?Sized + 'static> Application<V> {
                 || action.subscription
                     && !self.subscription_wanted(&action.consumer, &action.key, action.id)
                 || self.is_retiring(&action.consumer)
-                || action.captures.values().any(|t| !self.target_valid(t))
+                || action
+                    .captures
+                    .values()
+                    .chain(action.witnesses.iter().map(|c| &c.target))
+                    .any(|t| !self.target_valid(t))
             {
                 self.reject_action(action, "consumer retired before admission".into());
                 continue;
@@ -735,6 +917,7 @@ impl<V: ?Sized + 'static> Application<V> {
                     resources,
                     mutation: None,
                     stream: flow,
+                    continuations: action.witnesses,
                 },
             );
             return Ok(Some(ActionTask {
@@ -798,6 +981,14 @@ impl<V: ?Sized + 'static> Application<V> {
         let cleanup_result = completion.cleanup.map_err(bounded_reason);
         let failure = cleanup_result.as_ref().err().cloned();
         let cleanup = self.runtime.settle(&running.execution, cleanup_result);
+        let continuations = std::mem::take(
+            &mut self
+                .actions
+                .running
+                .get_mut(&id)
+                .expect("running")
+                .continuations,
+        );
         self.actions
             .running
             .get_mut(&id)
@@ -808,6 +999,7 @@ impl<V: ?Sized + 'static> Application<V> {
             key,
             outcome: output,
             request,
+            continuations,
         });
         cleanup?;
         if let Some(reason) = failure {
@@ -871,7 +1063,11 @@ impl<V: ?Sized + 'static> Application<V> {
     }
     /// No raw-input authority: only outcomes produced by owned requests can
     /// reach these handler keys. Each feedback is a new bounded UI transaction.
-    pub fn deliver_action_results(&mut self, root: &Mount) -> Result<usize> {
+    pub fn deliver_action_results(
+        &mut self,
+        root: &Mount,
+        mut valid: impl FnMut(&CaptureTarget, &V, &ContinuationWitness) -> Result<bool>,
+    ) -> Result<usize> {
         let mut count = 0;
         let mut first_error = None;
         for _ in 0..self.actions.outcomes.len() {
@@ -892,7 +1088,29 @@ impl<V: ?Sized + 'static> Application<V> {
                 continue;
             }
             let item = matches!(&outcome.outcome, ActionOutcome::Updated { .. });
-            let feedback = self.action_feedback(&outcome.consumer, &outcome.key, outcome.outcome);
+            // Check before invoking any callback: the callback can replace the
+            // entire scene and retire the very source these witnesses protect.
+            let mut stale = false;
+            for c in &outcome.continuations {
+                if c.invalidated
+                    || !self.target_valid(&c.target)
+                    || !self.views.get(&c.target.mount.id()).is_some_and(|view| {
+                        valid(&c.target, view.frame.view.view.as_ref(), &c.witness).unwrap_or(false)
+                    })
+                {
+                    stale = true;
+                    break;
+                }
+            }
+            let feedback = self.action_feedback(
+                &outcome.consumer,
+                &outcome.key,
+                if stale {
+                    ActionOutcome::Stale
+                } else {
+                    outcome.outcome
+                },
+            );
             if item
                 && !matches!(&feedback, ActionOutcome::Updated { .. })
                 && let Some(id) = outcome.request

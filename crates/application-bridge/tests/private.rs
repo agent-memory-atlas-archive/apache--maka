@@ -539,7 +539,8 @@ async fn ui_action(
             None => break,
         }
     }
-    ui.deliver_action_results(root).unwrap();
+    ui.deliver_action_results(root, |_, _, _| Ok(false))
+        .unwrap();
     ui.frame(root).unwrap().state["outcome"].clone()
 }
 fn stop_ui(mut ui: maka_ui::Application, root: &maka_plugin_core::runtime::Mount) {

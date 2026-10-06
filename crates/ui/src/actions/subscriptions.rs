@@ -155,6 +155,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 if wanted && !flow.stop.is_cancelled() {
                     flow.pending_feedback = true;
                     self.actions.outcomes.push_back(Outcome {
+                        continuations: Vec::new(),
                         consumer,
                         key,
                         outcome: ActionOutcome::Updated { value },

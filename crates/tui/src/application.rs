@@ -68,6 +68,24 @@ pub trait Widget: std::any::Any {
         Err(Error::Invalid("terminal widget capture unavailable".into()))
     }
     fn present(&self, _: &mut dyn std::any::Any, _: Box<dyn std::any::Any>) {}
+    fn capture_continuation(
+        &self,
+        _: &dyn std::any::Any,
+        _: &maka_ui::actions::CaptureTarget,
+    ) -> maka_ui::Result<maka_ui::actions::ContinuationWitness> {
+        Err(Error::Invalid(
+            "terminal widget continuation unavailable".into(),
+        ))
+    }
+    /// Observe only: no input dispatch or presentation mutation during admission.
+    fn validate_continuation(
+        &self,
+        _: &dyn std::any::Any,
+        _: &maka_ui::actions::CaptureTarget,
+        _: &maka_ui::actions::ContinuationWitness,
+    ) -> maka_ui::Result<bool> {
+        Ok(false)
+    }
     /// Successful presentation may suspend physical input and geometry while
     /// retaining the editor, capture and pending command observations.
     fn presentation(&self, _: &mut dyn std::any::Any, _: bool) {}
@@ -343,7 +361,11 @@ impl Presenter {
             while let Some(action) = self.application.start_task(&self.root)? {
                 self.execute(action);
             }
-            self.application.deliver_action_results(&self.root)?;
+            let resources = &mut self.resources;
+            self.application
+                .deliver_action_results(&self.root, |target, recipe, witness| {
+                    resources.validate_continuation(target, recipe, witness)
+                })?;
         }
         self.sync_native()?;
         // Discard native hit references before

@@ -96,6 +96,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 let reason =
                     "mutation owner construction panicked; cleanup unconfirmed".to_string();
                 self.actions.outcomes.push_back(Outcome {
+                    continuations: Vec::new(),
                     consumer: action.consumer.clone(),
                     key: action.key.clone(),
                     outcome: ActionOutcome::NotAccepted {
@@ -257,6 +258,7 @@ impl<V: ?Sized + 'static> Application<V> {
         self.actions.running.insert(
             id,
             Running {
+                continuations: Vec::new(),
                 consumer: preparing.action.consumer,
                 key: preparing.action.key,
                 method: preparing.action.method,
@@ -314,6 +316,7 @@ impl<V: ?Sized + 'static> Application<V> {
         preparing.phase = Phase::Failed;
         if let Some(outcome) = preparing.outcome.take() {
             self.actions.outcomes.push_back(Outcome {
+                continuations: Vec::new(),
                 consumer: preparing.action.consumer.clone(),
                 key: preparing.action.key.clone(),
                 outcome,
@@ -398,6 +401,7 @@ impl<V: ?Sized + 'static> Application<V> {
         let failure = cleanup.as_ref().err().cloned();
         self.runtime.settle(&running.execution, cleanup)?;
         self.actions.outcomes.push_back(Outcome {
+            continuations: Vec::new(),
             consumer: running.consumer.clone(),
             key: running.key.clone(),
             outcome: output,
@@ -434,6 +438,7 @@ impl<V: ?Sized + 'static> Application<V> {
                     .failure(reason.clone())
             });
             self.actions.outcomes.push_back(Outcome {
+                continuations: Vec::new(),
                 consumer: preparing.action.consumer.clone(),
                 key: preparing.action.key.clone(),
                 outcome,

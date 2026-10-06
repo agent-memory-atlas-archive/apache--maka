@@ -39,6 +39,12 @@ core validates metadata without interpreting the language. This local requiremen
 is separate from the public component contract and may differ across variants.
 Native, pure Value/Service and Host entries cannot declare a scene language.
 
+Component captures distinguish a service `resource` output from a presentation
+`continuation` output. Both retain the same declared input schema and explicit
+forwarding path. Continuations are local native observations, never remote service
+attachments or authorization evidence; the embedding checks them before publishing
+Query feedback. The core declares their shape without owning native UI state.
+
 `runtime::Runtime<T>` owns activation and registration epochs, atomically checks
 actual export batches, revokes consumers and tracks accepted execution and resource
 cleanup. The embedding adapter owns execution, cancellation and close confirmation;

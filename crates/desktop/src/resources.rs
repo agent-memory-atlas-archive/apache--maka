@@ -96,6 +96,10 @@ pub(super) struct NativeInstance {
     pub state: Box<dyn Any>,
     pub input: LiveInput,
 }
+struct OwnerWitness {
+    identity: std::rc::Weak<()>,
+    value: maka_ui::actions::ContinuationWitness,
+}
 impl NativeInstance {
     pub fn deactivate(&mut self, window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
         if self.input.0.borrow_mut().take().is_some() {
@@ -121,6 +125,70 @@ pub(super) struct NativeResources {
     wake: UnboundedSender<()>,
 }
 impl NativeResources {
+    pub fn capture(
+        &mut self,
+        target: &maka_ui::actions::CaptureTarget,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) -> maka_ui::Result<maka_ui::actions::NativeCapture> {
+        use maka_ui::actions::{ContinuationWitness, NativeCapture};
+        let owner = self
+            .owners
+            .get_mut(&target.mount().id().to_string())
+            .filter(|owner| owner.input.0.borrow().is_some() && !self.removed)
+            .ok_or_else(|| Error::Invalid("native capture owner unavailable".into()))?;
+        match target.output() {
+            maka_plugin_core::contract::CaptureOutput::Resource { .. } => owner
+                .recipe
+                .capture(owner.state.as_mut(), target, window, cx)
+                .map(NativeCapture::Resource),
+            maka_plugin_core::contract::CaptureOutput::Continuation => {
+                let value =
+                    owner
+                        .recipe
+                        .capture_continuation(owner.state.as_ref(), target, window, cx)?;
+                let bytes = value
+                    .bytes()
+                    .checked_add(std::mem::size_of::<OwnerWitness>())
+                    .ok_or_else(|| Error::Invalid("continuation byte overflow".into()))?;
+                Ok(NativeCapture::Continuation(ContinuationWitness::new(
+                    OwnerWitness {
+                        identity: Rc::downgrade(&owner.identity),
+                        value,
+                    },
+                    bytes,
+                )))
+            }
+        }
+    }
+    pub fn validate_continuation(
+        &self,
+        target: &maka_ui::actions::CaptureTarget,
+        recipe: &dyn super::widgets::Widget,
+        witness: &maka_ui::actions::ContinuationWitness,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) -> maka_ui::Result<bool> {
+        let Some(witness) = witness.downcast_ref::<OwnerWitness>() else {
+            return Ok(false);
+        };
+        let Some(identity) = witness.identity.upgrade() else {
+            return Ok(false);
+        };
+        let Some(owner) = self
+            .owners
+            .get(&target.mount().id().to_string())
+            .filter(|owner| {
+                !self.removed
+                    && owner.input.0.borrow().is_some()
+                    && Rc::ptr_eq(&owner.identity, &identity)
+                    && owner.kind == recipe.type_id()
+            })
+        else {
+            return Ok(false);
+        };
+        recipe.validate_continuation(owner.state.as_ref(), target, &witness.value, window, cx)
+    }
     pub fn new(surface: Mount, wake: UnboundedSender<()>) -> Self {
         Self {
             surface,

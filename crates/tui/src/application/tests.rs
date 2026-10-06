@@ -17,6 +17,9 @@
  * under the License.
  */
 
+#[path = "tests/continuations.rs"]
+mod continuations;
+
 use super::*;
 use crossterm::event::{KeyEvent, MouseEvent};
 use maka_ui::Surface;

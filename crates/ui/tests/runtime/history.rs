@@ -267,7 +267,11 @@ fn page(
     let task = request(app, mount, after, limit);
     let completion = timer.block_on(task.future);
     assert!(app.finish_task(task.id, completion).unwrap().is_none());
-    assert_eq!(app.deliver_action_results(mount).unwrap(), 1);
+    assert_eq!(
+        app.deliver_action_results(mount, |_, _, _| Ok(false))
+            .unwrap(),
+        1
+    );
     assert!(!app.is_retiring(mount));
     app.frame(mount).unwrap().state["outcome"].clone()
 }
@@ -562,7 +566,11 @@ fn accepted_history_waiting_behind_real_sql_writer_retains_root_after_surface_ex
     assert!(query.cleanup.is_ok());
     assert!(RootOwner::open(&dir.path().join("root"), &namespaces(dir.path())).is_err());
     app.finish_task(id, completion).unwrap();
-    assert_eq!(app.deliver_action_results(&mount).unwrap(), 0);
+    assert_eq!(
+        app.deliver_action_results(&mount, |_, _, _| Ok(false))
+            .unwrap(),
+        0
+    );
     assert!(app.can_shutdown());
     let observer = weak.upgrade().unwrap();
     timer.block_on(observer.shutdown()).unwrap();

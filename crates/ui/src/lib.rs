@@ -72,7 +72,7 @@ enum Component<V: ?Sized> {
 }
 struct CaptureDefinition {
     input: jsonschema::Validator,
-    resource: maka_plugin_core::contract::ResourceType,
+    output: maka_plugin_core::contract::CaptureOutput,
 }
 struct ServiceMethod {
     mode: maka_plugin_core::contract::MethodMode,
@@ -852,7 +852,7 @@ fn capture_schemas(
                 CaptureDefinition {
                     input: jsonschema::validator_for(&c.input)
                         .map_err(|e| Error::Invalid(e.to_string()))?,
-                    resource: c.resource.clone(),
+                    output: c.output.clone(),
                 },
             ))
         })

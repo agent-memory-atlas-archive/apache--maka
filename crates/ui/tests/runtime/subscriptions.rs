@@ -203,6 +203,7 @@ impl NativeComponent<()> for Parent {
         let count = if matches!(self.0, Mode::Many) { 16 } else { 1 };
         output.subscriptions = (0..count)
             .map(|i| Action {
+                continuations: Vec::new(),
                 key: format!("feed{i}"),
                 binding: "stream".into(),
                 member: 0,
@@ -227,6 +228,7 @@ impl NativeComponent<()> for Parent {
         {
             output.frame.state["queried"] = json!(true);
             output.actions.push(Action {
+                continuations: Vec::new(),
                 key: "probe".into(),
                 binding: "stream".into(),
                 member: 0,
@@ -245,6 +247,7 @@ impl NativeComponent<()> for Parent {
             )
         {
             output.actions.push(Action {
+                continuations: Vec::new(),
                 key: "panic".into(),
                 binding: "stream".into(),
                 member: 0,
@@ -461,7 +464,8 @@ fn finish(
     loop {
         let (id, completion) = run(timer, task);
         let next = app.finish_task(id, completion).unwrap();
-        app.deliver_action_results(root).unwrap();
+        app.deliver_action_results(root, |_, _, _| Ok(false))
+            .unwrap();
         if let Some(value) = next {
             task = value
         } else {
@@ -505,7 +509,8 @@ fn temporary_causal_demand_changes_do_not_restart_original_committed_execution()
     let root = app.mount_launch(json!({})).unwrap();
     let (id, item) = run(&timer, start(&mut app, &root));
     let next = app.finish_task(id, item).unwrap().unwrap();
-    app.deliver_action_results(&root).unwrap();
+    app.deliver_action_results(&root, |_, _, _| Ok(false))
+        .unwrap();
     app.dispatch(
         &root,
         app.frame(&root).unwrap().revision,
@@ -525,7 +530,8 @@ fn temporary_causal_demand_changes_do_not_restart_original_committed_execution()
         TaskCompletion::Subscription(StreamCompletion::Item { .. })
     ));
     let next = app.finish_task(id, item).unwrap().unwrap();
-    app.deliver_action_results(&root).unwrap();
+    app.deliver_action_results(&root, |_, _, _| Ok(false))
+        .unwrap();
     finish(&timer, &mut app, &root, next);
     assert_eq!(starts.load(Ordering::SeqCst), 1);
     close(&mut app, &[root]);
@@ -548,13 +554,18 @@ fn one_pending_feedback_does_not_double_charge_each_of_48_live_requests() {
     }
     assert_eq!(starts.load(Ordering::SeqCst), 48);
     assert_eq!(app.pending_action_count(), 48);
-    assert_eq!(app.deliver_action_results(&roots[0]).unwrap(), 16);
+    assert_eq!(
+        app.deliver_action_results(&roots[0], |_, _, _| Ok(false))
+            .unwrap(),
+        16
+    );
     assert!(!app.is_retiring(&roots[0]));
     assert_eq!(app.pending_action_count(), 49);
     let probe = start(&mut app, &roots[0]);
     let (id, result) = run(&timer, probe);
     assert!(app.finish_task(id, result).unwrap().is_none());
-    app.deliver_action_results(&roots[0]).unwrap();
+    app.deliver_action_results(&roots[0], |_, _, _| Ok(false))
+        .unwrap();
     for root in &roots {
         app.retire(root).unwrap();
     }
@@ -639,7 +650,8 @@ fn invalid_native_items_stop_before_feedback_and_complete_original_source() {
         let (id, item) = run(&timer, start(&mut app, &root));
         let successor = app.finish_task(id, item).unwrap().unwrap();
         assert_eq!(
-            app.deliver_action_results(&root).unwrap(),
+            app.deliver_action_results(&root, |_, _, _| Ok(false))
+                .unwrap(),
             0,
             "invalid item must never enter the component"
         );
@@ -649,7 +661,11 @@ fn invalid_native_items_stop_before_feedback_and_complete_original_source() {
             TaskCompletion::Subscription(StreamCompletion::Finished(_))
         ));
         assert!(app.finish_task(id, actual).unwrap().is_none());
-        assert_eq!(app.deliver_action_results(&root).unwrap(), 1);
+        assert_eq!(
+            app.deliver_action_results(&root, |_, _, _| Ok(false))
+                .unwrap(),
+            1
+        );
         let feedback = &app.frame(&root).unwrap().state["feedback"];
         assert_eq!(feedback["status"], "failed");
         assert!(feedback["reason"].as_str().unwrap().contains(message));
@@ -669,7 +685,8 @@ fn completed_stream_with_failed_cleanup_preserves_work_until_actual_confirmation
         let (_, completion) = run(&timer, task);
         match app.finish_task(id, completion) {
             Ok(Some(next)) => {
-                app.deliver_action_results(&root).unwrap();
+                app.deliver_action_results(&root, |_, _, _| Ok(false))
+                    .unwrap();
                 task = next;
             }
             Err(error) => {

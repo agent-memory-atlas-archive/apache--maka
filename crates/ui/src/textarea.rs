@@ -119,7 +119,9 @@ pub fn textarea_contract() -> Contract {
                 Capture {
                     input: serde_json::to_value(schemars::schema_for!(EditorCapture))
                         .expect("capture schema"),
-                    resource: text_resource_type(),
+                    output: maka_plugin_core::contract::CaptureOutput::Resource {
+                        resource: text_resource_type(),
+                    },
                 },
             )]),
         },
