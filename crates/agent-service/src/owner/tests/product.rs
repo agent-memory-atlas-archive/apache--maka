@@ -130,11 +130,13 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     const KEY: &str = "native-product-key-378f4a";
     let listener = runtime.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let (respond, response_ready) = tokio::sync::oneshot::channel();
     let server = runtime.spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
         let body = request_with_key(&mut socket, KEY).await;
         assert_eq!(body["model"], "fixture-model-19");
         assert!(body.to_string().contains("Hello product"));
+        response_ready.await.unwrap();
         response(&mut socket).await;
     });
     let peer = Arc::new(maka_application_bridge::transport::PeerPolicy::default());
@@ -662,11 +664,13 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     assert!(screen(&draw(&mut presenter)).contains("Hello product"));
     await_screen(&mut presenter, "[ Send ]");
     click(&mut presenter, "[ Send ]");
+    // The actual canonical user row must appear through guarded native follow
+    // while the provider is still waiting; neither Latest nor a replayed action
+    // is injected to expose it.
+    await_screen(&mut presenter, "[ Read message source ]");
+    assert!(screen(&draw(&mut presenter)).contains("Hello product"));
+    respond.send(()).unwrap();
     await_screen(&mut presenter, "Elegant response");
-    // Streaming does not replace the original fixed-fence reading window.
-    // Explicit Latest admits the now durable user/assistant rows.
-    await_screen(&mut presenter, "[ Latest messages ]");
-    click(&mut presenter, "[ Latest messages ]");
     await_screen(&mut presenter, "[ Read message source ]");
     // The bounded tail may contain only the assistant beside empty canonical
     // boundaries; Earlier retrieves the user through the real sparse-row cursor.

@@ -221,8 +221,8 @@ fn actual_reading_tail_checks_wheel_and_completed_selection_before_whole_scene_p
 ) {
     cx.with_paused_automatic_drawing(|cx| {
         let timer = timer();
-        for change in ["none", "wheel", "selection"] {
-            let (input, packages, contract) = fixture(change != "selection");
+        for change in ["none", "wheel", "selection", "drag"] {
+            let (input, packages, contract) = fixture(matches!(change, "none" | "wheel"));
             let mut registry = widgets::registry();
             registry.register("test.history", move |_, _| Ok(BTreeMap::from([("History".into(), NativeExport {
                 contract: contract.clone(), value: NativeCapability::Service(Arc::new(History)),
@@ -249,15 +249,19 @@ fn actual_reading_tail_checks_wheel_and_completed_selection_before_whole_scene_p
                         position: point(px(30.), px(40.)), delta: ScrollDelta::Pixels(point(px(0.), px(100.))),
                         modifiers: Modifiers::default(), touch_phase: TouchPhase::Moved,
                     }), cx);
-                } else if change == "selection" {
+                } else if matches!(change, "selection" | "drag") {
                     window.dispatch_event(PlatformInput::MouseDown(gpui_kit::MouseDownEvent {
-                        button: MouseButton::Left, position: point(px(30.), px(12.)), modifiers: Modifiers::default(), click_count: 1, first_mouse: false,
+                        button: MouseButton::Left, position: point(px(30.), px(20.)), modifiers: Modifiers::default(), click_count: 1, first_mouse: false,
                     }), cx);
+                    if change == "selection" {
                     window.dispatch_event(PlatformInput::MouseUp(gpui_kit::MouseUpEvent {
                         button: MouseButton::Left, position: point(px(30.), px(12.)), modifiers: Modifiers::default(), click_count: 1,
                     }), cx);
                     window.focused(cx).unwrap().dispatch_action(&gpui_kit::base::input::SelectAll, window, cx);
                     assert_eq!(gpui_kit::base::TextSelection::selected_text(window, cx), "Original selection 中文\n");
+                    } else {
+                        assert_eq!(gpui_kit::base::TextSelection::selected_text(window, cx), "");
+                    }
                 }
                 // The plugin's last atEnd is still optimistic: no new paint/frame callback.
                 assert_eq!(scene.app.borrow().frame(&scene.root).unwrap().state["observation"]["viewport"]["atEnd"], true);
@@ -279,6 +283,22 @@ fn actual_reading_tail_checks_wheel_and_completed_selection_before_whole_scene_p
                     cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("copy sentinel".into()));
                     window.focused(cx).unwrap().dispatch_action(&gpui_kit::base::input::Copy, window, cx);
                     assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), "Original selection 中文");
+                }).unwrap();
+            }
+            if change == "drag" {
+                cx.update_window(scene.window, |_, window, cx| {
+                    window.dispatch_event(PlatformInput::MouseMove(gpui_kit::MouseMoveEvent {
+                        position: point(px(160.), px(20.)), pressed_button: Some(MouseButton::Left), modifiers: Modifiers::default(),
+                    }), cx);
+                    window.dispatch_event(PlatformInput::MouseUp(gpui_kit::MouseUpEvent {
+                        button: MouseButton::Left, position: point(px(160.), px(20.)), modifiers: Modifiers::default(), click_count: 1,
+                    }), cx);
+                    window.draw(cx).clear(cx);
+                    let selected = gpui_kit::base::TextSelection::selected_text(window, cx);
+                    assert!(!selected.is_empty(), "original collapsed gesture must still extend");
+                    assert!("Original selection 中文\n".contains(selected.trim_end_matches('\n')));
+                    window.focused(cx).unwrap().dispatch_action(&gpui_kit::base::input::Copy, window, cx);
+                    assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), selected.trim_end_matches('\n'));
                 }).unwrap();
             }
             assert!(!scene.app.borrow().is_retiring(&scene.root));

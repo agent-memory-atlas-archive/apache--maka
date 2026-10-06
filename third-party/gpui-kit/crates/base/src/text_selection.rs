@@ -2632,7 +2632,8 @@ impl TextSelection {
         live_text_selection_state(window, cx).is_some_and(|state| state.read(cx).has_selection(cx))
     }
 
-    /// Whether this original scope has a geometry or completed local selection.
+    /// Whether this original scope has a geometry selection, an active selection
+    /// gesture (including its initial collapsed range), or local selection.
     /// Unrelated window scopes do not participate. Reads the original registered
     /// participants; does not copy text, dispatch input or create selection state.
     pub fn has_selection_in_scope(
@@ -2642,7 +2643,7 @@ impl TextSelection {
     ) -> bool {
         live_text_selection_state(window, cx).is_some_and(|state| {
             let state = state.read(cx);
-            (state.active_scope == scope && state.snapshot().is_some())
+            (state.active_scope == scope && (state.is_selecting || state.snapshot().is_some()))
                 || state.participants.values().any(|registration| {
                     registration.registration.scope == scope
                         && registration

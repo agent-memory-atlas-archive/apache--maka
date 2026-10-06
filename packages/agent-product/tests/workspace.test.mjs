@@ -94,7 +94,7 @@ class Client {
     return this.output;
   }
   find(method) {
-    const action = [...this.actions.values()].find((action) => action.method === method);
+    const action = [...this.actions.values()].reverse().find((action) => action.method === method);
     assert.ok(action, `expected ${method}`);
     return action;
   }
@@ -106,6 +106,8 @@ class Client {
     return this.complete(this.find(method), { status: 'succeeded', value });
   }
   component(name, event = {}) {
+    if (name === 'tailReady' && !Object.hasOwn(event, 'landing'))
+      event = { landing: this.state.landing.sequence, readingRevision: 0 };
     return this.input({
       kind: 'component',
       key: name,
@@ -122,6 +124,7 @@ class Client {
               'sourceLast',
               'sourceBack',
               'sourceRetry',
+              'tailReady',
             ].includes(name)
           ? 'timeline'
           : 'navigation',
@@ -160,6 +163,7 @@ class Client {
         label: 'Fixture model',
       },
     });
+    this.component('tailReady');
     return this;
   }
   page(events, through) {
@@ -283,10 +287,10 @@ test('bootstrap replays the original active prefix and does not render thinking 
     ],
     9,
   );
-  assert.equal(client.liveMessages[0].text, 'suffix');
+  assert.equal(client.liveMessages[0].text, 'prefix suffix');
   assert.equal(client.liveMessages.length, 1);
   client.page([fact(9, { kind: 'delta', stepId: 'step', partId: 'same', text: 'duplicate' })], 9);
-  assert.equal(client.liveMessages[0].text, 'suffix');
+  assert.equal(client.liveMessages[0].text, 'prefix suffix');
   client.page(
     [
       fact(10, { kind: 'part_finished', stepId: 'step', partId: 'same' }),
@@ -297,7 +301,7 @@ test('bootstrap replays the original active prefix and does not render thinking 
   );
   assert.equal(
     [...client.actions.values()].some((action) => action.method === 'history'),
-    false,
+    true,
   );
   client.component('latest');
   const history = client.find('history');
@@ -323,7 +327,7 @@ test('bootstrap replays the original active prefix and does not render thinking 
   assert.equal(client.liveMessages.length, 0);
   assert.equal(client.state.parts.length, 0);
 });
-test('opening a run leaves the reading window intact until explicit Latest and preserves its watch', () => {
+test('opening a run requests guarded follow while retaining open live text and its watch', () => {
   const client = new Client().start();
   const demand = structuredClone(client.output.subscriptions);
   client.page(
@@ -342,7 +346,9 @@ test('opening a run leaves the reading window intact until explicit Latest and p
   );
   assert.equal(client.messages.length, 0);
   assert.equal(client.timeline.latest, true);
-  client.component('latest');
+  assert.deepEqual(client.find('history').continuations, [
+    { child: 'timeline', method: 'tail', input: null },
+  ]);
   client.query('history', {
     kind: 'ready',
     through: 4,
@@ -361,8 +367,8 @@ test('opening a run leaves the reading window intact until explicit Latest and p
     after: null,
   });
   assert.equal(client.messages[0].text, 'Hello');
-  assert.equal(client.liveMessages.length, 0);
-  assert.equal(client.state.live.length, 0);
+  assert.equal(client.liveMessages[0].text, 'First response');
+  assert.equal(client.state.live.length, 1);
   assert.deepEqual(client.output.subscriptions, demand);
 });
 test('live display is bounded and marks its truncated Unicode excerpt', () => {
@@ -2787,7 +2793,7 @@ test('surrogate truncation closes the streaming prefix before later deltas', () 
 
 for (const readyFirst of [false, true]) {
   test(
-    'canonical replay consumes no live budget with Ready ' +
+    'open replay remains bounded while an unrelated canonical row is Ready ' +
       (readyFirst ? 'before' : 'after') +
       ' watch',
     () => {
@@ -2830,12 +2836,12 @@ for (const readyFirst of [false, true]) {
         ],
         101,
       );
-      assert.deepEqual(
-        client.state.live.map((fragment) => fragment.text),
-        ['new suffix'],
+      assert.ok(
+        client.state.live.reduce((sum, fragment) => sum + fragment.text.length, 0) <= 16000,
       );
       if (!readyFirst) client.query('history', ready);
-      assert.equal(client.liveMessages[0].text, 'new suffix');
+      assert.ok(client.liveMessages[0].text.startsWith('old'));
+      assert.ok(client.liveMessages[0].text.length <= 16000);
       assert.equal(client.messages[0].text, 'canonical prefix');
       assert.equal(client.state.latestKnown, 101);
     },
@@ -3284,6 +3290,253 @@ for (const target of ['desktop', 'tui']) {
         {},
       );
       assert.deepEqual(staleToggle.frame.state.expanded, hidden.frame.state.expanded);
+    },
+  );
+}
+
+for (const target of ['desktop', 'tui']) {
+  test(
+    target +
+      ' automatic history follow waits for native landing, coalesces fences and keeps stale reads optional',
+    async () => {
+      const module = await import(
+        pathToFileURL(resolve(root, 'dist/packages/workspace/' + target + '.js'))
+      );
+      module.activate({ locale: 'en' });
+      const client = new Client(module.component).start({
+        through: 10,
+        chunks: [historyChunk('Original')],
+      });
+      const original = structuredClone(client.state.window);
+      const landing = structuredClone(client.state.landing);
+      client.page([fact(11, { kind: 'opened' })], 11);
+      const pending = client.find('history');
+      assert.deepEqual(pending.continuations, [{ child: 'timeline', method: 'tail', input: null }]);
+      assert.equal(client.state.loading, false);
+      assert.deepEqual(client.state.window, original);
+      assert.deepEqual(client.state.landing, landing);
+      client.complete(pending, { status: 'succeeded', value: { kind: 'preparing', through: 11 } });
+      const retry = client.find('history');
+      assert.deepEqual(retry.input, pending.input);
+      assert.deepEqual(retry.continuations, pending.continuations);
+      client.page([fact(12, { kind: 'transcript_changed' })], 12);
+      assert.equal(client.output.actions.length, 0);
+      client.complete(retry, {
+        status: 'succeeded',
+        value: {
+          kind: 'ready',
+          through: 11,
+          chunks: [historyChunk('First')],
+          before: null,
+          after: null,
+        },
+      });
+      assert.equal(
+        client.output.actions.length,
+        0,
+        'new End must paint before capturing another witness',
+      );
+      client.page([fact(13, { kind: 'transcript_changed' })], 13);
+      assert.equal(client.output.actions.length, 0, 'watch before End paint must also wait');
+      client.component('tailReady');
+      const catchup = client.find('history');
+      assert.equal(catchup.input.through, 13);
+      const current = structuredClone(client.state.window);
+      const currentLanding = structuredClone(client.state.landing);
+      client.complete(catchup, { status: 'stale' });
+      assert.deepEqual(client.state.window, current);
+      assert.deepEqual(client.state.landing, currentLanding);
+      assert.equal(client.state.loading, false);
+      assert.equal(client.state.notice, null);
+      assert.equal(client.timeline.latest, true);
+      assert.equal(client.output.actions.length, 0, 'stale does not retry itself');
+      client.page([], 13);
+      assert.equal(client.output.actions.length, 0);
+      client.component('tailReady');
+      assert.equal(client.output.actions.length, 0, 'same request/paint basis does not retry');
+      client.component('tailReady', { landing: client.state.landing.sequence, readingRevision: 1 });
+      assert.equal(client.find('history').input.through, 13);
+      client.complete(client.find('history'), { status: 'not_accepted', reason: 'fixture' });
+      client.component('latest');
+      assert.deepEqual(client.find('history').continuations, []);
+      client.query('history', {
+        kind: 'ready',
+        through: 13,
+        chunks: [historyChunk('Latest')],
+        before: null,
+        after: null,
+      });
+      assert.equal(client.messages[0].text, 'Latest');
+    },
+  );
+
+  test(
+    target +
+      ' atomic text survives part finish and unrelated canonical history until its real step closure',
+    async () => {
+      const module = await import(
+        pathToFileURL(resolve(root, 'dist/packages/workspace/' + target + '.js'))
+      );
+      module.activate({ locale: 'en' });
+      const client = new Client(module.component).start();
+      client.page(
+        [
+          fact(1, { kind: 'opened' }),
+          fact(2, {
+            kind: 'part_started',
+            messageId: 'answer',
+            stepId: 'step',
+            partId: 'part',
+            textKind: 'text',
+          }),
+          fact(3, { kind: 'delta', stepId: 'step', partId: 'part', text: 'prefix ' }),
+        ],
+        3,
+      );
+      client.query('history', {
+        kind: 'ready',
+        through: 3,
+        chunks: [historyChunk('User', { role: 'user' })],
+        before: null,
+        after: null,
+      });
+      assert.equal(client.liveMessages[0].text, 'prefix ');
+      client.component('tailReady');
+      client.page(
+        [
+          fact(4, { kind: 'delta', stepId: 'step', partId: 'part', text: 'suffix' }),
+          fact(5, { kind: 'part_finished', stepId: 'step', partId: 'part' }),
+        ],
+        5,
+      );
+      client.query('history', { kind: 'ready', through: 5, chunks: [], before: null, after: null });
+      assert.equal(
+        client.liveMessages[0].text,
+        'prefix suffix',
+        'PartFinished is not atomic provider publication',
+      );
+      assert.equal(client.state.parts.length, 0);
+      client.component('tailReady');
+      client.page([fact(6, { kind: 'step_ended', stepId: 'step' })], 6);
+      client.query('history', {
+        kind: 'ready',
+        through: 6,
+        chunks: [historyChunk('prefix suffix', { messageId: 'answer' })],
+        before: null,
+        after: null,
+      });
+      assert.equal(client.liveMessages.length, 0);
+      assert.equal(client.state.live.length, 0);
+      assert.equal(client.messages[0].text, 'prefix suffix');
+    },
+  );
+
+  test(
+    target +
+      ' timeline forwards tail capture and schedules catchup only from settled original conversation paint',
+    async () => {
+      const { component: timeline } = await import(
+        pathToFileURL(resolve(root, 'dist/packages/timeline/' + target + '.js'))
+      );
+      const props = new Client().start().timeline;
+      let out = timeline.mount(props, {});
+      assert.deepEqual(timeline.capture(out.frame.state, props, 'tail', null, {}), {
+        kind: 'forward',
+        source: { child: 'reading', method: 'tail', input: null },
+      });
+      const observed = (child, pendingCommand, status = 'applied') =>
+        timeline.event(
+          structuredClone(out.frame.state),
+          {
+            kind: 'component',
+            child,
+            key: 'observed',
+            name: 'observed',
+            event: {
+              readingRevision: 0,
+              viewport: { readingRevision: 0, atEnd: true, visibleChildKeys: [] },
+              pendingCommand,
+              receipt: out.frame.state.command
+                ? { sequence: out.frame.state.command.sequence, status }
+                : null,
+            },
+          },
+          props,
+          {},
+        );
+      assert.deepEqual(observed('reading', 1).events, []);
+      assert.deepEqual(observed('source-reading', null).events, []);
+      out = observed('reading', null);
+      assert.deepEqual(out.events, [
+        { name: 'tailReady', value: { landing: props.landing.sequence, readingRevision: 0 } },
+      ]);
+      assert.deepEqual(observed('reading', null, 'cancelled').events, out.events);
+      assert.deepEqual(observed('reading', null, 'rejected').events, out.events);
+    },
+  );
+}
+
+for (const target of ['desktop', 'tui']) {
+  test(
+    target + ' late step closure preserves an already displayed source until guarded publication',
+    async () => {
+      const module = await import(
+        pathToFileURL(resolve(root, 'dist/packages/workspace/' + target + '.js'))
+      );
+      module.activate({ locale: 'en' });
+      const client = new Client(module.component).start();
+      client.page(
+        [
+          fact(1, { kind: 'opened' }),
+          fact(2, {
+            kind: 'part_started',
+            messageId: 'answer',
+            stepId: 'step',
+            partId: 'part',
+            textKind: 'text',
+          }),
+          fact(3, { kind: 'delta', stepId: 'step', partId: 'part', text: 'Selectable original' }),
+        ],
+        3,
+      );
+      // Independent observe can be ahead of queued watch delivery.
+      client.component('stop');
+      client.complete(client.find('stop'), returned({ requested: true }));
+      client.query('observe', { session, through: 100, run: null, parts: [] });
+      client.component('latest');
+      client.query('history', {
+        kind: 'ready',
+        through: 100,
+        chunks: [],
+        before: null,
+        after: null,
+      });
+      const original = structuredClone(client.liveMessages);
+      client.component('tailReady');
+      client.page([fact(90, { kind: 'step_ended', stepId: 'step' })], 100);
+      assert.deepEqual(
+        client.liveMessages,
+        original,
+        'watch closure cannot retire selected SourceText',
+      );
+      assert.equal(
+        client.timeline.latest,
+        true,
+        'a covered closure can still need guarded refresh',
+      );
+      const pending = client.find('history');
+      assert.deepEqual(pending.continuations, [{ child: 'timeline', method: 'tail', input: null }]);
+      client.complete(pending, { status: 'stale' });
+      assert.deepEqual(client.liveMessages, original);
+      client.component('latest');
+      client.query('history', {
+        kind: 'ready',
+        through: 100,
+        chunks: [],
+        before: null,
+        after: null,
+      });
+      assert.equal(client.liveMessages.length, 0, 'explicit navigation may retire the old prefix');
     },
   );
 }

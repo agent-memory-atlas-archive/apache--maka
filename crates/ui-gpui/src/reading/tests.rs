@@ -398,6 +398,18 @@ fn original_wheel_changes_reading_intent_and_cancels_pending_command(cx: &mut Te
         window.draw(cx).clear(cx);
         assert!(!state.borrow().handle.painted_observation().unwrap().at_end);
     });
+    window_cx.simulate_event(ScrollWheelEvent {
+        position: point(px(50.), px(50.)),
+        delta: ScrollDelta::Pixels(point(px(0.), px(-1000.))),
+        modifiers: Modifiers::default(),
+        touch_phase: TouchPhase::Moved,
+    });
+    window_cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+        assert!(state.borrow().handle.painted_observation().unwrap().at_end);
+        assert!(state.borrow().eligible(window, cx));
+        assert_eq!(state.borrow_mut().observation().receipt.unwrap().status, ReadingStatus::Cancelled);
+    });
     });
 }
 

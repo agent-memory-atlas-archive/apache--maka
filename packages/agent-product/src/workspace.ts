@@ -56,6 +56,7 @@ type Request =
       through: number;
       navigation: number;
       latest: boolean;
+      implicit: boolean;
       position: HistoryPosition;
     }
   | {
@@ -105,11 +106,20 @@ export interface State {
     position: HistoryPosition | null;
   } | null;
   landing: { sequence: number; edge: 'start' | 'end' };
+  tailReceipt: { landing: number; readingRevision: number } | null;
+  followAttempt: { through: number; landing: number; readingRevision: number } | null;
   parts: DisplayPart[];
   run: AgentRun | null;
   runThrough: number;
   loading: boolean;
-  live: { sequence: number; messageId: string; text: string }[];
+  live: {
+    sequence: number;
+    messageId: string;
+    invocationId: string;
+    stepId: string;
+    text: string;
+    closedAt: number | null;
+  }[];
   latestKnown: number;
   watch: { key: string; input: { sessionId: string; after: number }; last: number } | null;
   pending: Record<string, Request>;
@@ -128,18 +138,22 @@ function utf8Bytes(text: string): number {
   }
   return bytes;
 }
-// Retain a bounded streaming prefix until explicit navigation admits a new fence.
-// Automatic eviction would replace selected source even while the reader stays put.
-function appendLive(state: State, sequence: number, messageId: string, text: string) {
-  const baseline =
-    state.window?.page.through ??
-    Object.values(state.pending).find(
-      (request): request is Extract<Request, { kind: 'history' }> =>
-        request.kind === 'history' &&
-        request.epoch === state.epoch &&
-        request.navigation === state.navigation,
-    )?.through;
-  if (baseline === undefined || sequence <= baseline) return;
+// Raw fences can advance while model text is still open. Only an actual step
+// closure covers its live prefix for both atomic and item-accepting providers.
+function appendLive(
+  state: State,
+  sequence: number,
+  part: DisplayPart,
+  invocationId: string,
+  text: string,
+) {
+  const messageId = part.messageId;
+  if (
+    state.window &&
+    sequence <= state.window.page.through &&
+    state.window.page.chunks.some((chunk) => chunk.messageId === messageId)
+  )
+    return;
   const ids = new Set(state.live.map((fragment) => fragment.messageId));
   const remaining = 16000 - state.live.reduce((total, fragment) => total + fragment.text.length, 0);
   // A truncated surrogate can leave one unused code unit; keep the prefix closed.
@@ -147,7 +161,24 @@ function appendLive(state: State, sequence: number, messageId: string, text: str
   text = text.slice(0, remaining);
   const last = text.charCodeAt(text.length - 1);
   if (last >= 0xd800 && last <= 0xdbff) text = text.slice(0, -1);
-  if (text) state.live.push({ sequence, messageId, text });
+  if (text)
+    state.live.push({
+      sequence,
+      messageId,
+      invocationId,
+      stepId: part.stepId,
+      text,
+      closedAt: null,
+    });
+}
+function closeLive(state: State, sequence: number, invocationId: string, stepId?: string) {
+  for (const fragment of state.live)
+    if (
+      fragment.closedAt === null &&
+      fragment.invocationId === invocationId &&
+      (stepId === undefined || fragment.stepId === stepId)
+    )
+      fragment.closedAt = sequence;
 }
 function messages(state: State): Message[] {
   const canonical = (state.window?.page.chunks ?? []).map((chunk) => ({
@@ -162,7 +193,11 @@ function messages(state: State): Message[] {
   if (!state.window?.latest) return canonical;
   const live = new Map<string, Message>();
   for (const fragment of state.live) {
-    if (fragment.sequence <= state.window.page.through) continue;
+    if (
+      fragment.sequence <= state.window.page.through &&
+      canonical.some((message) => message.id === fragment.messageId)
+    )
+      continue;
     let message = live.get(fragment.messageId);
     if (!message) {
       message = {
@@ -188,10 +223,11 @@ function intent(
   method: string,
   input: unknown,
   resources: Action['resources'] = {},
+  continuations: Action['continuations'] = [],
 ) {
   const key = 'request-' + ++state.serial;
   state.pending[key] = request;
-  actions.push({ key, binding, member: 0, method, input, resources });
+  actions.push({ key, binding, member: 0, method, input, resources, continuations });
 }
 function observe(state: State, actions: Action[]) {
   if (state.selected)
@@ -205,24 +241,56 @@ function history(
   position: HistoryPosition,
   through: number,
   latest: boolean,
+  implicit = false,
 ) {
   if (!state.selected) return;
-  state.loading = true;
+  if (!implicit) state.loading = true;
   const navigation = ++state.navigation;
   intent(
     state,
     actions,
-    { kind: 'history', epoch: state.epoch, navigation, through, latest, position },
+    { kind: 'history', epoch: state.epoch, navigation, through, latest, implicit, position },
     'agent',
     'history',
     { sessionId: state.selected, through, position },
+    {},
+    implicit ? [{ child: 'timeline', method: 'tail', input: null }] : [],
   );
+}
+function follow(state: State, actions: Action[]) {
+  const receipt = state.tailReceipt;
+  if (
+    receipt?.landing === state.landing.sequence &&
+    !state.source &&
+    !state.loading &&
+    state.window?.latest &&
+    (state.latestKnown > state.window.page.through ||
+      state.live.some(
+        (fragment) => fragment.closedAt !== null && fragment.closedAt <= state.window!.page.through,
+      )) &&
+    !Object.values(state.pending).some(
+      (request) =>
+        request.kind === 'history' &&
+        request.epoch === state.epoch &&
+        request.navigation === state.navigation,
+    ) &&
+    !(
+      state.followAttempt?.through === state.latestKnown &&
+      state.followAttempt.landing === receipt.landing &&
+      state.followAttempt.readingRevision === receipt.readingRevision
+    )
+  ) {
+    state.followAttempt = { ...receipt, through: state.latestKnown };
+    history(state, actions, { kind: 'tail' }, state.latestKnown, true, true);
+  }
 }
 function select(state: State, actions: Action[], sessionId: string) {
   state.selected = sessionId;
   state.epoch++;
   state.window = null;
   state.source = null;
+  state.tailReceipt = null;
+  state.followAttempt = null;
   state.navigation++;
   state.parts = [];
   state.run = null;
@@ -297,6 +365,8 @@ function receipt(state: State, actions: Action[], request: Mutation, reply: Oper
   }
 }
 function queryFailed(state: State, request: Request) {
+  // Optional presentation work does not disable input or change execution facts.
+  if (request.kind === 'history' && request.implicit) return;
   if (request.kind === 'source') {
     if (request.epoch === state.epoch && request.navigation === state.source?.navigation) {
       state.source.loading = false;
@@ -378,6 +448,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         )
       )
         state.loading = false;
+      follow(state, actions);
       break;
     }
     case 'source': {
@@ -425,16 +496,24 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
       if (request.epoch !== state.epoch || request.navigation !== state.navigation) break;
       const page = value as AgentHistoryPage;
       if (page.through !== request.through) {
-        state.loading = false;
-        state.notice = 'unavailable';
+        queryFailed(state, request);
         break;
       }
       if (page.kind === 'preparing') {
-        intent(state, actions, request, 'agent', 'history', {
-          sessionId: state.selected,
-          through: request.through,
-          position: request.position,
-        });
+        intent(
+          state,
+          actions,
+          request,
+          'agent',
+          'history',
+          {
+            sessionId: state.selected,
+            through: request.through,
+            position: request.position,
+          },
+          {},
+          request.implicit ? [{ child: 'timeline', method: 'tail', input: null }] : [],
+        );
         break;
       }
       state.window = { page, latest: request.latest };
@@ -443,8 +522,13 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         edge: request.position.kind === 'before' || request.latest ? 'end' : 'start',
       };
       state.loading = false;
-      state.notice = null;
-      state.live = state.live.filter((fragment) => fragment.sequence > page.through);
+      if (!request.implicit) state.notice = null;
+      state.live = state.live.filter(
+        (fragment) =>
+          fragment.sequence > page.through ||
+          ((fragment.closedAt === null || fragment.closedAt > page.through) &&
+            !page.chunks.some((chunk) => chunk.messageId === fragment.messageId)),
+      );
       break;
     }
     case 'read': {
@@ -526,13 +610,18 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
       state.notice = 'unknown';
   }
 }
-function delivery(state: State, page: AgentDeliveryPage) {
+function delivery(state: State, page: AgentDeliveryPage, actions: Action[]) {
   const watch = state.watch;
   if (!watch) return;
   state.latestKnown = Math.max(state.latestKnown, page.through);
+  let canonicalChanged = false;
   for (const event of page.events) {
     if (event.sequence <= watch.last) continue;
     const fact = event.fact;
+    if (
+      ['opened', 'transcript_changed', 'part_finished', 'step_ended', 'ended'].includes(fact.kind)
+    )
+      canonicalChanged = true;
     if (fact.kind === 'opened') {
       if (event.sequence > state.runThrough) {
         state.run = { invocationId: event.invocationId, state: 'running' };
@@ -566,7 +655,7 @@ function delivery(state: State, page: AgentDeliveryPage) {
           part.partId === fact.partId,
       );
       if (part?.textKind === 'text') {
-        appendLive(state, event.sequence, part.messageId, fact.text);
+        appendLive(state, event.sequence, part, event.invocationId, fact.text);
       }
     } else if (fact.kind === 'part_finished') {
       state.parts = state.parts.filter(
@@ -576,10 +665,12 @@ function delivery(state: State, page: AgentDeliveryPage) {
           part.partId !== fact.partId,
       );
     } else if (fact.kind === 'step_ended') {
+      closeLive(state, event.sequence, event.invocationId, fact.stepId);
       state.parts = state.parts.filter(
         (part) => part.invocationId !== event.invocationId || part.stepId !== fact.stepId,
       );
     } else if (fact.kind === 'ended') {
+      closeLive(state, event.sequence, event.invocationId);
       state.parts = state.parts.filter((part) => part.invocationId !== event.invocationId);
       if (event.sequence > state.runThrough && state.run?.invocationId === event.invocationId) {
         state.run = null;
@@ -589,6 +680,7 @@ function delivery(state: State, page: AgentDeliveryPage) {
     }
   }
   watch.last = Math.max(watch.last, page.nextAfter);
+  if (canonicalChanged) follow(state, actions);
 }
 function frame(
   target: Target,
@@ -639,7 +731,13 @@ function frame(
       older: !!state.window?.page.before,
       newer: !!state.window?.page.after,
       latest:
-        !!state.window && (!state.window.latest || state.latestKnown > state.window.page.through),
+        !!state.window &&
+        (!state.window.latest ||
+          state.latestKnown > state.window.page.through ||
+          state.live.some(
+            (fragment) =>
+              fragment.closedAt !== null && fragment.closedAt <= state.window!.page.through,
+          )),
       landing: state.landing,
       live: !!state.run && !!state.window?.latest,
     },
@@ -654,6 +752,7 @@ function frame(
       sourceLast: 'source-last',
       sourceBack: 'source-back',
       sourceRetry: 'source-retry',
+      tailReady: 'tail-ready',
     },
   );
   const composer = slot(
@@ -877,6 +976,8 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         source: null,
         navigation: 0,
         landing: { sequence: 0, edge: 'end' },
+        tailReceipt: null,
+        followAttempt: null,
         parts: [],
         run: null,
         runThrough: 0,
@@ -909,7 +1010,8 @@ export function workspace(target: Target, locale: string): Component<State, Reco
       if (input.kind === 'action') {
         const outcome = input.event as ActionOutcome;
         if (state.watch?.key === input.key) {
-          if (outcome.status === 'updated') delivery(state, outcome.value as AgentDeliveryPage);
+          if (outcome.status === 'updated')
+            delivery(state, outcome.value as AgentDeliveryPage, actions);
           else if (outcome.status === 'failed' || outcome.status === 'not_accepted') {
             state.watch = null;
             state.notice = 'unavailable';
@@ -926,10 +1028,20 @@ export function workspace(target: Target, locale: string): Component<State, Reco
             else if (outcome.status === 'succeeded')
               querySucceeded(state, actions, request, outcome.value);
             else queryFailed(state, request);
+            // A newer original paint/intent may have arrived while this read
+            // was pending. The last attempted basis prevents self-retry.
+            if (request.kind === 'history' && request.implicit) follow(state, actions);
           }
         }
       } else if (input.kind === 'component') {
-        if (input.child === 'connections' && input.name === 'closed') state.settingsOpen = false;
+        if (input.child === 'timeline' && input.name === 'tailReady') {
+          const receipt = input.event as NonNullable<State['tailReceipt']>;
+          if (receipt.landing === state.landing.sequence) {
+            state.tailReceipt = receipt;
+            follow(state, actions);
+          }
+        } else if (input.child === 'connections' && input.name === 'closed')
+          state.settingsOpen = false;
         else if (input.child === 'connections' && input.name === 'changed') {
           state.catalogEpoch++;
           state.modelRefreshing = !!state.model;

@@ -539,6 +539,23 @@ export function components(target: Target): {
               : [...next.expanded, tool.id];
         }
         const out = timelineFrame(next, props);
+        if (
+          !props.source &&
+          input.kind === 'component' &&
+          input.child === 'reading' &&
+          input.name === 'observed' &&
+          next.observation?.viewport?.atEnd &&
+          next.observation.viewport.readingRevision === next.observation.readingRevision &&
+          next.observation.pendingCommand == null &&
+          (!next.command || next.observation.receipt?.sequence === next.command.sequence)
+        )
+          out.events.push({
+            name: 'tailReady',
+            value: {
+              landing: props.landing.sequence,
+              readingRevision: next.observation.readingRevision,
+            },
+          });
         if (input.kind === 'raw' && props.source) {
           const source = props.source;
           const event =
@@ -567,6 +584,9 @@ export function components(target: Target): {
             out.events.push({ name: 'latest', value: {} });
         }
         return out;
+      },
+      capture(_state, _props, method, input) {
+        return { kind: 'forward', source: { child: 'reading', method, input } };
       },
     },
   };

@@ -221,7 +221,12 @@ export const timelineContract = component(
     sourceLast: object({}),
     sourceBack: object({}),
     sourceRetry: object({}),
+    tailReady: object({
+      landing: { type: 'integer', minimum: 0 },
+      readingRevision: { type: 'integer', minimum: 0 },
+    }),
   },
+  native.readingArea.interface.captures,
 );
 export const composerContract = component(
   'maka.agent.Composer',
