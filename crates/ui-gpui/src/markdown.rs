@@ -275,6 +275,35 @@ pub(super) fn register(registry: &mut NativeRegistry<dyn Widget>) {
 }
 
 #[cfg(test)]
+pub(crate) struct TestDocument {
+    pub widget: Rc<dyn Widget>,
+    pub state: Box<dyn Any>,
+    pub document: Entity<TextViewState>,
+    pub notify: Box<dyn Fn(&mut App)>,
+}
+
+#[cfg(test)]
+pub(crate) fn test_document(
+    props: &MarkdownProps,
+    input: LiveInput,
+    window: &mut Window,
+    cx: &mut App,
+) -> TestDocument {
+    let widget: Rc<dyn Widget> = Rc::new(Recipe(props.clone()));
+    let mut state = widget.create(input, window, cx);
+    widget.presentation(state.as_mut(), true, window, cx);
+    widget.commit(state.as_mut(), window, cx);
+    let original = state.downcast_ref::<Entity<Owner>>().unwrap().clone();
+    let document = original.read(cx).document.clone();
+    TestDocument {
+        widget,
+        state,
+        document,
+        notify: Box::new(move |cx| original.update(cx, |_, cx| cx.notify())),
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use gpui_kit::{

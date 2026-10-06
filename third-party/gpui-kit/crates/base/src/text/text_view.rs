@@ -544,11 +544,7 @@ impl Element for TextView {
                 .and_then(|d| d.code_block_highlighter.clone())
         });
 
-        let scope = crate::text_selection::current_text_selection_scope(
-            window.window_handle().window_id(),
-            cx,
-        )
-        .unwrap_or_default();
+        let scope = crate::text_selection::current_text_selection_scope(window).unwrap_or_default();
         state.update(cx, |state, cx| {
             state.selection_adapter.capture_scope(scope);
             state.code_block_actions = self.code_block_actions.clone();
@@ -607,6 +603,8 @@ impl Element for TextView {
                 if key_down.upgrade().is_none() {
                     window.prevent_default();
                     cx.stop_propagation();
+                } else {
+                    TextSelection::activate_scope(scope, window, cx);
                 }
             })
             .capture_key_up(move |_, window, cx| {
@@ -637,6 +635,7 @@ impl Element for TextView {
                         cx.propagate();
                         return;
                     }
+                    TextSelection::activate_scope(scope, window, cx);
                     state.on_action_select_all(action, window, cx);
                 },
             ))
@@ -1942,8 +1941,8 @@ mod tests {
             );
             cx.update(|window, cx| crate::TextSelection::clear(window, cx));
             draw(cx);
-            // The gap report must preserve the explicit scope, and cannot be
-            // selected after switching the window to the default scope.
+            // A real hit activates the original participant's explicit scope,
+            // even after keyboard/focus work switched the window elsewhere.
             cx.update(|window, cx| {
                 crate::TextSelection::activate_scope(
                     crate::TextSelectionScopeId::default(),
@@ -1959,10 +1958,11 @@ mod tests {
                 });
                 draw(cx);
             }
-            assert!(
-                cx.update(|window, cx| crate::TextSelection::selected_text(window, cx))
-                    .is_empty()
-            );
+            assert!(!cx.update(|window, cx| crate::TextSelection::selected_text(window, cx)).is_empty());
+            cx.update(|window, cx| {
+                assert!(crate::TextSelection::has_selection_in_scope(scope, window, cx));
+                assert!(!crate::TextSelection::has_selection_in_scope(crate::TextSelectionScopeId::default(), window, cx));
+            });
             cx.update(|window, cx| crate::TextSelection::activate_scope(scope, window, cx));
             draw(cx);
             let first = states[0].read_with(cx, |state, _| state.selection_adapter.text_bounds());

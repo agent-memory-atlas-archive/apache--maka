@@ -40,6 +40,8 @@ export type RuntimeProtocol =
   | TextareaProps
   | MarkdownProps
   | MarkdownLink
+  | ReadingProps
+  | ReadingObservation
   | InputProps
   | EditorObservation
   | EditorCapture
@@ -329,6 +331,18 @@ export type EditorEdit =
       text: string;
       kind: 'reset';
     };
+export type ReadingTarget =
+  | {
+      kind: 'start';
+    }
+  | {
+      kind: 'end';
+    }
+  | {
+      key: string;
+      kind: 'reveal_child';
+    };
+export type ReadingStatus = 'applied' | 'cancelled' | 'rejected';
 export type EditorOutcome =
   | {
       status: 'applied';
@@ -1187,7 +1201,7 @@ export interface ComponentOutput {
    */
   subscriptions?: Action[];
   /**
-   * Applies only to the original raw input, after the entire batch commits.
+   * Applies to the original native input after its synchronous event route commits.
    * It is never retained in a frame or replayed by a renderer.
    */
   decision?: InputDecision | null;
@@ -1435,6 +1449,50 @@ export interface MarkdownAppearance {
 }
 export interface MarkdownLink {
   url: string;
+}
+export interface ReadingProps {
+  /**
+   * The presenter's scene language; Desktop requires a scrolling column Stack.
+   * Its scroll policy and layout are the only presentation authority.
+   */
+  content: {
+    [k: string]: unknown | undefined;
+  };
+  /**
+   * Omission retains an accepted command; numbers increase per original mount.
+   */
+  command?: ReadingCommand | null;
+}
+export interface ReadingCommand {
+  sequence: number;
+  target: ReadingTarget;
+}
+export interface ReadingObservation {
+  /**
+   * Immediate native intent; can be newer than the painted viewport.
+   */
+  readingRevision: number;
+  viewport?: ReadingViewport | null;
+  pendingCommand?: number | null;
+  /**
+   * Only the most recently settled command is retained, without a ledger.
+   */
+  receipt?: ReadingReceipt | null;
+}
+export interface ReadingViewport {
+  /**
+   * Explicit reading intent used by the actually painted children.
+   */
+  readingRevision: number;
+  atEnd: boolean;
+  /**
+   * @maxItems 4096
+   */
+  visibleChildKeys: string[];
+}
+export interface ReadingReceipt {
+  sequence: number;
+  status: ReadingStatus;
 }
 export interface InputProps {
   appearance: InputAppearance;

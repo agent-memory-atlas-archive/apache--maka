@@ -23,6 +23,7 @@ use gpui_kit::{
     PlatformInput,
 };
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 struct Scene {
     window: AnyWindowHandle,
     surface: Entity<Surface>,
@@ -341,21 +342,82 @@ fn canvas_failure_preserves_paint_and_only_retirement_closes_native_admission(
 #[gpui::test]
 fn canvas_tab_and_copy_defaults_obey_committed_plugin_veto(cx: &mut TestAppContext) {
     let timer = timer();
-    for mode in ["tab-veto", "tab-allow"] {
+    for (mode, reading) in [
+        ("tab-veto", false),
+        ("tab-allow", false),
+        ("tab-veto", true),
+        ("tab-allow", true),
+    ] {
         let (mut input, mut packages) = support::canvas_fixture();
         let index = packages
             .iter()
             .position(|p| p.manifest().id == "dynamic.canvas")
             .unwrap();
         let old = packages.remove(index);
-        let source = std::str::from_utf8(old.file("index.mjs").unwrap()).unwrap()
+        let mut source = std::str::from_utf8(old.file("index.mjs").unwrap()).unwrap()
             .replace("label: 'Review lane', tabIndex: -1", "label: 'Review lane', tabIndex: 0")
             .replace("const decision = {};", "const decision = {};if(event.kind==='key_down'&&((event.key==='tab'&&state.mode==='tab-veto')||event.key==='c'))decision.preventDefault=true;");
-        let root = support::package(
-            "dynamic.canvas",
-            old.manifest().application.clone().unwrap(),
-            Some(source),
-        );
+        let mut declaration = old.manifest().application.clone().unwrap();
+        if reading {
+            use maka_plugin_core::{
+                contract::{Availability, Cardinality, Export, Import},
+                package::{EntryTarget, Implementation},
+            };
+            let contract = maka_ui::reading::reading_contract();
+            declaration
+                .entries
+                .get_mut(&EntryTarget::Desktop)
+                .unwrap()
+                .imports
+                .insert(
+                    "reading".into(),
+                    Import {
+                        contract: contract.clone(),
+                        cardinality: Cardinality::One,
+                    },
+                );
+            let mut native = packages[0].manifest().application.clone().unwrap();
+            let entry = native.entries.get_mut(&EntryTarget::Desktop).unwrap();
+            entry.implementation = Implementation::Native {
+                implementation: "maka.ui.reading".into(),
+            };
+            entry.exports = BTreeMap::from([(
+                "ReadingArea".into(),
+                Export {
+                    contract,
+                    availability: Availability::Required,
+                },
+            )]);
+            let native = support::package("native.reading", native, None);
+            input
+                .instances
+                .insert("reading".into(), support::node(&native, 3));
+            input.instances.get_mut("app").unwrap().bindings.insert(
+                "reading".into(),
+                vec![maka_plugin_core::composition::Target::Instance {
+                    path: vec!["reading".into()],
+                    export: "ReadingArea".into(),
+                }],
+            );
+            packages.push(native);
+            source.push_str(r#"
+const contentFrame = frame;
+frame = (state) => {
+    const output = contentFrame(state);
+    output.frame.view = {kind:'component',key:'reading',binding:'reading',member:0,on:{input:'reading-input',observed:'reading-observed'},props:{command:null,content:{kind:'stack',key:'reading-content',direction:'column',padding:0,gap:0,background:0,scroll:'manual',style:{width:{unit:'pixels',value:640},height:{unit:'pixels',value:400}},children:[output.frame.view]}}};
+    return output;
+};
+const contentEvent = app.event;
+app.event = (state, input) => {
+    if (input.kind === 'component' && input.child === 'reading') {
+        if(input.name === 'input') return contentEvent(state, input.event);
+        return frame({...state,revision:state.revision+1});
+    }
+    return contentEvent(state,input);
+};
+"#);
+        }
+        let root = support::package("dynamic.canvas", declaration, Some(source));
         input.instances.get_mut("app").unwrap().package = root.application_ref().into();
         packages.push(root);
         let scene = Scene::from_packages(cx, &timer, mode, (input, packages));

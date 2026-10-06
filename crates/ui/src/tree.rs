@@ -75,6 +75,7 @@ struct Route {
 struct Notification {
     route: Route,
     event: Emission,
+    input_admission: bool,
 }
 
 pub(super) struct Mounted<V: ?Sized> {
@@ -98,6 +99,7 @@ pub(super) struct Update<V: ?Sized> {
     bytes: usize,
     touched: usize,
     actions: Vec<actions::Prepared<V>>,
+    decision: InputDecision,
 }
 impl<V: ?Sized> Update<V> {
     fn new(slice: std::time::Duration) -> Self {
@@ -111,6 +113,7 @@ impl<V: ?Sized> Update<V> {
             bytes: 0,
             touched: 0,
             actions: Vec::new(),
+            decision: InputDecision::default(),
         }
     }
     pub fn step(&mut self, depth: usize) -> Result<()> {
@@ -177,6 +180,7 @@ impl<V: ?Sized> Update<V> {
         mount: &Mount,
         subscription: Option<Subscription>,
         events: Vec<Emission>,
+        input_admission: bool,
     ) -> Result<()> {
         self.emitted += events.len();
         if self.emitted > 64 {
@@ -193,6 +197,7 @@ impl<V: ?Sized> Update<V> {
                             handler: handler.clone(),
                         },
                         event,
+                        input_admission,
                     });
                 }
             }
@@ -209,15 +214,16 @@ impl<V: ?Sized + 'static> Application<V> {
         let result = (|| {
             self.check_props(&mount, &props)?;
             update.step(0)?;
-            let frame = self.invoke(
+            let invocation = self.invoke(
                 &mount,
                 "mount",
                 std::slice::from_ref(&props),
                 update.deadline,
+                false,
             )?;
-            Self::check_initial(&frame.frame)?;
-            self.validate_surface(&mount, &frame.frame)?;
-            self.stage(&mount, props, frame, None, 0, &mut update)?;
+            Self::check_initial(&invocation.output.frame)?;
+            self.validate_surface(&mount, &invocation.output.frame)?;
+            self.stage(&mount, props, invocation, None, 0, &mut update)?;
             self.deliver(&mut update)?;
             self.commit(&mut update)
         })();
@@ -290,13 +296,12 @@ impl<V: ?Sized + 'static> Application<V> {
         let subscription = self.subscription(mount, &update)?;
         let result = (|| {
             update.step(depth)?;
-            let next = self.invoke(mount, "event", &args, update.deadline)?;
-            let decision = next.decision.unwrap_or_default();
-            Self::check_next(revision, &surface, &next.frame)?;
+            let next = self.invoke(mount, "event", &args, update.deadline, false)?;
+            Self::check_next(revision, &surface, &next.output.frame)?;
             self.stage(mount, props, next, subscription, depth, &mut update)?;
             self.deliver(&mut update)?;
             self.commit(&mut update)?;
-            Ok(decision)
+            Ok(update.decision)
         })();
         match result {
             Ok(decision) => Ok(decision),
@@ -465,11 +470,21 @@ impl<V: ?Sized + 'static> Application<V> {
         &mut self,
         mount: &Mount,
         props: Value,
-        output: ComponentOutput<NativeView<V>>,
+        invocation: Invocation<V>,
         subscription: Option<Subscription>,
         depth: usize,
         update: &mut Update<V>,
     ) -> Result<()> {
+        let Invocation {
+            output,
+            input_admission,
+        } = invocation;
+        if let Some(decision) = output.decision {
+            // All validated synchronous observers can veto; no observer can
+            // undo an earlier veto. This result escapes only after full commit.
+            update.decision.prevent_default |= decision.prevent_default;
+            update.decision.stop_propagation |= decision.stop_propagation;
+        }
         let bytes = update.charge(&output.frame, &props, &output.events, &output.subscriptions)?;
         let previous_subscriptions = self
             .current(mount, update)
@@ -500,7 +515,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 return Err(Error::Invalid("action feedback key already in use".into()));
             }
         }
-        update.emit(mount, subscription, output.events)?;
+        update.emit(mount, subscription, output.events, input_admission)?;
         let frame = output.frame;
         let mut previous = update
             .changed
@@ -533,8 +548,8 @@ impl<V: ?Sized + 'static> Application<V> {
                     let args = [child.frame.state.clone(), reference.props.clone()];
                     self.check_props(&old.mount, reference.props)?;
                     update.step(depth + 1)?;
-                    let next = self.invoke(&old.mount, "update", &args, update.deadline)?;
-                    Self::check_next(revision, &surface, &next.frame)?;
+                    let next = self.invoke(&old.mount, "update", &args, update.deadline, false)?;
+                    Self::check_next(revision, &surface, &next.output.frame)?;
                     self.stage(
                         &old.mount,
                         reference.props.clone(),
@@ -564,9 +579,10 @@ impl<V: ?Sized + 'static> Application<V> {
                     "mount",
                     std::slice::from_ref(reference.props),
                     update.deadline,
+                    false,
                 )?;
-                Self::check_initial(&next.frame)?;
-                if next.frame.surface.is_some() {
+                Self::check_initial(&next.output.frame)?;
+                if next.output.frame.surface.is_some() {
                     return Err(Error::Invalid(
                         "embedded component cannot create a surface".into(),
                     ));
@@ -699,9 +715,22 @@ impl<V: ?Sized + 'static> Application<V> {
             let depth = self.mount_depth(&route.parent)?;
             let subscription = self.subscription(&route.parent, update)?;
             update.step(depth)?;
-            let output = self.invoke(&route.parent, "event", &args, update.deadline)?;
-            Self::check_next(revision, &surface, &output.frame)?;
-            self.stage(&route.parent, props, output, subscription, depth, update)?;
+            let invocation = self.invoke(
+                &route.parent,
+                "event",
+                &args,
+                update.deadline,
+                notification.input_admission,
+            )?;
+            Self::check_next(revision, &surface, &invocation.output.frame)?;
+            self.stage(
+                &route.parent,
+                props,
+                invocation,
+                subscription,
+                depth,
+                update,
+            )?;
         }
         Ok(())
     }

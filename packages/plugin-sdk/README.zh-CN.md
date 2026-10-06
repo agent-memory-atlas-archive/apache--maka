@@ -50,7 +50,7 @@ Desktop 为 `{ name: "maka.desktop.scene", version: 1 }`，TUI 为
 `{ name: "maka.tui.scene", version: 1 }`。该本地要求不改变公开 props/events/captures；
 纯 Value/Service 与原生 entry 省略 scene。原场景 JSON 参与回调、事务及驻留预算。
 
-`raw` 事件可返回 `decision: { preventDefault: true, stopPropagation: true }`，省略的标志为 false。决定仅在整个因果事务提交后可见，不保留在 frame。其他事件来源和生命周期回调不能返回决定。它作用于平台实际监听阶段，不能撤销更早的原生行为。
+`raw` 事件及同一次输入的同步组件观察者可返回 `decision: { preventDefault: true, stopPropagation: true }`，省略标志为 false。私有准入仅沿原经过检查的 `on` 路径传递，公开组件事件仍为 `component`。旗标按 OR 合并，完整事务提交后才生效，不保留在 frame。生命周期 emission 与 action/subscription feedback 不能通过 payload 中的 raw DTO 获得准入。决定作用于实际平台监听阶段，不能撤销更早的原生行为。
 
 ```sh
 npm run schema:generate -w @maka-agent/plugin-sdk
@@ -94,7 +94,15 @@ Component capture 声明 `output: { kind: 'resource', resource: { name, version 
 执行结算后也保留到反馈前。Desktop/TUI 在调用反馈前检查原路径、原生 owner 和当前提交的
 recipe。失效返回 `{ status: 'stale' }`，不发布业务值、不撤销执行，也不确认 cleanup。
 原生 widget 实现实际观察检查；缺少捕获会返回 `not_accepted`。这些机械边界本身不代表
-阅读区 widget 或滚动/选区策略已实现。
+产品历史导航已完成。
+
+Desktop 提供 `contracts.readingArea`（`maka.ui.reading`，导出 `ReadingArea`）。
+`content` 使用经过检查的 Desktop scene：带滚动策略的 column Stack，子组件通过本实例
+声明的绑定组合。原生滚动与文本选区 owner 保留几何和选区；插件只接收 `observed` 事实
+和 `input` 事件，不保存像素 offset。递增编号的 `start`、`end`、`reveal_child` 命令结算为
+`applied`、`cancelled` 或 `rejected`；省略命令不会重放已接受的命令，只保留当前命令与最近回执。
+原生 `tail` continuation 仅在原实际绘制的末尾、阅读意图和本阅读区选区仍符合条件时准入隐式替换；
+滚轮或活动选区使反馈成为 `stale`，不撤销独立服务读取。TUI ReadingArea 与完整源码/历史导航仍待实现。
 
 持久 UI component 通过普通 `actions` 提交 mutation（可携带声明的原捕获资源）；内核生成 operation
 identity，先记录原 caller intent 再派发。feedback 的 `ActionOutcome` 使用

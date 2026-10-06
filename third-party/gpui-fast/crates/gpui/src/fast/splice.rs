@@ -75,6 +75,7 @@ pub(crate) struct Rebuild {
     /// and the keys of its nodes, are derived from.
     parent_layout_key: u64,
     text_style_stack: TextStyleStack,
+    text_selection_scope_context: Option<u64>,
     element_offset: Point<Pixels>,
     rem_size: Pixels,
     /// The style it is laid out at, when it is a cached view.
@@ -105,6 +106,7 @@ impl Window {
             view: handle.0.clone()?,
             parent_layout_key: parent_layout_key?,
             text_style_stack: self.text_style_stack.clone(),
+            text_selection_scope_context: self.text_selection_scope_context,
             element_offset: self.element_offset(),
             rem_size: self.rem_size(),
             cached_style: cached_style.cloned(),
@@ -232,6 +234,7 @@ pub(crate) struct SplicedPrepaint {
 struct Inherited {
     element_id_stack: SmallVec<[ElementId; 32]>,
     text_style_stack: TextStyleStack,
+    text_selection_scope_context: Option<u64>,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     element_offset_stack: Vec<Point<Pixels>>,
     rem_size_override_stack: SmallVec<[Pixels; 8]>,
@@ -258,6 +261,10 @@ impl Window {
                 &mut self.text_style_stack,
                 rebuild.text_style_stack.clone(),
             ),
+            text_selection_scope_context: mem::replace(
+                &mut self.text_selection_scope_context,
+                rebuild.text_selection_scope_context,
+            ),
             content_mask_stack: mem::replace(&mut self.content_mask_stack, vec![content_mask]),
             element_offset_stack: mem::replace(
                 &mut self.element_offset_stack,
@@ -274,6 +281,7 @@ impl Window {
     fn leave_gap(&mut self, inherited: Inherited) {
         self.element_id_stack = inherited.element_id_stack;
         self.text_style_stack = inherited.text_style_stack;
+        self.text_selection_scope_context = inherited.text_selection_scope_context;
         self.content_mask_stack = inherited.content_mask_stack;
         self.element_offset_stack = inherited.element_offset_stack;
         self.rem_size_override_stack = inherited.rem_size_override_stack;
@@ -306,6 +314,7 @@ impl Window {
         let layout = record.layout.as_ref()?;
         if layout.rem_size != self.rem_size()
             || layout.text_style != self.text_style()
+            || layout.text_selection_scope_context != self.text_selection_scope_context
             || cx.dependencies_changed(&record.own_dependencies, self.inside_notified_view())
             || !self.hovers_unchanged(&record.own_hovers)
         {
@@ -753,6 +762,7 @@ impl Window {
                 parent_node: dispatch.refresh(deferred_draw.parent_node),
                 element_id_stack: deferred_draw.element_id_stack.clone(),
                 text_style_stack: deferred_draw.text_style_stack.clone(),
+                text_selection_scope_context: deferred_draw.text_selection_scope_context,
                 prepaint_visible: deferred_draw.prepaint_visible,
                 content_mask: deferred_draw.content_mask,
                 rem_size: deferred_draw.rem_size,

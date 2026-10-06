@@ -59,7 +59,7 @@ TUI declares `{ name: "maka.tui.scene", version: 1 }`. This requirement is separ
 from public props/events/captures. Pure Value/Service and native entries omit it. Original scene
 JSON counts toward callback, transaction and retained-frame budgets.
 
-A `raw` event may return `decision: { preventDefault: true, stopPropagation: true }`. Omitted flags default to false. The decision becomes visible only after the whole causal transaction commits and is never stored in a frame. Other event origins and lifecycle callbacks cannot return it. It affects the actual platform listener phase, so it cannot undo earlier native behavior.
+A `raw` event and its synchronous component observers may return `decision: { preventDefault: true, stopPropagation: true }`. Omitted flags default to false. Private admission follows only the original checked `on` routes; public component inputs keep their `component` kind. Flags join by OR, become visible after the whole transaction commits, and are never stored in a frame. Lifecycle emissions and action/subscription feedback cannot acquire admission through a raw DTO in their payload. Decisions affect the actual platform listener phase and cannot undo earlier native behavior.
 
 ```sh
 npm run schema:generate -w @maka-agent/plugin-sdk
@@ -112,7 +112,19 @@ including after execution settles. Before invoking feedback, Desktop/TUI check t
 route, native owner and current committed recipe. Invalid evidence produces `{ status: 'stale' }`
 without publishing the service value, undoing execution, or confirming cleanup. Native
 widgets implement the observation check; a missing capture is `not_accepted`. These mechanics
-do not by themselves provide a reading-area widget or scroll/selection policy.
+do not by themselves implement product history navigation.
+
+Desktop provides `contracts.readingArea` (`maka.ui.reading`, export `ReadingArea`).
+Its `content` uses the checked Desktop scene language: a scrolling column Stack,
+with its own declared component bindings. The original native scroll and text
+selection owners retain geometry and selection; plugins receive `observed` facts
+and `input` events, never pixel offsets. Numbered `start`, `end`, and `reveal_child`
+commands settle as `applied`, `cancelled`, or `rejected`; omission does not replay
+an accepted command. Observations retain only the current command and latest receipt.
+The native `tail` continuation admits implicit replacement only while the original
+painted end, reading intent and scoped selection remain eligible. A wheel or active
+selection produces `stale` feedback; it does not undo the independent service read.
+TUI ReadingArea and complete source/history navigation remain unfinished.
 
 Persisted UI components submit mutations, including declared captured resources, through their ordinary
 `actions`. The kernel generates the operation identity and records the original

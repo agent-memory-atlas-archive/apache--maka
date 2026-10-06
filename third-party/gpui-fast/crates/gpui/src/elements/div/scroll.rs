@@ -62,6 +62,38 @@ pub enum ScrollRequestStatus {
     Rejected,
 }
 
+/// Weak original scroll-owner identity and its explicit reading intent.
+/// This keeps no native owner alive and is not a serializable resource grant.
+#[derive(Clone, Debug)]
+pub struct ScrollReadingWitness {
+    owner: Weak<RefCell<ScrollHandleState>>,
+    reading_revision: u64,
+}
+impl ScrollReadingWitness {
+    /// Whether this same original owner still has the captured reading intent.
+    pub fn is_current(&self, handle: &ScrollHandle) -> bool {
+        self.owner.upgrade().is_some_and(|owner| {
+            Rc::ptr_eq(&owner, &handle.0)
+                && owner.borrow().reading_revision == self.reading_revision
+        })
+    }
+}
+impl ScrollHandle {
+    /// Capture weak identity and intent, independently of whether layout painted.
+    /// Callers separately decide whether actual painted geometry admits their work.
+    pub fn reading_witness(&self) -> ScrollReadingWitness {
+        ScrollReadingWitness {
+            owner: Rc::downgrade(&self.0),
+            reading_revision: self.reading_revision(),
+        }
+    }
+
+    /// Whether two native references address the same original scroll owner.
+    pub fn same_owner(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
 /// Immutable facts from the last actually painted tracked Div viewport.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ScrollObservation {

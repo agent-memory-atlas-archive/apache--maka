@@ -32,6 +32,7 @@ export const packageNames = [
   'navigation',
   'timeline',
   'markdown',
+  'reading-area',
   'appearance',
   'surface',
   'editor',
@@ -183,10 +184,15 @@ export function composition(configuration: CompositionConfiguration): {
         'timeline',
         {},
         configuration.presentation === 'desktop'
-          ? { markdown: [local('markdown', 'Markdown')] }
+          ? { reading: [local('reading-area', 'ReadingArea')] }
           : {},
       ),
-      ...(configuration.presentation === 'desktop' ? { markdown: node('markdown') } : {}),
+      ...(configuration.presentation === 'desktop'
+        ? {
+            markdown: node('markdown'),
+            'reading-area': node('reading-area', {}, { markdown: [local('markdown', 'Markdown')] }),
+          }
+        : {}),
       appearance: node('appearance', { scheme: configuration.scheme }),
       surface: node('surface'),
       editor: node('editor'),

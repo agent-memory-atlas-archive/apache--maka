@@ -53,6 +53,8 @@ pub(super) fn catalog() -> Value {
         root::<textarea::TextareaProps>(&mut g),
         root::<markdown::MarkdownProps>(&mut g),
         root::<markdown::MarkdownLink>(&mut g),
+        root::<maka_ui::reading::ReadingProps>(&mut g),
+        root::<maka_ui::reading::ReadingObservation>(&mut g),
         root::<input::InputProps>(&mut g),
         root::<editor::EditorObservation>(&mut g),
         root::<editor::EditorCapture>(&mut g),
@@ -114,6 +116,7 @@ pub(super) fn catalog() -> Value {
         "configurations": { "agent": maka_agent_service::configuration_schema() },
         "contracts": {
             "markdown": markdown::markdown_contract(),
+            "readingArea": maka_ui::reading::reading_contract(),
             "label": maka_ui::label_contract(), "textarea": textarea::textarea_contract(),
             "textInput": input::text_input_contract(), "secretInput": input::secret_input_contract(),
             // Bundled availability is data, never an activated service or grant.

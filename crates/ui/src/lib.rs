@@ -28,6 +28,7 @@ pub mod input;
 pub mod markdown;
 mod native;
 pub mod operations;
+pub mod reading;
 pub mod text;
 pub mod textarea;
 mod tree;
@@ -69,6 +70,11 @@ enum Component<V: ?Sized> {
         callbacks: ForegroundCallbacks,
     },
     Native(Rc<dyn NativeComponent<V>>),
+}
+// Native input causality is never guest JSON or a retained frame property.
+struct Invocation<V: ?Sized> {
+    output: ComponentOutput<NativeView<V>>,
+    input_admission: bool,
 }
 struct CaptureDefinition {
     input: jsonschema::Validator,
@@ -485,7 +491,8 @@ impl<V: ?Sized + 'static> Application<V> {
         method: &str,
         args: &[Value],
         deadline: std::time::Instant,
-    ) -> Result<ComponentOutput<NativeView<V>>> {
+        inherited_input: bool,
+    ) -> Result<Invocation<V>> {
         let input = if method == "event" {
             Some(
                 serde_json::from_value::<abi::ComponentInput>(args[1].clone())
@@ -494,6 +501,8 @@ impl<V: ?Sized + 'static> Application<V> {
         } else {
             None
         };
+        let input_admission = matches!(input, Some(abi::ComponentInput::Raw { .. }))
+            || (inherited_input && matches!(input, Some(abi::ComponentInput::Component { .. })));
         let values = self.mount_values(mount, &args)?;
         let execution = self.runtime.admit_mount(mount)?;
         let Export::Component {
@@ -585,10 +594,9 @@ impl<V: ?Sized + 'static> Application<V> {
             }
         };
         let result = result.and_then(|output| {
-            if output.decision.is_some() && !matches!(input, Some(abi::ComponentInput::Raw { .. }))
-            {
+            if output.decision.is_some() && !input_admission {
                 return Err(Error::Invalid(
-                    "input decision requires an original raw callback".into(),
+                    "input decision requires an original synchronous input route".into(),
                 ));
             }
             // All declarative data is charged, including the original guest
@@ -630,7 +638,10 @@ impl<V: ?Sized + 'static> Application<V> {
             }
         }
         self.sync_subscription_demand();
-        result
+        result.map(|output| Invocation {
+            output,
+            input_admission,
+        })
     }
 
     fn validate_surface(&mut self, mount: &Mount, frame: &Frame<NativeView<V>>) -> Result<()> {

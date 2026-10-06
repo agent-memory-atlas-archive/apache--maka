@@ -33,7 +33,7 @@ pub struct ComponentOutput<V = Value> {
     /// Complete current subscription demand. Empty removes previous demand.
     #[serde(default)]
     pub subscriptions: Vec<super::actions::Action>,
-    /// Applies only to the original raw input, after the entire batch commits.
+    /// Applies to the original native input after its synchronous event route commits.
     /// It is never retained in a frame or replayed by a renderer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<InputDecision>,

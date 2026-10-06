@@ -121,6 +121,42 @@ impl Node {
     pub(crate) fn validate_root(&self, deadline: Instant) -> Result<(), String> {
         self.validate(0, &mut BTreeSet::new(), deadline)
     }
+    pub(crate) fn key(&self) -> &str {
+        match self {
+            Self::Stack { key, .. }
+            | Self::Text { key, .. }
+            | Self::Button { key, .. }
+            | Self::Canvas { key, .. }
+            | Self::Popup { key, .. } => key,
+            Self::Component(slot) => &slot.key,
+        }
+    }
+    pub(crate) fn reading_key(&self) -> Option<&str> {
+        match self {
+            Self::Stack {
+                key,
+                direction: Direction::Column,
+                scroll,
+                ..
+            } if *scroll != Scroll::None => Some(key),
+            _ => None,
+        }
+    }
+    pub(crate) fn reading_target(&self, key: &str) -> bool {
+        match self {
+            Self::Stack { children, .. } => children.iter().any(|child| {
+                child.key() == key && !matches!(child, Self::Stack { visible: false, .. })
+            }),
+            _ => false,
+        }
+    }
+    pub(crate) fn reading_visible(&self, state: &dyn std::any::Any) -> bool {
+        state
+            .downcast_ref::<SceneState>()
+            .expect("scene owner")
+            .visible
+            && matches!(self, Self::Stack { visible: true, .. })
+    }
     fn validate(
         &self,
         depth: usize,
@@ -347,6 +383,14 @@ pub fn compile(
     source: &Value,
     deadline: Instant,
 ) -> maka_ui::Result<NativeView<dyn super::Widget>> {
+    compile_with_inputs(source, deadline, BTreeMap::new())
+}
+
+pub(crate) fn compile_with_inputs(
+    source: &Value,
+    deadline: Instant,
+    additional_inputs: BTreeMap<String, Value>,
+) -> maka_ui::Result<NativeView<dyn super::Widget>> {
     if Instant::now() >= deadline {
         return Err(maka_ui::Error::Invalid("desktop scene deadline".into()));
     }
@@ -404,6 +448,13 @@ pub fn compile(
         deadline,
     )
     .map_err(maka_ui::Error::Invalid)?;
+    for (key, schema) in additional_inputs {
+        if inputs.insert(key, schema).is_some() {
+            return Err(maka_ui::Error::Invalid(
+                "native reading input collides with scene input".into(),
+            ));
+        }
+    }
     let mut depth = 0;
     let mut slot_depth = BTreeMap::new();
     node.render_depth(0, true, &mut depth, &mut slot_depth);
@@ -648,10 +699,42 @@ impl super::Widget for Node {
     }
 }
 impl Node {
+    pub(crate) fn reading_handle(&self, state: &dyn std::any::Any) -> gpui_kit::ScrollHandle {
+        state
+            .downcast_ref::<SceneState>()
+            .expect("scene owner")
+            .scrolls[self.reading_key().expect("reading root")]
+        .clone()
+    }
+    pub(crate) fn render_reading(
+        &self,
+        state: &dyn std::any::Any,
+        slots: &super::Slots,
+        scope: gpui_kit::base::TextSelectionScopeId,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) -> maka_ui::Result<gpui_kit::AnyElement> {
+        let state = state.downcast_ref::<SceneState>().expect("scene owner");
+        if !state.visible {
+            use gpui_kit::{IntoElement, Styled};
+            return Ok(gpui_kit::div().hidden().into_any_element());
+        }
+        self.element_root(state, slots, Some(scope), window, cx)
+    }
     fn element(
         &self,
         state: &SceneState,
         slots: &super::Slots,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) -> maka_ui::Result<gpui_kit::AnyElement> {
+        self.element_root(state, slots, None, window, cx)
+    }
+    fn element_root(
+        &self,
+        state: &SceneState,
+        slots: &super::Slots,
+        reading: Option<gpui_kit::base::TextSelectionScopeId>,
         window: &mut gpui_kit::Window,
         cx: &mut gpui_kit::App,
     ) -> maka_ui::Result<gpui_kit::AnyElement> {
@@ -852,7 +935,12 @@ impl Node {
                         });
                 }
                 for node in children {
-                    element = element.child(node.element(state, slots, window, cx)?);
+                    let child = node.element(state, slots, window, cx)?;
+                    element = element.child(if reading.is_some() {
+                        super::reading::mark(node.key(), child)
+                    } else {
+                        child
+                    });
                 }
                 element.into_any_element()
             }

@@ -562,11 +562,10 @@ fn raw_input_decision_waits_for_the_complete_causal_commit_and_is_not_retained()
 }
 
 #[test]
-fn input_decisions_cannot_escape_a_failed_or_overridden_causal_transaction() {
+fn input_decisions_cannot_escape_a_failed_causal_transaction() {
     let timer = timer();
     for receive in [
         "throw new Error('parent rejects batch');",
-        "const out=frame({...state,revision:state.revision+1});out.decision={preventDefault:false};return out;",
         "const out=frame({...state,revision:state.revision+2});return out;",
     ] {
         let (input, packages, _) = fixture(
@@ -585,6 +584,57 @@ fn input_decisions_cannot_escape_a_failed_or_overridden_causal_transaction() {
         assert_eq!(app.frame(&child).unwrap().state["count"], 10);
         close_all(&mut app, &root);
     }
+}
+
+#[test]
+fn synchronous_parent_decisions_join_the_original_input_without_changing_origin() {
+    let timer = timer();
+    for source_decision in ["{}", "{preventDefault:true}"] {
+        let (input, packages, _) = fixture(
+            MOUNT,
+            &format!(
+                "const out=frame({{...state,revision:state.revision+1}},[{{name:'changed',value:3}}]);out.decision={source_decision};return out;"
+            ),
+            support::CHILD_UPDATE,
+            "if(event.kind!=='component')throw new Error('origin was rewritten');const out=frame({...state,revision:state.revision+1});out.decision={preventDefault:false,stopPropagation:true};return out;",
+            "{changed:'notice'}",
+        );
+        let mut app = application(&input, packages, &timer);
+        let root = app.mount_launch(json!({})).unwrap();
+        let child = app.child_mount(&root, "left").unwrap().clone();
+        let decision = app.dispatch(&child, 0, "inc", Value::Null).unwrap();
+        assert_eq!(decision.prevent_default, source_decision != "{}");
+        assert!(
+            decision.stop_propagation,
+            "the checked parent joins the native decision"
+        );
+        close_all(&mut app, &root);
+    }
+}
+
+#[test]
+fn props_update_notifications_do_not_inherit_a_raw_transactions_input_admission() {
+    let timer = timer();
+    let (input, packages, _) = fixture(
+        MOUNT,
+        CHILD_EVENT,
+        "return frame({...state,label:props.label,revision:state.revision+1},[{name:'changed',value:42}]);",
+        "if(event.event===42){const out=frame({...state,revision:state.revision+1});out.decision={preventDefault:true};return out;}return frame({...state,version:state.version+1,revision:state.revision+1});",
+        "{changed:'notice'}",
+    );
+    let mut app = application(&input, packages, &timer);
+    let root = app.mount_launch(json!({})).unwrap();
+    let child = app.child_mount(&root, "left").unwrap().clone();
+    let error = app.dispatch(&child, 0, "inc", Value::Null).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("original synchronous input route")
+    );
+    assert_eq!(app.frame(&root).unwrap().revision, 0);
+    assert_eq!(app.frame(&child).unwrap().revision, 0);
+    assert_eq!(app.frame(&child).unwrap().state["count"], 10);
+    close_all(&mut app, &root);
 }
 
 #[test]

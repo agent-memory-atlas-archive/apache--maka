@@ -117,6 +117,7 @@ pub(crate) struct RetainedContext {
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) content_mask: ContentMask<Pixels>,
     pub(crate) text_style: TextStyle,
+    pub(crate) text_selection_scope_context: Option<u64>,
     pub(crate) opacity: f32,
     pub(crate) prepaint_visible: bool,
 }
@@ -134,6 +135,7 @@ pub(crate) struct RetainedLayout {
     pub(crate) element_states: Vec<(GlobalElementId, TypeId)>,
     pub(crate) text_style: TextStyle,
     pub(crate) rem_size: Pixels,
+    pub(crate) text_selection_scope_context: Option<u64>,
     /// The layout key of the element the view hangs off, which keys the
     /// view's own node, when it was laid out in the request-layout walk.
     pub(crate) parent_layout_key: Option<u64>,
@@ -147,6 +149,7 @@ pub(crate) struct RetainedLayoutRecording {
     dependencies: DependencyRecording,
     text_style: TextStyle,
     rem_size: Pixels,
+    text_selection_scope_context: Option<u64>,
     parent_layout_key: Option<u64>,
 }
 
@@ -538,6 +541,7 @@ impl Window {
             && context.opacity == self.element_opacity
             && context.content_mask == self.content_mask()
             && context.text_style == self.text_style()
+            && context.text_selection_scope_context == self.text_selection_scope_context
     }
 
     /// Lays out the view last frame's record `previous` stands for as it was
@@ -550,7 +554,10 @@ impl Window {
     ) -> Option<LayoutId> {
         let record = &self.rendered_frame.retained.records[previous];
         let layout = record.layout.as_ref()?;
-        if layout.rem_size != self.rem_size() || layout.text_style != self.text_style() {
+        if layout.rem_size != self.rem_size()
+            || layout.text_style != self.text_style()
+            || layout.text_selection_scope_context != self.text_selection_scope_context
+        {
             return None;
         }
         if !self
@@ -602,6 +609,7 @@ impl Window {
             dependencies: cx.begin_recording_dependencies(),
             text_style: self.text_style(),
             rem_size: self.rem_size(),
+            text_selection_scope_context: self.text_selection_scope_context,
             parent_layout_key: self.parent_layout_key(),
         }
     }
@@ -627,6 +635,7 @@ impl Window {
                 .to_vec(),
             text_style: recording.text_style,
             rem_size: recording.rem_size,
+            text_selection_scope_context: recording.text_selection_scope_context,
             parent_layout_key: recording.parent_layout_key,
         };
         (Some(Rc::new(layout)), dependencies)
@@ -804,6 +813,7 @@ impl Window {
                     bounds: Bounds::default(),
                     content_mask: ContentMask::default(),
                     text_style: TextStyle::default(),
+                    text_selection_scope_context: None,
                     opacity: 1.,
                     prepaint_visible: true,
                 }),
@@ -873,6 +883,7 @@ impl Window {
             content_mask: self.content_mask(),
             text_style: self.text_style(),
             opacity: self.element_opacity,
+            text_selection_scope_context: self.text_selection_scope_context,
             prepaint_visible: self.prepaint_visible,
         };
         let end = self.prepaint_index();

@@ -191,6 +191,254 @@ export const contracts = {
       captures: {},
     },
   },
+  readingArea: {
+    name: 'maka.ui.ReadingArea',
+    version: 1,
+    transport: 'local',
+    interface: {
+      kind: 'component',
+      props: {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        title: 'ReadingProps',
+        type: 'object',
+        properties: {
+          content: {
+            description:
+              "The presenter's scene language; Desktop requires a scrolling column Stack.\nIts scroll policy and layout are the only presentation authority.",
+          },
+          command: {
+            description:
+              'Omission retains an accepted command; numbers increase per original mount.',
+            anyOf: [
+              {
+                $ref: '#/$defs/ReadingCommand',
+              },
+              {
+                type: 'null',
+              },
+            ],
+          },
+        },
+        additionalProperties: false,
+        required: ['content'],
+        $defs: {
+          ReadingCommand: {
+            type: 'object',
+            properties: {
+              sequence: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 1,
+              },
+              target: {
+                $ref: '#/$defs/ReadingTarget',
+              },
+            },
+            additionalProperties: false,
+            required: ['sequence', 'target'],
+          },
+          ReadingTarget: {
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'start',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'end',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  key: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'reveal_child',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'key'],
+              },
+            ],
+          },
+        },
+      },
+      events: {
+        input: {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          title: 'ComponentInput',
+          description:
+            'Input origin is assigned by the application, never by plugin event payloads.',
+          oneOf: [
+            {
+              type: 'object',
+              properties: {
+                key: {
+                  type: 'string',
+                },
+                event: true,
+                kind: {
+                  type: 'string',
+                  const: 'raw',
+                },
+              },
+              additionalProperties: false,
+              required: ['kind', 'key', 'event'],
+            },
+            {
+              type: 'object',
+              properties: {
+                key: {
+                  type: 'string',
+                },
+                event: true,
+                kind: {
+                  type: 'string',
+                  const: 'action',
+                },
+              },
+              additionalProperties: false,
+              required: ['kind', 'key', 'event'],
+            },
+            {
+              type: 'object',
+              properties: {
+                key: {
+                  type: 'string',
+                },
+                child: {
+                  type: 'string',
+                },
+                name: {
+                  type: 'string',
+                },
+                event: true,
+                kind: {
+                  type: 'string',
+                  const: 'component',
+                },
+              },
+              additionalProperties: false,
+              required: ['kind', 'key', 'child', 'name', 'event'],
+            },
+          ],
+        },
+        observed: {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          title: 'ReadingObservation',
+          type: 'object',
+          properties: {
+            readingRevision: {
+              description: 'Immediate native intent; can be newer than the painted viewport.',
+              type: 'integer',
+              format: 'uint64',
+              minimum: 0,
+            },
+            viewport: {
+              anyOf: [
+                {
+                  $ref: '#/$defs/ReadingViewport',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+            },
+            pendingCommand: {
+              type: ['integer', 'null'],
+              format: 'uint64',
+              minimum: 0,
+            },
+            receipt: {
+              description: 'Only the most recently settled command is retained, without a ledger.',
+              anyOf: [
+                {
+                  $ref: '#/$defs/ReadingReceipt',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+            },
+          },
+          additionalProperties: false,
+          required: ['readingRevision'],
+          $defs: {
+            ReadingViewport: {
+              type: 'object',
+              properties: {
+                readingRevision: {
+                  description: 'Explicit reading intent used by the actually painted children.',
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                atEnd: {
+                  type: 'boolean',
+                },
+                visibleChildKeys: {
+                  type: 'array',
+                  items: {
+                    type: 'string',
+                  },
+                  maxItems: 4096,
+                },
+              },
+              additionalProperties: false,
+              required: ['readingRevision', 'atEnd', 'visibleChildKeys'],
+            },
+            ReadingReceipt: {
+              type: 'object',
+              properties: {
+                sequence: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                status: {
+                  $ref: '#/$defs/ReadingStatus',
+                },
+              },
+              additionalProperties: false,
+              required: ['sequence', 'status'],
+            },
+            ReadingStatus: {
+              type: 'string',
+              enum: ['applied', 'cancelled', 'rejected'],
+            },
+          },
+        },
+      },
+      captures: {
+        tail: {
+          input: {
+            type: 'null',
+          },
+          output: {
+            kind: 'continuation',
+          },
+        },
+      },
+    },
+  },
   label: {
     name: 'maka.ui.Label',
     version: 1,

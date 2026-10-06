@@ -22,6 +22,9 @@ import type {
   EditorObservation,
   TextareaProps,
   MarkdownProps,
+  ReadingObservation,
+  ReadingCommand,
+  ComponentInput,
   UiExport,
 } from '../../plugin-sdk/src/index.js';
 import {
@@ -40,10 +43,14 @@ interface Revision {
 interface Draft extends Revision {
   observation: EditorObservation | null;
 }
+interface Reading extends Revision {
+  observation: ReadingObservation | null;
+  command: ReadingCommand | null;
+}
 export function components(target: Target): {
   composer: Component<Draft, ComposerProps>;
   navigation: Component<Revision, NavigationProps>;
-  timeline: Component<Revision, TimelineProps>;
+  timeline: Component<Reading, TimelineProps>;
 } {
   const composerFrame = (
     state: Draft,
@@ -151,7 +158,7 @@ export function components(target: Target): {
       ),
     );
   };
-  const timelineFrame = (state: Revision, props: TimelineProps) => {
+  const timelineFrame = (state: Reading, props: TimelineProps) => {
     const ui = paint(target, props.theme),
       text = copy(props.locale);
     const messages: Node[] = props.messages.map((message) =>
@@ -194,30 +201,47 @@ export function components(target: Target): {
         },
       ),
     );
+    const content = ui.box(
+      'timeline',
+      [
+        ...(!messages.length && !props.loading
+          ? [
+              ui.text('welcome', text.welcome, 30, props.theme.text, 600),
+              ui.text('welcome-copy', text.welcomeCopy, 16, props.theme.muted),
+            ]
+          : messages),
+        ...(props.loading ? [ui.text('loading', text.loading, 14, props.theme.muted)] : []),
+        ...(props.more ? [ui.button('more', text.more)] : []),
+      ],
+      {
+        gap: target === 'desktop' ? 24 : 1,
+        style: {
+          width: fill,
+          height: fill,
+          padding: { top: 24, right: 24, bottom: 24, left: 24 },
+        },
+        scroll: props.live ? 'follow_end' : 'anchor',
+      },
+    );
     return output(
       state,
-      ui.box(
-        'timeline',
-        [
-          ...(!messages.length && !props.loading
-            ? [
-                ui.text('welcome', text.welcome, 30, props.theme.text, 600),
-                ui.text('welcome-copy', text.welcomeCopy, 16, props.theme.muted),
-              ]
-            : messages),
-          ...(props.loading ? [ui.text('loading', text.loading, 14, props.theme.muted)] : []),
-          ...(props.more ? [ui.button('more', text.more)] : []),
-        ],
-        {
-          gap: target === 'desktop' ? 24 : 1,
-          style: {
-            width: fill,
-            height: fill,
-            padding: { top: 24, right: 24, bottom: 24, left: 24 },
-          },
-          scroll: 'follow_end',
-        },
-      ),
+      target === 'desktop'
+        ? ui.box(
+            'timeline-frame',
+            [
+              slot(
+                'reading',
+                'reading',
+                { content, command: state.command },
+                { observed: 'reading-observed', input: 'reading-input' },
+              ),
+              ...(state.observation?.viewport && !state.observation.viewport.atEnd
+                ? [ui.button('end', text.toEnd, state.observation.pendingCommand != null)]
+                : []),
+            ],
+            { gap: 8, style: { width: fill, height: fill } },
+          )
+        : content,
     );
   };
   return {
@@ -269,10 +293,24 @@ export function components(target: Target): {
       },
     },
     timeline: {
-      mount: (props) => timelineFrame({ revision: 0 }, props),
-      update: (state, props) => timelineFrame({ revision: state.revision + 1 }, props),
+      mount: (props) => timelineFrame({ revision: 0, observation: null, command: null }, props),
+      update: (state, props) => timelineFrame({ ...state, revision: state.revision + 1 }, props),
       event(state, input, props) {
-        const out = timelineFrame({ revision: state.revision + 1 }, props);
+        const next = { ...state, revision: state.revision + 1 };
+        if (input.kind === 'component' && input.child === 'reading') {
+          if (input.name === 'observed') next.observation = input.event as ReadingObservation;
+          if (input.name === 'input') input = input.event as ComponentInput;
+        }
+        if (
+          input.kind === 'raw' &&
+          input.key === 'end' &&
+          target === 'desktop' &&
+          next.observation?.viewport &&
+          !next.observation.viewport.atEnd &&
+          next.observation.pendingCommand == null
+        )
+          next.command = { sequence: (next.command?.sequence ?? 0) + 1, target: { kind: 'end' } };
+        const out = timelineFrame(next, props);
         if (input.kind === 'raw' && input.key === 'more' && props.more && !props.loading)
           out.events.push({ name: 'more', value: {} });
         return out;

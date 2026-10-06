@@ -1042,6 +1042,7 @@ pub(crate) struct DeferredDraw {
     pub(crate) parent_node: DispatchNodeId,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(crate) text_style_stack: crate::fast::text_style::TextStyleStack,
+    pub(crate) text_selection_scope_context: Option<u64>,
     pub(crate) prepaint_visible: bool,
     pub(crate) content_mask: Option<ContentMask<Pixels>>,
     pub(crate) rem_size: Pixels,
@@ -1331,6 +1332,8 @@ pub struct Window {
     last_text_input_configuration: Option<TextInputConfiguration>,
     focused_text_input_active: bool,
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
+    // Opaque inherited renderer context; selection facts remain in its adapter.
+    pub(crate) text_selection_scope_context: Option<u64>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
     next_hitbox_id: HitboxId,
@@ -2263,6 +2266,7 @@ impl Window {
             prompt: None,
             client_inset: None,
             image_cache_stack: Vec::new(),
+            text_selection_scope_context: None,
             captured_hitbox: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
@@ -3864,6 +3868,7 @@ impl Window {
                     absolute_offset,
                     prepaint_range,
                     visible,
+                    selection_scope,
                 ) = {
                     let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
                     self.element_id_stack
@@ -3878,30 +3883,37 @@ impl Window {
                         deferred_draw.absolute_offset,
                         deferred_draw.prepaint_range.clone(),
                         deferred_draw.prepaint_visible,
+                        deferred_draw.text_selection_scope_context,
                     )
                 };
                 self.next_frame.dispatch_tree.set_active_node(parent_node);
 
                 let prepaint_start = self.prepaint_index();
-                self.with_prepaint_visibility(visible, |window| {
-                    if let Some(mut element) = element {
-                        let recording = crate::fast::retained::begin_deferred_prepaint(
-                            window,
-                            deferred_draw_ix,
-                            cx,
-                        );
-                        window.with_rendered_view(current_view, |window| {
-                            window.with_rem_size(Some(rem_size), |window| {
-                                window.with_absolute_element_offset(absolute_offset, |window| {
-                                    element.prepaint(window, cx);
+                self.with_text_selection_scope_context(selection_scope, |window| {
+                    window.with_prepaint_visibility(visible, |window| {
+                        if let Some(mut element) = element {
+                            let recording = crate::fast::retained::begin_deferred_prepaint(
+                                window,
+                                deferred_draw_ix,
+                                cx,
+                            );
+                            window.with_rendered_view(current_view, |window| {
+                                window.with_rem_size(Some(rem_size), |window| {
+                                    window.with_absolute_element_offset(
+                                        absolute_offset,
+                                        |window| {
+                                            element.prepaint(window, cx);
+                                        },
+                                    );
                                 });
                             });
-                        });
-                        crate::fast::retained::finish_deferred(window, recording, cx);
-                        window.next_frame.deferred_draws[deferred_draw_ix].element = Some(element);
-                    } else {
-                        window.reuse_prepaint(prepaint_range);
-                    }
+                            crate::fast::retained::finish_deferred(window, recording, cx);
+                            window.next_frame.deferred_draws[deferred_draw_ix].element =
+                                Some(element);
+                        } else {
+                            window.reuse_prepaint(prepaint_range);
+                        }
+                    })
                 });
                 let prepaint_end = self.prepaint_index();
                 self.next_frame.deferred_draws[deferred_draw_ix].prepaint_range =
@@ -3943,13 +3955,18 @@ impl Window {
             if let Some(element) = deferred_draw.element.as_mut() {
                 let enclosing = &deferred_draw.enclosing_retained;
                 let recording = crate::fast::retained::begin_deferred_paint(self, enclosing, cx);
-                self.with_rendered_view(deferred_draw.current_view, |window| {
-                    window.with_content_mask(content_mask, |window| {
-                        window.with_rem_size(Some(deferred_draw.rem_size), |window| {
-                            element.paint(window, cx);
-                        });
-                    })
-                });
+                self.with_text_selection_scope_context(
+                    deferred_draw.text_selection_scope_context,
+                    |window| {
+                        window.with_rendered_view(deferred_draw.current_view, |window| {
+                            window.with_content_mask(content_mask, |window| {
+                                window.with_rem_size(Some(deferred_draw.rem_size), |window| {
+                                    element.paint(window, cx);
+                                });
+                            })
+                        })
+                    },
+                );
                 crate::fast::retained::finish_deferred(self, recording, cx);
             } else {
                 self.reuse_paint(deferred_draw.paint_range.clone());
@@ -4061,6 +4078,7 @@ impl Window {
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
+                    text_selection_scope_context: deferred_draw.text_selection_scope_context,
                     prepaint_visible: deferred_draw.prepaint_visible,
                     content_mask: deferred_draw.content_mask,
                     rem_size: deferred_draw.rem_size,
@@ -4603,6 +4621,7 @@ impl Window {
             element_id_stack: self.element_id_stack.clone(),
             text_style_stack: self.text_style_stack.clone(),
             prepaint_visible: self.prepaint_visible,
+            text_selection_scope_context: self.text_selection_scope_context,
             content_mask,
             rem_size: self.rem_size(),
             priority,
@@ -5487,6 +5506,28 @@ impl Window {
         let result = f(self);
         self.rendered_entity_stack.pop();
         result
+    }
+
+    /// The renderer's opaque current text-selection traversal scope.
+    /// This is inherited layout context, not selection state or authority.
+    pub fn text_selection_scope_context(&self) -> Option<u64> {
+        self.text_selection_scope_context
+    }
+
+    /// Execute under a renderer's selection scope, restoring on return or panic.
+    /// Native retained view rebuilds capture the same context as text styles.
+    pub fn with_text_selection_scope_context<R>(
+        &mut self,
+        scope: Option<u64>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let previous = std::mem::replace(&mut self.text_selection_scope_context, scope);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self)));
+        self.text_selection_scope_context = previous;
+        match result {
+            Ok(value) => value,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
     }
 
     /// Executes the provided function with the specified image cache.

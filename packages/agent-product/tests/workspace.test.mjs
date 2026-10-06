@@ -2265,7 +2265,7 @@ test('prepending history preserves the streamed message presentation identity', 
     live: true,
   };
   const initial = timeline.mount(props, {});
-  const oldRow = initial.frame.view.children[0];
+  const oldRow = initial.frame.view.children[0].props.content.children[0];
   const oldBody = oldRow.children.find((node) => node.kind === 'component');
   assert.ok(oldBody);
   const next = timeline.update(
@@ -2279,11 +2279,98 @@ test('prepending history preserves the streamed message presentation identity', 
     },
     {},
   );
-  const row = next.frame.view.children[1];
+  const row = next.frame.view.children[0].props.content.children[1];
   const body = row.children.find((node) => node.kind === 'component');
   assert.equal(row.key, oldRow.key);
   assert.equal(body.key, oldBody.key);
   assert.equal(body.binding, oldBody.binding);
   assert.equal(body.props.source, message.text + ' continued');
-  assert.notEqual(next.frame.view.children[0].key, row.key);
+  assert.notEqual(next.frame.view.children[0].props.content.children[0].key, row.key);
+});
+
+test('desktop scroll-to-end uses native painted facts and preserves its accepted command', async () => {
+  const { component: timeline } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/timeline/desktop.js'))
+  );
+  const props = {
+    theme: values.appearance[0],
+    locale: 'en',
+    messages: [],
+    loading: false,
+    more: true,
+    live: true,
+  };
+  let result = timeline.mount(props, {});
+  const reading = () => result.frame.view.children[0];
+  assert.equal(reading().binding, 'reading');
+  assert.equal(result.frame.view.children.length, 1);
+  const observation = {
+    readingRevision: 2,
+    viewport: { readingRevision: 2, atEnd: false, visibleChildKeys: ['message-original'] },
+    pendingCommand: null,
+    receipt: null,
+  };
+  result = timeline.event(
+    result.frame.state,
+    {
+      kind: 'component',
+      child: 'reading',
+      name: 'observed',
+      key: 'reading-observed',
+      event: observation,
+    },
+    props,
+    {},
+  );
+  assert.equal(result.frame.view.children[1].key, 'end');
+  result = timeline.event(result.frame.state, { kind: 'raw', key: 'end', event: null }, props, {});
+  assert.deepEqual(reading().props.command, { sequence: 1, target: { kind: 'end' } });
+  result = timeline.update(result.frame.state, { ...props, live: false }, {});
+  assert.equal(reading().props.command.sequence, 1);
+  assert.equal(reading().props.content.scroll, 'anchor');
+  result = timeline.event(
+    result.frame.state,
+    {
+      kind: 'component',
+      child: 'reading',
+      name: 'observed',
+      key: 'reading-observed',
+      event: { ...observation, pendingCommand: 1 },
+    },
+    props,
+    {},
+  );
+  assert.equal(result.frame.view.children[1].disabled, true);
+  result = timeline.event(result.frame.state, { kind: 'raw', key: 'end', event: null }, props, {});
+  assert.equal(reading().props.command.sequence, 1);
+  result = timeline.event(
+    result.frame.state,
+    {
+      kind: 'component',
+      child: 'reading',
+      name: 'input',
+      key: 'reading-input',
+      event: { kind: 'raw', key: 'more', event: null },
+    },
+    props,
+    {},
+  );
+  assert.deepEqual(result.events, [{ name: 'more', value: {} }]);
+  result = timeline.event(
+    result.frame.state,
+    {
+      kind: 'component',
+      child: 'reading',
+      name: 'observed',
+      key: 'reading-observed',
+      event: {
+        ...observation,
+        viewport: { ...observation.viewport, atEnd: true },
+        receipt: { sequence: 1, status: 'applied' },
+      },
+    },
+    props,
+    {},
+  );
+  assert.equal(result.frame.view.children.length, 1);
 });

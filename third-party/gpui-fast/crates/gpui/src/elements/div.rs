@@ -46,7 +46,8 @@ use std::{
 mod scroll;
 use scroll::{Attempt, ScrollLayout, ScrollPresentation};
 pub use scroll::{
-    ScrollCommand, ScrollObservation, ScrollRequestId, ScrollRequestStatus, ScrollRetention,
+    ScrollCommand, ScrollObservation, ScrollReadingWitness, ScrollRequestId, ScrollRequestStatus,
+    ScrollRetention,
 };
 
 use super::ImageCacheProvider;

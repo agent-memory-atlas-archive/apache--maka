@@ -933,7 +933,7 @@ impl TextSelectionHandle {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if let Some(scope) = current_text_selection_scope(window.window_handle().window_id(), cx) {
+        if let Some(scope) = current_text_selection_scope(window) {
             registration.scope = scope;
         }
         self.register_exact(registration, window, cx);
@@ -1347,6 +1347,46 @@ impl WindowSelectionState {
         self.active_scope = scope;
         self.publish_snapshots(cx);
         handlers
+    }
+
+    // Resolve the original painted participant before changing scope. Container
+    // ancestors must never clear an inner document's selection on its behalf.
+    fn scope_at(
+        &self,
+        position: Point<Pixels>,
+        window: &Window,
+        cx: &App,
+        glyph_required: bool,
+    ) -> Option<TextSelectionScopeId> {
+        self.participants
+            .values()
+            .filter(|entry| {
+                entry
+                    .participant
+                    .upgrade()
+                    .is_some_and(|participant| participant.read(cx).enabled)
+                    && entry.registration.hitbox.is_hovered_at(position, window)
+            })
+            .min_by(|a, b| {
+                let area = |entry: &ParticipantRegistration| {
+                    f32::from(entry.registration.bounds.size.width)
+                        * f32::from(entry.registration.bounds.size.height)
+                };
+                area(a).total_cmp(&area(b)).then_with(|| {
+                    a.registration
+                        .document_order
+                        .cmp(&b.registration.document_order)
+                })
+            })
+            .filter(|entry| {
+                !glyph_required
+                    || entry
+                        .registration
+                        .text_bounds
+                        .iter()
+                        .any(|bounds| bounds.contains(&position))
+            })
+            .map(|entry| entry.registration.scope)
     }
 
     /// Sweeps participants after a rendered frame has completed.
@@ -2413,66 +2453,12 @@ struct PendingTextSelectionScopes(HashMap<gpui::WindowId, TextSelectionScopeId>)
 
 impl Global for PendingTextSelectionScopes {}
 
-// Native traversal context, not reactive application state. The exact scope
-// is captured by the reporting element before a retained State-only gap.
-#[derive(Default)]
-struct TextSelectionScopeStacks(
-    std::cell::RefCell<HashMap<gpui::WindowId, Vec<TextSelectionScopeId>>>,
-);
-
-impl Global for TextSelectionScopeStacks {}
-
-fn push_text_selection_scope(window_id: gpui::WindowId, scope: TextSelectionScopeId, cx: &mut App) {
-    if !cx.has_global::<TextSelectionScopeStacks>() {
-        cx.set_global(TextSelectionScopeStacks::default());
-    }
-    cx.global::<TextSelectionScopeStacks>()
-        .0
-        .borrow_mut()
-        .entry(window_id)
-        .or_default()
-        .push(scope);
-}
-
-fn pop_text_selection_scope(window_id: gpui::WindowId, cx: &mut App) {
-    let mut stacks = cx.global::<TextSelectionScopeStacks>().0.borrow_mut();
-    let remove_stack = stacks.get_mut(&window_id).is_some_and(|stack| {
-        stack.pop();
-        stack.is_empty()
-    });
-    if remove_stack {
-        stacks.remove(&window_id);
-    }
-}
-
-pub(crate) fn current_text_selection_scope(
-    window_id: gpui::WindowId,
-    cx: &App,
-) -> Option<TextSelectionScopeId> {
-    cx.has_global::<TextSelectionScopeStacks>()
-        .then(|| {
-            cx.global::<TextSelectionScopeStacks>()
-                .0
-                .borrow()
-                .get(&window_id)
-                .and_then(|stack| stack.last().copied())
-        })
-        .flatten()
-}
-
-fn with_text_selection_scope<T>(
-    window_id: gpui::WindowId,
-    scope: TextSelectionScopeId,
-    cx: &mut App,
-    callback: impl FnOnce(&mut App) -> T,
-) -> T {
-    push_text_selection_scope(window_id, scope, cx);
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| callback(cx)));
-    pop_text_selection_scope(window_id, cx);
-    match result {
-        Ok(result) => result,
-        Err(payload) => std::panic::resume_unwind(payload),
-    }
+// One inherited scope in the original Window, also restored for retained gaps.
+// Actual selection ownership stays in the original window/participant state.
+pub(crate) fn current_text_selection_scope(window: &Window) -> Option<TextSelectionScopeId> {
+    window
+        .text_selection_scope_context()
+        .map(TextSelectionScopeId)
 }
 
 /// Window-level operations for text selection.
@@ -2492,6 +2478,30 @@ impl TextSelection {
     /// has an active participant-local selection such as select-all.
     pub fn has_selection(window: &mut Window, cx: &mut App) -> bool {
         live_text_selection_state(window, cx).is_some_and(|state| state.read(cx).has_selection(cx))
+    }
+
+    /// Whether this original scope has a geometry or completed local selection.
+    /// Unrelated window scopes do not participate. Reads the original registered
+    /// participants; does not copy text, dispatch input or create selection state.
+    pub fn has_selection_in_scope(
+        scope: TextSelectionScopeId,
+        window: &Window,
+        cx: &mut App,
+    ) -> bool {
+        live_text_selection_state(window, cx).is_some_and(|state| {
+            let state = state.read(cx);
+            (state.active_scope == scope && state.snapshot().is_some())
+                || state.participants.values().any(|registration| {
+                    registration.registration.scope == scope
+                        && registration
+                            .participant
+                            .upgrade()
+                            .is_some_and(|participant| {
+                                let participant = participant.read(cx);
+                                participant.enabled && participant.local_selection
+                            })
+                })
+        })
     }
 
     /// Clears window selection and every participant's local selection.
@@ -2656,8 +2666,7 @@ impl<E: Element> Element for TextSelectionScopeMarker<E> {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let window_id = window.window_handle().window_id();
-        with_text_selection_scope(window_id, self.scope, cx, |cx| {
+        window.with_text_selection_scope_context(Some(self.scope.0), |window| {
             self.element.request_layout(id, inspector_id, window, cx)
         })
     }
@@ -2671,8 +2680,7 @@ impl<E: Element> Element for TextSelectionScopeMarker<E> {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        let window_id = window.window_handle().window_id();
-        with_text_selection_scope(window_id, self.scope, cx, |cx| {
+        window.with_text_selection_scope_context(Some(self.scope.0), |window| {
             self.element
                 .prepaint(id, inspector_id, bounds, request_layout, window, cx)
         })
@@ -2688,8 +2696,7 @@ impl<E: Element> Element for TextSelectionScopeMarker<E> {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let window_id = window.window_handle().window_id();
-        with_text_selection_scope(window_id, self.scope, cx, |cx| {
+        window.with_text_selection_scope_context(Some(self.scope.0), |window| {
             self.element.paint(
                 id,
                 inspector_id,
@@ -2875,6 +2882,12 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
             GlobalState::init(cx);
             GlobalState::reset_text_selection_suppression(cx);
             let handlers = state.update(cx, |state, cx| {
+                state
+                    .scope_at(event.position, window, cx, false)
+                    .map_or_else(Vec::new, |scope| state.set_active_scope_state(scope, cx))
+            });
+            dispatch_clear_handlers(handlers, cx);
+            let handlers = state.update(cx, |state, cx| {
                 if state.mouse_down_prepared {
                     return Vec::new();
                 }
@@ -2931,12 +2944,22 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
         if event.phase == TouchPhase::Started {
             if window.default_prevented()
                 || state.read(cx).touch.covers(event.start_position, window)
-                || !state.update(cx, |state, cx| {
-                    state
-                        .endpoint(event.start_position, Some(window), cx)
-                        .inside_text
-                })
             {
+                return;
+            }
+            let Some(scope) = state
+                .read(cx)
+                .scope_at(event.start_position, window, cx, true)
+            else {
+                return;
+            };
+            let handlers = state.update(cx, |state, cx| state.set_active_scope_state(scope, cx));
+            dispatch_clear_handlers(handlers, cx);
+            if !state.update(cx, |state, cx| {
+                state
+                    .endpoint(event.start_position, Some(window), cx)
+                    .inside_text
+            }) {
                 return;
             }
             GlobalState::init(cx);
@@ -3322,44 +3345,37 @@ mod tests {
     }
 
     #[gpui::test]
-    fn scope_stack_is_cleaned_after_panicking_subtree(cx: &mut TestAppContext) {
-        let window_id = {
-            let (_, window_cx) = cx.add_window_view(|_, _| SelectionElementOnlyView);
-            window_cx.update(|window, _| window.window_handle().window_id())
-        };
-        let scope = TextSelectionScopeId::from_raw(41);
-
-        cx.update(|cx| {
+    fn scope_context_is_cleaned_after_panicking_subtree(cx: &mut TestAppContext) {
+        let handle = cx.add_window(|_, _| SelectionElementOnlyView);
+        cx.update_window(*handle, |_, window, _| {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                with_text_selection_scope(window_id, scope, cx, |_| panic!("subtree failed"));
+                window.with_text_selection_scope_context(Some(41), |_| panic!("subtree failed"));
             }));
-
             assert!(result.is_err());
-            assert_eq!(current_text_selection_scope(window_id, cx), None);
-        });
+            assert_eq!(current_text_selection_scope(window), None);
+        })
+        .unwrap();
     }
 
     #[gpui::test]
     fn reentrant_scope_from_one_window_does_not_pollute_another(cx: &mut TestAppContext) {
-        let first_window_id = {
-            let (_, window_cx) = cx.add_window_view(|_, _| SelectionElementOnlyView);
-            window_cx.update(|window, _| window.window_handle().window_id())
-        };
-        let second_window_id = {
-            let (_, window_cx) = cx.add_window_view(|_, _| SelectionElementOnlyView);
-            window_cx.update(|window, _| window.window_handle().window_id())
-        };
-        let scope = TextSelectionScopeId::from_raw(42);
-
-        cx.update(|cx| {
-            with_text_selection_scope(first_window_id, scope, cx, |cx| {
-                assert_eq!(current_text_selection_scope(second_window_id, cx), None);
+        let first = cx.add_window(|_, _| SelectionElementOnlyView);
+        let second = cx.add_window(|_, _| SelectionElementOnlyView);
+        cx.update_window(*first, |_, window, cx| {
+            window.with_text_selection_scope_context(Some(42), |window| {
                 assert_eq!(
-                    current_text_selection_scope(first_window_id, cx),
-                    Some(scope)
+                    current_text_selection_scope(window),
+                    Some(TextSelectionScopeId::from_raw(42))
                 );
+                second
+                    .update(cx, |_, window, _| {
+                        assert_eq!(current_text_selection_scope(window), None)
+                    })
+                    .unwrap();
             });
-        });
+            assert_eq!(current_text_selection_scope(window), None);
+        })
+        .unwrap();
     }
 
     #[gpui::test]
