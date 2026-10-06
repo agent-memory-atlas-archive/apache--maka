@@ -92,6 +92,7 @@ fn click_nth(presenter: &mut maka_tui::application::Presenter, label: &str, nth:
         }))
         .unwrap();
 }
+#[track_caller]
 fn await_screen(presenter: &mut maka_tui::application::Presenter, expected: &str) {
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     loop {
@@ -688,10 +689,124 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     }
     presenter.shutdown().unwrap();
     drop(presenter);
+    // Preserve the original automatic restore assertion before publishing any
+    // newer fixture Session that can legitimately become the catalog's latest.
+    let mut restored = start();
+    await_screen(&mut restored, "Elegant response");
+    restored.surface_closed(Ok(())).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !restored.can_shutdown() {
+        restored.pump().unwrap();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    restored.shutdown().unwrap();
+    drop(restored);
+    // A legal imported conversation supplies immutable tool fields through the
+    // same original Host; the UI still discovers it using ordinary catalog reads.
+    let tool_session = runtime.block_on(async {
+        use maka_event_log::sessions::PluginSession;
+        use maka_plugins::{composition::Scope as StorageScope, storage::Namespace};
+        use maka_runtime::import::{Content, Record, Source};
+        let session = format!("{}{}", fixture.owner.prefix, Uuid::new_v4().simple());
+        fixture
+            .store
+            .begin_session_import(
+                &PluginSession {
+                    session_id: session.clone(),
+                    creator: Namespace::new("native.tool.fixture", StorageScope::Profile).unwrap(),
+                    fingerprint: "native-tool-import".into(),
+                    managed: false,
+                    authority_session_id: None,
+                },
+                &Source {
+                    adapter: "fixture".into(),
+                    session_id: "tools".into(),
+                },
+                &json!({"schemaVersion":1,"title":"Native tool inspection"}),
+                1,
+            )
+            .await
+            .unwrap();
+        let mut values = vec![1; 6000];
+        values.push(99999);
+        let value = json!({"count":42,"values":values});
+        let mut result_values = vec![2; 6000];
+        result_values.push(99998);
+        let result = json!({"count":43,"values":result_values});
+        let records = [
+            Content::User {
+                text: "Inspect original tool fields".into(),
+            },
+            Content::ToolCall {
+                call_id: "call".into(),
+                name: "Count".into(),
+                input: Some(value.clone()),
+            },
+            Content::ToolResult {
+                call_id: "call".into(),
+                output: result,
+                is_error: false,
+            },
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, content)| Record {
+            source_message_id: format!("m{i}"),
+            source_turn_id: "turn".into(),
+            timestamp: Some(1),
+            content,
+        })
+        .collect();
+        fixture
+            .store
+            .append_session_import(&session, 0, records)
+            .await
+            .unwrap();
+        fixture
+            .store
+            .publish_session_import(&session, 3)
+            .await
+            .unwrap();
+        session
+    });
     let mut reopened = start();
-    await_screen(&mut reopened, "Elegant response");
+    await_screen(&mut reopened, "[ Show sidebar ]");
     click(&mut reopened, "[ Show sidebar ]");
-    await_screen(&mut reopened, "[ New conversation ]");
+    await_screen(&mut reopened, "Native tool inspection");
+    click(&mut reopened, "Native tool inspection");
+    click(&mut reopened, "[ Hide sidebar ]");
+    await_screen(&mut reopened, "Tool output · Count");
+    await_screen(&mut reopened, "[ Tool details ]");
+    for (nth, heading, beginning, ending) in [
+        (0, "Tool arguments", "\"count\":42", "99999"),
+        (1, "Tool result", "\"count\":43", "99998"),
+    ] {
+        click_nth(&mut reopened, "[ Tool details ]", nth);
+        await_screen(&mut reopened, beginning);
+        let source_screen = screen(&draw(&mut reopened));
+        assert!(source_screen.contains(heading));
+        assert!(source_screen.contains("Beginning of source"));
+        click(&mut reopened, "[ End ]");
+        await_screen(&mut reopened, ending);
+        // End lands the native reading viewport at the final literal bytes;
+        // the heading above the long excerpt is outside that viewport.
+        assert!(!screen(&draw(&mut reopened)).contains("[ Next excerpt ]"));
+        click(&mut reopened, "[ Beginning ]");
+        await_screen(&mut reopened, beginning);
+        click(&mut reopened, "[ Back to conversation ]");
+        await_screen(&mut reopened, "[ Tool details ]");
+    }
+    assert!(
+        runtime
+            .block_on(fixture.owner.session(&tool_session))
+            .is_ok()
+    );
+    click(&mut reopened, "[ Show sidebar ]");
+    await_screen(&mut reopened, "New conversation");
+    // Both the creation button and the original session have this label.
+    // Select the ordinary catalog row before continuing original recovery/CAS.
+    click_nth(&mut reopened, "New conversation", 1);
     click(&mut reopened, "[ Hide sidebar ]");
     assert!(screen(&draw(&mut reopened)).contains("What would you like to work on?"));
     click(&mut reopened, "[ Connections ]");
