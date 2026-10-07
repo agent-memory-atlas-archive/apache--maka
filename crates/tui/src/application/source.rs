@@ -70,7 +70,7 @@ fn color(rgba: u32) -> Color {
     Color::Rgb((rgba >> 24) as u8, (rgba >> 16) as u8, (rgba >> 8) as u8)
 }
 impl Widget for Recipe {
-    fn create(&self) -> Box<dyn Any> {
+    fn create(&self, _: super::NativeContext) -> Box<dyn Any> {
         Box::new(Owner {
             document: Rc::new(std::cell::RefCell::new(Document {
                 source: Arc::from(self.0.source.as_str()),

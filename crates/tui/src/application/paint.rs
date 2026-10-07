@@ -314,6 +314,15 @@ impl Slots<'_> {
         })
     }
 
+    /// The original focused native input within this mounted widget, if any.
+    pub fn focused_key(&self) -> Option<&str> {
+        self.presenter
+            .focus
+            .as_ref()
+            .filter(|_| self.focused())
+            .map(|target| target.key.as_str())
+    }
+
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.declarations.iter().map(|slot| slot.key.as_str())
     }
@@ -387,6 +396,9 @@ impl Presenter {
             geometries: Vec::new(),
             ancestry: Vec::new(),
         };
+        if !self.resources.ready(&self.application, &self.root)? {
+            return Ok(scene);
+        }
         let measurements = Measurements::default();
         self.paint_mount(&self.root, area.into(), buffer, &mut scene, &measurements)?;
         Ok(scene)

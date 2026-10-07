@@ -437,6 +437,307 @@ export const contracts = {
       captures: {},
     },
   },
+  filePicker: {
+    name: 'maka.ui.FilePicker',
+    version: 1,
+    transport: 'local',
+    interface: {
+      kind: 'component',
+      props: {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        title: 'FilePickerProps',
+        type: 'object',
+        properties: {
+          appearance: {
+            $ref: '#/$defs/InputAppearance',
+          },
+          label: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 512,
+          },
+          pathLabel: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 512,
+          },
+          placeholder: {
+            type: 'string',
+            maxLength: 512,
+          },
+          disabled: {
+            type: 'boolean',
+          },
+          tabIndex: {
+            type: 'integer',
+            format: 'int16',
+            minimum: -1,
+            maximum: 32767,
+          },
+        },
+        additionalProperties: false,
+        required: ['appearance', 'label', 'pathLabel', 'placeholder', 'disabled', 'tabIndex'],
+        $defs: {
+          InputAppearance: {
+            type: 'object',
+            properties: {
+              text: {
+                $ref: '#/$defs/TextAppearance',
+              },
+              mutedForeground: {
+                $ref: '#/$defs/Color',
+              },
+              background: {
+                $ref: '#/$defs/Color',
+              },
+              selection: {
+                $ref: '#/$defs/Color',
+              },
+              caret: {
+                $ref: '#/$defs/Color',
+              },
+              border: {
+                $ref: '#/$defs/Color',
+              },
+              focusedBorder: {
+                $ref: '#/$defs/Color',
+              },
+              borderWidth: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 8,
+              },
+              radius: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 64,
+              },
+              padding: {
+                $ref: '#/$defs/Insets',
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'text',
+              'mutedForeground',
+              'background',
+              'selection',
+              'caret',
+              'border',
+              'focusedBorder',
+              'borderWidth',
+              'radius',
+              'padding',
+            ],
+          },
+          TextAppearance: {
+            type: 'object',
+            properties: {
+              font: {
+                $ref: '#/$defs/FontAppearance',
+              },
+              foreground: {
+                $ref: '#/$defs/Color',
+              },
+            },
+            additionalProperties: false,
+            required: ['font', 'foreground'],
+          },
+          FontAppearance: {
+            type: 'object',
+            properties: {
+              family: {
+                $ref: '#/$defs/FontFamily',
+              },
+              fallbacks: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/FontFamily',
+                },
+                maxItems: 8,
+              },
+              size: {
+                type: 'number',
+                format: 'float',
+                minimum: 6,
+                maximum: 96,
+              },
+              lineHeight: {
+                description: 'Line height relative to this font size.',
+                type: 'number',
+                format: 'float',
+                minimum: 1,
+                maximum: 3,
+              },
+              weight: {
+                type: 'integer',
+                format: 'uint16',
+                minimum: 1,
+                maximum: 1000,
+              },
+            },
+            additionalProperties: false,
+            required: ['family', 'fallbacks', 'size', 'lineHeight', 'weight'],
+          },
+          FontFamily: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+          },
+          Color: {
+            description: 'Packed RGBA, including explicit alpha zero.',
+            type: 'integer',
+            format: 'uint32',
+            minimum: 0,
+          },
+          Insets: {
+            type: 'object',
+            properties: {
+              top: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+              right: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+              bottom: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+              left: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['top', 'right', 'bottom', 'left'],
+          },
+        },
+      },
+      events: {
+        changed: {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          title: 'FileObservation',
+          type: 'object',
+          properties: {
+            owner: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 128,
+            },
+            revision: {
+              type: 'integer',
+              format: 'uint64',
+              minimum: 0,
+            },
+            phase: {
+              $ref: '#/$defs/FilePhase',
+            },
+            file: {
+              anyOf: [
+                {
+                  $ref: '#/$defs/FileDescriptor',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+            },
+            error: {
+              anyOf: [
+                {
+                  $ref: '#/$defs/FileError',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+            },
+          },
+          additionalProperties: false,
+          required: ['owner', 'revision', 'phase'],
+          $defs: {
+            FilePhase: {
+              type: 'string',
+              enum: ['empty', 'choosing', 'ready', 'failed'],
+            },
+            FileDescriptor: {
+              type: 'object',
+              properties: {
+                name: {
+                  type: 'string',
+                  maxLength: 512,
+                },
+                bytes: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+                digest: {
+                  type: 'string',
+                  minLength: 71,
+                  maxLength: 71,
+                },
+              },
+              additionalProperties: false,
+              required: ['name', 'bytes', 'digest'],
+            },
+            FileError: {
+              type: 'string',
+              enum: [
+                'invalid_file',
+                'read_failed',
+                'limit_exceeded',
+                'budget_exhausted',
+                'worker_failed',
+              ],
+            },
+          },
+        },
+      },
+      captures: {
+        snapshot: {
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'FileCapture',
+            type: 'object',
+            properties: {
+              owner: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              revision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['owner', 'revision'],
+          },
+          output: {
+            kind: 'resource',
+            resource: {
+              name: 'maka.bytes',
+              version: 1,
+            },
+          },
+        },
+      },
+    },
+  },
   sourceText: {
     name: 'maka.ui.SourceText',
     version: 1,
@@ -7064,7 +7365,7 @@ export const contracts = {
           },
           resources: {
             package: {
-              name: 'maka.plugin.PackageBundle',
+              name: 'maka.bytes',
               version: 1,
             },
           },

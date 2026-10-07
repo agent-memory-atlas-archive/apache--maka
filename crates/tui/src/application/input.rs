@@ -41,7 +41,7 @@ struct Recipe {
     secret: bool,
 }
 impl Widget for Recipe {
-    fn create(&self) -> Box<dyn Any> {
+    fn create(&self, _: super::NativeContext) -> Box<dyn Any> {
         Box::new(Owner::new(Editor::single_line(65536, self.secret), ""))
     }
     fn commit(&self, state: &mut dyn Any) -> maka_ui::Result<Option<NativeInput>> {

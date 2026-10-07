@@ -19,11 +19,7 @@
 
 //! Original native image custody; immutable recipes never read URLs or paths.
 mod decode;
-use crate::{
-    Input, LiveInput, NativeBudget, Slots, Widget,
-    appearance::color,
-    budget::{Kind, Permit},
-};
+use crate::{Input, LiveInput, NativeBudget, Slots, Widget, appearance::color};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use decode::{Decoded, Encoded};
 use gpui_kit::accesskit::Role;
@@ -34,7 +30,9 @@ use gpui_kit::{
 use gpui_kit::{StatefulInteractiveElement, StyledImage};
 use maka_ui::{
     ComponentCall, ComponentOutput, Emission, Frame, NativeCapability, NativeComponent,
-    NativeExport, NativeRegistry, NativeView, image::*,
+    NativeExport, NativeRegistry, NativeView,
+    budget::{Kind, Permit},
+    image::*,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -287,10 +285,10 @@ impl Owner {
     }
     fn start_decode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let budget = self.input.1.clone();
-        let job = match budget.reserve(Kind::Decode, 1) {
+        let job = match budget.reserve(Kind::Job, 1) {
             Ok(job) => job,
             Err(error) => {
-                self.fail(error);
+                self.fail(error.into());
                 return;
             }
         };

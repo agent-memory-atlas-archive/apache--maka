@@ -90,6 +90,7 @@ fn input(budget: NativeBudget, observations: Rc<RefCell<Vec<ImageObservation>>>)
             },
         ))))),
         budget,
+        std::sync::Arc::new(maka_plugins::call::Resources::default()),
     )
 }
 #[test]
@@ -97,17 +98,17 @@ fn original_budget_permits_are_aggregate_and_release_on_actual_drop() {
     let budget = NativeBudget::new(BudgetLimits {
         encoded_bytes: 10,
         pixel_bytes: 20,
-        decode_jobs: 1,
+        worker_jobs: 1,
     });
     let first = budget.reserve(Kind::Encoded, 8).unwrap();
     assert_eq!(
         budget.reserve(Kind::Encoded, 3).unwrap_err(),
-        ImageError::BudgetExhausted
+        maka_ui::budget::BudgetExhausted
     );
-    let job = budget.reserve(Kind::Decode, 1).unwrap();
+    let job = budget.reserve(Kind::Job, 1).unwrap();
     assert_eq!(
-        budget.reserve(Kind::Decode, 1).unwrap_err(),
-        ImageError::BudgetExhausted
+        budget.reserve(Kind::Job, 1).unwrap_err(),
+        maka_ui::budget::BudgetExhausted
     );
     let pixels = budget.reserve(Kind::Pixels, 20).unwrap();
     assert_eq!(budget.usage(), (8, 20, 1));
@@ -130,7 +131,7 @@ fn real_decoder_verifies_digest_first_frame_dimensions_and_actual_pixel_budget()
         encoded,
         source.clone(),
         budget.clone(),
-        budget.reserve(Kind::Decode, 1).unwrap(),
+        budget.reserve(Kind::Job, 1).unwrap(),
     )
     .unwrap();
     assert_eq!(decoded.image.frame_count(), 1);
@@ -152,7 +153,7 @@ fn real_decoder_verifies_digest_first_frame_dimensions_and_actual_pixel_budget()
             encoded,
             wrong,
             budget.clone(),
-            budget.reserve(Kind::Decode, 1).unwrap()
+            budget.reserve(Kind::Job, 1).unwrap()
         ),
         Err(ImageError::DigestMismatch)
     ));
@@ -160,7 +161,7 @@ fn real_decoder_verifies_digest_first_frame_dimensions_and_actual_pixel_budget()
     let small = NativeBudget::new(BudgetLimits {
         encoded_bytes: bytes.len(),
         pixel_bytes: 1,
-        decode_jobs: 1,
+        worker_jobs: 1,
     });
     let encoded = Encoded {
         _permit: small.reserve(Kind::Encoded, bytes.len()).unwrap(),
@@ -171,7 +172,7 @@ fn real_decoder_verifies_digest_first_frame_dimensions_and_actual_pixel_budget()
             encoded,
             props(&bytes, "small").source.unwrap(),
             small.clone(),
-            small.reserve(Kind::Decode, 1).unwrap()
+            small.reserve(Kind::Job, 1).unwrap()
         ),
         Err(ImageError::BudgetExhausted)
     ));
@@ -199,7 +200,7 @@ fn real_decoder_verifies_digest_first_frame_dimensions_and_actual_pixel_budget()
         encoded,
         source,
         budget.clone(),
-        budget.reserve(Kind::Decode, 1).unwrap(),
+        budget.reserve(Kind::Job, 1).unwrap(),
     )
     .unwrap();
     assert_eq!(decoded.image.frame_count(), 1);
@@ -231,7 +232,7 @@ fn tiny_real_png_huge_header_is_rejected_before_decoding_pixels() {
             encoded,
             source,
             budget.clone(),
-            budget.reserve(Kind::Decode, 1).unwrap()
+            budget.reserve(Kind::Job, 1).unwrap()
         ),
         Err(ImageError::LimitExceeded)
     ));
@@ -435,6 +436,7 @@ fn admitted_decoder_survives_retirement_with_original_lease_and_budget(cx: &mut 
             Ok(Default::default())
         }))))),
         budget.clone(),
+        std::sync::Arc::new(maka_plugins::call::Resources::default()),
     );
     let (root, cx) = cx.add_window_view(|_, cx| Root {
         owner: Some(Owner::new(&p, live.clone(), cx)),
@@ -527,6 +529,7 @@ fn rejected_publication_then_source_aba_settles_original_packet(cx: &mut TestApp
             Ok(Default::default())
         }))))),
         NativeBudget::default(),
+        std::sync::Arc::new(maka_plugins::call::Resources::default()),
     );
     let (root, cx) = cx.add_window_view(|_, cx| Root {
         owner: Some(Owner::new(&initial, live, cx)),
@@ -605,7 +608,7 @@ fn real_webp_decodes_but_nested_oversize_vp8_is_rejected() {
             },
             source,
             budget.clone(),
-            budget.reserve(Kind::Decode, 1).unwrap(),
+            budget.reserve(Kind::Job, 1).unwrap(),
         )
     };
     let decoded = run(encoded.into_inner()).unwrap();

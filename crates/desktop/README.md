@@ -121,3 +121,13 @@ settlement. Failed cleanup cannot permit replacement. Explicit native quit stops
 new admission and replacement before window removal. GPUI tests exercise held Kit
 entities, original snapshots, provider fences and quit during handoff; actual OS
 root-window replacement and IME acceptance remain pending.
+
+The foreground execution owner retains each original `NativeResources` object
+before the platform cleanup observer is created. Only a successful original
+surface receipt releases it; a failed or lost observer preserves native worker
+custody and allocation permits after window/Surface destruction. `LiveInput`
+supplies that original mount's work group and shared presenter budget. Cleanup
+requires both real lease destruction and a clean sealed group; ticket completion
+wakes the original closing owner after its tracker token is actually gone.
+Connections and caller storage must be supplied when creating the execution
+owner; later conflicting backend custody is rejected rather than ignored.

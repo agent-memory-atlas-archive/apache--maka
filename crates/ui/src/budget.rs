@@ -17,9 +17,12 @@
  * under the License.
  */
 
-//! Presenter-owned resource admission; no image identity or resource registry.
-use maka_ui::image::ImageError;
+//! Presenter-owned aggregate admission; permits follow actual allocations and work.
 use std::sync::{Arc, Mutex};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("native resource budget exhausted")]
+pub struct BudgetExhausted;
 
 #[derive(Clone, Debug)]
 pub struct NativeBudget(Arc<Mutex<Usage>>);
@@ -34,14 +37,14 @@ struct Usage {
 pub struct BudgetLimits {
     pub encoded_bytes: usize,
     pub pixel_bytes: usize,
-    pub decode_jobs: usize,
+    pub worker_jobs: usize,
 }
 impl Default for BudgetLimits {
     fn default() -> Self {
         Self {
             encoded_bytes: 64 * 1024 * 1024,
             pixel_bytes: 128 * 1024 * 1024,
-            decode_jobs: 2,
+            worker_jobs: 2,
         }
     }
 }
@@ -51,13 +54,13 @@ impl Default for NativeBudget {
     }
 }
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum Kind {
+pub enum Kind {
     Encoded,
     Pixels,
-    Decode,
+    Job,
 }
 #[derive(Debug)]
-pub(crate) struct Permit {
+pub struct Permit {
     budget: NativeBudget,
     kind: Kind,
     bytes: usize,
@@ -71,21 +74,21 @@ impl NativeBudget {
             limits,
         })))
     }
-    pub(crate) fn reserve(&self, kind: Kind, bytes: usize) -> Result<Permit, ImageError> {
+    pub fn reserve(&self, kind: Kind, bytes: usize) -> Result<Permit, BudgetExhausted> {
         let mut usage = self.0.lock().expect("native budget lock");
         let (used, limit) = match kind {
             Kind::Encoded => (usage.encoded, usage.limits.encoded_bytes),
             Kind::Pixels => (usage.pixels, usage.limits.pixel_bytes),
-            Kind::Decode => (usage.jobs, usage.limits.decode_jobs),
+            Kind::Job => (usage.jobs, usage.limits.worker_jobs),
         };
         let next = used
             .checked_add(bytes)
             .filter(|n| *n <= limit)
-            .ok_or(ImageError::BudgetExhausted)?;
+            .ok_or(BudgetExhausted)?;
         match kind {
             Kind::Encoded => usage.encoded = next,
             Kind::Pixels => usage.pixels = next,
-            Kind::Decode => usage.jobs = next,
+            Kind::Job => usage.jobs = next,
         }
         Ok(Permit {
             budget: self.clone(),
@@ -93,8 +96,7 @@ impl NativeBudget {
             bytes,
         })
     }
-    #[cfg(test)]
-    pub(crate) fn usage(&self) -> (usize, usize, usize) {
+    pub fn usage(&self) -> (usize, usize, usize) {
         let u = self.0.lock().unwrap();
         (u.encoded, u.pixels, u.jobs)
     }
@@ -105,7 +107,7 @@ impl Drop for Permit {
         let value = match self.kind {
             Kind::Encoded => &mut usage.encoded,
             Kind::Pixels => &mut usage.pixels,
-            Kind::Decode => &mut usage.jobs,
+            Kind::Job => &mut usage.jobs,
         };
         *value = value
             .checked_sub(self.bytes)

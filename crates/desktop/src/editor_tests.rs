@@ -37,6 +37,7 @@ struct Scene {
     resources: Rc<RefCell<resources::NativeResources>>,
     root: Mount,
     editor: Mount,
+    cleanup: Rc<RefCell<Option<Result<(), String>>>>,
 }
 impl Scene {
     fn from_launch(owner: &actions::Owner, cx: &mut TestAppContext) -> Self {
@@ -57,6 +58,7 @@ impl Scene {
             resources,
             root,
             editor,
+            cleanup: Default::default(),
         }
     }
 
@@ -123,7 +125,14 @@ impl Scene {
         .unwrap();
         Self::from_application(cx, application)
     }
-    fn from_application(cx: &mut TestAppContext, mut application: DesktopApplication) -> Self {
+    fn from_application(cx: &mut TestAppContext, application: DesktopApplication) -> Self {
+        Self::from_owned_application(cx, application, None)
+    }
+    fn from_owned_application(
+        cx: &mut TestAppContext,
+        mut application: DesktopApplication,
+        caller: Option<Arc<maka_event_log::EventLog>>,
+    ) -> Self {
         let root = application.mount_launch(serde_json::json!({})).unwrap();
         let outer = application.child_mount(&root, "editor").unwrap().clone();
         let editor = application
@@ -131,11 +140,14 @@ impl Scene {
             .cloned()
             .unwrap_or(outer);
         let app = Rc::new(RefCell::new(application));
+        cx.update(|cx| actions::own(app.clone(), None, caller, cx).unwrap());
         let (wake, receipts) = tokio::sync::mpsc::unbounded_channel();
         let resources = Rc::new(RefCell::new(resources::NativeResources::new(
             root.clone(),
             wake,
         )));
+        let cleanup = Rc::new(RefCell::new(None));
+        let completion = cleanup.clone();
         let (window, surface) = cx.update(|cx| {
             gpui_kit::init(cx);
             gpui_kit::open_window(
@@ -154,7 +166,9 @@ impl Scene {
                         resources.clone(),
                         app.clone(),
                         receipts,
-                        |outcome, _| outcome.unwrap(),
+                        move |outcome, _| {
+                            *completion.borrow_mut() = Some(outcome);
+                        },
                     )
                     .unwrap()
                     .detach();
@@ -176,6 +190,7 @@ impl Scene {
             resources,
             root,
             editor,
+            cleanup,
         }
     }
     fn owner(&self) -> Entity<TextareaOwner> {
@@ -214,6 +229,9 @@ impl Scene {
         cx.update_window(self.window, |_, window, _| window.remove_window())
             .unwrap();
         cx.run_until_parked();
+        if let Some(result) = self.cleanup.borrow().as_ref() {
+            result.as_ref().unwrap();
+        }
     }
 }
 fn timer() -> tokio::runtime::Runtime {
@@ -1026,6 +1044,7 @@ fn public_editor_events_preserve_a_same_batch_command_until_receipt_and_do_not_l
                 2
             );
         }
+        drop(owner);
         scene.close(cx);
     }
 }
@@ -1852,8 +1871,7 @@ fn empty_host_quit_waits_for_actual_caller_sql_close_after_accepted_writer_waite
             vec![],
         ))
         .unwrap();
-    let scene = Scene::from_application(cx, application);
-    cx.update(|cx| actions::own(scene.app.clone(), None, Some(caller.clone()), cx).unwrap());
+    let scene = Scene::from_owned_application(cx, application, Some(caller.clone()));
     scene.draw(cx);
     let blocker = rusqlite::Connection::open(root.join(ROOT_DATABASE)).unwrap();
     blocker.execute_batch("BEGIN IMMEDIATE;").unwrap();
@@ -2118,4 +2136,100 @@ fn committed_addition_preserves_actual_editor_entity_focus_selection_and_composi
     timer
         .block_on(std::sync::Arc::try_unwrap(store).ok().unwrap().close())
         .unwrap();
+}
+
+#[gpui::test]
+fn original_native_worker_group_blocks_clean_close_until_settled_and_preserves_failure(
+    cx: &mut TestAppContext,
+) {
+    let timer = timer();
+    for failed in [false, true] {
+        let scene = Scene::new(cx, &timer, false);
+        scene.draw(cx);
+        let group = scene.resources.borrow().owners[&scene.editor.id().to_string()]
+            .input
+            .2
+            .clone();
+        let mut ticket = group.reserve().unwrap();
+        ticket.start();
+        scene
+            .app
+            .borrow_mut()
+            .dispatch(&scene.root, 0, "toggle", serde_json::Value::Null)
+            .unwrap();
+        scene
+            .resources
+            .borrow_mut()
+            .collect(&mut scene.app.borrow_mut())
+            .unwrap();
+        scene.draw(cx);
+        cx.run_until_parked();
+        assert!(scene.app.borrow().frame(&scene.editor).is_ok());
+        assert!(!group.seal().unwrap());
+        ticket.complete(if failed {
+            Err("original native worker panic".into())
+        } else {
+            Ok(())
+        });
+        let result = scene
+            .resources
+            .borrow_mut()
+            .collect(&mut scene.app.borrow_mut());
+        if failed {
+            assert!(result.is_err());
+            assert!(scene.app.borrow().frame(&scene.editor).is_ok());
+            assert!(
+                scene
+                    .resources
+                    .borrow_mut()
+                    .collect(&mut scene.app.borrow_mut())
+                    .is_err()
+            );
+        } else {
+            result.unwrap();
+            assert!(scene.app.borrow().frame(&scene.editor).is_err());
+        }
+        if failed {
+            let native = Rc::downgrade(&scene.resources);
+            let app = scene.app.clone();
+            let mount = scene.editor.clone();
+            cx.update_window(scene.window, |_, w, _| w.remove_window())
+                .unwrap();
+            cx.run_until_parked();
+            assert!(scene.cleanup.borrow().as_ref().unwrap().is_err());
+            drop(scene);
+            drop(group);
+            cx.run_until_parked();
+            assert!(
+                native.upgrade().is_some(),
+                "foreground execution owner retains failed original native custody"
+            );
+            assert!(app.borrow().frame(&mount).is_ok());
+        } else {
+            scene.close(cx);
+        }
+    }
+}
+
+#[gpui::test]
+fn native_group_only_ticket_wakes_the_original_owner_after_actual_window_close(
+    cx: &mut TestAppContext,
+) {
+    let timer = timer();
+    let scene = Scene::new(cx, &timer, false);
+    scene.draw(cx);
+    let group = scene.resources.borrow().owners[&scene.editor.id().to_string()]
+        .input
+        .2
+        .clone();
+    let mut ticket = group.reserve().unwrap();
+    ticket.start();
+    scene.close(cx);
+    cx.run_until_parked();
+    assert!(scene.app.borrow().frame(&scene.root).is_ok());
+    assert!(!group.seal().unwrap());
+    ticket.complete(Ok(()));
+    cx.run_until_parked();
+    assert!(scene.resources.borrow().surface_closed);
+    assert!(scene.app.borrow().frame(&scene.root).is_err());
 }

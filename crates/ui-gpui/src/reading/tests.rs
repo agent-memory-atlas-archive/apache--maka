@@ -100,6 +100,7 @@ fn input() -> LiveInput {
             Ok(Default::default())
         }))))),
         crate::NativeBudget::default(),
+        std::sync::Arc::new(maka_plugins::call::Resources::default()),
     )
 }
 fn scene_source(children: Value) -> Value {
@@ -430,7 +431,7 @@ fn native_commands_settle_only_on_paint_and_observations_do_not_poll(cx: &mut Te
             assert_eq!(key, OBSERVED);
             out.borrow_mut().push(serde_json::from_value::<ReadingObservation>(value).unwrap());
             Ok(Default::default())
-        }))))), crate::NativeBudget::default());
+        }))))), crate::NativeBudget::default(), std::sync::Arc::new(maka_plugins::call::Resources::default()));
         let initial = compile_recipe(&source, None);
         let (view, window_cx) = cx.add_window_view(move |window, cx| {
             let mut state = initial.create(live, window, cx);

@@ -173,3 +173,11 @@ The shared font projection gives the generic `monospace` family a platform
 primary: Menlo on macOS, Consolas on Windows and DejaVu Sans Mono on Linux.
 These use installed native fonts. Explicit family names, size, weight and glyph
 fallbacks remain theme inputs.
+
+`maka.ui.file` makes `FilePicker` available for explicit composition binding. It
+uses the OS single-file dialog after the original native click and committed
+private intent, not during rendering. `LiveInput` carries the presenter's budget
+and the original mount's resource group. Detached dialog/read work retains its
+original input lease until actual settlement, independently of weak delivery to
+an entity/window. Worker panic or lost dialog observation prevents clean mount
+acknowledgement; an ordinary completed read error does not imply failed cleanup.

@@ -153,3 +153,12 @@ After confirmed old cleanup, `try_replace_surface` waits for related provider
 settlement and mounts the desired launch with fresh native state. Accepted work
 on unchanged providers may coexist with the new root. This does not transfer
 old draft/focus/selection into a replacement implementation.
+
+The available `maka.ui.file` / `FilePicker` component keeps the entered absolute
+path in its native editor. A native Open/Enter gesture and its committed private
+intent start the bounded background read; props cannot name a local file. Widget
+creation receives `NativeContext` with the presenter's shared budget and an
+original resource group. Native retirement seals admission and keeps the owner
+while real worker tickets remain pending. Pending does not submit a failed kernel
+receipt; known failure stays sticky. A recipe-kind handoff also waits for original
+work, including an A→B→A transition, before creating a fresh native owner.

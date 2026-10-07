@@ -274,6 +274,7 @@ mod tests {
                     |_, _, _, _| Ok(Default::default()),
                 ))))),
                 crate::NativeBudget::default(),
+                std::sync::Arc::new(maka_plugins::call::Resources::default()),
             );
             Root {
                 owner: Owner::new(&props, input, window, cx),
@@ -410,6 +411,7 @@ mod tests {
                         |_, _, _, _| Ok(Default::default()),
                     ))))),
                     crate::NativeBudget::default(),
+                    std::sync::Arc::new(maka_plugins::call::Resources::default()),
                 );
                 owners.push((Owner::new(&make(source), input, window, cx), scope));
             }
@@ -467,6 +469,7 @@ mod tests {
                     |_, _, _, _| Ok(Default::default()),
                 ))))),
                 crate::NativeBudget::default(),
+                std::sync::Arc::new(maka_plugins::call::Resources::default()),
             );
             Peers {
                 owners: vec![(
@@ -574,6 +577,7 @@ mod tests {
                         |_, _, _, _| Ok(Default::default()),
                     ))))),
                     crate::NativeBudget::default(),
+                    std::sync::Arc::new(maka_plugins::call::Resources::default()),
                 )
             };
             Mixed {

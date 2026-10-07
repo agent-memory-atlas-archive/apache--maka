@@ -91,3 +91,10 @@ owner 测试接缝验证。生产 launch owner 对初始和替代根共用窗口
 原结算。清理失败不能放行替换。显式原生退出先禁止新准入与替换，再移除窗口。
 GPUI 测试覆盖真实 Kit entity 持有、原快照、provider fence 及交接期间退出；实际 OS
 根窗口交接和输入法验收仍待完成。
+
+foreground 执行 owner 在创建平台清理观察者之前保有每个原 `NativeResources` 对象，
+只有原 surface 真实成功结算才释放。观察失败或消失时，窗口/Surface 销毁也不会丢弃
+原生 worker custody 与分配配额。`LiveInput` 提供原 mount 的工作组与呈现器共享预算。
+健康清理必须同时满足真实 lease 销毁和 sealed 工作组成功结算；ticket 实际释放
+tracker token 后唤醒同一个关闭 owner。连接与 caller 存储必须在创建执行 owner 时
+交入，后续冲突的 backend custody 会被拒绝，不能静默忽略。

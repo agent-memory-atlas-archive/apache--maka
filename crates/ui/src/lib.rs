@@ -22,8 +22,10 @@
 pub mod abi;
 pub mod actions;
 pub mod appearance;
+pub mod budget;
 mod deployment;
 pub mod editor;
+pub mod file;
 mod frame;
 pub use deployment::{CommittedUpdate, DeploymentStatus, PreparedUpdate};
 pub mod image;

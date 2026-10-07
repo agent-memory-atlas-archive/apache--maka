@@ -33,6 +33,9 @@ pub(super) fn start(
     mut wakes: UnboundedReceiver<()>,
     finished: impl FnOnce(Result<(), String>, &mut App) + 'static,
 ) -> Result<Task<()>, String> {
+    let owner = super::actions::own(application.clone(), None, None, cx)
+        .map_err(|error| error.to_string())?;
+    owner.retain_native(resources.clone());
     let mut platform = window.take_cleanup_receiver().map_err(|e| e.to_string())?;
     let handle = window.window_handle();
     let id = handle.window_id();
@@ -99,7 +102,11 @@ pub(super) fn start(
                 return;
             }
             if resources.borrow().surface_closed {
-                cx.update(|cx| finished(Ok(()), cx));
+                owner.release_native(&resources);
+                cx.update(|cx| {
+                    finished(Ok(()), cx);
+                    super::actions::quit_when_drained(&application, cx);
+                });
                 return;
             }
         }

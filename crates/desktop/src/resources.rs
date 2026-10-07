@@ -35,6 +35,7 @@ struct Scope {
     leases: Cell<usize>,
     detached: Cell<bool>,
     wake: UnboundedSender<()>,
+    workers: std::sync::Arc<maka_plugins::call::Resources>,
 }
 impl Scope {
     fn acquire(self: &Rc<Self>) -> Lease {
@@ -51,6 +52,7 @@ impl Scope {
         Lease(Rc::new(Resource(self.clone())))
     }
     fn detach(&self) {
+        let _ = self.workers.seal();
         if !self.detached.replace(true) && self.leases.get() == 0 {
             let _ = self.wake.send(());
         }
@@ -81,6 +83,9 @@ pub(super) struct Lease(Rc<Resource>);
 impl Lease {
     pub fn is_attached(&self) -> bool {
         !self.0.0.detached.get()
+    }
+    pub fn resources(&self) -> std::sync::Arc<maka_plugins::call::Resources> {
+        self.0.0.workers.clone()
     }
     pub fn mount(&self) -> &Mount {
         &self.0.0.mount
@@ -223,6 +228,12 @@ impl NativeResources {
                     leases: Cell::new(0),
                     detached: Cell::new(false),
                     wake: self.wake.clone(),
+                    workers: {
+                        let wake = self.wake.clone();
+                        std::sync::Arc::new(maka_plugins::call::Resources::with_wake(move || {
+                            let _ = wake.send(());
+                        }))
+                    },
                 })
             })
     }
@@ -260,6 +271,9 @@ impl NativeResources {
             }
         }
         Ok(())
+    }
+    pub fn surface(&self) -> &Mount {
+        &self.surface
     }
     pub fn is_removed(&self) -> bool {
         self.removed
@@ -329,7 +343,12 @@ impl NativeResources {
             if !scope.ready() {
                 continue;
             }
-            match application.close(&mount, Ok(())) {
+            let cleanup = match scope.workers.seal() {
+                Ok(false) => continue,
+                Ok(true) => Ok(()),
+                Err(error) => Err(error.to_string()),
+            };
+            match application.close(&mount, cleanup) {
                 Ok(()) => {
                     self.scopes.remove(&mount.id().to_string());
                     if mount == self.surface {

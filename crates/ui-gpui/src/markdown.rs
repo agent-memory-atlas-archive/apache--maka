@@ -375,6 +375,7 @@ mod tests {
                 Ok(Default::default())
             }))))),
             crate::NativeBudget::default(),
+            std::sync::Arc::new(maka_plugins::call::Resources::default()),
         );
         let (root, cx) = cx.add_window_view(|_, cx| Root(Owner::new(&props(), input, cx)));
         let owner = root.read_with(cx, |r, _| r.0.clone());
@@ -473,6 +474,7 @@ mod tests {
                 },
             ))))),
             crate::NativeBudget::default(),
+            std::sync::Arc::new(maka_plugins::call::Resources::default()),
         );
         let (root, cx) = cx.add_window_view(|_, cx| Root(Owner::new(&props(), input, cx)));
         let owner = root.read_with(cx, |r, _| r.0.clone());

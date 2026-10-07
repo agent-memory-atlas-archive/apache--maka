@@ -294,7 +294,7 @@ impl super::Widget for Node {
     fn layout(&self) -> Layout {
         Node::layout(self)
     }
-    fn create(&self) -> Box<dyn std::any::Any> {
+    fn create(&self, _: super::NativeContext) -> Box<dyn std::any::Any> {
         Box::<super::scroll::SceneState>::default()
     }
     fn commit(&self, state: &mut dyn std::any::Any) -> maka_ui::Result<Option<super::NativeInput>> {

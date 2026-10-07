@@ -176,7 +176,7 @@ impl Widget for Reading {
     fn layout(&self) -> super::TerminalLayout {
         self.node.layout()
     }
-    fn create(&self) -> Box<dyn Any> {
+    fn create(&self, _: super::NativeContext) -> Box<dyn Any> {
         Box::new(SceneState {
             reading: Some(ReadingState::new(reading_key(&self.node).unwrap().into())),
             ..Default::default()

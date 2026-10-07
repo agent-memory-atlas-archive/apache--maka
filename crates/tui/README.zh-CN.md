@@ -122,3 +122,10 @@ TUI 仅在成功 flush 后切换几何准入。自定义原生布局也通过公
 `try_replace_surface` 等待相关 provider 结算，再用全新原生状态挂载 desired launch；
 未替换 provider 的原已接受任务可以与新根并存。不把旧草稿、焦点和选区默认为
 新实现的数据。
+
+可用的 `maka.ui.file` / `FilePicker` 将用户输入的绝对路径保存在原生编辑器内。
+原生打开/Enter 手势及其已提交的私有意图才启动有界后台读取，props 不能指定本地文件。
+Widget 创建获得 `NativeContext`，其中包含呈现器共享预算与原资源组。退休时关闭
+原工作组的新 admission，仍在工作的 ticket 会保留原 owner；Pending 不提交失败
+kernel 回执，已知失败则保持 sticky。原生 recipe 类型切换也必须等待原任务，包括
+A→B→A 变化，之后才创建新的原生 owner。

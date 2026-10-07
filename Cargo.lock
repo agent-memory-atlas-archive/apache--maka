@@ -8816,7 +8816,10 @@ dependencies = [
 name = "maka-ui"
 version = "0.2.0"
 dependencies = [
+ "cap-fs-ext",
+ "cap-std",
  "jsonschema 0.56.0",
+ "libc",
  "maka-event-log",
  "maka-js-runtime",
  "maka-plugin-core",
@@ -8825,6 +8828,7 @@ dependencies = [
  "schemars 1.2.2",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
@@ -8847,6 +8851,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
  "tokio",
  "uuid",
 ]

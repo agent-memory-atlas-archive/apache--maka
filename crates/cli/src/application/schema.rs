@@ -75,6 +75,9 @@ pub(super) fn catalog() -> Value {
         root::<textarea::TextareaProps>(&mut g),
         root::<markdown::MarkdownProps>(&mut g),
         root::<markdown::MarkdownLink>(&mut g),
+        root::<maka_ui::file::FilePickerProps>(&mut g),
+        root::<maka_ui::file::FileObservation>(&mut g),
+        root::<maka_ui::file::FileCapture>(&mut g),
         root::<maka_ui::image::ImageProps>(&mut g),
         root::<maka_ui::image::ImageObservation>(&mut g),
         root::<maka_ui::source::SourceTextProps>(&mut g),
@@ -146,6 +149,7 @@ pub(super) fn catalog() -> Value {
         "contracts": {
             "markdown": markdown::markdown_contract(),
             "image": maka_ui::image::image_contract(),
+            "filePicker": maka_ui::file::file_picker_contract(),
             "sourceText": maka_ui::source::source_contract(),
             "readingArea": maka_ui::reading::reading_contract(),
             "label": maka_ui::label_contract(), "textarea": textarea::textarea_contract(),

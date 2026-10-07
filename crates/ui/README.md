@@ -403,3 +403,17 @@ participate in the original synchronous component batch; their committed input
 decision controls native defaults. Literal image URLs grant no resource access.
 Desktop provides this implementation; other presentations declare their own
 implementation or compose an explicit alternative.
+
+`file::file_picker_contract()` supplies a bundled `maka.ui.FilePicker` component
+with the same public contract on Desktop and TUI. Props contain appearance and
+labels, never a path or a programmatic open command. Actual native selection
+stages a private intent; only its matching committed marker may start a file read.
+Observations expose owner/revision, basename, SHA-256, byte count and a bounded
+phase/error code. `snapshot` captures that exact ready selection as immutable
+`maka.bytes` chunks; changing the original file does not change captured bytes.
+Consumers still validate content, including the DeploymentManager's complete
+package bundle checks. Selection permits at most 32 MiB of regular-file bytes,
+uses no-follow opens and charges actual 64 KiB chunks to the presenter's shared
+`budget::NativeBudget`. Byte permits follow snapshots; job permits and original
+resource tickets follow actual dialog/read settlement. Lost dialog observation
+keeps original budget custody and a failed cleanup fence.

@@ -126,6 +126,7 @@ fn harness(cx: &mut TestAppContext, move_rule: bool) -> TestHarness {
         let live = LiveInput::new(
             Rc::new(RefCell::new(Some(dispatcher.clone()))),
             crate::NativeBudget::default(),
+            std::sync::Arc::new(maka_plugins::call::Resources::default()),
         );
         let mut state = recipe.create(live.clone(), window, cx);
         recipe.presentation(state.as_mut(), true, window, cx);

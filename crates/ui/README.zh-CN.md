@@ -277,3 +277,13 @@ renderer 工作，内核不解释布局，也不允许 guest 决定配额。
 `maka.ui.Markdown` 是本地只读组件契约；source、可选择/禁用状态及排版颜色均显式提供。
 链接事件进入原同步组件批次，已提交的输入决定控制原生默认行为。图片地址不授予资源
 读取权。Desktop 提供实现；其他呈现端声明自己的实现或显式组合替代组件。
+
+`file::file_picker_contract()` 提供内置 `maka.ui.FilePicker`，Desktop 与 TUI
+共享公开契约。props 只有样式与文案，没有路径或程序化打开命令。实际原生选择
+先暂存私有用户意图，只有匹配的已提交 marker 才能开始读取。观察只含原 owner/revision、
+文件名、SHA-256、字节数与有限的阶段/错误码；`snapshot` 捕获该次 ready 选择的
+不可变 `maka.bytes` 分块。之后修改原文件不会改变已捕获字节。内容仍由消费者验证，
+包括 DeploymentManager 的完整包校验。只读取最多 32 MiB 的普通文件，使用 no-follow
+打开，并将实际 64 KiB 分块计入呈现器共享的 `budget::NativeBudget`。字节配额随快照
+实际释放，工作配额和原资源 ticket 随实际对话框/读取结束结算。失去对话框观察通道
+会保留原预算 custody 与清理失败 fence。

@@ -23,6 +23,7 @@ use maka_event_log::{
     root::{RootNamespaces, RootOwner},
 };
 use maka_plugin_core::{
+    contract::binary_resource_type,
     deployment::{DeploymentRef, management::*},
     operation::{OperationCleanup, OperationOutcome, OperationReply, Receipt},
 };
@@ -317,7 +318,7 @@ fn document_resource(document: DeploymentDocument) -> Attachments {
 }
 impl ReadResource for Bundle {
     fn resource_type(&self) -> ResourceType {
-        package_bundle_type()
+        binary_resource_type()
     }
     fn bytes(&self) -> usize {
         self.0.len()

@@ -34,6 +34,14 @@ pub fn text_resource_type() -> ResourceType {
     }
 }
 
+/// Shared immutable binary bytes. Consumers validate their content separately.
+pub fn binary_resource_type() -> ResourceType {
+    ResourceType {
+        name: "maka.bytes".into(),
+        version: 1,
+    }
+}
+
 /// Public contract definitions are package data, not live registration records.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

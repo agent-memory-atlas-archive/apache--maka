@@ -54,6 +54,9 @@ export type RuntimeProtocol =
   | TextareaProps
   | MarkdownProps
   | MarkdownLink
+  | FilePickerProps
+  | FileObservation
+  | FileCapture
   | ImageProps
   | ImageObservation
   | SourceTextProps
@@ -460,6 +463,13 @@ export type EditorEdit =
       text: string;
       kind: 'append';
     };
+export type FilePhase = 'empty' | 'choosing' | 'ready' | 'failed';
+export type FileError =
+  | 'invalid_file'
+  | 'read_failed'
+  | 'limit_exceeded'
+  | 'budget_exhausted'
+  | 'worker_failed';
 export type ImageFit = 'contain' | 'cover';
 export type ImagePhase = 'empty' | 'receiving' | 'decoding' | 'ready' | 'failed';
 export type ImageError =
@@ -1772,6 +1782,42 @@ export interface MarkdownAppearance {
 export interface MarkdownLink {
   url: string;
 }
+export interface FilePickerProps {
+  appearance: InputAppearance;
+  label: string;
+  pathLabel: string;
+  placeholder: string;
+  disabled: boolean;
+  tabIndex: number;
+}
+export interface InputAppearance {
+  text: TextAppearance;
+  mutedForeground: Color;
+  background: Color;
+  selection: Color;
+  caret: Color;
+  border: Color;
+  focusedBorder: Color;
+  borderWidth: number;
+  radius: number;
+  padding: Insets;
+}
+export interface FileObservation {
+  owner: string;
+  revision: number;
+  phase: FilePhase;
+  file?: FileDescriptor | null;
+  error?: FileError | null;
+}
+export interface FileDescriptor {
+  name: string;
+  bytes: number;
+  digest: string;
+}
+export interface FileCapture {
+  owner: string;
+  revision: number;
+}
 export interface ImageProps {
   source?: ImageDescriptor | null;
   packet?: ImagePacket | null;
@@ -1871,18 +1917,6 @@ export interface InputProps {
   tabIndex: number;
   placeholder?: string;
   command?: EditorCommand | null;
-}
-export interface InputAppearance {
-  text: TextAppearance;
-  mutedForeground: Color;
-  background: Color;
-  selection: Color;
-  caret: Color;
-  border: Color;
-  focusedBorder: Color;
-  borderWidth: number;
-  radius: number;
-  padding: Insets;
 }
 export interface EditorObservation {
   revision: number;

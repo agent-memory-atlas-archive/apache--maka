@@ -20,6 +20,7 @@
 //! Native terminal presentation of the shared plugin application kernel.
 //! 统一插件应用内核的原生终端呈现器。
 mod editor;
+mod file;
 mod geometry;
 mod input;
 mod layout;
@@ -65,7 +66,7 @@ pub trait Widget: std::any::Any {
     fn layout(&self) -> TerminalLayout {
         TerminalLayout::default()
     }
-    fn create(&self) -> Box<dyn std::any::Any> {
+    fn create(&self, _: NativeContext) -> Box<dyn std::any::Any> {
         Box::new(())
     }
     fn commit(&self, _: &mut dyn std::any::Any) -> maka_ui::Result<Option<NativeInput>> {
@@ -128,6 +129,14 @@ pub trait Widget: std::any::Any {
         buffer: &mut Buffer,
     ) -> maka_ui::Result<()>;
 }
+/// Original renderer custody. Workers retain tickets until their real resources
+/// settle; every owner shares its presenter's aggregate native budget.
+#[derive(Clone)]
+pub struct NativeContext {
+    pub resources: std::sync::Arc<maka_plugins::call::Resources>,
+    pub budget: maka_ui::budget::NativeBudget,
+}
+
 /// Owner-originated observation; never a guest-created native resource.
 #[derive(Clone, PartialEq)]
 pub struct NativeInput {
@@ -369,7 +378,7 @@ impl Presenter {
     /// scene. Crossterm supplies no screen epoch; never re-resolve a captured key.
     /// 输入立即绑定到最后成功输出的场景和真实 mount/revision。
     pub fn input(&mut self, event: Event) -> maka_ui::Result<()> {
-        if !self.surface.is_live() {
+        if !self.surface.is_live() || !self.resources.ready(&self.application, &self.root)? {
             return Ok(());
         }
         let target = match &event {
@@ -583,7 +592,11 @@ impl Presenter {
                 {
                     let cause = *cause;
                     let cleanup = cleanup.clone();
-                    let native = self.resources.close(&mount);
+                    let native = match self.resources.close(&mount) {
+                        Ok(false) => continue,
+                        Ok(true) => Ok(()),
+                        Err(error) => Err(error),
+                    };
                     match self.application.close(&mount, native.and(cleanup)) {
                         Ok(()) => self.surface = SurfaceState::Closed { cause },
                         Err(error) => {
@@ -592,7 +605,11 @@ impl Presenter {
                     }
                 }
             } else {
-                let cleanup = self.resources.close(&mount);
+                let cleanup = match self.resources.close(&mount) {
+                    Ok(false) => continue,
+                    Ok(true) => Ok(()),
+                    Err(error) => Err(error),
+                };
                 if let Err(error) = self.application.close(&mount, cleanup) {
                     failure.get_or_insert(error);
                 }

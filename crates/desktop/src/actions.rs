@@ -48,6 +48,7 @@ struct State {
     quitting: Cell<bool>,
     launch: RefCell<Option<launch::State>>,
     failure: RefCell<Option<String>>,
+    native: RefCell<BTreeMap<uuid::Uuid, Rc<RefCell<super::resources::NativeResources>>>>,
     updates: RefCell<Option<maka_application_bridge::Updates>>,
     update_errors: RefCell<BTreeSet<String>>,
 }
@@ -60,6 +61,28 @@ fn application_scheduler(owner: &Owner) -> tokio::runtime::Handle {
     owner.0.application.borrow().scheduler().clone()
 }
 impl Owner {
+    pub(super) fn retain_native(&self, resources: Rc<RefCell<super::resources::NativeResources>>) {
+        let root = resources.borrow().surface().id();
+        let mut native = self.0.native.borrow_mut();
+        if let Some(original) = native.get(&root) {
+            assert!(Rc::ptr_eq(original, &resources));
+        }
+        native.insert(root, resources);
+    }
+    pub(super) fn release_native(
+        &self,
+        resources: &Rc<RefCell<super::resources::NativeResources>>,
+    ) {
+        assert!(resources.borrow().surface_closed);
+        let root = resources.borrow().surface().id();
+        let original = self
+            .0
+            .native
+            .borrow_mut()
+            .remove(&root)
+            .expect("original native surface custody");
+        assert!(Rc::ptr_eq(&original, resources));
+    }
     pub(super) fn take_updates(&self) -> Option<maka_application_bridge::Updates> {
         let mut updates = self.0.updates.borrow_mut().take();
         if let Some(updates) = updates.as_mut() {
@@ -161,6 +184,23 @@ pub(super) fn own(
                 "prior application cleanup not completed".into(),
             ));
         }
+        if connections.as_ref().is_some_and(|provided| {
+            owner
+                .0
+                .connections
+                .as_ref()
+                .is_none_or(|original| !Arc::ptr_eq(original, provided))
+        }) || caller.as_ref().is_some_and(|provided| {
+            owner
+                .0
+                .caller
+                .as_ref()
+                .is_none_or(|original| !Arc::ptr_eq(original, provided))
+        }) {
+            return Err(maka_ui::Error::Invalid(
+                "foreground backend custody must be supplied at original creation".into(),
+            ));
+        }
         return Ok(owner.clone());
     }
     let updates = match (
@@ -188,6 +228,7 @@ pub(super) fn own(
         quitting: Cell::new(false),
         launch: RefCell::new(None),
         failure: RefCell::new(None),
+        native: RefCell::new(BTreeMap::new()),
         updates: RefCell::new(updates),
         update_errors: RefCell::new(BTreeSet::new()),
     }));

@@ -133,7 +133,7 @@ impl NativeComponent<dyn Widget> for Root {
 }
 struct Flush;
 impl Widget for Flush {
-    fn create(&self) -> Box<dyn Any> {
+    fn create(&self, _: NativeContext) -> Box<dyn Any> {
         Box::new(None::<u16>)
     }
     fn measure(&self, _: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {

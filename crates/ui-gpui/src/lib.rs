@@ -21,9 +21,9 @@
 extern crate gpui_kit as gpui;
 
 mod appearance;
-mod budget;
-pub use budget::{BudgetLimits, NativeBudget};
+pub use maka_ui::budget::{BudgetLimits, NativeBudget};
 mod editing;
+mod file;
 mod image;
 pub mod input;
 mod markdown;
@@ -108,10 +108,18 @@ pub trait Widget: Any {
 /// they are not button events against a retained old scene. Removal clears it
 /// before dropping the owner, so delayed observations cannot retarget a new one.
 #[derive(Clone)]
-pub struct LiveInput(pub Rc<RefCell<Option<Input>>>, pub NativeBudget);
+pub struct LiveInput(
+    pub Rc<RefCell<Option<Input>>>,
+    pub NativeBudget,
+    pub std::sync::Arc<maka_plugins::call::Resources>,
+);
 impl LiveInput {
-    pub fn new(input: Rc<RefCell<Option<Input>>>, budget: NativeBudget) -> Self {
-        Self(input, budget)
+    pub fn new(
+        input: Rc<RefCell<Option<Input>>>,
+        budget: NativeBudget,
+        resources: std::sync::Arc<maka_plugins::call::Resources>,
+    ) -> Self {
+        Self(input, budget, resources)
     }
 }
 type Dispatch =
@@ -265,6 +273,7 @@ pub fn registry() -> NativeRegistry<dyn Widget> {
     reading::register(&mut registry);
     source::register(&mut registry);
     input::register(&mut registry);
+    file::register(&mut registry);
     registry
 }
 

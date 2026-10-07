@@ -132,3 +132,9 @@ pub fn image_contract() -> Contract {
         },
     }
 }
+
+impl From<crate::budget::BudgetExhausted> for ImageError {
+    fn from(_: crate::budget::BudgetExhausted) -> Self {
+        Self::BudgetExhausted
+    }
+}

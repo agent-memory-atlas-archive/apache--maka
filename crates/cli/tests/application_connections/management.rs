@@ -19,10 +19,8 @@
 
 use super::*;
 use maka_plugin_core::{
-    contract::{Availability, Export},
-    deployment::management::{
-        ManagedDeployment, PackageInstalled, deployment_manager_contract, package_bundle_type,
-    },
+    contract::{Availability, Export, binary_resource_type},
+    deployment::management::{ManagedDeployment, PackageInstalled, deployment_manager_contract},
     package::{EntryTarget, Implementation},
 };
 use maka_plugins::{call::ReadResource, package::Package};
@@ -153,7 +151,7 @@ impl ReadResource for Document {
 }
 impl ReadResource for Bundle {
     fn resource_type(&self) -> maka_plugin_core::contract::ResourceType {
-        package_bundle_type()
+        binary_resource_type()
     }
     fn bytes(&self) -> usize {
         self.0.len()

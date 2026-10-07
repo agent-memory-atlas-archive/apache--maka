@@ -26,7 +26,7 @@ use maka_ui::{
 use std::{any::Any, cell::Cell, collections::BTreeMap, rc::Rc, sync::Arc};
 struct Probe;
 impl Widget for Probe {
-    fn create(&self) -> Box<dyn Any> {
+    fn create(&self, _: NativeContext) -> Box<dyn Any> {
         Box::new(Cell::new(7u64))
     }
     fn capture(

@@ -130,3 +130,9 @@ Scene 文本使用稳定的可访问文本节点，保留完整 value。`Style.t
 统一字体投影为通用 `monospace` 选择平台首选：macOS 的 Menlo、Windows 的 Consolas、
 Linux 的 DejaVu Sans Mono，使用已安装的原生字体。显式字体名、字号、字重和字形
 fallback 仍由主题提供。
+
+`maka.ui.file` 提供可显式绑定的 `FilePicker`。它在原生点击与私有意图提交后打开
+系统单文件对话框，绘制期间不打开。`LiveInput` 携带呈现器预算与原挂载的资源组。
+独立的对话框/读取任务持有原 input lease，直到真实结算；向弱 entity/window 投递
+失败不会提前结束该任务。worker panic 或失去对话框观察会阻止挂载确认健康清理；
+已经完成的普通读取错误不意味着清理失败。

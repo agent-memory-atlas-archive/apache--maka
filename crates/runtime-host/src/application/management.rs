@@ -20,11 +20,12 @@
 //! Explicitly composed management of a fixed deployment in the original Root.
 use super::*;
 use maka_event_log::{EventLog, StoreError, applications::validate_application};
+use maka_plugin_core::contract::binary_resource_type;
 use maka_plugin_core::deployment::management::{
     DeploymentDocument, DeploymentDocumentChunk, DeploymentDocumentRead, DeploymentInstances,
     DeploymentRead, DeploymentReplace, InstanceSetEnabled, MAX_DOCUMENT_BYTES, ManagedInstance,
     ManagedInstancesPage, ManagementRejection, ManagementResult, PackageInstall, PackageInstalled,
-    deployment_manager_contract, package_bundle_type,
+    deployment_manager_contract,
 };
 use serde::Deserialize;
 
@@ -533,7 +534,7 @@ fn read_document_resource(
 fn read_bundle(resource: &Arc<dyn maka_plugins::call::ReadResource>) -> Result<Package> {
     use maka_plugins::call::ResourceEncoding;
     let length = resource.bytes();
-    if resource.resource_type() != package_bundle_type()
+    if resource.resource_type() != binary_resource_type()
         || resource.encoding() != ResourceEncoding::Bytes
         || length > maka_plugins::package::MAX_PACKAGE_BYTES * 2
     {

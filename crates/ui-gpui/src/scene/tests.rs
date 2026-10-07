@@ -141,6 +141,7 @@ fn harness(cx: &mut TestAppContext) -> (Entity<Harness>, AnyWindowHandle, Rc<Cel
         let live = LiveInput::new(
             Rc::new(RefCell::new(Some(input.clone()))),
             crate::NativeBudget::default(),
+            std::sync::Arc::new(maka_plugins::call::Resources::default()),
         );
         let mut state = recipe.create(live, window, cx);
         recipe.presentation(state.as_mut(), true, window, cx);
@@ -435,6 +436,7 @@ fn scene_slot_render_errors_are_returned_before_publication(cx: &mut TestAppCont
             LiveInput::new(
                 Rc::new(RefCell::new(Some(input.clone()))),
                 crate::NativeBudget::default(),
+                std::sync::Arc::new(maka_plugins::call::Resources::default()),
             ),
             w,
             cx,
@@ -697,6 +699,7 @@ fn popup_harness(
             LiveInput::new(
                 Rc::new(RefCell::new(Some(input.clone()))),
                 crate::NativeBudget::default(),
+                std::sync::Arc::new(maka_plugins::call::Resources::default()),
             ),
             window,
             cx,

@@ -33,7 +33,7 @@ use maka_ui::actions::ServiceCompletion;
 #[allow(dead_code)]
 #[path = "../../../ui/examples/counter/support.rs"]
 mod support;
-fn fixture(handler: &str) -> (tokio::runtime::Runtime, Input, Vec<Package>) {
+pub(super) fn fixture(handler: &str) -> (tokio::runtime::Runtime, Input, Vec<Package>) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_time()
@@ -982,7 +982,7 @@ fn pure_native_paint_panics_drain_original_state_and_failed_drop_keeps_root() {
         failed: bool,
     }
     impl Widget for Panic {
-        fn create(&self) -> Box<dyn Any> {
+        fn create(&self, _: super::NativeContext) -> Box<dyn Any> {
             Box::new(State {
                 drops: self.drops.clone(),
                 failed: self.failed,
@@ -1125,4 +1125,120 @@ fn retired_target_cleanup_preserves_the_original_nested_scroll_ancestor_identity
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
     presenter.shutdown().unwrap();
+}
+
+#[test]
+fn held_native_work_waits_through_kind_handoff_and_original_surface_close() {
+    use std::{
+        any::Any,
+        collections::BTreeMap,
+        rc::Rc,
+        sync::{Arc, Mutex},
+    };
+    struct Old(Arc<Mutex<Option<maka_plugins::call::Ticket>>>);
+    struct New;
+    impl Widget for Old {
+        fn create(&self, context: NativeContext) -> Box<dyn Any> {
+            let mut ticket = context.resources.reserve().unwrap();
+            ticket.start();
+            *self.0.lock().unwrap() = Some(ticket);
+            Box::new(())
+        }
+        fn measure(&self, _: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
+            Ok((width, 1))
+        }
+        fn paint(&self, _: &mut Slots<'_>, _: Placement, _: &mut Buffer) -> maka_ui::Result<()> {
+            Ok(())
+        }
+    }
+    impl Widget for New {
+        fn create(&self, _: NativeContext) -> Box<dyn Any> {
+            Box::new(42_u32)
+        }
+        fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
+            assert_eq!(*slots.native_state::<u32>()?, 42);
+            Ok((width, 1))
+        }
+        fn paint(
+            &self,
+            slots: &mut Slots<'_>,
+            _: Placement,
+            _: &mut Buffer,
+        ) -> maka_ui::Result<()> {
+            assert_eq!(*slots.native_state::<u32>()?, 42);
+            Ok(())
+        }
+    }
+    for (change_kind, aba) in [(false, false), (true, false), (true, true)] {
+        let (runtime, input, packages) =
+            fixture("return frame({count:state.count+1,revision:state.revision+1});");
+        let ticket = Arc::new(Mutex::new(None));
+        let held = ticket.clone();
+        let native = NativeRegistry::with_surface(PresentationTarget::Tui)
+            .with_scene_compiler(scene::language(), move |view, _| {
+                let new = view["children"][0]["text"] == "1";
+                maka_ui::NativeView::<dyn Widget>::new(
+                    if new {
+                        Rc::new(New) as Rc<dyn Widget>
+                    } else {
+                        Rc::new(Old(held.clone())) as Rc<dyn Widget>
+                    },
+                    BTreeMap::from([("inc".into(), json!({"type":"object"}))]),
+                    vec![],
+                )
+            })
+            .unwrap();
+        let mut tui = Presenter::new(
+            &input,
+            packages,
+            runtime.handle().clone(),
+            native,
+            json!({}),
+        )
+        .unwrap();
+        let original = tui.root.clone();
+        if change_kind {
+            tui.application
+                .dispatch(&original, 0, "inc", json!({}))
+                .unwrap();
+            tui.pump().unwrap();
+            assert!(!tui.resources.ready(&tui.application, &original).unwrap());
+            let scene = tui
+                .paint(
+                    Rect::new(0, 0, 20, 4),
+                    &mut Buffer::empty(Rect::new(0, 0, 20, 4)),
+                )
+                .unwrap();
+            assert!(scene.targets.is_empty());
+            tui.pump().unwrap();
+            if aba {
+                let revision = tui.application.frame(&original).unwrap().revision;
+                tui.application
+                    .dispatch(&original, revision, "inc", json!({}))
+                    .unwrap();
+                tui.pump().unwrap();
+                assert!(!tui.resources.ready(&tui.application, &original).unwrap());
+            }
+            ticket.lock().unwrap().take().unwrap().complete(Ok(()));
+            tui.pump().unwrap();
+            assert!(tui.resources.ready(&tui.application, &original).unwrap());
+            draw(&mut tui, 20, 4);
+            if aba {
+                ticket.lock().unwrap().take().unwrap().complete(Ok(()));
+            }
+        } else {
+            tui.surface_closed(&original, Ok(())).unwrap();
+            tui.pump().unwrap();
+            assert!(!tui.can_shutdown());
+            assert!(tui.resources.owners.contains_key(&original.id()));
+            ticket.lock().unwrap().take().unwrap().complete(Ok(()));
+            tui.pump().unwrap();
+            assert!(!tui.resources.owners.contains_key(&original.id()));
+        }
+        if change_kind {
+            tui.surface_closed(&original, Ok(())).unwrap();
+        }
+        assert!(tui.can_shutdown());
+        tui.shutdown().unwrap();
+    }
 }

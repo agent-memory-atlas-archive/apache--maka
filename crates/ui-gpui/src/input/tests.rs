@@ -63,6 +63,7 @@ fn harness(cx: &mut TestAppContext, secret: bool) -> MountedInput {
             },
         ))))),
         crate::NativeBudget::default(),
+        std::sync::Arc::new(maka_plugins::call::Resources::default()),
     );
     let bound = live.clone();
     let bubble = Rc::new(Cell::new(0));

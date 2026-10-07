@@ -364,7 +364,7 @@ fn failed_original_native_drop_never_creates_replacement_root() {
     }
     struct View(Arc<AtomicUsize>);
     impl Widget for View {
-        fn create(&self) -> Box<dyn Any> {
+        fn create(&self, _: NativeContext) -> Box<dyn Any> {
             self.0.fetch_add(1, Ordering::SeqCst);
             Box::new(State)
         }

@@ -20,7 +20,7 @@
 //! Same-Root deployment management contracts; metadata never grants access.
 use crate::{
     composition::{Input, InstanceId},
-    contract::{Contract, Interface, Method, MethodMode, ResourceType, Transport},
+    contract::{Contract, Interface, Method, MethodMode, Transport, binary_resource_type},
     deployment::{Deployment, DeploymentRef, RemoteObservation},
     package::PackageRef,
 };
@@ -161,13 +161,6 @@ pub enum ManagementRejection {
     ParentDisabled,
 }
 
-pub fn package_bundle_type() -> ResourceType {
-    ResourceType {
-        name: "maka.plugin.PackageBundle".into(),
-        version: 1,
-    }
-}
-
 pub fn deployment_manager_contract() -> Contract {
     fn method<I: JsonSchema, O: JsonSchema>(mode: MethodMode) -> Method {
         Method {
@@ -182,7 +175,7 @@ pub fn deployment_manager_contract() -> Contract {
         method::<PackageInstall, ManagementResult<PackageInstalled>>(MethodMode::Mutation);
     install
         .resources
-        .insert("package".into(), package_bundle_type());
+        .insert("package".into(), binary_resource_type());
     let mut replace =
         method::<DeploymentReplace, ManagementResult<DeploymentRef>>(MethodMode::Mutation);
     replace

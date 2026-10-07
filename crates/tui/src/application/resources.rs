@@ -29,6 +29,7 @@ pub(super) struct Owner {
     pub identity: Rc<()>,
     pub recipe: Rc<dyn Widget>,
     pub state: Box<dyn Any>,
+    resources: std::sync::Arc<maka_plugins::call::Resources>,
     kind: TypeId,
     revision: Option<u64>,
     pub live: bool,
@@ -43,9 +44,14 @@ struct OwnerWitness {
 pub(super) struct Resources {
     pub owners: BTreeMap<Uuid, Owner>,
     failed: BTreeMap<Uuid, String>,
+    budget: maka_ui::budget::NativeBudget,
 }
 impl Resources {
-    pub fn prepare(&mut self, app: &Application<dyn Widget>, root: &Mount) -> maka_ui::Result<()> {
+    pub fn prepare(
+        &mut self,
+        app: &Application<dyn Widget>,
+        root: &Mount,
+    ) -> maka_ui::Result<bool> {
         for mount in app.mounted_subtree(root)? {
             if app.is_retiring(&mount) {
                 continue;
@@ -59,18 +65,25 @@ impl Resources {
             if self
                 .owners
                 .get(&mount.id())
-                .is_some_and(|owner| owner.kind != kind)
+                .is_some_and(|owner| owner.kind != kind || !owner.live)
+                && !self.close(&mount).map_err(Error::Invalid)?
             {
-                self.close(&mount).map_err(Error::Invalid)?;
+                return Ok(false);
             }
             if let std::collections::btree_map::Entry::Vacant(entry) = self.owners.entry(mount.id())
             {
-                match catch_unwind(AssertUnwindSafe(|| recipe.create())) {
+                let resources = std::sync::Arc::new(maka_plugins::call::Resources::default());
+                let context = NativeContext {
+                    resources: resources.clone(),
+                    budget: self.budget.clone(),
+                };
+                match catch_unwind(AssertUnwindSafe(|| recipe.create(context))) {
                     Ok(state) => {
                         entry.insert(Owner {
                             identity: Rc::new(()),
                             recipe: recipe.clone(),
                             state,
+                            resources,
                             kind,
                             revision: None,
                             live: true,
@@ -88,7 +101,24 @@ impl Resources {
             let owner = self.owners.get_mut(&mount.id()).unwrap();
             owner.recipe = recipe;
         }
-        Ok(())
+        Ok(true)
+    }
+    /// Derived compatibility with the committed recipe, never a cleanup receipt.
+    pub fn ready(&self, app: &Application<dyn Widget>, root: &Mount) -> maka_ui::Result<bool> {
+        for mount in app.mounted_subtree(root)? {
+            if app.is_retiring(&mount) {
+                continue;
+            }
+            let kind = app.frame(&mount)?.view.view.as_ref().type_id();
+            if !self
+                .owners
+                .get(&mount.id())
+                .is_some_and(|owner| owner.live && owner.kind == kind)
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
     pub fn commit(
         &mut self,
@@ -158,25 +188,42 @@ impl Resources {
             }
         }
     }
-    pub fn close(&mut self, mount: &Mount) -> Result<(), String> {
+    /// Keep original native custody while its sealed worker group is pending.
+    pub fn close(&mut self, mount: &Mount) -> Result<bool, String> {
         if let Some(error) = self.failed.get(&mount.id()) {
             return Err(error.clone());
         }
-        if let Some(mut owner) = self.owners.remove(&mount.id())
-            && catch_unwind(AssertUnwindSafe(|| {
-                if owner.live {
-                    owner.live = false;
+        if let Some(owner) = self.owners.get_mut(&mount.id()) {
+            if owner.live {
+                owner.live = false;
+                if catch_unwind(AssertUnwindSafe(|| {
                     owner.recipe.deactivate(owner.state.as_mut());
+                }))
+                .is_err()
+                {
+                    let error = "terminal native deactivation cleanup unconfirmed".to_owned();
+                    self.failed.insert(mount.id(), error.clone());
+                    return Err(error);
                 }
-                drop(owner);
-            }))
-            .is_err()
+            }
+            match owner.resources.seal() {
+                Ok(false) => return Ok(false),
+                Ok(true) => {}
+                Err(error) => {
+                    let error = error.to_string();
+                    self.failed.insert(mount.id(), error.clone());
+                    return Err(error);
+                }
+            }
+        }
+        if let Some(owner) = self.owners.remove(&mount.id())
+            && catch_unwind(AssertUnwindSafe(|| drop(owner))).is_err()
         {
             let error = "terminal native destruction cleanup unconfirmed".to_owned();
             self.failed.insert(mount.id(), error.clone());
             return Err(error);
         }
-        Ok(())
+        Ok(true)
     }
     pub fn observe(&mut self, mount: &Mount, observed: NativeInput) {
         if let Some(owner) = self.owners.get_mut(&mount.id()) {
@@ -363,7 +410,12 @@ impl Presenter {
         if !self.surface.is_live() || self.application.is_retiring(&self.root) {
             return Ok(());
         }
-        self.resources.prepare(&self.application, &self.root)?;
+        if !self.resources.prepare(&self.application, &self.root)? {
+            self.scene.clear();
+            self.focus = None;
+            self.drag = None;
+            return Ok(());
+        }
         let resources = &mut self.resources;
         self.application
             .capture_actions(&self.root, |target| resources.capture(target))?;
@@ -380,7 +432,12 @@ impl Presenter {
                 }
             }
         }
-        self.resources.prepare(&self.application, &self.root)?;
+        if !self.resources.prepare(&self.application, &self.root)? {
+            self.scene.clear();
+            self.focus = None;
+            self.drag = None;
+            return Ok(());
+        }
         if let Some(target) = &self.drag
             && !self.resources.pointer_capture(target)?
         {

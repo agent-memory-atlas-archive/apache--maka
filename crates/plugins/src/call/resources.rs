@@ -28,14 +28,24 @@ use tokio_util::task::{TaskTracker, task_tracker::TaskTrackerToken};
 pub struct Resources {
     state: Mutex<State>,
     tasks: TaskTracker,
+    wake: Option<Box<dyn Fn() + Send + Sync>>,
 }
 #[derive(Default)]
 struct State {
     closed: bool,
     failure: Option<String>,
+    retained: Vec<Box<dyn std::any::Any + Send>>,
 }
 
 impl Resources {
+    /// Wake the original presenter after ticket destruction has changed its
+    /// settlement fact. The callback must not retain the resource group itself.
+    pub fn with_wake(wake: impl Fn() + Send + Sync + 'static) -> Self {
+        Self {
+            wake: Some(Box::new(wake)),
+            ..Default::default()
+        }
+    }
     pub fn reserve(self: &Arc<Self>) -> Result<Ticket, ToolError> {
         let state = self.state.lock().unwrap();
         if state.closed || self.tasks.len() >= 16 {
@@ -45,10 +55,21 @@ impl Resources {
         }
         Ok(Ticket {
             group: self.clone(),
-            _token: self.tasks.token(),
+            _token: Some(self.tasks.token()),
             complete: false,
             started: false,
         })
+    }
+    /// Seal original admission and inspect actual worker settlement without a
+    /// timeout. `false` means still pending, never a failed cleanup receipt.
+    pub fn seal(&self) -> Result<bool, ToolError> {
+        let mut state = self.state.lock().unwrap();
+        state.closed = true;
+        self.tasks.close();
+        match &state.failure {
+            Some(error) => Err(ToolError::CleanupUnconfirmed(error.clone())),
+            None => Ok(self.tasks.is_empty()),
+        }
     }
     pub async fn finish(&self) -> Result<(), ToolError> {
         self.state.lock().unwrap().closed = true;
@@ -64,13 +85,21 @@ impl Resources {
 }
 pub struct Ticket {
     group: Arc<Resources>,
-    _token: TaskTrackerToken,
+    _token: Option<TaskTrackerToken>,
     complete: bool,
     started: bool,
 }
 impl Ticket {
     pub fn start(&mut self) {
         self.started = true;
+    }
+    /// Preserve original custody when losing an observation cannot establish
+    /// actual resource cleanup. A failed group never emits a successful receipt.
+    pub fn unconfirmed(mut self, error: String, custody: impl std::any::Any + Send) {
+        let mut state = self.group.state.lock().unwrap();
+        state.failure.get_or_insert(error);
+        state.retained.push(Box::new(custody));
+        self.complete = true;
     }
     pub fn complete(mut self, result: Result<(), String>) {
         if let Err(error) = result {
@@ -94,5 +123,65 @@ impl Drop for Ticket {
                 .failure
                 .get_or_insert_with(|| "plugin resource worker disappeared".into());
         }
+        // Publish after the original tracker token is actually gone. Waking
+        // before token drop could strand a presenter that observes Pending.
+        drop(self._token.take());
+        if let Some(wake) = &self.group.wake {
+            wake();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sealing_waits_for_actual_original_tickets_and_closes_admission() {
+        let group = Arc::new(Resources::default());
+        let mut ticket = group.reserve().unwrap();
+        ticket.start();
+        assert!(!group.seal().unwrap());
+        assert!(group.reserve().is_err());
+        assert!(!group.seal().unwrap());
+        ticket.complete(Ok(()));
+        assert!(group.seal().unwrap());
+    }
+
+    #[test]
+    fn unconfirmed_cleanup_keeps_original_custody_after_worker_observation_is_lost() {
+        struct Custody(Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for Custody {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let group = Arc::new(Resources::default());
+        let mut ticket = group.reserve().unwrap();
+        ticket.start();
+        ticket.unconfirmed("original observation lost".into(), Custody(dropped.clone()));
+        assert!(group.seal().is_err());
+        assert!(!dropped.load(std::sync::atomic::Ordering::SeqCst));
+        drop(group);
+        assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn known_failure_is_sticky_even_while_another_worker_is_pending() {
+        let group = Arc::new(Resources::default());
+        let mut failed = group.reserve().unwrap();
+        failed.start();
+        let held = group.reserve().unwrap();
+        failed.complete(Err("original worker failed".into()));
+        assert!(group.seal().is_err());
+        drop(held);
+        assert!(group.seal().is_err());
+
+        let group = Arc::new(Resources::default());
+        let mut lost = group.reserve().unwrap();
+        lost.start();
+        drop(lost);
+        assert!(group.seal().is_err());
     }
 }

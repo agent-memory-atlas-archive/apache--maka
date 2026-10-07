@@ -182,8 +182,11 @@ impl Surface {
             }
             let budget = resources.budget.clone();
             let owner = resources.owners.entry(id).or_insert_with(|| {
-                let input =
-                    widgets::LiveInput::new(Rc::new(RefCell::new(Some(input.clone()))), budget);
+                let input = widgets::LiveInput::new(
+                    Rc::new(RefCell::new(Some(input.clone()))),
+                    budget,
+                    lease.resources(),
+                );
                 resources::NativeInstance {
                     kind,
                     identity: Rc::new(()),
