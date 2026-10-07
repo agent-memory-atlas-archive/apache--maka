@@ -62,6 +62,12 @@ use uuid::Uuid;
 /// run against the original presenter-owned state, never a replacement frame.
 /// 可信不可变 recipe；资源由独立原生 owner 持有，绘制不创建资源或执行命令。
 pub trait Widget: std::any::Any {
+    /// Prove the complete immutable presentation recipe unchanged across a
+    /// business revision. This permits an actual resize flush after native
+    /// observations, while owner identity and opening admission stay separate.
+    fn same_presentation(&self, _: &dyn std::any::Any) -> bool {
+        false
+    }
     /// Immutable root constraints participate in the parent's original cell flow.
     fn layout(&self) -> TerminalLayout {
         TerminalLayout::default()

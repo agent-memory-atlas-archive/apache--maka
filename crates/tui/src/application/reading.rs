@@ -173,6 +173,11 @@ fn state_mut(state: &mut dyn Any) -> &mut SceneState {
         .expect("reading scene owner")
 }
 impl Widget for Reading {
+    fn same_presentation(&self, previous: &dyn Any) -> bool {
+        previous
+            .downcast_ref::<Self>()
+            .is_some_and(|previous| self.node == previous.node && self.command == previous.command)
+    }
     fn layout(&self) -> super::TerminalLayout {
         self.node.layout()
     }

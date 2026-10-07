@@ -143,6 +143,17 @@ impl<V: ?Sized> NativeView<V> {
             .iter()
             .filter(|slot| self.root_visible && !self.hidden_slots.contains(&slot.key))
     }
+    /// Compare immutable presentation declarations, independently of native
+    /// render behavior, resource ownership and business input admission.
+    pub fn same_presentation_metadata(&self, previous: &Self) -> bool {
+        self.schemas == previous.schemas
+            && self.slots == previous.slots
+            && self.hidden_slots == previous.hidden_slots
+            && self.root_visible == previous.root_visible
+            && self.declaration == previous.declaration
+            && self.render_depth == previous.render_depth
+            && self.slot_render_depth == previous.slot_render_depth
+    }
     pub(crate) fn metadata(&self) -> impl serde::Serialize + '_ {
         (
             &*self.schemas,

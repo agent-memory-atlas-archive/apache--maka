@@ -541,11 +541,9 @@ impl Element for Proxy {
                 && owner.input.0.borrow().is_some()
                 && !owner.state.read(cx).presentation().is_disabled()
         };
-        if admitted {
-            window.focus_on_reveal(&focus, cx);
-        }
+        let presented = admitted && window.focus_on_reveal(&focus, cx);
         self.content.paint(window, cx);
-        if admitted {
+        if presented {
             self.owner.update(cx, |owner, _| {
                 owner.focus.presented();
             });

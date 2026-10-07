@@ -116,7 +116,7 @@ impl Surface {
 }
 /// One child of a committed component, owned by a committed native presentation.
 /// Binding resolution belongs to the parent activation and the common mount kernel.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ComponentSlot {
     pub key: String,

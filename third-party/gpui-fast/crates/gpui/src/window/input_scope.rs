@@ -140,10 +140,7 @@ impl Window {
         }))
     }
     pub(super) fn focus_move_is_admitted(&self, focus: &FocusHandle) -> bool {
-        let scope = self
-            .input_scope
-            .as_ref()
-            .filter(|scope| scope.admitted(self));
+        let scope = self.physical_input_scope();
         if scope.is_some_and(|scope| scope.focus(self) == Some(focus.id)) {
             return true;
         }
@@ -200,17 +197,7 @@ impl Window {
         let Some(node) = tree.focusable_node_id(focus) else {
             return false;
         };
-        let scope = self
-            .next_frame
-            .input_scopes
-            .iter()
-            .rev()
-            .find(|scope| scope.admitted(self))
-            .or_else(|| {
-                self.input_scope
-                    .as_ref()
-                    .filter(|scope| scope.admitted(self))
-            });
+        let scope = self.physical_input_scope();
         self.node_scopes_are_admitted(tree, node)
             && scope.is_none_or(|scope| {
                 scope
@@ -246,10 +233,47 @@ impl Window {
             self.next_frame.input_scopes.push(scope.clone());
         }
     }
-    /// The live original foreground group for physical/default selection operations.
-    pub fn active_input_group(&self) -> Option<FocusId> {
+    // A newly opened scope is exclusive before paint. If it is revoked, the
+    // last still-live declaration in the original frame resumes immediately;
+    // the weak slot must not leave an enclosing opening unprotected until draw.
+    // During actual paint, declarations also admit the new foreground's native
+    // focus/handler publication. Before paint, an unpublished revoked opening
+    // with no survivor keeps the original refusal until a frame supplies it.
+    pub(super) fn physical_input_scope(&self) -> Option<&WeakInputScope> {
         self.input_scope
             .as_ref()
+            .filter(|scope| scope.admitted(self))
+            .or_else(|| {
+                (!self.invalidator.not_drawing())
+                    .then(|| {
+                        self.next_frame
+                            .input_scopes
+                            .iter()
+                            .rev()
+                            .find(|scope| scope.admitted(self))
+                    })
+                    .flatten()
+            })
+            .or_else(|| {
+                self.rendered_frame
+                    .input_scopes
+                    .iter()
+                    .rev()
+                    .find(|scope| scope.admitted(self))
+            })
+            .or_else(|| {
+                self.input_scope.as_ref().filter(|pending| {
+                    !self
+                        .rendered_frame
+                        .input_scopes
+                        .iter()
+                        .any(|published| published.0.ptr_eq(&pending.0))
+                })
+            })
+    }
+    /// The live original foreground group for physical/default selection operations.
+    pub fn active_input_group(&self) -> Option<FocusId> {
+        self.physical_input_scope()
             .and_then(|scope| scope.focus(self))
     }
     /// Admission for creation-time native interceptors with an original focus owner.
@@ -257,10 +281,8 @@ impl Window {
         self.focus_is_admitted_in(&self.rendered_frame.dispatch_tree, focus.id)
     }
     pub(super) fn focus_is_admitted_in(&self, tree: &DispatchTree, focus: FocusId) -> bool {
-        let own_scope = self
-            .input_scope
-            .as_ref()
-            .and_then(|scope| scope.focus(self));
+        let scope = self.physical_input_scope();
+        let own_scope = scope.and_then(|scope| scope.focus(self));
         if own_scope == Some(focus) {
             return true;
         }
@@ -269,9 +291,7 @@ impl Window {
                 return false;
             }
         }
-        self.input_scope
-            .as_ref()
-            .is_none_or(|_| own_scope.is_some_and(|parent| tree.focus_contains(parent, focus)))
+        scope.is_none_or(|_| own_scope.is_some_and(|parent| tree.focus_contains(parent, focus)))
     }
     pub(crate) fn input_origin_is_admitted(
         &self,
@@ -282,7 +302,7 @@ impl Window {
             return false;
         };
         self.node_scopes_are_admitted(tree, node)
-            && self.input_scope.as_ref().is_none_or(|scope| {
+            && self.physical_input_scope().is_none_or(|scope| {
                 scope
                     .focus(self)
                     .is_some_and(|focus| tree.focus_contains_node(focus, node))
@@ -304,7 +324,7 @@ impl Window {
             return None;
         }
         let mut path = tree.dispatch_path(node);
-        if let Some(scope) = &self.input_scope {
+        if let Some(scope) = self.physical_input_scope() {
             let focus = scope.focus(self)?;
             let scope = tree.focusable_node_id(focus)?;
             let start = path.iter().position(|node| *node == scope)?;

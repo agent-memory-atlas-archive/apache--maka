@@ -5721,10 +5721,15 @@ impl Window {
     /// Offer the original input's focus during its actual paint, before its
     /// native handler is registered. The first painted offer wins. Hidden or
     /// discarded prepaint cannot take focus, and active composition keeps it.
-    pub fn focus_on_reveal(&mut self, focus_handle: &FocusHandle, cx: &mut App) {
+    /// Returns whether this offer was physically presented, even when an earlier
+    /// offer or composition keeps focus. A background offer remains pending.
+    pub fn focus_on_reveal(&mut self, focus_handle: &FocusHandle, cx: &mut App) -> bool {
         self.invalidator.debug_assert_paint();
-        if self.next_frame.autofocus_offered || !self.focus_is_presented(focus_handle.id) {
-            return;
+        if !self.focus_is_presented(focus_handle.id) {
+            return false;
+        }
+        if self.next_frame.autofocus_offered {
+            return true;
         }
         self.next_frame.autofocus_offered = true;
         if self
@@ -5737,6 +5742,7 @@ impl Window {
             self.focus(focus_handle, cx);
             self.next_frame.focus = self.focus;
         }
+        true
     }
 
     /// Sets the view id for the current element, which will be used to manage view caching.
@@ -7065,7 +7071,7 @@ impl Window {
 
         // Capture phase for global actions.
         cx.propagate_event = true;
-        if self.input_scope.is_none()
+        if self.physical_input_scope().is_none()
             && let Some(mut global_listeners) = cx
                 .global_action_listeners
                 .remove(&action.as_any().type_id())
@@ -7155,7 +7161,7 @@ impl Window {
         }
 
         // Bubble phase for global actions.
-        if self.input_scope.is_none()
+        if self.physical_input_scope().is_none()
             && let Some(mut global_listeners) = cx
                 .global_action_listeners
                 .remove(&action.as_any().type_id())

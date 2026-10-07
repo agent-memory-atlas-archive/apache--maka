@@ -582,3 +582,53 @@ fn hidden_native_component_root_does_not_take_parent_grow_space() {
     assert_eq!(buffer[(0, 3)].symbol(), " ");
     close(&mut presenter);
 }
+
+#[test]
+fn delayed_hidden_flush_cannot_suspend_new_original_reading_and_source_geometry() {
+    let (_runtime, mut presenter, props) =
+        native(vec![source("one", "original"), source("two", "中😀")]);
+    draw(&mut presenter, 20, 2);
+    props.borrow_mut()["content"]["visible"] = json!(false);
+    refresh(&mut presenter);
+    let area = Rect::new(0, 0, 20, 2);
+    let hidden = presenter.paint(area, &mut Buffer::empty(area)).unwrap();
+    props.borrow_mut()["content"]["visible"] = json!(true);
+    refresh(&mut presenter);
+    draw(&mut presenter, 20, 2);
+    all(&mut presenter);
+    let before = copied(&mut presenter).unwrap();
+    let observed_before = observation(&presenter);
+    let targets: Vec<_> = presenter
+        .scene
+        .iter()
+        .map(|target| (target.mount.clone(), target.key.clone(), target.area))
+        .collect();
+    presenter.present(hidden);
+    assert_eq!(copied(&mut presenter).unwrap(), before);
+    assert_eq!(
+        presenter
+            .scene
+            .iter()
+            .map(|target| (target.mount.clone(), target.key.clone(), target.area))
+            .collect::<Vec<_>>(),
+        targets
+    );
+    presenter.sync_native().unwrap();
+    assert_eq!(observation(&presenter), observed_before);
+    // Actual pointer geometry still addresses the new original participants.
+    mouse(
+        &mut presenter,
+        MouseEventKind::Down(MouseButton::Left),
+        1,
+        0,
+    );
+    mouse(
+        &mut presenter,
+        MouseEventKind::Drag(MouseButton::Left),
+        4,
+        0,
+    );
+    mouse(&mut presenter, MouseEventKind::Up(MouseButton::Left), 4, 0);
+    assert_eq!(copied(&mut presenter).unwrap(), b"rig");
+    close(&mut presenter);
+}

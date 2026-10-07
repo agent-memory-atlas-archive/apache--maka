@@ -27,6 +27,10 @@ use gpui_kit::{
 
 struct Foreground {
     scope: Option<InputScope>,
+    nested: Option<InputScope>,
+    nested_focus: FocusHandle,
+    nested_query: Entity<InputOwner>,
+    nested_clicks: Rc<Cell<usize>>,
     interrupt_click: bool,
     focus: FocusHandle,
     query: Entity<InputOwner>,
@@ -44,6 +48,7 @@ impl Render for Foreground {
         let paints = self.paints.clone();
         let interrupt = self.interrupt_click;
         let ax_callbacks = self.ax_callbacks.clone();
+        let nested_clicks = self.nested_clicks.clone();
         self.scope.as_ref().unwrap().element(
             div()
                 .id("foreground")
@@ -96,7 +101,25 @@ impl Render for Foreground {
                         .on_a11y_action(accesskit::Action::Click, move |_, _, _| {
                             ax_callbacks.set(ax_callbacks.get() + 1)
                         }),
-                ),
+                )
+                .when_some(self.nested.as_ref(), |body, scope| {
+                    body.child(
+                        scope.element(
+                            div()
+                                .id("nested-foreground")
+                                .role(Role::Button)
+                                .aria_label("Nested foreground")
+                                .track_focus(&self.nested_focus)
+                                .h(px(48.))
+                                .w_full()
+                                .flex_shrink_0()
+                                .child(self.nested_query.clone())
+                                .on_click(move |_, _, _| {
+                                    nested_clicks.set(nested_clicks.get() + 1)
+                                }),
+                        ),
+                    )
+                }),
         )
     }
 }
@@ -212,8 +235,13 @@ fn fixture(cx: &mut TestAppContext) -> Fixture {
                 let mut query_props = props();
                 query_props.auto_focus = true;
                 let query = InputOwner::new(&query_props, live.clone(), false, window, cx);
+                let nested_query = InputOwner::new(&query_props, live.clone(), false, window, cx);
                 let panel = cx.new(|cx| Foreground {
                     scope: None,
+                    nested: None,
+                    nested_focus: cx.focus_handle().tab_stop(true),
+                    nested_query,
+                    nested_clicks: Rc::new(Cell::new(0)),
                     interrupt_click: false,
                     focus: cx.focus_handle().tab_stop(false),
                     query,
@@ -969,4 +997,342 @@ fn modal_preserves_original_editor_selection_without_resuming_its_old_pointer_dr
         Modifiers::default(),
     );
     cx.update(|cx| assert_ne!(f.background.read(cx).state.read(cx).selected_range(), range));
+}
+
+#[gpui::test]
+fn closing_nested_scope_restores_outer_admission_before_paint_without_reviving_old_opening(
+    cx: &mut TestAppContext,
+) {
+    let f = fixture(cx);
+    cx.activate_accessibility(f.window);
+    open(cx, &f);
+    draw(cx, f.window);
+    let background = target(cx, f.window, "Background");
+    let outer = target(cx, f.window, "Foreground first");
+    let outer_group = cx
+        .update_window(f.window, |_, window, _| window.active_input_group())
+        .unwrap()
+        .unwrap();
+    let global = Rc::new(Cell::new(0));
+    cx.update(|cx| {
+        let global = global.clone();
+        cx.on_action(move |_: &ScopeAction, _| global.set(global.get() + 1));
+    });
+    cx.with_paused_automatic_drawing(|cx| {
+        cx.update_window(f.window, |_, window, cx| {
+            f.panel.update(cx, |panel, cx| {
+                panel.nested = Some(window.input_scope(&panel.nested_focus, cx));
+                cx.notify();
+            });
+        })
+        .unwrap();
+        cx.with_platform_input_handler(f.window, |handler| {
+            handler.replace_text_in_range(None, "blocked");
+        })
+        .unwrap();
+        ax(cx, f.window, outer, accesskit::Action::Click);
+        assert_eq!(f.foreground_clicks.get(), 0);
+        cx.update(|cx| f.panel.read(cx).nested.as_ref().unwrap().revoke());
+        cx.with_platform_input_handler(f.window, |handler| {
+            handler.replace_text_in_range(None, "outer");
+        })
+        .unwrap();
+        ax(cx, f.window, background, accesskit::Action::Click);
+        ax(cx, f.window, outer, accesskit::Action::Click);
+        assert_eq!(f.clicks.get(), 0, "outer remains exclusive without a draw");
+        assert_eq!(f.foreground_clicks.get(), 1);
+        cx.dispatch_action(f.window, ScopeAction);
+        assert_eq!(
+            global.get(),
+            0,
+            "global business actions remain outside outer"
+        );
+        cx.update(|cx| {
+            assert_eq!(
+                f.panel
+                    .read(cx)
+                    .query
+                    .read(cx)
+                    .state
+                    .read(cx)
+                    .value()
+                    .as_ref(),
+                "outer"
+            );
+        });
+        cx.update_window(f.window, |_, window, cx| {
+            f.panel.update(cx, |panel, cx| {
+                panel.nested = Some(window.input_scope(&panel.nested_focus, cx));
+                panel.nested_focus.focus(window, cx);
+                cx.notify();
+            });
+        })
+        .unwrap();
+    });
+    draw(cx, f.window);
+    let nested = target(cx, f.window, "Nested foreground");
+    ax(cx, f.window, nested, accesskit::Action::Click);
+    cx.update(|cx| assert_eq!(f.panel.read(cx).nested_clicks.get(), 1));
+    cx.with_paused_automatic_drawing(|cx| {
+        cx.update(|cx| f.panel.read(cx).nested.as_ref().unwrap().revoke());
+        cx.update_window(f.window, |_, window, cx| {
+            let panel = f.panel.read(cx);
+            assert_eq!(window.active_input_group(), Some(outer_group));
+            assert!(window.input_focus_is_admitted(&panel.first));
+            assert!(!window.input_focus_is_admitted(&panel.nested_focus));
+            assert!(!window.input_focus_is_admitted(&f.root.read(cx).button));
+            panel.first.clone().focus(window, cx);
+        })
+        .unwrap();
+        ax(cx, f.window, background, accesskit::Action::Click);
+        ax(cx, f.window, nested, accesskit::Action::Click);
+        ax(cx, f.window, outer, accesskit::Action::Click);
+        cx.simulate_keystrokes(f.window, "x");
+        assert_eq!(f.clicks.get(), 0);
+        assert_eq!(f.foreground_clicks.get(), 2);
+        assert_eq!(f.keys.get(), 0, "raw keys cannot cross the outer barrier");
+    });
+    // The held dead child is still painted. Native declarations may observe it,
+    // but cannot make it the foreground or make its old listeners live again.
+    draw(cx, f.window);
+    ax(cx, f.window, nested, accesskit::Action::Click);
+    cx.update(|cx| assert_eq!(f.panel.read(cx).nested_clicks.get(), 1));
+    cx.with_paused_automatic_drawing(|cx| {
+        cx.update_window(f.window, |_, window, cx| {
+            f.panel.update(cx, |panel, cx| {
+                panel.nested = Some(window.input_scope(&panel.nested_focus, cx));
+                cx.notify();
+            });
+        })
+        .unwrap();
+        ax(cx, f.window, nested, accesskit::Action::Click);
+        ax(cx, f.window, outer, accesskit::Action::Click);
+        cx.update(|cx| assert_eq!(f.panel.read(cx).nested_clicks.get(), 1));
+        assert_eq!(
+            f.foreground_clicks.get(),
+            2,
+            "fresh inner opening is exclusive before paint"
+        );
+    });
+    draw(cx, f.window);
+    let fresh = target(cx, f.window, "Nested foreground");
+    ax(cx, f.window, fresh, accesskit::Action::Click);
+    cx.update(|cx| assert_eq!(f.panel.read(cx).nested_clicks.get(), 2));
+    cx.with_paused_automatic_drawing(|cx| {
+        cx.update(|cx| f.panel.read(cx).nested.as_ref().unwrap().revoke());
+        cx.update(|cx| f.panel.read(cx).scope.as_ref().unwrap().revoke());
+        ax(cx, f.window, background, accesskit::Action::Click);
+        ax(cx, f.window, outer, accesskit::Action::Click);
+        ax(cx, f.window, fresh, accesskit::Action::Click);
+        assert_eq!(
+            f.clicks.get(),
+            1,
+            "closing all scopes restores the original background"
+        );
+        assert_eq!(f.foreground_clicks.get(), 2);
+        cx.update(|cx| assert_eq!(f.panel.read(cx).nested_clicks.get(), 2));
+    });
+}
+
+#[gpui::test]
+fn closing_inner_before_either_scope_paints_keeps_original_background_refused(
+    cx: &mut TestAppContext,
+) {
+    for drop_inner in [false, true] {
+        let f = fixture(cx);
+        cx.activate_accessibility(f.window);
+        cx.update_window(f.window, |_, window, cx| {
+            let focus = f
+                .background
+                .read(cx)
+                .state
+                .read(cx)
+                .presentation()
+                .focus_handle()
+                .clone();
+            focus.focus(window, cx);
+        })
+        .unwrap();
+        draw(cx, f.window);
+        let background = target(cx, f.window, "Background");
+        let global = Rc::new(Cell::new(0));
+        cx.update(|cx| {
+            let global = global.clone();
+            cx.on_action(move |_: &ScopeAction, _| global.set(global.get() + 1));
+        });
+        cx.with_paused_automatic_drawing(|cx| {
+            open(cx, &f);
+            cx.update_window(f.window, |_, window, cx| {
+                f.panel.update(cx, |panel, cx| {
+                    panel.nested = Some(window.input_scope(&panel.nested_focus, cx));
+                    if drop_inner {
+                        panel.nested.take();
+                    } else {
+                        panel.nested.as_ref().unwrap().revoke();
+                    }
+                    cx.notify();
+                });
+            })
+            .unwrap();
+            ax(cx, f.window, background, accesskit::Action::Click);
+            cx.dispatch_action(f.window, ScopeAction);
+            cx.with_platform_input_handler(f.window, |handler| {
+                handler.replace_text_in_range(None, "forbidden");
+                assert!(handler.selected_text_range(true).is_none());
+            })
+            .unwrap();
+            cx.update_window(f.window, |_, window, cx| {
+                let button = f.root.read(cx).button.clone();
+                assert!(!window.input_focus_is_admitted(&button));
+                button.focus(window, cx);
+                assert!(!button.is_focused(window));
+            })
+            .unwrap();
+            assert_eq!(f.clicks.get(), 0);
+            assert_eq!(global.get(), 0);
+            cx.update(|cx| assert_eq!(f.background.read(cx).state.read(cx).value().as_ref(), ""));
+        });
+        draw(cx, f.window);
+        cx.update_window(f.window, |_, window, cx| {
+            let query = f
+                .panel
+                .read(cx)
+                .query
+                .read(cx)
+                .state
+                .read(cx)
+                .presentation()
+                .focus_handle()
+                .clone();
+            assert!(
+                query.is_focused(window),
+                "first actual outer paint offers its original editor"
+            );
+        })
+        .unwrap();
+        cx.simulate_input(f.window, "fresh outer");
+        ax(cx, f.window, background, accesskit::Action::Click);
+        assert_eq!(f.clicks.get(), 0);
+        cx.update(|cx| {
+            assert_eq!(
+                f.panel
+                    .read(cx)
+                    .query
+                    .read(cx)
+                    .state
+                    .read(cx)
+                    .value()
+                    .as_ref(),
+                "fresh outer"
+            )
+        });
+        close(cx, &f);
+        draw(cx, f.window);
+    }
+}
+
+#[gpui::test]
+fn nested_first_paint_offers_autofocus_only_to_current_foreground_editor(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    cx.activate_accessibility(f.window);
+    let background = target(cx, f.window, "Background");
+    cx.with_paused_automatic_drawing(|cx| {
+        open(cx, &f);
+        cx.update_window(f.window, |_, window, cx| {
+            f.panel.update(cx, |panel, cx| {
+                panel.nested = Some(window.input_scope(&panel.nested_focus, cx));
+                cx.notify();
+            });
+        })
+        .unwrap();
+    });
+    draw(cx, f.window);
+    cx.update_window(f.window, |_, window, cx| {
+        let panel = f.panel.read(cx);
+        let inner = panel
+            .nested_query
+            .read(cx)
+            .state
+            .read(cx)
+            .presentation()
+            .focus_handle()
+            .clone();
+        let outer = panel
+            .query
+            .read(cx)
+            .state
+            .read(cx)
+            .presentation()
+            .focus_handle()
+            .clone();
+        assert_ne!(inner, panel.nested_focus);
+        assert!(
+            inner.is_focused(window),
+            "outer offer must not consume the current inner opening's first offer"
+        );
+        assert!(!outer.is_focused(window));
+        assert!(window.input_focus_is_admitted(&inner));
+        assert!(!window.input_focus_is_admitted(&outer));
+    })
+    .unwrap();
+    assert_eq!(
+        cx.text_input_state_changes(f.window),
+        [gpui_kit::TextInputStateChange::FocusGained]
+    );
+    cx.with_platform_input_handler(f.window, |handler| {
+        handler.replace_text_in_range(None, "first inner")
+    })
+    .unwrap();
+    let outer = target(cx, f.window, "Foreground first");
+    ax(cx, f.window, background, accesskit::Action::Click);
+    ax(cx, f.window, outer, accesskit::Action::Click);
+    assert_eq!(f.clicks.get(), 0);
+    assert_eq!(f.foreground_clicks.get(), 0);
+    cx.update(|cx| {
+        let panel = f.panel.read(cx);
+        assert_eq!(
+            panel.nested_query.read(cx).state.read(cx).value().as_ref(),
+            "first inner"
+        );
+        assert_eq!(panel.query.read(cx).state.read(cx).value().as_ref(), "");
+    });
+    cx.update(|cx| {
+        f.panel.update(cx, |panel, cx| {
+            panel.nested.take();
+            cx.notify();
+        })
+    });
+    draw(cx, f.window);
+    cx.update_window(f.window, |_, window, cx| {
+        let outer = f
+            .panel
+            .read(cx)
+            .query
+            .read(cx)
+            .state
+            .read(cx)
+            .presentation()
+            .focus_handle()
+            .clone();
+        assert!(
+            outer.is_focused(window),
+            "the previously blocked original outer offer remains pending"
+        );
+    })
+    .unwrap();
+    cx.with_platform_input_handler(f.window, |handler| {
+        handler.replace_text_in_range(None, "first outer")
+    })
+    .unwrap();
+    cx.update(|cx| {
+        let panel = f.panel.read(cx);
+        assert_eq!(
+            panel.query.read(cx).state.read(cx).value().as_ref(),
+            "first outer"
+        );
+        assert_eq!(
+            panel.nested_query.read(cx).state.read(cx).value().as_ref(),
+            "first inner"
+        );
+    });
 }

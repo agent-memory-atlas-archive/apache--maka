@@ -29,6 +29,10 @@ use std::{any::Any, cell::Cell, collections::BTreeMap, rc::Rc};
 pub(super) enum View {
     Scene(Value),
     ChangingScene(Rc<std::cell::RefCell<Value>>),
+    MetadataVisibility {
+        scene: Rc<super::super::scene::Node>,
+        visible: Rc<Cell<bool>>,
+    },
     StandaloneSource(Rc<std::cell::RefCell<Value>>),
     Reading(Rc<std::cell::RefCell<Value>>),
     ReadingSlot(Rc<std::cell::RefCell<Value>>),
@@ -85,6 +89,12 @@ impl NativeComponent<dyn Widget> for Root {
                 &source.borrow(),
                 std::time::Instant::now() + std::time::Duration::from_secs(1),
             )?,
+            View::MetadataVisibility { scene, visible } => NativeView::<dyn Widget>::new(
+                scene.clone(),
+                BTreeMap::from([("back".into(), json!(true))]),
+                vec![],
+            )?
+            .with_root_visibility(visible.get()),
             View::StandaloneSource(source) => {
                 let view = super::super::source::compile(&source.borrow())?;
                 NativeView::<dyn Widget>::new(
@@ -940,4 +950,53 @@ fn packaged_session_navigation_keeps_paging_controls_outside_the_scrolling_list(
             presenter.shutdown().unwrap();
         }
     }
+}
+
+#[test]
+fn delayed_hidden_metadata_cannot_replace_same_native_recipe_foreground() {
+    let visible = Rc::new(Cell::new(true));
+    let scene = Rc::new(super::super::scene::Node::Button {
+        key: "back".into(),
+        label: "Continue".into(),
+        disabled: false,
+        color: None,
+    });
+    let (_runtime, mut presenter) = native(
+        View::MetadataVisibility {
+            scene,
+            visible: visible.clone(),
+        },
+        Rc::new(Cell::new(true)),
+    );
+    draw(&mut presenter, 20, 2);
+    let root = presenter.root.clone();
+    visible.set(false);
+    let revision = presenter.application.frame(&root).unwrap().revision;
+    presenter
+        .application
+        .dispatch(&root, revision, "back", json!(true))
+        .unwrap();
+    presenter.sync_native().unwrap();
+    let area = Rect::new(0, 0, 20, 2);
+    let hidden = presenter.paint(area, &mut Buffer::empty(area)).unwrap();
+    visible.set(true);
+    let revision = presenter.application.frame(&root).unwrap().revision;
+    presenter
+        .application
+        .dispatch(&root, revision, "back", json!(true))
+        .unwrap();
+    draw(&mut presenter, 20, 2);
+    let count = presenter.application.frame(&root).unwrap().state["count"]
+        .as_u64()
+        .unwrap();
+    presenter.present(hidden);
+    presenter.input(key(KeyCode::Enter)).unwrap();
+    assert_eq!(
+        presenter.application.frame(&root).unwrap().state["count"],
+        count + 1
+    );
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
+    presenter.shutdown().unwrap();
 }

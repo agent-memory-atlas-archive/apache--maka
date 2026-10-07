@@ -89,7 +89,11 @@ fn request_open_change(
 pub fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("escape", Cancel, Some(CONTEXT)),
-        KeyBinding::new("enter", Confirm { secondary: false }, Some(CONTEXT)),
+        KeyBinding::new(
+            "enter",
+            Confirm { secondary: false },
+            Some("Dialog && !DialogNoConfirm"),
+        ),
     ]);
 }
 
@@ -127,6 +131,7 @@ pub struct Dialog {
     role: Role,
     layer: usize,
     keyboard: bool,
+    confirm_on_enter: bool,
     overlay_closable: bool,
     topmost: bool,
     dismiss_below_y: Pixels,
@@ -428,6 +433,7 @@ impl Dialog {
             role: Role::Dialog,
             layer: 0,
             keyboard: true,
+            confirm_on_enter: true,
             overlay_closable: true,
             topmost: true,
             dismiss_below_y: px(0.),
@@ -476,6 +482,11 @@ impl Dialog {
     }
     pub fn close_on_escape(mut self, value: bool) -> Self {
         self.keyboard = value;
+        self
+    }
+    /// Keep Enter available to the content without disabling Escape dismissal.
+    pub fn confirm_on_enter(mut self, value: bool) -> Self {
+        self.confirm_on_enter = value;
         self
     }
     pub fn close_on_backdrop_press(mut self, value: bool) -> Self {
@@ -563,7 +574,13 @@ impl RenderOnce for Dialog {
                     .role(self.role)
                     .track_focus(&self.focus)
                     .focus_trap(format!("dialog-{}", self.layer), &self.focus)
-                    .when(self.keyboard, |this| this.key_context(CONTEXT))
+                    .when(self.keyboard, |this| {
+                        this.key_context(if self.confirm_on_enter {
+                            CONTEXT
+                        } else {
+                            "Dialog DialogNoConfirm"
+                        })
+                    })
                     .map(|this| {
                         let request_cancel = request_close.clone();
                         let request_confirm = request_close.clone();
@@ -906,5 +923,129 @@ mod tests {
             bounds.get().center(),
             point(viewport.width / 2., viewport.height / 2.)
         );
+    }
+
+    #[gpui::test]
+    fn enter_can_remain_with_content_while_escape_respects_original_ime(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::input::InputState;
+        use gpui::{AppContext, Entity, EntityInputHandler, Focusable};
+
+        struct Harness {
+            focus: FocusHandle,
+            choice: FocusHandle,
+            editor: Entity<InputState>,
+            confirm_on_enter: bool,
+            confirms: Rc<Cell<usize>>,
+            cancels: Rc<Cell<usize>>,
+            raw_enter: Rc<Cell<usize>>,
+        }
+        impl Render for Harness {
+            fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                let (confirms, cancels, raw_enter) = (
+                    self.confirms.clone(),
+                    self.cancels.clone(),
+                    self.raw_enter.clone(),
+                );
+                Dialog::new(cx)
+                    .open(true)
+                    .focus_handle(self.focus.clone())
+                    .confirm_on_enter(self.confirm_on_enter)
+                    .on_ok(move |_, _, _| {
+                        confirms.set(confirms.get() + 1);
+                        true
+                    })
+                    .on_cancel(move |_, _, _| {
+                        cancels.set(cancels.get() + 1);
+                        true
+                    })
+                    .popup(
+                        div()
+                            .id("dialog-content")
+                            .track_focus(&self.choice)
+                            .size(px(200.))
+                            .on_key_down(move |event, _, _| {
+                                if event.keystroke.key == "enter" {
+                                    raw_enter.set(raw_enter.get() + 1);
+                                }
+                            })
+                            .child(self.editor.clone()),
+                    )
+            }
+        }
+        cx.update(crate::init);
+        let (confirms, cancels, raw_enter) = (
+            Rc::new(Cell::new(0)),
+            Rc::new(Cell::new(0)),
+            Rc::new(Cell::new(0)),
+        );
+        let (view, cx) = cx.add_window_view({
+            let (confirms, cancels, raw_enter) =
+                (confirms.clone(), cancels.clone(), raw_enter.clone());
+            move |window, cx| Harness {
+                focus: cx.focus_handle(),
+                choice: cx.focus_handle().tab_stop(true),
+                editor: cx.new(|cx| InputState::new(window, cx)),
+                confirm_on_enter: false,
+                confirms,
+                cancels,
+                raw_enter,
+            }
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            view.read(cx).choice.clone().focus(window, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            raw_enter.get(),
+            1,
+            "no native Confirm binding consumes Enter"
+        );
+        assert_eq!(confirms.get(), 0);
+        cx.simulate_keystrokes("escape");
+        assert_eq!(
+            cancels.get(),
+            1,
+            "Escape still requests controlled dismissal"
+        );
+        let editor = cx.update(|window, cx| {
+            let editor = view.read(cx).editor.clone();
+            editor.read(cx).focus_handle(cx).focus(window, cx);
+            window.draw(cx).clear(cx);
+            editor
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            editor.replace_and_mark_text_in_range(None, "中", Some(1..1), window, cx);
+            assert!(editor.marked_text_range(window, cx).is_some());
+        });
+        cx.simulate_keystrokes("escape");
+        editor.update_in(cx, |editor, window, cx| {
+            assert_eq!(editor.marked_text_range(window, cx), None);
+            assert_eq!(editor.value().as_ref(), "中");
+        });
+        assert_eq!(
+            cancels.get(),
+            1,
+            "original editor consumes composition Escape first"
+        );
+        cx.simulate_keystrokes("escape");
+        assert_eq!(cancels.get(), 2);
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.confirm_on_enter = true;
+                cx.notify();
+            });
+            window.draw(cx).clear(cx);
+            view.read(cx).choice.clone().focus(window, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            confirms.get(),
+            1,
+            "the default native confirmation remains available"
+        );
+        assert_eq!(raw_enter.get(), 1);
     }
 }

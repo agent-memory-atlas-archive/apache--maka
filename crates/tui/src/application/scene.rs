@@ -32,7 +32,7 @@ pub fn language() -> maka_plugin_core::package::SceneLanguage {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "TerminalDirection")]
 pub enum Direction {
@@ -43,7 +43,7 @@ pub enum Direction {
 /// `grow` distributes remaining cells after fixed/intrinsic siblings; `basis`
 /// supplies an explicit base instead of intrinsic length. Row wrap preserves
 /// source order and measures its rows before allocating the parent viewport.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 #[schemars(rename = "TerminalLayout")]
 pub struct Layout {
@@ -63,7 +63,7 @@ pub enum ScrollPolicy {
     Anchor,
     FollowEnd,
 }
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "TerminalScene")]
 pub enum Node {
@@ -320,6 +320,11 @@ pub(super) fn compile_with_inputs(
         .map(|view| view.with_root_visibility(visible))
 }
 impl super::Widget for Node {
+    fn same_presentation(&self, previous: &dyn std::any::Any) -> bool {
+        previous
+            .downcast_ref::<Self>()
+            .is_some_and(|previous| self == previous)
+    }
     fn layout(&self) -> Layout {
         Node::layout(self)
     }

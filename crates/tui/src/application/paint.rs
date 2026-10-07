@@ -155,10 +155,17 @@ pub struct PaintedScene {
     pub(super) targets: Vec<Target>,
     pub(super) keyboard: Option<std::rc::Rc<Ancestor>>,
     placed: std::collections::BTreeSet<uuid::Uuid>,
-    laid_out: std::collections::BTreeMap<uuid::Uuid, (Mount, u64)>,
+    laid_out: std::collections::BTreeMap<uuid::Uuid, PaintedMount>,
     pub(super) scope: Option<super::selection::ScopePaint>,
     geometries: Vec<NativeGeometry>,
     ancestry: Vec<std::rc::Rc<Ancestor>>,
+}
+
+struct PaintedMount {
+    mount: Mount,
+    revision: u64,
+    view: maka_ui::NativeView<dyn super::Widget>,
+    owner: std::rc::Weak<()>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -425,16 +432,47 @@ impl Presenter {
         if !self.surface.is_live() {
             return;
         }
+        // A delayed flush cannot withdraw newer presentation or replace its
+        // geometry. Native observations can revise business state while the
+        // complete immutable recipe remains the same (e.g. selection during a
+        // resize). Validate that distinction and the original owner as a batch.
+        if !scene.laid_out.contains_key(&self.root.id()) {
+            return;
+        }
+        let mut frames_current = true;
+        for painted in scene.laid_out.values() {
+            let Ok(frame) = self.application.frame(&painted.mount) else {
+                return;
+            };
+            let frame_current = frame.revision == painted.revision;
+            if self.application.is_retiring(&painted.mount)
+                || !frame.view.same_presentation_metadata(&painted.view)
+                || !self
+                    .resources
+                    .owners
+                    .get(&painted.mount.id())
+                    .is_some_and(|owner| {
+                        owner.live
+                            && painted
+                                .owner
+                                .ptr_eq(&std::rc::Rc::downgrade(&owner.identity))
+                    })
+                || !(frame_current
+                    || std::rc::Rc::ptr_eq(&frame.view.view, &painted.view.view)
+                    || frame
+                        .view
+                        .view
+                        .same_presentation(painted.view.view.as_ref()))
+            {
+                return;
+            }
+            frames_current &= frame_current;
+        }
         self.resources.presentation(&scene.placed);
         for pending in scene.geometries {
             self.resources
                 .present(&pending.mount, &pending.owner, pending.geometry);
         }
-        let frames_current = scene.laid_out.values().all(|(mount, revision)| {
-            self.application
-                .frame(mount)
-                .is_ok_and(|frame| frame.revision == *revision)
-        });
         let mut autofocus = None;
         for target in &scene.targets {
             if frames_current
@@ -598,21 +636,32 @@ impl Presenter {
         scene: &mut PaintedScene,
         measurements: &Measurements,
     ) -> maka_ui::Result<()> {
-        if area.width == 0
-            || area.height == 0
-            || !self.application.frame(mount)?.view.root_visible()
-        {
-            return Ok(());
-        }
         let native_frame = self.application.frame(mount)?;
+        let owner = &self
+            .resources
+            .owners
+            .get(&mount.id())
+            .ok_or_else(|| maka_ui::Error::Invalid("terminal native owner unavailable".into()))?
+            .identity;
         if scene
             .laid_out
-            .insert(mount.id(), (mount.clone(), native_frame.revision))
+            .insert(
+                mount.id(),
+                PaintedMount {
+                    mount: mount.clone(),
+                    revision: native_frame.revision,
+                    view: native_frame.view.clone(),
+                    owner: std::rc::Rc::downgrade(owner),
+                },
+            )
             .is_some()
         {
             return Err(maka_ui::Error::Invalid(
                 "component placed twice in terminal scene".into(),
             ));
+        }
+        if area.width == 0 || area.height == 0 || !native_frame.view.root_visible() {
+            return Ok(());
         }
         if !area.is_empty() {
             scene.placed.insert(mount.id());
