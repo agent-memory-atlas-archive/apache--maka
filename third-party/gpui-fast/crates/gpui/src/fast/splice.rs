@@ -137,7 +137,11 @@ pub(crate) struct Gap {
 
 impl Gap {
     fn element_id(&self) -> ElementId {
-        self.global_id.0.last().cloned().expect("a view has an id")
+        self.global_id
+            .ids
+            .last()
+            .cloned()
+            .expect("a view has an id")
     }
 }
 
@@ -232,7 +236,7 @@ pub(crate) struct SplicedPrepaint {
 /// What the window inherits at some point of the element tree, set aside while
 /// a nested view is built where it was.
 struct Inherited {
-    element_id_stack: SmallVec<[ElementId; 32]>,
+    element_id_stack: crate::window::ElementIdStack,
     text_style_stack: TextStyleStack,
     text_selection_scope_context: Option<u64>,
     content_mask_stack: Vec<ContentMask<Pixels>>,
@@ -251,12 +255,15 @@ impl Window {
         content_mask: ContentMask<Pixels>,
         opacity: f32,
     ) -> Inherited {
-        let parent_ids = &id.0[..id.0.len() - 1];
+        let parent_ids = &id.ids[..id.ids.len() - 1];
         Inherited {
-            element_id_stack: mem::replace(
-                &mut self.element_id_stack,
-                parent_ids.iter().cloned().collect(),
-            ),
+            element_id_stack: mem::replace(&mut self.element_id_stack, {
+                let mut stack = crate::window::ElementIdStack::default();
+                for id in parent_ids {
+                    stack.push(id.clone());
+                }
+                stack
+            }),
             text_style_stack: mem::replace(
                 &mut self.text_style_stack,
                 rebuild.text_style_stack.clone(),
@@ -348,7 +355,17 @@ impl Window {
                 .map(|&gap| records[gap].layout.as_ref().unwrap().keys.as_slice()),
             &mut self.retained_state.splice_keys,
         );
-        let element_states = layout.element_states.clone();
+        let element_states = kept_element_states(
+            &layout.element_states,
+            gaps.iter().map(|&gap| {
+                records[gap]
+                    .layout
+                    .as_ref()
+                    .unwrap()
+                    .element_states
+                    .as_slice()
+            }),
+        );
         let dependencies = record.dependencies.clone();
         let engine = self.layout_engine.as_mut().unwrap();
         if !engine.try_keep_retained(&kept) {
@@ -445,7 +462,7 @@ impl Window {
         let root = nested.layout.as_ref()?.root;
         let global_id = nested.id.clone();
         let context = nested.context.clone();
-        let element_id = global_id.0.last().cloned()?;
+        let element_id = global_id.ids.last().cloned()?;
 
         let engine = self.layout_engine.as_ref().unwrap();
         let (changes, remeasures, transient) = (
@@ -943,7 +960,7 @@ fn copy_record(
 /// The entity of the view whose element has the id `id`.
 #[inline(always)]
 pub(crate) fn view_entity(id: &GlobalElementId) -> Option<EntityId> {
-    match id.0.last()? {
+    match id.ids.last()? {
         ElementId::View(entity) => Some(*entity),
         _ => None,
     }
@@ -1015,6 +1032,24 @@ impl OpenDispatchCopy {
 /// cover every key, none is kept and nothing is looked up. Otherwise the
 /// gaps' keys are gathered into `scratch`, which keeps its room from one
 /// splice to the next.
+/// The element states a view drawn around `gaps` keeps from last frame: those
+/// it used itself. Its record lists every state used while its layout was
+/// requested, the nested views' included, and a nested view built again in
+/// its gap uses its own states anew; one it no longer uses, such as the state
+/// of an element it no longer has, is dropped at the end of the frame, as
+/// upstream drops the state of every element a frame does not draw.
+pub(crate) fn kept_element_states<'a>(
+    element_states: &[(GlobalElementId, std::any::TypeId)],
+    gaps: impl Iterator<Item = &'a [(GlobalElementId, std::any::TypeId)]>,
+) -> Vec<(GlobalElementId, std::any::TypeId)> {
+    let in_gaps: FxHashSet<&(GlobalElementId, std::any::TypeId)> = gaps.flatten().collect();
+    element_states
+        .iter()
+        .filter(|state| !in_gaps.contains(state))
+        .cloned()
+        .collect()
+}
+
 pub(crate) fn kept_keys<'a>(
     keys: &[u64],
     gaps: impl Iterator<Item = &'a [u64]> + Clone,

@@ -19,7 +19,7 @@
 
 # GPUI Fast 平台清理补丁
 
-从 [GPUI Fast](https://github.com/longbridge/gpui-fast/tree/e4aabe752665baabe330464892cfe6882ed3283b) 固定 revision `e4aabe752665baabe330464892cfe6882ed3283b` 保留 `gpui`、`gpui_macos`、`gpui_windows`、`gpui_linux` 四个 crate。其余 helper 仍依赖同一官方 Git revision；根 Cargo source patch 保证 Kit 和所有后端使用同一份核心类型。
+从 [GPUI Fast](https://github.com/longbridge/gpui-fast/tree/8e1e1987fdb512bb8b0ab27261906a598aff2ab8) 正式 `v0.1.2` tag 保留 core、macOS、Windows、Linux 和 scheduler 五个 crate。按上游发布规则使用 `gpui-fast*` 包名，保持原 Rust library 名；修改过的 scheduler 对应 `gpui-pre-scheduler` 0.3.8。未修改 helper 使用同一正式发布及其 0.3.8 支持快照。Kit 选择官方 `gpui-fast` feature，根 registry source patch 提供修改过的实现；移除旧 gpui-pre Git 兼容 facade。
 
 `upstream.json` 列出改动前的有限原始文件清单与 SHA-256。保留上游许可和署名；Maka 新文件不进入该清单。隔离 workspace 仅规范化 helper 依赖和显式许可文件路径。
 
@@ -48,3 +48,5 @@ App 提供原当前事件传播标记的只读查询。原生分发完成观察�
 原 ScrollHandle 唯一拥有实时 offset 与最后实际绘制的直接子元素几何。Tracked Div 可选择 Anchor 或 FollowEnd；未绘制的自动调整保留相对于 immutable painted geometry 的阅读原点，每次 retry 重选原 element IDs 中仍存在的元素。真实 wheel、set_offset 和 focus reveal 转为绝对目标；plain clamp 同样参与重试处理。原 Window 的继承式 prepaint visibility 作用域阻止隐藏后代的自动 retention、显式请求解析与焦点显露，不 blur 或替换 owner；隔离外部显露请求并在 unwind 时恢复。DeferredDraw 捕获同一 eligibility，延迟 prepaint 恢复它；retained context 比较它再决定复用，隐藏几何不确认 focus generation。实际 Deferred::paint 通过原 Frame paint stream 准入子树，普通 retained 与 splice 重放同一事实；priority 只排序当前已准入记录，低 priority 的嵌套子树也须先经过祖先实际 paint，hover-hidden 祖先不能独立绘制 ghost 子树。只有实际 Div 内容 paint 才提交 baseline，覆盖 retained children；不增加第二棵树、全局滚动注册或插件像素镜像。
 
 Bottom 与 item 合为一个带 tag 的 pending target，按当前 overflow、bounds 和 child geometry 解析，仅匹配的实际 paint 确认；hidden、discarded 和新 hover-hidden 的跳过绘制不能消费。新请求覆盖旧请求，真实原生移动取消请求。invalidate() 只推进原 dependency version，不冒充输入或安排 frame，Kit VirtualList 继续使用同一机械 owner。原 retained splice 检查纳入 rebuilt gap root 的 location/size；外框变化重建父元素，外框相同的内部内容改变仍可 splice。原生回归使用实际 wheel、focus、layout retry、显式请求与 partial child 更新，不作为 OS 或成品验收。
+
+独立原生测试工作区选择与应用相同的五个适配 crate 和 async-io owner，使用行表调试信息及运行时 Metal shader。上游一处属性测试改为直接调用 proptest，原因是 GPUI 宏转发了不受支持的 proptest_path 参数；配置与 dispatcher 种子、四个 case、随机收缩、原上下文清理和渲染等价断言全部保留。这是测试入口适配，不替换运行时。

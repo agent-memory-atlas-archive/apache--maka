@@ -77,6 +77,7 @@ license = "Apache-2.0"
 publish = false
 
 [workspace.dependencies]
+gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "29c04574dc838a8e59e84c9c9f3c4d15983222ce", default-features = false, features = ["gpui-fast"] }
 maka-application-bridge = { path = "crates/application-bridge" }
 cua-driver-sdk = { git = "https://github.com/maka-agent/cua", rev = "79c9b58a1b61f66ae966635c464e54cb2c8151d6" }
 cua-driver-contract = { git = "https://github.com/maka-agent/cua", rev = "79c9b58a1b61f66ae966635c464e54cb2c8151d6" }
@@ -164,18 +165,12 @@ debug = "line-tables-only"
 image-webp = { path = "third-party/image-webp" }
 sqlx-sqlite = { path = "third-party/sqlx-sqlite" }
 async-io = { path = "third-party/async-io" }
-gpui-pre = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }
-gpui-pre-platform = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }
-gpui-pre-web = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }
-gpui-pre-macros = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }
-gpui-pre-sum-tree = { git = "https://github.com/longbridge/gpui-fast", rev = "e4aabe752665baabe330464892cfe6882ed3283b" }
 
-[patch."https://github.com/longbridge/gpui-fast"]
-scheduler = { path = "third-party/gpui-fast/crates/scheduler" }
-gpui = { path = "third-party/gpui-fast/crates/gpui" }
-gpui_macos = { path = "third-party/gpui-fast/crates/gpui_macos" }
-gpui_windows = { path = "third-party/gpui-fast/crates/gpui_windows" }
-gpui_linux = { path = "third-party/gpui-fast/crates/gpui_linux" }
+gpui-fast = { path = "third-party/gpui-fast/crates/gpui" }
+gpui-fast-macos = { path = "third-party/gpui-fast/crates/gpui_macos" }
+gpui-fast-windows = { path = "third-party/gpui-fast/crates/gpui_windows" }
+gpui-fast-linux = { path = "third-party/gpui-fast/crates/gpui_linux" }
+gpui-pre-scheduler = { path = "third-party/gpui-fast/crates/scheduler" }
 
 [patch."https://github.com/longbridge/gpui-kit"]
 gpui-base = { path = "third-party/gpui-kit/crates/base" }

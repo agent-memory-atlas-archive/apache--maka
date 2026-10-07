@@ -61,8 +61,9 @@ GPUI 的窗口移除通知早于平台销毁；独立 window owner 等待补丁�
 application lifetime owner 在窗口和 executor task 都退出后仍保留未结算 Work，只有真实
 成功清理才允许 shutdown。显式 Composer/Reader 路径与限额见[资源示例](../ui/README.zh-CN.md)。
 
-依赖固定到 GPUI Fast `e4aabe75` 与 GPUI Kit `f89c5cc9`。使用上游 gpui-pre
-重导出选择 Fast，不包含第二套 GPUI。Windows dwrote 与构建期 cbindgen 采用
+依赖固定到 GPUI Fast v0.1.2（`8e1e1987`）与 GPUI Kit `29c04574`，通过 Kit
+官方 `gpui-fast` feature 选择原生后端。本地补丁保留 Maka 的原生输入、选择与清理契约。
+Windows dwrote 与构建期 cbindgen 采用
 MPL-2.0，不 vendoring 源码；分发须带许可证与源码链接。当前尚无此 crate 的发布打包。
 
 生产启动使用 `--root PATH --deployment UUID`，读取原存储来源和精确包字节，

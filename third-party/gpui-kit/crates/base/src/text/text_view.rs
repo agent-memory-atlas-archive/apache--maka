@@ -2126,6 +2126,134 @@ mod tests {
     }
 
     #[gpui::test]
+    fn custom_block_kept_row_preserves_full_geometry_and_native_copy(cx: &mut TestAppContext) {
+        struct TallBlock(Arc<AtomicUsize>);
+        impl crate::text::MarkdownPlugin for TallBlock {
+            fn name(&self) -> &str {
+                "tall"
+            }
+            fn is_block(&self) -> bool {
+                true
+            }
+            fn parse(
+                &self,
+                node: &markdown::mdast::Node,
+                _: &crate::text::MarkdownParseContext<'_>,
+            ) -> Option<crate::text::MarkdownNode> {
+                matches!(node, markdown::mdast::Node::Paragraph(_)).then(|| {
+                    crate::text::MarkdownNode::new("tall", ())
+                        .text("block")
+                        .markdown("block")
+                })
+            }
+            fn render(
+                &self,
+                _: &crate::text::MarkdownNode,
+                _: &mut Window,
+                _: &mut gpui::App,
+            ) -> impl IntoElement {
+                let prepaints = self.0.clone();
+                div().w(px(240.)).h(px(200.)).child(
+                    gpui::canvas(
+                        move |_, _, _| {
+                            prepaints.fetch_add(1, Ordering::SeqCst);
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .size_full(),
+                )
+            }
+        }
+        struct Root {
+            state: Entity<TextViewState>,
+            extensions: crate::text::MarkdownExtensions,
+        }
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .w(px(240.))
+                    .h(px(100.))
+                    .bg(gpui::white())
+                    .child(crate::TextSelectionLayer)
+                    .child(
+                        TextView::new(&self.state)
+                            .scrollable(true)
+                            .markdown_extensions(self.extensions.clone())
+                            .motion(
+                                crate::text::TextViewMotion::default()
+                                    .with_stream_fade(std::time::Duration::ZERO),
+                            ),
+                    )
+            }
+        }
+        cx.with_paused_automatic_drawing(|cx| {
+            cx.update(crate::init);
+            let prepaints = Arc::new(AtomicUsize::new(0));
+            let probe = prepaints.clone();
+            let (root, cx) = cx.add_window_view(|_, cx| Root {
+                state: cx.new(|cx| TextViewState::markdown("block", cx)),
+                extensions: crate::text::MarkdownExtensions::default().plugin(TallBlock(probe)),
+            });
+            let cx: &mut VisualTestContext = cx;
+            let draw =
+                |cx: &mut VisualTestContext| cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.run_until_parked();
+            draw(cx);
+            cx.run_until_parked();
+            draw(cx);
+            let state = root.read_with(cx, |root, _| root.state.clone());
+            let wheel = |cx: &mut VisualTestContext| {
+                cx.simulate_event(gpui::ScrollWheelEvent {
+                    position: point(px(235.), px(50.)),
+                    delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-5.))),
+                    modifiers: Modifiers::default(),
+                    touch_phase: gpui::TouchPhase::Moved,
+                });
+                draw(cx);
+            };
+            wheel(cx);
+            wheel(cx);
+            let before = state.read_with(cx, |state, _| state.selection_adapter.text_bounds());
+            assert_eq!(before.len(), 1);
+            let viewport = state.read_with(cx, |state, _| state.list_state.viewport_bounds());
+            assert_eq!(before[0], viewport);
+            let old_offset = state.read_with(cx, |state, _| state.scroll_offset());
+            let count = prepaints.load(Ordering::SeqCst);
+            wheel(cx);
+            assert_eq!(
+                state.read_with(cx, |state, _| state.scroll_offset()),
+                old_offset - point(px(0.), px(5.))
+            );
+            assert_eq!(
+                prepaints.load(Ordering::SeqCst),
+                count,
+                "original custom row must actually remain kept"
+            );
+            let after = state.read_with(cx, |state, _| state.selection_adapter.text_bounds());
+            assert_eq!(
+                after, before,
+                "a tall kept block still fills the viewport after scrolling"
+            );
+            let focus = state.read_with(cx, |state, _| state.focus_handle().clone());
+            cx.update(|window, cx| focus.focus(window, cx));
+            draw(cx);
+            cx.dispatch_action(crate::input::SelectAll);
+            draw(cx);
+            assert_eq!(
+                cx.update(|window, cx| crate::TextSelection::selected_text(window, cx))
+                    .trim(),
+                "block"
+            );
+            cx.dispatch_action(crate::input::Copy);
+            assert_eq!(
+                cx.update(|_, cx| cx.read_from_clipboard().unwrap().text().unwrap())
+                    .trim(),
+                "block"
+            );
+        });
+    }
+
+    #[gpui::test]
     fn inline_html_image_after_newline_does_not_panic(cx: &mut TestAppContext) {
         cx.update(crate::init);
         let (_, cx) = cx.add_window_view(|_, cx| {
@@ -2488,8 +2616,9 @@ mod tests {
         cx.run_until_parked();
         cx.simulate_click(point(px(10.), px(10.)), Modifiers::default());
         assert_eq!(cx.opened_url(), Some("https://example.com".to_string()));
+        // Just past the code span's leading padding, on its first glyph.
         cx.simulate_mouse_down(
-            point(px(3.), px(8.)),
+            point(px(5.), px(8.)),
             MouseButton::Left,
             Modifiers::default(),
         );
@@ -2673,7 +2802,8 @@ mod tests {
 
             let mut markers = shaped_lines
                 .into_iter()
-                .filter(|line| line.ends_with(". "))
+                // Fast also shapes individual punctuation to measure wrapping.
+                .filter(|line| (2..=3).contains(&line.len()) && line.ends_with('.'))
                 .collect::<Vec<_>>();
             markers.dedup();
             markers
@@ -2682,28 +2812,28 @@ mod tests {
         let starts_at_one = "1. one\n2. two";
         assert_eq!(
             shaped_markers(Format::Markdown, starts_at_one),
-            ["1. ", "2. "]
+            ["1.", "2."]
         );
         assert_eq!(
             shaped_markers(Format::Html, "<ol><li>one</li><li>two</li></ol>"),
-            ["1. ", "2. "]
+            ["1.", "2."]
         );
 
         assert_eq!(
             shaped_markers(Format::Markdown, "3. hello\n4. world"),
-            ["3. ", "4. "]
+            ["3.", "4."]
         );
 
         let nested_starts_at_four = "1. outer\n\n   4. nested\n   5. again";
         assert_eq!(
             shaped_markers(Format::Markdown, nested_starts_at_four),
-            ["1. ", "D. ", "E. "]
+            ["1.", "D.", "E."]
         );
 
         let nested_starts_at_zero = "1. outer\n\n   0. zero";
         assert_eq!(
             shaped_markers(Format::Markdown, nested_starts_at_zero),
-            ["1. ", "0. "]
+            ["1.", "0."]
         );
     }
 

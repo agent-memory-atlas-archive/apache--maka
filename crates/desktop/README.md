@@ -74,9 +74,9 @@ of UI resources; the application lifetime owner retains unresolved work after
 window and executor-task exit. Only successful cleanup allows shutdown. See the
 [resource example and bounds](../ui/README.md) for the explicit Composer/Reader path.
 
-Dependencies are pinned to GPUI Fast `e4aabe75` and GPUI Kit `f89c5cc9`; later Fast
-text-wrapping API changes are incompatible with this Kit version. Upstream
-`gpui-pre-*` reexports select Fast without a second GPUI implementation.
+Dependencies are pinned to GPUI Fast v0.1.2 (`8e1e1987`) and GPUI Kit `29c04574`.
+Kit's official `gpui-fast` feature selects the native backend. Local source patches
+preserve Maka's native input, selection and cleanup contracts.
 
 Native dependencies include MPL-2.0 [dwrote](https://github.com/servo/dwrote)
 (Windows) and build-time [cbindgen](https://github.com/mozilla/cbindgen).

@@ -19,7 +19,7 @@
 
 # GPUI Fast platform cleanup patch
 
-Five crates are copied from [GPUI Fast](https://github.com/longbridge/gpui-fast/tree/e4aabe752665baabe330464892cfe6882ed3283b), revision `e4aabe752665baabe330464892cfe6882ed3283b`: `gpui`, `gpui_macos`, `gpui_windows`, `gpui_linux`, `scheduler`. Other helpers remain dependencies from that exact official Git revision. Root Cargo source patches give Kit and every backend the same core types. This is not a replacement UI framework.
+Five crates are copied from [GPUI Fast](https://github.com/longbridge/gpui-fast/tree/8e1e1987fdb512bb8b0ab27261906a598aff2ab8), revision `8e1e1987fdb512bb8b0ab27261906a598aff2ab8`: `gpui`, `gpui_macos`, `gpui_windows`, `gpui_linux`, `scheduler`. This is the official `v0.1.2` tag. Manifests use upstream release dependency rules: core and platform crates retain their Rust library names under the published `gpui-fast*` package names; the modified scheduler uses `gpui-pre-scheduler` 0.3.8. Unmodified helpers use the same official release and its 0.3.8 support snapshots. Kit selects its official `gpui-fast` backend feature. Root registry source patches supply the modified crates; the old `gpui-pre` Git compatibility facades are removed.
 
 `upstream.json` records the finite original file inventory and SHA-256 hashes before changes. Original license texts and upstream attribution are retained. New Maka source is not included in this inventory. Workspace dependencies are normalized for the isolated five-crate workspace, with explicit upstream license-file paths.
 
@@ -73,3 +73,5 @@ Window exposes read-only slices of its original prepainted and completed hitboxe
 `Entity::query` 公开原平台查询的派生报告分类，保留原 entity lease 与读取依赖；可观察变化仍须走原通知。queried-owner scope 在 unwind 复抛前恢复外层分类，不新增 entity lease rollback。原生回归在有效的普通 update 内捕获同 owner 双借用失败，再验证后续 source 写入仍可见。
 
 Window 只读公开原 prepainted/completed hitboxes 及原 focus handle 在完成 dispatch tree 中的插入位置。Kit 据此投影 retained 选区几何、维护触控菜单存活与文档顺序，不新建 hitbox、focus tree 或 frame owner。
+
+The standalone native test workspace selects the same five adapted crates and async-io owner as the application, with line-table debug information and runtime Metal shaders. One upstream property-test entry uses proptest directly because the GPUI macro forwards an unsupported proptest_path option. Its configuration/dispatcher seeds, four cases, shrinking, original context teardown and render-equivalence assertions are preserved; this is a test harness adjustment, not a replacement runtime.

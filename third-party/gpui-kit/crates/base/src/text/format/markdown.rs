@@ -233,6 +233,10 @@ fn parse_table_row(source: &str, table: &mut Table, node: &mdast::TableRow, cx: 
             _ => {}
         };
     });
+    // GFM fixes the column count with the header/delimiter, not each body row.
+    // Padding/truncation keeps every row on the same measured column grid.
+    row.children
+        .resize_with(table.column_aligns.len(), Default::default);
     table.children.push(row);
 }
 
@@ -949,7 +953,10 @@ fn ast_to_node(source: &str, value: mdast::Node, cx: &mut NodeContext) -> BlockN
     let parse_cx = MarkdownParseContext::new(source, cx.offset);
     if let Some(mut node) = cx.markdown_extensions.parse_block(&value, &parse_cx) {
         node.set_span(span);
-        return BlockNode::Custom(node);
+        return BlockNode::Custom {
+            node,
+            state: Default::default(),
+        };
     }
 
     match value {
@@ -1238,6 +1245,24 @@ mod tests {
         let start = code_text.find(selected_text).expect("selected MDX code");
         code.set_selection(start..start + selected_text.len());
         document.selected_source_range()
+    }
+
+    #[test]
+    fn table_rows_use_header_column_count() {
+        let mut cx = NodeContext::default();
+        let document = parse(
+            "| A | B | C |\n| --- | --- | --- |\n| one |\n| two | three | four | ignored |\n",
+            &mut cx,
+        )
+        .unwrap();
+        let BlockNode::Table(table) = &document.blocks[0] else {
+            panic!("expected table");
+        };
+        assert_eq!(table.column_aligns.len(), 3);
+        assert!(table.children.iter().all(|row| row.children.len() == 3));
+        assert_eq!(table.children[1].children[0].children.text(), "one");
+        assert!(table.children[1].children[1].children.text().is_empty());
+        assert_eq!(table.children[2].children[2].children.text(), "four");
     }
 
     #[test]
@@ -2114,7 +2139,7 @@ mod tests {
         };
         let document = parse("$TSLA.US", &mut cx).unwrap();
 
-        let BlockNode::Custom(node) = &document.blocks[0] else {
+        let BlockNode::Custom { node, .. } = &document.blocks[0] else {
             panic!("expected custom markdown node");
         };
         assert_eq!(node.name(), "ticker");
@@ -2429,7 +2454,7 @@ mod tests {
         };
         let document = parse("$TSLA.US", &mut cx).unwrap();
 
-        let BlockNode::Custom(node) = &document.blocks[0] else {
+        let BlockNode::Custom { node, .. } = &document.blocks[0] else {
             panic!("expected custom markdown node");
         };
         assert_eq!(node.name(), "ticker");

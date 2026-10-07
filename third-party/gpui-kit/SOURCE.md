@@ -19,7 +19,7 @@
 
 # GPUI Kit local presentation projection
 
-The `gpui-base` crate is copied from [GPUI Kit](https://github.com/longbridge/gpui-kit/tree/f89c5cc9576d823d253b4563806e5f842e9d69f9), revision `f89c5cc9576d823d253b4563806e5f842e9d69f9`, under Apache-2.0. Other Kit crates remain dependencies from that exact revision. `upstream.json` records the finite imported file inventory and original SHA-256 hashes before modifications; licenses are retained byte-for-byte. The root README is retained because upstream library tests include it. Examples, benchmarks and website sources are omitted. Benchmark-only dependencies and GPUI profiler features are omitted; library tests keep their original test support. The crate manifest is normalized to explicit upstream dependencies/lints and disables automatic example targets; this repository includes the adapted Base crate as a workspace member so its actual unit tests can run with the same source patches as the application.
+The `gpui-base` crate is copied from [GPUI Kit](https://github.com/longbridge/gpui-kit/tree/29c04574dc838a8e59e84c9c9f3c4d15983222ce), revision `29c04574dc838a8e59e84c9c9f3c4d15983222ce`, under Apache-2.0. Other Kit crates remain dependencies from that exact revision. `upstream.json` records the finite imported file inventory and original SHA-256 hashes before modifications; licenses are retained byte-for-byte. The root README is retained because upstream library tests include it. Examples, benchmarks and website sources are omitted. Benchmark-only dependencies and GPUI profiler features are omitted; library tests keep their original test support. The crate manifest is normalized to explicit upstream dependencies/lints and disables automatic example targets; this repository includes the adapted Base crate as a workspace member so its actual unit tests can run with the same source patches as the application.
 
 The bounded changes preserve the single native editing engine:
 
@@ -118,3 +118,25 @@ Derived bounds, selection runs and frame reports use the original native query c
 原 TextView State 的 document element 在实际内容 paint 后发布选区，覆盖 State-only retained gap。每个原 Inline/Object 将未裁剪几何关联原 HitboxId；adapter 只在原 prepaint 仍保留 hitbox 时保报告，通过只读 translation 与当前 mask 投影原 glyph layout，再由同一 selection participant 发布，不重新塑形或改共享 TextLayout。外层元素捕获准确 scope，并在原 native element state 保持 reveal callback custody，弱 State locator 不从被跳过的 wrapper 推断事实。fresh 与 retained peer 的文档顺序按完成的原 native focus tree 解析。
 
 派生 bounds、selection runs 与 frame reports 使用原 native query 分类；删除无变化的 snapshot mutable lease、空多击选区对 scroll offset 的读取、baseline ACK update、无活动选区的 wheel/move update。真正 source、enabled、selection 与 interaction 变化保留原 update/通知。既有 scope stack 是临时 native traversal context，在原 Global 内借用，不作为 reactive 写入。触控 handle/menu IDs 去重并按完成帧 hitbox 存活维护，删除 raw rectangle 与双代轮转。回归强断言真实内部 List row 复用及 glyph 平移、State-only reflow 后跨文档拖选/复制、显式 scope 隔离和连续 peer 发布时实际 retained menu 操作。
+
+
+## Official Fast backend update
+
+The workspace selects Kit's `gpui-fast` feature explicitly. Upstream's new parser
+commit helper accepts queued append prefixes newer than the last committed parse,
+preventing streaming starvation. Native selection compatibility still compares the
+actually committed document; original link/row-focus ownership and structural-reset
+selection retirement remain. Menu handlers execute outside the input Entity lease,
+then update that original weak input with the upstream menu-focus result. Document
+flow positioning and local row-focus wrappers coexist; typography remains locally
+projected. These are native presentation patches, without new plugin/kernel state.
+
+本次显式启用 Kit 官方 Fast 后端。采纳上游对有效流式前缀的提交规则，避免解析期间
+持续追加使显示饥饿；选区兼容仍根据真实已提交文档，保留原链接/行焦点 owner 与
+结构替换后的选区撤回。菜单回调在原 Input Entity 借用之外执行，再经其弱引用
+应用上游菜单焦点结果。文档流位置与原行焦点 wrapper 合并，排版继续由局部值投影。
+此处没有新增插件状态或内核权威。
+
+Custom Markdown blocks carry their original TextView WeakEntity and native hitbox. Full bounds enter the existing selection contribution adapter, which owns current clipping and retained translation. A native test checks actual kept-row scrolling and SelectAll/Copy; its old paint-mask clipping mutation is equivalent on that opaque Fast layer path and does not demonstrate a clipping regression. Marker tests exclude single-character wrapping measurements while preserving all ordinal assertions.
+
+自定义 Markdown 区块携带原 TextView WeakEntity 和原生 hitbox，将完整 bounds 交给既有选择贡献适配器，由它统一处理当前裁剪与保留行平移。原生测试检查真实旧行滚动及全选/复制；在该不透明 Fast layer 路径上，旧绘制 mask 裁剪变异等价，不构成已证裁剪回归。序号测试排除包装测量的单字符标点，保留所有起始与嵌套序号断言。
