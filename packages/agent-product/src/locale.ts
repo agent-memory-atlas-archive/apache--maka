@@ -19,6 +19,21 @@
 
 export const en = {
   viewImage: 'View image',
+  deploymentInstall: 'Install plugin',
+  deploymentInstallHelp:
+    'Save a plugin package for this product. Installation does not enable it or grant permissions.',
+  deploymentChooseFile: 'Choose plugin file…',
+  deploymentFilePath: 'Plugin file path',
+  deploymentFilePlaceholder: 'Absolute path to a .maka-plugin file',
+  deploymentFileTooLarge: 'This file exceeds 32 MiB. Choose a smaller plugin package.',
+  deploymentFileBusy: 'File memory is in use. Wait for other native work and try again.',
+  deploymentFileFailed: 'Could not read this file. Choose a readable regular file.',
+  deploymentFileLoading: 'Reading the selected file…',
+  deploymentInstallQuestion: 'Install this plugin package?',
+  deploymentInstalled: 'Plugin package saved. Component enablement and permissions are unchanged.',
+  deploymentActivateHelp:
+    'Edit the product composition to select this package and its required connections. Reload a retained draft to include the saved package.',
+  deploymentInstallRejected: 'Could not install this package. Check the plugin file and try again.',
   deploymentTitle: 'Plugins',
   deploymentHelp: 'Components selected by this product. Saved changes appear automatically.',
   deploymentRefresh: 'Refresh components',
@@ -263,6 +278,20 @@ export const en = {
 export type Copy = { [K in keyof typeof en]: string };
 const zhCN: Copy = {
   viewImage: '查看图片',
+  deploymentInstall: '安装插件',
+  deploymentInstallHelp: '为此产品保存插件包。安装不会启用插件，也不会授予权限。',
+  deploymentChooseFile: '选择插件文件…',
+  deploymentFilePath: '插件文件路径',
+  deploymentFilePlaceholder: '.maka-plugin 文件的绝对路径',
+  deploymentFileTooLarge: '文件超过 32 MiB，请选择更小的插件包。',
+  deploymentFileBusy: '文件内存正在使用，请等待其他原生任务完成后重试。',
+  deploymentFileFailed: '无法读取文件，请选择可读的普通文件。',
+  deploymentFileLoading: '正在读取选中的文件…',
+  deploymentInstallQuestion: '安装这个插件包？',
+  deploymentInstalled: '插件包已保存，组件启用状态和权限未改变。',
+  deploymentActivateHelp:
+    '编辑产品组合，选择此插件包及其所需连接。如有保留的草稿，请重新加载以包含已保存的插件包。',
+  deploymentInstallRejected: '无法安装此插件包，请检查插件文件后重试。',
   deploymentTitle: '插件',
   deploymentHelp: '当前产品选择的组件，保存后自动更新。',
   deploymentRefresh: '刷新组件',
@@ -489,6 +518,20 @@ const zhCN: Copy = {
 };
 const zhTW: Copy = {
   viewImage: '查看圖片',
+  deploymentInstall: '安裝外掛',
+  deploymentInstallHelp: '為此產品儲存外掛套件。安裝不會啟用外掛，也不會授予權限。',
+  deploymentChooseFile: '選擇外掛檔案…',
+  deploymentFilePath: '外掛檔案路徑',
+  deploymentFilePlaceholder: '.maka-plugin 檔案的絕對路徑',
+  deploymentFileTooLarge: '檔案超過 32 MiB，請選擇較小的外掛套件。',
+  deploymentFileBusy: '檔案記憶體正在使用，請等待其他原生工作完成後重試。',
+  deploymentFileFailed: '無法讀取檔案，請選擇可讀的普通檔案。',
+  deploymentFileLoading: '正在讀取選取的檔案…',
+  deploymentInstallQuestion: '安裝這個外掛套件？',
+  deploymentInstalled: '外掛套件已儲存，元件啟用狀態與權限未改變。',
+  deploymentActivateHelp:
+    '編輯產品組合，選擇此套件及其所需連線。如有保留的草稿，請重新載入以包含已儲存的套件。',
+  deploymentInstallRejected: '無法安裝此套件，請檢查外掛檔案後重試。',
   deploymentTitle: '外掛',
   deploymentHelp: '目前產品選擇的元件，儲存後自動更新。',
   deploymentRefresh: '重新整理元件',

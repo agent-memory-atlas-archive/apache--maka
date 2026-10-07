@@ -45,6 +45,8 @@ pub(super) enum Command {
     Schema,
     /// Validate immutable package bytes and print their exact pinned reference.
     InspectPackage(InspectPackage),
+    /// Export validated immutable package bytes to a new installable bundle.
+    ExportPackage(ExportPackage),
     /// Run a plugin composition with native terminal presentation.
     Run(Run),
     /// Atomically commit desired deployment input and exact immutable bytes.
@@ -59,6 +61,15 @@ pub(super) enum Command {
 pub(super) struct InspectPackage {
     #[arg(long, value_name = "PATH")]
     package: PathBuf,
+}
+
+#[derive(Args)]
+pub(super) struct ExportPackage {
+    #[arg(long, value_name = "PATH")]
+    package: PathBuf,
+    /// A new destination; an existing file is never replaced.
+    #[arg(long, value_name = "FILE")]
+    output: PathBuf,
 }
 
 #[derive(Args)]
@@ -129,6 +140,15 @@ impl Command {
                 let reference = tokio::task::spawn_blocking(move || {
                     Package::read_from(&std::path::absolute(args.package)?)
                         .map(|package| package.application_ref())
+                })
+                .await??;
+                println!("{}", serde_json::to_string_pretty(&reference)?);
+            }
+            Self::ExportPackage(args) => {
+                let reference = tokio::task::spawn_blocking(move || {
+                    let package = Package::read_from(&std::path::absolute(args.package)?)?;
+                    package.export_to(&std::path::absolute(args.output)?)?;
+                    Ok::<_, maka_plugins::package::PackageIoError>(package.application_ref())
                 })
                 .await??;
                 println!("{}", serde_json::to_string_pretty(&reference)?);

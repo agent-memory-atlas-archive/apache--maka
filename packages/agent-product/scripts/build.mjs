@@ -80,6 +80,7 @@ const specifications = {
       receipts: one(sdk.contracts.receiptReader),
       history: one(sdk.contracts.callerHistory),
       editor: one(sdk.contracts.textarea),
+      file: one(sdk.contracts.filePicker),
     },
   },
   workspace: {
@@ -270,6 +271,14 @@ const mechanical = {
         },
       },
     },
+  },
+  file: {
+    entries: Object.fromEntries(
+      ['desktop', 'tui'].map((target) => [
+        target,
+        native('maka.ui.file', { FilePicker: required(sdk.contracts.filePicker) }),
+      ]),
+    ),
   },
   image: {
     entries: { desktop: native('maka.ui.image', { Image: required(sdk.contracts.image) }) },

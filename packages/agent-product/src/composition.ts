@@ -42,6 +42,7 @@ export const packageNames = [
   'appearance',
   'surface',
   'editor',
+  'file',
   'reader',
   'history',
   'models',
@@ -159,6 +160,7 @@ export function composition(configuration: CompositionConfiguration): {
         {},
         {
           editor: [local('editor', 'Textarea')],
+          file: [local('file', 'FilePicker')],
           management: [
             {
               kind: 'remote',
@@ -254,6 +256,7 @@ export function composition(configuration: CompositionConfiguration): {
       appearance: node('appearance', { scheme: configuration.scheme }),
       surface: node('surface'),
       editor: node('editor'),
+      file: node('file'),
       reader: node('reader'),
       history: node('history'),
     },
@@ -296,7 +299,7 @@ export function composition(configuration: CompositionConfiguration): {
         consumer: [keys['deployment-gateway']],
         imports: {
           management: {
-            methods: ['instances', 'setEnabled', 'readDocument', 'replace'],
+            methods: ['instances', 'setEnabled', 'readDocument', 'replace', 'install'],
             recovery: false,
           },
           receipts: { methods: ['read'], recovery: true },

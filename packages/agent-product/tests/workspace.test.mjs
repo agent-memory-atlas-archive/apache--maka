@@ -455,6 +455,22 @@ test('both product compositions use actual immutable package refs and check in t
   const keys = Object.fromEntries(packageNames.map((name, index) => [name, uuid(index + 1)]));
   const directory = mkdtempSync(resolve(tmpdir(), 'maka-product-composition-'));
   try {
+    const sourcePackage = resolve(root, 'dist/packages/appearance');
+    const bundle = resolve(directory, 'appearance.maka-plugin');
+    const invoke = (args) =>
+      execFileSync(binary, ['application', ...args], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    const originalRef = JSON.parse(invoke(['inspect-package', '--package', sourcePackage]));
+    assert.deepEqual(
+      JSON.parse(invoke(['export-package', '--package', sourcePackage, '--output', bundle])),
+      originalRef,
+    );
+    assert.deepEqual(JSON.parse(invoke(['inspect-package', '--package', bundle])), originalRef);
+    const originalBytes = readFileSync(bundle);
+    assert.throws(() => invoke(['export-package', '--package', sourcePackage, '--output', bundle]));
+    assert.deepEqual(readFileSync(bundle), originalBytes);
     for (const presentation of ['desktop', 'tui']) {
       const configuration = {
         presentation,
@@ -501,6 +517,7 @@ test('both product compositions use actual immutable package refs and check in t
         'setEnabled',
         'readDocument',
         'replace',
+        'install',
       ]);
       assert.equal(manager.imports.receipts.recovery, true);
       assert.deepEqual(business.location, {
@@ -4607,5 +4624,220 @@ for (const target of ['desktop', 'tui']) {
       assert.equal(result.frame.state.document.confirmation, null);
       assert.equal(result.actions.length, 0);
     }
+  });
+}
+
+for (const target of ['desktop', 'tui']) {
+  test(`${target} file installation freezes the real resource slot, preserves drafts and recovers only its original operation`, async () => {
+    const { component } = await import(
+      pathToFileURL(resolve(root, `dist/packages/deployment/${target}.js`))
+    );
+    const props = { theme: values.appearance[0], locale: 'en' };
+    const source = { stateDomain: 'a'.repeat(64), deployment: uuid(80), revision: 7 };
+    const file = {
+      owner: uuid(99),
+      revision: 4,
+      phase: 'ready',
+      file: { name: '插件.maka-plugin', bytes: 123, digest: 'sha256:' + 'b'.repeat(64) },
+      error: null,
+    };
+    let result = component.mount(props, {});
+    const complete = (event) => {
+      result = component.event(
+        result.frame.state,
+        { kind: 'action', key: result.actions[0].key, event },
+        props,
+        {},
+      );
+    };
+    const press = (key) => {
+      result = component.event(result.frame.state, { kind: 'raw', key, event: null }, props, {});
+    };
+    const observe = (event) => {
+      result = component.event(
+        result.frame.state,
+        {
+          kind: 'component',
+          child: 'deployment-import-file',
+          name: 'changed',
+          key: 'deployment-import-changed',
+          event,
+        },
+        props,
+        {},
+      );
+    };
+    complete({ status: 'succeeded', value: { source, instances: [], next: null } });
+    // A retained, modified composition is never reset by installation.
+    const draft = {
+      source,
+      phase: 'ready',
+      observation: null,
+      sequence: 0,
+      command: null,
+      confirmation: null,
+      reloadConfirmation: false,
+      conflict: false,
+    };
+    result.frame.state.document = structuredClone(draft);
+    press('deployment-import');
+    press('deployment-import-install');
+    assert.equal(result.frame.state.importer.confirmation, null);
+    observe(file);
+    press('deployment-import-install');
+    assert.equal(result.actions.length, 0);
+    assert.deepEqual(result.frame.state.importer.confirmation.file, file);
+    observe({ ...file, revision: 5 });
+    assert.equal(result.frame.state.importer.confirmation, null);
+    press('deployment-import-confirm');
+    assert.equal(result.actions.length, 0);
+    press('deployment-import-install');
+    press('deployment-import-confirm');
+    const install = result.actions[0];
+    assert.equal(install.method, 'install');
+    assert.deepEqual(install.input, { expectedRevision: 7 });
+    assert.deepEqual(install.resources.package, {
+      child: 'deployment-import-file',
+      method: 'snapshot',
+      input: { owner: file.owner, revision: 5 },
+    });
+    // Validate the actual generated contract, including its mandatory resource name.
+    assert.deepEqual(
+      Object.keys(install.resources),
+      Object.keys(sdk.contracts.deploymentManager.interface.methods.install.resources),
+    );
+    assert.equal(
+      sdk.contracts.deploymentManager.interface.methods.install.resources.package.name,
+      sdk.contracts.filePicker.interface.captures.snapshot.output.resource.name,
+    );
+    const original = {
+      ...reference,
+      source: { ...source, deployment: uuid(81) },
+      namespace: [uuid(90)],
+      export: 'Management',
+      method: 'install',
+      contract: sdk.contracts.deploymentManager,
+    };
+    complete({ status: 'operation', reply: { reference: original, receipt: { kind: 'unknown' } } });
+    for (const key of [
+      'deployment-import-install',
+      'deployment-import-confirm',
+      'deployment-refresh',
+      'deployment-document-save',
+    ]) {
+      press(key);
+      assert.equal(result.actions.length, 0);
+    }
+    press('deployment-check');
+    assert.deepEqual(result.actions[0].input, original);
+    const installed = {
+      source: { ...source, revision: 8 },
+      package: { id: 'plugin.custom', revision: 'sha256-' + 'c'.repeat(64) },
+    };
+    complete({
+      status: 'succeeded',
+      value: {
+        reference: original,
+        receipt: {
+          kind: 'recorded',
+          outcome: { kind: 'returned', value: { status: 'committed', value: installed } },
+          cleanup: { kind: 'confirmed' },
+        },
+      },
+    });
+    assert.equal(result.frame.state.current, null);
+    assert.equal(result.frame.state.notice, 'deploymentInstalled');
+    assert.deepEqual(result.frame.state.importer.installed, installed);
+    assert.equal(result.frame.state.page.source.revision, 8);
+    assert.deepEqual(result.frame.state.document, draft);
+    assert.equal(result.actions[0].method, 'instances');
+    complete({ status: 'failed', message: 'refresh unavailable' });
+    assert.equal(result.frame.state.page.source.revision, 8);
+    assert.deepEqual(result.frame.state.document, draft);
+    observe({ ...file, revision: 6, phase: 'choosing', file: null });
+    assert.equal(result.frame.state.importer.installed, null);
+    assert.notEqual(result.frame.state.notice, 'deploymentInstalled');
+    observe({ ...file, revision: 7, phase: 'failed', file: null, error: 'read_failed' });
+    assert.equal(result.frame.state.importer.installed, null);
+    press('deployment-import-back');
+    press('deployment-history');
+    complete({ status: 'succeeded', value: [{ cursor: 1, reference: original }] });
+    assert.deepEqual(result.frame.state.earlier[0].reference, original);
+  });
+  test(`${target} installation conflict requires refreshed source and a new confirmation, while refusal retains selection`, async () => {
+    const { component } = await import(
+      pathToFileURL(resolve(root, `dist/packages/deployment/${target}.js`))
+    );
+    const props = { theme: values.appearance[0], locale: 'zh-CN' };
+    const source = { stateDomain: 'a'.repeat(64), deployment: uuid(80), revision: 7 };
+    const file = {
+      owner: uuid(99),
+      revision: 4,
+      phase: 'ready',
+      file: { name: 'sample.maka-plugin', bytes: 123, digest: 'sha256:' + 'b'.repeat(64) },
+    };
+    let result = component.mount(props, {});
+    const complete = (event) => {
+      result = component.event(
+        result.frame.state,
+        { kind: 'action', key: result.actions[0].key, event },
+        props,
+        {},
+      );
+    };
+    const press = (key) => {
+      result = component.event(result.frame.state, { kind: 'raw', key, event: null }, props, {});
+    };
+    complete({ status: 'succeeded', value: { source, instances: [], next: null } });
+    press('deployment-import');
+    result = component.event(
+      result.frame.state,
+      {
+        kind: 'component',
+        child: 'deployment-import-file',
+        name: 'changed',
+        key: 'deployment-import-changed',
+        event: file,
+      },
+      props,
+      {},
+    );
+    press('deployment-import-install');
+    press('deployment-import-cancel');
+    assert.deepEqual(result.frame.state.importer.observation, file);
+    press('deployment-import-install');
+    press('deployment-import-confirm');
+    const original = { ...reference, method: 'install', contract: sdk.contracts.deploymentManager };
+    const reply = (value) => ({
+      status: 'operation',
+      reply: {
+        reference: original,
+        receipt: {
+          kind: 'recorded',
+          outcome: { kind: 'returned', value },
+          cleanup: { kind: 'confirmed' },
+        },
+      },
+    });
+    complete(reply({ status: 'conflict', currentRevision: 8 }));
+    press('deployment-import-install');
+    assert.equal(result.frame.state.importer.confirmation, null);
+    press('deployment-import-confirm');
+    assert.equal(result.actions.length, 0);
+    assert.deepEqual(result.frame.state.importer.observation, file);
+    press('deployment-refresh');
+    complete({
+      status: 'succeeded',
+      value: { source: { ...source, revision: 8 }, instances: [], next: null },
+    });
+    press('deployment-import-confirm');
+    assert.equal(result.actions.length, 0);
+    press('deployment-import-install');
+    press('deployment-import-confirm');
+    assert.deepEqual(result.actions[0].input, { expectedRevision: 8 });
+    complete(reply({ status: 'rejected', reason: 'invalid_bundle' }));
+    assert.equal(result.frame.state.notice, 'deploymentInstallRejected');
+    assert.deepEqual(result.frame.state.importer.observation, file);
+    assert.equal(result.frame.state.importer.installed, null);
   });
 }

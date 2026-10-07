@@ -32,6 +32,8 @@ import type {
   ManagementResultForDeploymentRef,
   DeploymentDocumentChunk,
   EditorObservation,
+  FileObservation,
+  ManagementResultForPackageInstalled,
 } from '../../plugin-sdk/src/index.js';
 import { deploymentContract, type ConnectionsProps } from './contracts.js';
 import { copy, type Copy } from './locale.js';
@@ -45,6 +47,14 @@ import {
   observeDocument,
   type DocumentEditor,
 } from './deployment-document.js';
+
+import {
+  packageImport,
+  importView,
+  canInstall,
+  type PackageImport,
+  type InstallIntent,
+} from './deployment-import.js';
 
 type Request =
   | { kind: 'page'; input: DeploymentInstances; movement: 'reset' | 'next' | 'previous' }
@@ -68,9 +78,10 @@ interface State {
   previous: ManagedInstancesPage['next'][];
   confirmation: Intent | null;
   current: {
-    intent: Intent | { source: DeploymentRef; editor: EditorObservation };
+    intent: Intent | { source: DeploymentRef; editor: EditorObservation } | InstallIntent;
     reference: RecoveryRef | null;
   } | null;
+  importer: PackageImport;
   document: DocumentEditor | null;
   documentOpen: boolean;
   diagnostic: string | null;
@@ -120,20 +131,29 @@ function settle(state: State, reply: OperationReply, actions: Action[]) {
     state.notice = 'deploymentUnknown';
     return;
   }
-  const value = reply.receipt.outcome.value as ManagementResultForDeploymentRef;
+  const isInstall = 'file' in current.intent;
+  const value = reply.receipt.outcome.value as
+    | ManagementResultForDeploymentRef
+    | ManagementResultForPackageInstalled;
   const isDocument = 'editor' in current.intent;
   if (value.status === 'committed') {
-    if (isDocument && state.document) {
+    if (isInstall && 'package' in value.value) {
+      state.importer.installed = value.value;
+      if (state.page) state.page.source = value.value.source;
+      state.importer.confirmation = null;
+    }
+    if (isDocument && state.document && !('package' in value.value)) {
       state.document.source = value.value;
       state.document.confirmation = null;
       state.document.conflict = false;
     }
     state.current = null;
     state.confirmation = null;
-    state.notice = 'deploymentSaved';
+    state.notice = isInstall ? 'deploymentInstalled' : 'deploymentSaved';
     state.conflict = false;
     page(state, actions, { kind: 'start' });
   } else {
+    if (isInstall) state.importer.confirmation = null;
     if (isDocument && state.document) {
       state.document.confirmation = null;
       state.document.conflict = value.status === 'conflict';
@@ -144,15 +164,17 @@ function settle(state: State, reply: OperationReply, actions: Action[]) {
     state.notice =
       value.status === 'conflict'
         ? 'deploymentConflict'
-        : isDocument
-          ? value.reason === 'execution_environment'
-            ? 'deploymentEnvironment'
-            : value.reason === 'package_unavailable'
-              ? 'deploymentPackageUnavailable'
-              : 'deploymentDocumentRejected'
-          : value.reason === 'parent_disabled'
-            ? 'deploymentParentDisabled'
-            : 'deploymentRejected';
+        : isInstall
+          ? 'deploymentInstallRejected'
+          : isDocument
+            ? value.reason === 'execution_environment'
+              ? 'deploymentEnvironment'
+              : value.reason === 'package_unavailable'
+                ? 'deploymentPackageUnavailable'
+                : 'deploymentDocumentRejected'
+            : value.reason === 'parent_disabled'
+              ? 'deploymentParentDisabled'
+              : 'deploymentRejected';
   }
 }
 function frame(
@@ -294,6 +316,7 @@ function frame(
               : []),
             ui.button('deployment-history', text.deploymentHistory, !!state.pending || loading),
             ui.button('deployment-advanced', text.deploymentEdit, busy || !state.page),
+            ui.button('deployment-import', text.deploymentInstall, busy || !state.page),
           ],
     { row: target === 'desktop', gap: 0, style: { wrap: true, shrink: 0 } },
   );
@@ -319,32 +342,45 @@ function frame(
       ],
       {
         style: { width: fill, height: fill },
-        visible: !state.documentOpen,
+        visible: !state.documentOpen && !state.importer.open,
         terminal: { grow: 1 },
         gap: target === 'desktop' ? 16 : 1,
       },
     ),
     events,
   );
-  if (state.document)
-    out.frame.view = ui.box(
-      'deployment-pages',
-      [
-        out.frame.view as Record<string, unknown>,
-        documentView(
-          target,
-          props,
-          state.document,
-          state.documentOpen,
-          busy,
-          state.notice ? text[state.notice] : null,
-          state.diagnostic,
-          !!state.current?.reference,
-          !!state.pending,
-        ),
-      ],
-      { gap: 0, style: { width: fill, height: fill }, terminal: { grow: 1 } },
-    );
+  out.frame.view = ui.box(
+    'deployment-pages',
+    [
+      out.frame.view as Record<string, unknown>,
+      importView(
+        target,
+        props,
+        state.importer,
+        busy,
+        state.conflict,
+        state.notice ? text[state.notice] : null,
+        !!state.current?.reference,
+        !!state.pending,
+      ),
+      ...(state.document
+        ? [
+            documentView(
+              target,
+              props,
+              state.document,
+              state.documentOpen,
+              busy,
+              state.notice ? text[state.notice] : null,
+              state.diagnostic,
+              !!state.current?.reference,
+              !!state.pending,
+            ),
+          ]
+        : []),
+    ],
+    { gap: 0, style: { width: fill, height: fill }, terminal: { grow: 1 } },
+  );
   out.actions = actions;
   return out;
 }
@@ -365,6 +401,7 @@ export function deployment(target: Target): Component<State, ConnectionsProps> {
         earlier: [],
         historyOpen: false,
         historyNext: null,
+        importer: packageImport(),
         document: null,
         documentOpen: false,
         diagnostic: null,
@@ -382,6 +419,25 @@ export function deployment(target: Target): Component<State, ConnectionsProps> {
       const actions: Action[] = [],
         events: Emission[] = [];
       if (
+        input.kind === 'component' &&
+        input.child === 'deployment-import-file' &&
+        input.name === 'changed'
+      ) {
+        if (!sameValue(state.importer.observation, input.event)) {
+          state.importer.installed = null;
+          if (
+            !state.current &&
+            (state.notice === 'deploymentInstalled' || state.notice === 'deploymentInstallRejected')
+          )
+            state.notice = null;
+        }
+        state.importer.observation = input.event as FileObservation;
+        if (
+          state.importer.confirmation &&
+          !sameValue(state.importer.confirmation.file, input.event)
+        )
+          state.importer.confirmation = null;
+      } else if (
         input.kind === 'component' &&
         input.child === 'deployment-document-editor' &&
         input.name === 'changed' &&
@@ -434,6 +490,11 @@ export function deployment(target: Target): Component<State, ConnectionsProps> {
                 state.after = state.previous.pop()!;
               }
               state.page = value;
+              if (
+                state.importer.confirmation &&
+                !sameValue(state.importer.confirmation.source, value.source)
+              )
+                state.importer.confirmation = null;
             }
           } else state.notice = 'deploymentUnavailable';
         } else if (r.kind === 'mutate') {
@@ -460,7 +521,9 @@ export function deployment(target: Target): Component<State, ConnectionsProps> {
             .filter(
               (entry) =>
                 entry.reference.contract.name === 'maka.application.DeploymentManager' &&
-                (entry.reference.method === 'setEnabled' || entry.reference.method === 'replace'),
+                (entry.reference.method === 'setEnabled' ||
+                  entry.reference.method === 'replace' ||
+                  entry.reference.method === 'install'),
             )
             .map((entry) => ({ cursor: entry.cursor, reference: entry.reference, reply: null }));
         } else state.notice = 'historyUnavailable';
@@ -472,6 +535,60 @@ export function deployment(target: Target): Component<State, ConnectionsProps> {
         )
           return frame(target, state, props);
         let key = input.key;
+        if (key === 'deployment-import-check') key = 'deployment-check';
+        if (key === 'deployment-import-refresh') key = 'deployment-refresh';
+        if (key === 'deployment-import-advanced') key = 'deployment-advanced';
+        const importer = state.importer;
+        if (key === 'deployment-import-history') {
+          importer.open = false;
+          key = 'deployment-history';
+        }
+        if (key === 'deployment-import-back') {
+          importer.open = false;
+          importer.confirmation = null;
+        } else if (key === 'deployment-import' && !state.pending && !state.current && state.page) {
+          importer.open = true;
+          importer.confirmation = null;
+          state.documentOpen = false;
+          state.historyOpen = false;
+        } else if (key === 'deployment-import-cancel' && !state.pending && !state.current) {
+          importer.confirmation = null;
+        } else if (
+          key === 'deployment-import-install' &&
+          state.page &&
+          canInstall(importer, !!state.pending || !!state.current, state.conflict)
+        ) {
+          importer.confirmation = JSON.parse(
+            JSON.stringify({ source: state.page.source, file: importer.observation }),
+          ) as InstallIntent;
+        } else if (
+          key === 'deployment-import-confirm' &&
+          importer.confirmation &&
+          state.page &&
+          canInstall(importer, !!state.pending || !!state.current, state.conflict) &&
+          sameValue(importer.confirmation.file, importer.observation) &&
+          sameValue(importer.confirmation.source, state.page.source)
+        ) {
+          const intent = importer.confirmation;
+          importer.confirmation = null;
+          state.current = { intent, reference: null };
+          state.notice = null;
+          request(
+            state,
+            actions,
+            { kind: 'mutate' },
+            'management',
+            'install',
+            { expectedRevision: intent.source.revision },
+            {
+              package: {
+                child: 'deployment-import-file',
+                method: 'snapshot',
+                input: { owner: intent.file.owner, revision: intent.file.revision },
+              },
+            },
+          );
+        }
         if (key === 'deployment-document-check') key = 'deployment-check';
         if (key === 'deployment-document-history') {
           state.documentOpen = false;
@@ -491,6 +608,8 @@ export function deployment(target: Target): Component<State, ConnectionsProps> {
           state.page
         ) {
           state.historyOpen = false;
+          importer.open = false;
+          importer.confirmation = null;
           state.documentOpen = true;
           if (!editor) {
             state.notice = null;

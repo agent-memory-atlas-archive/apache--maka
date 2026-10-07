@@ -72,3 +72,10 @@ UTF-8 分块和原编辑器回执加载整份来源，原生 buffer 独占草稿
 必须明确确认丢弃/重载，未知整份替换也从原回执/调用历史恢复。关闭页面保留原编辑器。
 文档预算 1 MiB，提交 input 与 remote observations 仍共用 512 KiB。新包导入与完整
 产品/运行时验收仍待完成。
+
+插件页面通过保留的原生 FilePicker 安装 `.maka-plugin` 文件。确认时捕获选中文件
+owner/revision 对应的不可变字节，以观察到的来源版本交给 Host 校验。安装只保存
+插件包，不改变组件启用状态或权限。未知结果仅查询原操作；版本冲突需刷新后重新
+确认。高级组合草稿不会被安装覆盖，显式重新加载后可看到新保存的插件引用。
+用 `maka application export-package --package DIRECTORY --output FILE.maka-plugin`
+导出编写好的目录，已有目标文件不会被覆盖。

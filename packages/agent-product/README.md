@@ -110,3 +110,13 @@ explicit discard/reload; unknown replacement checks its original receipt and is 
 in durable caller history. Closing this page retains its native editor. Source documents
 are limited to 1 MiB; the committed input and remote observations still share their
 512 KiB limit. Importing new bundles and full product/runtime acceptance remain required.
+
+The Plugins page installs `.maka-plugin` files through a retained native FilePicker.
+One confirmation captures immutable selected bytes at the observed owner/revision
+and submits the saved source revision to Host validation. Installing stores the
+package without changing component enablement or permissions. Unknown results
+check only their original operation; conflicts require refresh and a new confirmation.
+The advanced composition draft remains intact; explicitly reload it to include newly
+saved package references. Export an authored directory with
+`maka application export-package --package DIRECTORY --output FILE.maka-plugin`;
+an existing destination is never overwritten.

@@ -65,6 +65,17 @@ fn packaged_deployment_pages_render_all_locales_and_operation_states(cx: &mut Te
           press('deployment-confirm');
           result=component.event(result.frame.state,{kind:'action',key:result.actions[0].key,event:{status:'failed',message:'transport'}},props,{});save();
           press('deployment-history');
+          result=component.mount(props,{});
+          result=component.event(result.frame.state,{kind:'action',key:result.actions[0].key,event:{status:'succeeded',value:{source,instances,next:null}}},props,{});
+          press('deployment-import');
+          const observation={owner:'00000000-0000-0000-0000-000000000099',revision:4,phase:'ready',file:{name:'插件.maka-plugin',bytes:123,digest:'sha256:'+'c'.repeat(64)}};
+          result=component.event(result.frame.state,{kind:'component',child:'deployment-import-file',name:'changed',key:'deployment-import-changed',event:observation},props,{});save();
+          press('deployment-import-install');
+          press('deployment-import-confirm');
+          const reference={source,namespace:['00000000-0000-0000-0000-000000000090'],export:'Management',method:'install',operation:'00000000-0000-0000-0000-000000000098',fingerprint:'sha256-'+'b'.repeat(64),contract:(await import('./packages/agent-product/dist/authoring/plugin-sdk/src/index.mjs')).contracts.deploymentManager,recovery:'journal_v1'};
+          result=component.event(result.frame.state,{kind:'action',key:result.actions[0].key,event:{status:'operation',reply:{reference,receipt:{kind:'unknown'}}}},props,{});save();
+          press('deployment-import-check');
+          result=component.event(result.frame.state,{kind:'action',key:result.actions[0].key,event:{status:'succeeded',value:{reference,receipt:{kind:'recorded',outcome:{kind:'returned',value:{status:'committed',value:{source:{...source,revision:8},package:{id:'local.selected',revision:'sha256-'+'d'.repeat(64)}}}},cleanup:{kind:'confirmed'}}}}},props,{});save();
         }
         console.log(JSON.stringify(frames));
         "#])
@@ -77,8 +88,26 @@ fn packaged_deployment_pages_render_all_locales_and_operation_states(cx: &mut Te
         String::from_utf8_lossy(&output.stderr)
     );
     let frames: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(frames.len(), 36);
+    assert_eq!(frames.len(), 78);
     let (entity, window, _) = harness(cx);
+    // This checks the packaged scene ABI and exact child placement. FilePicker
+    // owns separate native interaction/custody tests; this harness supplies its
+    // explicitly declared slot without pretending to exercise a system panel.
+    cx.update_window(window, |_, _, cx| {
+        entity.update(cx, |h, _| {
+            h.slots = Slots::new(
+                vec!["deployment-import-file".into()],
+                h.slots.input.clone(),
+                |key, _, _| {
+                    if key != "deployment-import-file" {
+                        return Err(maka_ui::Error::Invalid("unknown slot".into()));
+                    }
+                    Ok(gpui_kit::div().w_full().h(px(36.)).into_any_element())
+                },
+            );
+        });
+    })
+    .unwrap();
     for frame in frames {
         replace(cx, window, &entity, frame);
         draw(cx, window);

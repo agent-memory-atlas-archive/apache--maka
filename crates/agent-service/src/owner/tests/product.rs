@@ -229,6 +229,7 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         "appearance",
         "surface",
         "editor",
+        "file",
         "reader",
         "history",
     ];
@@ -561,6 +562,87 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         .source
         .input;
     assert_eq!(saved_input, original_input);
+    // Keep a modified advanced draft while importing an immutable new package
+    // through physical native path input, real capture and the original Host.
+    click_nth(&mut presenter, "{", 0);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    presenter.input(Event::Paste("{".into())).unwrap();
+    click(&mut presenter, "[ Back ]");
+    click(&mut presenter, "[ Install plugin ]");
+    await_screen(&mut presenter, "Absolute path to a .maka-plugin file");
+    let original_package = Package::read_from(&directory.join("appearance")).unwrap();
+    let mut files = original_package.files().clone();
+    let mut manifest: Value =
+        serde_json::from_slice(files.get(maka_plugins::package::MANIFEST_FILE).unwrap()).unwrap();
+    manifest["id"] = json!("local.imported-theme");
+    files.insert(
+        maka_plugins::package::MANIFEST_FILE.into(),
+        serde_json::to_vec(&manifest).unwrap(),
+    );
+    let imported = Package::new(files).unwrap();
+    let bundle = fixture._dir.path().join("selected-theme.maka-plugin");
+    imported.export_to(&bundle).unwrap();
+    click(&mut presenter, "Absolute path to a .maka-plugin file");
+    presenter
+        .input(Event::Paste(bundle.to_str().unwrap().into()))
+        .unwrap();
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    await_screen(&mut presenter, "selected-theme.maka-plugin");
+    click(&mut presenter, "[ Install plugin ]");
+    await_screen(&mut presenter, "Install this plugin package?");
+    click(&mut presenter, "[ Cancel ]");
+    click(&mut presenter, "[ Install plugin ]");
+    // The selected native bytes stay immutable after the filesystem changes.
+    std::fs::write(&bundle, b"replaced after selection").unwrap();
+    click(&mut presenter, "[ Confirm ]");
+    await_screen(&mut presenter, "Plugin package saved.");
+    await_screen(&mut presenter, "local.imported-theme");
+    let installed_head = runtime
+        .block_on(caller.application_head(deployment.deployment))
+        .unwrap()
+        .unwrap();
+    assert_eq!(installed_head.revision, saved.revision + 1);
+    let installed = runtime
+        .block_on(caller.read_application_metadata_at(&installed_head))
+        .unwrap()
+        .unwrap();
+    assert_eq!(installed.source.input, original_input);
+    assert!(installed.packages.contains(&imported.application_ref()));
+    let loaded = runtime
+        .block_on(caller.load_application_at(&installed_head))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        loaded
+            .packages
+            .iter()
+            .find(|package| package.application_ref() == imported.application_ref())
+            .unwrap()
+            .to_bundle(),
+        imported.to_bundle()
+    );
+    click(&mut presenter, "[ Edit product composition ]");
+    // The modified draft remains visible and still refers to its original source.
+    assert!(screen(&draw(&mut presenter)).contains('{'));
+    click(&mut presenter, "[ Save composition ]");
+    click(&mut presenter, "[ Confirm ]");
+    await_screen(&mut presenter, "Components changed.");
+    assert_eq!(
+        runtime
+            .block_on(caller.application_head(deployment.deployment))
+            .unwrap(),
+        Some(installed_head)
+    );
     // This fixture retains its explicitly admitted S1 registrations; production
     // foreground adoption is separately tested with the original Connections.
     click(&mut presenter, "[ Back ]");
