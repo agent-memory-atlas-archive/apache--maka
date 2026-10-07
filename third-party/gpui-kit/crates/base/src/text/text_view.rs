@@ -9,12 +9,12 @@ use gpui::{
 
 use crate::StyledExt;
 use crate::text::TextViewFormat;
+use crate::text::TextViewStyle;
 use crate::text::markdown_ext::{MarkdownExtensions, MarkdownNode, MarkdownPlugin};
 use crate::text::node::{CodeBlock, TableData};
 use crate::text::range_highlight::{PendingReveal, RevealProgress};
 use crate::text::state::{SelectionFormat, TextViewState};
 use crate::text::stream_fade::TextViewMotion;
-use crate::{TextSelection, text::TextViewStyle};
 
 /// Type for code block actions generator function.
 pub(crate) type CodeBlockActionsFn =
@@ -582,6 +582,9 @@ impl Element for TextView {
         let selection = state.read(cx).selection_adapter.admission(cx);
         let copy = selection.clone();
         let select_all = selection;
+        let key_selection = state.read(cx).selection_adapter.handle();
+        let copy_selection = key_selection.clone();
+        let action_selection = key_selection.clone();
         let list_state = state.read(cx).list_state.clone();
         let mut el = div()
             .id(("text-view-scroll", state.entity_id()))
@@ -604,7 +607,7 @@ impl Element for TextView {
                     window.prevent_default();
                     cx.stop_propagation();
                 } else {
-                    TextSelection::activate_scope(scope, window, cx);
+                    key_selection.activate_scope(window, cx);
                 }
             })
             .capture_key_up(move |_, window, cx| {
@@ -621,7 +624,11 @@ impl Element for TextView {
                     cx.propagate();
                     return;
                 }
-                let text = TextSelection::selected_text(window, cx).trim().to_string();
+                let text = copy_selection
+                    .selected_text_in_scope(window, cx)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
                 if text.is_empty() {
                     cx.propagate();
                     return;
@@ -635,7 +642,7 @@ impl Element for TextView {
                         cx.propagate();
                         return;
                     }
-                    TextSelection::activate_scope(scope, window, cx);
+                    action_selection.activate_scope(window, cx);
                     state.on_action_select_all(action, window, cx);
                 },
             ))
@@ -756,7 +763,7 @@ impl Element for DocumentElement {
         &mut self,
         _: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
-        _: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         _: &mut (),
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
@@ -765,6 +772,16 @@ impl Element for DocumentElement {
         let Some(state) = self.state.upgrade() else {
             return;
         };
+
+        let clear = state.query(cx, |state, cx| {
+            state
+                .reconcile_selection_layout(bounds, cx)
+                .then(|| state.selection_adapter.handle())
+        });
+        if let Some(selection) = clear {
+            selection.clear_group(cx);
+        }
+
         self.content.paint(window, cx);
         state.query(cx, |state, _| state.selection_adapter.project_frame(window));
 

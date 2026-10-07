@@ -10,7 +10,7 @@ use std::{
 
 use gpui::{
     App, AppContext as _, Bounds, Context, Element, ElementId, Entity, EntityId, EventEmitter,
-    FocusHandle, Global, GlobalElementId, Half, Hitbox, HitboxBehavior, HitboxId, Hsla,
+    FocusHandle, FocusId, Global, GlobalElementId, Half, Hitbox, HitboxBehavior, HitboxId, Hsla,
     InputEvent as _, InspectorElementId, IntoElement, LayoutId, LongPressEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollDelta, ScrollWheelEvent,
     SharedString, Style, Subscription, TextLayout, TouchDragEvent, TouchPhase, WeakEntity, Window,
@@ -716,7 +716,49 @@ fn dispatch_clear_handlers(handlers: Vec<ClearHandler>, cx: &mut App) {
     }
 }
 
+type SelectionGroupKey = (gpui::WindowId, Option<FocusId>);
+fn placement_group(window: &Window) -> SelectionGroupKey {
+    (
+        window.window_handle().window_id(),
+        window.selection_group_context(),
+    )
+}
+fn physical_group(window: &Window) -> SelectionGroupKey {
+    (
+        window.window_handle().window_id(),
+        window.active_input_group(),
+    )
+}
+
+/// Weak observation of an original element-owned selection group.
+/// It does not retain selection, Window, or physical input permission.
+#[derive(Clone)]
+pub struct TextSelectionGroup {
+    key: SelectionGroupKey,
+    owner: WeakEntity<WindowSelectionState>,
+}
+impl TextSelectionGroup {
+    pub fn same_owner(&self, other: &Self) -> bool {
+        self.key == other.key && self.owner.entity_id() == other.owner.entity_id()
+    }
+    /// Missing ownership is unavailable evidence, rather than an empty selection.
+    pub fn has_selection_in_scope(&self, scope: TextSelectionScopeId, cx: &App) -> Option<bool> {
+        Some(
+            self.owner
+                .upgrade()?
+                .read(cx)
+                .has_selection_in_scope(scope, cx),
+        )
+    }
+    fn in_window(&self, window: &Window) -> Option<Entity<WindowSelectionState>> {
+        (self.key.0 == window.window_handle().window_id())
+            .then(|| self.owner.upgrade())
+            .flatten()
+    }
+}
+
 struct SelectableTextState {
+    group: Option<TextSelectionGroup>,
     enabled: bool,
     admission: Arc<()>,
     fallback_copy_text: String,
@@ -736,6 +778,7 @@ impl EventEmitter<TextSelectionEvent> for SelectableTextState {}
 impl SelectableTextState {
     fn new(fallback_copy_text: impl Into<String>) -> Self {
         Self {
+            group: None,
             enabled: true,
             admission: Arc::new(()),
             fallback_copy_text: fallback_copy_text.into(),
@@ -942,22 +985,11 @@ impl TextSelectionHandle {
             !enabled
         });
         if revoked {
-            // Use the original native window locators, never another owner.
-            let windows: Vec<_> = cx
-                .try_global::<SelectionStateRegistry>()
-                .map(|registry| {
-                    registry
-                        .0
-                        .values()
-                        .filter_map(WeakEntity::upgrade)
-                        .collect()
-                })
+            let group = self.0.read(cx).group.clone();
+            let handlers = group
+                .and_then(|group| group.owner.upgrade())
+                .map(|owner| owner.update(cx, |owner, cx| owner.withdraw(self.entity_id(), cx)))
                 .unwrap_or_default();
-            let mut handlers = Vec::new();
-            for window in windows {
-                handlers
-                    .extend(window.update(cx, |window, cx| window.withdraw(self.entity_id(), cx)));
-            }
             // The caller may still be borrowing the original TextViewState.
             cx.defer(move |cx| dispatch_clear_handlers(handlers, cx));
         }
@@ -1004,7 +1036,7 @@ impl TextSelectionHandle {
     /// Copy the selected participants in this participant's original painted scope.
     /// Plain runs refresh from current native snapshots; rich callbacks stay original.
     pub fn selected_text_in_scope(&self, window: &Window, cx: &mut App) -> Option<String> {
-        let state = WindowSelectionState::existing(window, cx)?;
+        let state = self.group(cx)?.in_window(window)?;
         let participants = {
             let state = state.read(cx);
             let scope = state
@@ -1027,7 +1059,7 @@ impl TextSelectionHandle {
         let mut items = participants
             .into_iter()
             .filter_map(|(participant, order)| {
-                participant.update(cx, |participant, _| {
+                participant.query(cx, |participant, _| {
                     if !participant.local_selection && participant.copy.is_none() {
                         let runs = participant.runs.clone();
                         participant.update_runs(&runs);
@@ -1059,7 +1091,7 @@ impl TextSelectionHandle {
         if !self.0.read(cx).enabled {
             return false;
         }
-        let Some(state) = WindowSelectionState::existing(window, cx) else {
+        let Some(state) = self.group(cx).and_then(|group| group.in_window(window)) else {
             return false;
         };
         let scope = state
@@ -1070,8 +1102,21 @@ impl TextSelectionHandle {
         let Some(scope) = scope else {
             return false;
         };
-        TextSelection::activate_scope(scope, window, cx);
+        let handlers = state.update(cx, |state, cx| state.set_active_scope_state(scope, cx));
+        dispatch_clear_handlers(handlers, cx);
         true
+    }
+
+    pub fn group(&self, cx: &App) -> Option<TextSelectionGroup> {
+        self.0.read(cx).group.clone()
+    }
+
+    /// Clear this participant's original group without changing foreground ownership.
+    pub fn clear_group(&self, cx: &mut App) {
+        if let Some(owner) = self.group(cx).and_then(|group| group.owner.upgrade()) {
+            let handlers = owner.update(cx, |state, cx| state.clear_state(cx));
+            dispatch_clear_handlers(handlers, cx);
+        }
     }
 
     /// Returns whether participant-local selection is active.
@@ -1103,7 +1148,7 @@ impl TextSelectionHandle {
         if !self.0.read(cx).enabled {
             return;
         }
-        let Some(state) = WindowSelectionState::existing(window, cx) else {
+        let Some(state) = WindowSelectionState::at(placement_group(window), cx) else {
             return;
         };
         state.query(cx, |state, cx| {
@@ -1114,7 +1159,7 @@ impl TextSelectionHandle {
 
     /// Projects the current snapshot onto plain-text runs and caches their copy text.
     pub fn update_runs(&self, runs: &[TextSelectionRun], cx: &mut App) -> TextSelectionProjection {
-        self.0.update(cx, |state, _| state.update_runs(runs))
+        self.0.query(cx, |state, _| state.update_runs(runs))
     }
 
     // Rich text renders its own selection; retain geometry only for word hit testing.
@@ -1166,7 +1211,11 @@ impl TextSelectionHandle {
     /// where the finger takes it. Call during the participant's prepaint;
     /// hand the result to [`Self::paint_touch_handles`].
     pub fn prepaint_touch_handles(&self, window: &mut Window, cx: &App) -> TouchHandleLayout {
-        let Some(state) = WindowSelectionState::existing(window, cx) else {
+        let Some(state) = self
+            .group(cx)
+            .filter(|group| group.key == placement_group(window))
+            .and_then(|group| group.in_window(window))
+        else {
             return TouchHandleLayout::default();
         };
         let hitboxes = state
@@ -1198,7 +1247,11 @@ impl TextSelectionHandle {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let Some(state) = WindowSelectionState::existing(window, cx) else {
+        let Some(state) = self
+            .group(cx)
+            .filter(|group| group.key == placement_group(window))
+            .and_then(|group| group.in_window(window))
+        else {
             return;
         };
         for (edge, caret) in state.read(cx).touch_handles_of(self.entity_id()) {
@@ -1363,6 +1416,7 @@ impl TouchSelection {
 /// Window-local generic text-selection state.
 #[derive(Default)]
 struct WindowSelectionState {
+    group: Option<SelectionGroupKey>,
     participants: HashMap<EntityId, ParticipantRegistration>,
     active_scope: TextSelectionScopeId,
     anchor: Option<SelectionEndpoint>,
@@ -1414,27 +1468,18 @@ impl WindowSelectionState {
             state.publish_snapshots(cx);
         });
     }
-    fn acquire(window_id: gpui::WindowId, cx: &mut App) -> Entity<Self> {
+    fn acquire(key: SelectionGroupKey, cx: &mut App) -> Entity<Self> {
         if !cx.has_global::<SelectionStateRegistry>() {
             cx.set_global(SelectionStateRegistry::default());
         }
         if let Some(state) = cx
             .global::<SelectionStateRegistry>()
             .0
-            .get(&window_id)
+            .get(&key)
             .and_then(WeakEntity::upgrade)
         {
             return state;
         }
-
-        let active_scope = if cx.has_global::<PendingTextSelectionScopes>() {
-            cx.global_mut::<PendingTextSelectionScopes>()
-                .0
-                .remove(&window_id)
-                .unwrap_or_default()
-        } else {
-            TextSelectionScopeId::default()
-        };
 
         let state = cx.new(move |cx| {
             let entity_id = cx.entity_id();
@@ -1443,10 +1488,10 @@ impl WindowSelectionState {
                 if cx.has_global::<SelectionStateRegistry>() {
                     let registry = &mut cx.global_mut::<SelectionStateRegistry>().0;
                     if registry
-                        .get(&window_id)
+                        .get(&key)
                         .is_some_and(|state| state.entity_id() == entity_id)
                     {
-                        registry.remove(&window_id);
+                        registry.remove(&key);
                     }
                 }
                 if !handlers.is_empty() {
@@ -1455,30 +1500,31 @@ impl WindowSelectionState {
             })
             .detach();
             Self {
-                active_scope,
+                group: Some(key),
                 entity_id: Some(entity_id),
                 ..Self::default()
             }
         });
         cx.global_mut::<SelectionStateRegistry>()
             .0
-            .insert(window_id, state.downgrade());
+            .insert(key, state.downgrade());
         state
     }
 
     #[cfg(test)]
     fn ensure(window: &Window, cx: &mut App) -> Entity<Self> {
-        Self::acquire(window.window_handle().window_id(), cx)
+        Self::acquire(physical_group(window), cx)
+    }
+
+    fn at(key: SelectionGroupKey, cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<SelectionStateRegistry>()?
+            .0
+            .get(&key)?
+            .upgrade()
     }
 
     fn existing(window: &Window, cx: &App) -> Option<Entity<Self>> {
-        if !cx.has_global::<SelectionStateRegistry>() {
-            return None;
-        }
-        cx.global::<SelectionStateRegistry>()
-            .0
-            .get(&window.window_handle().window_id())
-            .and_then(WeakEntity::upgrade)
+        Self::at(physical_group(window), cx)
     }
 
     /// Updates the active scope. Participants from other scopes cannot participate.
@@ -1555,6 +1601,7 @@ impl WindowSelectionState {
     /// screen; only one whose element GPUI has dropped is swept.
     pub fn finish_frame(&mut self, cx: &mut App) -> Vec<ClearHandler> {
         self.finish_frame_scheduled = false;
+        self.prune_dead_participants(cx);
         let stale = self
             .participants
             .iter()
@@ -1593,10 +1640,41 @@ impl WindowSelectionState {
         registration: TextSelectionRegistration,
         cx: &mut App,
     ) {
+        if let Some(key) = self.group {
+            if let Some(owner) = Self::at(key, cx) {
+                let group = TextSelectionGroup {
+                    key,
+                    owner: owner.downgrade(),
+                };
+                let previous = selection
+                    .0
+                    .query(cx, |state, _| state.group.replace(group.clone()));
+                if let Some(previous) = previous.filter(|old| !old.same_owner(&group)) {
+                    let mut handlers = previous
+                        .owner
+                        .upgrade()
+                        .map(|old| {
+                            old.query(cx, |state, cx| state.withdraw(selection.entity_id(), cx))
+                        })
+                        .unwrap_or_default();
+                    if let Some(handler) = selection.0.query(cx, |state, cx| {
+                        (state.local_selection
+                            || state.snapshot.is_some()
+                            || state.projected_copy_text.is_some())
+                        .then(|| state.clear_state(cx))
+                        .flatten()
+                    }) {
+                        handlers.push(handler);
+                    }
+                    cx.defer(move |cx| dispatch_clear_handlers(handlers, cx));
+                }
+            }
+        }
+
         if !selection.0.read(cx).enabled {
             return;
         }
-        self.prune_dead_participants();
+        self.prune_dead_participants(cx);
         if self.is_selecting()
             && registration.self_scroll
             && self.anchor.as_ref().and_then(SelectionEndpoint::entity_id)
@@ -1696,7 +1774,7 @@ impl WindowSelectionState {
         if self.touch.reset() {
             self.touch_changed(cx);
         }
-        self.prune_dead_participants();
+        self.prune_dead_participants(cx);
         self.participants
             .values()
             .filter_map(|registration| registration.participant.upgrade())
@@ -1803,6 +1881,20 @@ impl WindowSelectionState {
             })
     }
 
+    fn has_selection_in_scope(&self, scope: TextSelectionScopeId, cx: &App) -> bool {
+        (self.active_scope == scope && (self.is_selecting() || self.snapshot().is_some()))
+            || self.participants.values().any(|registration| {
+                registration.registration.scope == scope
+                    && registration
+                        .participant
+                        .upgrade()
+                        .is_some_and(|participant| {
+                            let participant = participant.read(cx);
+                            participant.enabled && participant.local_selection
+                        })
+            })
+    }
+
     /// Returns the current resolved selection endpoints.
     pub fn snapshot(&self) -> Option<TextSelectionSnapshot> {
         if !self.did_hit_text {
@@ -1842,7 +1934,7 @@ impl WindowSelectionState {
         if self.touch.reset() {
             self.touch_changed(cx);
         }
-        self.prune_dead_participants();
+        self.prune_dead_participants(cx);
         let handlers = self
             .participants
             .values()
@@ -2290,7 +2382,7 @@ impl WindowSelectionState {
         window: Option<&Window>,
         cx: &App,
     ) -> SelectionEndpoint {
-        self.prune_dead_participants();
+        self.prune_dead_participants(cx);
         let mut hit: Option<(
             WeakEntity<SelectableTextState>,
             Rc<TextSelectionRegistration>,
@@ -2404,7 +2496,7 @@ impl WindowSelectionState {
     }
 
     fn publish_snapshots(&mut self, cx: &mut App) {
-        self.prune_dead_participants();
+        self.prune_dead_participants(cx);
         let snapshot = self.snapshot();
         let single_participant = self.single_participant();
         for (id, registration) in &self.participants {
@@ -2640,23 +2732,31 @@ impl WindowSelectionState {
         Some((participant, registration.registration.clone()))
     }
 
-    fn prune_dead_participants(&mut self) {
-        self.participants
-            .retain(|_, registration| registration.participant.upgrade().is_some());
+    fn prune_dead_participants(&mut self, cx: &App) {
+        let owner = self.entity_id;
+        self.participants.retain(|_, registration| {
+            registration
+                .participant
+                .upgrade()
+                .is_some_and(|participant| {
+                    owner.is_none_or(|owner| {
+                        participant
+                            .read(cx)
+                            .group
+                            .as_ref()
+                            .is_some_and(|group| group.owner.entity_id() == owner)
+                    })
+                })
+        });
     }
 }
 
 #[derive(Default)]
 /// Non-owning window locator; retained [`TextSelection`] element state owns
 /// each live selection entity.
-struct SelectionStateRegistry(HashMap<gpui::WindowId, WeakEntity<WindowSelectionState>>);
+struct SelectionStateRegistry(HashMap<SelectionGroupKey, WeakEntity<WindowSelectionState>>);
 
 impl Global for SelectionStateRegistry {}
-
-#[derive(Default)]
-struct PendingTextSelectionScopes(HashMap<gpui::WindowId, TextSelectionScopeId>);
-
-impl Global for PendingTextSelectionScopes {}
 
 // One inherited scope in the original Window, also restored for retained gaps.
 // Actual selection ownership stays in the original window/participant state.
@@ -2694,19 +2794,16 @@ impl TextSelection {
         window: &Window,
         cx: &mut App,
     ) -> bool {
-        live_text_selection_state(window, cx).is_some_and(|state| {
-            let state = state.read(cx);
-            (state.active_scope == scope && (state.is_selecting() || state.snapshot().is_some()))
-                || state.participants.values().any(|registration| {
-                    registration.registration.scope == scope
-                        && registration
-                            .participant
-                            .upgrade()
-                            .is_some_and(|participant| {
-                                let participant = participant.read(cx);
-                                participant.enabled && participant.local_selection
-                            })
-                })
+        live_text_selection_state(window, cx)
+            .is_some_and(|state| state.read(cx).has_selection_in_scope(scope, cx))
+    }
+
+    /// Observe the already painted owner for this element's original native placement.
+    pub fn group_for_element(window: &Window, cx: &App) -> Option<TextSelectionGroup> {
+        let key = placement_group(window);
+        Some(TextSelectionGroup {
+            key,
+            owner: WindowSelectionState::at(key, cx)?.downgrade(),
         })
     }
 
@@ -2716,14 +2813,6 @@ impl TextSelection {
             let handlers = state.update(cx, |state, cx| state.clear_state(cx));
             dispatch_clear_handlers(handlers, cx);
         }
-    }
-
-    /// Clears selection for a known window identifier.
-    ///
-    /// Prefer [`Self::clear`] when a window reference is available. This
-    /// narrow entry point supports hosts retiring deprecated window wrappers.
-    pub fn clear_for_window(window_id: gpui::WindowId, cx: &mut App) {
-        clear_window_text_selection(window_id, cx);
     }
 
     /// Ends the current drag while leaving its selection visible.
@@ -2740,9 +2829,9 @@ impl TextSelection {
         window: &Window,
         cx: &mut App,
         callback: impl Fn(&mut App) + 'static,
-    ) -> Subscription {
-        let state = WindowSelectionState::acquire(window.window_handle().window_id(), cx);
-        cx.observe(&state, move |_, cx| callback(cx))
+    ) -> Option<Subscription> {
+        let state = WindowSelectionState::existing(window, cx)?;
+        Some(cx.observe(&state, move |_, cx| callback(cx)))
     }
 
     /// Returns the selection a long press made, laid out for its handles and
@@ -2811,12 +2900,6 @@ impl TextSelection {
     /// Activates the opaque selection scope for this window.
     pub fn activate_scope(scope: TextSelectionScopeId, window: &mut Window, cx: &mut App) {
         let Some(state) = WindowSelectionState::existing(window, cx) else {
-            if !cx.has_global::<PendingTextSelectionScopes>() {
-                cx.set_global(PendingTextSelectionScopes::default());
-            }
-            cx.global_mut::<PendingTextSelectionScopes>()
-                .0
-                .insert(window.window_handle().window_id(), scope);
             return;
         };
         let handlers = state.update(cx, |state, cx| state.set_active_scope_state(scope, cx));
@@ -2917,7 +3000,7 @@ impl<E: Element> Element for TextSelectionScopeMarker<E> {
 }
 
 #[doc(hidden)]
-pub struct TextSelectionLayerPrepaintState(Entity<WindowSelectionState>);
+pub struct TextSelectionLayerPrepaintState(SelectionGroupKey);
 
 impl IntoElement for TextSelectionLayer {
     type Element = Self;
@@ -2951,15 +3034,14 @@ impl Element for TextSelectionLayer {
 
     fn prepaint(
         &mut self,
-        global_id: Option<&GlobalElementId>,
+        _: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
         _: Bounds<Pixels>,
-        _: &mut Self::RequestLayoutState,
+        _: &mut (),
         window: &mut Window,
-        cx: &mut App,
+        _: &mut App,
     ) -> Self::PrepaintState {
-        let state = retain_text_selection_state(global_id, window, cx);
-        TextSelectionLayerPrepaintState(state)
+        TextSelectionLayerPrepaintState(placement_group(window))
     }
 
     fn paint(
@@ -2967,42 +3049,24 @@ impl Element for TextSelectionLayer {
         _: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
         _: Bounds<Pixels>,
-        _: &mut Self::RequestLayoutState,
+        _: &mut (),
         state: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
-        paint_text_selection(&state.0, window, cx);
+        let key = state.0;
+        let namespace = key
+            .1
+            .map(ElementId::FocusHandle)
+            .unwrap_or_else(|| "background-selection".into());
+        let owner = window.with_global_id(namespace, |slot, window| {
+            window.with_element_state::<Entity<WindowSelectionState>, _>(slot, |retained, _| {
+                let owner = retained.unwrap_or_else(|| WindowSelectionState::acquire(key, cx));
+                (owner.clone(), owner)
+            })
+        });
+        paint_text_selection(&owner, window, cx);
     }
-}
-
-fn retain_text_selection_state(
-    global_id: Option<&GlobalElementId>,
-    window: &mut Window,
-    cx: &mut App,
-) -> Entity<WindowSelectionState> {
-    let window_id = window.window_handle().window_id();
-    let state = window.with_element_state::<Entity<WindowSelectionState>, _>(
-        global_id.expect("TextSelection has a stable element id"),
-        |retained, _| {
-            let state = retained.unwrap_or_else(|| WindowSelectionState::acquire(window_id, cx));
-            (state.clone(), state)
-        },
-    );
-    if !cx.has_global::<SelectionStateRegistry>() {
-        cx.set_global(SelectionStateRegistry::default());
-    }
-    if !cx
-        .global::<SelectionStateRegistry>()
-        .0
-        .get(&window_id)
-        .is_some_and(|current| current.entity_id() == state.entity_id())
-    {
-        cx.global_mut::<SelectionStateRegistry>()
-            .0
-            .insert(window_id, state.downgrade());
-    }
-    state
 }
 
 fn schedule_selection_finish_frame(
@@ -3326,22 +3390,6 @@ fn live_text_selection_state(
     WindowSelectionState::existing(window, cx)
 }
 
-pub(crate) fn clear_window_text_selection(window_id: gpui::WindowId, cx: &mut App) {
-    if !cx.has_global::<SelectionStateRegistry>() {
-        return;
-    }
-    let Some(state) = cx
-        .global::<SelectionStateRegistry>()
-        .0
-        .get(&window_id)
-        .and_then(WeakEntity::upgrade)
-    else {
-        return;
-    };
-    let handlers = state.update(cx, |state, cx| state.clear_state(cx));
-    dispatch_clear_handlers(handlers, cx);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3387,6 +3435,648 @@ mod tests {
         layouts: Vec<TextLayout>,
     }
 
+    struct GroupDocument {
+        handle: TextSelectionHandle,
+        focus: FocusHandle,
+        text: SharedString,
+        renders: Rc<Cell<usize>>,
+    }
+    impl Render for GroupDocument {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            let handle = self.handle.clone();
+            let select = handle.clone();
+            div()
+                .id("group-document")
+                .track_focus(&self.focus)
+                .key_context("TextView")
+                .w(px(400.))
+                .h(px(80.))
+                .on_action(move |_: &crate::input::Copy, window, cx| {
+                    if let Some(text) = handle.selected_text_in_scope(window, cx) {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                    }
+                })
+                .on_action(move |_: &crate::input::SelectAll, window, cx| {
+                    if select.activate_scope(window, cx) {
+                        select.clear_group(cx);
+                        select.set_local_selection(true, cx);
+                        window.refresh();
+                    }
+                })
+                .child(
+                    crate::SelectableText::with_handle(
+                        "run",
+                        self.handle.clone(),
+                        self.text.clone(),
+                    )
+                    .focus_handle(&self.focus),
+                )
+        }
+    }
+    struct GroupRoot {
+        background: Entity<GroupDocument>,
+        foreground: Entity<GroupDocument>,
+        group_focus: FocusHandle,
+        scope: Option<gpui::InputScope>,
+    }
+    impl Render for GroupRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let mut root = div()
+                .w(px(400.))
+                .h(px(200.))
+                .child(TextSelectionLayer)
+                .child(self.background.clone());
+            if let Some(scope) = &self.scope {
+                // Deliberately same parent/id namespace as background Layer.
+                root =
+                    root.child(scope.element(TextSelectionLayer)).child(
+                        scope.element(
+                            div()
+                                .id("foreground-container")
+                                .track_focus(&self.group_focus)
+                                .child(TextSelectionLayer)
+                                .child(self.foreground.clone().cached(
+                                    gpui::StyleRefinement::default().w(px(400.)).h(px(80.)),
+                                )),
+                        ),
+                    );
+            }
+            root
+        }
+    }
+    fn group_document(text: &'static str, cx: &mut App) -> Entity<GroupDocument> {
+        cx.new(|cx| {
+            let focus = cx.focus_handle();
+            let handle = TextSelectionHandle::new(text, cx);
+            let target = focus.clone();
+            handle.focus_with(move |window, cx| target.focus(window, cx), cx);
+            GroupDocument {
+                handle,
+                focus,
+                text: text.into(),
+                renders: Rc::new(Cell::new(0)),
+            }
+        })
+    }
+
+    #[gpui::test]
+    fn original_background_and_foreground_selection_layers_isolate_real_pointer_copy_and_namespace(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(crate::init);
+        let (root, cx) = cx.add_window_view(|_, cx| GroupRoot {
+            background: group_document("background original words", cx),
+            foreground: group_document("foreground independent words", cx),
+            group_focus: cx.focus_handle().tab_stop(false),
+            scope: None,
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        };
+        draw(cx);
+        cx.simulate_mouse_down(
+            point(px(2.), px(8.)),
+            MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_move(
+            point(px(95.), px(8.)),
+            Some(MouseButton::Left),
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            point(px(95.), px(8.)),
+            MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        draw(cx);
+        let background = root.read_with(cx, |root, cx| root.background.read(cx).handle.clone());
+        let foreground = root.read_with(cx, |root, cx| root.foreground.read(cx).handle.clone());
+        let kept = cx.update(|window, cx| background.selected_text_in_scope(window, cx).unwrap());
+        assert!(!kept.is_empty());
+        cx.update(|window, cx| {
+            root.update(cx, |root, cx| {
+                root.scope = Some(window.input_scope(&root.group_focus, cx));
+                cx.notify();
+            })
+        });
+        draw(cx);
+        cx.simulate_mouse_down(
+            point(px(2.), px(88.)),
+            MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_move(
+            point(px(135.), px(88.)),
+            Some(MouseButton::Left),
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            point(px(135.), px(88.)),
+            MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        draw(cx);
+        cx.update(|window, cx| {
+            let fore = foreground.selected_text_in_scope(window, cx).unwrap();
+            assert!(!fore.is_empty());
+            assert!(fore.starts_with("foreground"));
+            assert_eq!(background.selected_text_in_scope(window, cx).unwrap(), kept);
+            assert!(
+                !background
+                    .group(cx)
+                    .unwrap()
+                    .same_owner(&foreground.group(cx).unwrap())
+            );
+        });
+        cx.dispatch_action(crate::input::Copy);
+        cx.update(|_, cx| {
+            assert!(
+                cx.read_from_clipboard()
+                    .unwrap()
+                    .text()
+                    .unwrap()
+                    .starts_with("foreground")
+            )
+        });
+        let reopening = cx.update(|window, cx| {
+            let group = foreground.group(cx).unwrap();
+            let text = foreground.selected_text_in_scope(window, cx).unwrap();
+            let gesture = window.input_gesture();
+            root.update(cx, |root, cx| {
+                root.scope.take();
+                root.scope = Some(window.input_scope(&root.group_focus, cx));
+                cx.notify();
+            });
+            assert!(!gesture.is_current());
+            (group, text)
+        });
+        draw(cx);
+        cx.update(|_, cx| {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string("sentinel".into()))
+        });
+        cx.dispatch_action(crate::input::Copy);
+        cx.update(|window, cx| {
+            assert_eq!(
+                cx.read_from_clipboard().unwrap().text().unwrap(),
+                reopening.1
+            );
+            assert!(reopening.0.same_owner(&foreground.group(cx).unwrap()));
+            assert_eq!(
+                foreground.selected_text_in_scope(window, cx).unwrap(),
+                reopening.1
+            );
+            assert_eq!(background.selected_text_in_scope(window, cx).unwrap(), kept);
+        });
+        cx.update(|window, cx| {
+            root.update(cx, |root, cx| {
+                root.scope.take();
+                let focus = root.background.read(cx).focus.clone();
+                window.focus(&focus, cx);
+                cx.notify();
+            })
+        });
+        draw(cx);
+        cx.dispatch_action(crate::input::Copy);
+        cx.update(|window, cx| {
+            assert_eq!(background.selected_text_in_scope(window, cx).unwrap(), kept);
+            assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), kept);
+        });
+        cx.simulate_mouse_down(
+            point(px(180.), px(8.)),
+            MouseButton::Left,
+            gpui::Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+        );
+        cx.simulate_mouse_up(
+            point(px(180.), px(8.)),
+            MouseButton::Left,
+            gpui::Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+        );
+        draw(cx);
+        cx.update(|window, cx| {
+            let extended = background.selected_text_in_scope(window, cx).unwrap();
+            assert!(
+                extended.len() > kept.len(),
+                "original anchor supports shift extension after closing foreground"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn original_background_paint_does_not_resolve_foreground_copy_callbacks(
+        cx: &mut TestAppContext,
+    ) {
+        cx.with_paused_automatic_drawing(|cx| {
+            cx.update(crate::init);
+            let (root, cx) = cx.add_window_view(|window, cx| {
+                let group_focus = cx.focus_handle().tab_stop(false);
+                GroupRoot {
+                    background: group_document("background original words", cx),
+                    foreground: group_document("foreground independent words", cx),
+                    scope: Some(window.input_scope(&group_focus, cx)),
+                    group_focus,
+                }
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            let background = root.read_with(cx, |root, _| root.background.clone());
+            let foreground = root.read_with(cx, |root, _| root.foreground.clone());
+            let copies = Rc::new(Cell::new(0));
+            let out = copies.clone();
+            cx.update(|window, cx| {
+                let handle = foreground.read(cx).handle.clone();
+                handle.copy_with(
+                    move |_| {
+                        out.set(out.get() + 1);
+                        "foreground independent words".into()
+                    },
+                    cx,
+                );
+                handle.set_local_selection(true, cx);
+                window.refresh();
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                assert_eq!(
+                    TextSelection::selected_text(window, cx),
+                    "foreground independent words"
+                );
+            });
+            let calls = copies.get();
+            let foreground_renders = foreground.read_with(cx, |doc, _| doc.renders.get());
+            let background_renders = background.read_with(cx, |doc, _| doc.renders.get());
+            cx.update(|_, cx| background.update(cx, |_, cx| cx.notify()));
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            assert!(background.read_with(cx, |doc, _| doc.renders.get()) > background_renders);
+            assert_eq!(
+                foreground.read_with(cx, |doc, _| doc.renders.get()),
+                foreground_renders,
+                "original foreground remains retained while background alone rebuilds"
+            );
+            assert_eq!(
+                copies.get(),
+                calls,
+                "background paint must not execute foreground copy code"
+            );
+        });
+    }
+
+    struct ReparentRoot {
+        document: Entity<GroupDocument>,
+        first: gpui::InputScope,
+        first_focus: FocusHandle,
+        second: gpui::InputScope,
+        second_focus: FocusHandle,
+        moved: bool,
+        absent: bool,
+    }
+    impl Render for ReparentRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            if self.absent {
+                return div().into_any_element();
+            }
+            // Same container namespace and geometry; only original group context changes.
+            let content = div().id("group-container").w(px(400.)).h(px(80.)).child(
+                self.document
+                    .clone()
+                    .cached(gpui::StyleRefinement::default().w(px(400.)).h(px(80.))),
+            );
+            let content = if self.moved {
+                self.second
+                    .element(content.track_focus(&self.second_focus))
+                    .into_any_element()
+            } else {
+                self.first
+                    .element(content.track_focus(&self.first_focus))
+                    .into_any_element()
+            };
+            div()
+                .child(
+                    self.first
+                        .element(div().id("first-layer").child(TextSelectionLayer)),
+                )
+                .child(
+                    self.second
+                        .element(div().id("second-layer").child(TextSelectionLayer)),
+                )
+                .child(content)
+                .into_any_element()
+        }
+    }
+    #[gpui::test]
+    fn original_cached_participant_moves_groups_without_carrying_local_select_all(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(crate::init);
+        let (root, cx) = cx.add_window_view(|window, cx| {
+            let first_focus = cx.focus_handle().tab_stop(false);
+            let second_focus = cx.focus_handle().tab_stop(false);
+            ReparentRoot {
+                document: group_document("original cached selection", cx),
+                first: window.input_scope(&first_focus, cx),
+                first_focus,
+                second: window.input_scope(&second_focus, cx),
+                second_focus,
+                moved: false,
+                absent: false,
+            }
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        };
+        draw(cx);
+        let document = root.read_with(cx, |root, _| root.document.clone());
+        let handle = document.read_with(cx, |doc, _| doc.handle.clone());
+        cx.update(|window, cx| {
+            let focus = document.read(cx).focus.clone();
+            window.focus(&focus, cx);
+        });
+        draw(cx);
+        cx.dispatch_action(crate::input::SelectAll);
+        draw(cx);
+        let old = cx.update(|_, cx| handle.group(cx).unwrap());
+        let renders = document.read_with(cx, |doc, _| doc.renders.get());
+        cx.update(|window, cx| {
+            assert_eq!(
+                handle.selected_text_in_scope(window, cx).unwrap(),
+                "original cached selection"
+            )
+        });
+        // Prove unchanged group really uses the original cached subtree first.
+        cx.update(|_, cx| root.update(cx, |_, cx| cx.notify()));
+        draw(cx);
+        assert_eq!(document.read_with(cx, |doc, _| doc.renders.get()), renders);
+        cx.update(|_, cx| {
+            root.update(cx, |root, cx| {
+                root.moved = true;
+                cx.notify();
+            })
+        });
+        draw(cx);
+        assert!(document.read_with(cx, |doc, _| doc.renders.get()) > renders);
+        cx.update(|window, cx| {
+            let current = handle.group(cx).unwrap();
+            assert!(!old.same_owner(&current));
+            assert_eq!(
+                old.has_selection_in_scope(TextSelectionScopeId::default(), cx),
+                Some(false)
+            );
+            assert!(!handle.has_local_selection(cx));
+            assert!(handle.selected_text_in_scope(window, cx).is_none());
+            let focus = document.read(cx).focus.clone();
+            window.focus(&focus, cx);
+        });
+        draw(cx);
+        cx.dispatch_action(crate::input::SelectAll);
+        draw(cx);
+        cx.update(|window, cx| {
+            assert_eq!(
+                handle.selected_text_in_scope(window, cx).unwrap(),
+                "original cached selection"
+            )
+        });
+    }
+
+    #[gpui::test]
+    fn released_group_cannot_clear_repainted_participant_selection(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let (root, cx) = cx.add_window_view(|window, cx| {
+            let first_focus = cx.focus_handle().tab_stop(false);
+            let second_focus = cx.focus_handle().tab_stop(false);
+            ReparentRoot {
+                document: group_document("original fresh selection", cx),
+                first: window.input_scope(&first_focus, cx),
+                first_focus,
+                second: window.input_scope(&second_focus, cx),
+                second_focus,
+                moved: false,
+                absent: false,
+            }
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let handle = root.read_with(cx, |root, cx| root.document.read(cx).handle.clone());
+        let old = cx.update(|_, cx| handle.group(cx).unwrap());
+        cx.update(|window, cx| {
+            handle.set_local_selection(true, cx);
+            root.update(cx, |root, cx| {
+                root.absent = true;
+                cx.notify();
+            });
+            window.draw(cx).clear(cx);
+            assert!(
+                old.owner.upgrade().is_none(),
+                "original layer has dropped before its queued release"
+            );
+            root.update(cx, |root, cx| {
+                root.absent = false;
+                root.moved = true;
+                cx.notify();
+            });
+            window.draw(cx).clear(cx);
+            assert!(!old.same_owner(&handle.group(cx).unwrap()));
+            assert!(!handle.has_local_selection(cx));
+            handle.set_local_selection(true, cx);
+            assert!(handle.has_local_selection(cx));
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            assert!(
+                handle.has_local_selection(cx),
+                "old queued release cannot clear the new group's selection"
+            );
+            assert_eq!(
+                handle.selected_text_in_scope(window, cx).unwrap(),
+                "original fresh selection"
+            );
+        });
+    }
+
+    struct DiscardPrepaint {
+        child: gpui::AnyElement,
+        attempts: Rc<Cell<usize>>,
+    }
+    impl IntoElement for DiscardPrepaint {
+        type Element = Self;
+        fn into_element(self) -> Self {
+            self
+        }
+    }
+    impl Element for DiscardPrepaint {
+        type RequestLayoutState = ();
+        type PrepaintState = ();
+        fn id(&self) -> Option<ElementId> {
+            None
+        }
+        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+            None
+        }
+        fn request_layout(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> (LayoutId, ()) {
+            (self.child.request_layout(window, cx), ())
+        }
+        fn prepaint(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            _: Bounds<Pixels>,
+            _: &mut (),
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            let result: Result<(), ()> = window.transact(|window| {
+                self.child.prepaint(window, cx);
+                Err(())
+            });
+            assert!(result.is_err());
+            self.attempts.set(self.attempts.get() + 1);
+        }
+        fn paint(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            _: Bounds<Pixels>,
+            _: &mut (),
+            _: &mut (),
+            _: &mut Window,
+            _: &mut App,
+        ) {
+        }
+    }
+    struct FailedRichRoot {
+        document: Entity<crate::text::TextViewState>,
+        first: gpui::InputScope,
+        first_focus: FocusHandle,
+        second: gpui::InputScope,
+        second_focus: FocusHandle,
+        attempt: bool,
+        attempts: Rc<Cell<usize>>,
+    }
+    impl Render for FailedRichRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let failed = div()
+                .w(px(140.))
+                .h(px(80.))
+                .track_focus(&self.second_focus)
+                .child(TextSelectionLayer)
+                .child(crate::text::TextView::new(&self.document).selectable(true));
+            let failed = DiscardPrepaint {
+                child: self.second.element(failed).into_any_element(),
+                attempts: self.attempts.clone(),
+            };
+            let first = div()
+                .w(px(400.))
+                .h(px(80.))
+                .track_focus(&self.first_focus)
+                .child(TextSelectionLayer)
+                .child(crate::text::TextView::new(&self.document).selectable(true));
+            div()
+                .when(self.attempt, |this| this.child(failed))
+                .child(self.first.element(first))
+        }
+    }
+    #[gpui::test]
+    fn discarded_rich_prepaint_preserves_published_group_and_completed_selection(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(crate::init);
+        let (root, cx) = cx.add_window_view(|window, cx| {
+            let first_focus = cx.focus_handle().tab_stop(false);
+            let second_focus = cx.focus_handle().tab_stop(false);
+            FailedRichRoot {
+                document: cx.new(|cx| {
+                    crate::text::TextViewState::markdown("**Original** rich selected text 中文", cx)
+                }),
+                first: window.input_scope(&first_focus, cx),
+                first_focus,
+                second: window.input_scope(&second_focus, cx),
+                second_focus,
+                attempt: false,
+                attempts: Rc::new(Cell::new(0)),
+            }
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        };
+        draw(cx);
+        cx.simulate_mouse_down(
+            point(px(2.), px(8.)),
+            MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_move(
+            point(px(160.), px(8.)),
+            Some(MouseButton::Left),
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            point(px(160.), px(8.)),
+            MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        draw(cx);
+        let kept = cx.update(|window, cx| {
+            let selection = WindowSelectionState::existing(window, cx).unwrap();
+            assert!(selection.read(cx).snapshot().is_some());
+            assert!(!selection.read(cx).is_selecting());
+            let kept = TextSelection::selected_text(window, cx);
+            assert!(!kept.is_empty());
+            kept
+        });
+        let old = cx.update(|window, cx| TextSelectionGroup {
+            key: physical_group(window),
+            owner: WindowSelectionState::existing(window, cx)
+                .unwrap()
+                .downgrade(),
+        });
+        cx.update(|_, cx| {
+            root.update(cx, |root, cx| {
+                root.attempt = true;
+                cx.notify();
+            })
+        });
+        draw(cx);
+        cx.update(|window, cx| {
+            assert!(root.read(cx).attempts.get() > 0);
+            assert_eq!(
+                old.has_selection_in_scope(TextSelectionScopeId::default(), cx),
+                Some(true)
+            );
+            assert_eq!(TextSelection::selected_text(window, cx), kept);
+            assert_eq!(
+                cx.global::<SelectionStateRegistry>().0.len(),
+                1,
+                "discarded layer never publishes its weak locator"
+            );
+        });
+    }
+
+    fn painted_participant(selection: TextSelectionHandle) -> impl IntoElement {
+        gpui::canvas(
+            |bounds, window, _| {
+                let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+                TextSelectionRegistration::new(hitbox, bounds).with_text_bounds(vec![bounds])
+            },
+            move |_, registration, window, cx| selection.register(registration, window, cx),
+        )
+        .size_full()
+    }
+
     impl Render for WindowSelectionView {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             div()
@@ -3413,15 +4103,7 @@ mod tests {
             let selection = self.selection.clone();
             div().when(self.enabled, |this| {
                 this.child(TextSelectionLayer)
-                    .child(div().size_full().on_prepaint(move |bounds, window, cx| {
-                        let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-                        selection.register(
-                            TextSelectionRegistration::new(hitbox, bounds)
-                                .with_text_bounds(vec![bounds]),
-                            window,
-                            cx,
-                        );
-                    }))
+                    .child(painted_participant(selection))
             })
         }
     }
@@ -3433,15 +4115,7 @@ mod tests {
                 .size_full()
                 .child(TextSelectionLayer)
                 .child(TextSelectionLayer)
-                .on_prepaint(move |bounds, window, cx| {
-                    let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-                    selection.register(
-                        TextSelectionRegistration::new(hitbox, bounds)
-                            .with_text_bounds(vec![bounds]),
-                        window,
-                        cx,
-                    );
-                })
+                .child(painted_participant(selection))
         }
     }
 
@@ -3451,38 +4125,16 @@ mod tests {
             div()
                 .size_full()
                 .child(TextSelectionLayer)
-                .child(div().size_full().on_prepaint(move |bounds, window, cx| {
-                    let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-                    selection.register(
-                        TextSelectionRegistration::new(hitbox, bounds)
-                            .with_text_bounds(vec![bounds]),
-                        window,
-                        cx,
-                    );
-                }))
+                .child(painted_participant(selection))
         }
     }
 
     impl Render for FirstFrameScopedSelectionView {
-        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let scope = TextSelectionScopeId::from_raw(23);
-            TextSelection::activate_scope(scope, window, cx);
-            let selection = self.selection.clone();
-
-            div().child(TextSelectionLayer).child(
-                div()
-                    .size_full()
-                    .on_prepaint(move |bounds, window, cx| {
-                        let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-                        selection.register(
-                            TextSelectionRegistration::new(hitbox, bounds)
-                                .with_text_bounds(vec![bounds]),
-                            window,
-                            cx,
-                        );
-                    })
-                    .text_selection_scope(scope),
-            )
+            div()
+                .child(TextSelectionLayer)
+                .child(painted_participant(self.selection.clone()).text_selection_scope(scope))
         }
     }
 
@@ -4810,7 +5462,9 @@ mod tests {
             let _ = window.draw(cx);
             let state = WindowSelectionState::existing(window, cx).unwrap();
             assert_eq!(
-                state.read(cx).active_scope,
+                state.read(cx).participants[&selection.entity_id()]
+                    .registration
+                    .scope,
                 TextSelectionScopeId::from_raw(23)
             );
             assert!(
@@ -4819,6 +5473,23 @@ mod tests {
                     .participants
                     .contains_key(&selection.entity_id())
             );
+        });
+        cx.simulate_mouse_down(
+            point(px(1.), px(1.)),
+            MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_move(
+            point(px(8.), px(1.)),
+            Some(MouseButton::Left),
+            gpui::Modifiers::default(),
+        );
+        cx.update(|window, cx| {
+            assert!(TextSelection::has_selection_in_scope(
+                TextSelectionScopeId::from_raw(23),
+                window,
+                cx
+            ));
         });
     }
 

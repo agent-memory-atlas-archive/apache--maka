@@ -412,7 +412,7 @@ pub(crate) fn reuse_kept_layout(
     let layout = kept.layout.clone();
     if layout.rem_size != window.rem_size()
         || layout.text_style != window.text_style()
-        || layout.text_selection_scope_context != window.text_selection_scope_context
+        || layout.selection_context != window.selection_context
         || cx.dependencies_changed(&kept.dependencies, window.inside_notified_view())
         || crate::fast::layers::invalidate::offset_read_changed(window, &kept.dependencies)
     {

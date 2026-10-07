@@ -22,7 +22,7 @@ use crate::{
     LiveInput, Slots, Widget,
     appearance::{color, font},
 };
-use gpui_kit::base::{SelectableText, TextSelection, TextSelectionHandle};
+use gpui_kit::base::{SelectableText, TextSelectionHandle};
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
     ParentElement, Render, Styled, Window, div, px, relative,
@@ -145,7 +145,7 @@ impl Render for Owner {
                     cx.propagate();
                     return;
                 }
-                TextSelection::clear(window, cx);
+                handle.clear_group(cx);
                 handle.set_local_selection(true, cx);
                 window.refresh();
             })
@@ -243,6 +243,7 @@ pub(super) fn register(registry: &mut NativeRegistry<dyn Widget>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui_kit::base::TextSelection;
     use gpui_kit::base::{ElementExt, TextSelectionLayer, TextSelectionScopeId};
     use gpui_kit::{TestAppContext, point};
     struct Root {

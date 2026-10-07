@@ -2,18 +2,18 @@ use std::ops::Range;
 
 use gpui::{
     App, BorderStyle, Bounds, Corners, Edges, Element, ElementId, FocusHandle, GlobalElementId,
-    Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, PaintQuad, Pixels,
-    Point, SharedString, StyledText, TextStyleRefinement, Window, transparent_black,
+    HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, PaintQuad, Pixels, Point,
+    SharedString, StyledText, TextStyleRefinement, Window, transparent_black,
 };
 
-use crate::{TextSelection, TextSelectionHandle, TextSelectionRegistration, TextSelectionRun};
+use crate::{TextSelectionHandle, TextSelectionRegistration, TextSelectionRun};
 
-/// Plain text that participates in the window-scoped [`TextSelection`].
+/// Plain text that participates in the group-scoped [`crate::TextSelection`].
 ///
 /// Use [`Self::new`] for an independent run, or [`Self::with_handle`] when
 /// several elements form one selectable document.
 ///
-/// Applications must render one [`crate::TextSelectionLayer`] above their
+/// Applications must render [`crate::TextSelectionLayer`] first in each input group's
 /// content and call [`crate::init`] during startup. Selection and copy then
 /// work without depending on `gpui-component`.
 pub struct SelectableText {
@@ -145,7 +145,7 @@ impl IntoElement for SelectableText {
 
 impl Element for SelectableText {
     type RequestLayoutState = TextSelectionHandle;
-    type PrepaintState = Hitbox;
+    type PrepaintState = TextSelectionRegistration;
 
     fn id(&self) -> Option<ElementId> {
         Some(self.id.clone())
@@ -203,8 +203,7 @@ impl Element for SelectableText {
         if let Some(focus) = &self.focus {
             registration = registration.with_native_focus(focus.clone(), window);
         }
-        handle.register(registration, window, cx);
-        hitbox
+        registration
     }
 
     fn paint(
@@ -213,12 +212,13 @@ impl Element for SelectableText {
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         handle: &mut Self::RequestLayoutState,
-        _: &mut Self::PrepaintState,
+        registration: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
+        handle.register(registration.clone(), window, cx);
         let layout = self.styled_text.layout().clone();
-        let selected_text_before = TextSelection::selected_text(window, cx);
+        let selected_text_before = handle.selected_text_in_scope(window, cx);
         let projection = handle.update_runs(
             &[
                 TextSelectionRun::new(self.text.clone(), layout.clone(), bounds)
@@ -226,7 +226,7 @@ impl Element for SelectableText {
             ],
             cx,
         );
-        if selected_text_before != TextSelection::selected_text(window, cx) {
+        if selected_text_before != handle.selected_text_in_scope(window, cx) {
             window.refresh();
         }
         let color = self

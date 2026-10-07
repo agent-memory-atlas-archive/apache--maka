@@ -61,3 +61,5 @@ Window 支持每个实际绘制帧一次原生显露聚焦机会。输入框在�
 
 
 Window 可根据原 ClickInputState interruption 创建不可 clone 的 InputGesture，仅拥有不可变机械身份并弱观察原窗口。WeakInputGesture 不延长任一 owner 的生命；结束后，即使新手势使用同一 interruption epoch，旧观察也立即失效。Kit 据此结束原选区拖动和自动滚动；Window 不增加选区、定时器注册表或产品状态。
+
+原继承选择上下文同时携带文档 scope 与 InputScope 的稳定焦点组身份，沿布局、retained/splice/layer 与 deferred 绘制传递及比较。组改变使复用失效，已失效 opening 不会把保留前景误归后台。这只证明原生放置来源；物理输入仍由原弱 opening 与 gesture 准入控制。

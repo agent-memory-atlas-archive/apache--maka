@@ -223,6 +223,10 @@ impl TextViewSelectionAdapter {
         self.scope = scope;
     }
 
+    pub(super) fn handle(&self) -> TextSelectionHandle {
+        self.selection.clone()
+    }
+
     pub(super) fn admission(&self, cx: &App) -> std::sync::Weak<()> {
         self.selection.admission(cx)
     }

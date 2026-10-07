@@ -19,6 +19,7 @@
 
 use super::*;
 use serde_json::Value;
+use std::cell::RefCell;
 
 fn content() -> Value {
     json!({"kind":"stack","key":"reading","direction":"column","gap":0,"padding":0,
@@ -59,8 +60,8 @@ fn omitted_command_preserves_sequence_and_same_number_cannot_change_target() {
 use crate::{Input, scene};
 use gpui_kit::base::TextSelectionLayer;
 use gpui_kit::{
-    Context, Modifiers, ParentElement, Render, ScrollDelta, ScrollWheelEvent, Styled,
-    TestAppContext, TouchPhase, div, point, px,
+    Context, InteractiveElement, Modifiers, ParentElement, Render, ScrollDelta, ScrollWheelEvent,
+    Styled, TestAppContext, TouchPhase, div, point, px,
 };
 
 struct Harness {
@@ -69,12 +70,13 @@ struct Harness {
     slots: Slots,
     renders: std::cell::Cell<u64>,
     block_long_press: Rc<std::cell::Cell<bool>>,
+    foreground: Option<(gpui_kit::InputScope, gpui_kit::FocusHandle)>,
 }
 impl Render for Harness {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.renders.set(self.renders.get() + 1);
         let block = self.block_long_press.clone();
-        div()
+        let mut root = div()
             .size_full()
             .child(TextSelectionLayer)
             .child(gpui_kit::canvas(
@@ -91,7 +93,18 @@ impl Render for Harness {
                 self.recipe
                     .render(self.state.as_ref(), &self.slots, window, cx)
                     .unwrap(),
-            )
+            );
+        if let Some((scope, focus)) = &self.foreground {
+            root = root.child(
+                scope.element(
+                    div()
+                        .id("reading-foreground")
+                        .track_focus(focus)
+                        .child(TextSelectionLayer),
+                ),
+            );
+        }
+        root
     }
 }
 fn input() -> LiveInput {
@@ -153,13 +166,14 @@ fn logical_identity_markers_preserve_original_scene_geometry(cx: &mut TestAppCon
                     slots: empty_slots(),
                     renders: Default::default(),
                     block_long_press: Default::default(),
+                    foreground: None,
                 }
             });
             window_cx.update(|window, cx| window.draw(cx).clear(cx));
             shapes.push(window_cx.update(|_, cx| {
                 let view = view.read(cx);
                 let handle = if reading {
-                    owner(view.state.as_ref()).borrow().handle.clone()
+                    owner(view.state.as_ref()).read(cx).handle.clone()
                 } else {
                     (view.recipe.as_ref() as &dyn Any)
                         .downcast_ref::<Node>()
@@ -259,16 +273,16 @@ fn original_markdown_completed_selection_and_owner_gap_stay_in_reading_scope(
             recipe: outer,
             state: outer_state,
             slots: outer_slots,
-            renders: Default::default(), block_long_press: block_out,
+            renders: Default::default(), block_long_press: block_out, foreground: None,
         }
     });
     window_cx.run_until_parked();
     window_cx.update(|window, cx| window.draw(cx).clear(cx));
     let state = inner.borrow().as_ref().unwrap().clone();
-    let scope = state.borrow().scope;
-    let before = state.borrow().handle.reading_witness();
+    let scope = window_cx.update(|_, cx| state.read(cx).scope);
+    let before = window_cx.update(|_, cx| state.read(cx).handle.reading_witness());
     window_cx.update(|window, cx| {
-        assert!(state.borrow().eligible(window, cx));
+        assert!(state.read(cx).eligible(window, cx));
         document
             .borrow()
             .as_ref()
@@ -280,9 +294,9 @@ fn original_markdown_completed_selection_and_owner_gap_stay_in_reading_scope(
             window,
             cx
         ));
-        assert!(!state.borrow().eligible(window, cx));
+        assert!(!state.read(cx).eligible(window, cx));
         assert!(
-            before.is_current(&state.borrow().handle),
+            before.is_current(&state.read(cx).handle),
             "completed selection need not scroll"
         );
         assert!(TextSelection::selected_text(window, cx).contains("Original selection 中文"));
@@ -309,6 +323,21 @@ fn original_markdown_completed_selection_and_owner_gap_stay_in_reading_scope(
             "a blank long press must not switch scope or clear completed selection");
         assert!(TextSelection::selected_text(window, cx).contains("Original selection 中文"));
     });
+    // The foreground has no selection. A global lookup would incorrectly resume
+    // background follow; the original Reading observer must retain its own group.
+    window_cx.update(|window, cx| view.update(cx, |view, cx| {
+        let focus = cx.focus_handle().tab_stop(false);
+        view.foreground = Some((window.input_scope(&focus, cx), focus));
+        cx.notify();
+    }));
+    window_cx.update(|window, cx| window.draw(cx).clear(cx));
+    window_cx.update(|window, cx| {
+        assert!(!TextSelection::has_selection_in_scope(scope, window, cx));
+        assert_eq!(state.read(cx).selection.as_ref().unwrap().has_selection_in_scope(scope, cx), Some(true));
+        assert!(!state.read(cx).eligible(window, cx));
+    });
+    window_cx.run_until_parked();
+    window_cx.update(|window, cx| window.draw(cx).clear(cx));
     // Force the actual native Markdown Owner (which recreates TextView) to
     // rebuild independently; the retained parent must restore inherited scope.
     let renders = window_cx.update(|_, cx| view.read(cx).renders.get());
@@ -320,23 +349,34 @@ fn original_markdown_completed_selection_and_owner_gap_stay_in_reading_scope(
             renders,
             "the Markdown gap rebuild must retain the parent"
         );
-        assert!(TextSelection::has_selection_in_scope(scope, window, cx));
-        assert!(!state.borrow().eligible(window, cx));
+        assert_eq!(state.read(cx).selection.as_ref().unwrap().has_selection_in_scope(scope, cx), Some(true));
+        assert!(!state.read(cx).eligible(window, cx));
+    });
+    window_cx.update(|_, cx| document.borrow().as_ref().unwrap().update(cx, |doc, cx| doc.push_str("\n\nFresh source append 中文", cx)));
+    window_cx.run_until_parked();
+    window_cx.update(|window, cx| window.draw(cx).clear(cx));
+    window_cx.update(|window, cx| {
+        assert_eq!(state.read(cx).selection.as_ref().unwrap().has_selection_in_scope(scope, cx), Some(true));
+        assert!(!state.read(cx).eligible(window, cx));
+        view.update(cx, |view, cx| { view.foreground.take(); cx.notify(); });
+    });
+    window_cx.update(|window, cx| window.draw(cx).clear(cx));
+    window_cx.update(|window, cx| {
         assert!(TextSelection::selected_text(window, cx).contains("Original selection 中文"));
         document.borrow().as_ref().unwrap().update(cx, |doc, cx| doc.focus_handle().focus(window, cx));
     });
     window_cx.dispatch_action(gpui_kit::base::input::Copy);
     window_cx.update(|_, cx| {
-        assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), "Original selection 中文");
+        assert!(cx.read_from_clipboard().unwrap().text().unwrap().starts_with("Original selection 中文"));
     });
     window_cx.update(|window, cx| {
         TextSelection::clear(window, cx);
-        assert!(state.borrow().eligible(window, cx));
+        assert!(state.read(cx).eligible(window, cx));
     });
     // Move the original, unnotified Markdown entity into a new inherited scope.
     // Retained layout and scroll-layer caches must not replay its old registration.
     let moved_scope = TextSelectionScopeId::new();
-    state.borrow_mut().scope = moved_scope;
+    state.update(window_cx, |state, _| state.scope = moved_scope);
     window_cx.update(|_, cx| view.update(cx, |_, cx| cx.notify()));
     window_cx.update(|window, cx| window.draw(cx).clear(cx));
     window_cx.update(|window, cx| {
@@ -362,12 +402,12 @@ fn original_wheel_changes_reading_intent_and_cancels_pending_command(cx: &mut Te
             recipe,
             state,
             slots: empty_slots(),
-            renders: Default::default(), block_long_press: Default::default(),
+            renders: Default::default(), block_long_press: Default::default(), foreground: None,
         }
     });
     window_cx.update(|window, cx| window.draw(cx).clear(cx));
     let state = window_cx.update(|_, cx| owner(view.read(cx).state.as_ref()).clone());
-    assert!(state.borrow().handle.painted_observation().unwrap().at_end);
+    assert!(state.read_with(window_cx, |state, _| state.handle.painted_observation().unwrap().at_end));
     window_cx.update(|window, cx| {
         view.update(cx, |view, cx| {
             view.recipe = compile_recipe(
@@ -381,26 +421,26 @@ fn original_wheel_changes_reading_intent_and_cancels_pending_command(cx: &mut Te
             cx.notify();
         });
     });
-    let witness = state.borrow().handle.reading_witness();
-    assert_eq!(state.borrow_mut().observation().pending_command, Some(1));
+    let witness = window_cx.update(|_, cx| state.read(cx).handle.reading_witness());
+    assert_eq!(state.update(window_cx, |state, _| state.observation()).pending_command, Some(1));
     window_cx.simulate_event(ScrollWheelEvent {
         position: point(px(50.), px(50.)),
         delta: ScrollDelta::Pixels(point(px(0.), px(100.))),
         modifiers: Modifiers::default(),
         touch_phase: TouchPhase::Moved,
     });
-    assert!(!witness.is_current(&state.borrow().handle));
+    assert!(!state.read_with(window_cx, |state, _| witness.is_current(&state.handle)));
     assert_eq!(
-        state.borrow_mut().observation().receipt,
+        state.update(window_cx, |state, _| state.observation()).receipt,
         Some(ReadingReceipt {
             sequence: 1,
             status: ReadingStatus::Cancelled
         })
     );
     window_cx.update(|window, cx| {
-        assert!(!state.borrow().eligible(window, cx));
+        assert!(!state.read(cx).eligible(window, cx));
         window.draw(cx).clear(cx);
-        assert!(!state.borrow().handle.painted_observation().unwrap().at_end);
+        assert!(!state.read(cx).handle.painted_observation().unwrap().at_end);
     });
     window_cx.simulate_event(ScrollWheelEvent {
         position: point(px(50.), px(50.)),
@@ -410,9 +450,9 @@ fn original_wheel_changes_reading_intent_and_cancels_pending_command(cx: &mut Te
     });
     window_cx.update(|window, cx| {
         window.draw(cx).clear(cx);
-        assert!(state.borrow().handle.painted_observation().unwrap().at_end);
-        assert!(state.borrow().eligible(window, cx));
-        assert_eq!(state.borrow_mut().observation().receipt.unwrap().status, ReadingStatus::Cancelled);
+        assert!(state.read(cx).handle.painted_observation().unwrap().at_end);
+        assert!(state.read(cx).eligible(window, cx));
+        assert_eq!(state.query(cx, |state, _| state.observation()).receipt.unwrap().status, ReadingStatus::Cancelled);
     });
     });
 }
@@ -434,11 +474,11 @@ fn model_button_viewport_reveals_every_choice_in_both_directions(cx: &mut TestAp
             let mut state = initial.create(input(), window, cx);
             initial.presentation(state.as_mut(), true, window, cx);
             initial.commit(state.as_mut(), window, cx);
-            Harness { recipe: initial, state, slots: empty_slots(), renders: Default::default(), block_long_press: Default::default() }
+            Harness { recipe: initial, state, slots: empty_slots(), renders: Default::default(), block_long_press: Default::default(), foreground: None }
         });
         window_cx.update(|window, cx| window.draw(cx).clear(cx));
         let state = window_cx.update(|_, cx| owner(view.read(cx).state.as_ref()).clone());
-        assert!(!state.borrow_mut().observation().viewport.unwrap().visible_child_keys.contains(&"choose-15".into()));
+        assert!(!state.update(window_cx, |state, _| state.observation()).viewport.unwrap().visible_child_keys.contains(&"choose-15".into()));
         for (sequence, at) in (0..16).chain((0..16).rev()).enumerate() {
             let sequence = sequence as u64 + 1;
             let key = format!("choose-{at}");
@@ -448,7 +488,7 @@ fn model_button_viewport_reveals_every_choice_in_both_directions(cx: &mut TestAp
                 cx.notify();
             }));
             window_cx.update(|window, cx| window.draw(cx).clear(cx));
-            let observation = state.borrow_mut().observation();
+            let observation = state.update(window_cx, |state, _| state.observation());
             assert_eq!(observation.receipt, Some(ReadingReceipt { sequence, status: ReadingStatus::Applied }));
             assert!(observation.viewport.unwrap().visible_child_keys.contains(&key), "active model must actually paint inside the native viewport: {key}");
         }
@@ -475,7 +515,7 @@ fn native_commands_settle_only_on_paint_and_observations_do_not_poll(cx: &mut Te
             let mut state = initial.create(live, window, cx);
             initial.presentation(state.as_mut(), true, window, cx);
             initial.commit(state.as_mut(), window, cx);
-            Harness { recipe: initial, state, slots: empty_slots(), renders: Default::default(), block_long_press: Default::default() }
+            Harness { recipe: initial, state, slots: empty_slots(), renders: Default::default(), block_long_press: Default::default(), foreground: None }
         });
         window_cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(observations.borrow().is_empty(), "paint must not call a plugin");
@@ -495,13 +535,13 @@ fn native_commands_settle_only_on_paint_and_observations_do_not_poll(cx: &mut Te
                 cx.notify();
             }));
             if expected == ReadingStatus::Applied {
-                assert_eq!(state.borrow_mut().observation().pending_command, Some(sequence));
+                assert_eq!(state.update(window_cx, |state, _| state.observation()).pending_command, Some(sequence));
             }
             window_cx.update(|window, cx| window.draw(cx).clear(cx));
             window_cx.update(|window, cx| { window.simulate_next_frame(cx); });
-            assert_eq!(state.borrow_mut().observation().receipt, Some(ReadingReceipt { sequence, status: expected }));
+            assert_eq!(state.update(window_cx, |state, _| state.observation()).receipt, Some(ReadingReceipt { sequence, status: expected }));
         }
-        assert!(state.borrow().handle.painted_observation().unwrap().at_end);
+        assert!(state.read_with(window_cx, |state, _| state.handle.painted_observation().unwrap().at_end));
         window_cx.simulate_event(ScrollWheelEvent {
             position: point(px(50.), px(50.)),
             delta: ScrollDelta::Pixels(point(px(0.), px(100.))),
@@ -522,11 +562,11 @@ fn native_commands_settle_only_on_paint_and_observations_do_not_poll(cx: &mut Te
             view.recipe.commit(view.state.as_mut(), window, cx);
             cx.notify();
         }));
-        assert_eq!(state.borrow_mut().observation().receipt, Some(ReadingReceipt { sequence: 6, status: ReadingStatus::Rejected }));
+        assert_eq!(state.update(window_cx, |state, _| state.observation()).receipt, Some(ReadingReceipt { sequence: 6, status: ReadingStatus::Rejected }));
         window_cx.update(|_, cx| {
             let view = view.read(cx);
             let reading = (view.recipe.as_ref() as &dyn Any).downcast_ref::<Reading>().unwrap();
-            assert!(!reading.node.reading_visible(state.borrow().scene.as_ref()), "old painted end must not admit a hidden recipe");
+            assert!(!reading.node.reading_visible(state.read(cx).scene.as_ref()), "old painted end must not admit a hidden recipe");
         });
     });
 }

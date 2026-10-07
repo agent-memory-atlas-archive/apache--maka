@@ -86,3 +86,5 @@ Physical mouse/key/action/AX and platform text operations use completed-frame ad
 
 
 Window can create a nonclone InputGesture against its original ClickInputState interruption. The gesture owns only immutable mechanical identity and observes the window weakly; WeakInputGesture cannot extend either lifetime. Ending one gesture invalidates its observers even when a new gesture starts in the same interruption epoch. Kit uses these native facts for original selection and automatic scrolling; no selection, timer registry or product state is added to Window.
+
+The original inherited selection context carries document scope and the immutable InputScope focus-group identity through layout, retained/splice/layer reuse and deferred drawing. A group change invalidates reuse; a dead physical opening cannot relabel a retained foreground subtree as background. This context supplies placement provenance only. Native weak opening and gesture admission remain the physical input authority.

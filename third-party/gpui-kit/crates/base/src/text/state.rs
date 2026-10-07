@@ -18,7 +18,7 @@ use gpui::{
 };
 
 use crate::{
-    AutoScroll, ElementExt, TextSelection,
+    AutoScroll,
     async_util::{Receiver, Sender, unbounded},
     input::{self, SelectAll},
     text::{
@@ -827,6 +827,21 @@ impl TextViewState {
             || self.selected_text_override.is_some()
     }
 
+    /// Acknowledge display geometry only when the original document actually paints.
+    pub(super) fn reconcile_selection_layout(&mut self, bounds: Bounds<Pixels>, cx: &App) -> bool {
+        let size_changed = self.bounds.size != bounds.size;
+        let involves = self.selection_adapter.is_part_of_window_selection(cx);
+        let snapshot = self.selection_adapter.has_selection_snapshot(cx);
+        let compatible = self.compatible_layout_update;
+        let revision_changed = self
+            .selection_adapter
+            .update_layout_revision(self.selection_revision, self.is_selecting);
+        self.bounds = bounds;
+        self.compatible_layout_update = false;
+        !self.is_selecting
+            && ((size_changed && involves && !compatible) || (revision_changed && snapshot))
+    }
+
     pub(super) fn stop_auto_scroll(&mut self) {
         self.auto_scroll.stop();
     }
@@ -1096,7 +1111,6 @@ impl Render for TextViewState {
             self.invalidate_measured_heights();
         }
         self.layout_text_style = Some(typography);
-        let state = cx.entity();
         let stream_fade = self.stream_fade.frame(Instant::now(), cx.reduce_motion());
         if stream_fade.is_some() && self.fade_tick.is_none() {
             self.fade_tick = Some(cx.spawn(async move |this, cx| {
@@ -1146,38 +1160,6 @@ impl Render for TextViewState {
                         .child("Failed to parse content")
                         .child(err.to_string()),
                 ),
-            })
-            .on_prepaint(move |bounds, window, cx| {
-                let (
-                    size_changed,
-                    selection_involves_view,
-                    has_selection_snapshot,
-                    is_selecting,
-                    compatible_layout_update,
-                ) = {
-                    let state = state.read(cx);
-                    (
-                        state.bounds().size != bounds.size,
-                        state.selection_adapter.is_part_of_window_selection(cx),
-                        state.selection_adapter.has_selection_snapshot(cx),
-                        state.is_selecting,
-                        state.compatible_layout_update,
-                    )
-                };
-                let mut revision_changed = false;
-                state.query(cx, |state, _| {
-                    revision_changed = state
-                        .selection_adapter
-                        .update_layout_revision(state.selection_revision, state.is_selecting);
-                    state.bounds = bounds;
-                    state.compatible_layout_update = false;
-                });
-                if !is_selecting
-                    && ((size_changed && selection_involves_view && !compatible_layout_update)
-                        || (revision_changed && has_selection_snapshot))
-                {
-                    TextSelection::clear(window, cx);
-                }
             });
         // Parsed commit has already reconciled the original list. Reveal
         // the requested block after rendering its current document facts.

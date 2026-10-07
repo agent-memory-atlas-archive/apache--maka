@@ -105,6 +105,7 @@ impl InputScope {
         ScopedInput {
             child: element.into_any_element(),
             scope: self.downgrade(),
+            group: self.0.focus,
         }
     }
     /// Observe this opening without extending its owner lifetime.
@@ -245,6 +246,12 @@ impl Window {
             self.next_frame.input_scopes.push(scope.clone());
         }
     }
+    /// The live original foreground group for physical/default selection operations.
+    pub fn active_input_group(&self) -> Option<FocusId> {
+        self.input_scope
+            .as_ref()
+            .and_then(|scope| scope.focus(self))
+    }
     /// Admission for creation-time native interceptors with an original focus owner.
     pub fn input_focus_is_admitted(&self, focus: &FocusHandle) -> bool {
         self.focus_is_admitted_in(&self.rendered_frame.dispatch_tree, focus.id)
@@ -341,6 +348,7 @@ impl Window {
 struct ScopedInput {
     child: AnyElement,
     scope: WeakInputScope,
+    group: FocusId,
 }
 impl IntoElement for ScopedInput {
     type Element = Self;
@@ -364,7 +372,12 @@ impl Element for ScopedInput {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, ()) {
-        (self.child.request_layout(window, cx), ())
+        (
+            window.with_selection_group_context(self.group, |window| {
+                self.child.request_layout(window, cx)
+            }),
+            (),
+        )
     }
     fn prepaint(
         &mut self,
@@ -377,7 +390,7 @@ impl Element for ScopedInput {
     ) {
         let node = window.next_frame.dispatch_tree.active_node_id().unwrap();
         window.next_frame.dispatch_tree.nodes[node.0].input_scope = Some(self.scope.clone());
-        self.child.prepaint(window, cx);
+        window.with_selection_group_context(self.group, |window| self.child.prepaint(window, cx));
     }
     fn paint(
         &mut self,
@@ -390,6 +403,6 @@ impl Element for ScopedInput {
         cx: &mut App,
     ) {
         window.declare_input_scope(&self.scope);
-        self.child.paint(window, cx);
+        window.with_selection_group_context(self.group, |window| self.child.paint(window, cx));
     }
 }

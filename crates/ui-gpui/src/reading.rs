@@ -19,11 +19,11 @@
 
 //! Original scene/scroll/selection custody, with weak post-paint observation.
 use crate::{LiveInput, Slots, Widget, scene::Node};
-use gpui_kit::base::{ElementExt as _, TextSelection, TextSelectionScopeId};
+use gpui_kit::base::{ElementExt as _, TextSelection, TextSelectionGroup, TextSelectionScopeId};
 use gpui_kit::{
-    AnyElement, App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement,
-    LayoutId, Pixels, ScrollCommand, ScrollHandle, ScrollReadingWitness, ScrollRequestId,
-    ScrollRequestStatus, SharedString, Window,
+    AnyElement, App, AppContext, Bounds, Element, ElementId, Entity, GlobalElementId,
+    InspectorElementId, IntoElement, LayoutId, Pixels, ScrollCommand, ScrollHandle,
+    ScrollReadingWitness, ScrollRequestId, ScrollRequestStatus, SharedString, WeakEntity, Window,
 };
 use maka_ui::{
     ComponentCall, ComponentOutput, Emission, EventOrigin, Frame, NativeCapability,
@@ -34,9 +34,8 @@ use maka_ui::{
 use serde_json::json;
 use std::{
     any::Any,
-    cell::RefCell,
     collections::BTreeMap,
-    rc::{Rc, Weak},
+    rc::Rc,
     time::{Duration, Instant},
 };
 const OBSERVED: &str = "__reading_observation";
@@ -103,7 +102,7 @@ impl Element for Mark {
 }
 struct Painted {
     child: AnyElement,
-    owner: Weak<RefCell<Owner>>,
+    owner: WeakEntity<Owner>,
 }
 impl IntoElement for Painted {
     type Element = Self;
@@ -152,7 +151,10 @@ impl Element for Painted {
     ) {
         self.child.paint(window, cx);
         if let Some(owner) = self.owner.upgrade() {
-            Owner::schedule(&owner, window);
+            owner.query(cx, |state, cx| {
+                state.selection = TextSelection::group_for_element(window, cx)
+            });
+            Owner::schedule(&owner, window, cx);
         }
     }
 }
@@ -165,6 +167,7 @@ struct Owner {
     root_key: String,
     handle: ScrollHandle,
     scope: TextSelectionScopeId,
+    selection: Option<TextSelectionGroup>,
     input: LiveInput,
     alive: bool,
     last_command: Option<ReadingCommand>,
@@ -212,37 +215,42 @@ impl Owner {
             receipt: self.receipt.clone(),
         }
     }
-    fn schedule(owner: &Rc<RefCell<Self>>, window: &mut Window) {
-        let mut state = owner.borrow_mut();
-        if !state.alive || state.scheduled || state.input.0.borrow().is_none() {
+    fn schedule(owner: &Entity<Self>, window: &mut Window, cx: &mut App) {
+        let schedule = owner.query(cx, |state, _| {
+            if !state.alive || state.scheduled || state.input.0.borrow().is_none() {
+                return false;
+            }
+            let observation = state.observation();
+            if state.published.as_ref() == Some(&observation) {
+                return false;
+            }
+            state.scheduled = true;
+            true
+        });
+        if !schedule {
             return;
         }
-        let observation = state.observation();
-        if state.published.as_ref() == Some(&observation) {
-            return;
-        }
-        state.scheduled = true;
-        let weak = Rc::downgrade(owner);
+        let weak = owner.downgrade();
         window.on_next_frame(move |window, cx| {
             let Some(owner) = weak.upgrade() else {
                 return;
             };
-            let (input, observation) = {
-                let mut state = owner.borrow_mut();
+            let pending = owner.query(cx, |state, _| {
                 state.scheduled = false;
                 if !state.alive {
-                    return;
+                    return None;
                 }
                 let observation = state.observation();
                 if state.published.as_ref() == Some(&observation) {
-                    return;
+                    return None;
                 }
-                let Some(input) = state.input.0.borrow().clone() else {
-                    return;
-                };
-                (input, observation)
+                let input = state.input.0.borrow().clone()?;
+                Some((input, observation))
+            });
+            let Some((input, observation)) = pending else {
+                return;
             };
-            // Plugin work is outside paint and outside any native owner borrow.
+            // Plugin work is outside paint and the original native owner lease.
             let result = (input.0)(
                 OBSERVED,
                 serde_json::to_value(&observation).expect("reading observation"),
@@ -250,7 +258,7 @@ impl Owner {
                 cx,
             );
             if result.is_ok() {
-                owner.borrow_mut().published = Some(observation);
+                owner.query(cx, |state, _| state.published = Some(observation));
             }
         });
     }
@@ -260,10 +268,14 @@ impl Owner {
             self.poll();
         }
     }
-    fn eligible(&self, window: &Window, cx: &mut App) -> bool {
+    fn eligible(&self, _window: &Window, cx: &App) -> bool {
         self.handle.painted_observation().is_some_and(|painted| {
             painted.reading_revision == self.handle.reading_revision() && painted.at_end
-        }) && !TextSelection::has_selection_in_scope(self.scope, window, cx)
+        }) && self
+            .selection
+            .as_ref()
+            .and_then(|group| group.has_selection_in_scope(self.scope, cx))
+            == Some(false)
     }
 }
 struct Reading {
@@ -271,24 +283,26 @@ struct Reading {
     command: Option<ReadingCommand>,
 }
 struct Tail {
+    selection: Option<TextSelectionGroup>,
     scroll: ScrollReadingWitness,
     scope: TextSelectionScopeId,
     eligible: bool,
 }
-fn owner(state: &dyn Any) -> &Rc<RefCell<Owner>> {
+fn owner(state: &dyn Any) -> &Entity<Owner> {
     state
-        .downcast_ref::<Rc<RefCell<Owner>>>()
+        .downcast_ref::<Entity<Owner>>()
         .expect("reading native owner")
 }
 impl Widget for Reading {
     fn create(&self, input: LiveInput, window: &mut Window, cx: &mut App) -> Box<dyn Any> {
         let scene = self.node.create(input.clone(), window, cx);
         let handle = self.node.reading_handle(scene.as_ref());
-        Box::new(Rc::new(RefCell::new(Owner {
+        Box::new(cx.new(|_| Owner {
             scene,
             handle,
             root_key: self.node.reading_key().unwrap().into(),
             scope: TextSelectionScopeId::new(),
+            selection: None,
             input,
             alive: true,
             last_command: None,
@@ -296,63 +310,62 @@ impl Widget for Reading {
             receipt: None,
             published: None,
             scheduled: false,
-        })))
+        }))
     }
     fn commit(&self, state: &mut dyn Any, window: &mut Window, cx: &mut App) {
-        let owner = owner(state);
-        let mut state = owner.borrow_mut();
-        self.node.commit(state.scene.as_mut(), window, cx);
-        let handle = self.node.reading_handle(state.scene.as_ref());
-        if !handle.same_owner(&state.handle) {
-            state.cancel();
-        }
-        state.handle = handle;
-        state.root_key = self.node.reading_key().unwrap().into();
-        if let Some(command) = &self.command
-            && state.last_command.as_ref() != Some(command)
-        {
-            state.cancel();
-            state.last_command = Some(command.clone());
-            let target = match &command.target {
-                _ if !self.node.reading_visible(state.scene.as_ref()) => None,
-                ReadingTarget::Start => Some(ScrollCommand::Start),
-                ReadingTarget::End => Some(ScrollCommand::End),
-                ReadingTarget::RevealChild { key } if self.node.reading_target(key) => Some(
-                    ScrollCommand::RevealChild(SharedString::from(key.clone()).into()),
-                ),
-                ReadingTarget::RevealChild { .. } => None,
-            };
-            if let Some(target) = target {
-                let id = state.handle.request_scroll(target);
-                state.pending = Some(Pending {
-                    sequence: command.sequence,
-                    id,
-                });
-            } else {
-                state.handle.set_offset(state.handle.offset());
-                state.receipt = Some(ReadingReceipt {
-                    sequence: command.sequence,
-                    status: ReadingStatus::Rejected,
-                });
+        owner(state).update(cx, |state, cx| {
+            self.node.commit(state.scene.as_mut(), window, cx);
+            let handle = self.node.reading_handle(state.scene.as_ref());
+            if !handle.same_owner(&state.handle) {
+                state.cancel();
             }
-        }
+            state.handle = handle;
+            state.root_key = self.node.reading_key().unwrap().into();
+            if let Some(command) = &self.command
+                && state.last_command.as_ref() != Some(command)
+            {
+                state.cancel();
+                state.last_command = Some(command.clone());
+                let target = match &command.target {
+                    _ if !self.node.reading_visible(state.scene.as_ref()) => None,
+                    ReadingTarget::Start => Some(ScrollCommand::Start),
+                    ReadingTarget::End => Some(ScrollCommand::End),
+                    ReadingTarget::RevealChild { key } if self.node.reading_target(key) => Some(
+                        ScrollCommand::RevealChild(SharedString::from(key.clone()).into()),
+                    ),
+                    ReadingTarget::RevealChild { .. } => None,
+                };
+                if let Some(target) = target {
+                    let id = state.handle.request_scroll(target);
+                    state.pending = Some(Pending {
+                        sequence: command.sequence,
+                        id,
+                    });
+                } else {
+                    state.handle.set_offset(state.handle.offset());
+                    state.receipt = Some(ReadingReceipt {
+                        sequence: command.sequence,
+                        status: ReadingStatus::Rejected,
+                    });
+                }
+            }
+        });
     }
     fn presentation(&self, state: &mut dyn Any, visible: bool, window: &mut Window, cx: &mut App) {
-        self.node.presentation(
-            owner(state).borrow_mut().scene.as_mut(),
-            visible,
-            window,
-            cx,
-        );
+        owner(state).update(cx, |state, cx| {
+            self.node
+                .presentation(state.scene.as_mut(), visible, window, cx)
+        });
     }
-    fn publish_pending(&self, state: &mut dyn Any, window: &mut Window, _: &mut App) {
-        Owner::schedule(owner(state), window);
+    fn publish_pending(&self, state: &mut dyn Any, window: &mut Window, cx: &mut App) {
+        Owner::schedule(owner(state), window, cx);
     }
     fn deactivate(&self, state: &mut dyn Any, window: &mut Window, cx: &mut App) {
-        let mut state = owner(state).borrow_mut();
-        state.alive = false;
-        state.cancel();
-        self.node.deactivate(state.scene.as_mut(), window, cx);
+        owner(state).update(cx, |state, cx| {
+            state.alive = false;
+            state.cancel();
+            self.node.deactivate(state.scene.as_mut(), window, cx);
+        });
     }
     fn capture_continuation(
         &self,
@@ -361,9 +374,10 @@ impl Widget for Reading {
         window: &mut Window,
         cx: &mut App,
     ) -> maka_ui::Result<ContinuationWitness> {
-        let state = owner(state).borrow();
+        let state = owner(state).read(cx);
         Ok(ContinuationWitness::new(
             Tail {
+                selection: state.selection.clone(),
                 scroll: state.handle.reading_witness(),
                 scope: state.scope,
                 eligible: state.alive
@@ -382,11 +396,16 @@ impl Widget for Reading {
         window: &mut Window,
         cx: &mut App,
     ) -> maka_ui::Result<bool> {
-        let state = owner(state).borrow();
+        let state = owner(state).read(cx);
         Ok(witness.downcast_ref::<Tail>().is_some_and(|proof| {
             proof.eligible
                 && state.alive
                 && proof.scope == state.scope
+                && proof
+                    .selection
+                    .as_ref()
+                    .zip(state.selection.as_ref())
+                    .is_some_and(|(old, current)| old.same_owner(current))
                 && self.node.reading_key() == Some(state.root_key.as_str())
                 && self.node.reading_visible(state.scene.as_ref())
                 && proof.scroll.is_current(&state.handle)
@@ -401,15 +420,17 @@ impl Widget for Reading {
         cx: &mut App,
     ) -> maka_ui::Result<AnyElement> {
         let owner = owner(state);
-        let state = owner.borrow();
-        let child =
-            self.node
-                .render_reading(state.scene.as_ref(), slots, state.scope, window, cx)?;
+        let (child, scope) = owner.query(cx, |state, cx| {
+            let child =
+                self.node
+                    .render_reading(state.scene.as_ref(), slots, state.scope, window, cx)?;
+            maka_ui::Result::Ok((child, state.scope))
+        })?;
         Ok(Painted {
             child,
-            owner: Rc::downgrade(owner),
+            owner: owner.downgrade(),
         }
-        .text_selection_scope(state.scope)
+        .text_selection_scope(scope)
         .into_any_element())
     }
 }
