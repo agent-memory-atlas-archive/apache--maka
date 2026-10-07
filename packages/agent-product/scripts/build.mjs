@@ -160,6 +160,17 @@ specifications.models = {
     reading: one(sdk.contracts.readingArea),
   },
 };
+specifications['command-palette'] = {
+  contract: own.paletteContract,
+  export: 'CommandPalette',
+  module: 'palette',
+  imports: {
+    agent: one(sdk.contracts.agent),
+    input: one(sdk.contracts.textInput),
+    reader: one(sdk.contracts.textReader),
+    reading: one(sdk.contracts.readingArea),
+  },
+};
 specifications['model-default'] = {
   contract: own.modelDefaultContract,
   export: 'ModelDefault',
@@ -219,16 +230,14 @@ for (const [name, spec] of Object.entries(specifications)) {
       contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace('${target}',configuration.locale);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
     else if (name === 'studio')
       contents = `import {studio,activate as exports} from '${resolve(root, 'src/studio.ts')}';export let component;export function activate(configuration){component=studio('${target}',configuration.locale);return exports();}`;
-    else if (name === 'image-viewer')
-      contents = `import {imageViewer,activate} from '${resolve(root, 'src/image-viewer.ts')}';export const component=imageViewer('${target}');export {activate};`;
     else if (name === 'connection-form')
       contents = `import {connectionForm,activate} from '${resolve(root, 'src/connection-form.ts')}';import * as validation from '${validationPath}';export const component=connectionForm('${target}',validation);export {activate};`;
-    else if (name === 'model-default')
-      contents = `import {modelDefault,activate} from '${resolve(root, 'src/model-default.ts')}';export const component=modelDefault('${target}');export {activate};`;
-    else if (['models', 'connections', 'credential', 'deployment'].includes(name))
-      contents = `import {${name},activate} from '${resolve(root, 'src/' + name + '.ts')}';export const component=${name}('${target}');export {activate};`;
-    else
+    else if (spec.module === 'components')
       contents = `import {components,exports} from '${resolve(root, 'src/components.ts')}';export const component=components('${target}').${name};export function activate(){const declaration=exports().${spec.export};return {${spec.export}:{...declaration,component:['component']}};}`;
+    else {
+      const factory = spec.module.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+      contents = `import {${factory},activate} from '${resolve(root, 'src/' + spec.module + '.ts')}';export const component=${factory}('${target}');export {activate};`;
+    }
     const bundled = await build({
       absWorkingDir: root,
       stdin: { contents, resolveDir: root, sourcefile: `${name}-${target}.ts`, loader: 'ts' },

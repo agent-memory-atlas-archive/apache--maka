@@ -370,6 +370,7 @@ impl<M: InputModeKind> InputBaseState<M> {
 
     pub(super) fn page_up(&mut self, _: &MovePageUp, window: &mut Window, cx: &mut Context<Self>) {
         if self.is_single_line() {
+            cx.propagate();
             return;
         }
 
@@ -388,6 +389,7 @@ impl<M: InputModeKind> InputBaseState<M> {
         cx: &mut Context<Self>,
     ) {
         if self.is_single_line() {
+            cx.propagate();
             return;
         }
 

@@ -23,7 +23,7 @@ use gpui_kit::{base::Popup, *};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
-    cell::{Cell, RefCell},
+    cell::Cell,
     rc::{Rc, Weak},
 };
 
@@ -66,11 +66,7 @@ pub enum Reason {
     Outside,
 }
 
-struct Phase {
-    token: Rc<()>,
-    open: bool,
-}
-type Gate = Rc<RefCell<Phase>>;
+type Gate = Rc<Cell<bool>>;
 // This is mechanical focus/scroll and listener admission derived from the
 // committed scene. It neither decides nor publishes product open state.
 pub(super) struct State {
@@ -83,26 +79,19 @@ pub(super) struct State {
     window: WindowId,
 }
 struct Admission {
-    gate: Weak<RefCell<Phase>>,
-    token: Rc<()>,
+    gate: Weak<Cell<bool>>,
     window: WindowId,
 }
 impl Admission {
     fn allows(&self, window: &Window) -> bool {
         self.window == window.window_handle().window_id()
-            && self.gate.upgrade().is_some_and(|gate| {
-                let phase = gate.borrow();
-                phase.open && Rc::ptr_eq(&self.token, &phase.token)
-            })
+            && self.gate.upgrade().is_some_and(|gate| gate.get())
     }
 }
 impl State {
     pub fn new(window: &Window, cx: &mut App) -> Self {
         Self {
-            gate: Rc::new(RefCell::new(Phase {
-                token: Rc::new(()),
-                open: false,
-            })),
+            gate: Rc::new(Cell::new(false)),
             focus: cx.focus_handle(),
             previous: None,
             restore: None,
@@ -112,17 +101,16 @@ impl State {
         }
     }
     pub fn admitted(&self) -> bool {
-        self.gate.borrow().open
+        self.gate.get()
     }
     pub fn presentation(&mut self, open: bool, window: &mut Window, cx: &mut App) {
         if self.admitted() == open {
             return;
         }
-        let token = Rc::new(());
-        *self.gate.borrow_mut() = Phase {
-            token: token.clone(),
-            open,
-        };
+        // This allocation is the exact presentation lease. Revoke the old
+        // opening before replacing it; weak callbacks cannot follow a reopen.
+        self.gate.set(false);
+        self.gate = Rc::new(Cell::new(open));
         self.focus = self
             .focus
             .clone()
@@ -170,8 +158,7 @@ impl State {
                     let Some(gate) = gate.upgrade() else {
                         return;
                     };
-                    let phase = gate.borrow();
-                    if phase.open || !Rc::ptr_eq(&phase.token, &token) {
+                    if gate.get() {
                         return;
                     }
                     if let Some(previous) = previous
@@ -185,10 +172,8 @@ impl State {
         }
     }
     pub fn deactivate(&mut self, window: &mut Window, cx: &mut App) {
-        *self.gate.borrow_mut() = Phase {
-            token: Rc::new(()),
-            open: false,
-        };
+        self.gate.set(false);
+        self.gate = Rc::new(Cell::new(false));
         self.previous = None;
         self.restore = None;
         self.focus = self.focus.clone().tab_stop(false).tab_index(-1);
@@ -199,7 +184,6 @@ impl State {
     fn admission(&self) -> Admission {
         Admission {
             gate: Rc::downgrade(&self.gate),
-            token: self.gate.borrow().token.clone(),
             window: self.window,
         }
     }

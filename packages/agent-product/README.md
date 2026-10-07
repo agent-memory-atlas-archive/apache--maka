@@ -125,6 +125,8 @@ close/reopen. Terminal entries keep paged in-flow presentation.
 Desktop navigation can be collapsed without unmounting its component or the composer. Context and model controls use separate rows; long titles and model triggers are measured and truncated by the native renderer, with complete accessible values. Terminal navigation labels remain bounded by its own presentation.
 
 
+The `command-palette` package exports ordinary `CommandPalette` content for explicit compositions, with parent-controlled `open`, current command guards and `invoked`/`selected`/`closed` events. It imports TextInput, TextReader, ReadingArea and Agent. Search requires all whitespace-separated terms in a command's label/id/hint or a session's id/title; it scans the original revision-bound directory and keeps at most 32 matching sessions, with an explicit More window. Choice confirmation captures the original native query revision. The parent handles command ids and re-observes selected sessions through Agent; presentation and modal input isolation belong to its scene.
+
 ## Plugin controls
 
 The ordinary Deployment component provides Desktop/TUI variants for fixed-source,

@@ -82,6 +82,19 @@ export interface ModelsProps {
   selection: SettingsModelChoice | null;
   busy: boolean;
 }
+export interface PaletteCommand {
+  id: string;
+  label: string;
+  hint: string;
+  disabled: boolean;
+}
+export interface PaletteProps {
+  theme: Theme;
+  locale: string;
+  open: boolean;
+  busy: boolean;
+  commands: PaletteCommand[];
+}
 export interface ModelDefaultProps {
   theme: Theme;
   locale: string;
@@ -204,6 +217,30 @@ const component = (
   interface: { kind: 'component', props: withDefs(props), events, captures },
 });
 export const workspaceContract = component('maka.agent.Workspace', object({}));
+export const paletteContract = component(
+  'maka.agent.CommandPalette',
+  object({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    busy: { type: 'boolean' },
+    commands: {
+      type: 'array',
+      maxItems: 128,
+      items: object({
+        id: { type: 'string', minLength: 1, maxLength: 128 },
+        label: { type: 'string', minLength: 1, maxLength: 256 },
+        hint: { type: 'string', maxLength: 64 },
+        disabled: { type: 'boolean' },
+      }),
+    },
+  }),
+  {
+    invoked: object({ id: { type: 'string', minLength: 1, maxLength: 128 } }),
+    selected: withDefs({ $ref: '#/$defs/AgentSession' }),
+    closed: object({}),
+  },
+);
 export const studioContract = component('maka.studio.Workbench', object({}));
 export const navigationContract = component(
   'maka.agent.Navigation',

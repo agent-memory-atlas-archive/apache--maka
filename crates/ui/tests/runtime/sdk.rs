@@ -24,6 +24,159 @@ use maka_ui::Surface;
 use std::{path::Path, process::Command};
 
 #[test]
+#[ignore = "opt-in packaged product build and actual native schema compiler"]
+fn packaged_product_component_schemas_compile_independently_for_both_presentations() {
+    use maka_plugin_core::{
+        contract::Interface,
+        package::{Declaration, Implementation},
+    };
+    let timer = timer();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let build = Command::new("node")
+        .arg("packages/agent-product/scripts/build.mjs")
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let dist = root.join("packages/agent-product/dist");
+    let names: Vec<String> =
+        serde_json::from_slice(&std::fs::read(dist.join("packages.json")).unwrap()).unwrap();
+    let mut checked_palette = 0;
+    for name in names {
+        let manifest: Value = serde_json::from_slice(
+            &std::fs::read(
+                dist.join("packages")
+                    .join(&name)
+                    .join("maka.extension.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let declaration: Declaration =
+            serde_json::from_value(manifest["application"].clone()).unwrap();
+        for (target, entry) in declaration.entries {
+            if name == "command-palette" {
+                let Implementation::JavaScript { module, .. } = &entry.implementation else {
+                    panic!("ordinary palette requires JavaScript");
+                };
+                let mut realm = maka_js_runtime::plugin::Foreground::new(
+                    Default::default(),
+                    timer.handle().clone(),
+                )
+                .unwrap();
+                let palette = realm
+                    .load(
+                        "palette",
+                        &std::fs::read_to_string(
+                            dist.join("packages/command-palette").join(module),
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap();
+                let actual: BTreeMap<String, maka_ui::abi::UiExport> = serde_json::from_value(
+                    realm
+                        .call(&palette, &["activate".into()], &[json!({}), json!({})])
+                        .unwrap(),
+                )
+                .unwrap();
+                let maka_ui::abi::UiExport::Component {
+                    contract,
+                    component,
+                } = &actual["CommandPalette"]
+                else {
+                    panic!("palette must publish its component");
+                };
+                assert_eq!(contract, &entry.exports["CommandPalette"].contract);
+                let callbacks = realm
+                    .capture(&palette, component, &["mount", "event", "update"])
+                    .unwrap();
+                let appearance = realm
+                    .load(
+                        "appearance",
+                        &std::fs::read_to_string(dist.join("packages/appearance").join(module))
+                            .unwrap(),
+                    )
+                    .unwrap();
+                let theme = realm
+                    .call(
+                        &appearance,
+                        &["activate".into()],
+                        &[json!({"scheme":"light"})],
+                    )
+                    .unwrap()["Appearance"]["value"]
+                    .clone();
+                let props = json!({"theme":theme, "locale":"en", "open":true, "busy":false,
+                    "commands":[{"id":"settings", "label":"Settings", "hint":"", "disabled":false}]});
+                let mounted: maka_ui::ComponentOutput = serde_json::from_value(
+                    realm
+                        .call_bound(&callbacks, "mount", &[props.clone(), json!({})])
+                        .unwrap(),
+                )
+                .unwrap();
+                assert!(mounted.actions.is_empty());
+                assert!(mounted.events.is_empty());
+                let closed: maka_ui::ComponentOutput = serde_json::from_value(
+                    realm
+                        .call_bound(
+                            &callbacks,
+                            "event",
+                            &[
+                                mounted.frame.state,
+                                json!({"kind":"raw", "key":"close", "event":null}),
+                                props,
+                                json!({}),
+                            ],
+                        )
+                        .unwrap(),
+                )
+                .unwrap();
+                assert_eq!(closed.events[0].name, "closed");
+                assert_eq!(
+                    closed.frame.state["open"], true,
+                    "parent still owns controlled open"
+                );
+                realm.close(&palette).unwrap();
+                realm.close(&appearance).unwrap();
+            }
+            for (export, contract) in entry.exports {
+                let Interface::Component {
+                    props,
+                    events,
+                    captures,
+                } = contract.contract.interface
+                else {
+                    continue;
+                };
+                let check = |schema: &Value| {
+                    jsonschema::validator_for(schema)
+                        .unwrap_or_else(|error| panic!("{name}/{target:?}/{export}: {error}"))
+                };
+                check(&props);
+                for schema in events.values() {
+                    check(schema);
+                }
+                for capture in captures.values() {
+                    check(&capture.input);
+                }
+                if export == "CommandPalette" {
+                    checked_palette += 1;
+                    assert!(check(&events["selected"]).is_valid(&json!({
+                        "id":"session", "title":"Native schema checked", "revision":1,
+                        "updatedAt":1, "archived":false,
+                    })));
+                    assert!(!check(&events["selected"]).is_valid(&json!({"id":"session"})));
+                }
+            }
+        }
+    }
+    assert_eq!(checked_palette, 2);
+}
+
+#[test]
 fn sdk_typescript_bundles_execute_the_same_package_in_both_presentations() {
     let timer = timer();
     let work = tempfile::tempdir().unwrap();

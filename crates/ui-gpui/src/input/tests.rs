@@ -729,7 +729,7 @@ fn single_line_arrows_bubble_without_changing_the_original_native_text(cx: &mut 
     draw(cx, window);
     let before = cx.update(|cx| owner.read(cx).observation_snapshot());
     let previous = bubble.get();
-    cx.simulate_keystrokes(window, "up down");
-    assert_eq!(bubble.get(), previous + 2);
+    cx.simulate_keystrokes(window, "up down pageup pagedown");
+    assert_eq!(bubble.get(), previous + 4);
     cx.update(|cx| assert_eq!(owner.read(cx).observation_snapshot(), before));
 }

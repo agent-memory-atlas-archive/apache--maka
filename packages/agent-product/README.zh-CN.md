@@ -80,6 +80,8 @@ Desktop 模型选择器使用公开锚定 Popup scene。
 
 Desktop 侧栏可收起，导航组件与输入区持续挂载。上下文与模型操作分行排列，长标题和模型按钮由原生测量显示省略号，保留完整可访问值；Terminal 导航名称按自身呈现边界显示。
 
+`command-palette` 包提供可显式组合的普通 `CommandPalette` 内容组件：父组件控制 `open` 与当前命令启用条件，接收 `invoked`/`selected`/`closed` 事件。它导入 TextInput、TextReader、ReadingArea 和 Agent，按命令 label/id/hint 或会话 id/title 匹配全部空白分隔的查询词，扫描原 revision 约束的目录，保留最多 32 个匹配会话并提供显式 More 窗口。选择前捕获原生查询文本 revision；父组件处理命令 id，通过 Agent 重新观察所选会话，所在 scene 负责呈现与模态输入隔离。
+
 普通 Deployment 组件提供 Desktop/TUI 的固定版本八实例分页、确认启用/停用、冲突刷新与
 原操作查询。Host 对原组合输入做 CAS，保留模板参数和其它覆盖；必需连接失效则明确拒绝。
 界面显示 desired 配置，不将保存当运行就绪；未知结果不自动重放。独立高级页通过有界

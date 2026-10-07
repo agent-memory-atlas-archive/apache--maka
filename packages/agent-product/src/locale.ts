@@ -18,6 +18,18 @@
  */
 
 export const en = {
+  paletteTitle: 'Commands',
+  paletteFilter: 'Search commands or conversations',
+  paletteSession: 'Conversation',
+  paletteSearching: 'Searching conversations…',
+  paletteSearchFailed: 'Conversation search is unavailable.',
+  paletteEmpty: 'No matching commands or conversations.',
+  palettePrevious: 'Previous commands',
+  paletteNext: 'Next commands',
+  paletteMore: 'More conversations',
+  paletteRefresh: 'Refresh search',
+  paletteClose: 'Close commands',
+
   studioTitle: 'Configuration Studio',
   studioOverview: 'Overview',
   studioIntro: 'A quieter place to configure your workspace.',
@@ -292,6 +304,18 @@ export const en = {
 } as const;
 export type Copy = { [K in keyof typeof en]: string };
 const zhCN: Copy = {
+  paletteTitle: '命令',
+  paletteFilter: '搜索命令或对话',
+  paletteSession: '对话',
+  paletteSearching: '正在搜索对话…',
+  paletteSearchFailed: '暂时无法搜索对话。',
+  paletteEmpty: '没有匹配的命令或对话。',
+  palettePrevious: '上一页命令',
+  paletteNext: '下一页命令',
+  paletteMore: '更多对话',
+  paletteRefresh: '刷新搜索',
+  paletteClose: '关闭命令面板',
+
   studioTitle: '配置工作台',
   studioOverview: '概览',
   studioIntro: '专注整理工作区的连接、模型与插件。',
@@ -546,6 +570,18 @@ const zhCN: Copy = {
   connecting: '正在连接…',
 };
 const zhTW: Copy = {
+  paletteTitle: '命令',
+  paletteFilter: '搜尋命令或對話',
+  paletteSession: '對話',
+  paletteSearching: '正在搜尋對話…',
+  paletteSearchFailed: '暫時無法搜尋對話。',
+  paletteEmpty: '沒有匹配的命令或對話。',
+  palettePrevious: '上一頁命令',
+  paletteNext: '下一頁命令',
+  paletteMore: '更多對話',
+  paletteRefresh: '重新整理搜尋',
+  paletteClose: '關閉命令面板',
+
   studioTitle: '設定工作台',
   studioOverview: '總覽',
   studioIntro: '專注整理工作區的連線、模型與外掛。',

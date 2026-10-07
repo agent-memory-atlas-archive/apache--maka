@@ -666,7 +666,12 @@ fn single_line_arrows_leave_list_navigation_to_the_original_outer_scope() {
         draw(&mut tui, 80, 24);
         let target = tui.focus.clone().unwrap();
         let before = observation(&tui);
-        for code in [KeyCode::Up, KeyCode::Down] {
+        for code in [
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::PageUp,
+            KeyCode::PageDown,
+        ] {
             assert!(matches!(
                 tui.resources.input(&target, &key(code)).unwrap(),
                 Some(WidgetInput::Unhandled)

@@ -5396,3 +5396,295 @@ test('ordinary root shortcuts share creation policy and close only presented pag
     'pending creation cannot be duplicated by another input',
   );
 });
+
+for (const target of ['tui', 'desktop']) {
+  const { component } = await import(
+    pathToFileURL(resolve(root, `dist/packages/command-palette/${target}.js`))
+  );
+  const commands = Array.from({ length: 80 }, (_, at) => ({
+    id: `action-${at}`,
+    label: `Action ${at}`,
+    hint: '',
+    disabled: false,
+  }));
+  const make = (items = commands) => {
+    const form = new FormClient(component, {
+      theme: modelProps.theme,
+      locale: 'en',
+      open: true,
+      busy: false,
+      commands: items,
+    });
+    native(form, '', 1);
+    return form;
+  };
+  function native(form, text, revision) {
+    return form.input({
+      kind: 'component',
+      child: 'palette-query',
+      name: 'changed',
+      key: 'query',
+      event: modelObservation(text, revision),
+    });
+  }
+  function read(form, text, revision) {
+    const capture = form.find('read');
+    assert.deepEqual(capture.resources.text, {
+      child: 'palette-query',
+      method: 'snapshot',
+      input: { kind: 'at_revision', owner: 'model-editor', revision },
+    });
+    return form.complete(capture, {
+      status: 'succeeded',
+      value: { text, metadata: modelObservation(text, revision).snapshot.text },
+    });
+  }
+  function sessions(at, titles, after = null, revision = 'catalog-A') {
+    return {
+      revision,
+      before: at ? `session-${at - 1}` : null,
+      after,
+      sessions: titles.map((title, index) => ({
+        id: `session-${at + index}`,
+        title,
+        revision: 1,
+        updatedAt: 1,
+        archived: false,
+      })),
+    };
+  }
+  const viewport = (form) =>
+    modelSlots(form.output.frame.view).find((node) => node.key === 'palette-rows').props;
+  test(`${target} ordinary palette bounds native rows and keeps list keys, command guards and controlled open ownership`, () => {
+    const form = make();
+    assert.equal(viewport(form).content.children.length, 32);
+    const original = structuredClone(form.state.observation);
+    form.raw('page-down');
+    assert.equal(form.state.active, 32);
+    assert.equal(viewport(form).command.target.key, 'command-32');
+    assert.equal(viewport(form).content.children[0].key, 'command-32');
+    form.raw('up');
+    assert.equal(form.state.active, 31);
+    assert.deepEqual(form.state.observation, original);
+    form.raw('command-31');
+    assert.deepEqual(form.output.events, []);
+    form.update({
+      commands: commands.map((command) =>
+        command.id === 'action-31' ? { ...command, disabled: true } : command,
+      ),
+    });
+    read(form, '', 1);
+    assert.deepEqual(form.output.events, []);
+    form.raw('command-30');
+    read(form, '', 1);
+    assert.deepEqual(form.output.events, [{ name: 'invoked', value: { id: 'action-30' } }]);
+    assert.equal(
+      form.output.frame.view.visible,
+      true,
+      'only the parent can close its controlled palette',
+    );
+    form.raw('close');
+    assert.deepEqual(form.output.events, [{ name: 'closed', value: {} }]);
+    assert.equal(form.output.frame.view.visible, true);
+    form.update({ open: false });
+    assert.equal(form.output.frame.view.visible, false);
+  });
+  test(`${target} palette reaches a session beyond 1024 catalog rows without borrowing the sidebar page`, () => {
+    const form = make();
+    native(form, 'needle', 2);
+    read(form, 'needle', 2);
+    assert.deepEqual(form.find('list').input, { kind: 'start' });
+    for (let page = 0; page < 36; page++) {
+      const at = page * 32;
+      form.query(
+        'list',
+        sessions(
+          at,
+          Array.from({ length: 32 }, () => 'Other conversation'),
+          `session-${at + 31}`,
+        ),
+      );
+      assert.deepEqual(form.find('list').input, {
+        kind: 'after',
+        revision: 'catalog-A',
+        cursor: `session-${at + 31}`,
+      });
+      assert.equal(form.state.matches.length, 0);
+      assert.equal(form.state.source.sessions.length, 32);
+    }
+    const found = sessions(1152, ['A Needle Conversation']).sessions[0];
+    form.query('list', sessions(1152, [found.title]));
+    assert.deepEqual(form.state.matches, [found]);
+    form.input({
+      kind: 'component',
+      child: 'palette-query',
+      name: 'submitted',
+      key: 'choose',
+      event: {},
+    });
+    read(form, 'needle', 2);
+    assert.deepEqual(form.output.events, [{ name: 'selected', value: found }]);
+    assert.equal('catalog' in form.state, false);
+  });
+  test(`${target} palette More retains the original source cursor and one bounded matching window`, () => {
+    const form = make([]);
+    native(form, 'match', 2);
+    read(form, 'match', 2);
+    form.query(
+      'list',
+      sessions(
+        0,
+        Array.from({ length: 32 }, (_, at) => `Match ${at}`),
+        'session-31',
+      ),
+    );
+    assert.equal(form.state.matches.length, 32);
+    assert.equal(form.output.actions.length, 0);
+    const firstKey = viewport(form).content.children[0].key;
+    form.raw('more');
+    assert.equal(form.state.matches.length, 0);
+    assert.deepEqual(form.find('list').input, {
+      kind: 'after',
+      revision: 'catalog-A',
+      cursor: 'session-31',
+    });
+    form.query(
+      'list',
+      sessions(
+        32,
+        Array.from({ length: 32 }, (_, at) => `Match ${at + 32}`),
+      ),
+    );
+    assert.equal(form.state.matches.length, 32);
+    assert.equal(form.state.matches[0].id, 'session-32');
+    assert.notEqual(viewport(form).content.children[0].key, firstKey);
+    form.raw(firstKey);
+    assert.deepEqual(form.output.actions, []);
+    assert.deepEqual(form.output.events, []);
+  });
+  test(`${target} command choice supersedes a pending directory read and cannot adopt its late result`, () => {
+    const form = make([{ id: 'settings', label: 'Settings', hint: '', disabled: false }]);
+    native(form, 'settings', 2);
+    read(form, 'settings', 2);
+    const directory = form.find('list');
+    form.raw('command-0');
+    const capture = form.find('read');
+    form.complete(directory, {
+      status: 'succeeded',
+      value: sessions(0, ['Old Settings Conversation']),
+    });
+    assert.equal(form.state.pending.key, capture.key);
+    assert.equal(form.state.matches.length, 0);
+    read(form, 'settings', 2);
+    assert.deepEqual(form.output.events, [{ name: 'invoked', value: { id: 'settings' } }]);
+  });
+  test(`${target} a disabled command choice resumes its retired directory scan`, () => {
+    const command = { id: 'settings', label: 'Settings', hint: '', disabled: false };
+    const form = make([command]);
+    native(form, 'settings', 2);
+    read(form, 'settings', 2);
+    const old = form.find('list');
+    form.raw('command-0');
+    form.update({ commands: [{ ...command, disabled: true }] });
+    read(form, 'settings', 2);
+    assert.deepEqual(form.output.events, []);
+    const next = form.output.actions.find((action) => action.method === 'list');
+    assert.notEqual(next.key, old.key);
+    assert.deepEqual(next.input, { kind: 'start' });
+    form.complete(old, { status: 'succeeded', value: sessions(0, ['Old Settings']) });
+    assert.equal(form.state.pending.key, next.key);
+    assert.deepEqual(form.state.matches, []);
+    form.complete(next, { status: 'succeeded', value: sessions(1, ['Current Settings']) });
+    assert.deepEqual(
+      form.state.matches.map((session) => session.id),
+      ['session-1'],
+    );
+  });
+  test(`${target} explicit palette Refresh recovers failed query and selection reads without replaying a choice`, () => {
+    const form = make([]);
+    native(form, 'match', 2);
+    form.complete(form.find('read'), { status: 'failed', reason: 'temporarily unavailable' });
+    assert.equal(form.state.queryError, 'unavailable');
+    assert.ok(
+      form.output.frame.view.children.some(
+        (node) =>
+          node.key === 'palette-controls' &&
+          node.children.some((button) => button.key === 'refresh' && !button.disabled),
+      ),
+    );
+    form.raw('refresh');
+    read(form, 'match', 2);
+    assert.deepEqual(form.find('list').input, { kind: 'start' });
+    form.query('list', sessions(0, ['Match A']));
+    form.raw(viewport(form).content.children[0].key);
+    form.complete(form.find('read'), { status: 'failed', reason: 'temporarily unavailable' });
+    assert.deepEqual(form.output.events, []);
+    form.raw('refresh');
+    assert.equal(form.state.queryError, null);
+    assert.deepEqual(form.find('list').input, { kind: 'start' });
+    form.query('list', sessions(1, ['Match B']));
+    assert.deepEqual(form.output.events, []);
+    assert.equal(form.state.matches[0].id, 'session-1');
+    native(form, '界'.repeat(257), 3);
+    read(form, '界'.repeat(257), 3);
+    assert.equal(form.state.queryError, 'long');
+    form.raw('refresh');
+    assert.deepEqual(form.output.actions, []);
+    assert.equal(form.state.queryError, 'long');
+  });
+  test(`${target} palette coalesces failed old searches, suspends closed or busy scanning and preserves original query`, () => {
+    const form = make();
+    native(form, 'old', 2);
+    read(form, 'old', 2);
+    native(form, 'latest', 3);
+    assert.equal(form.output.actions.length, 0);
+    form.complete(form.find('list'), { status: 'failed', reason: 'offline' });
+    read(form, 'latest', 3);
+    assert.equal(form.state.query, 'latest');
+    form.update({ open: false });
+    form.query('list', sessions(0, ['Another'], 'session-0'));
+    assert.deepEqual(form.output.actions, []);
+    form.update({ open: true, busy: true });
+    assert.deepEqual(form.output.actions, []);
+    form.update({ busy: false });
+    assert.deepEqual(form.find('list').input, {
+      kind: 'after',
+      revision: 'catalog-A',
+      cursor: 'session-0',
+    });
+    form.query('list', sessions(1, ['Latest Conversation']));
+    assert.equal(form.state.matches[0].id, 'session-1');
+    native(form, 'latest', 4);
+    read(form, 'latest', 4);
+    assert.deepEqual(form.output.actions, []);
+    assert.equal(form.state.matches[0].id, 'session-1');
+  });
+  test(`${target} palette never combines catalog revisions and native snapshot failure cannot select`, () => {
+    const form = make([]);
+    native(form, 'match', 2);
+    read(form, 'match', 2);
+    form.query('list', sessions(0, ['Match A'], 'session-0'));
+    form.query('list', sessions(1, ['Match B'], null, 'catalog-B'));
+    assert.equal(form.state.failed, true);
+    assert.deepEqual(
+      form.state.matches.map((session) => session.title),
+      ['Match A'],
+    );
+    assert.equal(form.output.actions.length, 0);
+    form.raw('refresh');
+    assert.deepEqual(form.find('list').input, { kind: 'start' });
+    form.query('list', sessions(1, ['Match B'], null, 'catalog-B'));
+    form.raw(viewport(form).content.children[0].key);
+    form.complete(form.find('read'), { status: 'failed', reason: 'snapshot_revision_changed' });
+    assert.deepEqual(form.output.events, []);
+    assert.equal(form.state.queryError, 'unavailable');
+    native(form, '界'.repeat(257), 3);
+    read(form, '界'.repeat(257), 3);
+    assert.equal(form.state.queryError, 'long');
+    assert.deepEqual(form.output.actions, []);
+    native(form, '', 4);
+    assert.equal(form.state.queryError, null);
+    assert.equal(form.state.query, '');
+    assert.deepEqual(form.output.actions, []);
+  });
+}
