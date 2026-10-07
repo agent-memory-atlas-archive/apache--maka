@@ -46,8 +46,9 @@ function frame(target: Target, locale: string, state: State, values: ComponentVa
   const page = (route: Route, nodes: ReturnType<typeof ui.box>[]) =>
     ui.box('page-' + route, nodes, {
       visible: state.route === route,
+      scroll: route === 'overview' ? 'manual' : 'none',
       terminal: { grow: 1 },
-      style: { width: fill, height: pixels(0), grow: 1, minHeight: 0 },
+      style: { width: fill, height: pixels(0), grow: 1, shrink: 1, minHeight: 0 },
     });
   const out = output(
     state,
@@ -57,10 +58,19 @@ function frame(target: Target, locale: string, state: State, values: ComponentVa
         ui.box(
           'heading',
           [
-            ui.text('title', text.studioTitle, 26, theme.text, 600),
-            ui.text('intro', text.studioIntro, 14, theme.muted),
+            ui.text(
+              'title',
+              text.studioTitle,
+              state.route === 'overview' ? 26 : 18,
+              theme.text,
+              600,
+            ),
+            ui.box('introduction', [ui.text('intro', text.studioIntro, 14, theme.muted)], {
+              visible: state.route === 'overview',
+              gap: 0,
+            }),
           ],
-          { gap: target === 'desktop' ? 8 : 0 },
+          { gap: target === 'desktop' ? 8 : 0, style: { shrink: 0 } },
         ),
         ui.box(
           'navigation',
@@ -97,7 +107,7 @@ function frame(target: Target, locale: string, state: State, values: ComponentVa
               {
                 padding: target === 'desktop' ? 20 : 1,
                 surface: true,
-                style: { width: fill, radius: 12, shrink: 0 },
+                style: { width: fill, radius: 12, shrink: 0, align: 'start' },
               },
             ),
           ),
@@ -132,12 +142,17 @@ function frame(target: Target, locale: string, state: State, values: ComponentVa
       ],
       {
         padding: target === 'desktop' ? 28 : 1,
-        gap: target === 'desktop' ? 24 : 1,
+        gap: target === 'desktop' ? (state.route === 'overview' ? 24 : 12) : 1,
         terminal: { grow: 1 },
         style: { width: fill, height: fill, maxWidth: 960, minWidth: 0 },
       },
     ),
   );
+  if (target === 'desktop')
+    out.frame.view = ui.box('studio-surface', [out.frame.view as Record<string, unknown>], {
+      gap: 0,
+      style: { width: fill, height: fill, align: 'center' },
+    });
   out.frame.surface =
     target === 'desktop'
       ? { kind: 'window', binding: 'surface', title: text.studioTitle, width: 980, height: 760 }

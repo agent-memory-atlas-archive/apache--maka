@@ -229,18 +229,30 @@ function frame(
           ui.box(
             'deployment-instance-' + at,
             [
-              ui.text(
-                'deployment-path-' + at,
-                compactLabel(entry.path.join(' / '), target === 'desktop' ? 100 : 36),
-                15,
-                props.theme.text,
-                550,
-              ),
-              ui.text(
-                'deployment-package-' + at,
-                compactLabel(entry.package.id, target === 'desktop' ? 100 : 36),
-                13,
-                props.theme.muted,
+              ui.box(
+                'deployment-identity-' + at,
+                [
+                  ui.text(
+                    'deployment-path-' + at,
+                    target === 'desktop'
+                      ? entry.path.join(' / ')
+                      : compactLabel(entry.path.join(' / '), 36),
+                    15,
+                    props.theme.text,
+                    550,
+                  ),
+                  ui.text(
+                    'deployment-package-' + at,
+                    target === 'desktop' ? entry.package.id : compactLabel(entry.package.id, 36),
+                    13,
+                    props.theme.muted,
+                  ),
+                ],
+                {
+                  gap: target === 'desktop' ? 4 : 0,
+                  surface: target === 'desktop',
+                  style: { grow: 1, minWidth: 0 },
+                },
               ),
               ui.box(
                 'deployment-row-' + at,
@@ -261,10 +273,21 @@ function frame(
                     busy || state.conflict || (entry.disabled && entry.parentDisabled),
                   ),
                 ],
-                { row: target === 'desktop', gap: 0, style: { wrap: true } },
+                {
+                  row: target === 'desktop',
+                  gap: 0,
+                  surface: target === 'desktop',
+                  style: { wrap: true, align: 'center', shrink: 0 },
+                },
               ),
             ],
-            { gap: target === 'desktop' ? 4 : 0 },
+            {
+              row: target === 'desktop',
+              gap: target === 'desktop' ? 16 : 0,
+              padding: target === 'desktop' ? 12 : 0,
+              surface: target === 'desktop',
+              style: { width: fill, wrap: true, shrink: 0, radius: 10, align: 'center' },
+            },
           ),
         );
   const header = ui.box(
@@ -379,8 +402,18 @@ function frame(
           ]
         : []),
     ],
-    { gap: 0, style: { width: fill, height: fill }, terminal: { grow: 1 } },
+    {
+      gap: 0,
+      padding: target === 'desktop' ? 24 : 0,
+      style: { width: fill, height: fill, maxWidth: 808, minWidth: 0 },
+      terminal: { grow: 1 },
+    },
   );
+  if (target === 'desktop')
+    out.frame.view = ui.box('deployment-surface', [out.frame.view as Record<string, unknown>], {
+      gap: 0,
+      style: { width: fill, height: fill, align: 'center' },
+    });
   out.actions = actions;
   return out;
 }
