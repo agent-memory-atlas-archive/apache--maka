@@ -815,3 +815,129 @@ fn nested_scroll_consumes_innermost_wheel_then_bubbles_at_its_boundary() {
         .unwrap();
     presenter.shutdown().unwrap();
 }
+
+#[test]
+#[ignore = "opt-in packaged navigation build and actual terminal layout/input"]
+fn packaged_session_navigation_keeps_paging_controls_outside_the_scrolling_list() {
+    let repository = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let build = std::process::Command::new("node")
+        .arg("packages/agent-product/scripts/build.mjs")
+        .current_dir(&repository)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let output = std::process::Command::new("node").args(["--input-type=module", "-e", r#"
+      import {component} from './packages/agent-product/dist/packages/navigation/tui.js';
+      import {activate} from './packages/agent-product/dist/packages/appearance/tui.js';
+      const frames=[];
+      for(const scheme of ['light','dark']) for(const locale of ['en','zh-CN','zh-TW']) {
+        const props={theme:activate({scheme}).Appearance.value,locale,sessions:Array.from({length:32},(_,i)=>({id:'conversation-'+i,title:'Conversation '+i,revision:1,updatedAt:1,archived:false})),selected:'conversation-0',busy:false,previous:true,more:true,failed:false};
+        frames.push(component.mount(props,{}).frame.view);
+      }
+      console.log(JSON.stringify(frames));
+    "#]).current_dir(repository).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frames: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    for source in frames {
+        for (width, height) in [(80, 24), (40, 16)] {
+            let (_runtime, mut presenter) = native(
+                View::Scene(
+                    json!({"kind":"stack","key":"navigation-route","direction":"column","gap":0,"padding":0,"background":0,"layout":{"grow":1},"children":[{"kind":"button","key":"navigation-back","label":"Back to conversation"},source.clone()]}),
+                ),
+                Rc::new(Cell::new(true)),
+            );
+            let area = Rect::new(0, 0, width, height);
+            let mut buffer = Buffer::empty(area);
+            let pending = presenter.paint(area, &mut buffer).unwrap();
+            presenter.present(pending);
+            for key in ["previous", "more", "refresh"] {
+                let target = presenter
+                    .scene
+                    .iter()
+                    .find(|target| target.key == key)
+                    .expect("paging control remains visible")
+                    .clone();
+                assert!(target.area.visible().height > 0);
+            }
+            // The native tab traversal visits the fixed pager before the long list.
+            assert_eq!(presenter.focus.as_ref().unwrap().key, "navigation-back");
+            for _ in 0..3 {
+                presenter
+                    .input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
+                    .unwrap();
+            }
+            assert_eq!(presenter.focus.as_ref().unwrap().key, "more");
+            presenter
+                .input(Event::Key(KeyEvent::new(
+                    KeyCode::Enter,
+                    KeyModifiers::NONE,
+                )))
+                .unwrap();
+            assert_eq!(
+                presenter.application.frame(&presenter.root).unwrap().state["count"],
+                1
+            );
+            let first = presenter
+                .scene
+                .iter()
+                .find(|target| target.key == "conversation-0")
+                .unwrap()
+                .area
+                .visible();
+            for _ in 0..40 {
+                if presenter
+                    .scene
+                    .iter()
+                    .any(|target| target.key == "conversation-31")
+                {
+                    break;
+                }
+                presenter
+                    .input(Event::Mouse(MouseEvent {
+                        kind: MouseEventKind::ScrollDown,
+                        column: first.x,
+                        row: first.y,
+                        modifiers: KeyModifiers::NONE,
+                    }))
+                    .unwrap();
+                let mut buffer = Buffer::empty(area);
+                let pending = presenter.paint(area, &mut buffer).unwrap();
+                presenter.present(pending);
+            }
+            let last = presenter
+                .scene
+                .iter()
+                .find(|target| target.key == "conversation-31")
+                .expect("every item of the current page remains reachable")
+                .area
+                .visible();
+            presenter
+                .input(Event::Mouse(MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    column: last.x,
+                    row: last.y,
+                    modifiers: KeyModifiers::NONE,
+                }))
+                .unwrap();
+            assert_eq!(
+                presenter.application.frame(&presenter.root).unwrap().state["count"],
+                2
+            );
+            for key in ["previous", "more", "refresh"] {
+                assert!(presenter.scene.iter().any(|target| target.key == key));
+            }
+            presenter
+                .surface_closed(&presenter.surface(), Ok(()))
+                .unwrap();
+            presenter.shutdown().unwrap();
+        }
+    }
+}

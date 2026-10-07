@@ -43,6 +43,8 @@ test('busy TUI navigation preserves native buttons and restores their original a
     active: null,
     busy: false,
     more: false,
+    previous: false,
+    failed: false,
   };
   let result = navigation.mount(props, {});
   const button = () => result.frame.view.children.find((node) => node.key === 'new');
@@ -190,7 +192,7 @@ class Client {
   }
   start({ through = 0, parts = [], run = null, chunks = [] } = {}) {
     this.query('page', []);
-    this.query('list', { revision: 'catalog', sessions: [session], nextCursor: null });
+    this.query('list', { revision: 'catalog', sessions: [session], before: null, after: null });
     this.query('observe', { session, through, run, parts });
     this.query('history', { kind: 'ready', through, chunks, before: null, after: null });
     this.input({
@@ -1186,7 +1188,7 @@ test('settings routing keeps original composer key and commands while invalidati
 });
 test('sidebar presentation retains the same children, draft command, and active work', () => {
   const client = new Client().start();
-  client.state.sessions[0].title = '长标题 · A🙂é '.repeat(25);
+  client.state.selected.title = '长标题 · A🙂é '.repeat(25);
   client.component('draft', draft);
   const originalState = structuredClone(client.state);
   const originalSlots = modelSlots(client.output.frame.view);
@@ -2910,7 +2912,7 @@ for (const readyFirst of [false, true]) {
         textKind: 'text',
       };
       client.query('page', []);
-      client.query('list', { revision: 'catalog', sessions: [session], nextCursor: null });
+      client.query('list', { revision: 'catalog', sessions: [session], before: null, after: null });
       client.query('observe', {
         session,
         through: 100,
@@ -4918,4 +4920,126 @@ test('independent workbench variants retain page slots and react to real child e
         assert.deepEqual(result.frame.state.selection, choice);
       }
   }
+});
+
+for (const target of ['desktop', 'tui']) {
+  test(`${target} session pages reach all entries without moving the selected conversation`, async () => {
+    const { component } = await import(
+      pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+    );
+    const client = new Client(component).start();
+    const active = structuredClone({
+      selected: client.state.selected,
+      watch: client.state.watch,
+      window: client.state.window,
+      command: client.state.command,
+      epoch: client.state.epoch,
+    });
+    const all = Array.from({ length: 145 }, (_, index) => ({
+      ...session,
+      id: `session-${String(index).padStart(3, '0')}`,
+      title: `Conversation ${index}`,
+    }));
+    const page = (offset) => ({
+      revision: 'catalog-2',
+      sessions: all.slice(offset, offset + 32),
+      before: offset ? all[offset].id : null,
+      after: offset + 32 < all.length ? all[offset + 31].id : null,
+    });
+    client.component('refresh');
+    assert.deepEqual(client.find('list').input, { kind: 'start' });
+    client.query('list', page(0));
+    const visited = [...client.state.catalog.sessions];
+    for (let offset = 32; offset < all.length; offset += 32) {
+      const cursor = client.state.catalog.after;
+      client.component('more');
+      assert.deepEqual(client.find('list').input, { kind: 'after', revision: 'catalog-2', cursor });
+      client.query('list', page(offset));
+      assert.ok(client.state.catalog.sessions.length <= 32);
+      visited.push(...client.state.catalog.sessions);
+    }
+    assert.deepEqual(
+      visited.map((entry) => entry.id),
+      all.map((entry) => entry.id),
+    );
+    for (let offset = 96; offset >= 0; offset -= 32) {
+      const cursor = client.state.catalog.before;
+      client.component('previous');
+      assert.deepEqual(client.find('list').input, {
+        kind: 'before',
+        revision: 'catalog-2',
+        cursor,
+      });
+      client.query('list', page(offset));
+    }
+    assert.deepEqual(
+      {
+        selected: client.state.selected,
+        watch: client.state.watch,
+        window: client.state.window,
+        command: client.state.command,
+        epoch: client.state.epoch,
+      },
+      active,
+    );
+    const oldPage = structuredClone(client.state.catalog);
+    client.component('more');
+    client.complete(client.find('list'), { status: 'failed', error: 'agent_catalog_unavailable' });
+    assert.deepEqual(client.state.catalog, oldPage);
+    assert.equal(client.state.catalogFailed, true);
+    assert.equal(client.state.notice, null);
+    assert.equal(
+      modelSlots(client.output.frame.view).find((node) => node.binding === 'composer').props
+        .enabled,
+      true,
+    );
+    client.component('refresh');
+    client.query('list', page(0));
+    assert.equal(client.state.catalogFailed, false);
+    // Creation leaves the revisioned page intact until the fresh catalog returns.
+    client.component('create');
+    const created = { ...session, id: 'created', title: 'Newly created' };
+    client.complete(client.find('create'), returned(created));
+    client.query('list', { revision: 'catalog-3', sessions: [created], before: null, after: null });
+    assert.deepEqual(client.state.selected, created);
+    const replay = new Client(component);
+    const stale = replay.find('list');
+    replay.query('page', [{ cursor: 7, caller: reference.source, consumer: [uuid(9)], reference }]);
+    replay.complete(replay.find('read'), { status: 'failed', reason: 'temporarily unavailable' });
+    replay.raw('check');
+    replay.query('read', returned(null).reply);
+    const fresh = replay.find('list');
+    assert.notEqual(stale.key, fresh.key);
+    replay.complete(fresh, {
+      status: 'succeeded',
+      value: { revision: 'catalog-3', sessions: [created], before: null, after: null },
+    });
+    replay.complete(stale, { status: 'succeeded', value: page(0) });
+    assert.equal(replay.state.catalog.revision, 'catalog-3');
+    assert.deepEqual(replay.state.selected, created);
+  });
+}
+
+test('session catalog contracts require explicit boundaries and bound the page size', async () => {
+  const { default: Ajv } = await import('ajv/dist/2020.js');
+  const method = sdk.contracts.agent.interface.methods.list;
+  const ajv = new Ajv({ strict: false, formats: { uint64: true } });
+  const validate = ajv.compile(method.output);
+  const page = {
+    revision: 'catalog',
+    sessions: Array.from({ length: 32 }, () => session),
+    before: null,
+    after: null,
+  };
+  assert.equal(validate(page), true);
+  for (const boundary of ['before', 'after']) {
+    const incomplete = { ...page };
+    delete incomplete[boundary];
+    assert.equal(validate(incomplete), false);
+  }
+  assert.equal(validate({ ...page, sessions: [...page.sessions, session] }), false);
+  const position = ajv.compile(method.input);
+  assert.equal(position({ kind: 'start' }), true);
+  assert.equal(position({ kind: 'before', revision: 'catalog', cursor: 'session' }), true);
+  assert.equal(position({ kind: 'after', cursor: 'session' }), false);
 });

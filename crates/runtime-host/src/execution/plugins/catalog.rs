@@ -57,7 +57,7 @@ impl Executions {
             .scoped_sessions::<SessionConfiguration>(
                 scope,
                 input.revision.as_deref(),
-                input.cursor.as_deref(),
+                input.cursor.as_deref().into(),
                 input.include_archived,
             )
             .await

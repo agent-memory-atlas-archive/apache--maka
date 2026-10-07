@@ -45,10 +45,17 @@ impl Handler for Agent {
             match method.as_str() {
                 "list" => {
                     let input: List = decode(input)?;
-                    if input
-                        .cursor
-                        .as_ref()
-                        .is_some_and(|cursor| !owner.owns(cursor))
+                    use maka_event_log::sessions::SessionPosition;
+                    let (revision, position) = match &input {
+                        List::Start => (None, SessionPosition::Start),
+                        List::After { revision, cursor } => {
+                            (Some(revision.as_str()), SessionPosition::After(cursor))
+                        }
+                        List::Before { revision, cursor } => {
+                            (Some(revision.as_str()), SessionPosition::Before(cursor))
+                        }
+                    };
+                    if matches!(position, SessionPosition::After(cursor) | SessionPosition::Before(cursor) if !owner.owns(cursor))
                     {
                         return Err("agent_cursor_invalid".into());
                     }
@@ -56,8 +63,8 @@ impl Handler for Agent {
                         .store
                         .scoped_sessions::<SessionConfiguration>(
                             CatalogScope::IdPrefix(owner.prefix.clone()),
-                            input.revision.as_deref(),
-                            input.cursor.as_deref(),
+                            revision,
+                            position,
                             false,
                         )
                         .await
@@ -65,7 +72,8 @@ impl Handler for Agent {
                     encode(SessionPage {
                         revision: page.revision,
                         sessions: page.sessions.into_iter().map(summary).collect(),
-                        next_cursor: page.next_cursor,
+                        before: page.previous_cursor,
+                        after: page.next_cursor,
                     })
                 }
                 "create" => {

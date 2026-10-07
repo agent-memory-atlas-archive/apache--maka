@@ -268,6 +268,70 @@ fn replace(
     .unwrap();
 }
 #[gpui::test]
+#[ignore = "opt-in packaged navigation build and native Desktop scene ABI"]
+fn packaged_session_navigation_renders_bounded_pages_and_keeps_controls_accessible(
+    cx: &mut TestAppContext,
+) {
+    let repository = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let build = std::process::Command::new("node")
+        .arg("packages/agent-product/scripts/build.mjs")
+        .current_dir(&repository)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let output = std::process::Command::new("node").args(["--input-type=module","-e",r#"
+        import {component} from './packages/agent-product/dist/packages/navigation/desktop.js';
+        import {activate} from './packages/agent-product/dist/packages/appearance/desktop.js';
+        const frames=[];
+        for(const scheme of ['light','dark']) for(const locale of ['en','zh-CN','zh-TW']) for(const status of ['ready','busy','failed']) {
+          const props={theme:activate({scheme}).Appearance.value,locale,sessions:Array.from({length:32},(_,i)=>({id:'conversation-'+i,title:'Conversation '+i,revision:1,updatedAt:1,archived:false})),selected:'conversation-0',previous:true,more:true,busy:status==='busy',failed:status==='failed'};
+          frames.push(component.mount(props,{}).frame.view);
+        }
+        console.log(JSON.stringify(frames));
+    "#]).current_dir(repository).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frames: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let (entity, window, _) = harness(cx);
+    cx.activate_accessibility(window);
+    for frame in frames {
+        let controls: Vec<String> = frame["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["key"] == "catalog-controls")
+            .unwrap()["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|node| node["label"].as_str().unwrap().to_owned())
+            .collect();
+        replace(cx, window, &entity, frame);
+        draw(cx, window);
+        for label in controls {
+            let bounds = ax_bounds(cx, window, &label);
+            assert!(bounds.x1 > bounds.x0 && bounds.y1 > bounds.y0);
+        }
+        cx.update_window(window, |_, _, cx| {
+            let state = entity.read(cx).state();
+            assert_eq!(state.buttons.len(), 36);
+            assert!(state.scrolls.contains_key("session-list"));
+            for key in ["previous", "more", "refresh"] {
+                assert!(state.buttons.contains_key(key));
+            }
+        })
+        .unwrap();
+    }
+}
+
+#[gpui::test]
 fn measured_truncation_keeps_full_accessible_text_and_adjacent_controls(cx: &mut TestAppContext) {
     let (entity, window, clicks) = harness(cx);
     let title = "一个很长的对话标题 · A🙂e\u{301} ".repeat(20);

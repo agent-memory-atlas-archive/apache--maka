@@ -301,7 +301,7 @@ async fn query(
         log.scoped_sessions::<SessionConfiguration>(
             maka_event_log::sessions::CatalogScope::PendingInteractions,
             revision,
-            cursor,
+            cursor.into(),
             true,
         )
         .await

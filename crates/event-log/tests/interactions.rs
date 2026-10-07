@@ -309,7 +309,7 @@ async fn pending_session_pages_use_canonical_outcomes_and_isolate_continuation_s
     second_request.session_id = "session-33".into();
     log.establish_interaction(&second_request).await.unwrap();
     let page = log
-        .scoped_sessions::<Value>(CatalogScope::PendingInteractions, None, None, true)
+        .scoped_sessions::<Value>(CatalogScope::PendingInteractions, None, None.into(), true)
         .await
         .unwrap();
     assert_eq!(page.sessions.len(), 32);
@@ -323,7 +323,7 @@ async fn pending_session_pages_use_canonical_outcomes_and_isolate_continuation_s
         .scoped_sessions::<Value>(
             CatalogScope::PendingInteractions,
             Some(&page.revision),
-            cursor,
+            cursor.into(),
             true,
         )
         .await
@@ -348,7 +348,7 @@ async fn pending_session_pages_use_canonical_outcomes_and_isolate_continuation_s
         log.scoped_sessions::<Value>(
             CatalogScope::PendingInteractions,
             Some(&page.revision),
-            cursor,
+            cursor.into(),
             true
         )
         .await,
@@ -369,7 +369,7 @@ async fn pending_session_pages_use_canonical_outcomes_and_isolate_continuation_s
         .await
         .unwrap();
     let fresh = log
-        .scoped_sessions::<Value>(CatalogScope::PendingInteractions, None, None, true)
+        .scoped_sessions::<Value>(CatalogScope::PendingInteractions, None, None.into(), true)
         .await
         .unwrap();
     assert_eq!(fresh.sessions.len(), 32);

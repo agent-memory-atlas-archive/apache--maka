@@ -55,12 +55,20 @@ pub fn configuration_schema() -> Value {
 }
 
 #[derive(Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "AgentList")]
-pub struct List {
-    pub revision: Option<String>,
-    #[schemars(length(min = 1, max = 128))]
-    pub cursor: Option<String>,
+pub enum List {
+    Start,
+    After {
+        revision: String,
+        #[schemars(length(min = 1, max = 128))]
+        cursor: String,
+    },
+    Before {
+        revision: String,
+        #[schemars(length(min = 1, max = 128))]
+        cursor: String,
+    },
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -112,8 +120,12 @@ pub struct Session {
 #[schemars(rename = "AgentSessionPage")]
 pub struct SessionPage {
     pub revision: String,
+    #[schemars(length(max = 32))]
     pub sessions: Vec<Session>,
-    pub next_cursor: Option<String>,
+    #[schemars(with = "maka_runtime::schema::RequiredNullable<String>")]
+    pub before: Option<String>,
+    #[schemars(with = "maka_runtime::schema::RequiredNullable<String>")]
+    pub after: Option<String>,
 }
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

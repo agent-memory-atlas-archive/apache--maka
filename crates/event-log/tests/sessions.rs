@@ -60,7 +60,7 @@ async fn create_replay_conflict_reopen_and_anchored_catalog_pages() {
         .scoped_sessions::<Value>(
             maka_event_log::sessions::CatalogScope::Workspace("/chosen".into()),
             None,
-            None,
+            None.into(),
             false,
         )
         .await
@@ -92,6 +92,25 @@ async fn create_replay_conflict_reopen_and_anchored_catalog_pages() {
     assert_eq!(rest.sessions[0].id, "c");
     assert_eq!(rest.revision, page.revision);
     assert!(rest.next_cursor.is_none());
+    let previous = log
+        .scoped_sessions::<Value>(
+            maka_event_log::sessions::CatalogScope::Profile,
+            Some(&page.revision),
+            maka_event_log::sessions::SessionPosition::Before("c"),
+            true,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        previous
+            .sessions
+            .iter()
+            .map(|row| row.id.as_str())
+            .collect::<Vec<_>>(),
+        ["a", "b"]
+    );
+    assert!(previous.previous_cursor.is_none());
+    assert_eq!(previous.next_cursor.as_deref(), Some("b"));
     log.create_session("d", "d", &json!({}), 30).await.unwrap();
     assert!(matches!(
         log.list_sessions::<Value>(Some(&page.revision), Some("b"), 2)
@@ -110,7 +129,7 @@ async fn create_replay_conflict_reopen_and_anchored_catalog_pages() {
         log.scoped_sessions::<Value>(
             maka_event_log::sessions::CatalogScope::Session("a".into()),
             None,
-            None,
+            None.into(),
             false,
         )
         .await

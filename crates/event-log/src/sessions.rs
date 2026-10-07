@@ -94,6 +94,20 @@ pub struct SessionPage<T> {
     pub revision: String,
     pub sessions: Vec<SessionRecord<T>>,
     pub next_cursor: Option<String>,
+    pub previous_cursor: Option<String>,
+}
+
+/// Keyset position within one revisioned session catalog.
+#[derive(Clone, Copy, Debug)]
+pub enum SessionPosition<'a> {
+    Start,
+    After(&'a str),
+    Before(&'a str),
+}
+impl<'a> From<Option<&'a str>> for SessionPosition<'a> {
+    fn from(cursor: Option<&'a str>) -> Self {
+        cursor.map_or(Self::Start, Self::After)
+    }
 }
 
 impl EventLog {
@@ -214,7 +228,7 @@ impl EventLog {
         cursor: Option<&str>,
         limit: usize,
     ) -> Result<SessionPage<T>, StoreError> {
-        self.session_page(None, expected_revision, cursor, limit, true)
+        self.session_page(None, expected_revision, cursor.into(), limit, true)
             .await
     }
 
@@ -223,13 +237,13 @@ impl EventLog {
         &self,
         scope: CatalogScope,
         expected_revision: Option<&str>,
-        cursor: Option<&str>,
+        position: SessionPosition<'_>,
         include_archived: bool,
     ) -> Result<SessionPage<T>, StoreError> {
         self.session_page(
             Some(scope),
             expected_revision,
-            cursor,
+            position,
             MAX_SESSION_PAGE,
             include_archived,
         )
@@ -240,7 +254,7 @@ impl EventLog {
         &self,
         scope: Option<CatalogScope>,
         expected_revision: Option<&str>,
-        cursor: Option<&str>,
+        position: SessionPosition<'_>,
         limit: usize,
         include_archived: bool,
     ) -> Result<SessionPage<T>, StoreError> {
@@ -248,6 +262,11 @@ impl EventLog {
         if limit == 0 || limit > MAX_SESSION_PAGE {
             return Err(invalid("session page limit must be 1..=32"));
         }
+        let (cursor, reverse) = match position {
+            SessionPosition::Start => (None, false),
+            SessionPosition::After(cursor) => (Some(cursor), false),
+            SessionPosition::Before(cursor) => (Some(cursor), true),
+        };
         if let Some(cursor) = cursor {
             validate_id(cursor)?;
             if expected_revision.is_none() {
@@ -297,8 +316,11 @@ impl EventLog {
                             actual: revision,
                         });
                     }
-                    let ids = sqlx::query_scalar::<_, String>(
-                        "SELECT id FROM session_control WHERE id > ?
+                    // Direction is closed native state; every scope and user value
+                    // remains a bound parameter. Reverse reads return ascending pages.
+                    let (comparison, order) = if reverse { ("<", "DESC") } else { (">", "ASC") };
+                    let sql = format!(
+                        "SELECT id FROM session_control WHERE id {comparison} ?
                          AND NOT EXISTS (SELECT 1 FROM session_retirements WHERE session_id=id AND remove_session=1)
                          AND (? = 0 OR archived = 0)
                          AND (? IS NULL OR id = ?)
@@ -309,8 +331,9 @@ impl EventLog {
                              WHERE request.session_id = session_control.id AND NOT EXISTS (
                                  SELECT 1 FROM interaction_outcomes outcome
                                  WHERE outcome.request_id = request.request_id)))
-                         ORDER BY id LIMIT ?",
-                    )
+                         ORDER BY id {order} LIMIT ?"
+                    );
+                    let mut ids = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql))
                     .bind(cursor.as_deref().unwrap_or(""))
                     .bind(active_only)
                     .bind(&session)
@@ -325,6 +348,8 @@ impl EventLog {
                     .fetch_all(&mut *tx)
                     .await?;
                     let has_more = ids.len() > limit;
+                    ids.truncate(limit);
+                    if reverse { ids.reverse(); }
                     let mut sessions: Vec<SessionRecord<T>> = Vec::with_capacity(limit);
                     for id in ids.iter().take(limit) {
                         sessions.push(
@@ -333,16 +358,17 @@ impl EventLog {
                                 .ok_or(StoreError::SessionNotFound)?,
                         );
                     }
-                    let next_cursor = if has_more {
+                    let next_cursor = if (!reverse && has_more) || (reverse && cursor.is_some()) {
                         sessions.last().map(|record| record.id.clone())
                     } else {
                         None
                     };
-                    Ok(SessionPage {
-                        revision,
-                        sessions,
-                        next_cursor,
-                    })
+                    let previous_cursor = if (reverse && has_more) || (!reverse && cursor.is_some()) {
+                        sessions.first().map(|record| record.id.clone())
+                    } else {
+                        None
+                    };
+                    Ok(SessionPage { revision, sessions, next_cursor, previous_cursor })
                 })
             })
             .await

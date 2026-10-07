@@ -35,6 +35,7 @@ import type {
   AgentRun,
   AgentSession,
   AgentSessionPage,
+  AgentList,
   AgentStarted,
   CallerIntent,
   Component,
@@ -52,7 +53,7 @@ import { fill, output, paint, pixels, slot, type Target } from './view.js';
 
 type Notice = keyof Copy | null;
 type Request =
-  | { kind: 'list'; append: boolean }
+  | { kind: 'list'; generation: number }
   | { kind: 'observe'; epoch: number }
   | {
       kind: 'history';
@@ -98,10 +99,10 @@ export interface State {
   revision: number;
   serial: number;
   epoch: number;
-  sessions: AgentSession[];
-  listRevision: string | null;
-  listCursor: string | null;
-  selected: string | null;
+  catalog: AgentSessionPage | null;
+  catalogGeneration: number;
+  catalogFailed: boolean;
+  selected: AgentSession | null;
   model: SettingsModelChoice | null;
   catalogEpoch: number;
   modelRefreshing: boolean;
@@ -252,10 +253,26 @@ function intent(
   state.pending[key] = request;
   actions.push({ key, binding, member: 0, method, input, resources, continuations });
 }
+function catalogPending(state: State): boolean {
+  return Object.values(state.pending).some(
+    (request) => request.kind === 'list' && request.generation === state.catalogGeneration,
+  );
+}
+function catalog(state: State, actions: Action[], position: AgentList = { kind: 'start' }) {
+  state.catalogFailed = false;
+  intent(
+    state,
+    actions,
+    { kind: 'list', generation: ++state.catalogGeneration },
+    'agent',
+    'list',
+    position,
+  );
+}
 function observe(state: State, actions: Action[]) {
   if (state.selected)
     intent(state, actions, { kind: 'observe', epoch: state.epoch }, 'agent', 'observe', {
-      sessionId: state.selected,
+      sessionId: state.selected.id,
     });
 }
 function history(
@@ -275,7 +292,7 @@ function history(
     { kind: 'history', epoch: state.epoch, navigation, through, latest, implicit, position },
     'agent',
     'history',
-    { sessionId: state.selected, through, position },
+    { sessionId: state.selected.id, through, position },
     {},
     implicit ? [{ child: 'timeline', method: 'tail', input: null }] : [],
   );
@@ -308,8 +325,8 @@ function follow(state: State, actions: Action[]) {
     history(state, actions, { kind: 'tail' }, state.latestKnown, true, true);
   }
 }
-function select(state: State, actions: Action[], sessionId: string) {
-  state.selected = sessionId;
+function select(state: State, actions: Action[], session: AgentSession) {
+  state.selected = session;
   state.epoch++;
   state.window = null;
   state.source = null;
@@ -349,7 +366,7 @@ function readToolSource(state: State, actions: Action[], position: SourcePositio
     'agent',
     'toolSource',
     {
-      sessionId: state.selected,
+      sessionId: state.selected.id,
       through: source.through,
       sequence: source.chunk.sequence,
       field: source.toolSource.field,
@@ -380,14 +397,11 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
       after: state.restoreAfter,
       limit: 1,
     });
-    intent(state, actions, { kind: 'list', append: false }, 'agent', 'list', {});
+    catalog(state, actions);
   } else if (request.kind === 'create') {
     const session = value as AgentSession;
-    state.sessions = [session, ...state.sessions.filter((item) => item.id !== session.id)].slice(
-      0,
-      128,
-    );
-    select(state, actions, session.id);
+    select(state, actions, session);
+    catalog(state, actions);
   } else if (request.kind === 'send') {
     const started = value as AgentStarted;
     if (started.sessionId !== request.sessionId) {
@@ -403,12 +417,12 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
       edit: { kind: 'reset', text: '' },
     };
     state.notice = null;
-    if (state.selected === started.sessionId) {
+    if (state.selected?.id === started.sessionId) {
       observe(state, actions);
     }
   } else {
     state.notice = 'stopping';
-    if (state.selected === request.sessionId) observe(state, actions);
+    if (state.selected?.id === request.sessionId) observe(state, actions);
   }
 }
 function receipt(state: State, actions: Action[], request: Mutation, reply: OperationReply) {
@@ -421,6 +435,10 @@ function receipt(state: State, actions: Action[], request: Mutation, reply: Oper
 }
 function queryFailed(state: State, request: Request) {
   // Optional presentation work does not disable input or change execution facts.
+  if (request.kind === 'list') {
+    if (request.generation === state.catalogGeneration) state.catalogFailed = true;
+    return;
+  }
   if (request.kind === 'history' && request.implicit) return;
   if (request.kind === 'source' || request.kind === 'toolSource') {
     if (request.epoch === state.epoch && request.navigation === state.source?.navigation) {
@@ -446,25 +464,22 @@ function queryFailed(state: State, request: Request) {
 function querySucceeded(state: State, actions: Action[], request: Request, value: unknown) {
   switch (request.kind) {
     case 'list': {
-      const page = value as AgentSessionPage;
-      state.sessions = (request.append ? [...state.sessions, ...page.sessions] : page.sessions)
-        .filter(
-          (session, index, list) => list.findIndex((item) => item.id === session.id) === index,
-        )
-        .slice(0, 128);
-      state.listRevision = page.revision;
-      state.listCursor = page.nextCursor ?? null;
-      if (!state.selected && state.sessions.length) select(state, actions, state.sessions[0].id);
+      if (request.generation !== state.catalogGeneration) break;
+      state.catalog = value as AgentSessionPage;
+      state.catalogFailed = false;
+      if (!state.selected && state.catalog.sessions.length)
+        select(state, actions, state.catalog.sessions[0]);
       break;
     }
     case 'observe': {
       if (request.epoch !== state.epoch) break;
       const observation = value as AgentObservation;
-      if (observation.session.id !== state.selected) {
+      if (observation.session.id !== state.selected?.id) {
         state.loading = false;
         state.notice = 'unavailable';
         break;
       }
+      state.selected = observation.session;
       if (observation.through >= state.runThrough) {
         state.run = observation.run ?? null;
         state.runThrough = observation.through;
@@ -483,7 +498,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         );
         state.watch = {
           key: 'watch-' + state.epoch,
-          input: { sessionId: state.selected!, after },
+          input: { sessionId: state.selected!.id, after },
           last: after,
         };
       }
@@ -517,7 +532,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
       }
       if (page.kind === 'preparing') {
         intent(state, actions, request, 'agent', 'history', {
-          sessionId: state.selected,
+          sessionId: state.selected!.id,
           through: request.through,
           position: request.position,
         });
@@ -563,7 +578,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
       }
       if (page.kind === 'preparing') {
         intent(state, actions, request, 'agent', 'toolSource', {
-          sessionId: state.selected,
+          sessionId: state.selected!.id,
           through: request.through,
           sequence: request.sequence,
           field: request.field,
@@ -615,7 +630,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
           'agent',
           'history',
           {
-            sessionId: state.selected,
+            sessionId: state.selected!.id,
             through: request.through,
             position: request.position,
           },
@@ -807,12 +822,14 @@ function frame(
     {
       theme,
       locale,
-      sessions: state.sessions,
-      selected: state.selected,
-      busy,
-      more: !!state.listCursor && state.sessions.length < 128,
+      sessions: state.catalog?.sessions ?? [],
+      selected: state.selected?.id ?? null,
+      busy: busy || catalogPending(state),
+      previous: !!state.catalog?.before,
+      more: !!state.catalog?.after,
+      failed: state.catalogFailed,
     },
-    { create: 'create', select: 'select', more: 'sessions' },
+    { create: 'create', select: 'select', more: 'more', previous: 'previous', refresh: 'refresh' },
   );
   const timeline = slot(
     'timeline',
@@ -908,13 +925,7 @@ function frame(
         ? text.waiting
         : text.working
       : '';
-  const title = ui.text(
-    'title',
-    state.sessions.find((session) => session.id === state.selected)?.title ?? 'maka',
-    17,
-    theme.text,
-    550,
-  );
+  const title = ui.text('title', state.selected?.title ?? 'maka', 17, theme.text, 550);
   const models = slot(
     'models',
     'models',
@@ -1125,9 +1136,9 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         revision: 0,
         serial: 0,
         epoch: 0,
-        sessions: [],
-        listRevision: null,
-        listCursor: null,
+        catalog: null,
+        catalogGeneration: 0,
+        catalogFailed: false,
         selected: null,
         model: null,
         catalogEpoch: 0,
@@ -1158,7 +1169,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         notice: null,
       };
       const actions: Action[] = [];
-      intent(state, actions, { kind: 'list', append: false }, 'agent', 'list', {});
+      catalog(state, actions);
       intent(state, actions, { kind: 'restorePage' }, 'history', 'page', { after: 0, limit: 1 });
       return frame(target, locale, state, values, actions);
     },
@@ -1240,7 +1251,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
             intent(
               state,
               actions,
-              { kind: 'read', draft, sessionId: state.selected, model: state.model.selection },
+              { kind: 'read', draft, sessionId: state.selected.id, model: state.model.selection },
               'reader',
               'read',
               { start: 0, end: draft.snapshot.text.bytes },
@@ -1263,8 +1274,8 @@ export function workspace(target: Target, locale: string): Component<State, Reco
           state.selected &&
           state.run
         ) {
-          intent(state, actions, { kind: 'stop', sessionId: state.selected }, 'agent', 'stop', {
-            sessionId: state.selected,
+          intent(state, actions, { kind: 'stop', sessionId: state.selected.id }, 'agent', 'stop', {
+            sessionId: state.selected.id,
             invocationId: state.run.invocationId,
           });
         } else if (
@@ -1275,25 +1286,37 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         ) {
           state.model = input.event as SettingsModelChoice;
           state.modelRefreshing = false;
-        } else if (input.name === 'create' && !mutationPending(state))
+        } else if (input.name === 'create' && !mutationPending(state) && !catalogPending(state))
           intent(state, actions, { kind: 'create' }, 'agent', 'create', {
             title: copy(locale).new,
           });
-        else if (input.name === 'select' && !mutationPending(state)) {
+        else if (input.name === 'select' && !mutationPending(state) && !catalogPending(state)) {
           const sessionId = (input.event as { sessionId: string }).sessionId;
-          if (state.sessions.some((session) => session.id === sessionId))
-            select(state, actions, sessionId);
+          const session = state.catalog?.sessions.find((item) => item.id === sessionId);
+          if (session) select(state, actions, session);
         } else if (
           input.child === 'navigation' &&
-          input.name === 'more' &&
-          state.listCursor &&
-          !Object.values(state.pending).some((request) => request.kind === 'list')
-        )
-          intent(state, actions, { kind: 'list', append: true }, 'agent', 'list', {
-            revision: state.listRevision,
-            cursor: state.listCursor,
-          });
-        else if (input.child === 'image-viewer' && input.name === 'closed') {
+          ['refresh', 'more', 'previous'].includes(input.name) &&
+          !mutationPending(state) &&
+          !catalogPending(state)
+        ) {
+          const page = state.catalog;
+          if (input.name === 'refresh') catalog(state, actions);
+          else if (!state.catalogFailed && page) {
+            if (input.name === 'more' && page.after)
+              catalog(state, actions, {
+                kind: 'after',
+                revision: page.revision,
+                cursor: page.after,
+              });
+            else if (input.name === 'previous' && page.before)
+              catalog(state, actions, {
+                kind: 'before',
+                revision: page.revision,
+                cursor: page.before,
+              });
+          }
+        } else if (input.child === 'image-viewer' && input.name === 'closed') {
           state.image = null;
           state.followAttempt = null;
           follow(state, actions);
@@ -1314,7 +1337,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
           );
           if (chunk)
             state.image = {
-              sessionId: state.selected,
+              sessionId: state.selected.id,
               through: state.window.page.through,
               sequence,
             };
@@ -1382,7 +1405,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
                 },
                 'agent',
                 'history',
-                { sessionId: state.selected, through: source.through, position },
+                { sessionId: state.selected!.id, through: source.through, position },
               );
             }
           }
@@ -1461,8 +1484,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
               after: state.restoreAfter,
               limit: 1,
             });
-          else if (!state.selected)
-            intent(state, actions, { kind: 'list', append: false }, 'agent', 'list', {});
+          else if (!state.selected) catalog(state, actions);
           else {
             const window = state.window;
             select(state, actions, state.selected);

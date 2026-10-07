@@ -24,6 +24,8 @@ import type {
   ModelSelection,
   AgentSend,
   AgentHistoryPage,
+  AgentSessionPage,
+  AgentList,
   HistoryPosition,
   SetDefaultConnectionTargetInput,
   SettingsModelsPage,
@@ -464,3 +466,20 @@ const guardedQuery = {
   continuations: [{ child: 'reader', method: 'reading', input: null }],
 } satisfies Action;
 void [nativeContinuation, capturedResource, removedCapture, stalePresentation, guardedQuery];
+
+const sessionWindow = {
+  revision: 'catalog',
+  sessions: [],
+  before: null,
+  after: null,
+} satisfies AgentSessionPage;
+// @ts-expect-error A missing boundary is not an end-of-catalog receipt.
+const missingSessionBoundary: AgentSessionPage = { revision: 'catalog', sessions: [], after: null };
+const nextSessionPage = {
+  kind: 'after',
+  revision: 'catalog',
+  cursor: 'session',
+} satisfies AgentList;
+// @ts-expect-error Every continuation belongs to one catalog revision.
+const unfencedSessionPage: AgentList = { kind: 'before', cursor: 'session' };
+void [sessionWindow, missingSessionBoundary, nextSessionPage, unfencedSessionPage];

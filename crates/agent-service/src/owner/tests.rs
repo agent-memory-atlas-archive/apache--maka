@@ -849,7 +849,7 @@ async fn original_operation_conflicts_and_private_namespace_never_cross_sessions
             .start(
                 fixture.binding(2).await,
                 "list".into(),
-                json!({}),
+                json!({"kind":"start"}),
                 scope(&fixture.issuer, true),
                 Attachments::new().into(),
             )
@@ -1112,7 +1112,7 @@ async fn public_availability_resumes_stable_sessions_and_separates_deployments()
             .start(
                 binding.clone(),
                 "list".into(),
-                json!({}),
+                json!({"kind":"start"}),
                 scope(&fixture.issuer, true),
                 Attachments::new().into(),
             )
@@ -1153,7 +1153,7 @@ async fn public_availability_resumes_stable_sessions_and_separates_deployments()
             .start(
                 binding.clone(),
                 "list".into(),
-                json!({}),
+                json!({"kind":"start"}),
                 scope(&fixture.issuer, true),
                 Attachments::new().into(),
             )
@@ -1427,6 +1427,96 @@ async fn tool_source_uses_original_agent_grant_and_frozen_canonical_fields() {
         )
         .await;
     assert!(denied.is_err());
+    fixture.app.shutdown().await.unwrap();
+    fixture.config.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn private_catalog_pages_reach_every_session_in_both_directions() {
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", 2, None).await;
+    let mut expected = Vec::new();
+    for index in 0..145 {
+        expected.push(fixture.create(&format!("Conversation {index}")).await);
+    }
+    expected.sort();
+    fixture
+        .store
+        .create_session("foreign_session", "foreign", &json!({"foreign":true}), 1)
+        .await
+        .unwrap();
+    let mut page = fixture
+        .query("list", json!({"kind":"start"}))
+        .await
+        .unwrap();
+    let revision = page["revision"].clone();
+    let first = page.clone();
+    let mut actual = Vec::new();
+    loop {
+        let entries = page["sessions"].as_array().unwrap();
+        assert!(entries.len() <= 32);
+        actual.extend(
+            entries
+                .iter()
+                .map(|entry| entry["id"].as_str().unwrap().to_owned()),
+        );
+        if page["after"].is_null() {
+            break;
+        }
+        page = fixture
+            .query(
+                "list",
+                json!({"kind":"after", "revision":revision, "cursor":page["after"]}),
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(actual, expected);
+    while !page["before"].is_null() {
+        let last_first = page["sessions"][0]["id"].as_str().unwrap().to_owned();
+        page = fixture
+            .query(
+                "list",
+                json!({"kind":"before", "revision":revision, "cursor":page["before"]}),
+            )
+            .await
+            .unwrap();
+        let entries = page["sessions"].as_array().unwrap();
+        let ids: Vec<_> = entries
+            .iter()
+            .map(|entry| entry["id"].as_str().unwrap())
+            .collect();
+        assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(
+            ids.iter()
+                .all(|id| expected.iter().any(|item| item == id) && *id < last_first.as_str())
+        );
+    }
+    assert_eq!(page, first);
+    for kind in ["after", "before"] {
+        assert!(
+            fixture
+                .query(
+                    "list",
+                    json!({"kind":kind,"revision":revision,"cursor":"foreign_session"})
+                )
+                .await
+                .unwrap_err()
+                .contains("agent_cursor_invalid")
+        );
+    }
+    fixture.create("New conversation").await;
+    for kind in ["after", "before"] {
+        assert!(
+            fixture
+                .query(
+                    "list",
+                    json!({"kind":kind,"revision":revision,"cursor":expected[32]})
+                )
+                .await
+                .unwrap_err()
+                .contains("agent_catalog_unavailable")
+        );
+    }
     fixture.app.shutdown().await.unwrap();
     fixture.config.shutdown().await.unwrap();
 }

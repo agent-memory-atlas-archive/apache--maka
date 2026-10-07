@@ -1012,6 +1012,20 @@ export type CatalogMutationResult =
       target: ConnectionTarget;
       kind: 'invalid_default_target';
     };
+export type AgentList =
+  | {
+      kind: 'start';
+    }
+  | {
+      revision: string;
+      cursor: string;
+      kind: 'after';
+    }
+  | {
+      revision: string;
+      cursor: string;
+      kind: 'before';
+    };
 export type AgentDeliveryFact =
   | {
       kind: 'opened';
@@ -2224,10 +2238,6 @@ export interface SetDefaultConnectionTargetInput {
   expectedCatalogRevision: number;
   target: ConnectionTarget | null;
 }
-export interface AgentList {
-  revision?: string | null;
-  cursor?: string | null;
-}
 export interface AgentCreate {
   title: string;
 }
@@ -2253,8 +2263,12 @@ export interface AgentSession {
 }
 export interface AgentSessionPage {
   revision: string;
+  /**
+   * @maxItems 32
+   */
   sessions: AgentSession[];
-  nextCursor?: string | null;
+  before: string | null;
+  after: string | null;
 }
 export interface AgentStarted {
   sessionId: string;

@@ -145,32 +145,55 @@ export function components(target: Target): {
           ui.text('brand', 'maka', 24, props.theme.text, 650),
           ui.button('new', text.new, props.busy),
           ui.text('heading', text.conversations, 12, props.theme.muted, 550),
-          ...props.sessions.map((session) => {
-            const button = ui.button(
-              session.id,
-              target === 'desktop' ? session.title : compactLabel(session.title, 48),
-              props.busy,
-            );
-            if (target === 'desktop')
-              button.style = {
-                ...(button.style as object),
-                width: fill,
-                minWidth: 0,
-                justify: 'start',
-                truncate: true,
-              };
-            return ui.box('session-' + session.id, [button], {
-              surface: session.id === props.selected,
-              style: { width: fill, minWidth: 0, radius: 8, shrink: 0 },
-            });
-          }),
-          ...(props.more ? [ui.button('more', text.moreSessions, props.busy)] : []),
+          ...(props.failed
+            ? [ui.text('catalog-error', text.sessionsUnavailable, 12, props.theme.muted)]
+            : []),
+          ui.box(
+            'catalog-controls',
+            [
+              ...(props.previous
+                ? [ui.button('previous', text.previousSessions, props.busy || props.failed)]
+                : []),
+              ...(props.more
+                ? [ui.button('more', text.moreSessions, props.busy || props.failed)]
+                : []),
+              ui.button('refresh', text.refreshSessions, props.busy),
+            ],
+            { row: true, style: { wrap: true }, terminal: { wrap: true } },
+          ),
+          ui.box(
+            'session-list',
+            props.sessions.map((session) => {
+              const button = ui.button(
+                session.id,
+                target === 'desktop' ? session.title : compactLabel(session.title, 48),
+                props.busy,
+              );
+              if (target === 'desktop')
+                button.style = {
+                  ...(button.style as object),
+                  width: fill,
+                  minWidth: 0,
+                  justify: 'start',
+                  truncate: true,
+                };
+              return ui.box('session-' + session.id, [button], {
+                surface: session.id === props.selected,
+                style: { width: fill, minWidth: 0, radius: 8, shrink: 0 },
+              });
+            }),
+            {
+              scroll: 'anchor',
+              style: { width: fill, height: pixels(0), grow: 1, minHeight: 0 },
+              terminal: { grow: 1 },
+            },
+          ),
         ],
         {
           surface: true,
           padding: target === 'desktop' ? 20 : 1,
           style: { height: fill, width: fill },
-          scroll: 'anchor',
+          terminal: { grow: 1 },
         },
       ),
     );
@@ -578,7 +601,11 @@ export function components(target: Target): {
         const out = navigationFrame({ revision: state.revision + 1 }, props);
         if (input.kind === 'raw' && !props.busy) {
           if (input.key === 'new') out.events.push({ name: 'create', value: {} });
-          else if (input.key === 'more') out.events.push({ name: 'more', value: {} });
+          else if (input.key === 'refresh') out.events.push({ name: 'refresh', value: {} });
+          else if (input.key === 'more' && props.more && !props.failed)
+            out.events.push({ name: 'more', value: {} });
+          else if (input.key === 'previous' && props.previous && !props.failed)
+            out.events.push({ name: 'previous', value: {} });
           else {
             const session = props.sessions.find((session) => session.id === input.key);
             if (session) out.events.push({ name: 'select', value: { sessionId: session.id } });

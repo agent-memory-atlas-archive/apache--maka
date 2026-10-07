@@ -112,7 +112,7 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
         .scoped_sessions::<Value>(
             maka_event_log::sessions::CatalogScope::Profile,
             None,
-            None,
+            None.into(),
             true,
         )
         .await

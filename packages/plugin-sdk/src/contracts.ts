@@ -3435,18 +3435,57 @@ export const contracts = {
           input: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
             title: 'AgentList',
-            type: 'object',
-            properties: {
-              revision: {
-                type: ['string', 'null'],
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'start',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
               },
-              cursor: {
-                type: ['string', 'null'],
-                minLength: 1,
-                maxLength: 128,
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'string',
+                  },
+                  cursor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'after',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision', 'cursor'],
               },
-            },
-            additionalProperties: false,
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'string',
+                  },
+                  cursor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'before',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision', 'cursor'],
+              },
+            ],
           },
           output: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
@@ -3461,13 +3500,17 @@ export const contracts = {
                 items: {
                   $ref: '#/$defs/AgentSession',
                 },
+                maxItems: 32,
               },
-              nextCursor: {
+              before: {
+                type: ['string', 'null'],
+              },
+              after: {
                 type: ['string', 'null'],
               },
             },
             additionalProperties: false,
-            required: ['revision', 'sessions'],
+            required: ['revision', 'sessions', 'before', 'after'],
             $defs: {
               AgentSession: {
                 type: 'object',
