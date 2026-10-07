@@ -519,9 +519,7 @@ impl<M: InputModeKind> TextElement<M> {
 
                 // Stop auto-scroll when mouse up, and also stop selecting.
                 state.update(cx, |state, _| {
-                    state.auto_scroll.stop();
-                    state.selecting = false;
-                    state.column_select_start = None;
+                    state.cancel_pointer_selection();
                 });
             }
         });
@@ -2529,6 +2527,13 @@ impl<M: InputModeKind> Element for TextElement<M> {
         };
 
         self.state.update(cx, |state, cx| {
+            if state
+                .selecting
+                .as_ref()
+                .is_some_and(|gesture| !gesture.is_current())
+            {
+                state.cancel_pointer_selection();
+            }
             state.display_map.set_font(font, text_size, cx);
             state.display_map.ensure_text_prepared(&state.text, cx);
         });

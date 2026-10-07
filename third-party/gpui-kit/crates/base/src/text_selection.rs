@@ -675,12 +675,12 @@ type CopyCallback = Rc<dyn Fn(&mut App) -> String>;
 type ContentKeyResolver = Rc<dyn Fn(Point<Pixels>, &App) -> Option<TextSelectionContentKey>>;
 
 /// Notifications emitted by a text-selection participant.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TextSelectionEvent {
     /// The participant's window-selection projection changed.
     SelectionChanged(Option<TextSelectionSnapshot>),
     /// The active drag requests vertical auto-scroll, or `None` to stop.
-    AutoScroll(Option<Pixels>),
+    AutoScroll(Option<Pixels>, gpui::WeakInputGesture),
     /// Window selection cleared the participant's participant-local state.
     Cleared,
     /// The touch selection the participant takes part in changed: it
@@ -861,9 +861,14 @@ impl SelectableTextState {
         }))
     }
 
-    fn set_auto_scroll(&self, delta: Option<Pixels>, cx: &mut Context<Self>) {
+    fn set_auto_scroll(
+        &self,
+        delta: Option<Pixels>,
+        gesture: gpui::WeakInputGesture,
+        cx: &mut Context<Self>,
+    ) {
         let delta = delta.filter(|_| self.enabled);
-        cx.emit(TextSelectionEvent::AutoScroll(delta));
+        cx.emit(TextSelectionEvent::AutoScroll(delta, gesture));
     }
 
     fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -872,8 +877,10 @@ impl SelectableTextState {
         {
             let owner = cx.entity().downgrade();
             let admission = Arc::downgrade(&self.admission);
+            let input = window.input_gesture();
             window.defer(cx, move |window, cx| {
-                if admission.upgrade().is_some()
+                if input.is_current()
+                    && admission.upgrade().is_some()
                     && owner.upgrade().is_some_and(|owner| owner.read(cx).enabled)
                 {
                     callback(window, cx);
@@ -931,7 +938,6 @@ impl TextSelectionHandle {
                 state.admission = Arc::new(());
                 state.local_selection = false;
                 state.set_snapshot(None, cx);
-                state.set_auto_scroll(None, cx);
             }
             !enabled
         });
@@ -1362,7 +1368,7 @@ struct WindowSelectionState {
     anchor: Option<SelectionEndpoint>,
     cursor: Option<SelectionEndpoint>,
     pending_extension_anchor: Option<SelectionEndpoint>,
-    is_selecting: bool,
+    selecting: Option<gpui::InputGesture>,
     did_hit_text: bool,
     frame_generation: u64,
     finish_frame_scheduled: bool,
@@ -1591,7 +1597,7 @@ impl WindowSelectionState {
             return;
         }
         self.prune_dead_participants();
-        if self.is_selecting
+        if self.is_selecting()
             && registration.self_scroll
             && self.anchor.as_ref().and_then(SelectionEndpoint::entity_id)
                 == Some(selection.entity_id())
@@ -1630,8 +1636,8 @@ impl WindowSelectionState {
 
     /// Starts a selection gesture using bounds hit testing (useful to adapters/tests).
     #[cfg(test)]
-    fn begin(&mut self, position: Point<Pixels>, extend: bool, cx: &mut App) {
-        self.begin_impl(position, extend, false, None, cx);
+    fn begin(&mut self, position: Point<Pixels>, extend: bool, window: &Window, cx: &mut App) {
+        self.begin_impl(position, extend, false, None, window.input_gesture(), cx);
     }
 
     /// Updates the current gesture using bounds hit testing.
@@ -1640,18 +1646,37 @@ impl WindowSelectionState {
         self.update_impl(position, None, cx);
     }
 
+    fn retire_interrupted_gesture(&mut self, cx: &mut App) {
+        if self
+            .selecting
+            .as_ref()
+            .is_some_and(|gesture| !gesture.is_current())
+        {
+            self.stop_anchor_auto_scroll(cx);
+            self.selecting = None;
+            self.pending_extension_anchor = None;
+            self.refresh_held_cursor = false;
+            self.mouse_down_prepared = false;
+            if self.touch.drag.take().is_some() {
+                self.touch_changed(cx);
+            }
+            self.publish_snapshots(cx);
+        }
+    }
+
     /// Ends the current gesture and keeps its selection visible.
     pub fn end(&mut self, cx: &mut App) {
+        self.retire_interrupted_gesture(cx);
         self.pending_extension_anchor = None;
-        if !self.is_selecting {
+        if !self.is_selecting() {
             return;
         }
-        self.is_selecting = false;
+        self.stop_anchor_auto_scroll(cx);
+        self.selecting = None;
         if !self.did_hit_text {
             self.anchor = None;
             self.cursor = None;
         }
-        self.stop_anchor_auto_scroll(cx);
         self.publish_snapshots(cx);
     }
 
@@ -1666,7 +1691,7 @@ impl WindowSelectionState {
         self.anchor = None;
         self.cursor = None;
         self.pending_extension_anchor = None;
-        self.is_selecting = false;
+        self.selecting = None;
         self.did_hit_text = false;
         if self.touch.reset() {
             self.touch_changed(cx);
@@ -1794,15 +1819,16 @@ impl WindowSelectionState {
                 .is_some_and(|(a, b)| a != b);
         (anchor != cursor || different_content).then(|| {
             TextSelectionSnapshot::new(anchor_endpoint.snapshot(), cursor_endpoint.snapshot())
-                .with_selecting(self.is_selecting)
+                .with_selecting(self.is_selecting())
                 .with_window_points(Some(TextSelectionWindowPoints { anchor, cursor }))
         })
     }
 
     /// Returns whether a drag is currently in progress.
-    #[cfg(test)]
     fn is_selecting(&self) -> bool {
-        self.is_selecting
+        self.selecting
+            .as_ref()
+            .is_some_and(gpui::InputGesture::is_current)
     }
 
     fn prepare_for_mouse_down(&mut self, extend: bool, cx: &mut App) -> Vec<ClearHandler> {
@@ -1811,7 +1837,7 @@ impl WindowSelectionState {
         self.anchor = None;
         self.cursor = None;
         self.pending_extension_anchor = None;
-        self.is_selecting = false;
+        self.selecting = None;
         self.did_hit_text = false;
         if self.touch.reset() {
             self.touch_changed(cx);
@@ -1873,7 +1899,11 @@ impl WindowSelectionState {
                 .with_edge_visible(SelectionEdge::Start, start_visible)
                 .with_edge_visible(SelectionEdge::End, end_visible)
                 .with_menu_open(self.touch.menu_open)
-                .with_dragging(self.touch.drag.map(|drag| drag.edge())),
+                .with_dragging(
+                    self.is_selecting()
+                        .then(|| self.touch.drag.map(|drag| drag.edge()))
+                        .flatten(),
+                ),
         )
     }
 
@@ -2015,7 +2045,7 @@ impl WindowSelectionState {
         self.anchor = Some(to_endpoint(anchor));
         self.cursor = Some(to_endpoint(cursor));
         self.did_hit_text = true;
-        self.is_selecting = false;
+        self.selecting = None;
         self.touch.menu_open = true;
         self.publish_snapshots(cx);
         self.touch_changed(cx);
@@ -2033,11 +2063,15 @@ impl WindowSelectionState {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let gesture = window.input_gesture();
         let Some(snapshot) = self.touch_selection() else {
             return;
         };
         let handlers = self.prepare_for_mouse_down(false, cx);
         dispatch_clear_handlers(handlers, cx);
+        if !gesture.is_current() {
+            return;
+        }
         let held = snapshot.edge(edge.opposite());
         // Just inside the held end, so the anchor lands on the character it
         // marks rather than on the boundary between two participants.
@@ -2052,7 +2086,7 @@ impl WindowSelectionState {
         self.did_hit_text = anchor.inside_text || cursor.inside_text;
         self.anchor = Some(anchor);
         self.cursor = Some(cursor);
-        self.is_selecting = true;
+        self.selecting = Some(gesture);
         self.touch.active = true;
         self.touch.menu_open = false;
         self.touch.drag = Some(drag);
@@ -2061,6 +2095,7 @@ impl WindowSelectionState {
     }
 
     fn update_edge_drag(&mut self, finger: Point<Pixels>, window: &Window, cx: &mut Context<Self>) {
+        self.retire_interrupted_gesture(cx);
         let Some(drag) = self.touch.drag else {
             return;
         };
@@ -2108,7 +2143,8 @@ impl WindowSelectionState {
         window: &mut Window,
         cx: &mut App,
     ) {
-        self.begin_impl(position, extend, true, Some(window), cx);
+        let gesture = window.input_gesture();
+        self.begin_impl(position, extend, true, Some(window), gesture, cx);
     }
 
     fn update_in_window(
@@ -2117,6 +2153,7 @@ impl WindowSelectionState {
         window: &Window,
         cx: &mut Context<Self>,
     ) {
+        self.retire_interrupted_gesture(cx);
         if !cx.has_active_drag() {
             self.update_impl(position, Some(window), cx);
             self.update_auto_scroll(position, window, cx);
@@ -2170,7 +2207,7 @@ impl WindowSelectionState {
         self.anchor = Some(to_endpoint(anchor));
         self.cursor = Some(to_endpoint(cursor));
         self.did_hit_text = true;
-        self.is_selecting = false;
+        self.selecting = None;
         participant.update(cx, |state, cx| state.focus(window, cx));
         self.publish_snapshots(cx);
     }
@@ -2194,6 +2231,7 @@ impl WindowSelectionState {
         extend: bool,
         already_prepared: bool,
         window: Option<&mut Window>,
+        gesture: gpui::InputGesture,
         cx: &mut App,
     ) {
         GlobalState::init(cx);
@@ -2212,6 +2250,9 @@ impl WindowSelectionState {
         if !extend && !already_prepared {
             self.clear(cx);
         }
+        if !gesture.is_current() {
+            return;
+        }
         let endpoint = self.endpoint(position, window.as_deref(), cx);
         let focus_participant = endpoint
             .inside
@@ -2221,7 +2262,7 @@ impl WindowSelectionState {
         self.anchor = Some(anchor.clone());
         self.cursor = Some(endpoint.clone());
         self.did_hit_text = anchor.inside_text || endpoint.inside_text;
-        self.is_selecting = true;
+        self.selecting = Some(gesture);
         if let Some(participant) = focus_participant.and_then(|participant| participant.upgrade()) {
             if let Some(window) = window {
                 participant.update(cx, |state, cx| state.focus(window, cx));
@@ -2231,7 +2272,7 @@ impl WindowSelectionState {
     }
 
     fn update_impl(&mut self, position: Point<Pixels>, window: Option<&Window>, cx: &mut App) {
-        if !self.is_selecting {
+        if !self.is_selecting() {
             return;
         }
         let endpoint = self.endpoint(position, window, cx);
@@ -2448,7 +2489,7 @@ impl WindowSelectionState {
     ) {
         // A finished gesture keeps its anchor for shift-click extension; only
         // a live drag may scroll.
-        if !self.is_selecting {
+        if !self.is_selecting() {
             return;
         }
         let Some((_, registration)) = self.anchor_registration() else {
@@ -2493,54 +2534,56 @@ impl WindowSelectionState {
             return;
         };
         let admission = Arc::downgrade(&anchor.read(cx).admission);
-        self.auto_scroll.set(delta, cx, move |delta, state, cx| {
-            if admission.upgrade().is_none() || !state.is_selecting {
-                return;
-            }
-            let Some(position) = state.auto_scroll.last_drag_position else {
-                return;
-            };
-            // Hold off once the container has shown, over a few ticks, that
-            // it has nowhere left to go; the next move of the finger asks
-            // again.
-            const STALLED_TICKS: u8 = 3;
-            let geometry = state
-                .anchor_registration()
-                .map(|(_, registration)| (registration.bounds, registration.scroll_offset));
-            let (last, stalled) = &mut state.auto_scroll_stall;
-            if *last == geometry {
-                *stalled = stalled.saturating_add(1);
-                if *stalled >= STALLED_TICKS {
+        let gesture = self.selecting.as_ref().unwrap().downgrade();
+        let deferred_gesture = gesture.clone();
+        self.auto_scroll
+            .set(delta, gesture, cx, move |delta, state, cx| {
+                if admission.upgrade().is_none() || !state.is_selecting() {
                     return;
                 }
-            } else {
-                *last = geometry;
-                *stalled = 0;
-            }
-            let window = window;
-            let admission = admission.clone();
-            let gesture = cx.entity().downgrade();
-            cx.defer(move |cx| {
-                if admission.upgrade().is_none()
-                    || gesture
-                        .upgrade()
-                        .is_none_or(|gesture| !gesture.read(cx).is_selecting)
-                {
+                let Some(position) = state.auto_scroll.last_drag_position else {
                     return;
+                };
+                // Hold off once the container has shown, over a few ticks, that
+                // it has nowhere left to go; the next move of the finger asks
+                // again.
+                const STALLED_TICKS: u8 = 3;
+                let geometry = state
+                    .anchor_registration()
+                    .map(|(_, registration)| (registration.bounds, registration.scroll_offset));
+                let (last, stalled) = &mut state.auto_scroll_stall;
+                if *last == geometry {
+                    *stalled = stalled.saturating_add(1);
+                    if *stalled >= STALLED_TICKS {
+                        return;
+                    }
+                } else {
+                    *last = geometry;
+                    *stalled = 0;
                 }
-                _ = window.update(cx, |_, window, cx| {
-                    window.dispatch_event(
-                        ScrollWheelEvent {
-                            position,
-                            delta: ScrollDelta::Pixels(point(px(0.), -delta)),
-                            ..Default::default()
+                let window = window;
+                let admission = admission.clone();
+                let gesture = deferred_gesture.clone();
+                cx.defer(move |cx| {
+                    if admission.upgrade().is_none() || !gesture.is_current() {
+                        return;
+                    }
+                    _ = window.update(cx, |_, window, cx| {
+                        if !gesture.is_current() {
+                            return;
                         }
-                        .to_platform_input(),
-                        cx,
-                    );
+                        window.dispatch_event(
+                            ScrollWheelEvent {
+                                position,
+                                delta: ScrollDelta::Pixels(point(px(0.), -delta)),
+                                ..Default::default()
+                            }
+                            .to_platform_input(),
+                            cx,
+                        );
+                    });
                 });
             });
-        });
     }
 
     /// Drives the anchor participant's own scrolling, measured against the
@@ -2557,7 +2600,15 @@ impl WindowSelectionState {
         } else {
             None
         };
-        participant.update(cx, |state, cx| state.set_auto_scroll(delta, cx));
+        let Some(gesture) = self
+            .selecting
+            .as_ref()
+            .filter(|gesture| gesture.is_current())
+            .map(gpui::InputGesture::downgrade)
+        else {
+            return;
+        };
+        participant.update(cx, |state, cx| state.set_auto_scroll(delta, gesture, cx));
     }
 
     fn stop_anchor_auto_scroll(&mut self, cx: &mut App) {
@@ -2565,7 +2616,9 @@ impl WindowSelectionState {
         let Some(participant) = self.anchor_participant() else {
             return;
         };
-        participant.update(cx, |state, cx| state.set_auto_scroll(None, cx));
+        if let Some(gesture) = self.selecting.as_ref().map(gpui::InputGesture::downgrade) {
+            participant.update(cx, |state, cx| state.set_auto_scroll(None, gesture, cx));
+        }
     }
 
     /// The live participant owning the anchor of the current gesture.
@@ -2643,7 +2696,7 @@ impl TextSelection {
     ) -> bool {
         live_text_selection_state(window, cx).is_some_and(|state| {
             let state = state.read(cx);
-            (state.active_scope == scope && (state.is_selecting || state.snapshot().is_some()))
+            (state.active_scope == scope && (state.is_selecting() || state.snapshot().is_some()))
                 || state.participants.values().any(|registration| {
                     registration.registration.scope == scope
                         && registration
@@ -2995,7 +3048,7 @@ fn schedule_selection_finish_frame(
             let refresh_cursor = state.read(cx).refresh_held_cursor;
             let refresh_cursor = refresh_cursor
                 && state.update(cx, |state, cx| {
-                    if std::mem::take(&mut state.refresh_held_cursor) && state.is_selecting {
+                    if std::mem::take(&mut state.refresh_held_cursor) && state.is_selecting() {
                         // A handle drag holds the finger off the text; keep the
                         // same offset, or the cursor would hop between the two.
                         let position = window.mouse_position();
@@ -3017,6 +3070,7 @@ fn schedule_selection_finish_frame(
 }
 
 fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Window, cx: &mut App) {
+    state.query(cx, |state, cx| state.retire_interrupted_gesture(cx));
     schedule_selection_finish_frame(state, window, cx);
     let mouse_down_state = state.downgrade();
     window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
@@ -3032,6 +3086,7 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
             return;
         }
         if phase.capture() {
+            let gesture = window.input_gesture();
             GlobalState::init(cx);
             GlobalState::reset_text_selection_suppression(cx);
             let handlers = state.update(cx, |state, cx| {
@@ -3040,6 +3095,9 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
                     .map_or_else(Vec::new, |scope| state.set_active_scope_state(scope, cx))
             });
             dispatch_clear_handlers(handlers, cx);
+            if !gesture.is_current() {
+                return;
+            }
             let handlers = state.update(cx, |state, cx| {
                 if state.mouse_down_prepared {
                     return Vec::new();
@@ -3054,7 +3112,7 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
                 return;
             }
             state.update(cx, |state, cx| {
-                if !state.is_selecting {
+                if !state.is_selecting() {
                     state.begin_in_window(event.position, event.modifiers.shift, window, cx)
                 }
             });
@@ -3095,6 +3153,7 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
             return;
         };
         if event.phase == TouchPhase::Started {
+            let gesture = window.input_gesture();
             if window.default_prevented()
                 || state.read(cx).touch.covers(event.start_position, window)
             {
@@ -3108,6 +3167,9 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
             };
             let handlers = state.update(cx, |state, cx| state.set_active_scope_state(scope, cx));
             dispatch_clear_handlers(handlers, cx);
+            if !gesture.is_current() {
+                return;
+            }
             if !state.update(cx, |state, cx| {
                 state
                     .endpoint(event.start_position, Some(window), cx)
@@ -3119,9 +3181,18 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
             GlobalState::reset_text_selection_suppression(cx);
             let handlers = state.update(cx, |state, cx| state.prepare_for_mouse_down(false, cx));
             dispatch_clear_handlers(handlers, cx);
+            if !gesture.is_current() {
+                return;
+            }
             let selected = state.update(cx, |state, cx| {
                 state.select_at(event.start_position, 2, window, cx);
-                state.anchor.is_some()
+                if state.anchor.is_some() && gesture.is_current() {
+                    state.selecting = Some(gesture);
+                    state.publish_snapshots(cx);
+                    true
+                } else {
+                    false
+                }
             });
             if !selected {
                 return;
@@ -3132,7 +3203,6 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
         } else {
             state.update(cx, |state, cx| match event.phase {
                 TouchPhase::Moved => {
-                    state.is_selecting = true;
                     state.update_in_window(event.position, window, cx);
                 }
                 TouchPhase::Ended | TouchPhase::Cancelled => {
@@ -3196,7 +3266,7 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
     window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
         if phase.bubble()
             && let Some(state) = mouse_move_state.upgrade()
-            && state.read(cx).is_selecting
+            && state.read(cx).is_selecting()
             && state.read(cx).touch.drag.is_none()
         {
             state.update(cx, |state, cx| {
@@ -3234,7 +3304,7 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
             }
             return;
         }
-        if phase.bubble() && state.read(cx).is_selecting {
+        if phase.bubble() && state.read(cx).is_selecting() {
             let position = window.mouse_position();
             state.update(cx, |state, cx| {
                 // A handle drag holds the finger off the text; keep its offset.
@@ -3433,6 +3503,21 @@ mod tests {
         }
     }
 
+    fn with_selection_window<R>(
+        cx: &mut TestAppContext,
+        run: impl FnOnce(&mut Window, &mut App) -> R,
+    ) -> R {
+        let window = match cx.windows().first().copied() {
+            Some(window) => window,
+            None => {
+                let window = cx.add_window(|_, _| gpui::EmptyView);
+                (*window).into()
+            }
+        };
+        cx.update_window(window, |_, window, cx| run(window, cx))
+            .unwrap()
+    }
+
     impl FakeParticipant {
         fn new(text: &str, cx: &mut gpui::App) -> Self {
             let selection = TextSelectionHandle::new(text, cx);
@@ -3554,10 +3639,10 @@ mod tests {
             (selection_state, participant)
         });
         cx.run_until_parked();
-        cx.update(|cx| {
+        with_selection_window(cx, |window, cx| {
             selection_state.update(cx, |selection_state, cx| {
                 participant.register(selection_state, 0., TextSelectionScopeId::default(), 0, cx);
-                selection_state.begin(point(px(1.), px(1.)), false, cx);
+                selection_state.begin(point(px(1.), px(1.)), false, window, cx);
                 selection_state.update(point(px(20.), px(1.)), cx);
             });
         });
@@ -3726,16 +3811,16 @@ mod tests {
                 }
                 .register(state, 0., TextSelectionScopeId::default(), 0, cx);
                 second.register(state, 20., TextSelectionScopeId::default(), 1, cx);
-                state.begin(point(px(1.), px(1.)), false, cx);
+                state.begin(point(px(1.), px(1.)), false, window, cx);
                 state.update(point(px(8.), px(1.)), cx);
             });
-            assert!(state.read(cx).is_selecting);
+            assert!(state.read(cx).is_selecting());
             initial_clear.set(cleared.get());
             first.0.update(cx, |state, cx| state.focus(window, cx));
             first.set_enabled(false, cx);
             first.set_enabled(true, cx);
             state.update(cx, |state, cx| {
-                assert!(!state.is_selecting);
+                assert!(!state.is_selecting());
                 assert!(state.anchor.is_none());
                 assert!(state.cursor.is_none());
                 assert!(!state.participants.contains_key(&first.entity_id()));
@@ -3761,7 +3846,7 @@ mod tests {
                     selection: first.clone(),
                 }
                 .register(state, 0., TextSelectionScopeId::default(), 0, cx);
-                state.begin(point(px(1.), px(1.)), false, cx);
+                state.begin(point(px(1.), px(1.)), false, window, cx);
                 state.update(point(px(8.), px(1.)), cx);
                 assert_eq!(state.selected_text(cx), "first");
             });
@@ -4045,7 +4130,7 @@ mod tests {
 
     #[gpui::test]
     fn begin_update_and_end_publish_a_cross_participant_selection(cx: &mut TestAppContext) {
-        cx.update(|cx| {
+        with_selection_window(cx, |window, cx| {
             let mut selection_state = WindowSelectionState::default();
             let first = FakeParticipant::new("first", cx);
             let second = FakeParticipant::new("second", cx);
@@ -4064,7 +4149,7 @@ mod tests {
                 cx,
             );
 
-            selection_state.begin(point(px(1.), px(1.)), false, cx);
+            selection_state.begin(point(px(1.), px(1.)), false, window, cx);
             selection_state.update(point(px(1.), px(25.)), cx);
             assert!(selection_state.has_selection(cx));
             assert_eq!(selection_state.selected_text(cx), "first\nsecond");
@@ -4076,7 +4161,7 @@ mod tests {
 
     #[gpui::test]
     fn shift_extension_keeps_its_original_anchor_when_reversed(cx: &mut TestAppContext) {
-        cx.update(|cx| {
+        with_selection_window(cx, |window, cx| {
             let mut selection_state = WindowSelectionState::default();
             let participant = FakeParticipant::new("participant", cx);
             participant.register(
@@ -4087,13 +4172,13 @@ mod tests {
                 cx,
             );
 
-            selection_state.begin(point(px(2.), px(2.)), false, cx);
+            selection_state.begin(point(px(2.), px(2.)), false, window, cx);
             selection_state.end(cx);
-            selection_state.begin(point(px(8.), px(2.)), true, cx);
+            selection_state.begin(point(px(8.), px(2.)), true, window, cx);
             selection_state.end(cx);
             let first_anchor = selection_state.snapshot().unwrap().anchor();
 
-            selection_state.begin(point(px(0.), px(2.)), true, cx);
+            selection_state.begin(point(px(0.), px(2.)), true, window, cx);
             selection_state.end(cx);
             let reversed = selection_state.snapshot().unwrap();
             assert_eq!(reversed.anchor(), first_anchor);
@@ -4103,7 +4188,7 @@ mod tests {
 
     #[gpui::test]
     fn content_key_resolver_runs_outside_the_window_state_lease(cx: &mut TestAppContext) {
-        cx.update(|cx| {
+        with_selection_window(cx, |window, cx| {
             let state = cx.new(|_| WindowSelectionState::default());
             let participant = FakeParticipant::new("virtual", cx);
             let state_for_callback = state.clone();
@@ -4116,7 +4201,7 @@ mod tests {
             );
             state.update(cx, |state, cx| {
                 participant.register(state, 0., TextSelectionScopeId::default(), 0, cx);
-                state.begin(point(px(1.), px(1.)), false, cx);
+                state.begin(point(px(1.), px(1.)), false, window, cx);
                 state.update(point(px(8.), px(1.)), cx);
             });
 
@@ -4139,7 +4224,7 @@ mod tests {
                 let mut state = WindowSelectionState::default();
                 let participant = FakeParticipant::new("participant", cx);
                 participant.register(&mut state, 0., TextSelectionScopeId::default(), 0, cx);
-                state.begin(point(px(1.), px(1.)), false, cx);
+                state.begin(point(px(1.), px(1.)), false, window, cx);
                 let before = state.cursor.as_ref().unwrap().point;
                 state.update_in_window_with_active_drag(point(px(80.), px(1.)), true, window, cx);
                 assert_eq!(state.cursor.as_ref().unwrap().point, before);
@@ -4149,7 +4234,7 @@ mod tests {
 
     #[gpui::test]
     fn shift_extension_falls_back_when_the_anchor_participant_was_swept(cx: &mut TestAppContext) {
-        cx.update(|cx| {
+        with_selection_window(cx, |window, cx| {
             let mut selection_state = WindowSelectionState::default();
             let first = FakeParticipant::new("first", cx);
             let second = FakeParticipant::new("second", cx);
@@ -4160,7 +4245,7 @@ mod tests {
                 0,
                 cx,
             );
-            selection_state.begin(point(px(1.), px(1.)), false, cx);
+            selection_state.begin(point(px(1.), px(1.)), false, window, cx);
             selection_state.update(point(px(8.), px(1.)), cx);
             selection_state.end(cx);
 
@@ -4173,7 +4258,7 @@ mod tests {
                 1,
                 cx,
             );
-            selection_state.begin(point(px(1.), px(21.)), true, cx);
+            selection_state.begin(point(px(1.), px(21.)), true, window, cx);
             selection_state.update(point(px(8.), px(21.)), cx);
             selection_state.end(cx);
 
@@ -4185,7 +4270,7 @@ mod tests {
     fn scope_and_suppression_prevent_unrelated_participants_from_participating(
         cx: &mut TestAppContext,
     ) {
-        cx.update(|cx| {
+        with_selection_window(cx, |window, cx| {
             let mut selection_state = WindowSelectionState::default();
             let base = FakeParticipant::new("base", cx);
             let modal = FakeParticipant::new("modal", cx);
@@ -4199,7 +4284,7 @@ mod tests {
             modal.register(&mut selection_state, 20., TextSelectionScopeId(1), 1, cx);
 
             selection_state.set_active_scope(TextSelectionScopeId(1), cx);
-            selection_state.begin(point(px(1.), px(21.)), false, cx);
+            selection_state.begin(point(px(1.), px(21.)), false, window, cx);
             selection_state.update(point(px(8.), px(21.)), cx);
             selection_state.end(cx);
             assert_eq!(selection_state.selected_text(cx), "modal");
@@ -4207,7 +4292,7 @@ mod tests {
             selection_state.clear(cx);
             GlobalState::init(cx);
             GlobalState::suppress_text_selection(cx);
-            selection_state.begin(point(px(1.), px(21.)), false, cx);
+            selection_state.begin(point(px(1.), px(21.)), false, window, cx);
             selection_state.update(point(px(8.), px(21.)), cx);
             assert!(!selection_state.has_selection(cx));
         });
@@ -4223,9 +4308,9 @@ mod tests {
             });
             selection_state
         });
-        cx.update(|cx| {
+        with_selection_window(cx, |window, cx| {
             selection_state.update(cx, |selection_state, cx| {
-                selection_state.begin(point(px(1.), px(1.)), false, cx);
+                selection_state.begin(point(px(1.), px(1.)), false, window, cx);
                 selection_state.update(point(px(8.), px(1.)), cx);
                 selection_state.end(cx);
 
@@ -4251,7 +4336,7 @@ mod tests {
                     0,
                     cx,
                 );
-                selection_state.begin(point(px(1.), px(1.)), false, cx);
+                selection_state.begin(point(px(1.), px(1.)), false, window, cx);
                 selection_state.update(point(px(8.), px(1.)), cx);
             });
 
@@ -4342,7 +4427,7 @@ mod tests {
                     selection: selection.clone(),
                 }
                 .register(state, 0., TextSelectionScopeId::default(), 0, cx);
-                state.begin(point(px(1.), px(1.)), false, cx);
+                state.begin(point(px(1.), px(1.)), false, window, cx);
                 state.update(point(px(8.), px(1.)), cx);
                 state.end(cx);
             });
@@ -4355,7 +4440,7 @@ mod tests {
     fn cross_participant_selection_excludes_participants_outside_its_document_interval(
         cx: &mut TestAppContext,
     ) {
-        cx.update(|cx| {
+        with_selection_window(cx, |window, cx| {
             let mut selection_state = WindowSelectionState::default();
             let first = FakeParticipant::new("first", cx);
             let second = FakeParticipant::new("second", cx);
@@ -4382,7 +4467,7 @@ mod tests {
                 cx,
             );
 
-            selection_state.begin(point(px(1.), px(1.)), false, cx);
+            selection_state.begin(point(px(1.), px(1.)), false, window, cx);
             selection_state.update(point(px(1.), px(25.)), cx);
             selection_state.end(cx);
 
@@ -4393,7 +4478,7 @@ mod tests {
 
     #[gpui::test]
     fn changing_scope_clears_the_previous_scope_selection(cx: &mut TestAppContext) {
-        cx.update(|cx| {
+        with_selection_window(cx, |window, cx| {
             let mut selection_state = WindowSelectionState::default();
             let base = FakeParticipant::new("base", cx);
             let modal = FakeParticipant::new("modal", cx);
@@ -4412,7 +4497,7 @@ mod tests {
                 cx,
             );
 
-            selection_state.begin(point(px(1.), px(1.)), false, cx);
+            selection_state.begin(point(px(1.), px(1.)), false, window, cx);
             selection_state.update(point(px(8.), px(1.)), cx);
             selection_state.end(cx);
             selection_state.set_active_scope(TextSelectionScopeId::from_raw(1), cx);
@@ -4424,7 +4509,7 @@ mod tests {
 
     #[gpui::test]
     fn blank_only_drag_never_publishes_or_copies_selection(cx: &mut TestAppContext) {
-        cx.update(|cx| {
+        with_selection_window(cx, |window, cx| {
             let mut selection_state = WindowSelectionState::default();
             let participant = FakeParticipant::new("participant", cx);
             participant.register(
@@ -4435,7 +4520,7 @@ mod tests {
                 cx,
             );
 
-            selection_state.begin(point(px(200.), px(1.)), false, cx);
+            selection_state.begin(point(px(200.), px(1.)), false, window, cx);
             selection_state.update(point(px(200.), px(8.)), cx);
             selection_state.end(cx);
 
@@ -4447,7 +4532,7 @@ mod tests {
 
     #[gpui::test]
     fn stale_live_participants_are_removed_when_the_next_frame_begins(cx: &mut TestAppContext) {
-        cx.update(|cx| {
+        with_selection_window(cx, |window, cx| {
             let mut selection_state = WindowSelectionState::default();
             let participant = FakeParticipant::new("stale", cx);
             participant.register(
@@ -4457,7 +4542,7 @@ mod tests {
                 0,
                 cx,
             );
-            selection_state.begin(point(px(1.), px(1.)), false, cx);
+            selection_state.begin(point(px(1.), px(1.)), false, window, cx);
             selection_state.update(point(px(8.), px(1.)), cx);
             selection_state.end(cx);
 
@@ -4479,7 +4564,7 @@ mod tests {
                 .selection
                 .subscribe(
                     move |event, _| {
-                        if let TextSelectionEvent::AutoScroll(delta) = event {
+                        if let TextSelectionEvent::AutoScroll(delta, _) = event {
                             observed.borrow_mut().push(*delta);
                         }
                     },
@@ -4489,7 +4574,7 @@ mod tests {
             (selection_state, participant)
         });
         cx.run_until_parked();
-        cx.update(|cx| {
+        with_selection_window(cx, |window, cx| {
             participant.register(
                 &mut selection_state,
                 0.,
@@ -4498,13 +4583,68 @@ mod tests {
                 cx,
             );
 
-            selection_state.begin(point(px(1.), px(1.)), false, cx);
+            selection_state.begin(point(px(1.), px(1.)), false, window, cx);
             selection_state.update(point(px(1.), px(25.)), cx);
             selection_state.clear(cx);
         });
         cx.run_until_parked();
         assert!(commands.borrow().iter().any(Option::is_some));
         assert_eq!(commands.borrow().last(), Some(&None));
+    }
+
+    #[gpui::test]
+    fn original_clear_callback_cannot_rearm_an_interrupted_selection_begin(
+        cx: &mut TestAppContext,
+    ) {
+        with_selection_window(cx, |window, cx| {
+            let focus = cx.focus_handle();
+            let scope = window.input_scope(&focus, cx);
+            let participant = FakeParticipant::new("original", cx);
+            participant
+                .selection
+                .clear_with(move |_| scope.revoke(), cx);
+            let mut state = WindowSelectionState::default();
+            participant.register(&mut state, 0., TextSelectionScopeId::default(), 0, cx);
+            state.begin(point(px(1.), px(1.)), false, window, cx);
+            assert!(state.selecting.is_none());
+            assert!(state.anchor.is_none());
+            state.update(point(px(80.), px(8.)), cx);
+            assert!(participant.selection.snapshot(cx).is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn original_deferred_focus_callback_is_withdrawn_before_user_code_after_interruption(
+        cx: &mut TestAppContext,
+    ) {
+        let called = Rc::new(Cell::new(0));
+        let observed = called.clone();
+        let participant = with_selection_window(cx, |window, cx| {
+            let participant = FakeParticipant::new("focus", cx);
+            participant
+                .selection
+                .focus_with(move |_, _| observed.set(observed.get() + 1), cx);
+            let focus = cx.focus_handle();
+            let scope = window.input_scope(&focus, cx);
+            window.defer(cx, move |_, _| scope.revoke());
+            participant
+                .selection
+                .0
+                .update(cx, |state, cx| state.focus(window, cx));
+            // Keep the actual participant alive until both original defers run.
+            let fresh = participant.selection.clone();
+            window.defer(cx, move |window, cx| {
+                fresh.0.update(cx, |state, cx| state.focus(window, cx))
+            });
+            participant
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            called.get(),
+            1,
+            "old native focus callback is refused; a new one still executes"
+        );
+        drop(participant);
     }
 
     #[gpui::test]
@@ -4518,7 +4658,7 @@ mod tests {
                 let participant = FakeParticipant::new("participant", cx);
                 state.update(cx, |state, cx| {
                     participant.register(state, 0., TextSelectionScopeId::default(), 0, cx);
-                    state.begin(point(px(1.), px(1.)), false, cx);
+                    state.begin(point(px(1.), px(1.)), false, window, cx);
                 });
                 // The scrollable ancestor got clipped away mid-drag, so the
                 // refreshed registration carries a collapsed content mask.
@@ -4560,7 +4700,7 @@ mod tests {
                 state.update(cx, |state, cx| {
                     participant.register(state, 0., TextSelectionScopeId::default(), 0, cx);
                     // A click on text keeps its anchor so shift-click can extend it.
-                    state.begin(point(px(1.), px(1.)), false, cx);
+                    state.begin(point(px(1.), px(1.)), false, window, cx);
                     state.end(cx);
                     assert!(state.anchor.is_some());
 
@@ -4573,7 +4713,7 @@ mod tests {
 
     #[gpui::test]
     fn proxy_endpoints_break_equal_position_ties_by_document_order(cx: &mut TestAppContext) {
-        cx.update(|cx| {
+        with_selection_window(cx, |window, cx| {
             let mut selection_state = WindowSelectionState::default();
             let later = FakeParticipant::new("later", cx);
             let earlier = FakeParticipant::new("earlier", cx);
@@ -4592,7 +4732,7 @@ mod tests {
                 cx,
             );
 
-            selection_state.begin(point(px(1.), px(1.)), false, cx);
+            selection_state.begin(point(px(1.), px(1.)), false, window, cx);
             selection_state.update(point(px(200.), px(25.)), cx);
             let endpoint = selection_state.snapshot().unwrap().cursor();
 
@@ -4602,7 +4742,7 @@ mod tests {
 
     #[gpui::test]
     fn equal_area_hovered_participants_break_ties_by_document_order(cx: &mut TestAppContext) {
-        cx.update(|cx| {
+        with_selection_window(cx, |window, cx| {
             for _ in 0..64 {
                 let mut selection_state = WindowSelectionState::default();
                 let later = FakeParticipant::new("later", cx);
@@ -4630,7 +4770,7 @@ mod tests {
                     cx,
                 );
 
-                selection_state.begin(point(px(1.), px(1.)), false, cx);
+                selection_state.begin(point(px(1.), px(1.)), false, window, cx);
                 selection_state.update(point(px(8.), px(1.)), cx);
 
                 assert_eq!(
@@ -4799,7 +4939,7 @@ mod tests {
     fn frame_sweep_keeps_a_participant_registered_before_the_selection_element_paints(
         cx: &mut TestAppContext,
     ) {
-        cx.update(|cx| {
+        with_selection_window(cx, |window, cx| {
             let mut selection_state = WindowSelectionState::default();
             let participant = FakeParticipant::new("painted first", cx);
             participant.register(
@@ -4809,7 +4949,7 @@ mod tests {
                 0,
                 cx,
             );
-            selection_state.begin(point(px(1.), px(1.)), false, cx);
+            selection_state.begin(point(px(1.), px(1.)), false, window, cx);
             selection_state.update(point(px(8.), px(1.)), cx);
             selection_state.end(cx);
 
@@ -4836,7 +4976,7 @@ mod tests {
                     0,
                     cx,
                 );
-                selection_state.begin(point(px(1.), px(1.)), false, cx);
+                selection_state.begin(point(px(1.), px(1.)), false, window, cx);
                 selection_state.update(point(px(8.), px(1.)), cx);
                 selection_state.end(cx);
             });

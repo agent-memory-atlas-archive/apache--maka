@@ -3421,6 +3421,162 @@ mod tests {
         );
     }
 
+    struct GestureScrollTestRoot {
+        text_view: Entity<TextViewState>,
+        self_scroll: bool,
+        ancestor: gpui::ScrollHandle,
+    }
+
+    impl Render for GestureScrollTestRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .w(px(400.))
+                .h(px(200.))
+                .child(crate::TextSelectionLayer)
+                .child(
+                    div()
+                        .id("gesture-scroll")
+                        .size_full()
+                        .when(!self.self_scroll, |this| {
+                            this.overflow_y_scroll().track_scroll(&self.ancestor)
+                        })
+                        .child(
+                            TextView::new(&self.text_view)
+                                .selectable(true)
+                                .scrollable(self.self_scroll),
+                        ),
+                )
+        }
+    }
+
+    fn assert_modal_interrupts_original_selection_scroll(
+        cx: &mut TestAppContext,
+        self_scroll: bool,
+    ) {
+        use std::time::Duration;
+        cx.update(crate::init);
+        let text = (0..64)
+            .map(|i| format!("paragraph {i}: alpha bravo charlie"))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let (root, cx) = cx.add_window_view(|_, cx| GestureScrollTestRoot {
+            text_view: cx.new(|cx| TextViewState::markdown(&text, cx)),
+            self_scroll,
+            ancestor: gpui::ScrollHandle::new(),
+        });
+        let cx: &mut VisualTestContext = cx;
+        let settle = |cx: &mut VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        };
+        let tick = |cx: &mut VisualTestContext| {
+            cx.executor().advance_clock(Duration::from_millis(16));
+            settle(cx);
+        };
+        let offset = |cx: &mut VisualTestContext| {
+            root.read_with(cx, |root, cx| {
+                if root.self_scroll {
+                    root.text_view
+                        .read(cx)
+                        .list_state()
+                        .scroll_px_offset_for_scrollbar()
+                        .y
+                } else {
+                    root.ancestor.offset().y
+                }
+            })
+        };
+        let selected = |cx: &mut VisualTestContext| {
+            root.read_with(cx, |root, cx| root.text_view.read(cx).selected_text())
+        };
+        settle(cx);
+        let before = offset(cx);
+        cx.simulate_mouse_down(
+            point(px(2.), px(8.)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_move(
+            point(px(150.), px(195.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        tick(cx);
+        let stopped_offset = offset(cx);
+        assert!(
+            stopped_offset < before,
+            "actual selection timer scrolls its native owner: {before:?} -> {stopped_offset:?}"
+        );
+        let kept = selected(cx);
+        assert!(!kept.is_empty());
+        cx.update(|window, cx| {
+            let focus = cx.focus_handle();
+            drop(window.input_scope(&focus, cx));
+        });
+        tick(cx);
+        assert_eq!(offset(cx), stopped_offset);
+        assert_eq!(selected(cx), kept);
+        cx.simulate_mouse_move(
+            point(px(80.), px(80.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            point(px(80.), px(80.)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        tick(cx);
+        assert_eq!(offset(cx), stopped_offset);
+        assert_eq!(
+            selected(cx),
+            kept,
+            "old physical drag cannot resume after the opening closes"
+        );
+        cx.simulate_mouse_down(
+            point(px(2.), px(8.)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_move(
+            point(px(150.), px(195.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        tick(cx);
+        assert!(
+            offset(cx) < stopped_offset,
+            "fresh original drag restarts native scrolling"
+        );
+        cx.simulate_mouse_up(
+            point(px(150.), px(195.)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        settle(cx);
+        let finished_offset = offset(cx);
+        tick(cx);
+        assert_eq!(
+            offset(cx),
+            finished_offset,
+            "normal pointer-up also ends the original timer"
+        );
+    }
+
+    #[gpui::test]
+    fn modal_interrupts_original_text_view_self_scroll_without_erasing_selection(
+        cx: &mut TestAppContext,
+    ) {
+        assert_modal_interrupts_original_selection_scroll(cx, true);
+    }
+
+    #[gpui::test]
+    fn modal_interrupts_original_ancestor_wheel_scroll_without_erasing_selection(
+        cx: &mut TestAppContext,
+    ) {
+        assert_modal_interrupts_original_selection_scroll(cx, false);
+    }
+
     /// A tall selectable TextView clipped by a short `overflow_hidden` viewport,
     /// with a large blank footer below so a drag can extend the selection band
     /// past the bottom of the clip while still proxy-anchoring to the view.

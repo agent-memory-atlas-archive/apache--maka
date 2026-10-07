@@ -885,3 +885,88 @@ fn modal_interruption_stops_original_chord_replay_batch_and_its_observers(cx: &m
         assert_eq!(observations.get(), 1);
     }
 }
+
+#[gpui::test]
+fn modal_preserves_original_editor_selection_without_resuming_its_old_pointer_drag(
+    cx: &mut TestAppContext,
+) {
+    let f = fixture(cx);
+    cx.update_window(f.window, |_, window, cx| {
+        let focus = f
+            .background
+            .read(cx)
+            .state
+            .read(cx)
+            .presentation()
+            .focus_handle()
+            .clone();
+        window.focus(&focus, cx);
+    })
+    .unwrap();
+    draw(cx, f.window);
+    cx.simulate_input(f.window, "Original draft 中英文");
+    draw(cx, f.window);
+    let mut pointer = VisualTestContext::from_window(f.window, cx);
+    pointer.simulate_mouse_down(
+        point(px(12.), px(20.)),
+        gpui_kit::MouseButton::Left,
+        Modifiers::default(),
+    );
+    pointer.simulate_mouse_move(
+        point(px(55.), px(20.)),
+        Some(gpui_kit::MouseButton::Left),
+        Modifiers::default(),
+    );
+    let range = cx.update(|cx| f.background.read(cx).state.read(cx).selected_range());
+    assert!(
+        !range.is_empty(),
+        "actual native pointer selects the original editor"
+    );
+    open(cx, &f);
+    draw(cx, f.window);
+    close(cx, &f);
+    cx.update_window(f.window, |_, window, cx| {
+        let focus = f
+            .background
+            .read(cx)
+            .state
+            .read(cx)
+            .presentation()
+            .focus_handle()
+            .clone();
+        window.focus(&focus, cx);
+    })
+    .unwrap();
+    draw(cx, f.window);
+    pointer.simulate_mouse_move(
+        point(px(160.), px(20.)),
+        Some(gpui_kit::MouseButton::Left),
+        Modifiers::default(),
+    );
+    pointer.simulate_mouse_up(
+        point(px(160.), px(20.)),
+        gpui_kit::MouseButton::Left,
+        Modifiers::default(),
+    );
+    cx.update(|cx| {
+        let state = f.background.read(cx).state.read(cx);
+        assert_eq!(state.selected_range(), range);
+        assert_eq!(state.value().as_ref(), "Original draft 中英文");
+    });
+    pointer.simulate_mouse_down(
+        point(px(12.), px(20.)),
+        gpui_kit::MouseButton::Left,
+        Modifiers::default(),
+    );
+    pointer.simulate_mouse_move(
+        point(px(130.), px(20.)),
+        Some(gpui_kit::MouseButton::Left),
+        Modifiers::default(),
+    );
+    pointer.simulate_mouse_up(
+        point(px(130.), px(20.)),
+        gpui_kit::MouseButton::Left,
+        Modifiers::default(),
+    );
+    cx.update(|cx| assert_ne!(f.background.read(cx).state.read(cx).selected_range(), range));
+}

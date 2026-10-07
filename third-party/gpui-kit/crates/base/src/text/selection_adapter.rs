@@ -121,11 +121,12 @@ impl TextViewSelectionAdapter {
                             cx.notify();
                         });
                     }
-                    TextSelectionEvent::AutoScroll(delta) => {
+                    TextSelectionEvent::AutoScroll(delta, gesture) => {
                         let delta = *delta;
+                        let gesture = gesture.clone();
                         let _ = view_for_events.update(cx, |state, cx| {
                             if state.selectable && state.scrollable {
-                                state.set_auto_scroll(delta, cx);
+                                state.set_auto_scroll(delta, gesture, cx);
                             } else if delta.is_none() {
                                 state.stop_auto_scroll();
                             }

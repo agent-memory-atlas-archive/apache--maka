@@ -28,6 +28,63 @@ struct Scope {
     admitted: Cell<bool>,
     interruption: std::rc::Weak<ClickInputState>,
 }
+struct Gesture {
+    input: RcWeak<ClickInputState>,
+    interruption: u64,
+}
+impl Gesture {
+    fn is_current(&self) -> bool {
+        self.input
+            .upgrade()
+            .is_some_and(|input| input.interruption.get() == self.interruption)
+    }
+}
+/// One native gesture. Ending it withdraws weak timer and deferred observers.
+/// It observes the original window's interruption without retaining the window.
+pub struct InputGesture(Rc<Gesture>);
+/// A weak observation of one original gesture, never a gesture owner.
+#[derive(Clone)]
+pub struct WeakInputGesture(RcWeak<Gesture>);
+impl std::fmt::Debug for WeakInputGesture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WeakInputGesture")
+            .field("current", &self.is_current())
+            .finish()
+    }
+}
+impl std::fmt::Debug for InputGesture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InputGesture")
+            .field("current", &self.is_current())
+            .finish()
+    }
+}
+impl PartialEq for WeakInputGesture {
+    fn eq(&self, other: &Self) -> bool {
+        self.same_gesture(other)
+    }
+}
+impl Eq for WeakInputGesture {}
+impl InputGesture {
+    /// Whether the original window has left this gesture uninterrupted.
+    pub fn is_current(&self) -> bool {
+        self.0.is_current()
+    }
+    /// Observe this gesture without extending its lifetime.
+    pub fn downgrade(&self) -> WeakInputGesture {
+        WeakInputGesture(Rc::downgrade(&self.0))
+    }
+}
+impl WeakInputGesture {
+    /// Whether this same gesture is still owned and its window uninterrupted.
+    pub fn is_current(&self) -> bool {
+        self.0.upgrade().is_some_and(|gesture| gesture.is_current())
+    }
+    /// Compare original gesture identity, including after its owner has ended.
+    pub fn same_gesture(&self, other: &Self) -> bool {
+        self.0.ptr_eq(&other.0)
+    }
+}
 /// One revocable modal opening. Dropping or revoking it withdraws old physical input.
 /// It does not own product open state, native focus, or an editor capability.
 pub struct InputScope(Rc<Scope>);
@@ -74,6 +131,13 @@ impl WeakInputScope {
     }
 }
 impl Window {
+    /// Begin one mechanical gesture against the original window interruption.
+    pub fn input_gesture(&self) -> InputGesture {
+        InputGesture(Rc::new(Gesture {
+            input: Rc::downgrade(&self.click_input),
+            interruption: self.input_interruption(),
+        }))
+    }
     pub(super) fn focus_move_is_admitted(&self, focus: &FocusHandle) -> bool {
         let scope = self
             .input_scope

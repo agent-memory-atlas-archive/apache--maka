@@ -916,11 +916,17 @@ impl TextViewState {
         }
     }
 
-    pub(super) fn set_auto_scroll(&mut self, delta: Option<Pixels>, cx: &mut Context<Self>) {
-        self.auto_scroll.set(delta, cx, |delta, state, cx| {
-            state.list_state.scroll_by(delta);
-            cx.notify();
-        });
+    pub(super) fn set_auto_scroll(
+        &mut self,
+        delta: Option<Pixels>,
+        gesture: gpui::WeakInputGesture,
+        cx: &mut Context<Self>,
+    ) {
+        self.auto_scroll
+            .set(delta, gesture, cx, |delta, state, cx| {
+                state.list_state.scroll_by(delta);
+                cx.notify();
+            });
     }
 
     /// Return the window selection (anchor, cursor) in window coordinates if

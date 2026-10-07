@@ -25,7 +25,7 @@ pub(super) struct TouchSelection {
     /// The range the gesture left; `None` when no touch selection is live.
     range: Option<(usize, usize)>,
     menu_open: bool,
-    drag: Option<EdgeDrag>,
+    pub(super) drag: Option<EdgeDrag>,
 }
 
 impl<M: InputModeKind> InputBaseState<M> {
@@ -62,7 +62,12 @@ impl<M: InputModeKind> InputBaseState<M> {
                 .with_edge_visible(SelectionEdge::Start, caret_in_view(start, viewport))
                 .with_edge_visible(SelectionEdge::End, caret_in_view(end, viewport))
                 .with_menu_open(self.touch_selection.menu_open)
-                .with_dragging(self.touch_selection.drag.map(|drag| drag.edge())),
+                .with_dragging(
+                    self.selecting
+                        .as_ref()
+                        .filter(|gesture| gesture.is_current())
+                        .and_then(|_| self.touch_selection.drag.map(|drag| drag.edge())),
+                ),
         )
     }
 
@@ -168,6 +173,7 @@ impl<M: InputModeKind> InputBaseState<M> {
     ) -> bool {
         match event.phase {
             TouchPhase::Started => {
+                let gesture = window.input_gesture();
                 if self.disabled {
                     return false;
                 }
@@ -179,6 +185,9 @@ impl<M: InputModeKind> InputBaseState<M> {
                 crate::GlobalState::suppress_text_selection(cx);
                 self.undo_manager.break_transaction_coalescing();
                 M::clear_inline_completion(self, cx);
+                if !gesture.is_current() {
+                    return false;
+                }
                 self.touch_selection = TouchSelection::default();
 
                 let (offset, line_end_affinity, _) =
@@ -194,12 +203,23 @@ impl<M: InputModeKind> InputBaseState<M> {
                     self.move_to_with_affinity(offset, None, line_end_affinity, cx);
                     self.selected_word_range = None;
                 }
-                self.selecting = true;
+                if !gesture.is_current() {
+                    return false;
+                }
+                self.selecting = Some(gesture);
                 self.retain_touch_selection();
                 cx.notify();
                 true
             }
             TouchPhase::Moved => {
+                if !self
+                    .selecting
+                    .as_ref()
+                    .is_some_and(gpui::InputGesture::is_current)
+                {
+                    self.cancel_pointer_selection();
+                    return false;
+                }
                 let (offset, line_end_affinity, _) = self.resolve_mouse_position(event.position);
                 if self.selected_word_range.is_some() {
                     // The press took a word; the sweep grows it a word at a time.
@@ -212,7 +232,7 @@ impl<M: InputModeKind> InputBaseState<M> {
                 true
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
-                self.selecting = false;
+                self.selecting = None;
                 self.selected_word_range = None;
                 if self.touch_selection.range.is_some() {
                     self.touch_selection.menu_open = true;
@@ -231,6 +251,7 @@ impl<M: InputModeKind> InputBaseState<M> {
         &mut self,
         edge: SelectionEdge,
         finger: Point<Pixels>,
+        window: &Window,
         cx: &mut Context<Self>,
     ) {
         let Some(snapshot) = self.touch_selection() else {
@@ -239,6 +260,7 @@ impl<M: InputModeKind> InputBaseState<M> {
         self.undo_manager.break_transaction_coalescing();
         self.selected_word_range = None;
         self.active_selection_mut().reversed = edge == SelectionEdge::Start;
+        self.selecting = Some(window.input_gesture());
         self.touch_selection.drag = Some(EdgeDrag::begin(edge, snapshot.edge(edge), finger));
         self.touch_selection.menu_open = false;
         cx.notify();
@@ -249,6 +271,14 @@ impl<M: InputModeKind> InputBaseState<M> {
     /// Past the top or bottom of a multi-line input the content scrolls under
     /// the finger, so the end can reach text that was out of view.
     pub fn update_edge_drag(&mut self, finger: Point<Pixels>, cx: &mut Context<Self>) {
+        if !self
+            .selecting
+            .as_ref()
+            .is_some_and(gpui::InputGesture::is_current)
+        {
+            self.cancel_pointer_selection();
+            return;
+        }
         let Some(drag) = self.touch_selection.drag else {
             return;
         };
@@ -262,13 +292,15 @@ impl<M: InputModeKind> InputBaseState<M> {
         let delta = crate::AutoScroll::compute_delta(position.y, self.input_bounds);
         // Input's ScrollHandle uses negative-y-is-down; negate the positive-towards-bottom delta.
         let scroll_delta = delta.map(|delta| -delta);
-        self.auto_scroll.set(scroll_delta, cx, |delta, state, cx| {
-            let current = state.scroll_handle.offset();
-            state.update_scroll_offset(Some(point(current.x, current.y + delta)), cx);
-            if let Some(position) = state.auto_scroll.last_drag_position {
-                state.extend_edge_drag_to(position, cx);
-            }
-        });
+        let gesture = self.selecting.as_ref().unwrap().downgrade();
+        self.auto_scroll
+            .set(scroll_delta, gesture, cx, |delta, state, cx| {
+                let current = state.scroll_handle.offset();
+                state.update_scroll_offset(Some(point(current.x, current.y + delta)), cx);
+                if let Some(position) = state.auto_scroll.last_drag_position {
+                    state.extend_edge_drag_to(position, cx);
+                }
+            });
     }
 
     fn extend_edge_drag_to(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
@@ -303,6 +335,7 @@ impl<M: InputModeKind> InputBaseState<M> {
         if self.touch_selection.drag.take().is_none() {
             return;
         }
+        self.selecting = None;
         self.auto_scroll.stop();
         if self.active_selection().is_empty() {
             self.active_selection_mut().reversed = false;
@@ -486,9 +519,14 @@ mod tests {
         // The finger holds the end knob, which hangs below the line.
         let end_caret = caret_at(&input, cx, 12);
         let finger = (end_caret.0, end_caret.1 + 20.);
-        cx.update(|_, cx| {
+        cx.update(|window, cx| {
             input.update(cx, |state, cx| {
-                state.begin_edge_drag(SelectionEdge::End, point(px(finger.0), px(finger.1)), cx);
+                state.begin_edge_drag(
+                    SelectionEdge::End,
+                    point(px(finger.0), px(finger.1)),
+                    window,
+                    cx,
+                );
             });
         });
         input.read_with(cx, |state, _| {
@@ -509,12 +547,12 @@ mod tests {
 
         // Pull the start handle past the end: the ends swap, the finger keeps
         // its handle.
-        cx.update(|_, cx| {
+        cx.update(|window, cx| {
             input.update(cx, |state, cx| {
                 state.end_edge_drag(cx);
                 assert!(state.is_edit_menu_open());
                 let start_caret = state.touch_selection().unwrap().start();
-                state.begin_edge_drag(SelectionEdge::Start, start_caret.origin, cx);
+                state.begin_edge_drag(SelectionEdge::Start, start_caret.origin, window, cx);
             });
         });
         let target = caret_at(&input, cx, 0);
@@ -543,11 +581,12 @@ mod tests {
         // end of the text: the finger now holds the end handle, and the
         // selection runs from the old end forward.
         let start_caret = caret_at(&input, cx, 6);
-        cx.update(|_, cx| {
+        cx.update(|window, cx| {
             input.update(cx, |state, cx| {
                 state.begin_edge_drag(
                     SelectionEdge::Start,
                     point(px(start_caret.0), px(start_caret.1)),
+                    window,
                     cx,
                 );
             });

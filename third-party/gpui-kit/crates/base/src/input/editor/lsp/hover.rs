@@ -29,7 +29,11 @@ impl InputBaseState<EditorMode> {
         window: &mut Window,
         cx: &mut Context<InputBaseState<EditorMode>>,
     ) {
-        if self.selecting {
+        if self
+            .selecting
+            .as_ref()
+            .is_some_and(gpui::InputGesture::is_current)
+        {
             return;
         }
 

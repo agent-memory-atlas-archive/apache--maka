@@ -64,7 +64,7 @@ use uuid::Uuid;
 
 pub(crate) mod a11y;
 mod input_scope;
-pub use input_scope::{InputScope, WeakInputScope};
+pub use input_scope::{InputGesture, InputScope, WeakInputGesture, WeakInputScope};
 mod prompts;
 
 pub use a11y::A11ySubtreeBuilder;

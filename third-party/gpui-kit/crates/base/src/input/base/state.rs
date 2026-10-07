@@ -411,7 +411,7 @@ pub struct InputBaseState<M: InputModeKind> {
     /// The text bounds
     pub(super) last_bounds: Option<Bounds<Pixels>>,
     pub(super) last_selected_range: Option<CursorSelection>,
-    pub(super) selecting: bool,
+    pub(super) selecting: Option<gpui::InputGesture>,
     /// Anchor point of an in-progress columnar (block) selection.
     pub(super) column_select_start: Option<ColumnarPoint>,
     /// The selection a long press made, with its handles and edit menu.
@@ -784,7 +784,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             selected_word_range: None,
             ime_marked_range: None,
             input_bounds: Bounds::default(),
-            selecting: false,
+            selecting: None,
             touch_selection: Default::default(),
             disabled: false,
             readonly: false,
@@ -1170,6 +1170,7 @@ impl<M: InputModeKind> InputBaseState<M> {
 
         self.disabled = disabled;
         if disabled {
+            self.cancel_pointer_selection();
             self.pending_context_menu = None;
             M::hide_context_menu(self, cx);
             M::clear_inline_completion(self, cx);
@@ -2417,6 +2418,7 @@ impl<M: InputModeKind> InputBaseState<M> {
         if window.default_prevented() {
             return;
         }
+        let gesture = window.input_gesture();
         self.undo_manager.break_transaction_coalescing();
         // Input has its own text selection; suppress the window-level text
         // selection (Root) so it does not start a drag from here.
@@ -2443,11 +2445,22 @@ impl<M: InputModeKind> InputBaseState<M> {
             }
         }
 
-        self.selecting = true;
+        if !gesture.is_current() {
+            return;
+        }
+        self.selecting = Some(gesture);
         let (offset, line_end_affinity, columns_past_line_end) =
             self.resolve_mouse_position(event.position);
 
         if M::on_click(self, event, offset, window, cx) {
+            return;
+        }
+        if !self
+            .selecting
+            .as_ref()
+            .is_some_and(gpui::InputGesture::is_current)
+        {
+            self.cancel_pointer_selection();
             return;
         }
 
@@ -2487,7 +2500,6 @@ impl<M: InputModeKind> InputBaseState<M> {
                 // Alt+Shift starts a block; Linux also accepts Ghostty's Ctrl+Alt.
                 // Mark selecting so the drag handler extends the block.
                 self.column_select_start = Some(ColumnarPoint::new(offset, columns_past_line_end));
-                self.selecting = true;
                 self.move_to_with_affinity(offset, None, line_end_affinity, cx);
                 return;
             } else if event.modifiers.alt {
@@ -2506,6 +2518,14 @@ impl<M: InputModeKind> InputBaseState<M> {
         }
     }
 
+    pub(super) fn cancel_pointer_selection(&mut self) {
+        self.selecting = None;
+        self.selected_word_range = None;
+        self.column_select_start = None;
+        self.touch_selection.drag = None;
+        self.auto_scroll.stop();
+    }
+
     pub(super) fn on_mouse_up(
         &mut self,
         event: &MouseUpEvent,
@@ -2520,10 +2540,7 @@ impl<M: InputModeKind> InputBaseState<M> {
         if self.active_selection().is_empty() {
             self.active_selection_mut().reversed = false;
         }
-        self.selecting = false;
-        self.selected_word_range = None;
-        self.column_select_start = None;
-        self.auto_scroll.stop();
+        self.cancel_pointer_selection();
     }
 
     pub(super) fn on_mouse_move(
@@ -3635,7 +3652,12 @@ impl<M: InputModeKind> InputBaseState<M> {
             return;
         }
 
-        if !self.selecting {
+        if !self
+            .selecting
+            .as_ref()
+            .is_some_and(gpui::InputGesture::is_current)
+        {
+            self.cancel_pointer_selection();
             return;
         }
 
@@ -3653,20 +3675,22 @@ impl<M: InputModeKind> InputBaseState<M> {
             let delta = AutoScroll::compute_delta(event.position.y, self.input_bounds);
             // Input's ScrollHandle uses negative-y-is-down; negate the positive-towards-bottom delta.
             let scroll_delta = delta.map(|d| -d);
-            self.auto_scroll.set(scroll_delta, cx, |delta, state, cx| {
-                let current = state.scroll_handle.offset();
-                state.update_scroll_offset(Some(point(current.x, current.y + delta)), cx);
-                if let Some(pos) = state.auto_scroll.last_drag_position {
-                    let (offset, line_end_affinity, columns_past_line_end) =
-                        state.resolve_mouse_position(pos);
-                    if let Some(start) = state.column_select_start {
-                        let end = ColumnarPoint::new(offset, columns_past_line_end);
-                        state.build_columnar_selection(start, end, cx);
-                    } else {
-                        state.select_to_with_affinity(offset, line_end_affinity, cx);
+            let gesture = self.selecting.as_ref().unwrap().downgrade();
+            self.auto_scroll
+                .set(scroll_delta, gesture, cx, |delta, state, cx| {
+                    let current = state.scroll_handle.offset();
+                    state.update_scroll_offset(Some(point(current.x, current.y + delta)), cx);
+                    if let Some(pos) = state.auto_scroll.last_drag_position {
+                        let (offset, line_end_affinity, columns_past_line_end) =
+                            state.resolve_mouse_position(pos);
+                        if let Some(start) = state.column_select_start {
+                            let end = ColumnarPoint::new(offset, columns_past_line_end);
+                            state.build_columnar_selection(start, end, cx);
+                        } else {
+                            state.select_to_with_affinity(offset, line_end_affinity, cx);
+                        }
                     }
-                }
-            });
+                });
         }
     }
 
@@ -5928,6 +5952,61 @@ mod tests {
             let line = state.input_bounds;
             assert_eq!(line.center().y, px(30.), "line {line:?}");
         });
+    }
+
+    #[gpui::test]
+    fn disabled_original_editor_ends_drag_and_timer_without_erasing_selection(
+        cx: &mut TestAppContext,
+    ) {
+        use std::time::Duration;
+        cx.update(crate::init);
+        let text = (0..80)
+            .map(|i| format!("line {i}: original draft"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let view = InputView::build_textarea(cx, move |state| state.rows(4).default_value(text));
+        let mut visual = VisualTestContext::from_window(view.window_handle.into(), cx);
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        let bounds = view.input.read_with(&visual, |state, _| state.input_bounds);
+        let start = point(bounds.left() + px(2.), bounds.top() + px(8.));
+        let edge = point(bounds.left() + px(80.), bounds.bottom() + px(30.));
+        let tick = |cx: &mut VisualTestContext| {
+            cx.executor().advance_clock(Duration::from_millis(16));
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        };
+        visual.simulate_mouse_down(start, MouseButton::Left, gpui::Modifiers::default());
+        visual.simulate_mouse_move(edge, Some(MouseButton::Left), gpui::Modifiers::default());
+        tick(&mut visual);
+        let (range, offset) = view.input.read_with(&visual, |state, _| {
+            assert!(!state.selected_range().is_empty());
+            assert!(
+                state.scroll_handle.offset().y < px(0.),
+                "actual native drag timer scrolls the editor"
+            );
+            (state.selected_range(), state.scroll_handle.offset())
+        });
+        view.input.update(&mut visual, |state, cx| {
+            state.set_disabled(true, cx);
+            state.set_disabled(false, cx);
+            assert!(state.selecting.is_none());
+            assert!(!state.auto_scroll.is_active());
+        });
+        tick(&mut visual);
+        visual.simulate_mouse_move(edge, Some(MouseButton::Left), gpui::Modifiers::default());
+        visual.simulate_mouse_up(edge, MouseButton::Left, gpui::Modifiers::default());
+        tick(&mut visual);
+        view.input.read_with(&visual, |state, _| {
+            assert_eq!(state.selected_range(), range);
+            assert_eq!(state.scroll_handle.offset(), offset);
+        });
+        visual.simulate_mouse_down(start, MouseButton::Left, gpui::Modifiers::default());
+        visual.simulate_mouse_move(edge, Some(MouseButton::Left), gpui::Modifiers::default());
+        tick(&mut visual);
+        view.input.read_with(&visual, |state, _| {
+            assert!(state.scroll_handle.offset().y < offset.y)
+        });
+        visual.simulate_mouse_up(edge, MouseButton::Left, gpui::Modifiers::default());
     }
 
     #[gpui::test]
@@ -8872,7 +8951,7 @@ mod tests {
         cx.simulate_mouse_down(position, MouseButton::Left, modifiers);
         cx.simulate_mouse_up(point(px(-100.), px(-100.)), MouseButton::Left, modifiers);
         view.input.read_with(&cx, |state, _| {
-            assert!(!state.selecting);
+            assert!(state.selecting.is_none());
             assert!(state.column_select_start.is_none());
         });
     }
