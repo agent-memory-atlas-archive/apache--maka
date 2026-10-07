@@ -69,7 +69,11 @@ impl Widget for Recipe {
             .downcast_mut::<Owner>()
             .expect("terminal editor owner");
         if self.props.disabled {
-            return Ok(WidgetInput::Consumed(None));
+            return Ok(if matches!(event, Event::Key(_)) {
+                WidgetInput::Unhandled
+            } else {
+                WidgetInput::Consumed(None)
+            });
         }
         let handled = match event {
             Event::Key(key) => {

@@ -22,6 +22,7 @@ import type {
   Emission,
   Output,
   TerminalLayout,
+  Shortcut,
 } from '../../plugin-sdk/src/index.js';
 import type { Theme } from './contracts.js';
 export type Target = 'desktop' | 'tui';
@@ -76,6 +77,7 @@ export function paint(target: Target, theme: Theme) {
         scroll?: 'none' | 'manual' | 'anchor' | 'follow_end';
         visible?: boolean;
         terminal?: TerminalLayout;
+        shortcuts?: Shortcut[];
       } = {},
     ): Node => ({
       kind: 'stack',
@@ -86,6 +88,7 @@ export function paint(target: Target, theme: Theme) {
       background: rgba(options.surface ? theme.surface : theme.background),
       children,
       visible: options.visible ?? true,
+      shortcuts: options.shortcuts ?? [],
       ...(desktop
         ? { style: options.style ?? {}, scroll: options.scroll ?? 'none' }
         : { layout: options.terminal ?? {}, scroll: options.scroll ?? 'none' }),

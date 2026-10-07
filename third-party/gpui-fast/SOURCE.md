@@ -75,3 +75,5 @@ Window exposes read-only slices of its original prepainted and completed hitboxe
 Window 只读公开原 prepainted/completed hitboxes 及原 focus handle 在完成 dispatch tree 中的插入位置。Kit 据此投影 retained 选区几何、维护触控菜单存活与文档顺序，不新建 hitbox、focus tree 或 frame owner。
 
 The standalone native test workspace selects the same five adapted crates and async-io owner as the application, with line-table debug information and runtime Metal shaders. One upstream property-test entry uses proptest directly because the GPUI macro forwards an unsupported proptest_path option. Its configuration/dispatcher seeds, four cases, shrinking, original context teardown and render-equivalence assertions are preserved; this is a test harness adjustment, not a replacement runtime.
+
+Window exposes a live marked-text predicate through the original focused PlatformInputHandler. The internal direct forwarding seam receives the current Window/App, avoiding a second asynchronous borrow during native key dispatch. The handler is restored after the read; no composition mirror is added.

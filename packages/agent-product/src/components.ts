@@ -96,7 +96,7 @@ export function components(target: Target): {
             ? 'primary_enter'
             : 'control_enter'
           : null,
-      tabIndex: 0,
+      tabIndex: 1,
       initialText: '',
       placeholder: text.placeholder,
       command: props.command,

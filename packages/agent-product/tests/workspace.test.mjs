@@ -5043,3 +5043,37 @@ test('session catalog contracts require explicit boundaries and bound the page s
   assert.equal(position({ kind: 'before', revision: 'catalog', cursor: 'session' }), true);
   assert.equal(position({ kind: 'after', cursor: 'session' }), false);
 });
+
+test('ordinary root shortcuts share creation policy and close only presented pages', () => {
+  const client = new Client().start();
+  const shortcuts = () => client.output.frame.view.shortcuts;
+  assert.ok(
+    shortcuts().some((shortcut) => shortcut.key === 'b' && shortcut.input === 'navigation-toggle'),
+  );
+  const watch = structuredClone(client.state.watch);
+  client.raw('navigation-back');
+  assert.equal(client.state.navigationOpen, false);
+  assert.equal(
+    shortcuts().some((shortcut) => shortcut.key === 'escape'),
+    false,
+  );
+  assert.deepEqual(client.state.watch, watch);
+  client.raw('settings');
+  assert.equal(
+    shortcuts().some((shortcut) => shortcut.key === 'escape'),
+    false,
+    'child pages own their closing policy',
+  );
+  client.input({ kind: 'component', child: 'connections', name: 'closed', event: {} });
+  assert.equal(client.state.settingsOpen, false);
+  client.raw('create');
+  assert.deepEqual(client.find('create').input, { title: 'New conversation' });
+  assert.equal(shortcuts().find((shortcut) => shortcut.key === 'n').enabled, false);
+  const requests = client.actions.size;
+  client.raw('create');
+  assert.equal(
+    client.actions.size,
+    requests,
+    'pending creation cannot be duplicated by another input',
+  );
+});

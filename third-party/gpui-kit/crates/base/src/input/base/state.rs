@@ -2203,6 +2203,7 @@ impl<M: InputModeKind> InputBaseState<M> {
 
         if self.ime_marked_range.is_some() {
             self.unmark_text(window, cx);
+            return;
         }
 
         if self.clean_on_escape {

@@ -736,27 +736,8 @@ impl<V: ?Sized + 'static> Application<V> {
     fn target_valid(&self, target: &CaptureTarget) -> bool {
         // A visual continuation must remain on the current committed visible route.
         // Resource captures are independent of physical presentation.
-        if target.output == CaptureOutput::Continuation {
-            if !self
-                .frame(&target.mount)
-                .is_ok_and(|frame| frame.view.root_visible())
-            {
-                return false;
-            }
-            let Ok(chain) = self.mount_chain(&target.mount) else {
-                return false;
-            };
-            if !chain.windows(2).all(|edge| {
-                let (child, parent) = (&edge[0], &edge[1]);
-                self.frame(parent).is_ok_and(|frame| {
-                    frame.view.visible_slots().any(|slot| {
-                        self.child_mount(parent, &slot.key)
-                            .is_ok_and(|mount| mount == child)
-                    })
-                })
-            }) {
-                return false;
-            }
+        if target.output == CaptureOutput::Continuation && !self.mount_visible(&target.mount) {
+            return false;
         }
         target.edges.iter().all(|e| {
             self.views

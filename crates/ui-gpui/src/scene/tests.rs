@@ -1390,3 +1390,138 @@ fn popup_pointer_scope_follows_a_cached_opaque_child_when_its_external_parent_ch
         "input ancestry comes from remapped dispatch nodes, not a cached external FocusId"
     );
 }
+
+fn command(key: &str, input: &str, enabled: bool) -> Value {
+    json!({"key":key,"modifiers":["control"],"input":input,"enabled":enabled})
+}
+#[gpui::test]
+fn shortcuts_use_native_bubbling_and_nearest_live_admission(cx: &mut TestAppContext) {
+    let (entity, window, clicks) = harness(cx);
+    let mut scene = source(false, false, false);
+    scene["shortcuts"] = json!([command("b", "outer", true), command("n", "new", true)]);
+    scene["children"][0]["shortcuts"] = json!([command("b", "inner", false)]);
+    replace(cx, window, &entity, scene.clone());
+    draw(cx, window);
+    cx.update_window(window, |_, window, cx| {
+        let focus = entity.read(cx).state().buttons["action"].focus.clone();
+        window.focus(&focus, cx)
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "ctrl-b ctrl-n");
+    assert_eq!(
+        clicks.get(),
+        1,
+        "disabled inner shadows; another chord reaches outer"
+    );
+    scene["children"][0]["shortcuts"][0]["enabled"] = json!(true);
+    replace(cx, window, &entity, scene.clone());
+    draw(cx, window);
+    cx.simulate_keystrokes(window, "ctrl-b");
+    assert_eq!(clicks.get(), 2, "one nearest command, never both");
+    scene["children"][0]["shortcuts"][0]["enabled"] = json!(false);
+    cx.update_window(window, |_, window, cx| {
+        entity.update(cx, |h, cx| h.replace(scene, window, cx));
+        window.dispatch_event(
+            gpui_kit::PlatformInput::KeyDown(gpui_kit::KeyDownEvent {
+                keystroke: gpui_kit::Keystroke::parse("ctrl-b").unwrap(),
+                is_held: false,
+                prefer_character_input: false,
+            }),
+            cx,
+        );
+        assert_eq!(
+            clicks.get(),
+            2,
+            "unpainted current disable revokes original listener"
+        );
+        entity.update(cx, |h, cx| {
+            h.recipe.presentation(h.state.as_mut(), false, window, cx)
+        });
+        window.dispatch_event(
+            gpui_kit::PlatformInput::KeyDown(gpui_kit::KeyDownEvent {
+                keystroke: gpui_kit::Keystroke::parse("ctrl-n").unwrap(),
+                is_held: false,
+                prefer_character_input: false,
+            }),
+            cx,
+        );
+        assert_eq!(clicks.get(), 2, "hidden root cannot invoke old callbacks");
+    })
+    .unwrap();
+}
+#[gpui::test]
+fn unfocused_scene_root_adopts_a_non_tab_keyboard_scope(cx: &mut TestAppContext) {
+    let (entity, window, clicks) = harness(cx);
+    let mut scene = source(false, false, true);
+    scene["shortcuts"] = json!([command("n", "new", true)]);
+    replace(cx, window, &entity, scene);
+    draw(cx, window);
+    cx.update_window(window, |_, window, cx| {
+        let state = entity.read(cx).state();
+        let (_, focus) = state.keyboard_focus.as_ref().unwrap();
+        assert!(focus.is_focused(window));
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "ctrl-n");
+    assert_eq!(clicks.get(), 1);
+}
+#[gpui::test]
+fn marked_native_editor_blocks_commands_and_first_escape_only_ends_composition(
+    cx: &mut TestAppContext,
+) {
+    use gpui_kit::{
+        EntityInputHandler,
+        base::input::{InputBase, TextareaState},
+    };
+    cx.update(gpui_kit::init);
+    let (entity, window, clicks) = harness(cx);
+    let editor = cx
+        .update_window(window, |_, window, cx| {
+            let editor = cx.new(|cx| TextareaState::new(window, cx));
+            let child = editor.clone();
+            entity.update(cx, |h, _| {
+                h.slots = Slots::new(
+                    vec!["native-editor".into()],
+                    h.slots.input.clone(),
+                    move |_, _, cx| {
+                        let focus = child.read(cx).presentation().focus_handle().clone();
+                        Ok(InputBase::new("shortcut-test-editor")
+                            .size_full()
+                            .track_focus(&focus)
+                            .child(child.clone())
+                            .into_any_element())
+                    },
+                );
+            });
+            editor
+        })
+        .unwrap();
+    let mut scene = source(false, false, true);
+    scene["shortcuts"] = json!([command("n","new",true),{"key":"escape","modifiers":[],"input":"close","enabled":true}]);
+    scene["children"] = json!([{"kind":"component","key":"native-editor","binding":"editor","member":0,"props":{},"on":{}}]);
+    replace(cx, window, &entity, scene);
+    cx.update_window(window, |_, window, cx| {
+        window.focus(editor.read(cx).presentation().focus_handle(), cx);
+        editor.update(cx, |state, cx| {
+            state.replace_and_mark_text_in_range(None, "ni", None, window, cx)
+        });
+    })
+    .unwrap();
+    draw(cx, window);
+    cx.update_window(window, |_, window, cx| assert!(window.has_marked_text(cx)))
+        .unwrap();
+    cx.simulate_keystrokes(window, "ctrl-n escape");
+    assert_eq!(
+        clicks.get(),
+        0,
+        "composition owns both command suppression and first Escape"
+    );
+    cx.update_window(window, |_, window, cx| assert!(!window.has_marked_text(cx)))
+        .unwrap();
+    cx.simulate_keystrokes(window, "escape ctrl-n");
+    assert_eq!(
+        clicks.get(),
+        2,
+        "following unmarked keys reach the original scope"
+    );
+}

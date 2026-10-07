@@ -327,6 +327,10 @@ export type TerminalScene =
       padding: number;
       background: number;
       children: TerminalScene[];
+      /**
+       * @maxItems 32
+       */
+      shortcuts?: Shortcut[];
       layout?: TerminalLayout;
       /**
        * Native scroll policy; offsets and accepted viewport geometry remain native.
@@ -362,6 +366,7 @@ export type TerminalScene =
       kind: 'component';
     };
 export type TerminalDirection = 'row' | 'column';
+export type Modifier = 'control' | 'primary' | 'alt' | 'shift' | 'super';
 export type CapturePlan =
   | {
       source: CaptureSource;
@@ -1582,6 +1587,20 @@ export interface ComponentSlot {
   on: {
     [k: string]: string | undefined;
   };
+}
+export interface Shortcut {
+  key: string;
+  /**
+   * @maxItems 4
+   */
+  modifiers:
+    | []
+    | [Modifier]
+    | [Modifier, Modifier]
+    | [Modifier, Modifier, Modifier]
+    | [Modifier, Modifier, Modifier, Modifier];
+  input: string;
+  enabled: boolean;
 }
 /**
  * Native terminal cell constraints on a child in its parent's main axis.

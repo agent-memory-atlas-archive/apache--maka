@@ -20,6 +20,7 @@
 pub mod canvas;
 mod popup;
 
+use gpui_kit::AppContext;
 use maka_ui::{ComponentSlot, NativeView};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -76,6 +77,9 @@ pub enum Node {
         padding: u16,
         background: u32,
         children: Vec<Node>,
+        #[serde(default)]
+        #[schemars(length(max = 32))]
+        shortcuts: Vec<maka_ui::shortcut::Shortcut>,
         #[serde(default = "visible")]
         visible: bool,
         #[serde(default)]
@@ -182,6 +186,9 @@ impl Node {
         {
             return Err("invalid or duplicate UI node identity".into());
         }
+        if let Self::Stack { shortcuts, .. } = self {
+            maka_ui::shortcut::validate(shortcuts, cfg!(target_os = "macos"))?;
+        }
         match self {
             Self::Stack { style, .. }
             | Self::Text { style, .. }
@@ -284,6 +291,38 @@ impl Node {
             }
             _ => {}
         }
+    }
+    fn shortcut_inputs(
+        &self,
+        inputs: &mut BTreeMap<String, Value>,
+        visible: bool,
+    ) -> Result<(), String> {
+        match self {
+            Self::Stack {
+                children,
+                shortcuts,
+                visible: local,
+                ..
+            } => {
+                if visible && *local {
+                    maka_ui::shortcut::inputs(shortcuts, inputs)?;
+                }
+                for child in children {
+                    child.shortcut_inputs(inputs, visible && *local)?;
+                }
+            }
+            Self::Popup {
+                trigger,
+                content,
+                open,
+                ..
+            } => {
+                trigger.shortcut_inputs(inputs, visible)?;
+                content.shortcut_inputs(inputs, visible && *open)?;
+            }
+            _ => {}
+        }
+        Ok(())
     }
     fn metadata(
         &self,
@@ -448,6 +487,8 @@ pub(crate) fn compile_with_inputs(
         deadline,
     )
     .map_err(maka_ui::Error::Invalid)?;
+    node.shortcut_inputs(&mut inputs, true)
+        .map_err(maka_ui::Error::Invalid)?;
     for (key, schema) in additional_inputs {
         if inputs.insert(key, schema).is_some() {
             return Err(maka_ui::Error::Invalid(
@@ -481,20 +522,46 @@ impl Drop for ButtonState {
         let _ = self.focus.clone().tab_stop(false).tab_index(-1);
     }
 }
+struct ShortcutState {
+    admitted: bool,
+    shortcuts: Vec<maka_ui::shortcut::Shortcut>,
+}
 struct SceneState {
     visible: bool,
+    keyboard_focus: Option<(String, gpui_kit::FocusHandle)>,
     input: super::LiveInput,
     buttons: BTreeMap<String, ButtonState>,
+    shortcuts: BTreeMap<String, gpui_kit::Entity<ShortcutState>>,
     scrolls: BTreeMap<String, gpui_kit::ScrollHandle>,
     canvases: BTreeMap<String, canvas::State>,
     popups: BTreeMap<String, popup::State>,
 }
 impl SceneState {
     fn reconcile(&mut self, root: &Node, window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
+        let root_key = match root {
+            Node::Stack { key, shortcuts, .. } if !shortcuts.is_empty() => Some(key),
+            _ => None,
+        };
+        if self.keyboard_focus.as_ref().map(|(key, _)| key) != root_key {
+            if let Some((_, focus)) = self.keyboard_focus.take()
+                && focus.is_focused(window)
+            {
+                window.blur(cx);
+            }
+            self.keyboard_focus =
+                root_key.map(|key| (key.clone(), cx.focus_handle().tab_stop(false)));
+        }
+        if !self.visible
+            && let Some((_, focus)) = &self.keyboard_focus
+            && focus.is_focused(window)
+        {
+            window.blur(cx);
+        }
         let mut buttons = std::mem::take(&mut self.buttons);
         let mut scrolls = std::mem::take(&mut self.scrolls);
         let mut canvases = std::mem::take(&mut self.canvases);
         let mut popups = std::mem::take(&mut self.popups);
+        let mut shortcuts = std::mem::take(&mut self.shortcuts);
         // Original mechanical owners and native context remain separate.
         #[allow(clippy::too_many_arguments)]
         fn visit(
@@ -504,6 +571,7 @@ impl SceneState {
             scrolls: &mut BTreeMap<String, gpui_kit::ScrollHandle>,
             canvases: &mut BTreeMap<String, canvas::State>,
             popups: &mut BTreeMap<String, popup::State>,
+            shortcuts: &mut BTreeMap<String, gpui_kit::Entity<ShortcutState>>,
             window: &mut gpui_kit::Window,
             cx: &mut gpui_kit::App,
             visible: bool,
@@ -517,7 +585,8 @@ impl SceneState {
                     ..
                 } => {
                     visit(
-                        trigger, current, buttons, scrolls, canvases, popups, window, cx, visible,
+                        trigger, current, buttons, scrolls, canvases, popups, shortcuts, window,
+                        cx, visible,
                     );
                     let mut popup = popups
                         .remove(key)
@@ -530,6 +599,7 @@ impl SceneState {
                         scrolls,
                         canvases,
                         popups,
+                        shortcuts,
                         window,
                         cx,
                         visible && *open,
@@ -570,9 +640,23 @@ impl SceneState {
                     key,
                     scroll,
                     children,
+                    shortcuts: declarations,
                     visible: local,
                     ..
                 } => {
+                    if !declarations.is_empty() {
+                        let owner = shortcuts.remove(key).unwrap_or_else(|| {
+                            cx.new(|_| ShortcutState {
+                                admitted: false,
+                                shortcuts: vec![],
+                            })
+                        });
+                        owner.update(cx, |owner, _| {
+                            owner.admitted = visible && *local;
+                            owner.shortcuts = declarations.clone();
+                        });
+                        current.shortcuts.insert(key.clone(), owner);
+                    }
                     if *scroll != Scroll::None {
                         current
                             .scrolls
@@ -586,6 +670,7 @@ impl SceneState {
                             scrolls,
                             canvases,
                             popups,
+                            shortcuts,
                             window,
                             cx,
                             visible && *local,
@@ -603,10 +688,14 @@ impl SceneState {
             &mut scrolls,
             &mut canvases,
             &mut popups,
+            &mut shortcuts,
             window,
             cx,
             visible,
         );
+        for owner in shortcuts.values() {
+            owner.update(cx, |owner, _| owner.admitted = false);
+        }
         for canvas in canvases.values_mut() {
             canvas.deactivate(window, cx);
         }
@@ -631,8 +720,10 @@ impl super::Widget for Node {
             // Custody is allocated before the presenter knows actual visibility.
             // In particular, an initially hidden popup must never steal focus.
             visible: false,
+            keyboard_focus: None,
             input,
             buttons: BTreeMap::new(),
+            shortcuts: BTreeMap::new(),
             scrolls: BTreeMap::new(),
             canvases: BTreeMap::new(),
             popups: BTreeMap::new(),
@@ -671,6 +762,14 @@ impl super::Widget for Node {
         cx: &mut gpui_kit::App,
     ) {
         let state = state.downcast_mut::<SceneState>().expect("scene owner");
+        if let Some((_, focus)) = &state.keyboard_focus
+            && focus.is_focused(window)
+        {
+            window.blur(cx);
+        }
+        for owner in state.shortcuts.values() {
+            owner.update(cx, |owner, _| owner.admitted = false);
+        }
         for popup in state.popups.values_mut() {
             popup.deactivate(window, cx);
         }
@@ -696,6 +795,13 @@ impl super::Widget for Node {
         if !state.visible {
             use gpui_kit::{IntoElement, Styled};
             return Ok(gpui_kit::div().hidden().into_any_element());
+        }
+        // Give an otherwise unfocused surface a non-tab command scope. Native
+        // child focus remains authoritative and is never replaced by this fallback.
+        if window.focused(cx).is_none()
+            && let Some((_, focus)) = &state.keyboard_focus
+        {
+            window.focus(focus, cx);
         }
         self.element(state, slots, window, cx)
     }
@@ -901,6 +1007,7 @@ impl Node {
                 style,
                 scroll,
                 visible,
+                shortcuts,
             } => {
                 let element = div()
                     .id(SharedString::from(format!(
@@ -920,8 +1027,65 @@ impl Node {
                     Direction::Column => element.flex_col(),
                 };
                 let mut element = style.apply(element);
+                if let Some((root, focus)) = &state.keyboard_focus
+                    && root == key
+                {
+                    element = element.track_focus(focus);
+                }
                 if !visible {
                     return Ok(element.hidden().into_any_element());
+                }
+                if !shortcuts.is_empty() {
+                    let owner = state
+                        .shortcuts
+                        .get(key)
+                        .ok_or_else(|| {
+                            maka_ui::Error::Invalid("scene shortcut owner replaced".into())
+                        })?
+                        .downgrade();
+                    let declarations = shortcuts.clone();
+                    let input = slots.input.clone();
+                    let window_id = window.window_handle().window_id();
+                    element = element.on_key_down(move |event, window, cx| {
+                        if event.is_held
+                            || event.prefer_character_input
+                            || event.keystroke.modifiers.function
+                            || window.window_handle().window_id() != window_id
+                            || window.has_marked_text(cx)
+                        {
+                            return;
+                        }
+                        let modifiers = event.keystroke.modifiers;
+                        let physical = maka_ui::shortcut::Modifiers {
+                            control: modifiers.control,
+                            alt: modifiers.alt,
+                            shift: modifiers.shift,
+                            super_key: modifiers.platform,
+                        };
+                        let Some(shortcut) = declarations.iter().find(|shortcut| {
+                            shortcut.matches(
+                                &event.keystroke.key,
+                                physical,
+                                cfg!(target_os = "macos"),
+                            )
+                        }) else {
+                            return;
+                        };
+                        // A nearest old declaration remains a barrier. Admission and
+                        // original input epoch decide whether it can still invoke.
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        let admitted = owner.upgrade().is_some_and(|owner| {
+                            let current = owner.read(cx);
+                            current.admitted && current.shortcuts == declarations
+                        });
+                        if admitted && shortcut.enabled {
+                            input.bind(
+                                shortcut.input.clone(),
+                                |_: &gpui_kit::KeyDownEvent| json!({"kind":"click"}),
+                            )(event, window, cx);
+                        }
+                    });
                 }
                 if *scroll != Scroll::None {
                     let handle = state.scrolls.get(key).ok_or_else(|| {

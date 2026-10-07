@@ -51,3 +51,5 @@ provided. Localization and themes belong to the selected product. The generic
 application schema and native component contracts come from the Rust definitions
 and are generated for the plugin SDK. Product feature and platform UX acceptance
 are distinct from presenter tests.
+
+Scene Stack containers can declare bounded `shortcuts` with a key, modifiers, input and enabled flag. Native editing handles keys first; the nearest matching painted scope owns an unconsumed chord, including disabled declarations. Inputs use the original mount/revision and current committed visibility. An unfocused root uses its last successfully presented declaration. `primary` means Control in the terminal; unmodified printable keys stay native.

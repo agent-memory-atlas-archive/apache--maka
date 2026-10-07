@@ -113,6 +113,19 @@ pub(super) struct TargetIdentity {
     pub key: String,
     pub owner: std::rc::Rc<()>,
 }
+/// Original successfully painted ancestry, including across component slots.
+#[derive(Clone)]
+pub(super) struct Ancestor {
+    pub identity: TargetIdentity,
+    pub revision: u64,
+    pub shortcuts: Vec<maka_ui::shortcut::Shortcut>,
+}
+impl std::ops::Deref for Ancestor {
+    type Target = TargetIdentity;
+    fn deref(&self) -> &TargetIdentity {
+        &self.identity
+    }
+}
 #[derive(Clone)]
 pub(super) struct Target {
     pub identity: TargetIdentity,
@@ -120,7 +133,7 @@ pub(super) struct Target {
     pub area: Placement,
     pub tab_index: i16,
     pub kind: TargetKind,
-    pub ancestors: Vec<TargetIdentity>,
+    pub ancestors: Vec<std::rc::Rc<Ancestor>>,
 }
 impl std::ops::Deref for Target {
     type Target = TargetIdentity;
@@ -139,11 +152,12 @@ impl Target {
 /// 绘制成功并完成实际 flush 后，才发布对应的命中区域。
 pub struct PaintedScene {
     pub(super) targets: Vec<Target>,
+    pub(super) keyboard: Option<std::rc::Rc<Ancestor>>,
     placed: std::collections::BTreeSet<uuid::Uuid>,
     laid_out: std::collections::BTreeSet<uuid::Uuid>,
     pub(super) scope: Option<super::selection::ScopePaint>,
     geometries: Vec<NativeGeometry>,
-    ancestry: Vec<TargetIdentity>,
+    ancestry: Vec<std::rc::Rc<Ancestor>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -395,6 +409,7 @@ impl Presenter {
             scope: None,
             geometries: Vec::new(),
             ancestry: Vec::new(),
+            keyboard: None,
         };
         if !self.resources.ready(&self.application, &self.root)? {
             return Ok(scene);
@@ -429,6 +444,7 @@ impl Presenter {
                     .min_by_key(|target| (target.tab_index == 0, target.tab_index))
                     .cloned()
             });
+        self.keyboard = scene.keyboard;
         self.scene = scene.targets;
     }
     pub(super) fn measure_mount(
@@ -677,6 +693,7 @@ impl Presenter {
                 padding,
                 background,
                 children,
+                shortcuts,
                 ..
             } => {
                 buffer.set_style(area.visible(), Style::default().bg(color(*background)));
@@ -728,11 +745,21 @@ impl Presenter {
                             ancestors: scene.ancestry.clone(),
                         });
                     }
-                    scene.ancestry.push(identity);
                     offset
                 } else {
                     0
                 };
+                if scrolling || !shortcuts.is_empty() {
+                    scene.ancestry.push(std::rc::Rc::new(Ancestor {
+                        identity: TargetIdentity {
+                            mount: mount.clone(),
+                            key: key.clone(),
+                            owner: self.resources.owners[&mount.id()].identity.clone(),
+                        },
+                        revision: self.application.frame(mount)?.revision,
+                        shortcuts: shortcuts.clone(),
+                    }));
+                }
                 for (child, relative) in children.into_iter().zip(flow.children) {
                     let area = Placement::new(
                         relative.translated(inner.x, inner.y - i64::from(offset)),
@@ -740,7 +767,7 @@ impl Presenter {
                     );
                     self.paint_node(mount, child, area, buffer, scene, pass)?;
                 }
-                if scrolling {
+                if scrolling || !shortcuts.is_empty() {
                     scene.ancestry.pop();
                 }
             }

@@ -340,3 +340,177 @@ fn submit_preserves_retryable_reset_receipt_and_next_command_settles() {
     assert_eq!(observation(&tui)["receipt"]["sequence"], 2);
     close(&mut tui);
 }
+
+fn shortcut_presenter() -> (tokio::runtime::Runtime, Presenter) {
+    let (runtime, mut input, packages) = textarea::editor_fixture();
+    let packages = packages.into_iter().map(|original| {
+        let declaration = original.manifest().application.clone().unwrap();
+        let mut files = BTreeMap::new();
+        if let Implementation::JavaScript { module, .. } = &declaration.entries[&EntryTarget::Tui].implementation {
+            let mut source = std::str::from_utf8(original.file(module).unwrap()).unwrap().to_owned();
+            if original.manifest().id == "dynamic.app" {
+                source = source.replace("const next={...state,revision:state.revision+1};", "const next={...state,revision:state.revision+1};if(event.kind==='raw'&&['outer','new','undo'].includes(event.key))next.commands=(state.commands??0)+1;");
+                source.push_str("const shortcutFrame=frame;frame=(state)=>{const out=shortcutFrame(state);if(state.options?.empty)out.frame.view.children=[{kind:'text',key:'empty',text:'Empty',color:0}];out.frame.view.shortcuts=[{key:'b',modifiers:['control'],input:'outer',enabled:true},{key:'n',modifiers:['control'],input:'new',enabled:true},{key:'z',modifiers:['control'],input:'undo',enabled:true}];return out;};");
+            }
+            if original.manifest().id == "dynamic.composer" {
+                source = source.replace("event(state,event,props){return", "event(state,event,props){if(event.key==='disable')return frame({...state,revision:state.revision+1,disabled:true},props);if(event.kind==='raw')return frame({...state,revision:state.revision+1,commands:(state.commands??0)+1},props);return");
+                source = source.replace("return frame({revision:state.revision+1}", "return frame({...state,revision:state.revision+1}");
+                source.push_str("const shortcutFrame=frame;frame=(state,props,events=[])=>{const out=shortcutFrame(state,props,events);if(state.disabled)out.frame.view.props.disabled=true;out.frame.view={kind:'stack',key:'scope',direction:'column',gap:0,padding:0,background:0,shortcuts:[{key:'b',modifiers:['control'],input:'inner',enabled:!props.readOnly},{key:'d',modifiers:['control'],input:'disable',enabled:true}],children:[out.frame.view]};return out;};");
+            }
+            files.insert(module.clone(), source.into_bytes());
+        }
+        files.insert("maka.extension.json".into(), serde_json::to_vec(&json!({"schemaVersion":2,"id":original.manifest().id,"application":declaration})).unwrap());
+        let package = Package::new(files).unwrap();
+        for node in input.instances.values_mut().filter(|node| matches!(&node.package,maka_plugin_core::package::PackageSelection::Pinned{package} if package.id==original.manifest().id)) {
+            node.package = package.application_ref().into();
+        }
+        package
+    }).collect();
+    let presenter = Presenter::new(
+        &input,
+        packages,
+        runtime.handle().clone(),
+        registry(),
+        json!({}),
+    )
+    .unwrap();
+    (runtime, presenter)
+}
+#[test]
+fn shortcuts_bubble_across_mounts_after_editing_and_disabled_scopes_shadow() {
+    let (_runtime, mut tui) = shortcut_presenter();
+    draw(&mut tui, 80, 24);
+    assert!(tui.focus.as_ref().unwrap().kind == paint::TargetKind::Native);
+    tui.input(Event::Paste("Draft".into())).unwrap();
+    draw(&mut tui, 80, 24);
+    let child = tui
+        .application
+        .child_mount(&tui.root, "editor")
+        .unwrap()
+        .clone();
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Char('b'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    assert_eq!(tui.application.frame(&child).unwrap().state["commands"], 1);
+    assert!(tui.application.frame(&tui.root).unwrap().state["commands"].is_null());
+    draw(&mut tui, 80, 24);
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Char('n'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["commands"],
+        1
+    );
+    draw(&mut tui, 80, 24);
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Char('z'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["commands"],
+        1,
+        "native undo consumes before a product declaration"
+    );
+    dispatch(&mut tui, "configure", json!({"readOnly":true}));
+    draw(&mut tui, 80, 24);
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Char('b'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    assert_eq!(tui.application.frame(&child).unwrap().state["commands"], 1);
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["commands"],
+        1,
+        "disabled nearest declaration shadows the outer command"
+    );
+    close(&mut tui);
+}
+#[test]
+fn hidden_parent_revokes_old_shortcut_without_changing_child_revision_or_flushing() {
+    let (_runtime, mut tui) = shortcut_presenter();
+    draw(&mut tui, 80, 24);
+    assert!(tui.focus.as_ref().unwrap().kind == paint::TargetKind::Native);
+    let child = tui
+        .application
+        .child_mount(&tui.root, "editor")
+        .unwrap()
+        .clone();
+    let revision = tui.application.frame(&child).unwrap().revision;
+    dispatch(&mut tui, "configure", json!({"visible":false}));
+    assert_eq!(tui.application.frame(&child).unwrap().revision, revision);
+    let area = Rect::new(0, 0, 80, 24);
+    let mut buffer = Buffer::empty(area);
+    let _unflushed = tui.paint(area, &mut buffer).unwrap();
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Char('b'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    assert_eq!(tui.application.frame(&child).unwrap().revision, revision);
+    assert!(tui.application.frame(&child).unwrap().state["commands"].is_null());
+    assert!(
+        tui.application.frame(&tui.root).unwrap().state["commands"].is_null(),
+        "invalid inner declaration remains a barrier"
+    );
+    close(&mut tui);
+}
+
+#[test]
+fn unfocused_root_commands_use_the_successfully_painted_scope() {
+    let (_runtime, mut tui) = shortcut_presenter();
+    dispatch(&mut tui, "configure", json!({"empty":true}));
+    draw(&mut tui, 80, 24);
+    assert!(tui.focus.is_none());
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Char('n'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["commands"],
+        1
+    );
+    close(&mut tui);
+}
+
+#[test]
+fn disabled_editor_leaves_outer_commands_available_before_another_flush() {
+    let (_runtime, mut tui) = shortcut_presenter();
+    draw(&mut tui, 80, 24);
+    assert!(tui.focus.as_ref().unwrap().kind == paint::TargetKind::Native);
+    let child = tui
+        .application
+        .child_mount(&tui.root, "editor")
+        .unwrap()
+        .clone();
+    let revision = tui.application.frame(&tui.root).unwrap().revision;
+    tui.application
+        .dispatch(
+            &child,
+            tui.application.frame(&child).unwrap().revision,
+            "disable",
+            json!({"kind":"click"}),
+        )
+        .unwrap();
+    tui.pump().unwrap();
+    assert_eq!(tui.application.frame(&tui.root).unwrap().revision, revision);
+    let original = observation(&tui);
+    tui.input(Event::Paste("must not edit".into())).unwrap();
+    assert_eq!(observation(&tui), original);
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Char('n'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["commands"],
+        1
+    );
+    close(&mut tui);
+}

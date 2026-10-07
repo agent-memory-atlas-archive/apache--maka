@@ -75,6 +75,9 @@ pub enum Node {
         background: u32,
         children: Vec<Node>,
         #[serde(default)]
+        #[schemars(length(max = 32))]
+        shortcuts: Vec<maka_ui::shortcut::Shortcut>,
+        #[serde(default)]
         layout: Layout,
         #[serde(default)]
         scroll: ScrollPolicy,
@@ -141,6 +144,9 @@ impl Node {
         {
             return Err("invalid or duplicate UI node identity".into());
         }
+        if let Self::Stack { shortcuts, .. } = self {
+            maka_ui::shortcut::validate(shortcuts, false)?;
+        }
         match self {
             Self::Stack {
                 gap,
@@ -179,6 +185,27 @@ impl Node {
                 if slot.binding.is_empty() || slot.binding.len() > 128 {
                     return Err("invalid slot binding".into());
                 }
+            }
+        }
+        Ok(())
+    }
+    fn shortcut_inputs(
+        &self,
+        inputs: &mut BTreeMap<String, Value>,
+        visible: bool,
+    ) -> Result<(), String> {
+        if let Self::Stack {
+            children,
+            shortcuts,
+            visible: local,
+            ..
+        } = self
+        {
+            if visible && *local {
+                maka_ui::shortcut::inputs(shortcuts, inputs)?;
+            }
+            for child in children {
+                child.shortcut_inputs(inputs, visible && *local)?;
             }
         }
         Ok(())
@@ -285,6 +312,8 @@ pub(super) fn compile_with_inputs(
         deadline,
     )
     .map_err(maka_ui::Error::Invalid)?;
+    node.shortcut_inputs(&mut inputs, true)
+        .map_err(maka_ui::Error::Invalid)?;
     let visible = node.visible();
     NativeView::new(Rc::new(node) as Rc<dyn super::Widget>, inputs, slots)?
         .with_hidden_slots(hidden_slots)
@@ -345,6 +374,23 @@ impl super::Widget for Node {
         area: super::Placement,
         buffer: &mut ratatui::buffer::Buffer,
     ) -> maka_ui::Result<()> {
+        if slots.parent == &slots.presenter.root
+            && let Self::Stack { key, shortcuts, .. } = self
+            && !shortcuts.is_empty()
+        {
+            slots.scene.as_deref_mut().expect("paint scene").keyboard =
+                Some(Rc::new(super::paint::Ancestor {
+                    identity: super::paint::TargetIdentity {
+                        mount: slots.parent.clone(),
+                        key: key.clone(),
+                        owner: slots.presenter.resources.owners[&slots.parent.id()]
+                            .identity
+                            .clone(),
+                    },
+                    revision: slots.presenter.application.frame(slots.parent)?.revision,
+                    shortcuts: shortcuts.clone(),
+                }));
+        }
         let generation = slots
             .native_state::<super::scroll::SceneState>()?
             .generation;

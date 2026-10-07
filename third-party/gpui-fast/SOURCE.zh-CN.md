@@ -50,3 +50,5 @@ App 提供原当前事件传播标记的只读查询。原生分发完成观察�
 Bottom 与 item 合为一个带 tag 的 pending target，按当前 overflow、bounds 和 child geometry 解析，仅匹配的实际 paint 确认；hidden、discarded 和新 hover-hidden 的跳过绘制不能消费。新请求覆盖旧请求，真实原生移动取消请求。invalidate() 只推进原 dependency version，不冒充输入或安排 frame，Kit VirtualList 继续使用同一机械 owner。原 retained splice 检查纳入 rebuilt gap root 的 location/size；外框变化重建父元素，外框相同的内部内容改变仍可 splice。原生回归使用实际 wheel、focus、layout retry、显式请求与 partial child 更新，不作为 OS 或成品验收。
 
 独立原生测试工作区选择与应用相同的五个适配 crate 和 async-io owner，使用行表调试信息及运行时 Metal shader。上游一处属性测试改为直接调用 proptest，原因是 GPUI 宏转发了不受支持的 proptest_path 参数；配置与 dispatcher 种子、四个 case、随机收缩、原上下文清理和渲染等价断言全部保留。这是测试入口适配，不替换运行时。
+
+Window 的 marked-text 查询直接使用当前 Window/App 转发给原 focused PlatformInputHandler，读取后归还同一 handler，避免键盘派发期间再次异步借用 App/Window；不维护 composition 镜像。

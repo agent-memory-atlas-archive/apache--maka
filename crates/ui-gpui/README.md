@@ -181,3 +181,5 @@ and the original mount's resource group. Detached dialog/read work retains its
 original input lease until actual settlement, independently of weak delivery to
 an entity/window. Worker panic or lost dialog observation prevents clean mount
 acknowledgement; an ordinary completed read error does not imply failed cleanup.
+
+Scene Stack `shortcuts` share the typed command descriptor with TUI. Native actions and composition take priority, then an unconsumed key bubbles to the nearest declaration. Disabled or withdrawn scopes block outer commands without invoking. The original input epoch and native Entity custody gate retained callbacks. A root command scope can adopt a non-tab fallback focus only when no child is focused. `primary` is Command on macOS and Control elsewhere; no global application keymap is installed.

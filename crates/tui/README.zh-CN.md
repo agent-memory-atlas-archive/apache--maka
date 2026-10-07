@@ -42,3 +42,5 @@ Ctrl+C 退休界面。原 Guard 会检查每项终端恢复操作，即使此前
 旧业务 TUI、locale/profile 参数、主题存储与整 Host 退出界面已移除。本地化与
 主题由选中的产品负责。应用 Schema 和原生组件契约由 Rust 唯一定义并生成到
 插件 SDK；呈现器测试不代替完整产品功能与平台体验验收。
+
+场景 Stack 可声明有界的 `shortcuts`，包含 key、modifiers、input 与 enabled。原生编辑优先；最近的已绘制声明独占未消费的按键，禁用声明也阻止继续向外。输入核验原 mount/revision 和当前已提交可见链；无焦点的根使用最后成功呈现的声明。终端中 `primary` 为 Control，无修饰键的可打印字符保留给原生输入。

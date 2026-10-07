@@ -1982,6 +1982,10 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    pub fn has_marked_text(&mut self, window: &mut Window, cx: &mut App) -> bool {
+        self.handler.marked_text_range(window, cx).is_some()
+    }
+
     #[cfg_attr(target_os = "windows", allow(dead_code))]
     pub fn marked_text_range(&mut self) -> Option<Range<usize>> {
         self.cx

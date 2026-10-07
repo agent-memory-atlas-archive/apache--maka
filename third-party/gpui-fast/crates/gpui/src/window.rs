@@ -7040,6 +7040,14 @@ impl Window {
         self.platform_window.toggle_simple_fullscreen();
     }
 
+    /// Whether the focused original input handler currently owns marked text.
+    pub fn has_marked_text(&mut self, cx: &mut App) -> bool {
+        let Some(mut handler) = self.platform_window.take_input_handler() else { return false; };
+        let marked = handler.has_marked_text(self, cx);
+        self.platform_window.set_input_handler(handler);
+        marked
+    }
+
     /// Updates the IME panel position suggestions for languages like japanese, chinese.
     pub fn invalidate_character_coordinates(&self) {
         self.on_next_frame(|window, cx| {

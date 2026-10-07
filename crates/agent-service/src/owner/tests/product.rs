@@ -497,14 +497,26 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     };
     let mut presenter = start();
     await_screen(&mut presenter, "[ Show sidebar ]");
-    click(&mut presenter, "[ Show sidebar ]");
-    await_screen(&mut presenter, "[ New conversation ]");
-    click(&mut presenter, "[ New conversation ]");
-    click(&mut presenter, "[ Hide sidebar ]");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('b'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    wait_for_target(&mut presenter, "[ New conversation ]", 0);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('n'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    draw(&mut presenter);
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+        .unwrap();
     await_screen(&mut presenter, "A place to think.");
-    // Native draft is the first editor hit. Focus it through its actual visible
-    // placeholder, never inject component or forged action-result events.
-    click(&mut presenter, "What would you like to work on?");
+    // Closing navigation restores the retained native composer through its
+    // declared tab order. This command/draft path needs no mouse or forged input.
     presenter
         .input(Event::Paste("Hello product".into()))
         .unwrap();

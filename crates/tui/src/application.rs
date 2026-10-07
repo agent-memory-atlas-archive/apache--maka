@@ -186,6 +186,7 @@ pub struct Presenter {
     application: Application<dyn Widget>,
     root: Mount,
     scene: Vec<paint::Target>,
+    keyboard: Option<std::rc::Rc<paint::Ancestor>>,
     resources: resources::Resources,
     focus: Option<paint::Target>,
     drag: Option<paint::Target>,
@@ -334,6 +335,7 @@ impl Presenter {
             application,
             root,
             scene: Vec::new(),
+            keyboard: None,
             resources: Default::default(),
             focus: None,
             drag: None,
@@ -477,6 +479,9 @@ impl Presenter {
                 self.sync_native()?;
                 return Ok(());
             }
+            if self.dispatch_shortcut(&target.ancestors, &event)? {
+                return Ok(());
+            }
             // Bubble unconsumed navigation through the original flushed scroll ancestors.
             for ancestor in target.ancestors.iter().rev() {
                 if self.application.is_retiring(&ancestor.mount) {
@@ -515,7 +520,46 @@ impl Presenter {
             }
             self.sync_native()?;
         }
+        if self.focus.is_none()
+            && let Some(scope) = self.keyboard.clone()
+        {
+            self.dispatch_shortcut(&[scope], &event)?;
+        }
         Ok(())
+    }
+    fn dispatch_shortcut(
+        &mut self,
+        ancestors: &[std::rc::Rc<paint::Ancestor>],
+        event: &Event,
+    ) -> maka_ui::Result<bool> {
+        let Event::Key(key) = event else {
+            return Ok(false);
+        };
+        let Some((key, modifiers)) = shortcut_chord(key) else {
+            return Ok(false);
+        };
+        for ancestor in ancestors.iter().rev() {
+            if let Some(shortcut) = ancestor
+                .shortcuts
+                .iter()
+                .find(|shortcut| shortcut.matches(&key, modifiers, false))
+            {
+                if shortcut.enabled
+                    && self.resources.admits(ancestor)
+                    && self.application.mount_visible(&ancestor.mount)
+                {
+                    self.application.dispatch(
+                        &ancestor.mount,
+                        ancestor.revision,
+                        &shortcut.input,
+                        json!({"kind":"click"}),
+                    )?;
+                    self.sync_native()?;
+                }
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
     /// Copy only the focused original live native scope through the bounded
     /// terminal writer. An OSC52 write is not an OS clipboard acknowledgement.
@@ -723,6 +767,55 @@ impl Presenter {
     pub fn shutdown(&mut self) -> maka_ui::Result<()> {
         self.application.shutdown()
     }
+}
+
+fn shortcut_chord(
+    key: &crossterm::event::KeyEvent,
+) -> Option<(String, maka_ui::shortcut::Modifiers)> {
+    if key.kind != KeyEventKind::Press
+        || !(key.modifiers
+            - (KeyModifiers::CONTROL
+                | KeyModifiers::ALT
+                | KeyModifiers::SHIFT
+                | KeyModifiers::SUPER))
+            .is_empty()
+    {
+        return None;
+    }
+    // Crossterm's Windows AltGr text events carry both Control and Alt.
+    if cfg!(target_os = "windows")
+        && matches!(key.code, KeyCode::Char(_))
+        && key
+            .modifiers
+            .contains(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        return None;
+    }
+    let name = match key.code {
+        KeyCode::Char(' ') => "space".into(),
+        KeyCode::Char(c) => c.to_ascii_lowercase().to_string(),
+        KeyCode::Esc => "escape".into(),
+        KeyCode::Enter => "enter".into(),
+        KeyCode::Up => "up".into(),
+        KeyCode::Down => "down".into(),
+        KeyCode::Left => "left".into(),
+        KeyCode::Right => "right".into(),
+        KeyCode::Home => "home".into(),
+        KeyCode::End => "end".into(),
+        KeyCode::PageUp => "pageup".into(),
+        KeyCode::PageDown => "pagedown".into(),
+        KeyCode::F(n) => format!("f{n}"),
+        _ => return None,
+    };
+    Some((
+        name,
+        maka_ui::shortcut::Modifiers {
+            control: key.modifiers.contains(KeyModifiers::CONTROL),
+            alt: key.modifiers.contains(KeyModifiers::ALT),
+            shift: key.modifiers.contains(KeyModifiers::SHIFT),
+            super_key: key.modifiers.contains(KeyModifiers::SUPER),
+        },
+    ))
 }
 
 #[cfg(test)]

@@ -364,6 +364,26 @@ impl<V: ?Sized + 'static> Application<V> {
             .pop()
             .expect("nonempty mount chain"))
     }
+    /// Whether the exact live mount chain remains on the committed visible route.
+    pub fn mount_visible(&self, mount: &Mount) -> bool {
+        let Ok(chain) = self.mount_chain(mount) else {
+            return false;
+        };
+        chain.iter().all(|mount| {
+            !self.is_retiring(mount)
+                && self
+                    .frame(mount)
+                    .is_ok_and(|frame| frame.view.root_visible())
+        }) && chain.windows(2).all(|edge| {
+            let (child, parent) = (&edge[0], &edge[1]);
+            self.frame(parent).is_ok_and(|frame| {
+                frame.view.visible_slots().any(|slot| {
+                    self.child_mount(parent, &slot.key)
+                        .is_ok_and(|mount| mount == child)
+                })
+            })
+        })
+    }
     pub(super) fn mount_chain(&self, mount: &Mount) -> Result<Vec<Mount>> {
         let parents: BTreeMap<_, _> = self
             .runtime

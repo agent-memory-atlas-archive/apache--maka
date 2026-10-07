@@ -140,3 +140,5 @@ projected. These are native presentation patches, without new plugin/kernel stat
 Custom Markdown blocks carry their original TextView WeakEntity and native hitbox. Full bounds enter the existing selection contribution adapter, which owns current clipping and retained translation. A native test checks actual kept-row scrolling and SelectAll/Copy; its old paint-mask clipping mutation is equivalent on that opaque Fast layer path and does not demonstrate a clipping regression. Marker tests exclude single-character wrapping measurements while preserving all ordinal assertions.
 
 自定义 Markdown 区块携带原 TextView WeakEntity 和原生 hitbox，将完整 bounds 交给既有选择贡献适配器，由它统一处理当前裁剪与保留行平移。原生测试检查真实旧行滚动及全选/复制；在该不透明 Fast layer 路径上，旧绘制 mask 裁剪变异等价，不构成已证裁剪回归。序号测试排除包装测量的单字符标点，保留所有起始与嵌套序号断言。
+
+InputBaseState consumes Escape when it actually unmarks composition. A subsequent unmarked Escape can propagate to an enclosing application scope. This preserves native innermost dismissal ownership and prevents a single key from both cancelling composition and closing a product page.

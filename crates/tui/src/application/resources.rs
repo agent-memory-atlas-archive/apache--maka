@@ -237,6 +237,11 @@ impl Resources {
             owner.pending = None;
         }
     }
+    pub fn admits(&self, target: &paint::TargetIdentity) -> bool {
+        self.owners.get(&target.mount.id()).is_some_and(|owner| {
+            owner.live && owner.presented && Rc::ptr_eq(&owner.identity, &target.owner)
+        })
+    }
     pub fn input(
         &mut self,
         target: &paint::TargetIdentity,

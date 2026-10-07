@@ -253,6 +253,10 @@ function intent(
   state.pending[key] = request;
   actions.push({ key, binding, member: 0, method, input, resources, continuations });
 }
+function createSession(state: State, actions: Action[], locale: string) {
+  if (!mutationPending(state) && !catalogPending(state))
+    intent(state, actions, { kind: 'create' }, 'agent', 'create', { title: copy(locale).new });
+}
 function catalogPending(state: State): boolean {
   return Object.values(state.pending).some(
     (request) => request.kind === 'list' && request.generation === state.catalogGeneration,
@@ -1107,7 +1111,39 @@ function frame(
             ]
           : []),
       ],
-      { gap: 0, style: { width: fill, height: fill, align: 'center' }, terminal: { grow: 1 } },
+      {
+        gap: 0,
+        style: { width: fill, height: fill, align: 'center' },
+        terminal: { grow: 1 },
+        shortcuts: [
+          {
+            key: 'b',
+            modifiers: ['primary'],
+            input: 'navigation-toggle',
+            enabled: !state.settingsOpen && !state.deploymentOpen,
+          },
+          {
+            key: 'n',
+            modifiers: ['primary'],
+            input: 'create',
+            enabled:
+              !state.settingsOpen &&
+              !state.deploymentOpen &&
+              !mutationPending(state) &&
+              !catalogPending(state),
+          },
+          ...(state.navigationOpen && !state.settingsOpen && !state.deploymentOpen
+            ? [
+                {
+                  key: 'escape',
+                  modifiers: [],
+                  input: 'navigation-back',
+                  enabled: true,
+                } satisfies import('../../plugin-sdk/src/index.js').Shortcut,
+              ]
+            : []),
+        ],
+      },
     ),
   );
   out.frame.surface =
@@ -1286,10 +1322,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         ) {
           state.model = input.event as SettingsModelChoice;
           state.modelRefreshing = false;
-        } else if (input.name === 'create' && !mutationPending(state) && !catalogPending(state))
-          intent(state, actions, { kind: 'create' }, 'agent', 'create', {
-            title: copy(locale).new,
-          });
+        } else if (input.name === 'create') createSession(state, actions, locale);
         else if (input.name === 'select' && !mutationPending(state) && !catalogPending(state)) {
           const sessionId = (input.event as { sessionId: string }).sessionId;
           const session = state.catalog?.sessions.find((item) => item.id === sessionId);
@@ -1465,6 +1498,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
           state.settingsOpen = false;
         } else if (input.key === 'navigation-toggle') state.navigationOpen = !state.navigationOpen;
         else if (input.key === 'navigation-back') state.navigationOpen = false;
+        else if (input.key === 'create') createSession(state, actions, locale);
         else if (
           input.key === 'check' &&
           state.uncertain &&

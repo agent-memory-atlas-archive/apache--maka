@@ -136,3 +136,5 @@ fallback 仍由主题提供。
 独立的对话框/读取任务持有原 input lease，直到真实结算；向弱 entity/window 投递
 失败不会提前结束该任务。worker panic 或失去对话框观察会阻止挂载确认健康清理；
 已经完成的普通读取错误不意味着清理失败。
+
+场景 Stack 的 `shortcuts` 与 TUI 共用类型化命令声明。原生 action 与输入法优先，未消费的按键才冒泡到最近声明；禁用或撤销的作用域阻止外层命令且不调用。旧回调仍核验原输入 epoch 和原生 Entity 准入。根命令作用域仅在无子控件焦点时接管一个不参与 Tab 的焦点；macOS 的 `primary` 为 Command，其余平台为 Control，不安装应用全局 keymap。
