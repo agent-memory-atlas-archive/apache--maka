@@ -188,6 +188,11 @@ pub(crate) fn carry_paint_records(
             .iter_mut()
             .map(|(id, handler)| (*id, handler.take())),
     );
+    next.input_scopes.extend(
+        rendered.input_scopes[range.start.input_scopes_index..range.end.input_scopes_index]
+            .iter()
+            .cloned(),
+    );
     next.mouse_listeners.extend(
         rendered.mouse_listeners
             [range.start.mouse_listeners_index..range.end.mouse_listeners_index]
@@ -305,6 +310,8 @@ pub(crate) fn follow_paint(window: &mut Window, from: &Range<PaintIndex>, to: &P
             && b.fast_window_control_hitboxes_index <= d.fast_window_control_hitboxes_index
             && a.mouse_listeners_index >= c.mouse_listeners_index
             && b.mouse_listeners_index <= d.mouse_listeners_index
+            && a.input_scopes_index >= c.input_scopes_index
+            && b.input_scopes_index <= d.input_scopes_index
             && a.input_handlers_index >= c.input_handlers_index
             && b.input_handlers_index <= d.input_handlers_index
             && a.cursor_styles_index >= c.cursor_styles_index

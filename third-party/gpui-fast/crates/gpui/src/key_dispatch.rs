@@ -59,7 +59,7 @@ use std::{
     any::{Any, TypeId},
     cell::RefCell,
     ops::Range,
-    rc::Rc,
+    rc::{Rc, Weak},
 };
 
 /// ID of a node within `DispatchTree`. Note that these are **not** stable between frames, and so a
@@ -74,9 +74,12 @@ pub(crate) struct DispatchTree {
     pub(crate) nodes: Vec<DispatchNode>,
     pub(crate) focusable_node_ids: FxHashMap<FocusId, DispatchNodeId>,
     pub(crate) view_node_ids: FxHashMap<EntityId, DispatchNodeId>,
+    pub(crate) origin_nodes: FxHashMap<usize, DispatchNodeId>,
     keymap: Rc<RefCell<Keymap>>,
     action_registry: Rc<ActionRegistry>,
 }
+
+pub(crate) struct DispatchOrigin;
 
 #[derive(Default)]
 pub(crate) struct DispatchNode {
@@ -87,6 +90,8 @@ pub(crate) struct DispatchNode {
     pub focus_id: Option<FocusId>,
     pub(crate) view_id: Option<EntityId>,
     pub(crate) parent: Option<DispatchNodeId>,
+    pub(crate) origin: Option<Rc<DispatchOrigin>>,
+    pub(crate) input_scope: Option<crate::WeakInputScope>,
 }
 
 pub(crate) struct ReusedSubtree {
@@ -155,6 +160,7 @@ impl DispatchTree {
             nodes: Vec::new(),
             focusable_node_ids: FxHashMap::default(),
             view_node_ids: FxHashMap::default(),
+            origin_nodes: FxHashMap::default(),
             keymap,
             action_registry,
         }
@@ -167,6 +173,29 @@ impl DispatchTree {
         self.nodes.clear();
         self.focusable_node_ids.clear();
         self.view_node_ids.clear();
+        self.origin_nodes.clear();
+    }
+
+    pub(crate) fn input_origin(&mut self) -> Weak<DispatchOrigin> {
+        let id = self
+            .active_node_id()
+            .expect("input listener requires a dispatch node");
+        let origin = self.nodes[id.0]
+            .origin
+            .get_or_insert_with(|| Rc::new(DispatchOrigin));
+        self.origin_nodes.insert(Rc::as_ptr(origin) as usize, id);
+        Rc::downgrade(origin)
+    }
+
+    pub(crate) fn origin_node(&self, origin: &Weak<DispatchOrigin>) -> Option<DispatchNodeId> {
+        let origin = origin.upgrade()?;
+        let id = *self.origin_nodes.get(&(Rc::as_ptr(&origin) as usize))?;
+        self.nodes
+            .get(id.0)?
+            .origin
+            .as_ref()
+            .filter(|current| Rc::ptr_eq(current, &origin))
+            .map(|_| id)
     }
 
     pub fn len(&self) -> usize {
@@ -275,6 +304,9 @@ impl DispatchTree {
 
     pub fn truncate(&mut self, index: usize) {
         for node in &self.nodes[index..] {
+            if let Some(origin) = &node.origin {
+                self.origin_nodes.remove(&(Rc::as_ptr(origin) as usize));
+            }
             if let Some(focus_id) = node.focus_id {
                 self.focusable_node_ids.remove(&focus_id);
             }

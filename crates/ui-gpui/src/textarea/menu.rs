@@ -121,6 +121,7 @@ impl TextareaOwner {
 
     fn menu_allowed(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.input.0.borrow().is_some()
+            && window.input_focus_is_admitted(self.state.read(cx).presentation().focus_handle())
             && self.menu.is_some()
             && !self.state.read(cx).presentation().is_disabled()
             && self

@@ -1,13 +1,15 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
-    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, Decorations, DrawPhase, Drawable,
-    Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Platform, PlatformTextSystem, Point, Render, ResizeEdge, Result, SharedString, Size,
-    SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform,
-    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions, WindowVisibility, app::GpuiMode, window::ElementArenaScope,
+    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, Decorations, DrawPhase,
+    Drawable, Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Platform, PlatformTextSystem, Point, Render, ResizeEdge, Result,
+    SharedString, Size, SystemNotification, SystemNotificationResponse, Task, TestDispatcher,
+    TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window,
+    WindowBounds, WindowHandle, WindowOptions, WindowVisibility, app::GpuiMode,
+    window::ElementArenaScope,
 };
+use crate::{PlatformInputHandler, PlatformWindow};
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
 
@@ -645,6 +647,27 @@ impl TestAppContext {
         }
 
         self.background_executor.run_until_parked()
+    }
+
+    /// Read actual native text-input lifecycle observations from the test platform.
+    pub fn text_input_state_changes(
+        &self,
+        window: AnyWindowHandle,
+    ) -> Vec<crate::TextInputStateChange> {
+        self.test_window(window).text_input_state_changes()
+    }
+
+    /// Exercise the original platform-owned handler, as a native IME callback does.
+    pub fn with_platform_input_handler<R>(
+        &self,
+        window: AnyWindowHandle,
+        read: impl FnOnce(&mut PlatformInputHandler) -> R,
+    ) -> Option<R> {
+        let mut native = self.test_window(window);
+        let mut handler = native.take_input_handler()?;
+        let result = read(&mut handler);
+        native.set_input_handler(handler);
+        Some(result)
     }
 
     /// simulate_input takes a string of text to type.

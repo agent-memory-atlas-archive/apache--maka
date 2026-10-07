@@ -551,3 +551,66 @@ fn global_key_interceptor_rejects_another_window_even_with_same_focus_handle(
         "other window's native action remains available"
     );
 }
+
+#[gpui::test]
+fn modal_interruption_cancels_original_canvas_drag_after_close(cx: &mut TestAppContext) {
+    let (entity, window, seen, _, _) = harness(cx, true);
+    down(cx, window, 20., 20.);
+    let shared = cx.update(|cx| entity.read(cx).shared());
+    assert!(shared.gesture.borrow().is_some());
+    let before = seen.borrow().len();
+    cx.with_paused_automatic_drawing(|cx| {
+        cx.update_window(window, |_, window, cx| {
+            let focus = cx.focus_handle();
+            let opening = window.input_scope(&focus, cx);
+            drop(opening);
+        })
+        .unwrap();
+    });
+    draw(cx, window);
+    movement(cx, window, 40., 40.);
+    up(cx, window, 160., 20.);
+    assert!(shared.gesture.borrow().is_none());
+    assert_eq!(
+        seen.borrow().len(),
+        before,
+        "old drag neither moves nor drops after modal close"
+    );
+    down(cx, window, 20., 20.);
+    movement(cx, window, 40., 40.);
+    up(cx, window, 160., 20.);
+    assert_eq!(
+        seen.borrow().len(),
+        before + 3,
+        "a fresh original gesture still works"
+    );
+}
+
+#[gpui::test]
+fn reentrant_modal_opening_prevents_canvas_press_from_installing_old_gesture(
+    cx: &mut TestAppContext,
+) {
+    let (entity, window, _, _, _) = harness(cx, true);
+    let calls = Rc::new(Cell::new(0));
+    let count = calls.clone();
+    cx.update_window(window, |_, _, cx| {
+        let input = Input(Rc::new(move |_, _, window, cx| {
+            count.set(count.get() + 1);
+            let focus = cx.focus_handle();
+            let opening = window.input_scope(&focus, cx);
+            drop(opening);
+            Ok(Default::default())
+        }));
+        entity.update(cx, |h, cx| {
+            h.slots.input = input.clone();
+            *h.live.0.borrow_mut() = Some(input);
+            cx.notify();
+        });
+    })
+    .unwrap();
+    draw(cx, window);
+    down(cx, window, 20., 20.);
+    let shared = cx.update(|cx| entity.read(cx).shared());
+    assert_eq!(calls.get(), 1);
+    assert!(shared.gesture.borrow().is_none());
+}

@@ -13,7 +13,7 @@
 
 use crate::key_dispatch::{DispatchNode, DispatchNodeId, DispatchTree};
 use crate::{EntityId, FocusId};
-use std::{mem, ops::Range};
+use std::{mem, ops::Range, rc::Rc};
 
 /// A dispatch node's list of listeners. Nearly every node has none: as a
 /// `Vec` each list is three words of every node, written when it is pushed
@@ -88,6 +88,9 @@ pub(crate) fn copy_nodes(
         if let Some(view_id) = view_id {
             target.view_node_ids.insert(view_id, id);
         }
+        if let Some(origin) = &node.origin {
+            target.origin_nodes.insert(Rc::as_ptr(origin) as usize, id);
+        }
         target.nodes.push(DispatchNode {
             key_listeners: mem::take(&mut node.key_listeners),
             action_listeners: mem::take(&mut node.action_listeners),
@@ -96,6 +99,8 @@ pub(crate) fn copy_nodes(
             focus_id: node.focus_id,
             view_id,
             parent,
+            origin: node.origin.clone(),
+            input_scope: node.input_scope.clone(),
         });
     }
 

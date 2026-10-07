@@ -135,7 +135,9 @@ impl InputOwner {
                 return;
             }
             let Ok(Some(input)) = weak.update(cx, |owner, cx| {
-                if !owner.accepts_text_input(window, cx)
+                if !window
+                    .input_focus_is_admitted(owner.state.read(cx).presentation().focus_handle())
+                    || !owner.accepts_text_input(window, cx)
                     || owner
                         .state
                         .update(cx, |state, cx| state.marked_text_range(window, cx))

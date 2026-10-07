@@ -124,6 +124,7 @@ pub(crate) struct PrepaintCheckpoint {
     nodes: A11yNodeBuilder,
     focus_ids: FxHashMap<NodeId, FocusId>,
     node_bounds: FxHashMap<NodeId, Bounds<Pixels>>,
+    input_origins: FxHashMap<NodeId, std::rc::Weak<crate::DispatchOrigin>>,
 }
 
 /// Per-window accessibility state.
@@ -155,6 +156,7 @@ pub(crate) struct A11y {
     pub(crate) nodes: A11yNodeBuilder,
     pub(crate) focus_ids: FxHashMap<NodeId, FocusId>,
     pub(crate) node_bounds: FxHashMap<NodeId, Bounds<Pixels>>,
+    pub(crate) input_origins: FxHashMap<NodeId, std::rc::Weak<crate::DispatchOrigin>>,
     pub(crate) action_listeners: FxHashMap<NodeId, Vec<(Action, A11yActionListener)>>,
     /// The window's title, used to label the root node so assistive
     /// technology can tell windows apart.
@@ -176,6 +178,7 @@ impl A11y {
             nodes: self.nodes.clone(),
             focus_ids: self.focus_ids.clone(),
             node_bounds: self.node_bounds.clone(),
+            input_origins: self.input_origins.clone(),
         })
     }
     pub(crate) fn restore_prepaint(&mut self, checkpoint: Option<PrepaintCheckpoint>) {
@@ -183,6 +186,7 @@ impl A11y {
             self.nodes = checkpoint.nodes;
             self.focus_ids = checkpoint.focus_ids;
             self.node_bounds = checkpoint.node_bounds;
+            self.input_origins = checkpoint.input_origins;
         }
     }
 
@@ -199,6 +203,7 @@ impl A11y {
             focus_ids: FxHashMap::default(),
             node_bounds: FxHashMap::default(),
             action_listeners: FxHashMap::default(),
+            input_origins: FxHashMap::default(),
             window_title,
             last_focus_without_node: None,
             debug: debug::A11yDebug::default(),
@@ -298,6 +303,7 @@ impl A11y {
         self.focus_ids.clear();
         self.node_bounds.clear();
         self.action_listeners.clear();
+        self.input_origins.clear();
         self.nodes.begin_frame(self.window_title.as_ref());
     }
 

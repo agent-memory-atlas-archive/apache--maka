@@ -471,6 +471,12 @@ impl<E: Element> Drawable<E> {
                 }
 
                 let node_id = window.next_frame.dispatch_tree.push_node();
+                if pushed_a11y_node {
+                    window.a11y.input_origins.insert(
+                        global_id.as_ref().unwrap().accesskit_node_id(),
+                        window.next_frame.dispatch_tree.input_origin(),
+                    );
+                }
                 let scope = crate::fast::layout_key::enter_prepaint_scope(window, fast_layout_key);
                 let mut prepaint = self.element.prepaint(
                     global_id.as_ref(),
@@ -546,6 +552,7 @@ impl<E: Element> Drawable<E> {
                     debug_assert_eq!(&**global_id.as_ref().unwrap(), &*window.element_id_stack);
                 }
 
+                let enclosing_node = window.next_frame.dispatch_tree.active_node_id();
                 window.next_frame.dispatch_tree.set_active_node(node_id);
                 self.element.paint(
                     global_id.as_ref(),
@@ -556,6 +563,12 @@ impl<E: Element> Drawable<E> {
                     window,
                     cx,
                 );
+                if let Some(enclosing_node) = enclosing_node {
+                    window
+                        .next_frame
+                        .dispatch_tree
+                        .set_active_node(enclosing_node);
+                }
 
                 if global_id.is_some() {
                     window.element_id_stack.pop();

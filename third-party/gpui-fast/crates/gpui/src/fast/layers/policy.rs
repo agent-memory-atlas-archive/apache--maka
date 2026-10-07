@@ -375,6 +375,7 @@ fn eligible(
     let prepaint = &record.prepaint_range;
     let paint = &record.paint_range;
     prepaint.start.deferred_draws_index == prepaint.end.deferred_draws_index
+        && paint.start.input_scopes_index == paint.end.input_scopes_index
         && paint.start.input_handlers_index == paint.end.input_handlers_index
         && !policy.content_anchored
         && !invalidate::animation_frame_requested(window, id)

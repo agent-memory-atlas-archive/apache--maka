@@ -572,6 +572,11 @@ struct Momentum {
 }
 
 impl TouchGestureRecognizer {
+    pub(crate) fn interrupt(&mut self) {
+        self.state = TouchGestureState::Idle;
+        self.momentum = None;
+        self.last_tap = None;
+    }
     pub(crate) fn new(tuning: GestureTuning) -> Self {
         Self {
             tuning,

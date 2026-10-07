@@ -63,6 +63,8 @@ use std::{
 use uuid::Uuid;
 
 pub(crate) mod a11y;
+mod input_scope;
+pub use input_scope::{InputScope, WeakInputScope};
 mod prompts;
 
 pub use a11y::A11ySubtreeBuilder;
@@ -758,6 +760,10 @@ type FrameCallback = Box<dyn FnOnce(&mut Window, &mut App)>;
 
 pub(crate) type AnyMouseListener =
     Box<dyn FnMut(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static>;
+pub(crate) struct MouseListener {
+    origin: std::rc::Weak<crate::DispatchOrigin>,
+    callback: AnyMouseListener,
+}
 
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
@@ -1117,7 +1123,8 @@ pub(crate) struct Frame {
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
     pub(crate) accessed_element_states: Vec<(GlobalElementId, TypeId)>,
-    pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
+    pub(crate) mouse_listeners: Vec<Option<MouseListener>>,
+    pub(crate) input_scopes: Vec<WeakInputScope>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) fast_composition_starts: crate::fast::composition::SurfaceStarts,
@@ -1161,6 +1168,7 @@ pub(crate) struct PaintIndex {
     pub(crate) debug_bounds_index: usize,
     pub(crate) fast_window_control_hitboxes_index: usize,
     pub(crate) mouse_listeners_index: usize,
+    pub(crate) input_scopes_index: usize,
     pub(crate) input_handlers_index: usize,
     pub(crate) cursor_styles_index: usize,
     pub(crate) accessed_element_states_index: usize,
@@ -1184,6 +1192,7 @@ impl Frame {
             element_states: FxHashMap::default(),
             accessed_element_states: Vec::new(),
             mouse_listeners: Vec::new(),
+            input_scopes: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
             fast_composition_starts: crate::fast::composition::SurfaceStarts::default(),
@@ -1216,6 +1225,7 @@ impl Frame {
         self.element_states.clear();
         self.accessed_element_states.clear();
         self.mouse_listeners.clear();
+        self.input_scopes.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
         crate::fast::composition::SurfaceStarts::clear(&mut self.fast_composition_starts);
@@ -1323,6 +1333,7 @@ pub(crate) struct AutoscrollRequest {
 #[derive(Default)]
 pub(crate) struct ClickInputState {
     sequence: Cell<u64>,
+    interruption: Cell<u64>,
     current: Cell<Option<u64>>,
 }
 impl ClickInputState {
@@ -1347,6 +1358,8 @@ impl ClickInputState {
         self.current.get().is_some()
     }
     fn interrupt(&self) {
+        self.interruption
+            .set(self.interruption.get().wrapping_add(1));
         self.sequence.set(self.sequence.get().wrapping_add(1));
     }
     pub(crate) fn is_pending(&self, serial: u64) -> bool {
@@ -1450,6 +1463,7 @@ pub struct Window {
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
+    input_scope: Option<WeakInputScope>,
     dispatching_pointer: bool,
     /// Incremented every time focus moves. Used to invalidate a
     /// pending keyboard activation state when focus changes.
@@ -2360,6 +2374,7 @@ impl Window {
             activation_observers: SubscriberSet::new(),
             focus: None,
             focus_enabled: true,
+            input_scope: None,
             dispatching_pointer: false,
             focus_generation: 0,
             click_input: Rc::default(),
@@ -2589,7 +2604,10 @@ impl Window {
 
     /// Move focus to the element associated with the given [`FocusHandle`].
     pub fn focus(&mut self, handle: &FocusHandle, cx: &mut App) {
-        if !self.focus_enabled || self.focus == Some(handle.id) {
+        if !self.focus_enabled
+            || self.focus == Some(handle.id)
+            || !self.focus_move_is_admitted(handle)
+        {
             return;
         }
 
@@ -2662,7 +2680,7 @@ impl Window {
             return;
         }
 
-        if let Some(handle) = self.rendered_frame.tab_stops.next(self.focus.as_ref()) {
+        if let Some(handle) = self.scoped_tab_stop(true) {
             self.focus(&handle, cx)
         }
     }
@@ -2673,7 +2691,7 @@ impl Window {
             return;
         }
 
-        if let Some(handle) = self.rendered_frame.tab_stops.prev(self.focus.as_ref()) {
+        if let Some(handle) = self.scoped_tab_stop(false) {
             self.focus(&handle, cx)
         }
     }
@@ -2781,7 +2799,12 @@ impl Window {
         context_stack: Vec<KeyContext>,
         cx: &mut App,
     ) {
+        let interruption = self.input_interruption();
         cx.keystroke_observers.clone().retain(&(), move |callback| {
+            if self.input_interruption() != interruption {
+                cx.stop_propagation();
+                return true;
+            }
             (callback)(
                 &KeystrokeEvent {
                     keystroke: keystroke.clone(),
@@ -2802,9 +2825,14 @@ impl Window {
         context_stack: Vec<KeyContext>,
         cx: &mut App,
     ) {
+        let interruption = self.input_interruption();
         cx.keystroke_interceptors
             .clone()
             .retain(&(), move |callback| {
+                if self.input_interruption() != interruption {
+                    cx.stop_propagation();
+                    return true;
+                }
                 (callback)(
                     &KeystrokeEvent {
                         keystroke: keystroke.clone(),
@@ -3637,11 +3665,16 @@ impl Window {
             .next_frame
             .input_handlers
             .iter()
-            .rposition(|(id, handler)| Some(*id) == self.focus && handler.is_some());
+            .rposition(|(id, handler)| {
+                Some(*id) == self.focus
+                    && handler
+                        .as_ref()
+                        .is_some_and(|handler| handler.presentation_is_admitted(self))
+            });
         self.next_frame.published_input_handler = focused_handler;
         let (focused_text_input_active, has_focused_input) = if let Some(index) = focused_handler {
             let mut input_handler = self.next_frame.input_handlers[index].1.take().unwrap();
-            let accepts_text_input = input_handler.accepts_text_input(self, cx);
+            let accepts_text_input = input_handler.presentation_accepts_text_input(self, cx);
             self.platform_window.set_input_handler(input_handler);
             (accepts_text_input, true)
         } else {
@@ -3670,6 +3703,13 @@ impl Window {
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
         self.next_frame.clear();
+        self.input_scope = self
+            .rendered_frame
+            .input_scopes
+            .iter()
+            .rev()
+            .find(|scope| scope.admitted(self))
+            .cloned();
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
         let mut focus_before_listeners = self.focus;
@@ -4306,6 +4346,7 @@ impl Window {
             debug_bounds_index: self.next_frame.debug_bounds_records.len(),
             fast_window_control_hitboxes_index: self.next_frame.window_control_hitboxes.len(),
             mouse_listeners_index: self.next_frame.mouse_listeners.len(),
+            input_scopes_index: self.next_frame.input_scopes.len(),
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
@@ -4345,6 +4386,12 @@ impl Window {
                 [range.start.input_handlers_index..range.end.input_handlers_index]
                 .iter_mut()
                 .map(|(id, handler)| (*id, handler.take())),
+        );
+        self.next_frame.input_scopes.extend(
+            self.rendered_frame.input_scopes
+                [range.start.input_scopes_index..range.end.input_scopes_index]
+                .iter()
+                .cloned(),
         );
         self.next_frame.mouse_listeners.extend(
             self.rendered_frame.mouse_listeners
@@ -5672,7 +5719,7 @@ impl Window {
     /// discarded prepaint cannot take focus, and active composition keeps it.
     pub fn focus_on_reveal(&mut self, focus_handle: &FocusHandle, cx: &mut App) {
         self.invalidator.debug_assert_paint();
-        if self.next_frame.autofocus_offered {
+        if self.next_frame.autofocus_offered || !self.focus_is_presented(focus_handle.id) {
             return;
         }
         self.next_frame.autofocus_offered = true;
@@ -5773,7 +5820,12 @@ impl Window {
             let cx = self.to_async(cx);
             self.next_frame.input_handlers.push((
                 focus_handle.id,
-                Some(PlatformInputHandler::new(cx, Box::new(input_handler))),
+                Some(PlatformInputHandler::new(
+                    cx,
+                    Box::new(input_handler),
+                    focus_handle.id,
+                    self.next_frame.dispatch_tree.input_origin(),
+                )),
             ));
         }
     }
@@ -5809,13 +5861,17 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        self.next_frame.mouse_listeners.push(Some(Box::new(
-            move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
-                if let Some(event) = event.downcast_ref() {
-                    listener(event, phase, window, cx)
-                }
-            },
-        )));
+        let origin = self.next_frame.dispatch_tree.input_origin();
+        self.next_frame.mouse_listeners.push(Some(MouseListener {
+            origin,
+            callback: Box::new(
+                move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
+                    if let Some(event) = event.downcast_ref() {
+                        listener(event, phase, window, cx)
+                    }
+                },
+            ),
+        }));
     }
 
     /// Register a key event listener on this node for the next frame. The type of event
@@ -6331,6 +6387,7 @@ impl Window {
     fn dispatch_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
         let _click_input = (event.is::<MouseDownEvent>() || event.is::<MouseUpEvent>())
             .then(|| self.click_input.enter(false));
+        let interruption = self.input_interruption();
         let hit_test = self.rendered_frame.hit_test(self.mouse_position());
         if hit_test != self.mouse_hit_test {
             self.mouse_hit_test = hit_test;
@@ -6351,7 +6408,13 @@ impl Window {
         // special purposes, such as detecting events outside of a given Bounds.
         for listener in &mut mouse_listeners {
             let listener = listener.as_mut().unwrap();
-            listener(event, DispatchPhase::Capture, self, cx);
+            if !self.input_origin_is_admitted(&listener.origin) {
+                continue;
+            }
+            (listener.callback)(event, DispatchPhase::Capture, self, cx);
+            if self.input_interruption() != interruption {
+                cx.stop_propagation();
+            }
             if !cx.propagate_event {
                 break;
             }
@@ -6361,7 +6424,13 @@ impl Window {
         if cx.propagate_event {
             for listener in mouse_listeners.iter_mut().rev() {
                 let listener = listener.as_mut().unwrap();
-                listener(event, DispatchPhase::Bubble, self, cx);
+                if !self.input_origin_is_admitted(&listener.origin) {
+                    continue;
+                }
+                (listener.callback)(event, DispatchPhase::Bubble, self, cx);
+                if self.input_interruption() != interruption {
+                    cx.stop_propagation();
+                }
                 if !cx.propagate_event {
                     break;
                 }
@@ -6419,8 +6488,12 @@ impl Window {
             self.draw(cx).clear(cx);
         }
 
+        let interruption = self.input_interruption();
         let node_id = self.focus_node_id_in_rendered_frame(self.focus);
-        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+        let Some(dispatch_path) = self.input_dispatch_path(node_id) else {
+            cx.stop_propagation();
+            return;
+        };
 
         let mut keystroke: Option<Keystroke> = None;
 
@@ -6488,6 +6561,10 @@ impl Window {
             self.context_stack(),
             cx,
         );
+        if self.input_interruption() != interruption {
+            cx.stop_propagation();
+            return;
+        }
         if !cx.propagate_event {
             self.finish_dispatch_key_event(
                 event,
@@ -6514,6 +6591,10 @@ impl Window {
         if !match_result.to_replay.is_empty() {
             self.replay_pending_input(match_result.to_replay, cx);
             cx.propagate_event = true;
+        }
+        if self.input_interruption() != interruption {
+            cx.stop_propagation();
+            return;
         }
 
         if !match_result.pending.is_empty() {
@@ -6559,6 +6640,10 @@ impl Window {
         if input_preference == InputPreference::KeyBindings {
             for binding in match_result.bindings {
                 self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
+                if self.input_interruption() != interruption {
+                    cx.stop_propagation();
+                    return;
+                }
                 if !cx.propagate_event {
                     self.dispatch_keystroke_observers(
                         &keystroke,
@@ -6607,7 +6692,9 @@ impl Window {
                 };
 
                 let node_id = window.focus_node_id_in_rendered_frame(window.focus);
-                let dispatch_path = window.rendered_frame.dispatch_tree.dispatch_path(node_id);
+                let Some(dispatch_path) = window.input_dispatch_path(node_id) else {
+                    return;
+                };
 
                 let to_replay = window
                     .rendered_frame
@@ -6671,12 +6758,17 @@ impl Window {
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
         cx: &mut App,
     ) {
+        let interruption = self.input_interruption();
         // Capture phase
         for node_id in dispatch_path {
             let node = self.rendered_frame.dispatch_tree.node(*node_id);
 
             for key_listener in node.key_listeners.clone() {
                 key_listener(event, DispatchPhase::Capture, self, cx);
+                if self.input_interruption() != interruption {
+                    cx.stop_propagation();
+                    return;
+                }
                 if !cx.propagate_event {
                     return;
                 }
@@ -6689,6 +6781,10 @@ impl Window {
             let node = self.rendered_frame.dispatch_tree.node(*node_id);
             for key_listener in node.key_listeners.clone() {
                 key_listener(event, DispatchPhase::Bubble, self, cx);
+                if self.input_interruption() != interruption {
+                    cx.stop_propagation();
+                    return;
+                }
                 if !cx.propagate_event {
                     return;
                 }
@@ -6702,6 +6798,7 @@ impl Window {
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
         cx: &mut App,
     ) {
+        let interruption = self.input_interruption();
         let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() else {
             return;
         };
@@ -6709,6 +6806,10 @@ impl Window {
             let node = self.rendered_frame.dispatch_tree.node(*node_id);
             for listener in node.modifiers_changed_listeners.clone() {
                 listener(event, self, cx);
+                if self.input_interruption() != interruption {
+                    cx.stop_propagation();
+                    return;
+                }
                 if !cx.propagate_event {
                     return;
                 }
@@ -6830,8 +6931,12 @@ impl Window {
     }
 
     fn replay_pending_input(&mut self, replays: SmallVec<[Replay; 1]>, cx: &mut App) {
+        let interruption = self.input_interruption();
         let node_id = self.focus_node_id_in_rendered_frame(self.focus);
-        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+        let Some(dispatch_path) = self.input_dispatch_path(node_id) else {
+            cx.stop_propagation();
+            return;
+        };
 
         'replay: for replay in replays {
             let _click_input = self.click_input.enter(true);
@@ -6844,6 +6949,10 @@ impl Window {
             cx.propagate_event = true;
             for binding in replay.bindings {
                 self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
+                if self.input_interruption() != interruption {
+                    cx.stop_propagation();
+                    return;
+                }
                 if !cx.propagate_event {
                     self.dispatch_keystroke_observers(
                         &replay.keystroke,
@@ -6852,11 +6961,19 @@ impl Window {
                         Vec::default(),
                         cx,
                     );
+                    if self.input_interruption() != interruption {
+                        cx.stop_propagation();
+                        return;
+                    }
                     continue 'replay;
                 }
             }
 
             self.dispatch_key_down_up_event(&event, &dispatch_path, cx);
+            if self.input_interruption() != interruption {
+                cx.stop_propagation();
+                return;
+            }
             if !cx.propagate_event {
                 continue 'replay;
             }
@@ -6864,7 +6981,11 @@ impl Window {
                 && let Some(mut input_handler) = self.platform_window.take_input_handler()
             {
                 input_handler.dispatch_input(&input, self, cx);
-                self.platform_window.set_input_handler(input_handler)
+                self.platform_window.set_input_handler(input_handler);
+                if self.input_interruption() != interruption {
+                    cx.stop_propagation();
+                    return;
+                }
             }
         }
     }
@@ -6901,13 +7022,18 @@ impl Window {
         action: &dyn Action,
         cx: &mut App,
     ) {
-        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+        let interruption = self.input_interruption();
+        let Some(dispatch_path) = self.input_dispatch_path(node_id) else {
+            cx.stop_propagation();
+            return;
+        };
 
         // Capture phase for global actions.
         cx.propagate_event = true;
-        if let Some(mut global_listeners) = cx
-            .global_action_listeners
-            .remove(&action.as_any().type_id())
+        if self.input_scope.is_none()
+            && let Some(mut global_listeners) = cx
+                .global_action_listeners
+                .remove(&action.as_any().type_id())
         {
             for listener in &global_listeners {
                 #[cfg(feature = "profiler")]
@@ -6915,6 +7041,10 @@ impl Window {
                 listener(action.as_any(), DispatchPhase::Capture, cx);
                 #[cfg(feature = "profiler")]
                 self.window_profiler.end_action_handler();
+                if self.input_interruption() != interruption {
+                    cx.stop_propagation();
+                    break;
+                }
                 if !cx.propagate_event {
                     break;
                 }
@@ -6950,6 +7080,10 @@ impl Window {
                     #[cfg(feature = "profiler")]
                     self.window_profiler.end_action_handler();
 
+                    if self.input_interruption() != interruption {
+                        cx.stop_propagation();
+                        return;
+                    }
                     if !cx.propagate_event {
                         return;
                     }
@@ -6974,6 +7108,10 @@ impl Window {
                     #[cfg(feature = "profiler")]
                     self.window_profiler.end_action_handler();
 
+                    if self.input_interruption() != interruption {
+                        cx.stop_propagation();
+                        return;
+                    }
                     if !cx.propagate_event {
                         return;
                     }
@@ -6982,9 +7120,10 @@ impl Window {
         }
 
         // Bubble phase for global actions.
-        if let Some(mut global_listeners) = cx
-            .global_action_listeners
-            .remove(&action.as_any().type_id())
+        if self.input_scope.is_none()
+            && let Some(mut global_listeners) = cx
+                .global_action_listeners
+                .remove(&action.as_any().type_id())
         {
             for listener in global_listeners.iter().rev() {
                 cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
@@ -6994,6 +7133,10 @@ impl Window {
                 listener(action.as_any(), DispatchPhase::Bubble, cx);
                 #[cfg(feature = "profiler")]
                 self.window_profiler.end_action_handler();
+                if self.input_interruption() != interruption {
+                    cx.stop_propagation();
+                    break;
+                }
                 if !cx.propagate_event {
                     break;
                 }
@@ -7501,20 +7644,41 @@ impl Window {
         &mut self,
         node_id: accesskit::NodeId,
         action: accesskit::Action,
-        listener: impl FnMut(Option<&accesskit::ActionData>, &mut Window, &mut App) + 'static,
+        mut listener: impl FnMut(Option<&accesskit::ActionData>, &mut Window, &mut App) + 'static,
     ) {
+        let origin = self.next_frame.dispatch_tree.input_origin();
+        self.a11y
+            .input_origins
+            .entry(node_id)
+            .or_insert_with(|| origin.clone());
         self.a11y
             .action_listeners
             .entry(node_id)
             .or_default()
-            .push((action, Box::new(listener)));
+            .push((
+                action,
+                Box::new(move |data, window, cx| {
+                    if window.input_origin_is_admitted(&origin) {
+                        listener(data, window, cx);
+                    }
+                }),
+            ));
     }
 
     #[cfg(not(target_family = "wasm"))]
     pub(crate) fn handle_a11y_action(&mut self, request: accesskit::ActionRequest, cx: &mut App) {
+        if !self
+            .a11y
+            .input_origins
+            .get(&request.target_node)
+            .is_some_and(|origin| self.input_origin_is_admitted(origin))
+        {
+            return;
+        }
         // Assistive-technology actions are fresh inputs, including direct click
         // activation that intentionally does not dispatch physical pointer events.
         let _input = self.click_input.enter(false);
+        let interruption = self.input_interruption();
         cx.propagate_event = true;
         self.default_prevented = false;
         // Take listeners out temporarily so the closures can borrow Window
@@ -7526,6 +7690,10 @@ impl Window {
                 if *action == request.action {
                     listener(extra_data, self, cx);
                     matched = true;
+                    if self.input_interruption() != interruption {
+                        cx.stop_propagation();
+                        break;
+                    }
                 }
             }
             self.a11y
@@ -7555,7 +7723,9 @@ impl Window {
                         click_count: 1,
                     });
                     self.dispatch_event(mouse_down, cx);
-                    self.dispatch_event(mouse_up, cx);
+                    if self.input_interruption() == interruption {
+                        self.dispatch_event(mouse_up, cx);
+                    }
                 }
             }
             accesskit::Action::Focus => {

@@ -54,3 +54,7 @@ Bottom 与 item 合为一个带 tag 的 pending target，按当前 overflow、bo
 Window 的 marked-text 查询直接使用当前 Window/App 转发给原 focused PlatformInputHandler，读取后归还同一 handler，避免键盘派发期间再次异步借用 App/Window；不维护 composition 镜像。
 
 Window 支持每个实际绘制帧一次原生显露聚焦机会。输入框在实际 paint、注册同一原生编辑器处理器之前提供原 FocusHandle；隐藏或丢弃 prepaint 不能取焦点。原 Window 与完成帧焦点保持一致。Retained 处理器记录保留原 FocusId，Frame 记住实际交给平台的精确槽位，覆盖没有 tracked geometry 的 focused canvas。Draw 归还原槽位；marked-text 查询读取并归还同一处理器，无论仍在 stash 或已随 retained paint 移动。不增加第二焦点 authority、输入 owner 或 composition 镜像。
+
+原 Window 提供绑定窗口、可撤销的 InputScope，包裹原生焦点组。不可 clone 的 owner 对应一次 opening；原祖先及 retained 绘制记录只持 weak custody。原 DispatchNode 按需分配不可变 origin，mouse、AX 和平台编辑器槽根据已发布原树的当前 parent ancestry 准入；prepaint 回滚恢复 AX provenance 并移除临时 origin lookup。AnyElement 在子 paint 返回后恢复 enclosing node，避免父监听器借用子元素身份。Frame、retained splice 及 layer carry/shift 保留原 scope 声明，不增加产品 open 状态、焦点树或领域权限。
+
+物理输入使用已发布帧；首次焦点及编辑器槽发布使用即将提交的原帧，因此独立容器里的真实编辑器能收到首次输入。原 TabStopMap 将遍历限制在 live scope。scope 变化中断原 press/drag、pending chord、pointer capture 和 touch momentum；callback 内循环及 chord replay 依原 interruption 停止，并归还原 listener/subscription 集合。TestAppContext 只公开实际平台生命周期记录及原输入槽测试入口。此为原生前置能力，尚不包含产品 Dialog，也未完成 Kit 原编辑器/窗口选区手势及自动滚动的暂停。

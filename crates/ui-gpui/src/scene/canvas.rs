@@ -380,6 +380,7 @@ impl Painted {
 #[derive(Clone)]
 struct Gesture {
     id: u32,
+    interruption: u64,
     region: PaintedRegion,
     start: Point,
     start_window: NativePoint<Pixels>,
@@ -461,6 +462,7 @@ impl Shared {
         if let Some(id) = gesture {
             self.sequence.set(id);
         }
+        let interruption = window.input_interruption();
         let decision = if region.listen.contains(&EventKind::PointerDown) {
             self.decision(
                 &painted.input,
@@ -475,12 +477,17 @@ impl Shared {
         } else {
             Some(maka_ui::InputDecision::default())
         };
-        if decision.is_some_and(|d| !d.prevent_default) && self.enabled(window) && region.admitted()
+        if decision.is_some_and(|d| !d.prevent_default)
+            && self.enabled(window)
+            && region.admitted()
+            && interruption == window.input_interruption()
+            && window.input_focus_is_admitted(&region.owner.focus)
         {
             region.owner.focus.focus(window, cx);
             if let Some(id) = gesture {
                 *self.gesture.borrow_mut() = Some(Gesture {
                     id,
+                    interruption,
                     bounds: region.rect.native(painted.bounds.origin),
                     region,
                     start: position,
@@ -505,7 +512,7 @@ impl Shared {
         let Some(gesture) = self.gesture.borrow().clone() else {
             return;
         };
-        if !gesture.region.admitted() {
+        if gesture.interruption != window.input_interruption() || !gesture.region.admitted() {
             self.gesture.borrow_mut().take();
             return;
         }
@@ -540,6 +547,7 @@ impl Shared {
         if decision.is_some_and(|d| !d.prevent_default)
             && self.enabled(window)
             && gesture.region.admitted()
+            && gesture.interruption == window.input_interruption()
             && let Some(current) = self.gesture.borrow_mut().as_mut().filter(|g| {
                 g.id == gesture.id && Rc::ptr_eq(&g.region.owner, &gesture.region.owner)
             })
@@ -558,6 +566,7 @@ impl Shared {
         };
         window.refresh(); // End the native gesture before any fallible rule.
         if !self.enabled(window)
+            || gesture.interruption != window.input_interruption()
             || !gesture.region.admitted()
             || !gesture.region.listen.contains(&EventKind::Drop)
         {
@@ -632,7 +641,11 @@ impl State {
                 .regions
                 .borrow()
                 .values()
-                .find(|r| r.admitted.get() && r.focus.is_focused(window))
+                .find(|r| {
+                    r.admitted.get()
+                        && r.focus.is_focused(window)
+                        && window.input_focus_is_admitted(&r.focus)
+                })
                 .map(|r| {
                     (
                         r.clone(),
@@ -878,9 +891,12 @@ impl State {
                                 }
                             }
                         }
-                        if let (Some(color), Some(gesture)) =
-                            (drag_color, paint_shared.gesture.borrow().clone())
-                            && gesture.region.admitted()
+                        if let (Some(color), Some(gesture)) = (
+                            drag_color,
+                            paint_shared.gesture.borrow().clone().filter(|gesture| {
+                                gesture.interruption == window.input_interruption()
+                            }),
+                        ) && gesture.region.admitted()
                         {
                             let delta = gesture.delta.native();
                             window.paint_quad(gesture.region.outline(

@@ -143,6 +143,11 @@ impl TextareaOwner {
                 return;
             }
             let Ok(Some((input, observation))) = weak.update(cx, |owner, cx| {
+                if !window
+                    .input_focus_is_admitted(owner.state.read(cx).presentation().focus_handle())
+                {
+                    return None;
+                }
                 let modifiers = &event.keystroke.modifiers;
                 let matches = match owner.submit {
                     Some(SubmitKey::Enter) => !modifiers.modified(),

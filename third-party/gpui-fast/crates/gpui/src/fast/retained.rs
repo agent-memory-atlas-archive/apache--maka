@@ -311,6 +311,7 @@ impl PartialEq for PaintIndex {
             debug_bounds_index,
             fast_window_control_hitboxes_index,
             mouse_listeners_index,
+            input_scopes_index,
             input_handlers_index,
             cursor_styles_index,
             accessed_element_states_index,
@@ -321,6 +322,7 @@ impl PartialEq for PaintIndex {
             && *scene_index == other.scene_index
             && *fast_window_control_hitboxes_index == other.fast_window_control_hitboxes_index
             && *mouse_listeners_index == other.mouse_listeners_index
+            && *input_scopes_index == other.input_scopes_index
             && *input_handlers_index == other.input_handlers_index
             && *cursor_styles_index == other.cursor_styles_index
             && *accessed_element_states_index == other.accessed_element_states_index
@@ -351,6 +353,8 @@ impl PaintIndex {
                 + to.fast_window_control_hitboxes_index,
             mouse_listeners_index: self.mouse_listeners_index - from.mouse_listeners_index
                 + to.mouse_listeners_index,
+            input_scopes_index: self.input_scopes_index - from.input_scopes_index
+                + to.input_scopes_index,
             input_handlers_index: self.input_handlers_index - from.input_handlers_index
                 + to.input_handlers_index,
             cursor_styles_index: self.cursor_styles_index - from.cursor_styles_index

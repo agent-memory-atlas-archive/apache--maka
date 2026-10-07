@@ -2954,8 +2954,16 @@ impl Interactivity {
                                                             let click = ClickEvent::Accessibility(
                                                                 AccessibilityClickEvent { bounds },
                                                             );
+                                                            let interruption =
+                                                                window.input_interruption();
                                                             for listener in &listeners {
                                                                 listener(&click, window, cx);
+                                                                if window.input_interruption()
+                                                                    != interruption
+                                                                {
+                                                                    cx.stop_propagation();
+                                                                    break;
+                                                                }
                                                             }
                                                         },
                                                     );
@@ -3497,8 +3505,13 @@ impl Interactivity {
                                 } else {
                                     &aux_click_listeners
                                 };
+                                let interruption = window.input_interruption();
                                 for listener in listeners {
                                     listener(&click, window, cx);
+                                    if window.input_interruption() != interruption {
+                                        cx.stop_propagation();
+                                        break;
+                                    }
                                 }
                             }
                         }

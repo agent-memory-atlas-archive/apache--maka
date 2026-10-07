@@ -733,3 +733,5 @@ fn single_line_arrows_bubble_without_changing_the_original_native_text(cx: &mut 
     assert_eq!(bubble.get(), previous + 4);
     cx.update(|cx| assert_eq!(owner.read(cx).observation_snapshot(), before));
 }
+
+mod modal;
