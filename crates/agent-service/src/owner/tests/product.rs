@@ -904,7 +904,44 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     }
     assert!(screen(&draw(&mut presenter)).contains("Close"));
     click(&mut presenter, "fixture-model-19");
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while screen(&draw(&mut presenter)).contains("[ Close ]") {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "native model snapshot did not settle"
+        );
+        std::thread::yield_now();
+    }
     assert!(screen(&draw(&mut presenter)).contains("Hello product"));
+    // Opening reveals the retained native query input. Its first paste must
+    // search the whole catalog, and arrows navigate without moving its caret.
+    click(&mut presenter, "fixture-model-19");
+    await_screen(&mut presenter, "Search models");
+    presenter
+        .input(Event::Paste("fixture-model-1".into()))
+        .unwrap();
+    await_screen(&mut presenter, "› fixture-model-10");
+    for at in 11..20 {
+        presenter
+            .input(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))
+            .unwrap();
+        await_screen(&mut presenter, &format!("› fixture-model-{at}"));
+    }
+    await_screen(&mut presenter, "› fixture-model-19");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while screen(&draw(&mut presenter)).contains("[ Close ]") {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "native Enter selection did not settle"
+        );
+        std::thread::yield_now();
+    }
     // Defaults are a separate ordinary component. A catalog-only race must
     // reject its frozen confirmation, without replacing model 19 or the draft.
     click(&mut presenter, "fixture-model-19");

@@ -410,3 +410,76 @@ async fn ordinary_settings_pages_keep_root_revision_and_exact_default_cas_withou
     first.config.shutdown().await.unwrap();
     second.config.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn model_search_continues_its_query_across_bounded_scan_windows_and_catalog_fences() {
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    edit(&fixture, |changes| {
+        changes.name = Some("Research Account".into());
+        changes.enabled_model_ids = Some((0..300).map(|at| format!("model-{at:03}")).collect());
+    })
+    .await;
+    let browsing = models(&fixture, json!({"kind":"start"})).await.unwrap();
+    assert_eq!(browsing["choices"].as_array().unwrap().len(), 16);
+    assert_eq!(browsing["next"]["query"], "");
+    assert!(
+        models(&fixture, json!({"kind":"start","query":null}))
+            .await
+            .is_err()
+    );
+    assert!(
+        models(&fixture, json!({"kind":"start","query":"界".repeat(257)}))
+            .await
+            .is_err()
+    );
+    let first = models(
+        &fixture,
+        json!({"kind":"start","query":"RESEARCH model-299"}),
+    )
+    .await
+    .unwrap();
+    assert!(first["choices"].as_array().unwrap().is_empty());
+    assert_eq!(first["next"]["query"], "RESEARCH model-299");
+    assert_eq!(first["next"]["model"], 256);
+    let continuation =
+        json!({"kind":"continue","revision":first["revision"],"cursor":first["next"]});
+    let found = models(&fixture, continuation.clone()).await.unwrap();
+    assert_eq!(found["choices"].as_array().unwrap().len(), 1);
+    assert_eq!(found["choices"][0]["selection"]["modelId"], "model-299");
+    assert!(found["next"].is_null());
+    assert!(!found.to_string().contains("private-fixture-key"));
+    assert!(!found.to_string().contains("baseUrl"));
+    let matches = models(&fixture, json!({"kind":"start","query":"MoDeL-29"}))
+        .await
+        .unwrap();
+    assert!(matches["choices"].as_array().unwrap().is_empty());
+    let matches = models(
+        &fixture,
+        json!({"kind":"continue","revision":matches["revision"],"cursor":matches["next"]}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(matches["choices"].as_array().unwrap().len(), 10);
+    let none = models(
+        &fixture,
+        json!({"kind":"start","query":"research missing-token"}),
+    )
+    .await
+    .unwrap();
+    let none = models(
+        &fixture,
+        json!({"kind":"continue","revision":none["revision"],"cursor":none["next"]}),
+    )
+    .await
+    .unwrap();
+    assert!(none["choices"].as_array().unwrap().is_empty());
+    assert!(none["next"].is_null());
+    edit(&fixture, |changes| {
+        changes.name = Some("Renamed Account".into())
+    })
+    .await;
+    let changed = models(&fixture, continuation).await.unwrap();
+    assert_eq!(changed["kind"], "changed");
+    fixture.app.shutdown().await.unwrap();
+    fixture.config.shutdown().await.unwrap();
+}

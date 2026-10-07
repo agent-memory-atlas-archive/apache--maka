@@ -656,3 +656,23 @@ fn reveal_focus_uses_committed_visibility_and_only_successful_native_presentatio
         close(&mut tui);
     }
 }
+
+#[test]
+fn single_line_arrows_leave_list_navigation_to_the_original_outer_scope() {
+    for secret in [false, true] {
+        let (_runtime, mut tui) = input_presenter(secret);
+        draw(&mut tui, 80, 24);
+        tui.input(Event::Paste("query".into())).unwrap();
+        draw(&mut tui, 80, 24);
+        let target = tui.focus.clone().unwrap();
+        let before = observation(&tui);
+        for code in [KeyCode::Up, KeyCode::Down] {
+            assert!(matches!(
+                tui.resources.input(&target, &key(code)).unwrap(),
+                Some(WidgetInput::Unhandled)
+            ));
+        }
+        assert_eq!(observation(&tui), before);
+        close(&mut tui);
+    }
+}

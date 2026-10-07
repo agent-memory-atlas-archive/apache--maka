@@ -518,6 +518,7 @@ export type EditorCapture =
     };
 export type SettingsModelsRead =
   | {
+      query?: string;
       kind: 'start';
     }
   | {
@@ -2020,6 +2021,7 @@ export interface ModelSelection {
   modelId: string;
 }
 export interface SettingsModelCursor {
+  query: string;
   connection: number;
   model: number;
 }

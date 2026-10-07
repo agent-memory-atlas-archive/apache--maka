@@ -91,6 +91,9 @@ impl Widget for Recipe {
         }
         let handled = match event {
             Event::Key(key) => {
+                if key.modifiers.is_empty() && matches!(key.code, KeyCode::Up | KeyCode::Down) {
+                    return Ok(WidgetInput::Unhandled);
+                }
                 if key.code == KeyCode::Enter && !self.props.read_only {
                     return Ok(WidgetInput::Emitted(NativeInput {
                         key: "submit".into(),

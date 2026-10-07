@@ -142,3 +142,7 @@ Custom Markdown blocks carry their original TextView WeakEntity and native hitbo
 自定义 Markdown 区块携带原 TextView WeakEntity 和原生 hitbox，将完整 bounds 交给既有选择贡献适配器，由它统一处理当前裁剪与保留行平移。原生测试检查真实旧行滚动及全选/复制；在该不透明 Fast layer 路径上，旧绘制 mask 裁剪变异等价，不构成已证裁剪回归。序号测试排除包装测量的单字符标点，保留所有起始与嵌套序号断言。
 
 InputBaseState consumes Escape when it actually unmarks composition. A subsequent unmarked Escape can propagate to an enclosing application scope. This preserves native innermost dismissal ownership and prevents a single key from both cancelling composition and closing a product page.
+
+Plain Up/Down in a single-line InputBaseState propagates to the containing native scope after the original context-menu action has had priority. It leaves the original text and selection unchanged, allowing an ordinary plugin search input to navigate its surrounding list. Multiline vertical movement retains its native path. The Maka input test dispatches actual focused native keys and checks propagation and the original editor snapshot; it is not OS IME acceptance.
+
+单行 InputBaseState 的普通 Up/Down 在原 context-menu action 优先处理后向外层原生 scope 传播，保留原文本与选区，让普通插件搜索框可控制外层列表。多行垂直移动仍走原生路径。Maka input 测试发送真实聚焦原生按键，检查传播及原编辑器 snapshot，不宣称 OS IME 验收。

@@ -5568,13 +5568,18 @@ export const contracts = {
               {
                 type: 'object',
                 properties: {
+                  query: {
+                    type: 'string',
+                    maxLength: 256,
+                    default: '',
+                  },
                   kind: {
                     type: 'string',
                     const: 'start',
                   },
                 },
-                required: ['kind'],
                 additionalProperties: false,
+                required: ['kind'],
               },
               {
                 type: 'object',
@@ -5601,6 +5606,10 @@ export const contracts = {
               SettingsModelCursor: {
                 type: 'object',
                 properties: {
+                  query: {
+                    type: 'string',
+                    maxLength: 256,
+                  },
                   connection: {
                     type: 'integer',
                     format: 'uint',
@@ -5615,7 +5624,7 @@ export const contracts = {
                   },
                 },
                 additionalProperties: false,
-                required: ['connection', 'model'],
+                required: ['query', 'connection', 'model'],
               },
             },
           },
@@ -5779,6 +5788,10 @@ export const contracts = {
               SettingsModelCursor: {
                 type: 'object',
                 properties: {
+                  query: {
+                    type: 'string',
+                    maxLength: 256,
+                  },
                   connection: {
                     type: 'integer',
                     format: 'uint',
@@ -5793,7 +5806,7 @@ export const contracts = {
                   },
                 },
                 additionalProperties: false,
-                required: ['connection', 'model'],
+                required: ['query', 'connection', 'model'],
               },
             },
           },

@@ -190,7 +190,8 @@ impl Handler for Settings {
                         .await
                         .map_err(|_| "settings_store_unavailable")?;
                     let start = match input {
-                        ModelsRead::Start => ModelCursor {
+                        ModelsRead::Start { query } => ModelCursor {
+                            query,
                             connection: 0,
                             model: 0,
                         },
@@ -212,8 +213,14 @@ impl Handler for Settings {
                             cursor
                         }
                     };
+                    let terms: Vec<_> = start
+                        .query
+                        .split_whitespace()
+                        .map(str::to_lowercase)
+                        .collect();
                     let mut choices = Vec::new();
                     let mut next = None;
+                    let mut scanned = 0;
                     'rows: for (index, row) in catalog
                         .connections
                         .iter()
@@ -230,14 +237,31 @@ impl Handler for Settings {
                                 0
                             },
                         ) {
-                            if choices.len() == 16 {
+                            // Bound work as well as returned matches. An empty
+                            // matching page can still continue its exact query.
+                            if scanned == 256 || choices.len() == 16 {
                                 next = Some(ModelCursor {
+                                    query: start.query.clone(),
                                     connection: index,
                                     model: at,
                                 });
                                 break 'rows;
                             }
-                            choices.push(model_choice(row, model));
+                            scanned += 1;
+                            let choice = model_choice(row, model);
+                            let matches = terms.is_empty() || {
+                                let label = choice.label.to_lowercase();
+                                let model = model.to_lowercase();
+                                let connection = choice.connection_name.to_lowercase();
+                                terms.iter().all(|term| {
+                                    label.contains(term)
+                                        || model.contains(term)
+                                        || connection.contains(term)
+                                })
+                            };
+                            if matches {
+                                choices.push(choice);
+                            }
                         }
                     }
                     serde_json::to_value(ModelsPage::Ready {

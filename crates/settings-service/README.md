@@ -19,11 +19,13 @@
 
 # Root settings capability
 
+`models` Start accepts an optional `query` of at most 256 Unicode characters; omission or empty text browses normally. All whitespace-separated terms must match the model ID, display label or connection name, case-insensitively. Each call examines at most 256 enabled models. An empty result may have a continuation, whose original cursor carries the exact query and physical position; the default projection remains independent of search.
+
 `maka.settings` is a compiled native extension exporting `Settings` (`maka.settings.Settings` v1). Launchers register availability; an ordinary composition must activate and bind it. The actual `NativeContext` supplies persistence and its owned Root. A retained configuration SQL owner is drained on native close; cleanup failure keeps the Host owner and Root fence.
 
 `models` returns at most sixteen public choices per page, including the exact observed connection revision. Its cursor remains bound to the original catalog revision; a changed catalog returns `changed` instead of mixing snapshots. Each ready page includes one `defaultModel` projection from that same snapshot: `none`, `unavailable` with its saved target, or `ready` with its exact choice. It is independent of pagination and uses the same eligibility and labels as the choices. Ready means selectable from this catalog, not authenticated or reachable. Choices contain labels and model IDs, with no credentials, endpoint, or native execution grant. Selecting a choice does not authorize execution.
 
-`setDefault` is a durable mutation using the original catalog CAS. Its required nullable `target` explicitly sets or clears the default. SQL uncertainty remains the original operation's Unknown result; recovery never repeats a write. The settings contract is generated from the actual Rust serialization shape, while domain validation remains in the configuration owner.
+`setDefault` is a durable mutation using the original catalog CAS. Its required nullable `target` explicitly sets or clears the default. SQL uncertainty remains the original operation's Unknown result; recovery never repeats a write. The settings contract uses the actual Rust deserialization shape for input and serialization shape for output; domain validation remains in the configuration owner.
 
 `connections` returns at most sixteen public summaries per catalog revision. `connection` compares an exact connection basis and returns its public configuration and editable basic fields, or `stale`; hidden model inventories and overrides are not copied into the detail. `providers` pages the compiled API provider descriptors, eight per page within a 128 KiB encoded response budget. These descriptors describe availability, not activation or authority.
 

@@ -347,11 +347,21 @@ impl<M: InputModeKind> InputBaseState<M> {
             return;
         }
 
+        if self.is_single_line() {
+            cx.propagate();
+            return;
+        }
+
         self.move_vertical(-1, true, window, cx);
     }
 
     pub(super) fn down(&mut self, action: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
         if M::handle_context_menu_action(self, Box::new(action.clone()), window, cx) {
+            return;
+        }
+
+        if self.is_single_line() {
+            cx.propagate();
             return;
         }
 

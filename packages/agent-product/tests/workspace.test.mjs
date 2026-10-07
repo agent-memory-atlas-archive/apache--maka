@@ -730,7 +730,32 @@ test('TUI pages expose every original choice, keep controls visible and retain l
     ['choose-15'],
   );
   assert.ok(modelButtons(out.frame.view).includes('close'));
+  out = modelGuest.component.event(
+    out.frame.state,
+    {
+      kind: 'component',
+      child: 'model-query',
+      name: 'changed',
+      key: 'query',
+      event: modelObservation('', 1),
+    },
+    enabled,
+    {},
+  );
   out = modelRaw(out, 'choose-15', enabled);
+  const capture = out.actions[0];
+  assert.equal(capture.method, 'read');
+  assert.deepEqual(capture.resources.text.input, {
+    kind: 'at_revision',
+    owner: 'model-editor',
+    revision: 1,
+  });
+  out = modelAction(
+    out,
+    capture.key,
+    { status: 'succeeded', value: { text: '', metadata: modelObservation('', 1).snapshot.text } },
+    enabled,
+  );
   assert.equal(out.events[0].value.selection.modelId, 'model-15');
   assert.equal(out.frame.state.open, false);
   out = modelGuest.component.update(
@@ -759,8 +784,9 @@ test('late query is ignored and catalog changes restart only the observation', (
     },
     enabled,
   );
-  assert.equal(out.frame.state.pending, original.key);
+  assert.equal(out.frame.state.pending.key, original.key);
   assert.equal(out.frame.state.choices.length, 0);
+  out = modelRaw(out, 'toggle', enabled);
   out = modelAction(
     out,
     original.key,
@@ -768,7 +794,7 @@ test('late query is ignored and catalog changes restart only the observation', (
     enabled,
   );
   assert.equal(out.actions.length, 1);
-  assert.deepEqual(out.actions[0].input, { kind: 'start' });
+  assert.deepEqual(out.actions[0].input, { kind: 'start', query: '' });
   assert.equal(out.events.length, 0);
   assert.equal(out.actions[0].method, 'models');
 });
@@ -844,6 +870,299 @@ class FormClient {
   get state() {
     return this.output.frame.state;
   }
+}
+function modelObservation(text, revision) {
+  const bytes = Buffer.byteLength(text);
+  return {
+    revision,
+    snapshot: {
+      text: { owner: 'model-editor', revision, bytes },
+      selection: { start: bytes, end: bytes },
+      reversed: false,
+      marked: null,
+    },
+    receipt: null,
+  };
+}
+function modelNative(form, text, revision) {
+  return form.input({
+    kind: 'component',
+    child: 'model-query',
+    name: 'changed',
+    key: 'query',
+    event: modelObservation(text, revision),
+  });
+}
+function modelRead(form, text, revision) {
+  const read = form.find('read');
+  assert.deepEqual(read.resources.text.input, {
+    kind: 'at_revision',
+    owner: 'model-editor',
+    revision,
+  });
+  return form.complete(read, {
+    status: 'succeeded',
+    value: { text, metadata: modelObservation(text, revision).snapshot.text },
+  });
+}
+const modelPage = (choices = modelChoices, next = null) => ({
+  kind: 'ready',
+  revision: 5,
+  choices,
+  next,
+  defaultModel: { kind: 'none' },
+});
+for (const target of ['tui', 'desktop']) {
+  const { component } = await import(
+    pathToFileURL(resolve(root, `dist/packages/models/${target}.js`))
+  );
+  const ready = () => {
+    const form = new FormClient(component, {
+      ...modelProps,
+      busy: false,
+      selection: modelChoices[0],
+    });
+    form.query('models', modelPage());
+    modelNative(form, '', 1);
+    form.raw('toggle');
+    return form;
+  };
+  test(`${target} model search coalesces original native revisions and scans exact query continuations`, () => {
+    const form = ready();
+    const query = modelSlots(form.output.frame.view).find((n) => n.key === 'model-query');
+    assert.equal(query.props.autoFocus, true);
+    modelNative(form, 'earlier', 2);
+    const old = form.find('read');
+    modelNative(form, 'Account model-299', 3);
+    assert.equal(form.output.actions.length, 0);
+    form.complete(old, {
+      status: 'succeeded',
+      value: { text: 'earlier', metadata: modelObservation('earlier', 2).snapshot.text },
+    });
+    assert.equal(form.state.query, '');
+    modelRead(form, 'Account model-299', 3);
+    assert.deepEqual(form.find('models').input, { kind: 'start', query: 'Account model-299' });
+    const cursor = { query: 'Account model-299', connection: 0, model: 256 };
+    form.query('models', modelPage([], cursor));
+    assert.deepEqual(form.find('models').input, { kind: 'continue', revision: 5, cursor });
+    const choice = {
+      ...modelChoices[0],
+      selection: { ...modelChoices[0].selection, modelId: 'model-299' },
+    };
+    form.query('models', modelPage([choice]));
+    form.input({
+      kind: 'component',
+      child: 'model-query',
+      name: 'submitted',
+      key: 'choose-active',
+      event: {},
+    });
+    assert.deepEqual(form.output.events, []);
+    modelRead(form, 'Account model-299', 3);
+    assert.deepEqual(form.output.events, [{ name: 'selected', value: choice }]);
+    assert.equal(form.state.open, false);
+  });
+  test(`${target} moving the search caret acknowledges its original revision without resetting model navigation`, () => {
+    const form = ready();
+    modelNative(form, 'model', 2);
+    modelRead(form, 'model', 2);
+    form.query('models', modelPage());
+    for (let at = 0; at < 7; at++) form.raw('next-choice');
+    const reveal = structuredClone(form.state.reveal);
+    const choices = structuredClone(form.state.choices);
+    const observation = modelObservation('model', 3);
+    observation.snapshot.selection = { start: 0, end: 0 };
+    form.input({
+      kind: 'component',
+      child: 'model-query',
+      name: 'changed',
+      key: 'query',
+      event: observation,
+    });
+    modelRead(form, 'model', 3);
+    assert.equal(form.state.active, 7);
+    assert.deepEqual(form.state.choices, choices);
+    assert.deepEqual(form.state.reveal, reveal);
+    assert.equal(form.state.queryBasis.revision, 3);
+    assert.deepEqual(form.output.actions, []);
+  });
+  test(`${target} model arrows keep the original query and reveal the active row in both directions`, () => {
+    const form = ready();
+    for (let at = 0; at < 15; at++) form.raw('next-choice');
+    assert.equal(form.state.active, 15);
+    assert.deepEqual(form.state.observation, modelObservation('', 1));
+    assert.equal(form.output.actions.length, 0);
+    if (target === 'desktop') {
+      const reading = modelSlots(form.output.frame.view).find((n) => n.key === 'model-rows');
+      assert.equal(reading.props.content.scroll, 'manual');
+      assert.equal(reading.props.content.children.length, 16);
+      assert.deepEqual(reading.props.command.target, { kind: 'reveal_child', key: 'choose-15' });
+      const sequence = reading.props.command.sequence;
+      form.input({
+        kind: 'component',
+        child: 'model-rows',
+        name: 'observed',
+        key: 'row-viewport',
+        event: {},
+      });
+      assert.equal(form.state.reveal.sequence, sequence);
+      form.input({
+        kind: 'component',
+        child: 'model-rows',
+        name: 'input',
+        key: 'row-input',
+        event: { kind: 'raw', key: 'choose-15', event: {} },
+      });
+    } else {
+      assert.equal(form.state.offset, 15);
+      assert.deepEqual(
+        modelButtons(form.output.frame.view).filter((n) => n.startsWith('choose-')),
+        ['choose-15'],
+      );
+      form.raw('choose-15');
+    }
+    modelRead(form, '', 1);
+    assert.deepEqual(form.output.events, [{ name: 'selected', value: modelChoices[15] }]);
+    form.raw('toggle');
+    for (let at = 0; at < 15; at++) form.raw('previous-choice');
+    assert.equal(form.state.active, 0);
+    assert.deepEqual(form.state.reveal.target, { kind: 'reveal_child', key: 'choose-0' });
+  });
+  test(`${target} hidden, defaults and busy model searches stop scanning and resume from the original cursor`, () => {
+    for (const barrier of ['close', 'defaults', 'busy']) {
+      const form = ready();
+      modelNative(form, 'later', 2);
+      modelRead(form, 'later', 2);
+      if (barrier === 'busy') form.update({ busy: true });
+      else form.raw(barrier);
+      const cursor = { query: 'later', connection: 0, model: 256 };
+      form.query('models', modelPage([], cursor));
+      assert.deepEqual(form.output.actions, []);
+      if (barrier === 'busy') form.update({ busy: false });
+      else form.raw(barrier === 'close' ? 'toggle' : 'default-back');
+      assert.deepEqual(form.find('models').input, { kind: 'continue', revision: 5, cursor });
+      assert.equal(form.state.pending.key, form.find('models').key);
+    }
+  });
+  test(`${target} model selection requires the original snapshot and closing disarms pending confirmation`, () => {
+    const form = ready();
+    form.raw('choose-3');
+    const selection = form.find('read');
+    form.raw('close');
+    form.raw('toggle');
+    form.complete(selection, {
+      status: 'succeeded',
+      value: { text: '', metadata: modelObservation('', 1).snapshot.text },
+    });
+    assert.deepEqual(form.output.events, []);
+    form.raw('choose-3');
+    form.complete(form.find('read'), { status: 'failed', reason: 'snapshot_revision_changed' });
+    assert.deepEqual(form.output.events, []);
+    modelNative(form, 'new', 2);
+    modelRead(form, 'new', 2);
+    assert.deepEqual(form.find('models').input, { kind: 'start', query: 'new' });
+    const old = form.find('models');
+    modelNative(form, 'latest', 3);
+    form.complete(old, { status: 'succeeded', value: modelPage() });
+    modelRead(form, 'latest', 3);
+    assert.deepEqual(form.find('models').input, { kind: 'start', query: 'latest' });
+    assert.deepEqual(form.output.events, []);
+  });
+  test(`${target} changed search retries a failed directory while caret changes preserve the failure`, () => {
+    const form = ready();
+    modelNative(form, 'model', 2);
+    modelRead(form, 'model', 2);
+    form.complete(form.find('models'), { status: 'failed', reason: 'offline' });
+    modelNative(form, 'model', 3);
+    modelRead(form, 'model', 3);
+    assert.equal(form.state.failed, true);
+    assert.deepEqual(form.output.actions, []);
+    modelNative(form, 'different', 4);
+    modelRead(form, 'different', 4);
+    assert.equal(form.state.failed, false);
+    assert.deepEqual(form.find('models').input, { kind: 'start', query: 'different' });
+  });
+  test(`${target} a failed older directory request cannot strand a coalesced or cleared search`, () => {
+    for (const latest of ['latest', '']) {
+      const form = ready();
+      modelNative(form, 'old', 2);
+      modelRead(form, 'old', 2);
+      const old = form.find('models');
+      modelNative(form, latest, 3);
+      assert.deepEqual(form.output.actions, []);
+      form.complete(old, { status: 'failed', reason: 'offline' });
+      if (latest) modelRead(form, latest, 3);
+      assert.equal(form.state.failed, false);
+      assert.deepEqual(form.find('models').input, { kind: 'start', query: latest });
+    }
+  });
+  test(`${target} default metadata refresh ignores invalid search and keeps each cursor with its page revision`, () => {
+    const form = ready();
+    modelNative(form, 'model', 2);
+    modelRead(form, 'model', 2);
+    const oldCursor = { query: 'model', connection: 0, model: 16 };
+    form.query('models', modelPage(modelChoices, oldCursor));
+    form.raw('defaults');
+    modelNative(form, 'model', 3);
+    assert.deepEqual(form.output.actions, []);
+    form.raw('default-refresh');
+    assert.deepEqual(form.find('models').input, { kind: 'start', query: 'model' });
+    const cursor = { query: 'model', connection: 0, model: 256 };
+    form.query('models', {
+      ...modelPage([], cursor),
+      revision: 6,
+      defaultModel: { kind: 'ready', choice: modelChoices[15] },
+    });
+    assert.equal(form.state.catalogRevision, 6);
+    assert.deepEqual(form.state.defaultModel, { kind: 'ready', choice: modelChoices[15] });
+    assert.deepEqual(form.output.actions, []);
+    form.raw('default-back');
+    modelRead(form, 'model', 3);
+    assert.deepEqual(form.find('models').input, { kind: 'continue', revision: 6, cursor });
+    form.query('models', { ...modelPage(), revision: 6 });
+    modelNative(form, '界'.repeat(257), 4);
+    modelRead(form, '界'.repeat(257), 4);
+    assert.equal(form.state.queryError, 'searchTooLong');
+    form.raw('defaults');
+    form.raw('default-refresh');
+    assert.equal(form.find('models').method, 'models');
+    form.query('models', { ...modelPage(), revision: 7 });
+    assert.equal(form.state.catalogRevision, 7);
+    form.input({
+      kind: 'component',
+      child: 'default-settings',
+      name: 'changed',
+      key: 'default-changed',
+      event: {},
+    });
+    assert.deepEqual(
+      form.output.actions.map((a) => a.method),
+      ['models'],
+    );
+    form.query('models', { ...modelPage(), revision: 8 });
+    assert.equal(form.state.catalogRevision, 8);
+  });
+  test(`${target} model search bounds Unicode input and resumes dirty text after disabled props`, () => {
+    const form = ready();
+    form.update({ busy: true });
+    modelNative(form, 'waiting', 2);
+    assert.deepEqual(form.output.actions, []);
+    form.update({ busy: false });
+    assert.equal(form.state.pending.key, form.find('read').key);
+    modelRead(form, 'waiting', 2);
+    form.query('models', modelPage());
+    modelNative(form, '界'.repeat(257), 3);
+    modelRead(form, '界'.repeat(257), 3);
+    assert.equal(form.state.queryError, 'searchTooLong');
+    assert.deepEqual(form.output.actions, []);
+    modelNative(form, '🙂'.repeat(257), 4);
+    assert.equal(form.state.queryError, 'searchTooLong');
+    assert.deepEqual(form.output.actions, []);
+    modelNative(form, '', 5);
+    assert.equal(form.state.queryError, null);
+    assert.equal(form.state.query, '');
+    assert.deepEqual(form.find('models').input, { kind: 'start', query: '' });
+  });
 }
 const credentialModules = await Promise.all(
   ['desktop', 'tui'].map(async (target) => [
@@ -2379,7 +2698,7 @@ for (const target of ['desktop', 'tui']) {
       revision: 5,
       choices: modelChoices,
       defaultModel: { kind: 'ready', choice: late },
-      next: { connection: 0, model: 16 },
+      next: { query: '', connection: 0, model: 16 },
     });
     assert.deepEqual(form.output.events, [{ name: 'selected', value: late }]);
   });

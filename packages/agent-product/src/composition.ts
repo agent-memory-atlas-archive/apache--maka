@@ -201,6 +201,9 @@ function settingsComposition(
         {
           settings: [remote('settings', 'Settings')],
           defaults: [local('model-default', 'ModelDefault')],
+          reading: [local('reading-area', 'ReadingArea')],
+          input: [local('input', 'TextInput')],
+          reader: [local('reader', 'Reader')],
         },
       ),
       'model-default': node(
@@ -217,6 +220,7 @@ function settingsComposition(
       editor: node('editor'),
       file: node('file'),
       reader: node('reader'),
+      'reading-area': node('reading-area'),
       history: node('history'),
     },
   };

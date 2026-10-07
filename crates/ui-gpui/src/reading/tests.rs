@@ -418,6 +418,44 @@ fn original_wheel_changes_reading_intent_and_cancels_pending_command(cx: &mut Te
 }
 
 #[gpui::test]
+fn model_button_viewport_reveals_every_choice_in_both_directions(cx: &mut TestAppContext) {
+    cx.with_paused_automatic_drawing(|cx| {
+        let mut source = scene_source(Value::Array((0..16).map(|at| json!({
+            "kind":"button", "key":format!("choose-{at}"),
+            "label":format!("Model {at} with a long display name · Research Account"),
+            "style":{"width":{"unit":"fraction","value":1},"height":{"unit":"pixels","value":32},"shrink":0,"minWidth":0,"truncate":true}
+        })).collect()));
+        source["scroll"] = json!("manual");
+        source["gap"] = json!(2);
+        source["style"]["height"] = json!({"unit":"pixels","value":160});
+        let initial = compile_recipe(&source, None);
+        let (view, window_cx) = cx.add_window_view(move |window, cx| {
+            gpui_kit::init(cx);
+            let mut state = initial.create(input(), window, cx);
+            initial.presentation(state.as_mut(), true, window, cx);
+            initial.commit(state.as_mut(), window, cx);
+            Harness { recipe: initial, state, slots: empty_slots(), renders: Default::default(), block_long_press: Default::default() }
+        });
+        window_cx.update(|window, cx| window.draw(cx).clear(cx));
+        let state = window_cx.update(|_, cx| owner(view.read(cx).state.as_ref()).clone());
+        assert!(!state.borrow_mut().observation().viewport.unwrap().visible_child_keys.contains(&"choose-15".into()));
+        for (sequence, at) in (0..16).chain((0..16).rev()).enumerate() {
+            let sequence = sequence as u64 + 1;
+            let key = format!("choose-{at}");
+            window_cx.update(|window, cx| view.update(cx, |view, cx| {
+                view.recipe = compile_recipe(&source, Some(ReadingCommand { sequence, target: ReadingTarget::RevealChild { key: key.clone() } }));
+                view.recipe.commit(view.state.as_mut(), window, cx);
+                cx.notify();
+            }));
+            window_cx.update(|window, cx| window.draw(cx).clear(cx));
+            let observation = state.borrow_mut().observation();
+            assert_eq!(observation.receipt, Some(ReadingReceipt { sequence, status: ReadingStatus::Applied }));
+            assert!(observation.viewport.unwrap().visible_child_keys.contains(&key), "active model must actually paint inside the native viewport: {key}");
+        }
+    });
+}
+
+#[gpui::test]
 fn native_commands_settle_only_on_paint_and_observations_do_not_poll(cx: &mut TestAppContext) {
     cx.with_paused_automatic_drawing(|cx| {
         let mut source = scene_source(json!([

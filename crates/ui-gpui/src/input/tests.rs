@@ -707,3 +707,29 @@ fn simultaneous_reveal_offers_choose_one_painted_input_without_later_cycling(
         });
     }
 }
+
+#[gpui::test]
+fn single_line_arrows_bubble_without_changing_the_original_native_text(cx: &mut TestAppContext) {
+    let MountedInput {
+        owner,
+        window,
+        bubble,
+        ..
+    } = harness(cx, false);
+    cx.update_window(window, |_, window, cx| {
+        owner
+            .read(cx)
+            .state
+            .clone()
+            .update(cx, |state, cx| state.focus(window, cx));
+    })
+    .unwrap();
+    draw(cx, window);
+    cx.simulate_input(window, "query");
+    draw(cx, window);
+    let before = cx.update(|cx| owner.read(cx).observation_snapshot());
+    let previous = bubble.get();
+    cx.simulate_keystrokes(window, "up down");
+    assert_eq!(bubble.get(), previous + 2);
+    cx.update(|cx| assert_eq!(owner.read(cx).observation_snapshot(), before));
+}

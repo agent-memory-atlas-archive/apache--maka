@@ -29,17 +29,23 @@ use std::collections::BTreeMap;
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "SettingsModelsRead")]
 pub enum ModelsRead {
-    Start,
+    Start {
+        #[serde(default)]
+        #[schemars(length(max = 256))]
+        query: String,
+    },
     Continue {
         #[schemars(range(max = 9_007_199_254_740_991u64))]
         revision: u64,
         cursor: ModelCursor,
     },
 }
-#[derive(Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "SettingsModelCursor")]
 pub struct ModelCursor {
+    #[schemars(length(max = 256))]
+    pub query: String,
     #[schemars(range(max = 1024))]
     pub connection: usize,
     #[schemars(range(max = 4096))]
@@ -214,17 +220,17 @@ pub enum CredentialRejection {
     Authentication,
 }
 pub fn contract() -> Contract {
-    fn schema<T: JsonSchema>() -> serde_json::Value {
+    fn schema<T: JsonSchema>(contract: schemars::generate::Contract) -> serde_json::Value {
         let settings = schemars::generate::SchemaSettings::default()
-            .with(|settings| settings.contract = schemars::generate::Contract::Serialize);
+            .with(|settings| settings.contract = contract);
         serde_json::to_value(settings.into_generator().into_root_schema_for::<T>())
             .expect("settings schema")
     }
     fn method<I: JsonSchema, O: JsonSchema>(mode: MethodMode) -> Method {
         Method {
             mode,
-            input: schema::<I>(),
-            output: schema::<O>(),
+            input: schema::<I>(schemars::generate::Contract::Deserialize),
+            output: schema::<O>(schemars::generate::Contract::Serialize),
             resources: BTreeMap::new(),
         }
     }

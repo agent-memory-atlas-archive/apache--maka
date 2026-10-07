@@ -19,11 +19,13 @@
 
 # Root 设置能力
 
+`models` 的 Start 接受可省略的 `query`，最多 256 个 Unicode 字符；省略或空文本为普通浏览。空白分隔的每个词都须在模型 ID、显示名称或连接名称中匹配，忽略大小写。每次最多扫描 256 个启用模型；空结果仍可能有 continuation，原 cursor 携带准确查询与物理位置，继续受原目录 revision 约束。默认模型投影独立于搜索。
+
 `maka.settings` 是编译提供的原生扩展，导出 `Settings`（`maka.settings.Settings` v1）。启动器只登记 availability，普通组合必须显式激活与绑定。实际 `NativeContext` 提供持久化及所属 Root；原生 owner 持有配置 SQL owner，关闭时等待真实 shutdown，清理失败保留 Host owner 与 Root fence。
 
 `models` 每页最多返回十六个公开选项，包括准确的连接观察 revision。cursor 绑定原目录 revision，目录变化时返回 `changed`，不混合两个 snapshot。每个 ready 页包含同一 snapshot 下的单个 `defaultModel` 投影：`none`、带已保存目标的 `unavailable`、或带准确选项的 `ready`。它独立于分页，与选项使用同一资格和标签逻辑；ready 只表示目录可选，不保证认证或网络可达。选项只含标签和模型 ID，不含凭据、endpoint 或原生执行权限；选择一个选项不等于执行授权。
 
-`setDefault` 是沿原目录 CAS 的持久 mutation，required nullable `target` 明确设置或清空默认项。SQL 不确定保留原 operation 的 Unknown，recovery 不重复写入。契约由实际 Rust 序列化形态生成，领域校验仍归配置 owner。
+`setDefault` 是沿原目录 CAS 的持久 mutation，required nullable `target` 明确设置或清空默认项。SQL 不确定保留原 operation 的 Unknown，recovery 不重复写入。输入契约按实际 Rust 反序列化形态生成，输出按序列化形态生成；领域校验仍归配置 owner。
 
 `connections` 按目录 revision 每页提供最多十六项公开摘要。`connection` 比较准确的连接 basis，返回公开配置和基本编辑字段，或 `stale`；详情不复制隐藏的模型目录与 overrides。`providers` 分页提供编译可用的 API provider descriptor，每页最多八项、编码结果最多 128 KiB。descriptor 表示可用事实，不代表激活或授权。
 

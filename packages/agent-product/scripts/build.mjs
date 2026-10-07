@@ -152,7 +152,13 @@ specifications.models = {
   contract: own.modelsContract,
   export: 'Models',
   module: 'models',
-  imports: { settings: one(sdk.contracts.settings), defaults: one(own.modelDefaultContract) },
+  imports: {
+    settings: one(sdk.contracts.settings),
+    defaults: one(own.modelDefaultContract),
+    input: one(sdk.contracts.textInput),
+    reader: one(sdk.contracts.textReader),
+    reading: one(sdk.contracts.readingArea),
+  },
 };
 specifications['model-default'] = {
   contract: own.modelDefaultContract,
@@ -314,11 +320,16 @@ const mechanical = {
     entries: {
       desktop: {
         ...native('maka.ui.reading', { ReadingArea: required(sdk.contracts.readingArea) }),
-        imports: { markdown: one(sdk.contracts.markdown), source: one(sdk.contracts.sourceText) },
+        imports: {
+          markdown: { contract: sdk.contracts.markdown, cardinality: { kind: 'optional' } },
+          source: { contract: sdk.contracts.sourceText, cardinality: { kind: 'optional' } },
+        },
       },
       tui: {
         ...native('maka.ui.reading', { ReadingArea: required(sdk.contracts.readingArea) }),
-        imports: { source: one(sdk.contracts.sourceText) },
+        imports: {
+          source: { contract: sdk.contracts.sourceText, cardinality: { kind: 'optional' } },
+        },
       },
     },
   },
