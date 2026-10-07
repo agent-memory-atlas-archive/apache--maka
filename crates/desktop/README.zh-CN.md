@@ -51,8 +51,9 @@ surface 销毁不会取消该职责。
 读取校验已绑定 owner 的身份、修订与 UTF-8 边界，最多 64 KiB；平台 UTF-16 查询共用
 这条读取路径。
 
-运行方式见 [组件示例](../ui/README.md)。这是初始呈现器；真实 OS IME 验收、子 surface、恢复 UI、运行中动态安装与完整 Host/TUI 接线仍
-未完成。counter/editor 示例用于验证运行时，不代表默认产品的最终视觉设计。
+运行方式见 [组件示例](../ui/README.md)。counter/editor 示例用于验证运行时，
+不代表默认产品的最终视觉设计。生产运行中的动态安装与共用 Host/TUI 接线已可用；
+完整 Agent UI、真实 OS IME 验收、子 surface 与恢复 UI 仍未完成。
 
 GPUI 的窗口移除通知早于平台销毁；独立 window owner 等待补丁提供的后端销毁回执、
 实际 entity/保留帧释放与子挂载清理，才确认 root 完成。最后窗口移除不能提前退出应用，
@@ -84,13 +85,19 @@ availability 在 child 内登记，持久组合决定实例。父子 runtime 均
 前台原生 pump 在 paint 外推进已接纳的 committed plan，并在继续资源准备和动作处理前
 撤销退休控件的原生输入。未改变的 Mount 保留原 editor entity 和阅读作用域。
 独立新插件初始化失败是部署诊断，不关闭仍健康的原窗口；实际原生同步与清理错误
-仍保留原错误和 fence 语义。生产管理准入仍待接入，目前 adoption 入口仅由可信
-owner 测试接缝验证。生产 launch owner 对初始和替代根共用窗口创建路径；替换须等
+仍保留原错误和 fence 语义。生产管理写入使用原 caller operation 与持久来源；
+同一前台 Updates 管线经原连接和 application owner 批准并接纳已提交来源。
+生产 launch owner 对初始和替代根共用窗口创建路径；替换须等
 原窗口 owner 确认平台销毁、实际 entity 释放和 mount 清理，再以同一 application 和
 已接受任务 owner 打开全新根。无关已接受任务可与新根并存；替换其 provider 才等待
 原结算。清理失败不能放行替换。显式原生退出先禁止新准入与替换，再移除窗口。
-GPUI 测试覆盖真实 Kit entity 持有、原快照、provider fence 及交接期间退出；实际 OS
-根窗口交接和输入法验收仍待完成。
+GPUI 测试覆盖真实 Kit entity 持有、原快照、provider fence 及交接期间退出。
+
+macOS 实窗已通过系统文件面板安装普通包、保存完整来源，并在同一进程内自动
+从 Agent 替换为 Configuration Studio，启动原先闲置的独立 Host；新产品保存的
+连接只进入该 Host 的设置存储。正常关闭窗口后，父进程、两个子进程和三个 Root
+均已释放。这不证明交接时旧 Host 即时释放。输入法、屏幕阅读器、Windows/Linux
+及完整产品视觉验收仍待完成。
 
 foreground 执行 owner 在创建平台清理观察者之前保有每个原 `NativeResources` 对象，
 只有原 surface 真实成功结算才释放。观察失败或消失时，窗口/Surface 销毁也不会丢弃

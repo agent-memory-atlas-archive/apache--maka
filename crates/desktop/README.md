@@ -60,10 +60,10 @@ cancel an operating-system IME session. Observations contain resource metadata,
 not full text. Reads against the bound owner check identity/revision and UTF-8
 boundaries and are limited to 64 KiB. Platform UTF-16 queries use this read path.
 
-Run the [component example](../ui/README.md). This is an initial renderer, not the
-completed desktop product: real OS IME acceptance, child surfaces, recovery UI,
-dynamic in-process installation and full Host/TUI integration remain pending. Counter/editor fixtures validate the
-runtime, not the default product's final visual design.
+Run the [component example](../ui/README.md). Counter/editor fixtures validate
+the runtime, not the default product's final visual design. Production dynamic
+installation and shared Host/TUI integration are available; complete Agent UI,
+real OS IME acceptance, child surfaces and recovery UI remain pending.
 
 GPUI window removal starts retirement before platform teardown. The independent
 window owner waits for the patched backend destruction receipt, actual entity and
@@ -110,17 +110,24 @@ revokes retired native input before continuing preparation and action processing
 Unchanged Mounts retain their original editor entities and reading scopes. An
 independent new plugin's initialization failure is a deployment diagnostic; it
 does not close a healthy existing window. Actual native synchronization and
-cleanup failures retain their original error/fence semantics. Production
-management admission is still pending; the current adoption entry exercised here
-is a trusted owner test seam. The production launch owner uses one window creation
-path for initial and replacement roots. Replacement waits for the original window
+cleanup failures retain their original error/fence semantics. Production management
+writes use the original caller operations and persisted source. The same foreground Updates pipeline approves and adopts committed sources
+through the existing connections and application owner. The production launch
+owner uses one window creation path for initial and replacement roots. Replacement waits for the original window
 owner's platform destruction, real entity release and mount cleanup, then opens a
 fresh root with the same application and accepted-work owner. Unrelated accepted
 work may coexist with the new root; replacing its provider waits for its original
 settlement. Failed cleanup cannot permit replacement. Explicit native quit stops
 new admission and replacement before window removal. GPUI tests exercise held Kit
-entities, original snapshots, provider fences and quit during handoff; actual OS
-root-window replacement and IME acceptance remain pending.
+entities, original snapshots, provider fences and quit during handoff.
+
+macOS acceptance has also installed an ordinary package through the OS file panel,
+saved a complete source and automatically replaced Agent with Configuration Studio
+in the same process, starting its previously idle Host. A connection saved from the
+new product persisted only in that Host’s settings store. Normal window close
+released the parent, both children and all three Roots. This does not establish
+immediate release of the previous Host at handoff. IME, screen-reader, Windows/Linux
+and complete product visual acceptance remain pending.
 
 The foreground execution owner retains each original `NativeResources` object
 before the platform cleanup observer is created. Only a successful original
