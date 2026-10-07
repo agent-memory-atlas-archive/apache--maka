@@ -17,31 +17,28 @@
  * under the License.
  */
 
-//! Bounded, grapheme-aware composer. Inspired by grok-build's separation of byte
+//! Bounded, grapheme-aware native editor. Inspired by grok-build's separation of byte
 //! editing and display geometry; implemented here against Ratatui 0.30.
 //! No Host state or submission authority belongs in this widget.
-pub mod completion;
 pub(crate) mod layout;
-pub mod marks;
 mod presentation;
-mod preview;
 pub(crate) use presentation::Geometry;
-pub mod saved;
 
 use std::{collections::VecDeque, ops::Range};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use ratatui::{
-    Frame,
-    layout::{Position, Rect},
-    style::{Modifier, Style},
-};
+use ratatui::layout::Position;
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 use crate::application::Placement;
 use layout::Layout;
-use saved::Cursor as Selection;
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Selection {
+    cursor: usize,
+    anchor: Option<usize>,
+    // A soft-wrap boundary has two visual positions for one byte offset.
+    upstream: bool,
+}
 
 const MAX_TEXT_BYTES: usize = 256 * 1024;
 const MAX_HISTORY_BYTES: usize = 1024 * 1024;
@@ -60,16 +57,11 @@ struct Edit {
     inserted: String,
     before: Selection,
     after: Selection,
-    before_marks: Vec<marks::Mark>,
-    after_marks: Vec<marks::Mark>,
 }
 
 impl Edit {
     fn bytes(&self) -> usize {
-        self.removed.len()
-            + self.inserted.len()
-            + marks::bytes(&self.before_marks)
-            + marks::bytes(&self.after_marks)
+        self.removed.len() + self.inserted.len()
     }
 }
 
@@ -79,7 +71,6 @@ pub struct Editor {
     limit_error: &'static str,
     text: String,
     selection: Selection,
-    marks: Vec<marks::Mark>,
     undo: VecDeque<Edit>,
     redo: Vec<Edit>,
     history_bytes: usize,
@@ -103,7 +94,6 @@ impl Default for Editor {
             limit_error: "composer-too-large",
             text: String::new(),
             selection: Selection::default(),
-            marks: Vec::new(),
             undo: VecDeque::new(),
             redo: Vec::new(),
             history_bytes: 0,
@@ -165,6 +155,7 @@ impl Editor {
             .anchor
             .is_some_and(|anchor| anchor > self.selection.cursor)
     }
+    #[cfg(test)]
     pub(crate) fn selected_text(&self) -> &str {
         &self.text[self.selection.range()]
     }
@@ -173,20 +164,10 @@ impl Editor {
         self.selection.cursor = self.text.len();
         self.reveal_cursor();
     }
-    pub fn retained_bytes(&self) -> usize {
-        self.text.len() + self.history_bytes + marks::bytes(&self.marks)
-    }
     pub fn clear_history(&mut self) {
         self.undo.clear();
         self.redo.clear();
         self.history_bytes = 0;
-    }
-
-    pub fn preferred_height(&mut self, width: u16, maximum: u16) -> u16 {
-        if self.layout.width != width {
-            self.layout = self.make_layout(width);
-        }
-        self.layout.rows.len().min(maximum as usize).max(1) as u16
     }
 
     /// Rows the text wraps to at `width`, leaving the cached layout alone.
@@ -205,6 +186,7 @@ impl Editor {
     }
 
     /// The visible caret in the last drawn editor area, with its current wrap.
+    #[cfg(test)]
     pub fn cursor_position(&self) -> Option<Position> {
         let area = self.area.filter(|area| !area.is_empty())?;
         let (row, column) = self
@@ -221,23 +203,8 @@ impl Editor {
         )
     }
 
-    pub fn contains(&self, point: Position) -> bool {
-        self.area.is_some_and(|area| area.contains(point))
-    }
-
     pub fn dragging(&self) -> bool {
         self.dragging
-    }
-
-    /// Whether a pointer event is this editor's: a press or the wheel over
-    /// it, or anything while it drags a selection it began. Passing over it
-    /// or releasing a press made elsewhere is not.
-    pub fn takes(&self, mouse: &MouseEvent) -> bool {
-        self.dragging
-            || (matches!(
-                mouse.kind,
-                MouseEventKind::Down(_) | MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-            ) && self.contains(Position::new(mouse.column, mouse.row)))
     }
 
     fn reflow(&mut self) {
@@ -301,12 +268,6 @@ impl Editor {
         true
     }
 
-    pub fn clear_if_unchanged(&mut self, sent: &str) {
-        if self.text == sent {
-            self.replace(0..self.text.len(), "");
-        }
-    }
-
     pub fn clear(&mut self) {
         self.replace(0..self.text.len(), "");
     }
@@ -324,16 +285,9 @@ impl Editor {
         }
         self.revision = self.revision.wrapping_add(1);
         let before = self.selection;
-        let before_marks = self.marks.clone();
         let removed = self.text[range.clone()].to_owned();
         self.text.replace_range(range.clone(), inserted);
         self.reflow();
-        self.marks = marks::rebase(
-            &before_marks,
-            &range,
-            inserted.len(),
-            &self.layout.boundaries,
-        );
         self.selection = Selection {
             cursor: self.layout.snap_right(range.start + inserted.len()),
             anchor: None,
@@ -349,8 +303,6 @@ impl Editor {
             inserted: inserted.to_owned(),
             before,
             after: self.selection,
-            before_marks,
-            after_marks: self.marks.clone(),
         };
         self.history_bytes += edit.bytes();
         self.undo.push_back(edit);
@@ -380,12 +332,10 @@ impl Editor {
             self.text
                 .replace_range(edit.start..edit.start + edit.removed.len(), &edit.inserted);
             self.selection = edit.after;
-            self.marks = edit.after_marks.clone();
         } else {
             self.text
                 .replace_range(edit.start..edit.start + edit.inserted.len(), &edit.removed);
             self.selection = edit.before;
-            self.marks = edit.before_marks.clone();
         }
         self.reflow();
         self.preferred_column = None;
@@ -592,131 +542,32 @@ impl Editor {
         }
         true
     }
-
-    pub fn draw(
-        &mut self,
-        frame: &mut Frame<'_>,
-        area: Rect,
-        focused: bool,
-        colors: crate::theme::Palette,
-    ) {
-        self.draw_inner(frame, area, focused, false, colors);
-    }
-
-    /// Mask before constructing terminal cells; never paint a secret and cover it later.
-    pub fn draw_masked(
-        &mut self,
-        frame: &mut Frame<'_>,
-        area: Rect,
-        focused: bool,
-        colors: crate::theme::Palette,
-    ) {
-        self.draw_inner(frame, area, focused, true, colors);
-    }
-
-    fn draw_inner(
-        &mut self,
-        frame: &mut Frame<'_>,
-        area: Rect,
-        focused: bool,
-        masked: bool,
-        colors: crate::theme::Palette,
-    ) {
-        if area.is_empty() {
-            self.invalidate_geometry();
-            return;
-        }
-        let resized = self.area != Some(area.into());
-        self.area = Some(area.into());
-        if self.layout.width != area.width {
-            self.layout = self.make_layout(area.width);
-        }
-        if resized {
-            self.reveal_cursor();
-        }
-        let selection = self.selection.range();
-        let selected = colors.selected();
-        for (screen_row, row) in self
-            .layout
-            .rows
-            .iter()
-            .skip(self.top)
-            .take(area.height as usize)
-            .enumerate()
-        {
-            let y = area.y + screen_row as u16;
-            for cell in &row.cells {
-                let x = area.x + cell.column as u16;
-                let style = if cell.bytes.start < selection.end && cell.bytes.end > selection.start
-                {
-                    selected
-                } else {
-                    Style::default()
-                };
-                let text = &self.text[cell.bytes.clone()];
-                if masked {
-                    for column in 0..cell.width {
-                        frame.buffer_mut()[(x + column as u16, y)]
-                            .set_symbol("*")
-                            .set_style(style);
-                    }
-                } else if text == "\t" {
-                    for column in 0..cell.width {
-                        frame.buffer_mut()[(x + column as u16, y)]
-                            .set_symbol(" ")
-                            .set_style(style);
-                    }
-                } else if text.width() > cell.width {
-                    frame.buffer_mut()[(x, y)].set_symbol("�").set_style(style);
-                } else {
-                    let symbol = if text.width() == 0 {
-                        format!("◌{text}")
-                    } else {
-                        text.to_owned()
-                    };
-                    frame
-                        .buffer_mut()
-                        .set_stringn(x, y, symbol, cell.width, style);
-                }
-            }
-            if self.text.as_bytes().get(row.end) == Some(&b'\n') && selection.contains(&row.end) {
-                let column = row.cells.last().map_or(0, |cell| cell.column + cell.width);
-                frame.buffer_mut()[(
-                    area.x
-                        + column
-                            .saturating_sub(self.left)
-                            .min(area.width.saturating_sub(1) as usize)
-                            as u16,
-                    y,
-                )]
-                    .set_style(selected);
-            }
-        }
-        if focused {
-            let (row, column) = self
-                .layout
-                .cursor(self.selection.cursor, self.selection.upstream);
-            if row >= self.top && row < self.top + area.height as usize {
-                let position = Position::new(
-                    area.x
-                        + column
-                            .saturating_sub(self.left)
-                            .min(area.width.saturating_sub(1) as usize)
-                            as u16,
-                    area.y + (row - self.top) as u16,
-                );
-                frame.buffer_mut()[position]
-                    .set_style(Style::default().add_modifier(Modifier::REVERSED));
-                frame.set_cursor_position(position);
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{
+        Frame, Terminal,
+        backend::TestBackend,
+        layout::Rect,
+        style::{Modifier, Style},
+    };
+
+    fn draw(editor: &mut Editor, frame: &mut Frame<'_>, area: Rect, focused: bool) {
+        let geometry = editor.paint_prepared(
+            area.into(),
+            frame.buffer_mut(),
+            focused,
+            Style::default(),
+            Style::default().add_modifier(Modifier::REVERSED),
+            Style::default().add_modifier(Modifier::REVERSED),
+        );
+        editor.present_geometry(geometry);
+        if focused && let Some(position) = editor.cursor_position() {
+            frame.set_cursor_position(position);
+        }
+    }
 
     fn key(editor: &mut Editor, code: KeyCode, modifiers: KeyModifiers) {
         assert!(editor.key(KeyEvent::new(code, modifiers)));
@@ -756,7 +607,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(12, 8)).unwrap();
         let area = Rect::new(2, 1, 7, 4);
         terminal
-            .draw(|frame| editor.draw(frame, area, true, crate::theme::Palette::default()))
+            .draw(|frame| draw(&mut editor, frame, area, true))
             .unwrap();
         // ab(2) + 中(2) + emoji(2) fit, then explicit newline.
         assert_eq!(editor.layout.rows.len(), 2); // tab reaches column 4, 末 fits.
@@ -779,14 +630,7 @@ mod tests {
         editor.invalidate_geometry();
         assert!(!editor.mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 1)));
         terminal
-            .draw(|frame| {
-                editor.draw(
-                    frame,
-                    Rect::new(2, 1, 5, 4),
-                    true,
-                    crate::theme::Palette::default(),
-                )
-            })
+            .draw(|frame| draw(&mut editor, frame, Rect::new(2, 1, 5, 4), true))
             .unwrap();
         assert_eq!(editor.layout.rows[1].start, "ab中".len());
         editor.selection = Selection::default();
@@ -839,14 +683,7 @@ mod tests {
             let start = std::time::Instant::now();
             editor.insert("!");
             terminal
-                .draw(|frame| {
-                    editor.draw(
-                        frame,
-                        Rect::new(2, 28, 116, 8),
-                        true,
-                        crate::theme::Palette::default(),
-                    )
-                })
+                .draw(|frame| draw(&mut editor, frame, Rect::new(2, 28, 116, 8), true))
                 .unwrap();
             samples.push(start.elapsed());
         }

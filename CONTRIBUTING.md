@@ -51,7 +51,6 @@ Use [just](https://github.com/casey/just) for common tasks. Install it with your
 
 ```sh
 just setup                 # build-time JavaScript dependencies
-just run                   # native TUI
 just run --help            # CLI commands
 just check                 # formatting, Clippy, SDK, scripts and Rust tests
 ```

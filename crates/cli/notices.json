@@ -1,7 +1,7 @@
 {
   "inputs": {
-    "Cargo.lock": "361ad24dafe9c67bae513ea20ae9a30021ac6f313e9f87613162ba90ff3b484c",
-    "Cargo.toml": "c3fc69337d77e54cb3d178c11f91705ce3b20f2e20170f1ee29df69c8670e10d",
+    "Cargo.lock": "bc338c607ad44c6cea6cc1bed5f01e3d748e2af547d29810e57ddb4e03602ff6",
+    "Cargo.toml": "a3220442358f1ca50e39081a12dd3590818e73e8a2d26aae26de717f94defc02",
     "crates/acp/Cargo.toml": "836cf57acda320dc984f4648e5893580e79063e95ced700f33cfbaa75994b8f8",
     "crates/agent-service/Cargo.toml": "ab6d16f47c0b826a03b94a664f2628b4e994aee957d0a8c86cba18a783f6c042",
     "crates/agent/Cargo.toml": "241d363907d6e5491ba6645de5c114877165e4abd6844b2c581a35fd19c0f4f4",
@@ -54,7 +54,7 @@
     "crates/tool-catalog/Cargo.toml": "ebad8ad9afef6254d4d12e4b66dc8355d9ffc48760566d76920d303cb9eef9b9",
     "crates/tools/Cargo.toml": "be918aeeae9874d3bdcdd66f1c6fc51b4650f9abfef784e9a796ac8b997c39d8",
     "crates/transport/Cargo.toml": "3b9af9320e5d14e90fa7b9c1bcbe68cbca04ce9252179f1dc0cd4f3c0659845a",
-    "crates/tui/Cargo.toml": "d044203b4e7a115885bcf5e4e4acbe1168f2940cb43c472fabf252d80a9dc2c3",
+    "crates/tui/Cargo.toml": "1396c733bd93be16534db236884587e7ab66ef327f49c6282c2f659e7dda9ffa",
     "crates/ui-gpui/Cargo.toml": "5d7800306387c9e2ee49ecde47013aafa2fab9531c71d1d90741614ceb56bbda",
     "crates/ui/Cargo.toml": "1859a818e89543a0727d02717ad45b3c391fb946a24277b8905f712cde75549f",
     "crates/web/Cargo.toml": "244cf6690ca9bd8966e39ad0342512858b01483ce600aeef481f2e560bfa6065",
@@ -687,5 +687,5 @@
     "third-party/sqlx-sqlite/src/value.rs": "0d067051b2f86c53ed4e12f5c4fad27bbb3e4a4fb020e37b08415806c9b164d4",
     "third-party/sqlx-sqlite/upstream.json": "0d9b56e81ace351d771e27f0e247e346fa6605f5e160176ea531d9f7720a10db"
   },
-  "sha256": "7eab52f1b14fc36eb4c67e863228bbc7a39e535bbab8c9146b03304c35503463"
+  "sha256": "3230669813e1a45bfeabf79f7f46e3d0eb6e74d624e1376067f10d3ffd969e3a"
 }

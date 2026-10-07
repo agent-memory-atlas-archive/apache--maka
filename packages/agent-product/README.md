@@ -109,7 +109,7 @@ source budget before CAS. Validation diagnostics retain the draft. Conflicts req
 explicit discard/reload; unknown replacement checks its original receipt and is included
 in durable caller history. Closing this page retains its native editor. Source documents
 are limited to 1 MiB; the committed input and remote observations still share their
-512 KiB limit. Importing new bundles and full product/runtime acceptance remain required.
+512 KiB limit. Full product/runtime acceptance remains required.
 
 The Plugins page installs `.maka-plugin` files through a retained native FilePicker.
 One confirmation captures immutable selected bytes at the observed owner/revision

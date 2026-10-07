@@ -33,7 +33,6 @@
 
 ```sh
 just setup                 # 构建时使用的 JavaScript 依赖
-just run                   # 原生 TUI
 just run --help            # CLI 命令
 just check                 # 格式、Clippy、SDK、脚本和 Rust 测试
 ```

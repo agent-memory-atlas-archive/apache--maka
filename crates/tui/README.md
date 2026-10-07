@@ -17,148 +17,37 @@
   under the License.
 -->
 
-# Maka TUI
+# Native terminal presentation
 
 [简体中文](README.zh-CN.md)
 
-Terminal client for the Runtime Host, launched by `maka tui`.
+`maka-tui` presents plugin application compositions through the shared `maka-ui`
+component kernel. It contains terminal layout, input, focus, scrolling, selection,
+bounded native editors and immutable resource capture. Product navigation, pages,
+themes, local workflow state and business calls belong to ordinary plugins.
 
-The sidebar groups sessions by workspace. **Needs you** filters that directory without leaving the current conversation. `Ctrl+B` opens navigation in a sheet on narrow terminals or in focus mode; `Esc` returns to the current draft. Tab crosses lists and fields, while arrow keys move within a list. `F1` opens help over the current page; Host connection details live in Settings.
+Run a checked committed source with
+`maka application run --root PATH --deployment UUID [--connections FILE]`.
+The source selects the launch component and all capability bindings; the terminal
+adapter has no automatic agent startup or built-in business page registry.
+[The ordinary agent product](../../packages/agent-product/README.md) and
+[the dual-entry example](../ui/README.md) use the same kernel as Desktop.
 
-`Enter` sends a message, or queues it for the next turn while the model is working. `Shift+Enter` inserts a new line on terminals with enhanced keyboard support; `Ctrl+J` works on legacy terminals, including Windows Terminal through WSL. Pasting multiple lines never sends them. `Ctrl+K` opens commands, `Ctrl+F` searches the conversation, and `Ctrl+N` creates a session. Dialogs and search keep their own input scope.
+Tab/Shift+Tab moves focus; Enter/Space or a left click activates buttons. Native
+Unicode editors retain their text, selections and undo history across compatible
+component updates and hidden routes. Product-supplied appearance controls their
+styles. Terminal scenes support flexible viewports and native scroll policies;
+SourceText/ReadingArea provide bounded literal selection and Copy.
 
-The sidebar's Search opens the command palette. It scans the Host's paged session directory by name, workspace, ID and displayed labels; **More matching sessions** continues a broad search. Model choosers search enabled chat models across catalog pages.
+Ctrl+C retires the surface. The original guard checks every restoration operation
+even after an earlier failure. Native workers, resource snapshots and accepted
+service calls retain their original owners until actual cleanup completes. Failed
+cleanup keeps the application fenced. `--connections` uses explicit
+[Host method and recovery grants](../application-bridge/README.md); exit waits for
+original service, caller SQL and Host close acknowledgements.
 
-When the Host has no model connection or default model, the workspace home offers the missing setup step; `Ctrl+N` opens that step. Existing sessions remain available.
-
-Chat and plugin transcripts share Markdown, selection, search and streaming presentation. New streamed text briefly fades to its final color without delaying the received content or changing its layout. Reduced motion and terminal-owned colors display it immediately.
-
-Across native and plugin controls, a filled row marks the current value or open
-destination; an underline marks keyboard focus. Hover does not select another
-row. Sessions needing an approval or answer show **Needs you** in the sidebar.
-The request also appears above the composer: click it or press `Ctrl+G` to
-review it. This opens the existing review without answering automatically.
-**Back to latest** appears in the same area when reading earlier messages.
-
-Read tool rows show compact resource addresses; expanded arguments preserve the
-original input. `Read.path` accepts `task:<id-prefix>`, `attachment:<id-prefix>`
-and `archive:<event-id-prefix>`, as well as full resource URLs. Prefer 12 ID
-characters after any fixed ID prefix (for example `attachment-`). Exact matches
-win; other prefixes must resolve uniquely among this Session's readable resources.
-Pass the complete returned `next` object unchanged for subsequent pages.
-
-In the composer, `Ctrl+V` or **+ → Paste from clipboard** reads images, copied
-files, or text from the local clipboard on macOS, Windows and Linux. Terminal
-pastes consisting of absolute file paths or local `file://` URLs become
-attachments, including quoted/escaped paths and multiple files. Other text
-stays in the draft. Files use the existing attachment checks and upload queue;
-invalid paths, directories and oversized files show an attachment error.
-Clipboard images are kept with the local draft and reclaimed after removal is
-saved. The terminal controls `Cmd+V`/`Ctrl+Shift+V`; use `Ctrl+V` for image data
-that it does not forward. Over SSH, native clipboard access is on the TUI host.
-
-For a selection longer than the viewport, click its start, scroll, then
-Alt+click its end (Option+click on macOS). Normal clicks clear the selection;
-Shift+arrows and Shift+PageUp/PageDown also extend it. Shift+click uses the same
-selection when the terminal forwards it. On Unix, Maka requests `XTSHIFTESCAPE`
-while running and releases it on exit, but some terminals reserve Shift for
-their own selection regardless. That terminal selection can include sidebars
-and cannot be cleared by Maka. Alt+click avoids that Shift policy. In Otty 1.5.4,
-`mouse-shift-to-select = false` is an optional global preference for forwarding
-Shift too; it is not required for Alt+click.
-
-Settings → Plugins manages local packages, instances, configuration and service bindings. Changes are reviewed before submission; activation updates arrive automatically. Configuration drafts remain in memory, and an uncertain result is never retried automatically.
-
-A session's **Skill library** imports local Markdown, installs sources, reviews managed updates and confirms directory deletion. WorkHub configures new tasks and repairs unavailable models from its views; its coordinator accepts ordinary chat input. Other managed sessions enable native input only when their owning behavior explicitly supports it. Rust and JavaScript plugins can contribute pages, settings, panels and nested views through the same public components.
-
-- `maka-client` owns transport and protocol validation; the TUI owns presentation and input.
-- Provider setup consumes public descriptors, configuration and authentication contracts.
-- Local state stores drafts and recovery identities, never authentication input. Uncertain writes require observation, not automatic replay.
-- Fluent catalogs cover English, Simplified Chinese and Traditional Chinese.
-
-The new application presenter runs `maka application run --root PATH --deployment UUID`
-and loads the stored source and exact package bytes. It consumes the shared `maka-ui` component kernel directly;
-[the dual-entry example](../ui/README.md) demonstrates the same package revision on
-Desktop and TUI. Tab/Shift+Tab moves focus; Enter/Space or a left click activates a
-button; Ctrl+C retires the surface. Accepted service workers remain owned until
-actual cleanup completes, including after the terminal is restored. Failed cleanup
-keeps the application fenced; it does not return by discarding the owner.
-
-This presenter currently supports Stack/Text/Button/imported Component and compiled
-Label recipes through its own pure scene compiler and the shared `NativeView` path.
-Its scene language owns terminal geometry and does not inherit Desktop layout.
-Native editing, scrolling and selection use retained presenter owners.
-Interactive recovery remains pending. The `maka tui` business client described above still awaits migration and
-deletion; it is not a compatibility contract for the new application architecture.
-
-The application launcher also accepts `--connections FILE` for explicit
-[local Host connections](../application-bridge/README.md). Terminal restoration
-precedes service cleanup; process exit additionally awaits actual caller SQL and
-Host close acknowledgements. A lost foreground execution is not a successful
-terminal/module cleanup receipt.
-
-
-Compiled terminal layouts also receive scoped `Slots`: `measure` reads a committed
-child and `paint` renders it through the same presenter, preserving child input
-geometry and identity. Measurements may repeat; duplicate actual placement rejects
-the pending scene before flush/input publication. Native layouts choose terminal
-geometry independently of desktop pixels and cannot create another mount runtime.
-
-The fixed `TextInput` and `SecretInput` exports from `maka.ui.input` use the
-shared `Editor*` command, observation and capture protocol. Single-line props
-supply complete `InputAppearance`, label, placeholder, editability and tab order.
-Both controls start empty; an initial metadata observation permits a revision
-checked prefill command. Input rejects control characters as one complete edit,
-before clipboard or IME normalization. Reset clears native undo history.
-
-SecretInput stays masked for its lifetime. Its AccessKit password node has no
-plaintext value or text runs, and platform surrounding-text queries return masks
-in the original UTF-16 units. Captures retain the original immutable UTF-8 bytes;
-masking does not remove an explicitly granted Reader capability. Normal settings
-composition should bind secure capture to its trusted setter and omit Reader.
-Native Enter is consumed before keybindings and emits `submitted` as a business
-event, not a synchronous native decision. TUI emits this independently of its
-retryable observation/receipt slot. OS input-method and screen-reader acceptance
-requires separate platform verification.
-
-Retained presentation is an immutable projection of the original frame. A scene
-Stack may set `visible: false`; native parents use `NativeView::with_hidden_slots`
-with declared exact slot keys. All declared children remain mounted. Hidden
-children measure zero and publish no focus stops or input targets; scene stacks
-exclude them from layout gaps. Their original editor buffers, selections, undo
-history, capture capabilities and command receipts remain owned and can settle. Showing restores current props on the same owner.
-Desktop invalidates mechanical admission before the next paint and rejects retained
-child renders; TUI applies geometry admission only after a successful flush.
-Custom native layouts use the same public Slots boundary and cannot paint a hidden
-child. This projection does not retire resources or create a second writable draft.
-
-
-The trusted Presenter owner can load an exact committed update without borrowing
-its foreground state, adopt it with explicit remote registrations, and observe
-`deployment_status`. Its pump advances that plan outside paint and revokes
-retired native inputs even if convergence fails. Unchanged native draft,
-selection, focus and undo owners survive; an independent plugin initialization
-failure is a bounded diagnostic and leaves the healthy terminal running. Root
-retirement requires the original terminal-restoration receipt and is reported
-by `requires_surface_replacement`. The launcher restores the old terminal before
-entering for a fresh launch; production update management is still pending.
-
-Root handoff retains the same Application and accepted-work observers. An adoption
-records replacement only if it retires the original live root; an unrelated
-adoption cannot turn a realm fault into a handoff. `surface_closed` takes the exact
-original Mount and actual restoration result. Duplicate or old receipts cannot
-close a new root, and cleanup failures keep their fence. `surface_recovered` is
-an explicit successful restoration retry of that same failed physical surface.
-After confirmed old cleanup, `try_replace_surface` waits for related provider
-settlement and mounts the desired launch with fresh native state. Accepted work
-on unchanged providers may coexist with the new root. This does not transfer
-old draft/focus/selection into a replacement implementation.
-
-The available `maka.ui.file` / `FilePicker` component keeps the entered absolute
-path in its native editor. A native Open/Enter gesture and its committed private
-intent start the bounded background read; props cannot name a local file. Widget
-creation receives `NativeContext` with the presenter's shared budget and an
-original resource group. Native retirement seals admission and keeps the owner
-while real worker tickets remain pending. Pending does not submit a failed kernel
-receipt; known failure stays sticky. A recipe-kind handoff also waits for original
-work, including an A→B→A transition, before creating a fresh native owner.
+No legacy business TUI, locale/profile flags, theme store or whole-Host quit UI is
+provided. Localization and themes belong to the selected product. The generic
+application schema and native component contracts come from the Rust definitions
+and are generated for the plugin SDK. Product feature and platform UX acceptance
+are distinct from presenter tests.

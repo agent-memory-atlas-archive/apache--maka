@@ -17,8 +17,8 @@
  * under the License.
  */
 
-use clap::{Args, Parser, Subcommand};
-use maka_event_log::{EventLog, root::RootNamespaces};
+use clap::{Args, CommandFactory, Parser, Subcommand};
+use maka_event_log::EventLog;
 use maka_runtime_host::server::HostError;
 use std::{net::SocketAddr, path::PathBuf};
 
@@ -27,15 +27,6 @@ use crate::{candidate, code, serve};
 #[derive(Parser)]
 #[command(name = "maka", version, about = "Maka")]
 pub(super) struct Cli {
-    /// Native State Root for the default interactive TUI.
-    #[arg(long = "root", value_name = "DIRECTORY")]
-    tui_root: Option<PathBuf>,
-    /// TUI language: auto, zh-CN, zh-TW, en. Overrides MAKA_LOCALE.
-    #[arg(long = "locale", value_name = "LANGUAGE")]
-    tui_locale: Option<maka_tui::LocalePreference>,
-    /// Local TUI profile; use different profiles for concurrent terminals.
-    #[arg(long = "profile", value_name = "NAME")]
-    tui_profile: Option<String>,
     /// Total observation budget for a finite Host operation, including cleanup.
     #[arg(long, global = true, value_parser = clap::value_parser!(u64).range(1..=600_000))]
     timeout_ms: Option<u64>,
@@ -47,8 +38,6 @@ pub(super) struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Open the interactive terminal application (also the default without a command).
-    Tui(Tui),
     /// Validate a plugin application composition without activating it.
     #[command(subcommand)]
     Application(crate::application::Command),
@@ -64,42 +53,6 @@ enum Command {
     /// Diagnose commands and manage native sandbox setup.
     #[command(subcommand)]
     Sandbox(crate::sandbox::Command),
-}
-
-#[derive(Args, Default)]
-struct Tui {
-    /// Native State Root, initialized automatically when empty. Defaults to the account root.
-    #[arg(long, value_name = "DIRECTORY")]
-    root: Option<PathBuf>,
-    /// UI language: auto, zh-CN, zh-TW, en. Overrides MAKA_LOCALE.
-    #[arg(long, value_name = "LANGUAGE")]
-    locale: Option<maka_tui::LocalePreference>,
-    /// Local TUI profile; use different profiles for concurrent terminals.
-    #[arg(long, value_name = "NAME")]
-    profile: Option<String>,
-}
-
-impl Tui {
-    async fn run(self) -> Result<(), HostError> {
-        let root = match self.root {
-            Some(root) => root,
-            None => RootNamespaces::for_current_account()?
-                .ownership
-                .parent()
-                .ok_or("missing account data directory")?
-                .join("runtime-host-rust"),
-        };
-        maka_tui::run(
-            maka_tui::Options {
-                root,
-                locale: self.locale,
-                profile: self.profile.unwrap_or_else(|| "default".into()),
-            },
-            crate::deployment::connect_local,
-            crate::deployment::shutdown_local,
-        )
-        .await
-    }
 }
 
 #[derive(Subcommand)]
@@ -188,22 +141,6 @@ impl Cli {
     }
 
     pub(super) async fn run(self) -> Result<std::process::ExitCode, HostError> {
-        if self.tui_root.is_some() && self.command.is_some() {
-            return Err(
-                "Use --root after the subcommand, or use maka --root DIRECTORY for the default TUI"
-                    .into(),
-            );
-        }
-        if self.tui_locale.is_some() && self.command.is_some() {
-            return Err(
-                "Use --locale after tui, or use maka --locale LANGUAGE for the default TUI".into(),
-            );
-        }
-        if self.tui_profile.is_some() && self.command.is_some() {
-            return Err(
-                "Use --profile after tui, or use maka --profile NAME for the default TUI".into(),
-            );
-        }
         let finite = matches!(&self.command, Some(Command::Host(command)) if !matches!(command,
             HostCommand::Candidate(_) | HostCommand::Serve { .. } | HostCommand::ServiceRun(_)
             | HostCommand::Connect(_)));
@@ -238,12 +175,12 @@ impl Cli {
     }
 
     async fn execute(self) -> Result<std::process::ExitCode, HostError> {
-        let result = match self.command.unwrap_or(Command::Tui(Tui {
-            root: self.tui_root,
-            locale: self.tui_locale,
-            profile: self.tui_profile,
-        })) {
-            Command::Tui(args) => args.run().await,
+        let Some(command) = self.command else {
+            Self::command().print_help()?;
+            println!();
+            return Ok(std::process::ExitCode::SUCCESS);
+        };
+        let result = match command {
             Command::Application(args) => args.run().await,
             Command::Sandbox(args) => return args.run(self.timeout_ms).await,
             Command::Host(HostCommand::Fetch(args)) => args.run().await,
@@ -313,61 +250,31 @@ impl Cli {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::CommandFactory;
 
     #[test]
-    fn default_tui_and_explicit_tui_preserve_operator_parsing() {
+    fn entry_requires_explicit_product_source_and_preserves_operator_parsing() {
         Cli::command().debug_assert();
         assert!(Cli::try_parse_from(["maka"]).unwrap().command.is_none());
-        assert!(matches!(
-            Cli::try_parse_from(["maka", "tui"]).unwrap().command,
-            Some(Command::Tui(_))
-        ));
         assert!(matches!(
             Cli::try_parse_from(["maka", "host", "init", "--root", "/tmp/test-root"])
                 .unwrap()
                 .command,
             Some(Command::Host(HostCommand::Init(_)))
         ));
-        assert_eq!(
-            Cli::try_parse_from(["maka", "--root", "/tmp/test-root"])
-                .unwrap()
-                .tui_root,
-            Some(PathBuf::from("/tmp/test-root"))
-        );
         assert!(matches!(
-            Cli::try_parse_from(["maka", "tui", "--root", "/tmp/test-root"])
-                .unwrap()
-                .command,
-            Some(Command::Tui(Tui { root: Some(_), .. }))
+            Cli::try_parse_from([
+                "maka",
+                "application",
+                "run",
+                "--root",
+                "/tmp/test-root",
+                "--deployment",
+                "00000000-0000-0000-0000-000000000001"
+            ])
+            .unwrap()
+            .command,
+            Some(Command::Application(crate::application::Command::Run(_)))
         ));
         assert!(Cli::try_parse_from(["maka", "unknown-command"]).is_err());
-        assert_eq!(
-            Cli::try_parse_from(["maka", "--locale", "zh-CN"])
-                .unwrap()
-                .tui_locale,
-            Some(maka_tui::LocalePreference::Explicit(maka_tui::Locale::ZhCn)),
-        );
-        assert!(matches!(
-            Cli::try_parse_from(["maka", "tui", "--locale", "zh-TW"])
-                .unwrap()
-                .command,
-            Some(Command::Tui(Tui {
-                locale: Some(maka_tui::LocalePreference::Explicit(maka_tui::Locale::ZhTw)),
-                ..
-            }))
-        ));
-        assert!(Cli::try_parse_from(["maka", "--locale", "not-a-language"]).is_err());
-        assert_eq!(
-            Cli::try_parse_from(["maka", "--profile", "second"])
-                .unwrap()
-                .tui_profile
-                .as_deref(),
-            Some("second")
-        );
-        assert!(
-            matches!(Cli::try_parse_from(["maka", "tui", "--profile", "second"]).unwrap().command,
-            Some(Command::Tui(Tui {profile: Some(profile), ..})) if profile == "second")
-        );
     }
 }

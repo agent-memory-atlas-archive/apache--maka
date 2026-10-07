@@ -23,7 +23,7 @@
 
 Apache Maka (Incubating) is a high-performance agent workspace that keeps a complete record of everything it did.
 
-Maka runs agents through a native Rust CLI and TUI. A Runtime Host owns execution, permissions and durable state. Model providers, tools and business capabilities use public plugin interfaces.
+Maka runs plugin-composed products through native Rust terminal and desktop presenters. A Runtime Host owns execution, permissions and durable state. Model providers, tools and business capabilities use public plugin interfaces.
 
 ## Run from source
 
@@ -33,17 +33,17 @@ Install Rust stable, Node.js 24 LTS, npm 11.19.0 and [just](https://github.com/c
 git clone https://github.com/apache/maka.git
 cd maka
 just setup
-just run
+just run --help
 ```
 
-`just run --help` lists the CLI commands. `just build --release` produces `target/release/maka` (`maka.exe` on Windows). Node.js bundles provider SDKs at build time; the resulting executable runs its embedded JavaScript in V8.
+`just run --help` lists the CLI commands. `just build --release` produces `target/release/maka` (`maka.exe` on Windows). Node.js bundles provider SDKs at build time; the resulting executable runs its embedded JavaScript in V8. To launch a checked terminal composition, use `just run application run --root PATH --deployment UUID --connections FILE`. Product authoring and installation are described in [the ordinary agent product](packages/agent-product/README.md).
 
 ## Repository
 
 | Directory | Purpose |
 | --- | --- |
 | `crates/` | Runtime Host, CLI/TUI, plugins and native platform capabilities |
-| `packages/plugin-sdk/` | Host and declarative terminal-view contracts for JavaScript plugins |
+| `packages/plugin-sdk/` | Generated Host, component and native presentation contracts for JavaScript plugins |
 | `packages/cli/` | npm launcher for platform-specific Rust executables |
 | `scripts/rust/` | Embedded SDK bundling and source-bound npm packaging |
 | `website/` | Independently built project website |

@@ -18,7 +18,8 @@
  */
 
 use super::*;
-use ratatui::buffer::Buffer;
+use ratatui::{buffer::Buffer, style::Style};
+use unicode_width::UnicodeWidthStr;
 
 /// Pending read-only geometry. No buffer/selection/history is copied or mutated.
 #[derive(Clone)]
@@ -192,6 +193,7 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::layout::Rect;
     fn paint(editor: &Editor, area: Rect) -> (Geometry, Buffer) {
         let mut buffer = Buffer::empty(area);
         let geometry = editor.paint_prepared(

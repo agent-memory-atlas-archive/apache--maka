@@ -22,4 +22,4 @@ mod candidate;
 mod code_command;
 mod distribution;
 mod sandbox;
-mod tui;
+mod terminal;
