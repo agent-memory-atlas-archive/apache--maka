@@ -34,13 +34,13 @@ use maka_ui::{
     NativeRegistry, NativeView, budget::Kind, file::*,
 };
 use press::Press;
-use std::{any::Any, cell::RefCell, collections::BTreeMap, rc::Rc, sync::Arc};
+use std::{any::Any, collections::BTreeMap, rc::Rc, sync::Arc};
 
 struct Owner {
     input: LiveInput,
     props: FilePickerProps,
     focus: FocusHandle,
-    click: Rc<RefCell<Option<gpui_kit::ClickHandle>>>,
+    click: Option<gpui_kit::ClickHandle>,
     selection: FileSelection,
     visible: bool,
     active: bool,
@@ -89,7 +89,7 @@ impl Owner {
                 -1
             });
         if !enabled {
-            if let Some(click) = self.click.borrow().as_ref() {
+            if let Some(click) = self.click.as_ref() {
                 click.cancel();
             }
             self.selection.cancel_intent();
@@ -337,7 +337,7 @@ impl Render for Owner {
             });
         div().w_full().child(Press {
             inner: button,
-            click: self.click.clone(),
+            owner: cx.weak_entity(),
         })
     }
 }

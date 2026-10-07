@@ -19,13 +19,12 @@
 
 //! Weak original native press cancellation, preserving element identity and phases.
 use gpui_kit::{
-    App, Bounds, ClickHandle, Div, Element, ElementId, GlobalElementId, InspectorElementId,
-    InteractiveElement, IntoElement, LayoutId, Pixels, Stateful, Window, accesskit,
+    App, Bounds, Div, Element, ElementId, GlobalElementId, InspectorElementId, InteractiveElement,
+    IntoElement, LayoutId, Pixels, Stateful, WeakEntity, Window, accesskit,
 };
-use std::{cell::RefCell, rc::Rc};
 pub(super) struct Press {
     pub inner: gpui_kit::base::ObservedElement<Stateful<Div>>,
-    pub click: Rc<RefCell<Option<ClickHandle>>>,
+    pub owner: WeakEntity<super::Owner>,
 }
 impl IntoElement for Press {
     type Element = Self;
@@ -57,7 +56,8 @@ impl Element for Press {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let layout = self.inner.request_layout(id, inspector, window, cx);
-        *self.click.borrow_mut() = self.inner.interactivity().click_handle(id, window);
+        let click = self.inner.interactivity().click_handle(id, window);
+        let _ = self.owner.update(cx, |owner, _| owner.click = click);
         layout
     }
     fn prepaint(
