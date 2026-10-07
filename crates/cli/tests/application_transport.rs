@@ -506,11 +506,10 @@ fn private_peer_json_cannot_change_the_approved_ui_consumer() {
     let mut source = f.source();
     source.consumer = support::identity(13);
     let (child, mut call) = f.spawn("business", "write", Value::Null, token(), source);
+    let error = f.timer.block_on(call.start()).unwrap_err();
     assert!(
-        f.timer
-            .block_on(call.start())
-            .unwrap_err()
-            .contains("approved peer")
+        error.contains("caller is not approved for this exact source"),
+        "{error}"
     );
     assert!(call.cleanup_confirmed());
     drop(call);

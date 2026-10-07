@@ -38,6 +38,9 @@ pub(super) struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Present the selected plugin product in a native desktop window.
+    #[command(disable_help_flag = true)]
+    Desktop(crate::desktop::Args),
     /// Validate a plugin application composition without activating it.
     #[command(subcommand)]
     Application(crate::application::Command),
@@ -181,6 +184,7 @@ impl Cli {
             return Ok(std::process::ExitCode::SUCCESS);
         };
         let result = match command {
+            Command::Desktop(args) => return Ok(args.run()?),
             Command::Application(args) => args.run().await,
             Command::Sandbox(args) => return args.run(self.timeout_ms).await,
             Command::Host(HostCommand::Fetch(args)) => args.run().await,

@@ -25,6 +25,7 @@ mod args;
 mod candidate;
 mod code;
 mod deployment;
+mod desktop;
 mod distribution;
 mod endpoint;
 mod host_client;
@@ -137,6 +138,9 @@ fn main() -> std::process::ExitCode {
                 }
             };
         }
+    }
+    if let Some(exit) = desktop::bootstrap() {
+        return exit;
     }
     match tokio::runtime::Builder::new_multi_thread()
         .enable_all()

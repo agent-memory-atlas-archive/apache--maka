@@ -140,11 +140,14 @@ export async function generateNotices(root = repository) {
   }
   const upstream = new Map();
   async function upstreamFiles(pkg, directory) {
-    const vcs = JSON.parse(await readFile(join(directory, '.cargo_vcs_info.json'), 'utf8'));
-    const repo = /^https:\/\/github\.com\/([^/]+\/[^/#]+?)(?:\.git)?(?:\/|$)/.exec(
-      pkg.repository ?? '',
+    const git = pkg.source?.startsWith('git+') ? new URL(pkg.source.slice(4)) : undefined;
+    const vcs = git
+      ? undefined
+      : JSON.parse(await readFile(join(directory, '.cargo_vcs_info.json'), 'utf8'));
+    const repo = /^https?:\/\/github\.com\/([^/]+\/[^/#?]+?)(?:\.git)?(?:[/?]|$)/.exec(
+      git ? git.origin + git.pathname : (pkg.repository ?? ''),
     )?.[1];
-    const sha = vcs.git?.sha1;
+    const sha = git ? git.hash.slice(1) : vcs.git?.sha1;
     if (!repo || !/^[a-f0-9]{40}$/.test(sha))
       throw new Error('Missing pinned license source for ' + pkg.name);
     const key = repo + '/' + sha;
@@ -194,7 +197,9 @@ export async function generateNotices(root = repository) {
     );
     const nodes = new Map(metadata.resolve.nodes.map((node) => [node.id, node]));
     const catalog = new Map(metadata.packages.map((pkg) => [pkg.id, pkg]));
-    const pending = [metadata.packages.find((pkg) => pkg.name === 'maka-cli').id];
+    const pending = ['maka-cli', 'maka-desktop'].map(
+      (name) => metadata.packages.find((pkg) => pkg.name === name).id,
+    );
     const seen = new Set();
     while (pending.length) {
       const id = pending.pop();
@@ -235,7 +240,10 @@ export async function generateNotices(root = repository) {
         source = `https://crates.io/api/v1/crates/${pkg.name}/${pkg.version}/download`;
       }
       let local = await licenseFiles(directory);
-      if (pkg.license_file && !local.includes(pkg.license_file)) local.push(pkg.license_file);
+      if (pkg.license_file) {
+        const license = resolve(directory, pkg.license_file);
+        if (!local.includes(license)) local.push(license);
+      }
       let references = false;
       local = (
         await Promise.all(

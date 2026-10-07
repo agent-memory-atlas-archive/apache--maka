@@ -63,6 +63,8 @@ test('CLI builds use the requested target and artifact path', async (t) => {
       '--locked',
       '-p',
       'maka-cli',
+      '-p',
+      'maka-desktop',
       '--target-dir',
       directory,
       '--release',
@@ -87,6 +89,8 @@ test('CLI builds use the requested target and artifact path', async (t) => {
     '--locked',
     '-p',
     'maka-cli',
+    '-p',
+    'maka-desktop',
     '--target-dir',
     join(root, 'target'),
   ]);

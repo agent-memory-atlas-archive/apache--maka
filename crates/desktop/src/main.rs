@@ -17,6 +17,8 @@
  * under the License.
  */
 
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 extern crate gpui_kit as gpui;
 mod actions;
 mod owned;
@@ -36,15 +38,12 @@ type DesktopApplication = Application<dyn widgets::Widget>;
 use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc};
 
 #[derive(Parser)]
-enum CommandLine {
-    /// Present the selected plugin product.
-    Run(Args),
-    /// Internal inherited-pipe Host role selected only by this product launcher.
-    #[command(hide = true)]
-    ApplicationHost,
-}
-
-#[derive(clap::Args)]
+#[command(
+    name = "maka desktop",
+    bin_name = "maka desktop",
+    version,
+    about = "Present the selected plugin product"
+)]
 pub(crate) struct Args {
     #[arg(long)]
     pub(crate) root: PathBuf,
@@ -495,26 +494,27 @@ impl Render for Surface {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::set_logger(&NativeLog)?;
     log::set_max_level(log::LevelFilter::Warn);
-    match CommandLine::parse() {
-        CommandLine::Run(args) => Launcher::start(
-            args,
-            maka_application_bridge::HostExecutable::new(
-                std::env::current_exe()?,
-                vec!["application-host".into()],
-            )?,
-            widgets::registry(),
-        )?
-        .run(),
-        CommandLine::ApplicationHost => {
-            let native = compiled_host()?;
-            let timer = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(1)
-                .enable_all()
-                .build()?;
-            timer.block_on(maka_application_bridge::transport::process::serve(native))?;
-            Ok(())
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("application-host")) {
+        if std::env::args_os().nth(2).is_some() {
+            return Err("unexpected application-host arguments".into());
         }
+        let native = compiled_host()?;
+        let timer = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()?;
+        timer.block_on(maka_application_bridge::transport::process::serve(native))?;
+        return Ok(());
     }
+    Launcher::start(
+        Args::parse(),
+        maka_application_bridge::HostExecutable::new(
+            std::env::current_exe()?,
+            vec!["application-host".into()],
+        )?,
+        widgets::registry(),
+    )?
+    .run()
 }
 
 fn compiled_host() -> Result<maka_runtime_host::application::NativeRegistry, String> {

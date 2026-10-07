@@ -64,9 +64,10 @@ application lifetime owner 在窗口和 executor task 都退出后仍保留未�
 依赖固定到 GPUI Fast v0.1.2（`8e1e1987`）与 GPUI Kit `29c04574`，通过 Kit
 官方 `gpui-fast` feature 选择原生后端。本地补丁保留 Maka 的原生输入、选择与清理契约。
 Windows dwrote 与构建期 cbindgen 采用
-MPL-2.0，不 vendoring 源码；分发须带许可证与源码链接。当前尚无此 crate 的发布打包。
+MPL-2.0，不 vendoring 源码；同一原生平台包分发 Desktop 与无图形依赖的 CLI，
+共享许可证与源码链接。`maka desktop` 只启动固定的同目录前端，不搜索 PATH。
 
-生产启动使用 `--root PATH --deployment UUID`，读取原存储来源和精确包字节，
+生产启动使用 `maka desktop --root PATH --deployment UUID`，读取原存储来源和精确包字节，
 激活前检查 Desktop 目标。desired source 更新不改写运行来源。应用保有 Root 至真实
 成功清理；UI shutdown 释放自身 custody，与 SQL 连接真实关闭分别确认。
 
@@ -76,7 +77,7 @@ MPL-2.0，不 vendoring 源码；分发须带许可证与源码链接。当前�
 store/Root/runtime。macOS 已用真实窗口及阻塞的 File/SQL owner 验证原生退出；
 Windows/Linux 原生验收和完整产品 UI 仍未完成。
 
-生产启动使用 `maka-desktop run --root PATH --deployment UUID`。默认启动器选同一
+生产启动使用 `maka desktop --root PATH --deployment UUID`。默认启动器选同一
 executable 的内部 `application-host` role，共享 Host 经私有 IPC 提供业务服务；编译
 availability 在 child 内登记，持久组合决定实例。父子 runtime 均启用 Tokio IO；真实 UI
 清理后继续撤销原连接、等 same-child Closed 与实际 child exit。其他 embedding 显式

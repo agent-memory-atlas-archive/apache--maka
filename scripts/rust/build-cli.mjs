@@ -54,6 +54,8 @@ export async function buildCli({
     '--locked',
     '-p',
     'maka-cli',
+    '-p',
+    'maka-desktop',
     '--target-dir',
     targetDirectory,
   ];

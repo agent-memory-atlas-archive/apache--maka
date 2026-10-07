@@ -62,16 +62,7 @@ struct Member {
 }
 
 fn allowed(target: Target, name: &str) -> bool {
-    matches!(
-        name,
-        "package.json"
-            | "LICENSE"
-            | "NOTICE"
-            | "THIRD_PARTY_NOTICES.txt"
-            | "README.md"
-            | "README.zh-CN.md"
-    ) || name == target.executable()
-        || Some(name) == target.service_executable()
+    required(target).any(|member| member == name) || matches!(name, "README.md" | "README.zh-CN.md")
 }
 
 fn required(target: Target) -> impl Iterator<Item = &'static str> {
@@ -81,6 +72,7 @@ fn required(target: Target) -> impl Iterator<Item = &'static str> {
         "NOTICE",
         "THIRD_PARTY_NOTICES.txt",
         target.executable(),
+        target.desktop_executable(),
     ]
     .into_iter()
     .chain(target.service_executable())
@@ -106,7 +98,6 @@ pub(super) fn cached(
     decode_integrity(&receipt.integrity)?;
     if receipt.target != target
         || receipt.version != version
-        || receipt.files.len() > 8
         || required(target).any(|name| !receipt.files.contains_key(name))
     {
         return Err("native package cache identity or file set changed".into());
@@ -148,7 +139,7 @@ pub(super) fn publish(
     // packages need only short fixed paths, not general-purpose tar semantics.
     let mut tar = tar::Archive::new(decoder.take(MAX_EXPANDED_BYTES + 1));
     for (index, entry) in tar.entries()?.raw(true).enumerate() {
-        if index >= 12 {
+        if index >= required(target).count() + 4 {
             return Err("native package contains too many archive entries".into());
         }
         let mut entry = entry?;
@@ -163,7 +154,7 @@ pub(super) fn publish(
         let name = path
             .strip_prefix("package/")
             .ok_or("native package member is outside package/")?;
-        let executable = name == target.executable() || Some(name) == target.service_executable();
+        let executable = target.is_executable(name);
         let limit = if executable {
             MAX_FILE_BYTES
         } else {
@@ -254,7 +245,6 @@ pub(super) fn import_directory(
     decode_integrity(&receipt.integrity)?;
     if receipt.target != target
         || receipt.version != version
-        || receipt.files.len() > 8
         || required(target).any(|name| !receipt.files.contains_key(name))
         || receipt.files.keys().any(|name| !allowed(target, name))
     {
@@ -278,8 +268,7 @@ pub(super) fn import_directory(
     private_directory(&package.join("bin"))?;
     let mut total = 0_u64;
     for (name, expected) in &receipt.files {
-        let executable =
-            name == target.executable() || Some(name.as_str()) == target.service_executable();
+        let executable = target.is_executable(name);
         let limit = if executable {
             MAX_FILE_BYTES
         } else {
@@ -384,6 +373,10 @@ fn validate_package(directory: &Path, target: Target, version: &str) -> Result<(
     target.validate_binary(
         &mut regular_file(&directory.join(target.executable()), MAX_FILE_BYTES)?,
         false,
+    )?;
+    target.validate_binary(
+        &mut regular_file(&directory.join(target.desktop_executable()), MAX_FILE_BYTES)?,
+        true,
     )?;
     if let Some(service) = target.service_executable() {
         target.validate_binary(

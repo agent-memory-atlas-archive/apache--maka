@@ -69,7 +69,7 @@ For installation, initialize separate owned Host/UI Roots with `maka host init -
 maka application run --root UI_ROOT --deployment UI_DEPLOYMENT \
   --connections product-source/connections.json
 # For a desktop source:
-maka-desktop run --root UI_ROOT --deployment UI_DEPLOYMENT \
+maka desktop --root UI_ROOT --deployment UI_DEPLOYMENT \
   --connections product-source/connections.json
 ```
 

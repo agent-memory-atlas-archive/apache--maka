@@ -42,7 +42,29 @@ fn npm_package_round_trips_native_code_offline_and_never_overwrites_a_release() 
         path
     };
     #[cfg(not(unix))]
-    let package_executable = Path::new(executable).to_path_buf();
+    let package_executable = {
+        let path = temporary.path().join("maka.exe");
+        std::fs::copy(executable, &path).unwrap();
+        std::fs::copy(
+            Path::new(executable).with_file_name("maka-service.exe"),
+            temporary.path().join("maka-service.exe"),
+        )
+        .unwrap();
+        path
+    };
+    // This archive fixture verifies native bytes and receipts without a GPUI
+    // build dependency. GUI launch is exercised by the actual Desktop smoke.
+    let desktop_name = if cfg!(windows) {
+        "maka-desktop.exe"
+    } else {
+        "maka-desktop"
+    };
+    let desktop_source = if cfg!(windows) {
+        temporary.path().join("maka-service.exe")
+    } else {
+        package_executable.clone()
+    };
+    std::fs::copy(desktop_source, temporary.path().join(desktop_name)).unwrap();
     let target = match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => "darwin-arm64",
         ("macos", "x86_64") => "darwin-x64",
@@ -127,7 +149,7 @@ fn npm_package_round_trips_native_code_offline_and_never_overwrites_a_release() 
     .unwrap();
     assert_eq!(manifest["publishConfig"]["tag"], "rust-preview");
     // Bootstrap from transferred bytes, then remove that source. The retained
-    // operator must still have its complete package, including Windows service code.
+    // operator must still have its complete package, including Desktop and Windows service code.
     use sha2::Digest;
     let receipt =
         std::fs::read(Path::new(artifact["directory"].as_str().unwrap()).join("receipt.json"))
@@ -163,6 +185,12 @@ fn npm_package_round_trips_native_code_offline_and_never_overwrites_a_release() 
     )
     .unwrap();
     std::fs::remove_dir_all(&cache).unwrap();
+    assert!(
+        Path::new(artifact["directory"].as_str().unwrap())
+            .join("bin")
+            .join(desktop_name)
+            .is_file()
+    );
     let imported = artifact["executable"].as_str().unwrap();
     let help = Command::new(imported)
         .args(["host", "setup", "--help"])

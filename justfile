@@ -28,9 +28,9 @@ setup:
 run *args:
     cargo run --locked -p maka-cli -- "$@"
 
-# Build the native CLI; additional arguments go to Cargo.
+# Build the native CLI and Desktop; additional arguments go to Cargo.
 build *args:
-    cargo build --locked -p maka-cli "$@"
+    cargo build --locked -p maka-cli -p maka-desktop "$@"
 
 # Check all maintained code and behavior.
 check: fmt-check lint typecheck test-js test licenses

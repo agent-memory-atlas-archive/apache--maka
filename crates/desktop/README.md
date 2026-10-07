@@ -80,10 +80,11 @@ preserve Maka's native input, selection and cleanup contracts.
 
 Native dependencies include MPL-2.0 [dwrote](https://github.com/servo/dwrote)
 (Windows) and build-time [cbindgen](https://github.com/mozilla/cbindgen).
-Their source is not vendored. Binary distribution must include licenses and
-source references; this crate does not yet provide release packaging.
+Their source is not vendored. The native platform package includes Desktop
+alongside the headless CLI, with shared licenses and source references.
+`maka desktop` starts the fixed sibling frontend; it never searches PATH.
 
-Production startup takes `run --root PATH --deployment UUID`, reads the original
+Production startup takes `maka desktop --root PATH --deployment UUID`, reads the original
 stored source and exact package bytes, and checks the Desktop target before
 activation. A newer desired source does not rewrite the running source. Root
 custody remains with the application through pending/failed cleanup; successful

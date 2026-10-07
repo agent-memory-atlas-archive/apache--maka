@@ -141,7 +141,8 @@ Generate a package-backed desktop example (the output directory must be new):
 
 ```sh
 cargo run --locked -p maka-ui --example counter -- /tmp/maka-counter
-cargo run --locked -p maka-desktop -- run --root /tmp/maka-counter/root \
+cargo build --locked -p maka-cli -p maka-desktop
+target/debug/maka desktop --root /tmp/maka-counter/root \
   --deployment 00000000-0000-0000-0000-000000000001
 ```
 
@@ -184,7 +185,8 @@ explicitly imported native UTF-8 Reader:
 
 ```sh
 cargo run --locked -p maka-ui --example counter -- /tmp/maka-resource resource
-cargo run --locked -p maka-desktop -- run --root /tmp/maka-resource/root \
+cargo build --locked -p maka-cli -p maka-desktop
+target/debug/maka desktop --root /tmp/maka-resource/root \
   --deployment 00000000-0000-0000-0000-000000000001
 ```
 

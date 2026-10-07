@@ -29,21 +29,48 @@ if (!['check', 'generate'].includes(mode) || process.argv.length !== 3) {
 }
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const cargo = ['deny', '--locked', '--config', 'deny.toml'];
-// Check test/build dependencies too, but omit dev-only crates from the CLI inventory.
+// Check test/build dependencies too; inventory the two shipped native roots.
 execFileSync('cargo', [...cargo, 'check', 'licenses'], { cwd: root, stdio: 'inherit' });
-const inventory = execFileSync(
-  'cargo',
+const crates = new Map();
+const licenses = new Set();
+for (const crate of ['cli', 'desktop']) {
+  const listing = execFileSync(
+    'cargo',
+    [
+      ...cargo,
+      '--manifest-path',
+      `crates/${crate}/Cargo.toml`,
+      '--exclude-dev',
+      'list',
+      '--format',
+      'tsv',
+    ],
+    { cwd: root, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 },
+  )
+    .replaceAll('\r\n', '\n')
+    .trimEnd()
+    .split('\n');
+  const header = listing.shift().split('\t').slice(1);
+  for (const license of header) licenses.add(license);
+  for (const row of listing) {
+    const [name, ...cells] = row.split('\t');
+    const declared = crates.get(name) ?? new Set();
+    cells.forEach((cell, index) => {
+      if (cell === 'X') declared.add(header[index]);
+    });
+    crates.set(name, declared);
+  }
+}
+const columns = [...licenses].sort();
+const inventory =
   [
-    ...cargo,
-    '--manifest-path',
-    'crates/cli/Cargo.toml',
-    '--exclude-dev',
-    'list',
-    '--format',
-    'tsv',
-  ],
-  { cwd: root, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 },
-).replaceAll('\r\n', '\n');
+    ['crate', ...columns].join('\t'),
+    ...[...crates]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, declared]) =>
+        [name, ...columns.map((license) => (declared.has(license) ? 'X' : ''))].join('\t'),
+      ),
+  ].join('\n') + '\n';
 const output = new URL('../../crates/cli/DEPENDENCIES.rust.tsv', import.meta.url);
 if (mode === 'generate') {
   writeFileSync(output, inventory);

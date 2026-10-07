@@ -78,5 +78,73 @@
       "file": "scripts/rust/licenses/declared-mit.txt",
       "source": "https://github.com/etemesi254/zune-image/blob/69502ce83fdfecdd0beefd677e2abb3781b29d98/zune-inflate/Cargo.toml"
     }
+  ],
+  "block@0.1.6": [
+    {
+      "file": "scripts/rust/licenses/declared-mit.txt",
+      "source": "https://github.com/SSheldon/rust-block/blob/47178790cfc9d4a8b092051d8b413b78bd31254a/Cargo.toml"
+    }
+  ],
+  "leak@0.1.2": [
+    {
+      "file": "scripts/rust/licenses/declared-mit.txt",
+      "source": "https://github.com/codyps/leak/blob/024bd1ccfa33aea1eff0026b0d8b676874b5e3d2/Cargo.toml"
+    }
+  ],
+  "leaky-cow@0.1.1": [
+    {
+      "file": "scripts/rust/licenses/declared-mit.txt",
+      "source": "https://github.com/notriddle/rust-leaky-cow/blob/88f4a8cd01ffc634d9f7642b97eb764a8dcd3760/Cargo.toml"
+    }
+  ],
+  "mac@0.1.1": [
+    {
+      "file": "scripts/rust/licenses/declared-mit.txt",
+      "source": "https://github.com/reem/rust-mac/blob/66afc663b68a65633ea165c742b5a9c6734581c2/Cargo.toml"
+    }
+  ],
+  "malloc_buf@0.0.6": [
+    {
+      "file": "scripts/rust/licenses/declared-mit.txt",
+      "source": "https://github.com/SSheldon/malloc_buf/blob/a7811e5f4c6f9685dd57ad9bfe34e9bf6b0ba4f9/Cargo.toml"
+    }
+  ],
+  "objc_exception@0.1.2": [
+    {
+      "file": "scripts/rust/licenses/declared-mit.txt",
+      "source": "https://github.com/SSheldon/rust-objc-exception/blob/c86ad3a52984461fc5c63980d12e8ceed847854c/Cargo.toml"
+    }
+  ],
+  "seahash@4.1.0": [
+    {
+      "file": "scripts/rust/licenses/declared-mit.txt",
+      "source": "https://crates.io/api/v1/crates/seahash/4.1.0/download"
+    }
+  ],
+  "pathfinder_geometry@0.5.1": [
+    {
+      "file": "scripts/rust/licenses/declared-mit.txt",
+      "source": "https://crates.io/api/v1/crates/pathfinder_geometry/0.5.1/download"
+    },
+    {
+      "file": "scripts/rust/licenses/pathfinder-geometry-0.5.1-notice.txt",
+      "source": "https://crates.io/api/v1/crates/pathfinder_geometry/0.5.1/download :: src/unit_vector.rs"
+    }
+  ],
+  "zune-core@0.4.12": [
+    {
+      "file": "scripts/rust/licenses/declared-mit.txt",
+      "source": "https://github.com/etemesi254/zune-image/blob/f8fbb123d5ed04441e8324a555bfcda0cb1bd28f/crates/zune-core/Cargo.toml"
+    },
+    {
+      "file": "scripts/rust/licenses/zune-core-0.4.12-notice.txt",
+      "source": "https://crates.io/api/v1/crates/zune-core/0.4.12/download :: src/lib.rs"
+    }
+  ],
+  "hexf-parse@0.2.1": [
+    {
+      "file": "scripts/rust/licenses/declared-cc0.txt",
+      "source": "https://github.com/lifthrasiir/hexf/blob/4225763d744183d720f575ae96d04161b4d08ea0/parse/Cargo.toml"
+    }
   ]
 }

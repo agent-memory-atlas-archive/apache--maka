@@ -84,12 +84,26 @@ impl Target {
         }
     }
 
+    pub fn desktop_executable(self) -> &'static str {
+        if self == Self::Win32X64 {
+            "bin/maka-desktop.exe"
+        } else {
+            "bin/maka-desktop"
+        }
+    }
+
+    pub fn is_executable(self, name: &str) -> bool {
+        name == self.executable()
+            || name == self.desktop_executable()
+            || Some(name) == self.service_executable()
+    }
+
     pub fn service_executable(self) -> Option<&'static str> {
         (self == Self::Win32X64).then_some("bin/maka-service.exe")
     }
 
     // Inspect only; a downloader must never execute a foreign-target artifact.
-    pub fn validate_binary(self, file: &mut File, service: bool) -> Result<(), HostError> {
+    pub fn validate_binary(self, file: &mut File, gui: bool) -> Result<(), HostError> {
         let mut header = [0; 64];
         file.read_exact(&mut header)?;
         let valid = match self {
@@ -120,7 +134,7 @@ impl Target {
                     file.seek(SeekFrom::Start(offset.into()))?;
                     let mut pe = [0; 94];
                     file.read_exact(&mut pe)?;
-                    let subsystem: u16 = if service { 2 } else { 3 };
+                    let subsystem: u16 = if gui { 2 } else { 3 };
                     pe[..4] == *b"PE\0\0"
                         && pe[4..6] == 0x8664_u16.to_le_bytes()
                         && pe[24..26] == 0x20b_u16.to_le_bytes()

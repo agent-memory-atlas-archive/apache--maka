@@ -186,6 +186,12 @@ export async function releaseNativeCli({ source, keys, target, validator, output
       env: { ...env, ...v8.environment },
     });
     if (native) {
+      const { stdout } = await run(binary, ['desktop', '--version'], {
+        timeout: 15_000,
+        windowsHide: true,
+      });
+      if (stdout.trim() !== 'maka desktop ' + candidate.version)
+        throw new Error('Built Desktop reports another source version');
       const executables = [
         binary,
         ...(platform.os === 'win32' ? [join(dirname(binary), 'maka-service.exe')] : []),

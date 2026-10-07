@@ -525,7 +525,7 @@ mod tests {
         assert!(!root.path().join("receipt.json").exists());
     }
 
-    fn package(target: Target, extra: Option<&str>) -> Vec<u8> {
+    fn package(target: Target, extra: Option<&str>, desktop_gui: Option<bool>) -> Vec<u8> {
         let manifest = serde_json::json!({
             "name": target.package_name(), "version": "1.2.3",
             "os": [target.os()], "cpu": [target.cpu()],
@@ -541,7 +541,13 @@ mod tests {
                 .unwrap();
         };
         append("package.json", &serde_json::to_vec(&manifest).unwrap());
-        for name in ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.txt"] {
+        for name in [
+            "LICENSE",
+            "NOTICE",
+            "THIRD_PARTY_NOTICES.txt",
+            "README.md",
+            "README.zh-CN.md",
+        ] {
             append(name, b"test license");
         }
         let mut binary = [0; 256];
@@ -572,6 +578,12 @@ mod tests {
             }
         }
         append(target.executable(), &binary);
+        if let Some(gui) = desktop_gui {
+            if target == Target::Win32X64 {
+                binary[156..158].copy_from_slice(&(if gui { 2_u16 } else { 3_u16 }).to_le_bytes());
+            }
+            append(target.desktop_executable(), &binary);
+        }
         if let Some(service) = target.service_executable() {
             binary[156..158].copy_from_slice(&2_u16.to_le_bytes());
             append(service, &binary);
@@ -645,7 +657,7 @@ mod tests {
             Target::Win32X64,
         ] {
             let root = tempfile::tempdir().unwrap();
-            let bytes = package(target, None);
+            let bytes = package(target, None, Some(true));
             let integrity = format!("sha512-{}", STANDARD.encode(Sha512::digest(&bytes)));
             let registry = registry(target, bytes, integrity.clone()).await;
             let client = Client::builder().no_proxy().build().unwrap();
@@ -655,6 +667,8 @@ mod tests {
                 .unwrap();
             assert_eq!(artifact.integrity, integrity);
             assert!(artifact.executable.is_file());
+            let desktop = artifact.directory.join(target.desktop_executable());
+            assert!(desktop.is_file());
             assert_eq!(
                 artifact.service_executable.is_some(),
                 target == Target::Win32X64
@@ -700,13 +714,9 @@ mod tests {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(
-                    &artifact.executable,
-                    std::fs::Permissions::from_mode(0o600),
-                )
-                .unwrap();
+                std::fs::set_permissions(&desktop, std::fs::Permissions::from_mode(0o600)).unwrap();
             }
-            std::fs::write(&artifact.executable, b"changed").unwrap();
+            std::fs::write(&desktop, b"changed").unwrap();
             assert!(
                 transferred("corrupted", receipt_sha256)
                     .resolve(client.clone(), offline.clone())
@@ -737,9 +747,10 @@ mod tests {
             (None, true),
             (Some("bin/maka"), false),
             (Some("bin/extra"), false),
+            (Some("bin/maka-desktop"), false),
         ] {
             let root = tempfile::tempdir().unwrap();
-            let bytes = package(target, extra);
+            let bytes = package(target, extra, Some(true));
             let digest = if bad_hash {
                 [0; 64]
             } else {
@@ -747,6 +758,26 @@ mod tests {
             };
             let origin =
                 registry(target, bytes, format!("sha512-{}", STANDARD.encode(digest))).await;
+            let client = Client::builder().no_proxy().build().unwrap();
+            assert!(
+                request(target, root.path())
+                    .resolve(client, origin)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                std::fs::read_dir(root.path().join("cache"))
+                    .unwrap()
+                    .count(),
+                0
+            );
+        }
+        for (target, desktop_gui) in [(Target::LinuxX64Gnu, None), (Target::Win32X64, Some(false))]
+        {
+            let root = tempfile::tempdir().unwrap();
+            let bytes = package(target, None, desktop_gui);
+            let integrity = format!("sha512-{}", STANDARD.encode(Sha512::digest(&bytes)));
+            let origin = registry(target, bytes, integrity).await;
             let client = Client::builder().no_proxy().build().unwrap();
             assert!(
                 request(target, root.path())

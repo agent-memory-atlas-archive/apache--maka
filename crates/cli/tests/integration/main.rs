@@ -20,6 +20,8 @@
 mod application;
 mod candidate;
 mod code_command;
+#[cfg(unix)]
+mod desktop;
 mod distribution;
 mod sandbox;
 mod terminal;
