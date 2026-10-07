@@ -17,13 +17,33 @@
   under the License.
 -->
 
-# Agent product composition
+# Plugin product compositions
 
 [简体中文](README.zh-CN.md)
 
 This is an ordinary plugin composition for a text agent, with separate desktop and terminal entries. The launchers contain no product pages. Workspace, composer, navigation, timeline and appearance are individually replaceable packages, connected through explicit public contracts. Native packages provide surfaces, the editor, bounded text capture, operation history and the Host agent service.
 
 The initial product supports conversation creation, selection, canonical transcript pages, streaming replies, exact-run stop and recovery of original mutation receipts. It uses typed English, Simplified Chinese and Traditional Chinese catalogs. The desktop design uses scoped light/dark appearance, system typography, quiet navigation and a native multiline composer. Connection browsing, creation, public field editing and native API-key saving/removal are ordinary plugins. Default model setting and clearing are ordinary plugins with explicit confirmation and receipt recovery. Tool workflows, attachments, history virtualization and platform visual/IME/accessibility acceptance remain unfinished.
+
+## Configuration Studio
+
+An independent ordinary `maka.studio.workbench` package provides desktop and terminal
+roots for configuring connections, default models and plugin composition. It uses
+quiet top navigation and retains hidden page mounts and native drafts. It has no
+conversation, composer or Agent binding; its separate Host source contains only
+Settings, Receipts and a gateway with their explicit grants. Shared settings
+components remain replaceable. Model selection is local to the workbench; saving a
+default still uses the original confirmed Settings operation.
+
+Select it at authoring time with `--product studio` (the default is `agent`). The
+Studio installation configuration uses the same fields and keys below, except
+`agent` is unnecessary. Both products use the same generic launch commands and
+checked source replacement; neither requires a launcher product-name branch.
+Installing a root package does not switch products. Changing a running product
+requires a separately confirmed source update and original surface cleanup. A new
+root does not inherit the previous product’s native drafts. Changing Host location
+also requires explicit trusted connection configuration; source declarations do
+not grant access to a different Host.
 
 ## Build and author
 

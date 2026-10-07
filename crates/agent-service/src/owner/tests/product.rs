@@ -17,6 +17,9 @@
  * under the License.
  */
 
+#[path = "product/studio.rs"]
+mod studio;
+
 use super::*;
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -73,6 +76,21 @@ fn click(presenter: &mut maka_tui::application::Presenter, label: &str) {
     click_nth(presenter, label, 0);
 }
 fn click_nth(presenter: &mut maka_tui::application::Presenter, label: &str, nth: usize) {
+    let (x, y) = wait_for_target(presenter, label, nth);
+    presenter
+        .input(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: x,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+}
+fn wait_for_target(
+    presenter: &mut maka_tui::application::Presenter,
+    label: &str,
+    nth: usize,
+) -> (u16, u16) {
     // Disabled buttons retain their label. This fixture uses the ordinary light
     // theme, whose enabled button foreground is its accent. Await that painted
     // state before one click; never replay a potentially committed operation.
@@ -116,14 +134,7 @@ fn click_nth(presenter: &mut maka_tui::application::Presenter, label: &str, nth:
         );
         std::thread::yield_now();
     };
-    presenter
-        .input(Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: x,
-            row: y,
-            modifiers: KeyModifiers::NONE,
-        }))
-        .unwrap();
+    (x, y)
 }
 #[track_caller]
 fn await_screen(presenter: &mut maka_tui::application::Presenter, expected: &str) {
@@ -1249,9 +1260,21 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         }
         assert!(count > 0, "actual journal must contain persisted facts");
     }
-    reopened
-        .surface_closed(&reopened.surface(), Ok(()))
-        .unwrap();
+    assert!(
+        !runtime
+            .block_on(fixture.config.catalog())
+            .unwrap()
+            .connections
+            .is_empty()
+    );
+    studio::switch(
+        &runtime,
+        &caller,
+        &mut reopened,
+        &directory,
+        &registrations,
+        &manager_callers,
+    );
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while !reopened.can_shutdown() {
         reopened.pump().unwrap();

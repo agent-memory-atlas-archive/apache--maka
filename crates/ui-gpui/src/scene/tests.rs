@@ -114,6 +114,68 @@ fn packaged_deployment_pages_render_all_locales_and_operation_states(cx: &mut Te
     }
 }
 
+#[gpui::test]
+#[ignore = "opt-in ordinary Studio root build and native Desktop scene ABI"]
+fn packaged_studio_root_renders_locales_and_retained_routes(cx: &mut TestAppContext) {
+    let repository = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let build = std::process::Command::new("node")
+        .arg("packages/agent-product/scripts/build.mjs")
+        .current_dir(&repository)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let output = std::process::Command::new("node")
+        .args(["--input-type=module", "-e", r#"
+        import * as root from './packages/agent-product/dist/packages/studio/desktop.js';
+        import {activate} from './packages/agent-product/dist/packages/appearance/desktop.js';
+        const frames=[];
+        for(const scheme of ['light','dark']) for(const locale of ['en','zh-CN','zh-TW']) {
+            root.activate({locale});
+            const values={appearance:[activate({scheme}).Appearance.value]};
+            let result=root.component.mount({},values);
+            frames.push(result.frame.view);
+            for(const route of ['connections','models','deployment']) {
+                result=root.component.event(result.frame.state,{kind:'raw',key:'route-'+route,event:null},{},values);
+                frames.push(result.frame.view);
+            }
+        }
+        console.log(JSON.stringify(frames));
+        "#]).current_dir(repository).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frames: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(frames.len(), 24);
+    let (entity, window, _) = harness(cx);
+    // Explicit declared child placeholders: this proves only root scene ABI,
+    // slot visibility and geometry, not business controls or OS/visual acceptance.
+    cx.update_window(window, |_, _, cx| {
+        entity.update(cx, |h, _| {
+            h.slots = Slots::new(
+                vec!["connections".into(), "models".into(), "deployment".into()],
+                h.slots.input.clone(),
+                |key, _, _| {
+                    if !["connections", "models", "deployment"].contains(&key) {
+                        return Err(maka_ui::Error::Invalid("unknown Studio slot".into()));
+                    }
+                    Ok(gpui_kit::div().w_full().h(px(80.)).into_any_element())
+                },
+            );
+        })
+    })
+    .unwrap();
+    for frame in frames {
+        replace(cx, window, &entity, frame);
+        draw(cx, window);
+    }
+}
+
 struct Harness {
     recipe: Rc<dyn Widget>,
     state: Box<dyn Any>,

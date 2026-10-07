@@ -71,6 +71,19 @@ const native = (implementation, exports, configuration = empty) => ({
   exports,
 });
 const specifications = {
+  studio: {
+    id: 'maka.studio.workbench',
+    contract: own.studioContract,
+    export: 'Workbench',
+    module: 'studio',
+    imports: {
+      connections: one(own.connectionsContract),
+      models: one(own.modelsContract),
+      deployment: one(own.deploymentContract),
+      appearance: one(own.themeContract),
+    },
+    configuration: own.object({ locale: own.locale }),
+  },
   deployment: {
     contract: own.deploymentContract,
     export: 'Deployment',
@@ -198,6 +211,8 @@ for (const [name, spec] of Object.entries(specifications)) {
       contents = `export {activate} from '${resolve(root, 'src/theme.ts')}';`;
     else if (name === 'workspace')
       contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace('${target}',configuration.locale);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
+    else if (name === 'studio')
+      contents = `import {studio,activate as exports} from '${resolve(root, 'src/studio.ts')}';export let component;export function activate(configuration){component=studio('${target}',configuration.locale);return exports();}`;
     else if (name === 'image-viewer')
       contents = `import {imageViewer,activate} from '${resolve(root, 'src/image-viewer.ts')}';export const component=imageViewer('${target}');export {activate};`;
     else if (name === 'connection-form')
@@ -237,7 +252,7 @@ for (const [name, spec] of Object.entries(specifications)) {
     for (const target of ['desktop', 'tui'])
       entries[target].imports.reading = one(sdk.contracts.readingArea);
   // A surface is an explicit capability in the root's checked plan.
-  if (name === 'workspace')
+  if (name === 'workspace' || name === 'studio')
     for (const target of ['desktop', 'tui'])
       entries[target].imports.surface = one(
         target === 'desktop' ? sdk.contracts.desktopSurface : sdk.contracts.terminalSurface,
@@ -246,7 +261,7 @@ for (const [name, spec] of Object.entries(specifications)) {
     resolve(directory, 'maka.extension.json'),
     JSON.stringify({
       schemaVersion: 2,
-      id: `maka.agent.${name}`,
+      id: spec.id ?? `maka.agent.${name}`,
       displayName: name,
       application: { entries },
     }) + '\n',
@@ -254,6 +269,18 @@ for (const [name, spec] of Object.entries(specifications)) {
   packages.push(name);
 }
 const mechanical = {
+  'studio-gateway': {
+    id: 'maka.studio.gateway',
+    entries: {
+      host: {
+        ...native('maka.application.gateway', {}),
+        imports: {
+          settings: one(sdk.contracts.settings),
+          receipts: one(sdk.contracts.receiptReader),
+        },
+      },
+    },
+  },
   'deployment-manager': {
     entries: {
       host: native('maka.application.ui-management', {
@@ -383,13 +410,12 @@ const mechanical = {
     },
   },
 };
-for (const [name, application] of Object.entries(mechanical)) {
+for (const [name, { id = `maka.agent.${name}`, ...application }] of Object.entries(mechanical)) {
   const directory = resolve(destination, 'packages', name);
   await mkdir(directory, { recursive: true });
   await writeFile(
     resolve(directory, 'maka.extension.json'),
-    JSON.stringify({ schemaVersion: 2, id: `maka.agent.${name}`, displayName: name, application }) +
-      '\n',
+    JSON.stringify({ schemaVersion: 2, id, displayName: name, application }) + '\n',
   );
   packages.push(name);
 }

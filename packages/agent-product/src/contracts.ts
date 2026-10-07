@@ -202,6 +202,7 @@ const component = (
   interface: { kind: 'component', props: withDefs(props), events, captures },
 });
 export const workspaceContract = component('maka.agent.Workspace', object({}));
+export const studioContract = component('maka.studio.Workbench', object({}));
 export const navigationContract = component(
   'maka.agent.Navigation',
   object({

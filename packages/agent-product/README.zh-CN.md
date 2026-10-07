@@ -17,13 +17,24 @@
   under the License.
 -->
 
-# Agent 产品组合
+# 插件产品组合
 
 [English](README.md)
 
 这是一份普通的文本 agent 插件组合，同一组包分别提供 desktop/TUI 入口。Workspace、Composer、Navigation、Timeline、Appearance 可以独立替换；启动器不包含产品页面。Surface、编辑器、文本捕获、调用历史及 Host agent 服务由随构建提供的原生包承担，各部分通过明确的公开契约连接。
 
 当前切片包含创建/选择对话、规范历史分页、流式回复、精确 invocation 停止与原始 mutation 回执恢复。连接浏览、创建、公开字段编辑与原生 API 密钥保存/移除已接入普通插件；默认模型设置与清除已接入独立普通组件，具备明确确认与回执恢复；工具流程、附件、历史虚拟化和各平台视觉/IME/可访问性验收尚未完成，不把运行时测试当作成品验收。
+
+独立普通包 `maka.studio.workbench` 提供双端“配置工作台”：用顶部导航管理连接、
+默认模型和插件组合，隐藏页面保留同一挂载与原生草稿。工作台不包含会话、输入区
+或 Agent 绑定；它的独立 Host 组合仅包含 Settings、Receipts 及明确授权的 gateway。
+共享设置组件仍可替换。模型选择属于工作台本地状态，保存默认项仍通过原确认操作。
+
+编写来源时选择 `--product studio`，默认是 `agent`。工作台使用下述安装字段与 keys，
+不需要 `agent` 配置；两个产品使用相同的通用启动命令与组合替换机制，启动器不判断
+产品名称。安装根插件不会自动切换产品，运行中的替换需要单独确认来源变更，并完成
+旧界面实际清理；新根不继承旧产品的原生草稿。切换 Host 位置还需明确修改可信连接
+配置，来源中的声明本身不授权访问另一 Host。
 
 在仓库根执行 `npm --workspace @maka-agent/product run build`，再运行：
 
@@ -70,8 +81,8 @@ UTF-8 分块和原编辑器回执加载整份来源，原生 buffer 独占草稿
 已安装包选择和启动根，保留模板来源结构；保存确认冻结 owner/revision，并将不可变文本
 资源交给 Host 校验完整计划、原执行环境、已安装版本和 CAS。规划诊断保留草稿；冲突
 必须明确确认丢弃/重载，未知整份替换也从原回执/调用历史恢复。关闭页面保留原编辑器。
-文档预算 1 MiB，提交 input 与 remote observations 仍共用 512 KiB。新包导入与完整
-产品/运行时验收仍待完成。
+文档预算 1 MiB，提交 input 与 remote observations 仍共用 512 KiB。完整
+产品/运行时与平台体验验收仍待完成。
 
 插件页面通过保留的原生 FilePicker 安装 `.maka-plugin` 文件。确认时捕获选中文件
 owner/revision 对应的不可变字节，以观察到的来源版本交给 Host 校验。安装只保存

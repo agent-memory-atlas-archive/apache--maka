@@ -18,6 +18,15 @@
  */
 
 export const en = {
+  studioTitle: 'Configuration Studio',
+  studioOverview: 'Overview',
+  studioIntro: 'A quieter place to configure your workspace.',
+  studioConnections: 'Connect a provider',
+  studioConnectionsHelp:
+    'Manage endpoints and credentials. Existing drafts stay here when you change pages.',
+  studioModelsHelp: 'Browse available models and choose a default for new work.',
+  studioPluginsHelp: 'Install packages and shape the product’s components and connections.',
+
   viewImage: 'View image',
   deploymentInstall: 'Install plugin',
   deploymentInstallHelp:
@@ -277,6 +286,14 @@ export const en = {
 } as const;
 export type Copy = { [K in keyof typeof en]: string };
 const zhCN: Copy = {
+  studioTitle: '配置工作台',
+  studioOverview: '概览',
+  studioIntro: '专注整理工作区的连接、模型与插件。',
+  studioConnections: '连接提供商',
+  studioConnectionsHelp: '管理端点与凭据，切换页面时保留当前草稿。',
+  studioModelsHelp: '浏览可用模型，为新的工作选择默认模型。',
+  studioPluginsHelp: '安装插件包，调整产品的组件与连接。',
+
   viewImage: '查看图片',
   deploymentInstall: '安装插件',
   deploymentInstallHelp: '为此产品保存插件包。安装不会启用插件，也不会授予权限。',
@@ -517,6 +534,14 @@ const zhCN: Copy = {
   connecting: '正在连接…',
 };
 const zhTW: Copy = {
+  studioTitle: '設定工作台',
+  studioOverview: '總覽',
+  studioIntro: '專注整理工作區的連線、模型與外掛。',
+  studioConnections: '連接供應商',
+  studioConnectionsHelp: '管理端點與憑證，切換頁面時保留目前草稿。',
+  studioModelsHelp: '瀏覽可用模型，為新的工作選擇預設模型。',
+  studioPluginsHelp: '安裝外掛套件，調整產品的元件與連線。',
+
   viewImage: '查看圖片',
   deploymentInstall: '安裝外掛',
   deploymentInstallHelp: '為此產品儲存外掛套件。安裝不會啟用外掛，也不會授予權限。',

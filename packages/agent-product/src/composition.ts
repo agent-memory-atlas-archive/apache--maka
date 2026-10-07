@@ -28,6 +28,8 @@ import {
 } from '../../plugin-sdk/src/index.js';
 export const packageNames = [
   'workspace',
+  'studio',
+  'studio-gateway',
   'deployment',
   'deployment-manager',
   'deployment-gateway',
@@ -68,16 +70,18 @@ export interface CompositionConfiguration {
   hostDeployment: string;
   managementDeployment: string;
 }
-/** Product source assembled exclusively from ordinary checked plugin bindings.
- * Keys and the Host deployment belong to the installation, not to a build.
- */
-export function composition(configuration: CompositionConfiguration): {
+interface ApplicationSources {
   host: CompositionInput;
   managementHost: CompositionInput;
   ui: CompositionInput;
   remoteExports: RemoteObservation[];
   connections: unknown;
-} {
+}
+/** Shared ordinary settings/management graph; each product adds its own root and capabilities. */
+function settingsComposition(
+  configuration: Omit<CompositionConfiguration, 'agent'>,
+  gateway: 'gateway' | 'studio-gateway',
+) {
   const { packages, keys } = configuration;
   const local = (name: PackageName, exportName: string): BindingTarget => ({
     kind: 'instance',
@@ -104,14 +108,12 @@ export function composition(configuration: CompositionConfiguration): {
   const host: CompositionInput = {
     environment: { location: 'host' },
     instances: {
-      agent: node('agent', { ...configuration.agent }),
       settings: node('settings'),
       receipts: node('receipts'),
       gateway: node(
-        'gateway',
+        gateway,
         {},
         {
-          agent: [local('agent', 'agent')],
           settings: [local('settings', 'Settings')],
           receipts: [local('receipts', 'Receipts')],
         },
@@ -136,25 +138,6 @@ export function composition(configuration: CompositionConfiguration): {
   const ui: CompositionInput = {
     environment: { location: 'ui', presentation: configuration.presentation },
     instances: {
-      workspace: node(
-        'workspace',
-        { locale: configuration.locale },
-        {
-          agent: [remote('agent', 'agent')],
-          receipts: [remote('receipts', 'Receipts')],
-          reader: [local('reader', 'Reader')],
-          history: [local('history', 'History')],
-          composer: [local('composer', 'Composer')],
-          models: [local('models', 'Models')],
-          connections: [local('connections', 'Connections')],
-          deployment: [local('deployment', 'Deployment')],
-          navigation: [local('navigation', 'Navigation')],
-          timeline: [local('timeline', 'Timeline')],
-          imageViewer: [local('image-viewer', 'ImageViewer')],
-          appearance: [local('appearance', 'Appearance')],
-          surface: [local('surface', 'Surface')],
-        },
-      ),
       deployment: node(
         'deployment',
         {},
@@ -229,30 +212,6 @@ export function composition(configuration: CompositionConfiguration): {
           history: [local('history', 'History')],
         },
       ),
-      composer: node('composer', {}, { editor: [local('editor', 'Textarea')] }),
-      navigation: node('navigation'),
-      'image-viewer': node(
-        'image-viewer',
-        {},
-        {
-          agent: [remote('agent', 'agent')],
-          ...(configuration.presentation === 'desktop' ? { image: [local('image', 'Image')] } : {}),
-        },
-      ),
-      ...(configuration.presentation === 'desktop' ? { image: node('image') } : {}),
-      timeline: node('timeline', {}, { reading: [local('reading-area', 'ReadingArea')] }),
-      'source-text': node('source-text'),
-      'reading-area': node(
-        'reading-area',
-        {},
-        {
-          source: [local('source-text', 'SourceText')],
-          ...(configuration.presentation === 'desktop'
-            ? { markdown: [local('markdown', 'Markdown')] }
-            : {}),
-        },
-      ),
-      ...(configuration.presentation === 'desktop' ? { markdown: node('markdown') } : {}),
       appearance: node('appearance', { scheme: configuration.scheme }),
       surface: node('surface'),
       editor: node('editor'),
@@ -260,13 +219,8 @@ export function composition(configuration: CompositionConfiguration): {
       reader: node('reader'),
       history: node('history'),
     },
-    launch: local('workspace', 'Workspace'),
   };
   const remoteExports: RemoteObservation[] = [
-    {
-      capability: { deployment: 'local', instance: [keys.agent], export: 'agent' },
-      declaration: { contract: contracts.agent, availability: 'required' },
-    },
     {
       capability: { deployment: 'local', instance: [keys.receipts], export: 'Receipts' },
       declaration: { contract: contracts.receiptReader, availability: 'required' },
@@ -309,14 +263,99 @@ export function composition(configuration: CompositionConfiguration): {
         name: 'local',
         location: { kind: 'process', root: configuration.hostRoot },
         deployment: configuration.hostDeployment,
-        consumer: [keys.gateway],
+        consumer: [keys[gateway]],
         imports: {
-          agent: { methods: Object.keys(contracts.agent.interface.methods), recovery: true },
           receipts: { methods: ['read'], recovery: true },
           settings: { methods: Object.keys(contracts.settings.interface.methods), recovery: true },
         },
       },
     ],
   };
+  return { host, managementHost, ui, remoteExports, connections, local, remote, node };
+}
+/** Product source assembled exclusively from ordinary checked plugin bindings.
+ * Keys and the Host deployment belong to the installation, not to a build.
+ */
+export function composition(configuration: CompositionConfiguration): ApplicationSources {
+  const { keys } = configuration;
+  const { host, managementHost, ui, remoteExports, connections, local, remote, node } =
+    settingsComposition(configuration, 'gateway');
+  host.instances.agent = node('agent', { ...configuration.agent });
+  host.instances.gateway!.bindings!.agent = [local('agent', 'agent')];
+  Object.assign(ui.instances, {
+    workspace: node(
+      'workspace',
+      { locale: configuration.locale },
+      {
+        agent: [remote('agent', 'agent')],
+        receipts: [remote('receipts', 'Receipts')],
+        reader: [local('reader', 'Reader')],
+        history: [local('history', 'History')],
+        composer: [local('composer', 'Composer')],
+        models: [local('models', 'Models')],
+        connections: [local('connections', 'Connections')],
+        deployment: [local('deployment', 'Deployment')],
+        navigation: [local('navigation', 'Navigation')],
+        timeline: [local('timeline', 'Timeline')],
+        imageViewer: [local('image-viewer', 'ImageViewer')],
+        appearance: [local('appearance', 'Appearance')],
+        surface: [local('surface', 'Surface')],
+      },
+    ),
+    composer: node('composer', {}, { editor: [local('editor', 'Textarea')] }),
+    navigation: node('navigation'),
+    'image-viewer': node(
+      'image-viewer',
+      {},
+      {
+        agent: [remote('agent', 'agent')],
+        ...(configuration.presentation === 'desktop' ? { image: [local('image', 'Image')] } : {}),
+      },
+    ),
+    ...(configuration.presentation === 'desktop' ? { image: node('image') } : {}),
+    timeline: node('timeline', {}, { reading: [local('reading-area', 'ReadingArea')] }),
+    'source-text': node('source-text'),
+    'reading-area': node(
+      'reading-area',
+      {},
+      {
+        source: [local('source-text', 'SourceText')],
+        ...(configuration.presentation === 'desktop'
+          ? { markdown: [local('markdown', 'Markdown')] }
+          : {}),
+      },
+    ),
+    ...(configuration.presentation === 'desktop' ? { markdown: node('markdown') } : {}),
+  });
+  ui.launch = local('workspace', 'Workspace');
+  remoteExports.unshift({
+    capability: { deployment: 'local', instance: [keys.agent], export: 'agent' },
+    declaration: { contract: contracts.agent, availability: 'required' },
+  });
+  Object.assign(connections.hosts.find((host) => host.name === 'local')!.imports, {
+    agent: { methods: Object.keys(contracts.agent.interface.methods), recovery: true },
+  });
+  return { host, managementHost, ui, remoteExports, connections };
+}
+/** Independent configuration workbench: no Agent capability or conversation UI. */
+export function studioComposition(
+  configuration: Omit<CompositionConfiguration, 'agent'>,
+): ApplicationSources {
+  const { host, managementHost, ui, remoteExports, connections, local, node } = settingsComposition(
+    configuration,
+    'studio-gateway',
+  );
+  ui.instances.studio = node(
+    'studio',
+    { locale: configuration.locale },
+    {
+      connections: [local('connections', 'Connections')],
+      models: [local('models', 'Models')],
+      deployment: [local('deployment', 'Deployment')],
+      appearance: [local('appearance', 'Appearance')],
+      surface: [local('surface', 'Surface')],
+    },
+  );
+  ui.launch = local('studio', 'Workbench');
   return { host, managementHost, ui, remoteExports, connections };
 }

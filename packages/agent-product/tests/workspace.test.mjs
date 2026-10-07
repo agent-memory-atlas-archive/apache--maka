@@ -471,81 +471,95 @@ test('both product compositions use actual immutable package refs and check in t
     const originalBytes = readFileSync(bundle);
     assert.throws(() => invoke(['export-package', '--package', sourcePackage, '--output', bundle]));
     assert.deepEqual(readFileSync(bundle), originalBytes);
-    for (const presentation of ['desktop', 'tui']) {
-      const configuration = {
-        presentation,
-        locale: 'zh-Hant-HK',
-        scheme: 'light',
-        keys,
-        agent: {
-          maxActiveRuns: 1,
-          maxSteps: 1,
-          tools: [],
-        },
-        hostRoot: '/private/product-fixture',
-        hostDeployment: uuid(80),
-        managementDeployment: uuid(81),
-      };
-      const configurationFile = resolve(directory, 'installation.json');
-      const output = resolve(directory, presentation);
-      writeFileSync(configurationFile, JSON.stringify(configuration));
-      execFileSync(
-        process.execPath,
-        [
-          resolve(root, 'scripts/compose.mjs'),
-          '--configuration',
-          configurationFile,
-          '--output',
-          output,
-          '--maka',
-          binary,
-        ],
-        { encoding: 'utf8', maxBuffer: 1024 * 1024 },
-      );
-      const ui = JSON.parse(readFileSync(resolve(output, 'ui.json'), 'utf8'));
-      const host = JSON.parse(readFileSync(resolve(output, 'host.json'), 'utf8'));
-      const connections = JSON.parse(readFileSync(resolve(output, 'connections.json'), 'utf8'));
-      assert.equal(ui.environment.presentation, presentation);
-      assert.equal(ui.instances.workspace.key, keys.workspace);
-      assert.equal(host.instances.agent.key, keys.agent);
-      const business = connections.hosts.find((host) => host.name === 'local');
-      const manager = connections.hosts.find((host) => host.name === 'manager');
-      assert.deepEqual(manager.location, { kind: 'cohost' });
-      assert.equal(manager.deployment, configuration.managementDeployment);
-      assert.deepEqual(manager.imports.management.methods, [
-        'instances',
-        'setEnabled',
-        'readDocument',
-        'replace',
-        'install',
-      ]);
-      assert.equal(manager.imports.receipts.recovery, true);
-      assert.deepEqual(business.location, {
-        kind: 'process',
-        root: configuration.hostRoot,
-      });
-      assert.deepEqual(business.consumer, [keys.gateway]);
-      assert.equal(business.deployment, configuration.hostDeployment);
-      assert.deepEqual(
-        business.imports.settings.methods,
-        Object.keys(sdk.contracts.settings.interface.methods),
-      );
-      assert.equal(business.imports.settings.recovery, true);
-      const secret = JSON.parse(
-        readFileSync(resolve(root, 'dist/packages/credential/maka.extension.json')),
-      );
-      assert.equal('reader' in secret.application.entries[presentation].imports, false);
-      assert.deepEqual(
-        secret.application.entries[presentation].exports.Credential.contract.interface.captures,
-        {},
-      );
-      assert.deepEqual(Object.keys(ui.instances.credential.bindings).sort(), [
-        'history',
-        'receipts',
-        'secret',
-        'settings',
-      ]);
-    }
+    for (const productName of ['agent', 'studio'])
+      for (const presentation of ['desktop', 'tui']) {
+        const configuration = {
+          presentation,
+          locale: 'zh-Hant-HK',
+          scheme: 'light',
+          keys,
+          agent: {
+            maxActiveRuns: 1,
+            maxSteps: 1,
+            tools: [],
+          },
+          hostRoot: '/private/product-fixture',
+          hostDeployment: uuid(80),
+          managementDeployment: uuid(81),
+        };
+        const configurationFile = resolve(directory, 'installation.json');
+        const output = resolve(directory, productName + '-' + presentation);
+        writeFileSync(configurationFile, JSON.stringify(configuration));
+        execFileSync(
+          process.execPath,
+          [
+            resolve(root, 'scripts/compose.mjs'),
+            '--configuration',
+            configurationFile,
+            '--output',
+            output,
+            '--maka',
+            binary,
+            '--product',
+            productName,
+          ],
+          { encoding: 'utf8', maxBuffer: 1024 * 1024 },
+        );
+        const ui = JSON.parse(readFileSync(resolve(output, 'ui.json'), 'utf8'));
+        const host = JSON.parse(readFileSync(resolve(output, 'host.json'), 'utf8'));
+        const connections = JSON.parse(readFileSync(resolve(output, 'connections.json'), 'utf8'));
+        assert.equal(ui.environment.presentation, presentation);
+        if (productName === 'agent') {
+          assert.equal(ui.instances.workspace.key, keys.workspace);
+          assert.equal(host.instances.agent.key, keys.agent);
+        } else {
+          assert.deepEqual(ui.launch, { kind: 'instance', path: ['studio'], export: 'Workbench' });
+          assert.equal(ui.instances.studio.key, keys.studio);
+          for (const name of ['workspace', 'composer', 'timeline', 'navigation', 'agent'])
+            assert.equal(name in ui.instances, false);
+          assert.deepEqual(Object.keys(host.instances).sort(), ['gateway', 'receipts', 'settings']);
+        }
+        const business = connections.hosts.find((host) => host.name === 'local');
+        const manager = connections.hosts.find((host) => host.name === 'manager');
+        assert.deepEqual(manager.location, { kind: 'cohost' });
+        assert.equal(manager.deployment, configuration.managementDeployment);
+        assert.deepEqual(manager.imports.management.methods, [
+          'instances',
+          'setEnabled',
+          'readDocument',
+          'replace',
+          'install',
+        ]);
+        assert.equal(manager.imports.receipts.recovery, true);
+        assert.deepEqual(business.location, {
+          kind: 'process',
+          root: configuration.hostRoot,
+        });
+        assert.deepEqual(business.consumer, [
+          keys[productName === 'agent' ? 'gateway' : 'studio-gateway'],
+        ]);
+        assert.equal('agent' in business.imports, productName === 'agent');
+        assert.equal(business.deployment, configuration.hostDeployment);
+        assert.deepEqual(
+          business.imports.settings.methods,
+          Object.keys(sdk.contracts.settings.interface.methods),
+        );
+        assert.equal(business.imports.settings.recovery, true);
+        const secret = JSON.parse(
+          readFileSync(resolve(root, 'dist/packages/credential/maka.extension.json')),
+        );
+        assert.equal('reader' in secret.application.entries[presentation].imports, false);
+        assert.deepEqual(
+          secret.application.entries[presentation].exports.Credential.contract.interface.captures,
+          {},
+        );
+        assert.deepEqual(Object.keys(ui.instances.credential.bindings).sort(), [
+          'history',
+          'receipts',
+          'secret',
+          'settings',
+        ]);
+      }
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -4841,3 +4855,67 @@ for (const target of ['desktop', 'tui']) {
     assert.equal(result.frame.state.importer.installed, null);
   });
 }
+
+test('independent workbench variants retain page slots and react to real child event names', async () => {
+  const choice = { label: 'Fixture model', selection: { connectionId: 'fixture', modelId: 'one' } };
+  for (const target of ['desktop', 'tui']) {
+    const module = await import(pathToFileURL(resolve(root, `dist/packages/studio/${target}.js`)));
+    const nodes = (view) => [view, ...(view.children ?? []).flatMap(nodes)];
+    for (const locale of ['en', 'zh-CN', 'zh-TW'])
+      for (const scheme of ['light', 'dark']) {
+        module.activate({ locale });
+        const component = module.component;
+        const values = { appearance: [appearance.activate({ scheme }).Appearance.value] };
+        let result = component.mount({}, values);
+        const slots = () => nodes(result.frame.view).filter((node) => node.kind === 'component');
+        const press = (key) => {
+          result = component.event(
+            result.frame.state,
+            { kind: 'raw', key, event: null },
+            {},
+            values,
+          );
+        };
+        const child = (child, name, event) => {
+          result = component.event(
+            result.frame.state,
+            { kind: 'component', key: 'arbitrary-routing-key', child, name, event },
+            {},
+            values,
+          );
+        };
+        assert.deepEqual(
+          slots().map((node) => [node.key, node.binding]),
+          [
+            ['connections', 'connections'],
+            ['models', 'models'],
+            ['deployment', 'deployment'],
+          ],
+        );
+        const initialKeys = nodes(result.frame.view).map((node) => node.key);
+        assert.equal(new Set(initialKeys).size, initialKeys.length);
+        press('open-connections');
+        assert.equal(result.frame.state.route, 'connections');
+        child('connections', 'changed', {});
+        assert.equal(result.frame.state.catalogEpoch, 1);
+        press('route-models');
+        child('models', 'selected', choice);
+        assert.deepEqual(result.frame.state.selection, choice);
+        assert.equal(slots()[1].props.catalogEpoch, 1);
+        assert.deepEqual(slots()[1].props.selection, choice);
+        press('route-deployment');
+        press('route-overview');
+        assert.deepEqual(
+          nodes(result.frame.view).map((node) => node.key),
+          initialKeys,
+        );
+        assert.equal(result.actions.length, 0);
+        assert.equal(result.subscriptions.length, 0);
+        assert.equal(result.frame.surface.binding, 'surface');
+        assert.equal(result.frame.surface.kind, target === 'desktop' ? 'window' : 'terminal');
+        child('deployment', 'closed', {});
+        assert.equal(result.frame.state.route, 'overview');
+        assert.deepEqual(result.frame.state.selection, choice);
+      }
+  }
+});

@@ -28,12 +28,16 @@ const { values } = parseArgs({
     configuration: { type: 'string' },
     output: { type: 'string' },
     maka: { type: 'string', default: 'maka' },
+    product: { type: 'string', default: 'agent' },
   },
 });
 if (!values.configuration || !values.output)
-  throw new Error('Required: --configuration FILE --output DIRECTORY [--maka EXECUTABLE]');
+  throw new Error(
+    'Required: --configuration FILE --output DIRECTORY [--maka EXECUTABLE] [--product agent|studio]',
+  );
+if (!['agent', 'studio'].includes(values.product)) throw new Error('Unknown product');
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const { composition, packageNames } = await import(
+const { composition, studioComposition, packageNames } = await import(
   pathToFileURL(resolve(root, 'dist/authoring/agent-product/src/composition.mjs'))
 );
 const configuration = JSON.parse(await readFile(values.configuration, 'utf8'));
@@ -46,7 +50,10 @@ const run = (args) =>
   });
 for (const [index, name] of packageNames.entries())
   packages[name] = JSON.parse(run(['inspect-package', '--package', paths[index]]));
-const result = composition({ ...configuration, packages });
+const result = (values.product === 'studio' ? studioComposition : composition)({
+  ...configuration,
+  packages,
+});
 const output = resolve(values.output);
 await mkdir(output, { recursive: true });
 const write = async (name, value) => {
