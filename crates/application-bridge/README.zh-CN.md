@@ -124,6 +124,12 @@ incarnation。取消等待原 opening 明确完成；构造、poll、future 析�
 
 ## 精确来源更新
 
+没有启用消费者的已配置 Host 仅保留为未启动的可信声明，不占用 Root 或创建 executor。
+校验后的已提交来源首次选择它时，使用该精确来源、实际消费者和原配置权限启动。
+创建 executor 前失败保留声明；创建后失败保留同一物理 owner，禁止自动重启。
+从未向 UI 发布 registration 的 owner 不阻塞排除它的修正来源的批准与 retention；
+最终退出仍须真实 drain 该 owner。
+
 可信 Root manager 可以对精确已提交 UI source 调用 `Connections::approve_source`，
 同时明确保留仍有原消费者存活的 revision。此操作委托原配置的方法及恢复权限；
 观察 SQL head 本身不授予权限，也不能改变 Host Root、deployment、可执行文件、

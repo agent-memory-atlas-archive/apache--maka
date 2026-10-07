@@ -57,6 +57,9 @@ pub(super) struct OwnedHost {
     pub(super) owner: HostOwner,
     pub(super) connection: Option<Arc<native::Connection>>,
     pub(super) ready: bool,
+    // Publication is distinct from bootstrap readiness: an unused controller
+    // must keep custody without obstructing healthy UI-source retention.
+    pub(super) published: bool,
     pub(super) configuration: Host,
     pub(super) peers: Arc<crate::transport::Peers>,
 }

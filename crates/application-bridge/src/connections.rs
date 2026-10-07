@@ -158,6 +158,17 @@ struct PreparedHost {
     configuration: Host,
     consumers: BTreeSet<InstanceId>,
 }
+fn consumers(plan: &Plan, host: &str) -> BTreeSet<InstanceId> {
+    plan.instances()
+        .values()
+        .filter(|i| !i.disabled && i.entry.is_some())
+        .filter(|i| {
+            i.bindings.values().flatten().any(|b|
+            matches!(&b.provider, Provider::Remote { capability } if capability.deployment == host))
+        })
+        .map(|i| i.identity.clone())
+        .collect()
+}
 #[derive(PartialEq)]
 enum Phase {
     Prepared,
@@ -227,17 +238,22 @@ impl Connections {
             .collect();
         let plan =
             Plan::prepare(&loaded.source.input, &packages, &remote).map_err(|e| e.to_string())?;
+        if plan
+            .instances()
+            .values()
+            .filter(|i| !i.disabled)
+            .flat_map(|i| i.bindings.values().flatten())
+            .any(|binding| {
+                matches!(&binding.provider, Provider::Remote {capability}
+                    if !configuration.hosts.iter().any(|host| host.name == capability.deployment))
+            })
+        {
+            return Err("UI source selects an unconfigured Host".into());
+        }
         let mut prepared = Vec::new();
         let mut cohosts = BTreeSet::new();
         for mut host in configuration.hosts {
-            let consumers: BTreeSet<_> = plan.instances().values()
-                .filter(|i| !i.disabled && i.entry.is_some())
-                .filter(|i| i.bindings.values().flatten().any(|b|
-                    matches!(&b.provider, Provider::Remote { capability } if capability.deployment == host.name)))
-                .map(|i| i.identity.clone()).collect();
-            if consumers.is_empty() {
-                return Err("configured Host has no enabled UI consumer".into());
-            }
+            let consumers = consumers(&plan, &host.name);
             match &mut host.location {
                 HostLocation::Process { root } => {
                     *root = std::path::absolute(&*root).map_err(|e| e.to_string())?
@@ -290,16 +306,15 @@ impl Connections {
         self.phase = Phase::Starting;
         let mut targets = BTreeSet::new();
         for prepared in std::mem::take(&mut self.prepared) {
+            if prepared.consumers.is_empty() {
+                // Trusted availability is not a running executor or an approval.
+                self.prepared.push(prepared);
+                continue;
+            }
             let host = prepared.configuration;
-            let catalogue = match host.location.clone() {
-                HostLocation::Process { root } => {
-                    self.start_process(host.clone(), prepared.consumers, root)
-                        .await?
-                }
-                HostLocation::Cohost {} => {
-                    self.start_cohost(host.clone(), prepared.consumers).await?
-                }
-            };
+            let catalogue = self
+                .start_selected(host.clone(), prepared.consumers, self.source.clone())
+                .await?;
             let owned = self.hosts.last_mut().unwrap();
             for import in host.imports.keys() {
                 let selection = catalogue.select(import)?;
@@ -331,14 +346,31 @@ impl Connections {
                 });
             }
         }
+        for owned in &mut self.hosts {
+            owned.published = true;
+        }
         self.phase = Phase::Started;
         Ok(())
+    }
+    async fn start_selected(
+        &mut self,
+        host: Host,
+        consumers: BTreeSet<InstanceId>,
+        source: DeploymentRef,
+    ) -> Result<crate::transport::Catalogue> {
+        match host.location.clone() {
+            HostLocation::Process { root } => {
+                self.start_process(host, consumers, root, source).await
+            }
+            HostLocation::Cohost {} => self.start_cohost(host, consumers, source).await,
+        }
     }
     async fn start_process(
         &mut self,
         host: Host,
         consumers: BTreeSet<InstanceId>,
         root: PathBuf,
+        source: DeploymentRef,
     ) -> Result<crate::transport::Catalogue> {
         let configuration = host.clone();
         let nonce = Uuid::new_v4();
@@ -347,7 +379,7 @@ impl Connections {
             root,
             deployment: host.deployment,
             namespaces: self.namespaces.clone(),
-            source: self.source.clone(),
+            source,
             consumers,
             consumer: host.consumer.clone(),
             imports: host.imports.clone(),
@@ -379,6 +411,7 @@ impl Connections {
             },
             connection: Some(connection),
             ready: false,
+            published: false,
             configuration,
             peers: crate::transport::Peers::new(crate::transport::Peer::new(
                 bootstrap.source.clone(),
@@ -397,11 +430,9 @@ impl Connections {
         &mut self,
         configuration: Host,
         consumers: BTreeSet<InstanceId>,
+        source: DeploymentRef,
     ) -> Result<crate::transport::Catalogue> {
-        let peers = crate::transport::Peers::new(crate::transport::Peer::new(
-            self.source.clone(),
-            consumers,
-        )?);
+        let peers = crate::transport::Peers::new(crate::transport::Peer::new(source, consumers)?);
         self.hosts.push(OwnedHost {
             owner: HostOwner::Cohost {
                 application: None,
@@ -410,6 +441,7 @@ impl Connections {
             },
             connection: None,
             ready: false,
+            published: false,
             configuration: configuration.clone(),
             peers: peers.clone(),
         });
@@ -524,17 +556,48 @@ impl Connections {
                 .hosts
                 .iter()
                 .any(|host| host.configuration.name == target.deployment)
+                && !self
+                    .prepared
+                    .iter()
+                    .any(|host| host.configuration.name == target.deployment)
         }) {
             return Err("UI source selects an unconfigured Host".into());
+        }
+        while let Some(index) = self
+            .prepared
+            .iter()
+            .position(|host| !consumers(&plan, &host.configuration.name).is_empty())
+        {
+            let prepared = self.prepared.remove(index);
+            let callers = consumers(&plan, &prepared.configuration.name);
+            // Newly needed executors belong to this controller before bootstrap
+            // is observed. A failure retains actual custody, not a retryable recipe.
+            let owners = self.hosts.len();
+            let result = self
+                .start_selected(prepared.configuration.clone(), callers, source.clone())
+                .await;
+            // All pre-custody work is synchronous. Cancellation at the first
+            // suspension already belongs to an actual owner, never this recipe.
+            if result.is_err() && self.hosts.len() == owners {
+                self.prepared.insert(index, prepared);
+            }
+            result?;
         }
         let mut published = Vec::new();
         let mut targets = BTreeSet::new();
         let mut staged = Vec::new();
         for owned in &mut self.hosts {
             let name = owned.configuration.name.clone();
-            let consumers: BTreeSet<_> = plan.instances().values().filter(|i| !i.disabled && i.entry.is_some())
-                .filter(|i| i.bindings.values().flatten().any(|binding| matches!(&binding.provider, Provider::Remote { capability } if capability.deployment == name)))
-                .map(|i| i.identity.clone()).collect();
+            let consumers = consumers(&plan, &name);
+            if !owned.ready && !consumers.is_empty() {
+                return Err("selected Host startup is unconfirmed".into());
+            }
+            if !owned.published && consumers.is_empty() {
+                // No endpoint from this owner was published. Keep custody for
+                // real cleanup without requiring a nonexistent approval channel.
+                staged.push(None);
+                continue;
+            }
             let approved = if consumers.is_empty() {
                 None
             } else {
@@ -594,7 +657,7 @@ impl Connections {
                 }
             }
             owned.check_approval(&source, &consumers, &retain, &catalogue)?;
-            staged.push((approved, consumers, catalogue));
+            staged.push(Some((approved, consumers, catalogue)));
         }
         if required.iter().any(|target| {
             !published
@@ -605,11 +668,20 @@ impl Connections {
         }
         // Complete the whole batch's known validation before changing any grant.
         // Physical IO failure still belongs to each original child, not rollback.
-        for (owned, (approved, consumers, catalogue)) in self.hosts.iter_mut().zip(staged) {
+        for (owned, approval) in self.hosts.iter_mut().zip(staged) {
+            let Some((approved, consumers, catalogue)) = approval else {
+                owned.peers.update(None, &BTreeSet::new())?;
+                continue;
+            };
             owned
                 .approve(source.clone(), consumers, retain.clone(), catalogue)
                 .await?;
             owned.peers.update(approved, &retain)?;
+        }
+        for owned in &mut self.hosts {
+            if !consumers(&plan, &owned.configuration.name).is_empty() {
+                owned.published = true;
+            }
         }
         self.registrations = published.clone();
         Ok(published)
@@ -634,7 +706,7 @@ impl Connections {
     pub async fn retain_sources(&mut self, retain: BTreeSet<u64>) -> Result<()> {
         self.revoke_sources(&retain)?;
         let mut failures = Vec::new();
-        for owned in &mut self.hosts {
+        for owned in self.hosts.iter_mut().filter(|owned| owned.published) {
             if let Err(error) = owned
                 .approve(self.source.clone(), BTreeSet::new(), retain.clone(), None)
                 .await

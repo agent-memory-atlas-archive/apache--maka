@@ -174,6 +174,14 @@ in-process UI service/session implementation.
 
 ## Exact-source updates
 
+A configured Host without enabled consumers remains an unstarted trusted declaration.
+It acquires no Root or executor until a checked committed source selects it. First
+selection uses that exact source and its resolved consumers with the original grants.
+Failure before executor creation preserves the declaration; failure after creation
+retains the same physical owner and forbids automatic restart. An owner that never
+published UI registrations cannot block approval/retention for a corrected
+source that excludes it; shutdown still drains that owner.
+
 The trusted Root manager may call `Connections::approve_source` with an exact
 committed UI source and the revisions whose original consumers remain live. This
 explicit operation delegates the original configuration's method/recovery grants;

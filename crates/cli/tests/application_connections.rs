@@ -17,6 +17,8 @@
  * under the License.
  */
 
+#[path = "application_connections/deferred.rs"]
+mod deferred;
 #[path = "application_connections/management.rs"]
 mod management;
 #[path = "application_connections/resource_mutations.rs"]
@@ -323,7 +325,9 @@ fn preflight_and_failed_child_start_do_not_unlock_the_actual_caller() {
     let f = Fixture::new();
     let mut configuration = f.configuration(true, true);
     configuration.hosts[0].name = "undeclared".into();
-    assert!(matches!(f.prepare(configuration), Err(reason) if reason.contains("consumer")));
+    assert!(
+        matches!(f.prepare(configuration), Err(reason) if reason.contains("unconfigured Host"))
+    );
     f.blocked("caller");
     f.reopened("host");
     let mut configuration = f.configuration(true, true);

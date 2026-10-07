@@ -21,6 +21,7 @@
 
 mod application;
 mod frames;
+mod product;
 
 use maka_process::terminal::Screen;
 use maka_runtime::terminal::TerminalSize;
@@ -81,6 +82,8 @@ impl Pty {
         command
             .args(args)
             .env("TERM", "xterm-256color")
+            .env("COLORTERM", "truecolor")
+            .env_remove("NO_COLOR")
             .env("LC_ALL", "en_US.UTF-8")
             .stdin(slave.try_clone().unwrap())
             .stdout(slave.try_clone().unwrap())

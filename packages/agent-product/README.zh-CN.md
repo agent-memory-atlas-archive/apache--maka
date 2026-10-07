@@ -50,13 +50,15 @@ node packages/agent-product/scripts/compose.mjs \
 
 组合命令调用真实 Rust CLI 校验包并计算精确引用，输出并检查 `host.json`、`management-host.json`、`ui.json`、`remote-exports.json`、`connections.json`、`packages.json`。它不初始化 Root、不提交部署、不启动执行。`connections.json` 属于可信启动器输入，其中的逐方法和恢复 grant 需要明确选定。
 
+可信 connections 文件可以预声明后续组合所需的其他 Host；未选中的声明不占用 Root，校验后的已提交来源选择它时才按原显式配置和权限启动。
+
 分别初始化 Host/UI Root，用 `maka application commit` 提交相应输入、部署 UUID、当前 expected revision 和包路径；UI 同时提供 remote exports。初次提交使用 expected revision 0。同一 UI Root 还须以稳定且不同于 UI/业务 Host 的 `managementDeployment` 提交 `management-host.json`；该明确选择的管理 cohost 借用原 Store。随后通过 `maka application run` 或 `maka-desktop run` 指定 UI Root、部署及 connections 文件。发送需要从选定 Host Root 中明确选择已认证并启用连接的模型；[本地 Host 连接](../../crates/application-bridge/README.zh-CN.md)拥有启动与清理，不自动使用其他模型。
 
 原生 editor 独占草稿、选区和 IME；产品只保留元数据与工作流。发送按原始 owner/revision 捕获不可变资源，只有持久准入回执才可清除原草稿。结果未知时沿原 RecoveryRef 查询，不自动重发。重新挂载从原消费者调用历史恢复，不能清除新 editor 的草稿。
 
 历史固定事件 fence，使用 Host 返回的 transcript cursor 分页。活动文本从原 PartStarted 重放，thinking 不作为回答；规范历史变化不重启原订阅。显示节选有界并明确标注，后续分页仍是独立读取。
 
-类型检查和测试使用 `npm --workspace @maka-agent/product run typecheck` / `test`。设置 `MAKA_PRODUCT_CLI_CHECK=1` 额外验证实际包引用与两端组合。原生 opt-in 测试使用实际打包 guest、TUI 编辑器、持久调用意图、已授权原生服务和本地 HTTP provider，命令见英文文档；最终桌面视觉和三平台交互需要另行实际验收。
+类型检查和测试使用 `npm --workspace @maka-agent/product run typecheck` / `test`。设置 `MAKA_PRODUCT_CLI_CHECK=1` 额外验证实际包引用与两端组合。原生 opt-in 测试使用实际打包 guest、TUI 编辑器、持久调用意图、已授权原生服务和本地 HTTP provider，命令见英文文档；独立 CLI PTY 测试通过原生文件输入安装 Studio、由原 manager 保存组合，再由生产管线自动替换 surface 并启动预声明的设置 Host；验证持久来源与包、最终 Root 释放和真实终端恢复，命令见英文文档。最终桌面视觉和三平台交互需要另行实际验收。
 
 普通 `models` 组件从显式绑定的 Root 设置能力读取有界模型选项，默认投影独立于选项分页，首屏十六项之外的默认模型也能准确建议；仅在尚未选择模型时建议已保存默认项。每次发送固定该次选择的连接 revision；Desktop 使用滚动列表，TUI 每屏三个选项并保留导航。宿主不隐式替换模型，未知结果不自动重发；目录刷新保留原 connection/model 身份并核验实际 revision，不改选无关默认项。`agent` 配置包含 `maxActiveRuns`、`maxSteps` 与显式 `tools`；纯文本产品填写 `tools: []`。工具须由 Agent 原生条目声明服务 import，并由 Host 独立授权具体调用边。
 

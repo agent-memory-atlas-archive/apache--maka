@@ -73,6 +73,10 @@ maka-desktop run --root UI_ROOT --deployment UI_DEPLOYMENT \
   --connections product-source/connections.json
 ```
 
+The trusted connections file may declare additional Hosts for later compositions.
+Unselected declarations acquire no Root; a checked committed source starts a newly
+selected Host using its original explicit configuration and grants.
+
 Sending requires an authenticated, enabled connection and an explicitly selected model from the selected Host Root. The existing [trusted local connection](../../crates/application-bridge/README.md) owns Host startup and cleanup. Product code neither chooses a fallback model nor imports private execution objects.
 
 ## State and verification
@@ -89,9 +93,16 @@ MAKA_PRODUCT_CLI_CHECK=1 npm --workspace @maka-agent/product test
 # Requires the normal Node build dependencies and an actual native test binary:
 cargo nextest run -p maka-agent-service --run-ignored only \
   -E 'test(packaged_product_creates)'
+# Actual foreground install and automatic Agent -> Studio surface/backend switch:
+cargo nextest run -p maka-cli --test integration --run-ignored only --locked \
+  -E 'test(agent_installs_studio)'
 ```
 
-The opt-in Rust integration uses the actual packaged guest, native TUI editor, persisted caller intents, authenticated native service and a local HTTP provider. It exercises creation, input, send, canonical response and reopening the same deployment. Passing protocol tests does not establish the final desktop visual or three-platform input quality.
+The opt-in Rust integration uses the actual packaged guest, native TUI editor, persisted caller intents, authenticated native service and a local HTTP provider. It exercises creation, input, send, canonical response and reopening the same deployment. The separate CLI PTY test installs Studio through native file input and commits its
+composition through the original manager. The production pipeline replaces the
+surface and opens a previously idle, explicitly configured settings Host. It checks
+the persisted source/package, final Root release and real terminal restoration.
+Passing protocol tests does not establish the final desktop visual or three-platform input quality.
 
 The ordinary `models` component reads bounded choices from the explicitly bound Root settings capability. Its default projection is independent of the choice page, so a default beyond the first sixteen choices can still be suggested. It offers the saved default only when no model is selected; choosing another model captures its observed connection revision for that send. Desktop presents a scrollable list; TUI pages three choices at a time with visible navigation. No host-selected model fallback or unknown-result resend is performed. Catalog refresh preserves the chosen connection/model identity and rechecks its actual revision; it never switches to an unrelated default.
 
