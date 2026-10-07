@@ -23,6 +23,7 @@ use crate::{
     appearance::{color, font},
 };
 use gpui_kit::base::{SelectableText, TextSelectionHandle};
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
     ParentElement, Render, Styled, Window, div, px, relative,
@@ -101,12 +102,15 @@ impl Owner {
 }
 impl Render for Owner {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.visible {
+            return div().hidden();
+        }
         let copy = cx.entity().downgrade();
         let select = copy.clone();
         let a = &self.props.appearance;
         div()
             .w_full()
-            .track_focus(&self.focus)
+            .when(self.enabled(), |this| this.track_focus(&self.focus))
             .key_context("TextView")
             .font(font(&a.font))
             .text_size(px(a.font.size))
@@ -238,6 +242,41 @@ pub(super) fn register(registry: &mut NativeRegistry<dyn Widget>) {
             )]))
         })
         .expect("unique source implementation");
+}
+
+#[cfg(test)]
+pub(crate) type TestSourceUpdate = Box<dyn Fn(&SourceTextProps, &mut Window, &mut App)>;
+
+#[cfg(test)]
+pub(crate) struct TestSource {
+    pub widget: Rc<dyn Widget>,
+    pub state: Box<dyn Any>,
+    pub handle: TextSelectionHandle,
+    pub focus: FocusHandle,
+    pub update: TestSourceUpdate,
+}
+#[cfg(test)]
+pub(crate) fn test_source(
+    props: &SourceTextProps,
+    input: LiveInput,
+    window: &mut Window,
+    cx: &mut App,
+) -> TestSource {
+    let widget: Rc<dyn Widget> = Rc::new(Recipe(props.clone()));
+    let mut state = widget.create(input, window, cx);
+    widget.presentation(state.as_mut(), true, window, cx);
+    let original = state.downcast_ref::<Entity<Owner>>().unwrap().clone();
+    let handle = original.read(cx).handle.clone();
+    let focus = original.read(cx).focus.clone();
+    TestSource {
+        widget,
+        state,
+        handle,
+        focus,
+        update: Box::new(move |props, window, cx| {
+            original.update(cx, |owner, cx| owner.apply(props, window, cx))
+        }),
+    }
 }
 
 #[cfg(test)]

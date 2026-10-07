@@ -575,6 +575,7 @@ impl Element for TextView {
         state.update(cx, |state, cx| state.prepare_interaction(cx));
         let focus_handle = state.read(cx).focus_handle.clone();
         let input = state.read(cx).interaction_admission();
+        let interactive = input.upgrade().is_some();
         let down = input.clone();
         let up = input.clone();
         let key_down = input.clone();
@@ -589,7 +590,7 @@ impl Element for TextView {
         let mut el = div()
             .id(("text-view-scroll", state.entity_id()))
             .key_context("TextView")
-            .track_focus(&focus_handle)
+            .when(interactive, |this| this.track_focus(&focus_handle))
             .capture_any_mouse_down(move |_, window, cx| {
                 if down.upgrade().is_none() {
                     window.prevent_default();

@@ -570,3 +570,5 @@ fn native_commands_settle_only_on_paint_and_observations_do_not_poll(cx: &mut Te
         });
     });
 }
+
+mod dialog;

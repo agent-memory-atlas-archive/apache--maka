@@ -5839,7 +5839,7 @@ impl Window {
         self.with_selection_context(
             SelectionContext {
                 group: Some(group),
-                ..self.selection_context
+                document: None,
             },
             f,
         )
