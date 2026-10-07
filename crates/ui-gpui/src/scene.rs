@@ -18,6 +18,7 @@
  */
 
 pub mod canvas;
+mod dialog;
 mod popup;
 
 use gpui_kit::AppContext;
@@ -56,6 +57,18 @@ pub enum Scroll {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "DesktopScene")]
 pub enum Node {
+    Dialog {
+        key: String,
+        label: String,
+        background: Box<Node>,
+        content: Box<Node>,
+        open: bool,
+        /// Styles the bounded foreground body; background layout remains original.
+        #[serde(default)]
+        style: Style,
+        #[serde(default = "dialog::backdrop")]
+        backdrop: maka_ui::appearance::Color,
+    },
     Popup {
         key: String,
         label: String,
@@ -131,7 +144,8 @@ impl Node {
             | Self::Text { key, .. }
             | Self::Button { key, .. }
             | Self::Canvas { key, .. }
-            | Self::Popup { key, .. } => key,
+            | Self::Popup { key, .. }
+            | Self::Dialog { key, .. } => key,
             Self::Component(slot) => &slot.key,
         }
     }
@@ -175,7 +189,8 @@ impl Node {
             | Self::Text { key, .. }
             | Self::Button { key, .. }
             | Self::Canvas { key, .. }
-            | Self::Popup { key, .. } => key,
+            | Self::Popup { key, .. }
+            | Self::Dialog { key, .. } => key,
             Self::Component(slot) => &slot.key,
         };
         if depth > 32
@@ -193,7 +208,8 @@ impl Node {
             Self::Stack { style, .. }
             | Self::Text { style, .. }
             | Self::Canvas { style, .. }
-            | Self::Popup { style, .. } => style.validate()?,
+            | Self::Popup { style, .. }
+            | Self::Dialog { style, .. } => style.validate()?,
             Self::Button {
                 style,
                 hover,
@@ -212,6 +228,18 @@ impl Node {
             Self::Component(_) => {}
         }
         match self {
+            Self::Dialog {
+                background,
+                content,
+                label,
+                ..
+            } => {
+                if label.is_empty() || label.len() > 4096 {
+                    return Err("invalid dialog presentation".into());
+                }
+                background.validate(depth + 1, keys, deadline)?;
+                content.validate(depth + 1, keys, deadline)?;
+            }
             Self::Popup {
                 trigger,
                 content,
@@ -270,6 +298,15 @@ impl Node {
         }
         *depth = (*depth).max(enclosing);
         match self {
+            Self::Dialog {
+                background,
+                content,
+                open,
+                ..
+            } => {
+                background.render_depth(enclosing, true, depth, slots);
+                content.render_depth(enclosing + 1, *open, depth, slots);
+            }
             Self::Popup {
                 trigger,
                 content,
@@ -311,6 +348,15 @@ impl Node {
                     child.shortcut_inputs(inputs, visible && *local)?;
                 }
             }
+            Self::Dialog {
+                background,
+                content,
+                open,
+                ..
+            } => {
+                background.shortcut_inputs(inputs, visible)?;
+                content.shortcut_inputs(inputs, visible && *open)?;
+            }
             Self::Popup {
                 trigger,
                 content,
@@ -337,6 +383,34 @@ impl Node {
             return Err("scene compilation deadline".into());
         }
         match self {
+            Self::Dialog {
+                key,
+                background,
+                content,
+                open,
+                ..
+            } => {
+                *input_count += 1;
+                if *input_count > 64 {
+                    return Err("scene input limit".into());
+                }
+                if visible && *open {
+                    inputs.insert(
+                        key.clone(),
+                        serde_json::to_value(schemars::schema_for!(maka_ui::dismiss::Input))
+                            .expect("dialog input schema"),
+                    );
+                }
+                background.metadata(slots, inputs, hidden_slots, input_count, visible, deadline)?;
+                content.metadata(
+                    slots,
+                    inputs,
+                    hidden_slots,
+                    input_count,
+                    visible && *open,
+                    deadline,
+                )?;
+            }
             Self::Popup {
                 key,
                 trigger,
@@ -351,7 +425,7 @@ impl Node {
                 if visible && *open {
                     inputs.insert(
                         key.clone(),
-                        serde_json::to_value(schemars::schema_for!(popup::Input))
+                        serde_json::to_value(schemars::schema_for!(maka_ui::dismiss::Input))
                             .expect("popup input schema"),
                     );
                 }
@@ -464,6 +538,11 @@ pub(crate) fn compile_with_inputs(
                 scan(child, depth + 1, count, deadline)?;
             }
         }
+        if source.get("kind").and_then(Value::as_str) == Some("dialog")
+            && let Some(background) = source.get("background")
+        {
+            scan(background, depth + 1, count, deadline)?;
+        }
         for field in ["trigger", "content"] {
             if let Some(child) = source.get(field) {
                 scan(child, depth + 1, count, deadline)?;
@@ -535,13 +614,18 @@ struct SceneState {
     scrolls: BTreeMap<String, gpui_kit::ScrollHandle>,
     canvases: BTreeMap<String, canvas::State>,
     popups: BTreeMap<String, popup::State>,
+    dialogs: BTreeMap<String, dialog::State>,
 }
 impl SceneState {
     fn reconcile(&mut self, root: &Node, window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
-        let root_key = match root {
-            Node::Stack { key, shortcuts, .. } if !shortcuts.is_empty() => Some(key),
-            _ => None,
-        };
+        fn keyboard_root(node: &Node) -> Option<&String> {
+            match node {
+                Node::Stack { key, shortcuts, .. } if !shortcuts.is_empty() => Some(key),
+                Node::Dialog { background, .. } => keyboard_root(background),
+                _ => None,
+            }
+        }
+        let root_key = keyboard_root(root);
         if self.keyboard_focus.as_ref().map(|(key, _)| key) != root_key {
             if let Some((_, focus)) = self.keyboard_focus.take()
                 && focus.is_focused(window)
@@ -561,6 +645,7 @@ impl SceneState {
         let mut scrolls = std::mem::take(&mut self.scrolls);
         let mut canvases = std::mem::take(&mut self.canvases);
         let mut popups = std::mem::take(&mut self.popups);
+        let mut dialogs = std::mem::take(&mut self.dialogs);
         let mut shortcuts = std::mem::take(&mut self.shortcuts);
         // Original mechanical owners and native context remain separate.
         #[allow(clippy::too_many_arguments)]
@@ -571,12 +656,43 @@ impl SceneState {
             scrolls: &mut BTreeMap<String, gpui_kit::ScrollHandle>,
             canvases: &mut BTreeMap<String, canvas::State>,
             popups: &mut BTreeMap<String, popup::State>,
+            dialogs: &mut BTreeMap<String, dialog::State>,
             shortcuts: &mut BTreeMap<String, gpui_kit::Entity<ShortcutState>>,
             window: &mut gpui_kit::Window,
             cx: &mut gpui_kit::App,
             visible: bool,
         ) {
             match node {
+                Node::Dialog {
+                    key,
+                    background,
+                    content,
+                    open,
+                    ..
+                } => {
+                    visit(
+                        background, current, buttons, scrolls, canvases, popups, dialogs,
+                        shortcuts, window, cx, visible,
+                    );
+                    let mut owner = dialogs
+                        .remove(key)
+                        .unwrap_or_else(|| dialog::State::new(cx));
+                    owner.presentation(visible && *open, window, cx);
+                    visit(
+                        content,
+                        current,
+                        buttons,
+                        scrolls,
+                        canvases,
+                        popups,
+                        dialogs,
+                        shortcuts,
+                        window,
+                        cx,
+                        visible && *open,
+                    );
+                    current.dialogs.insert(key.clone(), owner);
+                }
                 Node::Popup {
                     key,
                     trigger,
@@ -585,8 +701,8 @@ impl SceneState {
                     ..
                 } => {
                     visit(
-                        trigger, current, buttons, scrolls, canvases, popups, shortcuts, window,
-                        cx, visible,
+                        trigger, current, buttons, scrolls, canvases, popups, dialogs, shortcuts,
+                        window, cx, visible,
                     );
                     let mut popup = popups
                         .remove(key)
@@ -599,6 +715,7 @@ impl SceneState {
                         scrolls,
                         canvases,
                         popups,
+                        dialogs,
                         shortcuts,
                         window,
                         cx,
@@ -670,6 +787,7 @@ impl SceneState {
                             scrolls,
                             canvases,
                             popups,
+                            dialogs,
                             shortcuts,
                             window,
                             cx,
@@ -688,6 +806,7 @@ impl SceneState {
             &mut scrolls,
             &mut canvases,
             &mut popups,
+            &mut dialogs,
             &mut shortcuts,
             window,
             cx,
@@ -698,6 +817,9 @@ impl SceneState {
         }
         for canvas in canvases.values_mut() {
             canvas.deactivate(window, cx);
+        }
+        for dialog in dialogs.values_mut() {
+            dialog.deactivate(window, cx);
         }
         for popup in popups.values_mut() {
             popup.deactivate(window, cx);
@@ -727,6 +849,7 @@ impl super::Widget for Node {
             scrolls: BTreeMap::new(),
             canvases: BTreeMap::new(),
             popups: BTreeMap::new(),
+            dialogs: BTreeMap::new(),
         };
         state.reconcile(self, window, cx);
         Box::new(state)
@@ -770,6 +893,9 @@ impl super::Widget for Node {
         for owner in state.shortcuts.values() {
             owner.update(cx, |owner, _| owner.admitted = false);
         }
+        for dialog in state.dialogs.values_mut() {
+            dialog.deactivate(window, cx);
+        }
         for popup in state.popups.values_mut() {
             popup.deactivate(window, cx);
         }
@@ -799,6 +925,7 @@ impl super::Widget for Node {
         // Give an otherwise unfocused surface a non-tab command scope. Native
         // child focus remains authoritative and is never replaced by this fallback.
         if window.focused(cx).is_none()
+            && !window.has_pending_focus_restoration()
             && let Some((_, focus)) = &state.keyboard_focus
         {
             window.focus(focus, cx);
@@ -852,6 +979,38 @@ impl Node {
             StatefulInteractiveElement, Styled, base::Button, div, px, rgb,
         };
         Ok(match self {
+            Self::Dialog {
+                key,
+                label,
+                background,
+                content,
+                open,
+                style,
+                backdrop,
+            } => {
+                let dialog = state
+                    .dialogs
+                    .get(key)
+                    .ok_or_else(|| maka_ui::Error::Invalid("scene dialog owner replaced".into()))?;
+                let background = background.element_root(state, slots, reading, window, cx)?;
+                let content = if *open && dialog.admitted() {
+                    Some(content.element(state, slots, window, cx)?)
+                } else {
+                    None
+                };
+                dialog.render(
+                    key,
+                    label,
+                    background,
+                    content,
+                    style,
+                    *backdrop,
+                    &state.input,
+                    slots.input.clone(),
+                    window,
+                    cx,
+                )
+            }
             Self::Popup {
                 key,
                 label,
@@ -941,7 +1100,7 @@ impl Node {
                     .accessibility_label(SharedString::from(label.clone()))
                     .disabled(!enabled)
                     .aria_disabled(!enabled)
-                    .track_focus(&handle)
+                    .when(enabled, |this| this.track_focus(&handle))
                     .tab_index(handle.tab_index)
                     .tab_stop(handle.tab_stop)
                     .capture_any_mouse_down(move |_, _, cx| {
@@ -1189,6 +1348,56 @@ impl Dimension {
     }
 }
 impl Style {
+    fn bounded(&self, available: gpui_kit::Size<gpui_kit::Pixels>) -> Self {
+        let mut style = self.clone();
+        let width = style
+            .max_width
+            .unwrap_or(available.width.into())
+            .min(available.width.into());
+        let height = style
+            .max_height
+            .unwrap_or(available.height.into())
+            .min(available.height.into());
+        style.max_width = Some(width);
+        style.max_height = Some(height);
+        style.min_width = style.min_width.map(|value| value.min(width));
+        style.min_height = style.min_height.map(|value| value.min(height));
+        if let Some(Dimension::Pixels(value)) = &mut style.width {
+            *value = value.min(width);
+        }
+        if let Some(Dimension::Pixels(value)) = &mut style.height {
+            *value = value.min(height);
+        }
+        // Taffy cannot shrink a border box below its padding and border. Keep
+        // those insets within its viewport budget, leaving at least half of
+        // each inner axis for actual content rather than only decorations.
+        let effective = |dimension: Option<Dimension>, available: f32, maximum: f32| match dimension
+        {
+            Some(Dimension::Pixels(value)) => value.min(maximum),
+            Some(Dimension::Fraction(value)) => (available * value).min(maximum),
+            _ => maximum,
+        };
+        let inset_width = effective(style.width, available.width.into(), width);
+        let inset_height = effective(style.height, available.height.into(), height);
+        let border = style
+            .border_width
+            .unwrap_or(0.)
+            .min(inset_width.min(inset_height) / 4.);
+        style.border_width = style.border_width.map(|_| border);
+        if let Some(padding) = &mut style.padding {
+            let horizontal = padding.left + padding.right;
+            let vertical = padding.top + padding.bottom;
+            let horizontal_scale =
+                ((inset_width - 2. * border) / (2. * horizontal).max(1.)).min(1.);
+            let vertical_scale = ((inset_height - 2. * border) / (2. * vertical).max(1.)).min(1.);
+            padding.left *= horizontal_scale;
+            padding.right *= horizontal_scale;
+            padding.top *= vertical_scale;
+            padding.bottom *= vertical_scale;
+        }
+        style
+    }
+
     fn schema() -> &'static jsonschema::Validator {
         static SCHEMA: std::sync::LazyLock<jsonschema::Validator> =
             std::sync::LazyLock::new(|| {

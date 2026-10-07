@@ -6,9 +6,9 @@ use std::{
 
 use gpui::{
     AnyElement, App, ClickEvent, FocusHandle, InteractiveElement as _, IntoElement, KeyBinding,
-    MouseButton, ParentElement, Pixels, RenderOnce, Role, StatefulInteractiveElement as _,
-    StyleRefinement, Styled, Window, anchored, deferred, div, point, prelude::FluentBuilder as _,
-    px,
+    MouseButton, ParentElement, Pixels, RenderOnce, Role, SharedString,
+    StatefulInteractiveElement as _, StyleRefinement, Styled, Window, anchored, deferred, div,
+    point, prelude::FluentBuilder as _, px,
 };
 use smallvec::SmallVec;
 
@@ -129,6 +129,7 @@ pub struct Dialog {
     style: StyleRefinement,
     focus: FocusHandle,
     role: Role,
+    label: Option<SharedString>,
     layer: usize,
     keyboard: bool,
     confirm_on_enter: bool,
@@ -431,6 +432,7 @@ impl Dialog {
             style: StyleRefinement::default(),
             focus: cx.focus_handle(),
             role: Role::Dialog,
+            label: None,
             layer: 0,
             keyboard: true,
             confirm_on_enter: true,
@@ -448,6 +450,11 @@ impl Dialog {
             open: true,
             on_open_change: None,
         }
+    }
+    /// Accessible name of the original modal host.
+    pub fn accessibility_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = Some(label.into());
+        self
     }
     pub fn open(mut self, open: bool) -> Self {
         self.open = open;
@@ -572,6 +579,7 @@ impl RenderOnce for Dialog {
                     .items_center()
                     .justify_center()
                     .role(self.role)
+                    .when_some(self.label, |this, label| this.aria_label(label))
                     .track_focus(&self.focus)
                     .focus_trap(format!("dialog-{}", self.layer), &self.focus)
                     .when(self.keyboard, |this| {

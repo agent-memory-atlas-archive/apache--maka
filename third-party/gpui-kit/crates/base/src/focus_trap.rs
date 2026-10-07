@@ -173,6 +173,22 @@ impl<E: InteractiveElement + ParentElement + Styled + Element + 'static> Element
         None
     }
 
+    fn a11y_role(&self) -> Option<gpui::Role> {
+        self.base.a11y_role()
+    }
+
+    fn write_a11y_info(&self, node: &mut gpui::accesskit::Node) {
+        self.base.write_a11y_info(node);
+    }
+
+    fn a11y_synthetic_children(
+        &mut self,
+        prepaint: &mut Self::PrepaintState,
+        builder: &mut gpui::A11ySubtreeBuilder,
+    ) {
+        self.base.a11y_synthetic_children(prepaint, builder);
+    }
+
     fn request_layout(
         &mut self,
         global_id: Option<&gpui::GlobalElementId>,

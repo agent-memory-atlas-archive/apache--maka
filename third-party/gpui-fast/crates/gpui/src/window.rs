@@ -1475,6 +1475,7 @@ pub struct Window {
     /// Incremented every time focus moves. Used to invalidate a
     /// pending keyboard activation state when focus changes.
     pub(crate) focus_generation: u64,
+    focus_restorations: Vec<(WeakFocusHandle, u64)>,
     pub(crate) click_input: Rc<ClickInputState>,
     // A focus movement is revealed once, using actual prepaint geometry. These
     // are frame facts, not an independent focus or geometry registry.
@@ -2384,6 +2385,7 @@ impl Window {
             input_scope: None,
             dispatching_pointer: false,
             focus_generation: 0,
+            focus_restorations: Vec::new(),
             click_input: Rc::default(),
             revealed_focus_generation: 0,
             focus_reveal_seen: false,
@@ -2595,6 +2597,27 @@ impl Window {
     pub fn focused(&self, cx: &App) -> Option<FocusHandle> {
         self.focus
             .and_then(|id| FocusHandle::for_id(id, &cx.focus_handles))
+    }
+
+    /// Observe the original native focus-change receipt for deferred restoration.
+    /// This does not grant focus or physical input admission.
+    pub fn focus_generation(&self) -> u64 {
+        self.focus_generation
+    }
+
+    /// Offer an original weak target after the next completed native paint.
+    /// Intervening focus changes cancel the offer; missing targets are skipped.
+    /// An inadmissible foreground focus may yield to the published opening.
+    pub fn restore_focus_after_paint(&mut self, previous: WeakFocusHandle, receipt: u64) {
+        self.focus_restorations.push((previous, receipt));
+        self.refresh();
+    }
+
+    /// Whether the next completed paint still owes original focus restoration.
+    pub fn has_pending_focus_restoration(&self) -> bool {
+        self.focus_restorations
+            .iter()
+            .any(|(_, receipt)| *receipt == self.focus_generation)
     }
 
     /// During focus-lost listeners, returns the nearest surviving tab stop on
@@ -3666,38 +3689,6 @@ impl Window {
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
 
-        // Preserve each retained slot and select only the actual focused owner,
-        // even if a different cached field paints after a reveal focus change.
-        let focused_handler = self
-            .next_frame
-            .input_handlers
-            .iter()
-            .rposition(|(id, handler)| {
-                Some(*id) == self.focus
-                    && handler
-                        .as_ref()
-                        .is_some_and(|handler| handler.presentation_is_admitted(self))
-            });
-        self.next_frame.published_input_handler = focused_handler;
-        let (focused_text_input_active, has_focused_input) = if let Some(index) = focused_handler {
-            let mut input_handler = self.next_frame.input_handlers[index].1.take().unwrap();
-            let accepts_text_input = input_handler.presentation_accepts_text_input(self, cx);
-            self.platform_window.set_input_handler(input_handler);
-            (accepts_text_input, true)
-        } else {
-            (false, false)
-        };
-        self.apply_text_input_configuration(cx);
-        if focused_text_input_active != self.focused_text_input_active {
-            self.focused_text_input_active = focused_text_input_active;
-            self.platform_window
-                .text_input_state_changed(if focused_text_input_active {
-                    TextInputStateChange::FocusGained
-                } else {
-                    TextInputStateChange::FocusLost
-                });
-        }
-
         self.layout_engine.as_mut().unwrap().clear();
         crate::fast::layout_key::WindowLayout::end_frame(&mut self.fast_layout);
         self.text_system().finish_frame();
@@ -3759,6 +3750,48 @@ impl Window {
         self.reset_cursor_style(cx);
         self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
+        for (previous, receipt) in std::mem::take(&mut self.focus_restorations) {
+            if self.focus_generation == receipt
+                && self
+                    .focused(cx)
+                    .is_none_or(|focus| !self.focus_move_is_admitted(&focus))
+                && let Some(previous) = previous.upgrade()
+            {
+                self.focus_if_presented(&previous, cx);
+            }
+        }
+        // Preserve each retained slot and select only the actual focused owner,
+        // even if a different cached field paints after a reveal focus change.
+        let focused_handler =
+            self.rendered_frame
+                .input_handlers
+                .iter()
+                .rposition(|(id, handler)| {
+                    Some(*id) == self.focus
+                        && handler
+                            .as_ref()
+                            .is_some_and(|handler| handler.presentation_is_admitted(self))
+                });
+        self.rendered_frame.published_input_handler = focused_handler;
+        let (focused_text_input_active, has_focused_input) = if let Some(index) = focused_handler {
+            let mut input_handler = self.rendered_frame.input_handlers[index].1.take().unwrap();
+            let accepts_text_input = input_handler.presentation_accepts_text_input(self, cx);
+            self.platform_window.set_input_handler(input_handler);
+            (accepts_text_input, true)
+        } else {
+            (false, false)
+        };
+        self.apply_text_input_configuration(cx);
+        if focused_text_input_active != self.focused_text_input_active {
+            self.focused_text_input_active = focused_text_input_active;
+            self.platform_window
+                .text_input_state_changed(if focused_text_input_active {
+                    TextInputStateChange::FocusGained
+                } else {
+                    TextInputStateChange::FocusLost
+                });
+        }
+
         // Focus listeners may move focus (e.g. a dock forwarding focus to its active
         // panel). `Window::focus` suppresses `refresh` while a draw is in progress, so
         // schedule another frame here to render the new focus state and dispatch the
@@ -5857,18 +5890,18 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        if focus_handle.is_focused(self) {
-            let cx = self.to_async(cx);
-            self.next_frame.input_handlers.push((
+        // Every actually painted handler belongs to this original frame. Select
+        // the final focused owner only after focus restoration and publication.
+        let cx = self.to_async(cx);
+        self.next_frame.input_handlers.push((
+            focus_handle.id,
+            Some(PlatformInputHandler::new(
+                cx,
+                Box::new(input_handler),
                 focus_handle.id,
-                Some(PlatformInputHandler::new(
-                    cx,
-                    Box::new(input_handler),
-                    focus_handle.id,
-                    self.next_frame.dispatch_tree.input_origin(),
-                )),
-            ));
-        }
+                self.next_frame.dispatch_tree.input_origin(),
+            )),
+        ));
     }
 
     /// Forwards the focused input handler's [`TextInputConfiguration`] to the

@@ -119,6 +119,13 @@ impl Drop for InputScope {
     }
 }
 impl WeakInputScope {
+    /// Whether this exact opening is the original window's current foreground.
+    pub fn is_active(&self, window: &Window) -> bool {
+        self.admitted(window)
+            && window
+                .physical_input_scope()
+                .is_some_and(|current| self.0.ptr_eq(&current.0))
+    }
     pub(super) fn admitted(&self, window: &Window) -> bool {
         self.0
             .upgrade()
@@ -167,6 +174,22 @@ impl Window {
                 .is_some_and(|parent| tree.focus_contains(parent, focus.id))
         })
     }
+    /// Restore only an original focus target that still has native presentation.
+    /// This includes non-tab targets and never admits an unpainted replacement.
+    pub(super) fn focus_if_presented(&mut self, focus: &FocusHandle, cx: &mut App) {
+        let tree = if self.invalidator.not_drawing() {
+            &self.rendered_frame.dispatch_tree
+        } else {
+            &self.next_frame.dispatch_tree
+        };
+        if tree
+            .focusable_node_id(focus.id)
+            .is_some_and(|node| self.node_scopes_are_admitted(tree, node))
+        {
+            self.focus(focus, cx);
+        }
+    }
+
     /// Native interruption epoch for an original press/drag. Scope changes and window interruption invalidate it.
     pub fn input_interruption(&self) -> u64 {
         self.click_input.interruption.get()
@@ -175,22 +198,21 @@ impl Window {
         &self,
         origin: &std::rc::Weak<crate::DispatchOrigin>,
     ) -> bool {
-        let tree = &self.next_frame.dispatch_tree;
+        let frame = if self.invalidator.not_drawing() {
+            &self.rendered_frame
+        } else {
+            &self.next_frame
+        };
+        let tree = &frame.dispatch_tree;
         let Some(node) = tree.origin_node(origin) else {
             return false;
         };
         self.node_scopes_are_admitted(tree, node)
-            && self
-                .next_frame
-                .input_scopes
-                .iter()
-                .rev()
-                .find(|scope| scope.admitted(self))
-                .is_none_or(|scope| {
-                    scope
-                        .focus(self)
-                        .is_some_and(|focus| tree.focus_contains_node(focus, node))
-                })
+            && self.physical_input_scope().is_none_or(|scope| {
+                scope
+                    .focus(self)
+                    .is_some_and(|focus| tree.focus_contains_node(focus, node))
+            })
     }
     pub(super) fn focus_is_presented(&self, focus: FocusId) -> bool {
         let tree = &self.next_frame.dispatch_tree;

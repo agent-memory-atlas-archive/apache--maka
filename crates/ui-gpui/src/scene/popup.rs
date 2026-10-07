@@ -54,17 +54,7 @@ impl Anchor {
         }
     }
 }
-#[derive(Serialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum Input {
-    Dismiss { reason: Reason },
-}
-#[derive(Clone, Copy, Serialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Reason {
-    Escape,
-    Outside,
-}
+use maka_ui::dismiss::{Input, Reason};
 
 type Gate = Rc<Cell<bool>>;
 // This is mechanical focus/scroll and listener admission derived from the
@@ -210,52 +200,7 @@ impl State {
             return popup.into_any_element();
         };
         let available = Popup::available_size(window);
-        let mut style = style.clone();
-        let width = style
-            .max_width
-            .unwrap_or(available.width.into())
-            .min(available.width.into());
-        let height = style
-            .max_height
-            .unwrap_or(available.height.into())
-            .min(available.height.into());
-        style.max_width = Some(width);
-        style.max_height = Some(height);
-        style.min_width = style.min_width.map(|value| value.min(width));
-        style.min_height = style.min_height.map(|value| value.min(height));
-        if let Some(super::Dimension::Pixels(value)) = &mut style.width {
-            *value = value.min(width);
-        }
-        if let Some(super::Dimension::Pixels(value)) = &mut style.height {
-            *value = value.min(height);
-        }
-        // Taffy cannot shrink a border box below its padding and border. Keep
-        // those insets within its viewport budget, leaving at least half of
-        // each inner axis for actual content rather than only decorations.
-        let effective =
-            |dimension: Option<super::Dimension>, available: f32, maximum: f32| match dimension {
-                Some(super::Dimension::Pixels(value)) => value.min(maximum),
-                Some(super::Dimension::Fraction(value)) => (available * value).min(maximum),
-                _ => maximum,
-            };
-        let inset_width = effective(style.width, available.width.into(), width);
-        let inset_height = effective(style.height, available.height.into(), height);
-        let border = style
-            .border_width
-            .unwrap_or(0.)
-            .min(inset_width.min(inset_height) / 4.);
-        style.border_width = style.border_width.map(|_| border);
-        if let Some(padding) = &mut style.padding {
-            let horizontal = padding.left + padding.right;
-            let vertical = padding.top + padding.bottom;
-            let horizontal_scale =
-                ((inset_width - 2. * border) / (2. * horizontal).max(1.)).min(1.);
-            let vertical_scale = ((inset_height - 2. * border) / (2. * vertical).max(1.)).min(1.);
-            padding.left *= horizontal_scale;
-            padding.right *= horizontal_scale;
-            padding.top *= vertical_scale;
-            padding.bottom *= vertical_scale;
-        }
+        let style = style.bounded(available);
         let escape_admission = self.admission();
         let outside_admission = self.admission();
         let trigger_bounds = self.trigger.clone();

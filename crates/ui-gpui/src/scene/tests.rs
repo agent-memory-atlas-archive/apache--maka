@@ -1525,3 +1525,5 @@ fn marked_native_editor_blocks_commands_and_first_escape_only_ends_composition(
         "following unmarked keys reach the original scope"
     );
 }
+
+mod dialog;

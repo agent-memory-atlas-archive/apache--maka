@@ -451,7 +451,7 @@ impl Render for TextareaOwner {
         let content = InputBase::new(("textarea", self.state.entity_id()))
             .size_full()
             .flex()
-            .track_focus(&focus)
+            .when(!disabled, |this| this.track_focus(&focus))
             .focused(focused)
             .disabled(disabled)
             .capture_any_mouse_down(move |event, window, cx| {

@@ -735,3 +735,5 @@ fn single_line_arrows_bubble_without_changing_the_original_native_text(cx: &mut 
 }
 
 mod modal;
+
+mod dialog;

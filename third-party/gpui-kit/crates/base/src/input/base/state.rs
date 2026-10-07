@@ -4677,7 +4677,7 @@ impl<M: InputModeKind> Render for InputBaseState<M> {
         let element = div()
             .id("input-state")
             .key_context(CONTEXT)
-            .track_focus(&self.focus_handle)
+            .when(!self.disabled, |this| this.track_focus(&self.focus_handle))
             .when(self.is_editable(), |this| {
                 this.on_action(window.listener_for(&entity, InputBaseState::backspace))
                     .on_action(window.listener_for(&entity, InputBaseState::delete))
