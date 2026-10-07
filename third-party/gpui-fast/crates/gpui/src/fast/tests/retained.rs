@@ -498,7 +498,7 @@ fn a_cached_view_is_rendered_again_when_the_pointer_moves_over_what_it_deferred(
 
 /// An input handler that answers every question about its text with its
 /// name, so a test can tell which one the platform was handed.
-struct NamedInput(&'static str);
+struct NamedInput(&'static str, bool);
 
 impl crate::InputHandler for NamedInput {
     fn selected_text_range(
@@ -514,7 +514,7 @@ impl crate::InputHandler for NamedInput {
         _: &mut Window,
         _: &mut crate::App,
     ) -> Option<std::ops::Range<usize>> {
-        None
+        self.1.then_some(0..1)
     }
     fn text_for_range(
         &mut self,
@@ -564,7 +564,7 @@ impl crate::InputHandler for NamedInput {
 pub(super) fn text_input(focus: crate::FocusHandle, name: &'static str) -> impl IntoElement {
     crate::canvas(
         |_, _, _| {},
-        move |_, _, window, cx| window.handle_input(&focus, NamedInput(name), cx),
+        move |_, _, window, cx| window.handle_input(&focus, NamedInput(name, false), cx),
     )
     .size_full()
 }
@@ -1898,5 +1898,127 @@ fn a_view_around_a_notified_nested_view_is_drawn_around_it() {
         cx.update_window(window.into(), |_, window, _| window.forget_retained_state())
             .unwrap();
         assert_eq!(last, draw(&mut cx), "cached: {cached}");
+    }
+}
+
+#[test]
+fn untracked_retained_input_keeps_its_original_marked_handler_during_reveal_paint() {
+    struct MarkedField(crate::FocusHandle, bool, Rc<Cell<usize>>);
+    impl Render for MarkedField {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let focus = self.0.clone();
+            let marked = self.1;
+            let paints = self.2.clone();
+            crate::canvas(
+                |_, _, _| {},
+                move |_, _, window, cx| {
+                    paints.set(paints.get() + 1);
+                    window.handle_input(&focus, NamedInput("original", marked), cx);
+                },
+            )
+            .size_full()
+        }
+    }
+    struct Reveal {
+        original: Entity<MarkedField>,
+        candidate: crate::FocusHandle,
+        offer: bool,
+        original_first: bool,
+    }
+    impl Render for Reveal {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let original = self
+                .original
+                .clone()
+                .cached(StyleRefinement::default().w(px(100.)).h(px(20.)))
+                .into_any_element();
+            let focus = self.candidate.clone();
+            let offer = self.offer;
+            let candidate = div()
+                .w(px(100.))
+                .h(px(20.))
+                .track_focus(&self.candidate)
+                .child(
+                    crate::canvas(
+                        |_, _, _| {},
+                        move |_, _, window, cx| {
+                            if offer {
+                                window.focus_on_reveal(&focus, cx);
+                            }
+                            window.handle_input(&focus, NamedInput("candidate", false), cx);
+                        },
+                    )
+                    .size_full(),
+                )
+                .into_any_element();
+            div().children(if self.original_first {
+                [original, candidate]
+            } else {
+                [candidate, original]
+            })
+        }
+    }
+    for (original_first, marked) in [(true, false), (false, false), (true, true), (false, true)] {
+        let mut cx = TestAppContext::single();
+        let window = cx.add_window(move |_, cx| Reveal {
+            original: cx.new(|cx| MarkedField(cx.focus_handle(), marked, Rc::new(Cell::new(0)))),
+            candidate: cx.focus_handle(),
+            offer: false,
+            original_first,
+        });
+        let original = window
+            .update(&mut cx, |view, _, cx| view.original.read(cx).0.clone())
+            .unwrap();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.focus(&original, cx);
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        window
+            .update(&mut cx, |view, _, cx| {
+                view.offer = true;
+                cx.notify();
+            })
+            .unwrap();
+        let (paints, candidate) = window
+            .update(&mut cx, |view, _, cx| {
+                (view.original.read(cx).2.clone(), view.candidate.clone())
+            })
+            .unwrap();
+        let before_paint = paints.get();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            assert_eq!(
+                paints.get(),
+                before_paint,
+                "original native handler's subtree actually reuses paint"
+            );
+            assert!(if marked {
+                original.is_focused(window)
+            } else {
+                candidate.is_focused(window)
+            });
+            assert_eq!(window.has_marked_text(cx), marked);
+        })
+        .unwrap();
+        let expected = if marked { "original" } else { "candidate" };
+        for _ in 0..3 {
+            let mut handler = cx
+                .update_window(window.into(), |_, window, _| {
+                    window.platform_window.take_input_handler()
+                })
+                .unwrap()
+                .expect("actual published handler");
+            assert_eq!(
+                handler.text_for_range(0..1, &mut None).as_deref(),
+                Some(expected)
+            );
+            cx.update_window(window.into(), |_, window, cx| {
+                window.platform_window.set_input_handler(handler);
+                window.draw(cx).clear(cx);
+                assert_eq!(window.has_marked_text(cx), marked);
+            })
+            .unwrap();
+        }
     }
 }

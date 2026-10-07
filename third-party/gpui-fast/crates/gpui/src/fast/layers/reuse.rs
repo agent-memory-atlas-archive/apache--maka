@@ -186,7 +186,7 @@ pub(crate) fn carry_paint_records(
     next.input_handlers.extend(
         rendered.input_handlers[range.start.input_handlers_index..range.end.input_handlers_index]
             .iter_mut()
-            .map(|handler| handler.take()),
+            .map(|(id, handler)| (*id, handler.take())),
     );
     next.mouse_listeners.extend(
         rendered.mouse_listeners

@@ -443,3 +443,267 @@ fn retained_secret_presentation_preserves_custody_and_settles_hidden_reset(
             .any(|(_, node)| node.role() == Role::PasswordInput && node.value().is_none())
     );
 }
+
+struct RevealHarness {
+    old: Entity<InputOwner>,
+    new: Entity<InputOwner>,
+    cached_first: bool,
+    hidden_new: bool,
+}
+impl Render for RevealHarness {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let old = self
+            .old
+            .clone()
+            .cached(gpui_kit::StyleRefinement::default().w(px(400.)).h(px(48.)))
+            .into_any_element();
+        let mut new = div().child(self.new.clone());
+        if self.hidden_new {
+            new.style().visibility = Some(gpui_kit::Visibility::Hidden);
+        }
+        let new = new.into_any_element();
+        div()
+            .w(px(400.))
+            .h(px(160.))
+            .flex()
+            .flex_col()
+            .children(if self.cached_first {
+                [old, new]
+            } else {
+                [new, old]
+            })
+    }
+}
+fn empty_live() -> LiveInput {
+    LiveInput::new(
+        Rc::new(RefCell::new(Some(Input(Rc::new(|_, _, _, _| {
+            Ok(Default::default())
+        }))))),
+        crate::NativeBudget::default(),
+        std::sync::Arc::new(maka_plugins::call::Resources::default()),
+    )
+}
+#[gpui::test]
+fn reveal_focus_routes_the_first_platform_character_and_preserves_native_composition(
+    cx: &mut TestAppContext,
+) {
+    use crate::Widget;
+    for cached_first in [true, false] {
+        cx.with_paused_automatic_drawing(|cx| {
+            let (root, _) = cx.add_window_view(move |window, cx| {
+                gpui_kit::init(cx);
+                let old = InputOwner::new(&props(), empty_live(), false, window, cx);
+                let mut offered = props();
+                offered.auto_focus = true;
+                let new = InputOwner::new(&offered, empty_live(), false, window, cx);
+                super::InputRecipe {
+                    props: offered,
+                    secret: false,
+                }
+                .presentation(&mut new.clone(), false, window, cx);
+                RevealHarness {
+                    old,
+                    new,
+                    cached_first,
+                    hidden_new: true,
+                }
+            });
+            let window = cx.windows().last().copied().unwrap();
+            let (old, new) = cx.update(|cx| (root.read(cx).old.clone(), root.read(cx).new.clone()));
+            let mut offered = props();
+            offered.auto_focus = true;
+            let recipe = super::InputRecipe {
+                props: offered.clone(),
+                secret: false,
+            };
+            cx.update_window(window, |_, window, cx| {
+                old.read(cx)
+                    .state
+                    .clone()
+                    .update(cx, |state, cx| state.focus(window, cx));
+                window.draw(cx).clear(cx);
+            })
+            .unwrap();
+            cx.simulate_input(window, "Old buffer");
+            cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+            let before = cx.update(|cx| old.read(cx).observation_snapshot());
+            cx.update_window(window, |_, window, cx| {
+                recipe.presentation(&mut new.clone(), true, window, cx);
+                root.update(cx, |_, cx| cx.notify());
+                window.draw(cx).clear(cx);
+                assert!(
+                    old.read(cx)
+                        .state
+                        .read(cx)
+                        .presentation()
+                        .focus_handle()
+                        .is_focused(window),
+                    "visually hidden ancestor cannot offer focus without actual paint"
+                );
+                assert!(
+                    new.read(cx).focus.pending(),
+                    "skipped native paint cannot consume the pending offer"
+                );
+                root.update(cx, |root, cx| {
+                    root.hidden_new = false;
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+                assert!(
+                    new.read(cx)
+                        .state
+                        .read(cx)
+                        .presentation()
+                        .focus_handle()
+                        .is_focused(window)
+                );
+            })
+            .unwrap();
+            // No click, Tab, defer callback or second frame before this native ingress.
+            cx.simulate_input(window, "First密钥🙂");
+            cx.update(|cx| {
+                assert_eq!(new.read(cx).state.read(cx).value().as_ref(), "First密钥🙂");
+                assert_eq!(old.read(cx).observation_snapshot(), before);
+            });
+            cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+            cx.update_window(window, |_, window, cx| {
+                old.read(cx)
+                    .state
+                    .clone()
+                    .update(cx, |state, cx| state.focus(window, cx));
+                new.update(cx, |owner, cx| owner.apply(&offered, window, cx));
+                root.update(cx, |_, cx| cx.notify());
+                window.draw(cx).clear(cx);
+                assert!(
+                    old.read(cx)
+                        .state
+                        .read(cx)
+                        .presentation()
+                        .focus_handle()
+                        .is_focused(window),
+                    "stable props must not steal manual focus"
+                );
+                recipe.presentation(&mut new.clone(), false, window, cx);
+                old.update(cx, |owner, cx| {
+                    owner.replace_and_mark_text_in_range(
+                        None,
+                        "composition",
+                        Some(0..1),
+                        window,
+                        cx,
+                    )
+                });
+                window.draw(cx).clear(cx);
+                recipe.presentation(&mut new.clone(), true, window, cx);
+                window.draw(cx).clear(cx);
+                assert!(
+                    old.read(cx)
+                        .state
+                        .read(cx)
+                        .presentation()
+                        .focus_handle()
+                        .is_focused(window),
+                    "original composition must keep focus during draw stash and retained replay"
+                );
+                old.update(cx, |owner, cx| owner.unmark_text(window, cx));
+                root.update(cx, |_, cx| cx.notify());
+                window.draw(cx).clear(cx);
+                assert!(
+                    old.read(cx)
+                        .state
+                        .read(cx)
+                        .presentation()
+                        .focus_handle()
+                        .is_focused(window),
+                    "blocked offer is consumed, never steals later"
+                );
+                recipe.presentation(&mut new.clone(), false, window, cx);
+                recipe.presentation(&mut new.clone(), true, window, cx);
+                window.draw(cx).clear(cx);
+                assert!(
+                    new.read(cx)
+                        .state
+                        .read(cx)
+                        .presentation()
+                        .focus_handle()
+                        .is_focused(window)
+                );
+            })
+            .unwrap();
+            cx.simulate_input(window, "!");
+            cx.update(|cx| {
+                assert_eq!(new.read(cx).state.read(cx).value().as_ref(), "First密钥🙂!")
+            });
+            // AX validates the native focused field separately. Exact retained
+            // handler handoff is guarded by Fast's counted custom-canvas test.
+            cx.activate_accessibility(window);
+            cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+            let ax = cx.accessibility_update(window).unwrap();
+            let (new_node, _) = ax
+                .nodes
+                .iter()
+                .find(|(_, node)| {
+                    node.role() == Role::TextInput && node.value() == Some("First密钥🙂!")
+                })
+                .expect("new native AX input");
+            assert_eq!(ax.focus, *new_node);
+        });
+    }
+}
+
+#[gpui::test]
+fn simultaneous_reveal_offers_choose_one_painted_input_without_later_cycling(
+    cx: &mut TestAppContext,
+) {
+    for cached_first in [true, false] {
+        cx.with_paused_automatic_drawing(|cx| {
+            let (root, _) = cx.add_window_view(move |window, cx| {
+                gpui_kit::init(cx);
+                let mut offered = props();
+                offered.auto_focus = true;
+                let old = InputOwner::new(&offered, empty_live(), false, window, cx);
+                RevealHarness {
+                    old,
+                    new: InputOwner::new(&offered, empty_live(), false, window, cx),
+                    cached_first,
+                    hidden_new: false,
+                }
+            });
+            let window = cx.windows().last().copied().unwrap();
+            let (winner, loser) = cx.update(|cx| {
+                let root = root.read(cx);
+                if cached_first {
+                    (root.old.clone(), root.new.clone())
+                } else {
+                    (root.new.clone(), root.old.clone())
+                }
+            });
+            cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+            cx.simulate_input(window, "first");
+            for _ in 0..3 {
+                cx.update_window(window, |_, window, cx| {
+                    root.update(cx, |_, cx| cx.notify());
+                    window.draw(cx).clear(cx);
+                    assert!(
+                        winner
+                            .read(cx)
+                            .state
+                            .read(cx)
+                            .presentation()
+                            .focus_handle()
+                            .is_focused(window)
+                    );
+                })
+                .unwrap();
+            }
+            cx.update(|cx| {
+                assert_eq!(winner.read(cx).state.read(cx).value().as_ref(), "first");
+                assert!(loser.read(cx).state.read(cx).value().is_empty());
+            });
+        });
+    }
+}

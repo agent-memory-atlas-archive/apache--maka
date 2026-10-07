@@ -53,3 +53,5 @@ and are generated for the plugin SDK. Product feature and platform UX acceptance
 are distinct from presenter tests.
 
 Scene Stack containers can declare bounded `shortcuts` with a key, modifiers, input and enabled flag. Native editing handles keys first; the nearest matching painted scope owns an unconsumed chord, including disabled declarations. Inputs use the original mount/revision and current committed visibility. An unfocused root uses its last successfully presented declaration. `primary` means Control in the terminal; unmodified printable keys stay native.
+
+Native editors can declare `autoFocus` to offer focus once when their committed structural route becomes visible and enabled. The successful flush consumes only offers whose original painted frame revisions and owner remain current, including unchanged children under changed ancestors. An unflushed or late old scene cannot consume a newer reveal; viewport clipping and stable repaint do not create another offer.

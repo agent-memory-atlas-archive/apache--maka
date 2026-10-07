@@ -71,6 +71,20 @@ impl Widget for Recipe {
             Ok(None)
         }
     }
+    fn present_focus(&self, state: &mut dyn Any) -> bool {
+        state
+            .downcast_mut::<Owner>()
+            .expect("terminal editor owner")
+            .focus
+            .presented()
+    }
+    fn prepare_focus(&self, state: &mut dyn Any, visible: bool) {
+        state
+            .downcast_mut::<Owner>()
+            .expect("terminal editor owner")
+            .focus
+            .reconcile(visible && !self.props.disabled && self.props.auto_focus);
+    }
     fn input(&self, state: &mut dyn Any, _: &str, event: &Event) -> maka_ui::Result<WidgetInput> {
         let owner = state
             .downcast_mut::<Owner>()
@@ -196,9 +210,10 @@ impl Widget for Recipe {
                 Style::default().fg(color(appearance.muted_foreground)),
             );
         }
+        let autofocus = owner.focus.pending();
         slots.native_geometry(Box::new(geometry))?;
         if !self.props.disabled {
-            slots.native_target("observe", area, self.props.tab_index)?;
+            slots.native_target("observe", area, self.props.tab_index, autofocus)?;
         }
         Ok(())
     }

@@ -43,6 +43,7 @@ pub struct TextareaOwner {
     pending: bool,
     needs_publication: bool,
     visible: bool,
+    focus: maka_ui::focus::FocusOnReveal,
     _observation: Subscription,
     projection: super::appearance::TextareaProjection,
     label: String,
@@ -118,6 +119,11 @@ impl TextareaOwner {
                 pending: false,
                 needs_publication: true,
                 visible: true,
+                focus: {
+                    let mut focus = maka_ui::focus::FocusOnReveal::default();
+                    focus.reconcile(props.auto_focus && !props.disabled);
+                    focus
+                },
                 _observation: observation,
                 projection,
                 label: props.accessibility_label.clone(),
@@ -317,6 +323,8 @@ impl TextareaOwner {
         });
     }
     fn apply(&mut self, props: &TextareaProps, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus
+            .reconcile(props.auto_focus && self.visible && !props.disabled);
         // Notify observers may still be queued after keyboard/selection input.
         // This synchronous barrier is authoritative for command admission.
         self.refresh(false, window, cx);
@@ -540,7 +548,7 @@ impl IntoElement for Proxy {
 }
 impl Element for Proxy {
     type RequestLayoutState = ();
-    type PrepaintState = ();
+    type PrepaintState = bool;
     fn id(&self) -> Option<ElementId> {
         None
     }
@@ -560,12 +568,18 @@ impl Element for Proxy {
         &mut self,
         _: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
-        _: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         _: &mut (),
         window: &mut Window,
         cx: &mut App,
-    ) {
+    ) -> bool {
         self.content.prepaint(window, cx);
+        let owner = self.owner.read(cx);
+        owner.focus.pending()
+            && owner.visible
+            && owner.input.0.borrow().is_some()
+            && !owner.state.read(cx).presentation().is_disabled()
+            && !bounds.intersect(&window.content_mask().bounds).is_empty()
     }
     fn paint(
         &mut self,
@@ -573,12 +587,27 @@ impl Element for Proxy {
         _: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _: &mut (),
-        _: &mut (),
+        offered: &mut bool,
         window: &mut Window,
         cx: &mut App,
     ) {
-        self.content.paint(window, cx);
         let focus = self.owner.read(cx).state.read(cx).focus_handle(cx);
+        let admitted = *offered && {
+            let owner = self.owner.read(cx);
+            owner.focus.pending()
+                && owner.visible
+                && owner.input.0.borrow().is_some()
+                && !owner.state.read(cx).presentation().is_disabled()
+        };
+        if admitted {
+            window.focus_on_reveal(&focus, cx);
+        }
+        self.content.paint(window, cx);
+        if admitted {
+            self.owner.update(cx, |owner, _| {
+                owner.focus.presented();
+            });
+        }
         window.handle_input(
             &focus,
             ElementInputHandler::new(bounds, self.owner.clone()),
@@ -792,6 +821,9 @@ impl Widget for TextareaRecipe {
             .expect("editor owner")
             .update(cx, |owner, cx| {
                 owner.visible = visible;
+                owner
+                    .focus
+                    .reconcile(self.props.auto_focus && visible && !self.props.disabled);
                 cx.notify();
                 owner.state.update(cx, |state, cx| {
                     let disabled = self.props.disabled || !visible;
@@ -822,6 +854,7 @@ impl Widget for TextareaRecipe {
             // The original LiveInput has already been revoked. Closing the
             // menu clears its own focus without restoring the retired editor.
             owner.close_menu(true, window, cx);
+            owner.focus.reconcile(false);
             owner._keyboard.take();
             owner
                 .state

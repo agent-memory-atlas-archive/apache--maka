@@ -132,6 +132,7 @@ pub(super) struct Target {
     pub revision: u64,
     pub area: Placement,
     pub tab_index: i16,
+    pub autofocus: bool,
     pub kind: TargetKind,
     pub ancestors: Vec<std::rc::Rc<Ancestor>>,
 }
@@ -154,7 +155,7 @@ pub struct PaintedScene {
     pub(super) targets: Vec<Target>,
     pub(super) keyboard: Option<std::rc::Rc<Ancestor>>,
     placed: std::collections::BTreeSet<uuid::Uuid>,
-    laid_out: std::collections::BTreeSet<uuid::Uuid>,
+    laid_out: std::collections::BTreeMap<uuid::Uuid, (Mount, u64)>,
     pub(super) scope: Option<super::selection::ScopePaint>,
     geometries: Vec<NativeGeometry>,
     ancestry: Vec<std::rc::Rc<Ancestor>>,
@@ -268,6 +269,7 @@ impl Slots<'_> {
         key: &str,
         area: Placement,
         tab_index: i16,
+        autofocus: bool,
     ) -> maka_ui::Result<()> {
         let owner = self
             .presenter
@@ -294,6 +296,7 @@ impl Slots<'_> {
             revision: self.presenter.application.frame(self.parent)?.revision,
             area,
             tab_index,
+            autofocus,
             kind: TargetKind::Native,
             ancestors: self.scene.as_ref().unwrap().ancestry.clone(),
         };
@@ -427,15 +430,32 @@ impl Presenter {
             self.resources
                 .present(&pending.mount, &pending.owner, pending.geometry);
         }
+        let frames_current = scene.laid_out.values().all(|(mount, revision)| {
+            self.application
+                .frame(mount)
+                .is_ok_and(|frame| frame.revision == *revision)
+        });
+        let mut autofocus = None;
+        for target in &scene.targets {
+            if frames_current
+                && target.autofocus
+                && self.application.mount_visible(&target.mount)
+                && self.resources.present_focus(target)
+            {
+                autofocus.get_or_insert_with(|| target.clone());
+            }
+        }
         self.drag = self
             .drag
             .take()
             .filter(|target| self.resources.pointer_capture(target).unwrap_or(false))
             .and_then(|old| scene.targets.iter().find(|new| new.same(&old)).cloned());
-        self.focus = self
-            .focus
-            .take()
-            .and_then(|old| scene.targets.iter().find(|new| new.same(&old)).cloned())
+        self.focus = autofocus
+            .or_else(|| {
+                self.focus
+                    .take()
+                    .and_then(|old| scene.targets.iter().find(|new| new.same(&old)).cloned())
+            })
             .or_else(|| {
                 scene
                     .targets
@@ -584,7 +604,12 @@ impl Presenter {
         {
             return Ok(());
         }
-        if !scene.laid_out.insert(mount.id()) {
+        let native_frame = self.application.frame(mount)?;
+        if scene
+            .laid_out
+            .insert(mount.id(), (mount.clone(), native_frame.revision))
+            .is_some()
+        {
             return Err(maka_ui::Error::Invalid(
                 "component placed twice in terminal scene".into(),
             ));
@@ -657,6 +682,7 @@ impl Presenter {
                     revision: self.application.frame(mount)?.revision,
                     area: button_area,
                     tab_index: 0,
+                    autofocus: false,
                     identity: TargetIdentity {
                         mount: mount.clone(),
                         key: key.clone(),
@@ -741,6 +767,7 @@ impl Presenter {
                             revision: self.application.frame(mount)?.revision,
                             area: inner,
                             tab_index: -1,
+                            autofocus: false,
                             kind: TargetKind::Scroll,
                             ancestors: scene.ancestry.clone(),
                         });

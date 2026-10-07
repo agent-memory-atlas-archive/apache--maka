@@ -1225,6 +1225,12 @@ export const contracts = {
             minimum: -1,
             maximum: 32767,
           },
+          autoFocus: {
+            description:
+              'Offer native focus once when this original input becomes visible and\nenabled. Stable updates and viewport scrolling do not repeat the offer.',
+            type: 'boolean',
+            default: false,
+          },
           initialText: {
             type: 'string',
             maxLength: 65536,
@@ -2117,6 +2123,12 @@ export const contracts = {
             minimum: -1,
             maximum: 32767,
           },
+          autoFocus: {
+            description:
+              'Offer native focus once when this original input becomes visible and\nenabled. Stable updates and viewport scrolling do not repeat the offer.',
+            type: 'boolean',
+            default: false,
+          },
           placeholder: {
             type: 'string',
             maxLength: 512,
@@ -2599,6 +2611,12 @@ export const contracts = {
             format: 'int16',
             minimum: -1,
             maximum: 32767,
+          },
+          autoFocus: {
+            description:
+              'Offer native focus once when this original input becomes visible and\nenabled. Stable updates and viewport scrolling do not repeat the offer.',
+            type: 'boolean',
+            default: false,
           },
           placeholder: {
             type: 'string',

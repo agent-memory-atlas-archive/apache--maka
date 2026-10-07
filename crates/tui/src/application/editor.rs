@@ -25,6 +25,7 @@ use std::{ops::Range, sync::Arc};
 pub(super) struct Owner {
     pub editor: Editor,
     pub presented: Option<Geometry>,
+    pub focus: maka_ui::focus::FocusOnReveal,
     id: String,
     revision: u64,
     last_edit: u64,
@@ -47,6 +48,7 @@ impl Owner {
         Self {
             editor,
             presented: None,
+            focus: Default::default(),
             id: uuid::Uuid::new_v4().to_string(),
             revision: 0,
             last_edit,

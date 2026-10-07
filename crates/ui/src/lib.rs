@@ -26,6 +26,7 @@ pub mod budget;
 mod deployment;
 pub mod editor;
 pub mod file;
+pub mod focus;
 mod frame;
 pub use deployment::{CommittedUpdate, DeploymentStatus, PreparedUpdate};
 pub mod image;

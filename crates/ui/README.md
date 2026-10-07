@@ -419,3 +419,5 @@ uses no-follow opens and charges actual 64 KiB chunks to the presenter's shared
 `budget::NativeBudget`. Byte permits follow snapshots; job permits and original
 resource tickets follow actual dialog/read settlement. Lost dialog observation
 keeps original budget custody and a failed cleanup fence.
+
+TextInput, SecretInput and Textarea accept optional `autoFocus` (default false). A structurally visible, enabled input offers its original native focus once on reveal. Stable updates and viewport clipping do not repeat the offer. Hidden or disabled inputs cancel it; showing or enabling them can offer again. Actual native presentation admits the first eligible offer and consumes the other painted offers. Desktop keeps active native composition in its original editor. These props do not replace native text, selection or undo ownership.

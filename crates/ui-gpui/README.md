@@ -183,3 +183,5 @@ an entity/window. Worker panic or lost dialog observation prevents clean mount
 acknowledgement; an ordinary completed read error does not imply failed cleanup.
 
 Scene Stack `shortcuts` share the typed command descriptor with TUI. Native actions and composition take priority, then an unconsumed key bubbles to the nearest declaration. Disabled or withdrawn scopes block outer commands without invoking. The original input epoch and native Entity custody gate retained callbacks. A root command scope can adopt a non-tab fallback focus only when no child is focused. `primary` is Command on macOS and Control elsewhere; no global application keymap is installed.
+
+Native editor `autoFocus` is an offer on structural reveal, not a persistent focus demand. The actual input paint offers the original FocusHandle before registering its native handler. Hidden or skipped paint cannot take or consume focus; active composition blocks the offer for that presentation. A completed frame publishes only a handler belonging to the actual native focus, including retained subtrees in either paint order. Stable props and manual scrolling do not re-arm the offer.

@@ -135,6 +135,18 @@ impl Resources {
                 .owners
                 .get_mut(&mount.id())
                 .expect("prepared terminal native owner");
+            if catch_unwind(AssertUnwindSafe(|| {
+                owner
+                    .recipe
+                    .prepare_focus(owner.state.as_mut(), app.mount_visible(&mount))
+            }))
+            .is_err()
+            {
+                owner.live = false;
+                let error = "terminal native focus preparation cleanup unconfirmed".to_owned();
+                self.failed.insert(mount.id(), error.clone());
+                return Err(Error::Invalid(error));
+            }
             if owner.revision != Some(frame.revision) {
                 let observed = match catch_unwind(AssertUnwindSafe(|| {
                     owner.recipe.commit(owner.state.as_mut())
@@ -294,6 +306,26 @@ impl Resources {
     pub fn copy(&mut self, target: &paint::TargetIdentity) -> maka_ui::Result<Option<String>> {
         self.read_native(target, |recipe, state| recipe.copy(state))?
             .unwrap_or(Ok(None))
+    }
+    pub fn present_focus(&mut self, target: &paint::TargetIdentity) -> bool {
+        let Some(owner) = self.owners.get_mut(&target.mount.id()).filter(|owner| {
+            owner.live && owner.presented && Rc::ptr_eq(&owner.identity, &target.owner)
+        }) else {
+            return false;
+        };
+        match catch_unwind(AssertUnwindSafe(|| {
+            owner.recipe.present_focus(owner.state.as_mut())
+        })) {
+            Ok(offered) => offered,
+            Err(_) => {
+                owner.live = false;
+                self.failed.insert(
+                    target.mount.id(),
+                    "terminal native focus presentation cleanup unconfirmed".into(),
+                );
+                false
+            }
+        }
     }
     pub fn present(&mut self, mount: &Mount, identity: &Rc<()>, geometry: Box<dyn Any>) {
         let Some(owner) = self

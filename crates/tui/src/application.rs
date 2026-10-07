@@ -72,6 +72,14 @@ pub trait Widget: std::any::Any {
     fn commit(&self, _: &mut dyn std::any::Any) -> maka_ui::Result<Option<NativeInput>> {
         Ok(None)
     }
+    /// Reconcile focus eligibility from the committed structural route. This
+    /// cannot publish geometry, take focus, or consume a presentation offer.
+    fn prepare_focus(&self, _: &mut dyn std::any::Any, _: bool) {}
+    /// Consume this exact eligible target after a successful flush and current
+    /// original frame/owner admission. Geometry alone cannot consume an offer.
+    fn present_focus(&self, _: &mut dyn std::any::Any) -> bool {
+        false
+    }
     /// Poll original native observations independently of recipe revisions.
     fn observe(&self, _: &mut dyn std::any::Any) -> Option<NativeInput> {
         None

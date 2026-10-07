@@ -52,3 +52,5 @@ Bottom 与 item 合为一个带 tag 的 pending target，按当前 overflow、bo
 独立原生测试工作区选择与应用相同的五个适配 crate 和 async-io owner，使用行表调试信息及运行时 Metal shader。上游一处属性测试改为直接调用 proptest，原因是 GPUI 宏转发了不受支持的 proptest_path 参数；配置与 dispatcher 种子、四个 case、随机收缩、原上下文清理和渲染等价断言全部保留。这是测试入口适配，不替换运行时。
 
 Window 的 marked-text 查询直接使用当前 Window/App 转发给原 focused PlatformInputHandler，读取后归还同一 handler，避免键盘派发期间再次异步借用 App/Window；不维护 composition 镜像。
+
+Window 支持每个实际绘制帧一次原生显露聚焦机会。输入框在实际 paint、注册同一原生编辑器处理器之前提供原 FocusHandle；隐藏或丢弃 prepaint 不能取焦点。原 Window 与完成帧焦点保持一致。Retained 处理器记录保留原 FocusId，Frame 记住实际交给平台的精确槽位，覆盖没有 tracked geometry 的 focused canvas。Draw 归还原槽位；marked-text 查询读取并归还同一处理器，无论仍在 stash 或已随 retained paint 移动。不增加第二焦点 authority、输入 owner 或 composition 镜像。

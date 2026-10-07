@@ -10,19 +10,19 @@ use crate::{
     Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
-    Hsla, InputHandler, InputPreference, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, KeyUpEvent,
-    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
-    MonochromeSprite, MouseButton, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
-    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
-    TaffyLayoutEngine, Task, TextInputConfiguration, TextInputStateChange, TextRenderingMode,
-    TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point, prelude::*, px, rems,
-    size, transparent_black,
+    Hsla, InputHandler, InputPreference, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
+    KeyUpEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers,
+    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseDownEvent, MouseEvent,
+    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
+    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
+    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
+    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
+    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -1112,6 +1112,8 @@ pub(crate) struct DeferredDraw {
 
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
+    autofocus_offered: bool,
+    published_input_handler: Option<usize>,
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
     pub(crate) accessed_element_states: Vec<(GlobalElementId, TypeId)>,
@@ -1125,7 +1127,7 @@ pub(crate) struct Frame {
     pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
     deferred_paints: Vec<DeferredPaint>,
-    pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
+    pub(crate) input_handlers: Vec<(FocusId, Option<PlatformInputHandler>)>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
@@ -1176,6 +1178,8 @@ impl Frame {
     pub(crate) fn new(dispatch_tree: DispatchTree) -> Self {
         Frame {
             focus: None,
+            autofocus_offered: false,
+            published_input_handler: None,
             window_active: false,
             element_states: FxHashMap::default(),
             accessed_element_states: Vec::new(),
@@ -1227,6 +1231,8 @@ impl Frame {
         self.tab_stops.clear();
         crate::fast::retained::RetainedSubtrees::clear(&mut self.retained);
         self.focus = None;
+        self.autofocus_offered = false;
+        self.published_input_handler = None;
 
         #[cfg(any(test, feature = "test-support"))]
         {
@@ -3600,22 +3606,14 @@ impl Window {
         self.focus_reveal_scrolled = false;
         let reveal_focus = (self.focus, self.focus_generation);
 
-        // Restore the previously-used input handler.
-        // Place it back into a None slot (left by a previous .take()) so that
-        // cached paint_range indices in reuse_paint find the handler at the
-        // expected position.
+        // Restore the platform's exact original slot for retained paint reuse.
+        // A focused canvas handler need not have a tracked geometry node.
         if let Some(input_handler) = self.platform_window.take_input_handler() {
-            if let Some(slot) = self
+            let index = self
                 .rendered_frame
-                .input_handlers
-                .iter_mut()
-                .rev()
-                .find(|h| h.is_none())
-            {
-                *slot = Some(input_handler);
-            } else {
-                self.rendered_frame.input_handlers.push(Some(input_handler));
-            }
+                .published_input_handler
+                .expect("published native input handler slot");
+            self.rendered_frame.input_handlers[index].1 = Some(input_handler);
         }
         if !cx.mode.skip_drawing() {
             self.draw_roots(cx);
@@ -3633,18 +3631,16 @@ impl Window {
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
 
-        // Register requested input handler with the platform window.
-        // Use .take() instead of .pop() to preserve Vec length, so that cached
-        // paint_range indices remain valid for reuse_paint on the next frame.
-        // Search backwards to find the last Some entry, since reuse_paint may
-        // have copied None slots from the previous frame. (Fixes #50456)
-        let (focused_text_input_active, has_focused_input) = if let Some(mut input_handler) = self
+        // Preserve each retained slot and select only the actual focused owner,
+        // even if a different cached field paints after a reveal focus change.
+        let focused_handler = self
             .next_frame
             .input_handlers
-            .iter_mut()
-            .rev()
-            .find_map(|h| h.take())
-        {
+            .iter()
+            .rposition(|(id, handler)| Some(*id) == self.focus && handler.is_some());
+        self.next_frame.published_input_handler = focused_handler;
+        let (focused_text_input_active, has_focused_input) = if let Some(index) = focused_handler {
+            let mut input_handler = self.next_frame.input_handlers[index].1.take().unwrap();
             let accepts_text_input = input_handler.accepts_text_input(self, cx);
             self.platform_window.set_input_handler(input_handler);
             (accepts_text_input, true)
@@ -4348,7 +4344,7 @@ impl Window {
             self.rendered_frame.input_handlers
                 [range.start.input_handlers_index..range.end.input_handlers_index]
                 .iter_mut()
-                .map(|handler| handler.take()),
+                .map(|(id, handler)| (*id, handler.take())),
         );
         self.next_frame.mouse_listeners.extend(
             self.rendered_frame.mouse_listeners
@@ -5671,6 +5667,27 @@ impl Window {
         self.next_frame.dispatch_tree.set_focus_id(focus_handle.id);
     }
 
+    /// Offer the original input's focus during its actual paint, before its
+    /// native handler is registered. The first painted offer wins. Hidden or
+    /// discarded prepaint cannot take focus, and active composition keeps it.
+    pub fn focus_on_reveal(&mut self, focus_handle: &FocusHandle, cx: &mut App) {
+        self.invalidator.debug_assert_paint();
+        if self.next_frame.autofocus_offered {
+            return;
+        }
+        self.next_frame.autofocus_offered = true;
+        if self
+            .next_frame
+            .dispatch_tree
+            .focusable_node_id(focus_handle.id)
+            .is_some()
+            && !self.has_marked_text(cx)
+        {
+            self.focus(focus_handle, cx);
+            self.next_frame.focus = self.focus;
+        }
+    }
+
     /// Sets the view id for the current element, which will be used to manage view caching.
     ///
     /// This method should only be called as part of element prepaint. We plan on removing this
@@ -5754,9 +5771,10 @@ impl Window {
 
         if focus_handle.is_focused(self) {
             let cx = self.to_async(cx);
-            self.next_frame
-                .input_handlers
-                .push(Some(PlatformInputHandler::new(cx, Box::new(input_handler))));
+            self.next_frame.input_handlers.push((
+                focus_handle.id,
+                Some(PlatformInputHandler::new(cx, Box::new(input_handler))),
+            ));
         }
     }
 
@@ -7042,9 +7060,38 @@ impl Window {
 
     /// Whether the focused original input handler currently owns marked text.
     pub fn has_marked_text(&mut self, cx: &mut App) -> bool {
-        let Some(mut handler) = self.platform_window.take_input_handler() else { return false; };
+        let Some(index) = self.rendered_frame.published_input_handler else {
+            return false;
+        };
+        let id = self.rendered_frame.input_handlers[index].0;
+        if self.focus != Some(id) {
+            return false;
+        }
+        if let Some(mut handler) = self.platform_window.take_input_handler() {
+            let marked = handler.has_marked_text(self, cx);
+            self.platform_window.set_input_handler(handler);
+            return marked;
+        }
+        // During draw the platform's original handler is stashed in its exact
+        // completed-frame slot. Retained paint may already have moved it to the
+        // upcoming frame. Query the same native owner and restore that slot;
+        // no asynchronous Window reborrow or composition mirror is needed.
+        if let Some(mut handler) = self.rendered_frame.input_handlers[index].1.take() {
+            let marked = handler.has_marked_text(self, cx);
+            self.rendered_frame.input_handlers[index].1 = Some(handler);
+            return marked;
+        }
+        let Some(index) = self
+            .next_frame
+            .input_handlers
+            .iter()
+            .rposition(|(focus, handler)| *focus == id && handler.is_some())
+        else {
+            return false;
+        };
+        let mut handler = self.next_frame.input_handlers[index].1.take().unwrap();
         let marked = handler.has_marked_text(self, cx);
-        self.platform_window.set_input_handler(handler);
+        self.next_frame.input_handlers[index].1 = Some(handler);
         marked
     }
 

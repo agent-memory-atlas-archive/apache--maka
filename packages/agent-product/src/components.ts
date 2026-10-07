@@ -97,6 +97,7 @@ export function components(target: Target): {
             : 'control_enter'
           : null,
       tabIndex: 1,
+      autoFocus: true,
       initialText: '',
       placeholder: text.placeholder,
       command: props.command,

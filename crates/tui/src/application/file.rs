@@ -246,8 +246,8 @@ impl Widget for Recipe {
         let enabled = !self.0.props.disabled && !owner.selection.busy();
         slots.native_geometry(Box::new(geometry))?;
         if enabled {
-            slots.native_target("path", path, self.0.props.tab_index)?;
-            slots.native_target("choose", row(2), self.0.props.tab_index)?;
+            slots.native_target("path", path, self.0.props.tab_index, false)?;
+            slots.native_target("choose", row(2), self.0.props.tab_index, false)?;
         }
         Ok(())
     }

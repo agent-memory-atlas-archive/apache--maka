@@ -514,3 +514,145 @@ fn disabled_editor_leaves_outer_commands_available_before_another_flush() {
     );
     close(&mut tui);
 }
+
+#[test]
+fn reveal_focus_uses_committed_visibility_and_only_successful_native_presentation() {
+    for secret in [false, true] {
+        let (_runtime, mut tui) = input_presenter(secret);
+        draw(&mut tui, 80, 24);
+        let outer = tui
+            .application
+            .child_mount(&tui.root, "editor")
+            .unwrap()
+            .clone();
+        let mount = tui
+            .application
+            .child_mount(&outer, "draft")
+            .unwrap()
+            .clone();
+        let identity = tui.resources.owners[&mount.id()].identity.clone();
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buffer = Buffer::empty(area);
+        let older = tui.paint(area, &mut buffer).unwrap();
+        dispatch(&mut tui, "configure", json!({"autoFocus":true}));
+        tui.sync_native().unwrap();
+        tui.present(older);
+        let discarded = tui.paint(area, &mut buffer).unwrap();
+        assert!(
+            discarded
+                .targets
+                .iter()
+                .any(|target| target.mount == mount && target.autofocus)
+        );
+        // Painting a frame that was never flushed cannot consume its offer.
+        tui.focus = None;
+        drop(discarded);
+        let presented = tui.paint(area, &mut buffer).unwrap();
+        tui.present(presented);
+        assert_eq!(tui.focus.as_ref().unwrap().mount, mount);
+        tui.input(Event::Paste("First密钥🙂".into())).unwrap();
+        draw(&mut tui, 80, 24);
+        let before = observation(&tui);
+        let other = tui
+            .scene
+            .iter()
+            .find(|target| target.mount == tui.root)
+            .unwrap()
+            .clone();
+        tui.focus = Some(other.clone());
+        draw(&mut tui, 80, 24);
+        assert!(
+            tui.focus.as_ref().unwrap().same(&other),
+            "stable native render must not steal manual focus"
+        );
+        dispatch(
+            &mut tui,
+            "configure",
+            json!({"autoFocus":true,"visible":false}),
+        );
+        draw(&mut tui, 80, 24);
+        let child_revision = tui.application.frame(&mount).unwrap().revision;
+        dispatch(
+            &mut tui,
+            "configure",
+            json!({"autoFocus":true,"visible":true}),
+        );
+        assert_eq!(
+            tui.application.frame(&mount).unwrap().revision,
+            child_revision,
+            "ancestor reveal does not change original child props"
+        );
+        draw(&mut tui, 80, 24);
+        assert_eq!(tui.focus.as_ref().unwrap().mount, mount);
+        assert!(Rc::ptr_eq(
+            &identity,
+            &tui.resources.owners[&mount.id()].identity
+        ));
+        assert_eq!(
+            observation(&tui),
+            before,
+            "focus changes preserve original native buffer and selection"
+        );
+        tui.input(Event::Paste("!".into())).unwrap();
+        assert_eq!(
+            observation(&tui)["snapshot"]["text"]["bytes"],
+            "First密钥🙂!".len()
+        );
+        // A held scene cannot cross an ancestor hide/show, even though the
+        // original input's own props/revision never change.
+        dispatch(&mut tui, "configure", json!({"autoFocus":false}));
+        draw(&mut tui, 80, 24);
+        dispatch(&mut tui, "configure", json!({"autoFocus":true}));
+        tui.sync_native().unwrap();
+        let held = tui.paint(area, &mut buffer).unwrap();
+        let unchanged = tui.application.frame(&mount).unwrap().revision;
+        dispatch(
+            &mut tui,
+            "configure",
+            json!({"autoFocus":true,"visible":false}),
+        );
+        dispatch(
+            &mut tui,
+            "configure",
+            json!({"autoFocus":true,"visible":true}),
+        );
+        assert_eq!(tui.application.frame(&mount).unwrap().revision, unchanged);
+        tui.focus = Some(other.clone());
+        tui.present(held);
+        assert_ne!(
+            tui.focus.as_ref().unwrap().mount,
+            mount,
+            "held offer cannot cross changed original route frames"
+        );
+        let fresh = tui.paint(area, &mut buffer).unwrap();
+        let twin = tui.paint(area, &mut buffer).unwrap();
+        assert!(
+            fresh
+                .targets
+                .iter()
+                .any(|target| target.mount == mount && target.autofocus)
+        );
+        tui.present(fresh);
+        assert_eq!(tui.focus.as_ref().unwrap().mount, mount);
+        tui.focus = Some(other.clone());
+        tui.present(twin);
+        assert_ne!(
+            tui.focus.as_ref().unwrap().mount,
+            mount,
+            "the same already consumed offer cannot steal focus in a second held scene"
+        );
+        // Viewport clipping alone cannot re-arm a structural reveal offer.
+        draw(&mut tui, 80, 1);
+        let restored = tui.paint(area, &mut buffer).unwrap();
+        assert!(
+            !restored
+                .targets
+                .iter()
+                .any(|target| target.mount == mount && target.autofocus)
+        );
+        tui.focus = Some(other);
+        tui.present(restored);
+        assert_ne!(tui.focus.as_ref().unwrap().mount, mount);
+        close(&mut tui);
+    }
+}

@@ -1688,6 +1688,11 @@ export interface TextareaProps {
    */
   submit?: SubmitKey | null;
   tabIndex: number;
+  /**
+   * Offer native focus once when this original input becomes visible and
+   * enabled. Stable updates and viewport scrolling do not repeat the offer.
+   */
+  autoFocus?: boolean;
   initialText?: string;
   placeholder?: string;
   /**
@@ -1948,6 +1953,11 @@ export interface InputProps {
   readOnly: boolean;
   disabled: boolean;
   tabIndex: number;
+  /**
+   * Offer native focus once when this original input becomes visible and
+   * enabled. Stable updates and viewport scrolling do not repeat the offer.
+   */
+  autoFocus?: boolean;
   placeholder?: string;
   command?: EditorCommand | null;
 }

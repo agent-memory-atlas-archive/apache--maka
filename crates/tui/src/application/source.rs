@@ -263,7 +263,7 @@ impl Widget for Recipe {
         };
         slots.native_geometry(Box::new(geometry))?;
         if !self.0.disabled {
-            slots.native_target("source", area, 0)?;
+            slots.native_target("source", area, 0, false)?;
         }
         Ok(())
     }

@@ -50,6 +50,10 @@ pub struct TextareaProps {
     pub submit: Option<SubmitKey>,
     #[schemars(range(min = -1, max = 32767))]
     pub tab_index: i16,
+    /// Offer native focus once when this original input becomes visible and
+    /// enabled. Stable updates and viewport scrolling do not repeat the offer.
+    #[serde(default)]
+    pub auto_focus: bool,
     #[serde(default)]
     #[schemars(length(max = 65536))]
     pub initial_text: String,
