@@ -79,6 +79,7 @@ const specifications = {
       management: one(sdk.contracts.deploymentManager),
       receipts: one(sdk.contracts.receiptReader),
       history: one(sdk.contracts.callerHistory),
+      editor: one(sdk.contracts.textarea),
     },
   },
   workspace: {

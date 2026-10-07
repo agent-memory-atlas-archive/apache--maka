@@ -30,6 +30,9 @@ export type RuntimeProtocol =
   | DeploymentInstances
   | ManagedInstancesPage
   | InstanceSetEnabled
+  | DeploymentDocument
+  | DeploymentDocumentRead
+  | DeploymentDocumentChunk
   | ManagementResultForPackageInstalled
   | ManagementResultForDeploymentRef
   | PackageDeclaration
@@ -213,10 +216,12 @@ export type ManagementResultForPackageInstalled =
     }
   | {
       reason: ManagementRejection;
+      diagnostic?: string | null;
       status: 'rejected';
     };
 export type ManagementRejection =
   | 'invalid_bundle'
+  | 'invalid_document'
   | 'invalid_source'
   | 'package_unavailable'
   | 'execution_environment'
@@ -237,6 +242,7 @@ export type ManagementResultForDeploymentRef =
     }
   | {
       reason: ManagementRejection;
+      diagnostic?: string | null;
       status: 'rejected';
     };
 export type Implementation =
@@ -449,6 +455,10 @@ export type EditorEdit =
   | {
       text: string;
       kind: 'reset';
+    }
+  | {
+      text: string;
+      kind: 'append';
     };
 export type ImageFit = 'contain' | 'cover';
 export type ImagePhase = 'empty' | 'receiving' | 'decoding' | 'ready' | 'failed';
@@ -1339,15 +1349,6 @@ export interface PackageInstalled {
 }
 export interface DeploymentReplace {
   expectedRevision: number;
-  input: CompositionInput;
-  /**
-   * @maxItems 128
-   */
-  remoteExports: RemoteObservation[];
-  /**
-   * @maxItems 128
-   */
-  packages: PackageRef[];
 }
 /**
  * Committed desired source and available immutable packages, not runtime readiness.
@@ -1409,6 +1410,31 @@ export interface InstanceSetEnabled {
   expectedRevision: number;
   instance: InstanceId;
   enabled: boolean;
+}
+/**
+ * Source document edited by one native buffer, never a second desired plan.
+ */
+export interface DeploymentDocument {
+  input: CompositionInput;
+  /**
+   * @maxItems 128
+   */
+  remoteExports: RemoteObservation[];
+  /**
+   * @maxItems 128
+   */
+  packages: PackageRef[];
+}
+export interface DeploymentDocumentRead {
+  source: DeploymentRef;
+  offset: number;
+}
+export interface DeploymentDocumentChunk {
+  source: DeploymentRef;
+  offset: number;
+  totalBytes: number;
+  text: string;
+  next?: number | null;
 }
 export interface PackageDeclaration {
   entries?: {

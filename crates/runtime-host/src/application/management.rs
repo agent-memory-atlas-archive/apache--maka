@@ -21,7 +21,8 @@
 use super::*;
 use maka_event_log::{EventLog, StoreError, applications::validate_application};
 use maka_plugin_core::deployment::management::{
-    DeploymentInstances, DeploymentRead, DeploymentReplace, InstanceSetEnabled, ManagedInstance,
+    DeploymentDocument, DeploymentDocumentChunk, DeploymentDocumentRead, DeploymentInstances,
+    DeploymentRead, DeploymentReplace, InstanceSetEnabled, MAX_DOCUMENT_BYTES, ManagedInstance,
     ManagedInstancesPage, ManagementRejection, ManagementResult, PackageInstall, PackageInstalled,
     deployment_manager_contract, package_bundle_type,
 };
@@ -127,6 +128,44 @@ impl Manager {
             source,
             instances,
             next,
+        })
+        .map_err(|e| e.to_string())
+    }
+    async fn read_document(&self, input: Value) -> Result<Value> {
+        let request: DeploymentDocumentRead =
+            serde_json::from_value(input).map_err(|e| e.to_string())?;
+        if request.source.state_domain != self.source.state_domain
+            || request.source.deployment != self.source.deployment
+        {
+            return Err("foreign managed deployment source".into());
+        }
+        let _materialize = self.writes.lock().await;
+        let metadata = self
+            .store
+            .read_application_metadata_at(&request.source)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or("managed source not found")?;
+        let text = document_text(DeploymentDocument {
+            input: metadata.source.input,
+            remote_exports: metadata.source.remote_exports,
+            packages: metadata.packages,
+        })?;
+        if request.offset > text.len() || !text.is_char_boundary(request.offset) {
+            return Err("invalid document byte offset".into());
+        }
+        let mut end = text
+            .len()
+            .min(request.offset.saturating_add(RESOURCE_CHUNK_LIMIT));
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        serde_json::to_value(DeploymentDocumentChunk {
+            source: request.source,
+            offset: request.offset,
+            total_bytes: text.len(),
+            text: text[request.offset..end].into(),
+            next: (end < text.len()).then_some(end),
         })
         .map_err(|e| e.to_string())
     }
@@ -247,7 +286,7 @@ impl Manager {
         )
         .await
     }
-    async fn replace(&self, input: Value) -> Result<Value> {
+    async fn replace(&self, input: Value, context: Context) -> Result<Value> {
         let request: DeploymentReplace =
             serde_json::from_value(input).map_err(|error| error.to_string())?;
         let _write = self.writes.lock().await;
@@ -255,13 +294,36 @@ impl Manager {
         if request.expected_revision != metadata.source.reference.revision {
             return conflict(metadata.source.reference.revision);
         }
-        if request.input.environment != self.environment
+        let resource = context
+            .attachments()
+            .get("document")
+            .ok_or("source document required")?
+            .clone();
+        let mut ticket = context
+            .scope()
+            .resources
+            .reserve()
+            .map_err(|e| e.to_string())?;
+        ticket.start();
+        let parsed = tokio::task::spawn_blocking(move || {
+            let parsed = read_document_resource(&resource);
+            drop(resource);
+            ticket.complete(Ok(()));
+            parsed
+        })
+        .await
+        .map_err(|e| format!("document validation worker failed: {e}"))?;
+        let document = match parsed {
+            Ok(document) => document,
+            Err(error) => return rejected_diagnostic(ManagementRejection::InvalidDocument, error),
+        };
+        if document.input.environment != self.environment
             || (self.environment.location == ExecutionLocation::Host
-                && !request.remote_exports.is_empty())
+                && !document.remote_exports.is_empty())
         {
             return rejected(ManagementRejection::ExecutionEnvironment);
         }
-        if request
+        if document
             .packages
             .iter()
             .any(|reference| !metadata.packages.contains(reference))
@@ -279,7 +341,7 @@ impl Manager {
             .into_iter()
             .map(|package| (package.application_ref(), package))
             .collect();
-        let packages = request
+        let packages = document
             .packages
             .into_iter()
             .map(|reference| {
@@ -291,8 +353,8 @@ impl Manager {
             .collect::<Result<Vec<_>>>()?;
         self.commit(
             request.expected_revision,
-            request.input,
-            request.remote_exports,
+            document.input,
+            document.remote_exports,
             packages,
             |source| source,
         )
@@ -309,8 +371,8 @@ impl Manager {
         if input.environment != self.environment {
             return rejected(ManagementRejection::ExecutionEnvironment);
         }
-        if validate_application(&input, &observations, &packages).is_err() {
-            return rejected(ManagementRejection::InvalidSource);
+        if let Err(error) = validate_application(&input, &observations, &packages) {
+            return rejected_diagnostic(ManagementRejection::InvalidSource, error.to_string());
         }
         match self
             .store
@@ -360,8 +422,18 @@ fn desired_plan(loaded: &maka_event_log::applications::LoadedDeployment) -> Resu
     Plan::prepare(&loaded.source.input, &packages, &declarations).map_err(|e| e.to_string())
 }
 fn rejected(reason: ManagementRejection) -> Result<Value> {
-    serde_json::to_value(ManagementResult::<DeploymentRef>::Rejected { reason })
-        .map_err(|error| error.to_string())
+    serde_json::to_value(ManagementResult::<DeploymentRef>::Rejected {
+        reason,
+        diagnostic: None,
+    })
+    .map_err(|error| error.to_string())
+}
+fn rejected_diagnostic(reason: ManagementRejection, message: String) -> Result<Value> {
+    serde_json::to_value(ManagementResult::<DeploymentRef>::Rejected {
+        reason,
+        diagnostic: Some(message.chars().take(512).collect()),
+    })
+    .map_err(|e| e.to_string())
 }
 fn conflict(current_revision: u64) -> Result<Value> {
     serde_json::to_value(ManagementResult::<DeploymentRef>::Conflict { current_revision })
@@ -385,9 +457,10 @@ impl Handler for Manager {
                         .map_err(|error| error.to_string())
                 }
                 "instances" => manager.instances(input).await,
+                "readDocument" => manager.read_document(input).await,
                 "setEnabled" => manager.set_enabled(input).await,
                 "install" => manager.install(input, context).await,
-                "replace" => manager.replace(input).await,
+                "replace" => manager.replace(input, context).await,
                 _ => Err("unknown deployment management method".into()),
             }
         })
@@ -399,6 +472,63 @@ impl NativeOwner for Manager {
         // Host execution Scopes; no independent activation work is started.
         Box::pin(async { Ok(()) })
     }
+}
+// Pretty formatting is cosmetic. Abort at the document budget and use compact
+// encoding if indentation would exceed it; every committed source still roundtrips.
+fn document_text(document: DeploymentDocument) -> Result<String> {
+    struct Writer(Vec<u8>);
+    impl std::io::Write for Writer {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > MAX_DOCUMENT_BYTES.saturating_sub(self.0.len()) {
+                return Err(std::io::Error::other("document exceeds byte limit"));
+            }
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut writer = Writer(Vec::new());
+    if serde_json::to_writer_pretty(&mut writer, &document).is_err() {
+        writer.0.clear();
+        serde_json::to_writer(&mut writer, &document).map_err(|e| e.to_string())?;
+    }
+    String::from_utf8(writer.0).map_err(|e| e.to_string())
+}
+fn read_document_resource(
+    resource: &Arc<dyn maka_plugins::call::ReadResource>,
+) -> Result<DeploymentDocument> {
+    use maka_plugins::call::ResourceEncoding;
+    if resource.resource_type() != maka_plugin_core::contract::text_resource_type()
+        || resource.encoding() != ResourceEncoding::Utf8
+        || resource.bytes() == 0
+        || resource.bytes() > MAX_DOCUMENT_BYTES
+    {
+        return Err("source document must be immutable UTF-8 and at most 1 MiB".into());
+    }
+    let length = resource.bytes();
+    let mut bytes = Vec::with_capacity(length);
+    while bytes.len() < length {
+        let offset = bytes.len();
+        let mut end = length.min(offset + RESOURCE_CHUNK_LIMIT);
+        let mut chunk = resource.read(offset..end);
+        // Snapshots reject ranges inside a Unicode scalar. Try at most its
+        // three possible trailing byte boundaries, as the original transport does.
+        for _ in 0..3 {
+            if chunk.is_ok() || end <= offset + 1 {
+                break;
+            }
+            end -= 1;
+            chunk = resource.read(offset..end);
+        }
+        let chunk = chunk?;
+        if chunk.len() != end - offset || chunk.is_empty() {
+            return Err("document snapshot length changed".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|e| e.to_string())
 }
 fn read_bundle(resource: &Arc<dyn maka_plugins::call::ReadResource>) -> Result<Package> {
     use maka_plugins::call::ResourceEncoding;

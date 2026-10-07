@@ -158,6 +158,7 @@ export function composition(configuration: CompositionConfiguration): {
         'deployment',
         {},
         {
+          editor: [local('editor', 'Textarea')],
           management: [
             {
               kind: 'remote',
@@ -294,7 +295,10 @@ export function composition(configuration: CompositionConfiguration): {
         deployment: configuration.managementDeployment,
         consumer: [keys['deployment-gateway']],
         imports: {
-          management: { methods: ['instances', 'setEnabled'], recovery: false },
+          management: {
+            methods: ['instances', 'setEnabled', 'readDocument', 'replace'],
+            recovery: false,
+          },
           receipts: { methods: ['read'], recovery: true },
         },
       },

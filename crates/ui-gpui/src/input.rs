@@ -321,8 +321,9 @@ impl InputOwner {
                 EditorOutcome::Conflict {
                     reason: EditorConflict::Composition,
                 }
-            } else if !representable(match &command.edit {
-                EditorEdit::Replace { text } | EditorEdit::Reset { text } => text,
+            } else if !representable(&match &command.edit {
+                EditorEdit::Replace { text } | EditorEdit::Reset { text } => text.clone(),
+                EditorEdit::Append { text } => format!("{}{text}", self.snapshot.text),
             }) {
                 EditorOutcome::Conflict {
                     reason: EditorConflict::Representation,
@@ -331,6 +332,9 @@ impl InputOwner {
                 self.state.update(cx, |state, cx| match &command.edit {
                     EditorEdit::Replace { text } => state.replace_all(text.clone(), window, cx),
                     EditorEdit::Reset { text } => state.set_value(text.clone(), window, cx),
+                    EditorEdit::Append { text } => {
+                        state.set_value(format!("{}{text}", self.snapshot.text), window, cx)
+                    }
                 });
                 self.refresh(true, window, cx);
                 EditorOutcome::Applied

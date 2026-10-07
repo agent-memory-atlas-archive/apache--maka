@@ -627,6 +627,101 @@ fn restarted_process_rejects_the_original_editor_capture_and_command(cx: &mut Te
 }
 
 #[gpui::test]
+fn initialization_append_crosses_native_receipts_without_replacing_the_original_editor(
+    cx: &mut TestAppContext,
+) {
+    let timer = timer();
+    let scene = Scene::new(cx, &timer, false);
+    scene.draw(cx);
+    let owner = scene.owner();
+    let identity = cx.update(|cx| scene.editor_owner(cx));
+    let chunk = "中🌟".repeat(9000);
+    for sequence in 1..=8 {
+        cx.update_window(scene.window, |_, window, cx| {
+            scene
+                .command(
+                    EditorCommand {
+                        owner: identity.clone(),
+                        sequence,
+                        based_on: owner.read(cx).revision,
+                        edit: if sequence == 1 {
+                            EditorEdit::Reset {
+                                text: chunk.clone(),
+                            }
+                        } else {
+                            EditorEdit::Append {
+                                text: chunk.clone(),
+                            }
+                        },
+                    },
+                    window,
+                    cx,
+                )
+                .unwrap();
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| assert_eq!(scene.editor_owner(cx), identity));
+        cx.update(|cx| {
+            assert_eq!(
+                owner.read(cx).state.read(cx).value().as_ref(),
+                chunk.repeat(sequence as usize)
+            )
+        });
+        let observation: EditorObservation = serde_json::from_value(
+            scene.app.borrow().frame(&scene.editor).unwrap().state["observation"].clone(),
+        )
+        .unwrap();
+        assert_eq!(observation.receipt.unwrap().outcome, EditorOutcome::Applied);
+        assert_eq!(
+            observation.snapshot.text.bytes,
+            chunk.len() * sequence as usize
+        );
+    }
+    for (sequence, based_on, text, reason) in [
+        (9, 0, "stale".into(), EditorConflict::Revision),
+        (
+            10,
+            cx.update(|cx| owner.read(cx).revision),
+            "中".repeat(21846),
+            EditorConflict::Representation,
+        ),
+    ] {
+        cx.update_window(scene.window, |_, window, cx| {
+            scene
+                .command(
+                    EditorCommand {
+                        owner: identity.clone(),
+                        sequence,
+                        based_on,
+                        edit: EditorEdit::Append { text },
+                    },
+                    window,
+                    cx,
+                )
+                .unwrap();
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let observation: EditorObservation = serde_json::from_value(
+            scene.app.borrow().frame(&scene.editor).unwrap().state["observation"].clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            observation.receipt.unwrap().outcome,
+            EditorOutcome::Conflict { reason }
+        );
+        cx.update(|cx| {
+            assert_eq!(
+                owner.read(cx).state.read(cx).value().as_ref(),
+                chunk.repeat(8)
+            )
+        });
+    }
+    scene.close(cx);
+}
+
+#[gpui::test]
 fn editor_large_text_observations_use_revision_checked_bounded_resources(cx: &mut TestAppContext) {
     let timer = timer();
     let scene = Scene::new(cx, &timer, false);

@@ -130,6 +130,27 @@ impl NativeService for Capture {
     }
 }
 struct Bundle(Vec<u8>);
+struct Document(String);
+impl ReadResource for Document {
+    fn resource_type(&self) -> maka_plugin_core::contract::ResourceType {
+        maka_plugin_core::contract::text_resource_type()
+    }
+    fn encoding(&self) -> maka_plugins::call::ResourceEncoding {
+        maka_plugins::call::ResourceEncoding::Utf8
+    }
+    fn bytes(&self) -> usize {
+        self.0.len()
+    }
+    fn metadata(&self) -> Value {
+        json!({})
+    }
+    fn read(&self, range: std::ops::Range<usize>) -> Result<Vec<u8>, String> {
+        self.0
+            .get(range)
+            .map(|s| s.as_bytes().to_vec())
+            .ok_or("UTF-8 boundary".into())
+    }
+}
 impl ReadResource for Bundle {
     fn resource_type(&self) -> maka_plugin_core::contract::ResourceType {
         package_bundle_type()
@@ -484,13 +505,22 @@ fn cohost_manager_installs_ui_bytes_and_adopts_without_reopening_root_or_replaci
                     input: serde_json::to_value(
                         maka_plugin_core::deployment::management::DeploymentReplace {
                             expected_revision: 2,
-                            input: current.source.input,
-                            remote_exports: current.source.remote_exports,
-                            packages: current.packages,
                         },
                     )
                     .unwrap(),
-                    resources: BTreeMap::new(),
+                    resources: BTreeMap::from([(
+                        "document".into(),
+                        Arc::new(Document(
+                            serde_json::to_string(
+                                &maka_plugin_core::deployment::management::DeploymentDocument {
+                                    input: current.source.input,
+                                    remote_exports: current.source.remote_exports,
+                                    packages: current.packages,
+                                },
+                            )
+                            .unwrap(),
+                        )) as Arc<dyn ReadResource>,
+                    )]),
                 })
                 .unwrap();
             let reference = f.timer.block_on(replace.clone().prepare()).unwrap();

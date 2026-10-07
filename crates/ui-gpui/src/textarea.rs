@@ -380,6 +380,11 @@ impl TextareaOwner {
                 }
             } else if match &command.edit {
                 EditorEdit::Replace { text } | EditorEdit::Reset { text } => text.len() > 65536,
+                EditorEdit::Append { text } => {
+                    text.len() > 65536
+                        || self.snapshot.text.len().saturating_add(text.len())
+                            > maka_ui::textarea::MAX_BUFFER_BYTES
+                }
             } {
                 EditorOutcome::Conflict {
                     reason: EditorConflict::Representation,
@@ -388,6 +393,9 @@ impl TextareaOwner {
                 self.state.update(cx, |state, cx| match &command.edit {
                     EditorEdit::Replace { text } => state.replace_all(text.clone(), window, cx),
                     EditorEdit::Reset { text } => state.set_value(text.clone(), window, cx),
+                    EditorEdit::Append { text } => {
+                        state.set_value(format!("{}{text}", self.snapshot.text), window, cx)
+                    }
                 });
                 self.refresh(true, window, cx);
                 EditorOutcome::Applied

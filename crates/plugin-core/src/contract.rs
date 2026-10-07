@@ -25,6 +25,15 @@ use serde_json::Value;
 
 use crate::Error;
 
+/// Shared immutable UTF-8 resource contract. Content schemas are checked by
+/// consumers; a resource name never confers access to its bytes.
+pub fn text_resource_type() -> ResourceType {
+    ResourceType {
+        name: "maka.text.utf8".into(),
+        version: 1,
+    }
+}
+
 /// Public contract definitions are package data, not live registration records.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

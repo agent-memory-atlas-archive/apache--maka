@@ -288,6 +288,33 @@ impl Fixture {
     }
 }
 struct Bundle(Vec<u8>);
+struct Document(String);
+impl ReadResource for Document {
+    fn resource_type(&self) -> ResourceType {
+        maka_plugin_core::contract::text_resource_type()
+    }
+    fn encoding(&self) -> maka_plugins::call::ResourceEncoding {
+        maka_plugins::call::ResourceEncoding::Utf8
+    }
+    fn bytes(&self) -> usize {
+        self.0.len()
+    }
+    fn metadata(&self) -> Value {
+        json!({})
+    }
+    fn read(&self, range: std::ops::Range<usize>) -> Result<Vec<u8>> {
+        self.0
+            .get(range)
+            .map(|s| s.as_bytes().to_vec())
+            .ok_or("UTF-8 boundary".into())
+    }
+}
+fn document_resource(document: DeploymentDocument) -> Attachments {
+    BTreeMap::from([(
+        "document".into(),
+        Arc::new(Document(serde_json::to_string(&document).unwrap())) as Arc<dyn ReadResource>,
+    )])
+}
 impl ReadResource for Bundle {
     fn resource_type(&self) -> ResourceType {
         package_bundle_type()
@@ -334,6 +361,171 @@ fn extension() -> Package {
             serde_json::to_string(&contract(MethodMode::Query)).unwrap(),
         )),
     )
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn complete_unicode_document_uses_fixed_source_chunks_and_recorded_native_snapshot_replace() {
+    let f = Fixture::new().await;
+    let mut current = f.read().await;
+    let payload = extension();
+    let mut packages = f
+        .store
+        .load_application_at(&current.source.reference)
+        .await
+        .unwrap()
+        .unwrap()
+        .packages;
+    packages.push(payload.clone());
+    let mut payload_node = node(&payload, 77, true);
+    payload_node.disabled = true;
+    let original = "中🌟".repeat(60000);
+    payload_node
+        .configuration
+        .values
+        .insert("original".into(), json!(original));
+    current
+        .source
+        .input
+        .instances
+        .insert("payload".into(), payload_node);
+    let source = f
+        .store
+        .commit_application(
+            f.managed.deployment,
+            1,
+            current.source.input.clone(),
+            vec![],
+            packages,
+        )
+        .await
+        .unwrap();
+    let mut offset = 0;
+    let mut text = String::new();
+    loop {
+        let chunk: DeploymentDocumentChunk = serde_json::from_value(
+            f.query("readDocument", json!({"source":source,"offset":offset}))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(chunk.source, source);
+        assert_eq!(chunk.offset, offset);
+        assert!(chunk.text.len() <= 65536);
+        text.push_str(&chunk.text);
+        assert_eq!(text.len(), chunk.offset + chunk.text.len());
+        if let Some(next) = chunk.next {
+            offset = next;
+        } else {
+            assert_eq!(text.len(), chunk.total_bytes);
+            break;
+        }
+    }
+    assert!(text.len() > 256 * 1024);
+    let mut document: DeploymentDocument = serde_json::from_str(&text).unwrap();
+    assert_eq!(document.input, current.source.input);
+    assert_eq!(
+        document.input.instances["payload"].configuration.values["original"],
+        original
+    );
+    // A later head must not alter the original document's continuation.
+    let before = f
+        .query("readDocument", json!({"source":source,"offset":0}))
+        .await
+        .unwrap();
+    document
+        .input
+        .instances
+        .get_mut("payload")
+        .unwrap()
+        .configuration
+        .values
+        .insert("edited".into(), json!("完整来源🙂"));
+    let changed = f
+        .mutate(
+            "replace",
+            json!({"expectedRevision":2}),
+            document_resource(document.clone()),
+        )
+        .await;
+    assert_eq!(returned(&changed)["status"], "committed");
+    let next: DeploymentRef = serde_json::from_value(returned(&changed)["value"].clone()).unwrap();
+    assert_eq!(
+        f.query("readDocument", json!({"source":source,"offset":0}))
+            .await
+            .unwrap(),
+        before
+    );
+    assert_eq!(
+        f.store
+            .read_application_metadata_at(&next)
+            .await
+            .unwrap()
+            .unwrap()
+            .source
+            .input,
+        document.input
+    );
+    let stale = f
+        .mutate(
+            "replace",
+            json!({"expectedRevision":2}),
+            document_resource(document.clone()),
+        )
+        .await;
+    assert_eq!(
+        returned(&stale),
+        json!({"status":"conflict","currentRevision":3})
+    );
+    // Preserve the complete draft on a deterministically invalid edited plan,
+    // and return a bounded reason usable by the advanced source editor.
+    document
+        .input
+        .instances
+        .get_mut("a")
+        .unwrap()
+        .bindings
+        .clear();
+    let bad = f
+        .mutate(
+            "replace",
+            json!({"expectedRevision":3}),
+            document_resource(document),
+        )
+        .await;
+    assert_eq!(returned(&bad)["reason"], "invalid_source");
+    let diagnostic = returned(&bad)["diagnostic"].as_str().unwrap().to_owned();
+    assert!(!diagnostic.is_empty() && diagnostic.chars().count() <= 512);
+    assert!(diagnostic.contains("manage"), "{diagnostic}");
+    assert_eq!(
+        f.store
+            .application_head(f.managed.deployment)
+            .await
+            .unwrap(),
+        Some(next)
+    );
+    let broken: Attachments = BTreeMap::from([(
+        "document".into(),
+        Arc::new(Document("{".into())) as Arc<dyn ReadResource>,
+    )]);
+    let rejected = f
+        .mutate("replace", json!({"expectedRevision":3}), broken)
+        .await;
+    assert_eq!(returned(&rejected)["reason"], "invalid_document");
+    assert!(
+        f.query(
+            "readDocument",
+            json!({"source":source,"offset":text.find('中').unwrap()+1})
+        )
+        .await
+        .is_err()
+    );
+    let mut foreign = source.clone();
+    foreign.deployment = Uuid::new_v4();
+    assert!(
+        f.query("readDocument", json!({"source":foreign,"offset":0}))
+            .await
+            .is_err()
+    );
+    f.close().await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn installed_bytes_do_not_activate_until_explicit_cas_replace_and_original_receipt_survives()
@@ -387,14 +579,12 @@ async fn installed_bytes_do_not_activate_until_explicit_cas_replace_and_original
     let replacement = f
         .mutate(
             "replace",
-            serde_json::to_value(DeploymentReplace {
-                expected_revision: 3,
+            json!({"expectedRevision":3}),
+            document_resource(DeploymentDocument {
                 input,
                 remote_exports: vec![],
                 packages: current.packages,
-            })
-            .unwrap(),
-            Attachments::new(),
+            }),
         )
         .await;
     let source: DeploymentRef =
@@ -468,14 +658,12 @@ async fn rejected_bundle_cas_role_and_unknown_revision_leave_original_plan_healt
     let refused = f
         .mutate(
             "replace",
-            serde_json::to_value(DeploymentReplace {
-                expected_revision: 1,
+            json!({"expectedRevision":1}),
+            document_resource(DeploymentDocument {
                 input,
                 remote_exports: vec![],
                 packages: current.packages,
-            })
-            .unwrap(),
-            Attachments::new(),
+            }),
         )
         .await;
     assert_eq!(
@@ -511,14 +699,12 @@ async fn rejected_bundle_cas_role_and_unknown_revision_leave_original_plan_healt
     let refused = f
         .mutate(
             "replace",
-            serde_json::to_value(DeploymentReplace {
-                expected_revision: 2,
+            json!({"expectedRevision":2}),
+            document_resource(DeploymentDocument {
                 input: read.source.input,
                 remote_exports: vec![],
                 packages: read.packages,
-            })
-            .unwrap(),
-            Attachments::new(),
+            }),
         )
         .await;
     assert_eq!(
@@ -654,14 +840,12 @@ async fn ui_target_uses_original_root_but_keeps_host_journal_and_fixed_presentat
         let refused = f
             .mutate(
                 "replace",
-                serde_json::to_value(DeploymentReplace {
-                    expected_revision: 2,
+                json!({"expectedRevision":2}),
+                document_resource(DeploymentDocument {
                     input: current.source.input,
                     remote_exports: vec![],
                     packages: current.packages,
-                })
-                .unwrap(),
-                Attachments::new(),
+                }),
             )
             .await;
         assert_eq!(
@@ -672,14 +856,12 @@ async fn ui_target_uses_original_root_but_keeps_host_journal_and_fixed_presentat
         let replaced = f
             .mutate(
                 "replace",
-                serde_json::to_value(DeploymentReplace {
-                    expected_revision: 2,
+                json!({"expectedRevision":2}),
+                document_resource(DeploymentDocument {
                     input: current.source.input,
                     remote_exports: vec![],
                     packages: current.packages,
-                })
-                .unwrap(),
-                Attachments::new(),
+                }),
             )
             .await;
         let next: DeploymentRef =

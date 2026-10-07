@@ -30,17 +30,30 @@ import type {
   RecoveryRef,
   CallerIntent,
   ManagementResultForDeploymentRef,
+  DeploymentDocumentChunk,
+  EditorObservation,
 } from '../../plugin-sdk/src/index.js';
 import { deploymentContract, type ConnectionsProps } from './contracts.js';
 import { copy, type Copy } from './locale.js';
 import { sameValue } from './value.js';
 import { compactLabel, fill, output, paint, pixels, type Target } from './view.js';
+import {
+  acceptDocumentChunk,
+  canSaveDocument,
+  documentEditor,
+  documentView,
+  observeDocument,
+  type DocumentEditor,
+} from './deployment-document.js';
 
 type Request =
   | { kind: 'page'; input: DeploymentInstances; movement: 'reset' | 'next' | 'previous' }
   | { kind: 'mutate' }
   | { kind: 'receipt'; reference: RecoveryRef }
   | { kind: 'history'; after: number };
+type DocumentRequest =
+  | { kind: 'document'; source: DeploymentRef; offset: number }
+  | { kind: 'documentReload' };
 interface Intent {
   source: DeploymentRef;
   instance: ManagedInstance;
@@ -49,12 +62,18 @@ interface Intent {
 interface State {
   revision: number;
   serial: number;
-  pending: { key: string; request: Request } | null;
+  pending: { key: string; request: Request | DocumentRequest } | null;
   page: ManagedInstancesPage | null;
   after: ManagedInstancesPage['next'];
   previous: ManagedInstancesPage['next'][];
   confirmation: Intent | null;
-  current: { intent: Intent; reference: RecoveryRef | null } | null;
+  current: {
+    intent: Intent | { source: DeploymentRef; editor: EditorObservation };
+    reference: RecoveryRef | null;
+  } | null;
+  document: DocumentEditor | null;
+  documentOpen: boolean;
+  diagnostic: string | null;
   notice: keyof Copy | null;
   conflict: boolean;
   earlier: { cursor: number; reference: RecoveryRef; reply: OperationReply | null }[];
@@ -64,15 +83,19 @@ interface State {
 function request(
   state: State,
   actions: Action[],
-  r: Request,
+  r: Request | DocumentRequest,
   binding: string,
   method: string,
   input: unknown,
+  resources: Action['resources'] = {},
 ) {
   if (state.pending) return;
+  // Initialization owns the one request lane until the final native receipt.
+  // A navigation/history query cannot consume it between two document chunks.
+  if (state.document?.phase === 'loading' && r.kind !== 'document') return;
   const key = 'deployment-' + ++state.serial;
   state.pending = { key, request: r };
-  actions.push({ key, binding, member: 0, method, input, resources: {} });
+  actions.push({ key, binding, member: 0, method, input, resources });
 }
 function page(
   state: State,
@@ -81,6 +104,13 @@ function page(
   movement: 'reset' | 'next' | 'previous' = 'reset',
 ) {
   request(state, actions, { kind: 'page', input, movement }, 'management', 'instances', input);
+}
+function readDocument(state: State, actions: Action[], offset: number) {
+  const source = state.document!.source;
+  request(state, actions, { kind: 'document', source, offset }, 'management', 'readDocument', {
+    source,
+    offset,
+  });
 }
 function settle(state: State, reply: OperationReply, actions: Action[]) {
   const current = state.current;
@@ -91,21 +121,38 @@ function settle(state: State, reply: OperationReply, actions: Action[]) {
     return;
   }
   const value = reply.receipt.outcome.value as ManagementResultForDeploymentRef;
+  const isDocument = 'editor' in current.intent;
   if (value.status === 'committed') {
+    if (isDocument && state.document) {
+      state.document.source = value.value;
+      state.document.confirmation = null;
+      state.document.conflict = false;
+    }
     state.current = null;
     state.confirmation = null;
     state.notice = 'deploymentSaved';
     state.conflict = false;
     page(state, actions, { kind: 'start' });
   } else {
+    if (isDocument && state.document) {
+      state.document.confirmation = null;
+      state.document.conflict = value.status === 'conflict';
+    }
+    state.diagnostic = value.status === 'rejected' ? (value.diagnostic ?? null) : null;
     state.current = null;
     state.conflict = value.status === 'conflict';
     state.notice =
       value.status === 'conflict'
         ? 'deploymentConflict'
-        : value.reason === 'parent_disabled'
-          ? 'deploymentParentDisabled'
-          : 'deploymentRejected';
+        : isDocument
+          ? value.reason === 'execution_environment'
+            ? 'deploymentEnvironment'
+            : value.reason === 'package_unavailable'
+              ? 'deploymentPackageUnavailable'
+              : 'deploymentDocumentRejected'
+          : value.reason === 'parent_disabled'
+            ? 'deploymentParentDisabled'
+            : 'deploymentRejected';
   }
 }
 function frame(
@@ -117,7 +164,8 @@ function frame(
 ) {
   const ui = paint(target, props.theme),
     text = copy(props.locale);
-  const busy = !!state.pending || !!state.current;
+  const loading = state.document?.phase === 'loading';
+  const busy = !!state.pending || !!state.current || loading;
   const entries = state.page?.instances ?? [];
   const current = state.confirmation;
   const history = state.historyOpen;
@@ -244,7 +292,8 @@ function frame(
             ...(state.current?.reference
               ? [ui.button('deployment-check', text.check, !!state.pending)]
               : []),
-            ui.button('deployment-history', text.deploymentHistory, !!state.pending),
+            ui.button('deployment-history', text.deploymentHistory, !!state.pending || loading),
+            ui.button('deployment-advanced', text.deploymentEdit, busy || !state.page),
           ],
     { row: target === 'desktop', gap: 0, style: { wrap: true, shrink: 0 } },
   );
@@ -270,12 +319,32 @@ function frame(
       ],
       {
         style: { width: fill, height: fill },
+        visible: !state.documentOpen,
         terminal: { grow: 1 },
         gap: target === 'desktop' ? 16 : 1,
       },
     ),
     events,
   );
+  if (state.document)
+    out.frame.view = ui.box(
+      'deployment-pages',
+      [
+        out.frame.view as Record<string, unknown>,
+        documentView(
+          target,
+          props,
+          state.document,
+          state.documentOpen,
+          busy,
+          state.notice ? text[state.notice] : null,
+          state.diagnostic,
+          !!state.current?.reference,
+          !!state.pending,
+        ),
+      ],
+      { gap: 0, style: { width: fill, height: fill }, terminal: { grow: 1 } },
+    );
   out.actions = actions;
   return out;
 }
@@ -296,6 +365,9 @@ export function deployment(target: Target): Component<State, ConnectionsProps> {
         earlier: [],
         historyOpen: false,
         historyNext: null,
+        document: null,
+        documentOpen: false,
+        diagnostic: null,
       };
       const actions: Action[] = [];
       page(state, actions, { kind: 'start' });
@@ -309,13 +381,43 @@ export function deployment(target: Target): Component<State, ConnectionsProps> {
       state.revision++;
       const actions: Action[] = [],
         events: Emission[] = [];
-      if (input.kind === 'action') {
+      if (
+        input.kind === 'component' &&
+        input.child === 'deployment-document-editor' &&
+        input.name === 'changed' &&
+        state.document
+      ) {
+        const next = observeDocument(state.document, input.event as EditorObservation);
+        if (next !== null) readDocument(state, actions, next);
+      } else if (input.kind === 'action') {
         const pending = state.pending;
         if (!pending || pending.key !== input.key) return frame(target, state, props);
         state.pending = null;
         const outcome = input.event as ActionOutcome,
           r = pending.request;
-        if (r.kind === 'page') {
+        if (r.kind === 'document') {
+          const editor = state.document;
+          if (editor && sameValue(editor.source, r.source) && editor.offset === r.offset) {
+            if (outcome.status === 'succeeded')
+              acceptDocumentChunk(editor, outcome.value as DeploymentDocumentChunk);
+            else editor.phase = 'failed';
+          }
+        } else if (r.kind === 'documentReload') {
+          if (outcome.status === 'succeeded' && state.document) {
+            const value = outcome.value as ManagedInstancesPage,
+              old = state.document;
+            state.document = documentEditor(value.source);
+            state.document.observation = old.observation;
+            state.document.sequence = old.sequence;
+            state.page = value;
+            state.previous = [];
+            state.after = null;
+            state.conflict = false;
+            state.notice = null;
+            state.diagnostic = null;
+            readDocument(state, actions, 0);
+          } else state.notice = 'deploymentUnavailable';
+        } else if (r.kind === 'page') {
           if (outcome.status === 'succeeded') {
             const value = outcome.value as ManagedInstancesPage;
             if (r.input.kind === 'continue' && !sameValue(value.source, r.input.source))
@@ -358,12 +460,106 @@ export function deployment(target: Target): Component<State, ConnectionsProps> {
             .filter(
               (entry) =>
                 entry.reference.contract.name === 'maka.application.DeploymentManager' &&
-                entry.reference.method === 'setEnabled',
+                (entry.reference.method === 'setEnabled' || entry.reference.method === 'replace'),
             )
             .map((entry) => ({ cursor: entry.cursor, reference: entry.reference, reply: null }));
         } else state.notice = 'historyUnavailable';
       } else if (input.kind === 'raw') {
-        const key = input.key;
+        if (
+          state.document?.phase === 'loading' &&
+          input.key !== 'deployment-document-back' &&
+          input.key !== 'deployment-back'
+        )
+          return frame(target, state, props);
+        let key = input.key;
+        if (key === 'deployment-document-check') key = 'deployment-check';
+        if (key === 'deployment-document-history') {
+          state.documentOpen = false;
+          key = 'deployment-history';
+        }
+        const editor = state.document;
+        if (key === 'deployment-document-back') {
+          state.documentOpen = false;
+          if (editor) {
+            editor.confirmation = null;
+            editor.reloadConfirmation = false;
+          }
+        } else if (
+          key === 'deployment-advanced' &&
+          !state.pending &&
+          !state.current &&
+          state.page
+        ) {
+          state.historyOpen = false;
+          state.documentOpen = true;
+          if (!editor) {
+            state.notice = null;
+            state.diagnostic = null;
+            state.document = documentEditor(state.page.source);
+            readDocument(state, actions, 0);
+          }
+        } else if (
+          key === 'deployment-document-cancel' &&
+          editor &&
+          !state.pending &&
+          !state.current
+        ) {
+          editor.confirmation = null;
+          editor.reloadConfirmation = false;
+        } else if (
+          key === 'deployment-document-save' &&
+          editor &&
+          canSaveDocument(editor, !!state.pending || !!state.current)
+        ) {
+          editor.confirmation = JSON.parse(JSON.stringify(editor.observation)) as EditorObservation;
+        } else if (
+          key === 'deployment-document-confirm' &&
+          editor?.confirmation &&
+          canSaveDocument(editor, !!state.pending || !!state.current)
+        ) {
+          const frozen = editor.confirmation;
+          editor.confirmation = null;
+          state.current = { intent: { source: editor.source, editor: frozen }, reference: null };
+          state.notice = null;
+          state.diagnostic = null;
+          request(
+            state,
+            actions,
+            { kind: 'mutate' },
+            'management',
+            'replace',
+            { expectedRevision: editor.source.revision },
+            {
+              document: {
+                child: 'deployment-document-editor',
+                method: 'snapshot',
+                input: {
+                  kind: 'at_revision',
+                  owner: frozen.snapshot.text.owner,
+                  revision: frozen.revision,
+                },
+              },
+            },
+          );
+        } else if (
+          key === 'deployment-document-reload' &&
+          editor &&
+          !state.pending &&
+          !state.current &&
+          editor.phase !== 'loading'
+        ) {
+          editor.reloadConfirmation = true;
+        } else if (
+          key === 'deployment-document-reload-confirm' &&
+          editor?.reloadConfirmation &&
+          !state.pending &&
+          !state.current
+        ) {
+          editor.reloadConfirmation = false;
+          request(state, actions, { kind: 'documentReload' }, 'management', 'instances', {
+            kind: 'start',
+          });
+        }
         if (key === 'deployment-back') events.push({ name: 'closed', value: {} });
         else if (key === 'deployment-cancel' && !state.current) state.confirmation = null;
         else if (key === 'deployment-history-back') state.historyOpen = false;

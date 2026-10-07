@@ -496,7 +496,12 @@ test('both product compositions use actual immutable package refs and check in t
       const manager = connections.hosts.find((host) => host.name === 'manager');
       assert.deepEqual(manager.location, { kind: 'cohost' });
       assert.equal(manager.deployment, configuration.managementDeployment);
-      assert.deepEqual(manager.imports.management.methods, ['instances', 'setEnabled']);
+      assert.deepEqual(manager.imports.management.methods, [
+        'instances',
+        'setEnabled',
+        'readDocument',
+        'replace',
+      ]);
       assert.equal(manager.imports.receipts.recovery, true);
       assert.deepEqual(business.location, {
         kind: 'process',
@@ -4361,5 +4366,246 @@ for (const target of ['desktop', 'tui']) {
       instance: instance.instance,
       enabled: true,
     });
+  });
+}
+
+for (const target of ['desktop', 'tui']) {
+  test(`${target} composition editor loads all chunks through original native receipts and captures one confirmed revision`, async () => {
+    const { component } = await import(
+      pathToFileURL(resolve(root, `dist/packages/deployment/${target}.js`))
+    );
+    const props = { theme: values.appearance[0], locale: 'en' };
+    const source = { stateDomain: 'a'.repeat(64), deployment: uuid(80), revision: 7 };
+    let result = component.mount(props, {});
+    const complete = (event) => {
+      result = component.event(
+        result.frame.state,
+        { kind: 'action', key: result.actions[0].key, event },
+        props,
+        {},
+      );
+    };
+    const press = (key) => {
+      result = component.event(result.frame.state, { kind: 'raw', key, event: null }, props, {});
+    };
+    const observed = (revision, bytes, receipt = null) => {
+      result = component.event(
+        result.frame.state,
+        {
+          kind: 'component',
+          child: 'deployment-document-editor',
+          name: 'changed',
+          key: 'deployment-document-changed',
+          event: {
+            revision,
+            snapshot: {
+              text: { owner: 'original-document', revision, bytes },
+              selection: { start: 0, end: 0 },
+              reversed: false,
+              marked: null,
+            },
+            receipt,
+          },
+        },
+        props,
+        {},
+      );
+    };
+    complete({ status: 'succeeded', value: { source, instances: [], next: null } });
+    press('deployment-advanced');
+    assert.deepEqual(result.actions[0].input, { source, offset: 0 });
+    const chunks = ['{\n"input":"' + '中🌟'.repeat(8500), 'second chunk', '","packages":[]}'];
+    const total = chunks.reduce((n, s) => n + Buffer.byteLength(s), 0);
+    let offset = 0;
+    for (let at = 0; at < chunks.length; at++) {
+      const text = chunks[at],
+        end = offset + Buffer.byteLength(text),
+        next = at === chunks.length - 1 ? null : end;
+      complete({ status: 'succeeded', value: { source, offset, totalBytes: total, text, next } });
+      if (at === 0) {
+        assert.equal(result.frame.state.document.command, null);
+        observed(0, 0);
+      }
+      const command = result.frame.state.document.command;
+      assert.equal(command.edit.kind, at === 0 ? 'reset' : 'append');
+      assert.equal(command.basedOn, at);
+      assert.equal(result.actions.length, 0, 'next query waits for actual native applied receipt');
+      if (at === 0) {
+        press('deployment-document-back');
+        press('deployment-history');
+        assert.equal(
+          result.frame.state.pending,
+          null,
+          'initialization keeps the request lane between chunks',
+        );
+        assert.equal(result.actions.length, 0);
+      }
+      observed(at + 1, end, {
+        owner: command.owner,
+        sequence: command.sequence,
+        revision: at + 1,
+        outcome: { status: 'applied' },
+      });
+      if (next !== null) assert.deepEqual(result.actions[0].input, { source, offset: next });
+      offset = end;
+    }
+    assert.equal(result.frame.state.document.phase, 'ready');
+    assert.equal(result.frame.state.document.chunk, null);
+    assert.equal(result.frame.state.document.command, null);
+    assert.ok(
+      JSON.stringify(result.frame.state).length < 5000,
+      'full editable source belongs only to the native owner',
+    );
+    press('deployment-advanced');
+    assert.equal(
+      result.actions.length,
+      0,
+      'returning to the retained editor does not reload its draft',
+    );
+    press('deployment-document-save');
+    assert.equal(result.actions.length, 0);
+    press('deployment-document-cancel');
+    assert.equal(result.frame.state.document.confirmation, null);
+    press('deployment-document-save');
+    press('deployment-document-confirm');
+    assert.deepEqual(result.actions[0].input, { expectedRevision: 7 });
+    assert.deepEqual(result.actions[0].resources, {
+      document: {
+        child: 'deployment-document-editor',
+        method: 'snapshot',
+        input: { kind: 'at_revision', owner: 'original-document', revision: 3 },
+      },
+    });
+    const original = {
+      ...reference,
+      source: { ...source, deployment: uuid(81) },
+      namespace: [uuid(90)],
+      export: 'Management',
+      method: 'replace',
+      contract: sdk.contracts.deploymentManager,
+    };
+    complete({ status: 'operation', reply: { reference: original, receipt: { kind: 'unknown' } } });
+    press('deployment-document-save');
+    assert.equal(result.actions.length, 0);
+    press('deployment-document-check');
+    assert.deepEqual(result.actions[0].input, original);
+    complete({
+      status: 'succeeded',
+      value: {
+        reference: original,
+        receipt: {
+          kind: 'recorded',
+          outcome: { kind: 'returned', value: { status: 'conflict', currentRevision: 8 } },
+          cleanup: { kind: 'confirmed' },
+        },
+      },
+    });
+    assert.equal(result.frame.state.document.source.revision, 7);
+    assert.equal(result.frame.state.document.observation.snapshot.text.bytes, total);
+    assert.equal(result.frame.state.document.conflict, true);
+    press('deployment-document-save');
+    assert.equal(result.frame.state.document.confirmation, null);
+    press('deployment-document-history');
+    assert.equal(result.actions[0].method, 'page');
+    complete({ status: 'succeeded', value: [{ cursor: 31, reference: original }] });
+    assert.deepEqual(result.frame.state.earlier[0].reference, original);
+    press('deployment-earlier-check-0');
+    assert.deepEqual(result.actions[0].input, original);
+    complete({
+      status: 'succeeded',
+      value: { reference: original, receipt: { kind: 'unknown' } },
+    });
+    assert.equal(result.frame.state.document.observation.snapshot.text.bytes, total);
+    assert.equal(result.frame.state.document.conflict, true);
+    press('deployment-history-back');
+    press('deployment-advanced');
+    assert.equal(result.actions.length, 0);
+    press('deployment-document-reload');
+    assert.equal(result.actions.length, 0, 'discarding native draft requires confirmation');
+    press('deployment-document-cancel');
+    assert.equal(result.frame.state.document.source.revision, 7);
+    press('deployment-document-reload');
+    press('deployment-document-reload-confirm');
+    complete({
+      status: 'succeeded',
+      value: { source: { ...source, revision: 8 }, instances: [], next: null },
+    });
+    assert.deepEqual(result.actions[0].input, { source: { ...source, revision: 8 }, offset: 0 });
+    assert.equal(
+      result.frame.state.document.observation.snapshot.text.bytes,
+      total,
+      'the first accepted new chunk performs reset, not the reload click',
+    );
+  });
+  test(`${target} composition editor rejects mixed-source chunks and failed native initialization without enabling save`, async () => {
+    const { component } = await import(
+      pathToFileURL(resolve(root, `dist/packages/deployment/${target}.js`))
+    );
+    const props = { theme: values.appearance[0], locale: 'en' },
+      source = { stateDomain: 'a'.repeat(64), deployment: uuid(80), revision: 7 };
+    for (const failure of ['source', 'receipt']) {
+      let result = component.mount(props, {});
+      const complete = (value) => {
+        result = component.event(
+          result.frame.state,
+          { kind: 'action', key: result.actions[0].key, event: { status: 'succeeded', value } },
+          props,
+          {},
+        );
+      };
+      const press = (key) => {
+        result = component.event(result.frame.state, { kind: 'raw', key, event: null }, props, {});
+      };
+      complete({ source, instances: [], next: null });
+      press('deployment-advanced');
+      complete({
+        source: failure === 'source' ? { ...source, revision: 8 } : source,
+        offset: 0,
+        totalBytes: 2,
+        text: '{}',
+        next: null,
+      });
+      if (failure === 'receipt') {
+        const observe = (event) => {
+          result = component.event(
+            result.frame.state,
+            {
+              kind: 'component',
+              child: 'deployment-document-editor',
+              name: 'changed',
+              key: 'deployment-document-changed',
+              event,
+            },
+            props,
+            {},
+          );
+        };
+        const observation = {
+          revision: 0,
+          snapshot: {
+            text: { owner: 'original', revision: 0, bytes: 0 },
+            selection: { start: 0, end: 0 },
+            reversed: false,
+            marked: null,
+          },
+          receipt: null,
+        };
+        observe(observation);
+        const command = result.frame.state.document.command;
+        observe({
+          ...observation,
+          receipt: {
+            owner: 'original',
+            sequence: command.sequence,
+            revision: 0,
+            outcome: { status: 'conflict', reason: 'revision' },
+          },
+        });
+      }
+      assert.equal(result.frame.state.document.phase, 'failed');
+      press('deployment-document-save');
+      assert.equal(result.frame.state.document.confirmation, null);
+      assert.equal(result.actions.length, 0);
+    }
   });
 }

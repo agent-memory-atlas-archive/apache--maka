@@ -113,8 +113,15 @@ impl Owner {
                     reason: EditorConflict::Revision,
                 }
             } else {
-                let (EditorEdit::Replace { text } | EditorEdit::Reset { text }) = &command.edit;
-                if !representable(text) || !self.editor.accepts_text(text) {
+                let (EditorEdit::Replace { text }
+                | EditorEdit::Reset { text }
+                | EditorEdit::Append { text }) = &command.edit;
+                let value = if matches!(command.edit, EditorEdit::Append { .. }) {
+                    format!("{}{text}", self.editor.text())
+                } else {
+                    text.clone()
+                };
+                if !representable(text) || !self.editor.accepts_text(&value) {
                     EditorOutcome::Conflict {
                         reason: EditorConflict::Representation,
                     }
@@ -124,9 +131,9 @@ impl Owner {
                             self.editor.select_all();
                             self.editor.insert(text);
                         }
-                        EditorEdit::Reset { text } => {
+                        EditorEdit::Reset { .. } | EditorEdit::Append { .. } => {
                             self.editor.clear();
-                            self.editor.insert(text);
+                            self.editor.insert(&value);
                             self.editor.clear_history();
                         }
                     }
@@ -174,6 +181,7 @@ fn representable(text: &str) -> bool {
             .chars()
             .any(|c| c.is_control() && !matches!(c, '\n' | '\t'))
 }
+
 pub(super) struct Snapshot {
     pub owner: String,
     pub text: String,
@@ -204,5 +212,79 @@ impl maka_plugins::call::ReadResource for Snapshot {
             .get(range)
             .map(|text| text.as_bytes().to_vec())
             .ok_or_else(|| "invalid editor UTF-8 range".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn initialization_chunks_keep_one_native_owner_and_reject_stale_or_over_budget_append() {
+        let mut owner = Owner::new(
+            Editor::bounded(maka_ui::textarea::MAX_BUFFER_BYTES, "too-large"),
+            "",
+        );
+        let identity = owner.id.clone();
+        let chunk = "中🌟".repeat(9000);
+        for sequence in 1..=8 {
+            owner.apply(&EditorCommand {
+                owner: identity.clone(),
+                sequence,
+                based_on: owner.revision,
+                edit: if sequence == 1 {
+                    EditorEdit::Reset {
+                        text: chunk.clone(),
+                    }
+                } else {
+                    EditorEdit::Append {
+                        text: chunk.clone(),
+                    }
+                },
+            });
+            assert_eq!(
+                owner.receipt.as_ref().unwrap().outcome,
+                EditorOutcome::Applied
+            );
+            assert_eq!(owner.editor.text(), chunk.repeat(sequence as usize));
+        }
+        let before = owner.editor.text().to_owned();
+        owner.editor.key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('z'),
+            crossterm::event::KeyModifiers::CONTROL,
+        ));
+        assert_eq!(
+            owner.editor.text(),
+            before,
+            "initialization does not create partial-document undo steps"
+        );
+        owner.apply(&EditorCommand {
+            owner: identity.clone(),
+            sequence: 9,
+            based_on: 0,
+            edit: EditorEdit::Append {
+                text: "stale".into(),
+            },
+        });
+        assert_eq!(
+            owner.receipt.as_ref().unwrap().outcome,
+            EditorOutcome::Conflict {
+                reason: EditorConflict::Revision
+            }
+        );
+        owner.apply(&EditorCommand {
+            owner: identity,
+            sequence: 10,
+            based_on: owner.revision,
+            edit: EditorEdit::Append {
+                text: "x".repeat(65537),
+            },
+        });
+        assert_eq!(
+            owner.receipt.as_ref().unwrap().outcome,
+            EditorOutcome::Conflict {
+                reason: EditorConflict::Representation
+            }
+        );
+        assert_eq!(owner.editor.text(), before);
     }
 }

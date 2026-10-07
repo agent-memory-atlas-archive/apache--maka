@@ -61,7 +61,14 @@ const remote = await write('remote-exports', result.remoteExports);
 await write('connections', result.connections);
 await write('packages', packages);
 const arguments_ = paths.flatMap((path) => ['--package', path]);
-run(['check', '--input', host, ...arguments_]);
-run(['check', '--input', management, ...arguments_]);
-run(['check', '--input', ui, '--remote-exports', remote, ...arguments_]);
+const check = (args) =>
+  execFileSync(values.maka, ['application', 'check', ...args], {
+    // The checker owns its derived plan. Authoring only needs the exit status,
+    // not a second, buffered copy of every expanded contract and declaration.
+    stdio: ['ignore', 'ignore', 'pipe'],
+    maxBuffer: 4 * 1024 * 1024,
+  });
+check(['--input', host, ...arguments_]);
+check(['--input', management, ...arguments_]);
+check(['--input', ui, '--remote-exports', remote, ...arguments_]);
 console.log(`Checked Host and ${configuration.presentation} compositions written to ${output}`);

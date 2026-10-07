@@ -99,5 +99,14 @@ the original input on CAS, preserving template parameters and unrelated override
 required connections must remain valid. Desired input is distinct from runtime readiness.
 Conflicts require refresh and a new confirmation. Unknown results expose only original
 operation checks and durable earlier intents, never automatic replay. The current screen
-covers existing instances; importing bundles, editing bindings/configuration and selecting
-new product roots remain required work.
+covers existing instances. Its separate advanced composition editor loads the complete
+committed source into one native buffer through bounded UTF-8 chunks, waiting for each
+original editor receipt. It edits configuration, explicit bindings, package selections
+and the launch root without flattening template provenance. Saving freezes the native
+owner/revision for confirmation and passes an immutable UTF-8 document resource to Host;
+Host checks installed revisions, the original execution environment, the full plan and
+source budget before CAS. Validation diagnostics retain the draft. Conflicts require
+explicit discard/reload; unknown replacement checks its original receipt and is included
+in durable caller history. Closing this page retains its native editor. Source documents
+are limited to 1 MiB; the committed input and remote observations still share their
+512 KiB limit. Importing new bundles and full product/runtime acceptance remain required.

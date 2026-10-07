@@ -19,6 +19,8 @@
 
 //! Native editor protocol. Snapshots are observations, never writable buffers.
 use crate::editor::*;
+/// Maximum retained editable buffer; individual commands remain at 64 KiB.
+pub const MAX_BUFFER_BYTES: usize = 1024 * 1024;
 use maka_plugin_core::contract::{Capture, Contract, Interface, Transport};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

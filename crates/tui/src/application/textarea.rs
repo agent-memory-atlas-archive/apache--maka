@@ -48,7 +48,7 @@ struct Recipe {
 impl Widget for Recipe {
     fn create(&self) -> Box<dyn Any> {
         Box::new(Owner::new(
-            Editor::bounded(65536, "composer-too-large"),
+            Editor::bounded(maka_ui::textarea::MAX_BUFFER_BYTES, "composer-too-large"),
             &self.props.initial_text,
         ))
     }

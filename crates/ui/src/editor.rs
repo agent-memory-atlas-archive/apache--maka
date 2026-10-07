@@ -45,6 +45,12 @@ pub enum EditorEdit {
         #[schemars(length(max = 65536))]
         text: String,
     },
+    /// Continue initialization after Reset, without creating undo history.
+    /// Each chunk is bounded; the same native owner retains the full buffer.
+    Append {
+        #[schemars(length(max = 65536))]
+        text: String,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

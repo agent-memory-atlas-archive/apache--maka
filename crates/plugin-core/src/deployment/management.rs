@@ -51,11 +51,37 @@ pub struct PackageInstalled {
 pub struct DeploymentReplace {
     #[schemars(range(min = 1, max = 9_007_199_254_740_990_u64))]
     pub expected_revision: u64,
+}
+
+/// Source document edited by one native buffer, never a second desired plan.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeploymentDocument {
     pub input: Input,
     #[schemars(length(max = 128))]
     pub remote_exports: Vec<RemoteObservation>,
     #[schemars(length(max = 128))]
     pub packages: Vec<PackageRef>,
+}
+
+pub const MAX_DOCUMENT_BYTES: usize = 1024 * 1024;
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeploymentDocumentRead {
+    pub source: DeploymentRef,
+    #[schemars(range(max = 1048576))]
+    pub offset: usize,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeploymentDocumentChunk {
+    pub source: DeploymentRef,
+    pub offset: usize,
+    pub total_bytes: usize,
+    #[schemars(length(max = 65536))]
+    pub text: String,
+    pub next: Option<usize>,
 }
 
 /// A fixed committed source for continuation; no runtime or permission claim.
@@ -118,12 +144,16 @@ pub enum ManagementResult<T> {
     },
     Rejected {
         reason: ManagementRejection,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(length(max = 512))]
+        diagnostic: Option<String>,
     },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ManagementRejection {
     InvalidBundle,
+    InvalidDocument,
     InvalidSource,
     PackageUnavailable,
     ExecutionEnvironment,
@@ -153,6 +183,11 @@ pub fn deployment_manager_contract() -> Contract {
     install
         .resources
         .insert("package".into(), package_bundle_type());
+    let mut replace =
+        method::<DeploymentReplace, ManagementResult<DeploymentRef>>(MethodMode::Mutation);
+    replace
+        .resources
+        .insert("document".into(), crate::contract::text_resource_type());
     Contract {
         name: "maka.application.DeploymentManager".into(),
         version: 1,
@@ -165,6 +200,10 @@ pub fn deployment_manager_contract() -> Contract {
                 ),
                 ("install".into(), install),
                 (
+                    "readDocument".into(),
+                    method::<DeploymentDocumentRead, DeploymentDocumentChunk>(MethodMode::Query),
+                ),
+                (
                     "instances".into(),
                     method::<DeploymentInstances, ManagedInstancesPage>(MethodMode::Query),
                 ),
@@ -174,12 +213,7 @@ pub fn deployment_manager_contract() -> Contract {
                         MethodMode::Mutation,
                     ),
                 ),
-                (
-                    "replace".into(),
-                    method::<DeploymentReplace, ManagementResult<DeploymentRef>>(
-                        MethodMode::Mutation,
-                    ),
-                ),
+                ("replace".into(), replace),
             ]),
         },
     }

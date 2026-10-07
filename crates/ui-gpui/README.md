@@ -168,3 +168,8 @@ selection layer. Link batches run before original Kit defaults and fail closed;
 only user-activated HTTP(S) targets may open. Document images use an explicit
 failed source instead of implicit network/filesystem reads. Resource-backed
 images require a separate explicit capability implementation.
+
+The shared font projection gives the generic `monospace` family a platform
+primary: Menlo on macOS, Consolas on Windows and DejaVu Sans Mono on Linux.
+These use installed native fonts. Explicit family names, size, weight and glyph
+fallbacks remain theme inputs.

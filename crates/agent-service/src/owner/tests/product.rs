@@ -511,6 +511,59 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
             .unwrap(),
         Some(deployment.clone())
     );
+    click(&mut presenter, "[ Edit product composition ]");
+    // Enabled Save is reached only after every original native initialization
+    // receipt. Cancel this first confirmation without touching its buffer.
+    click(&mut presenter, "[ Save composition ]");
+    await_screen(&mut presenter, "Replace this product’s composition?");
+    click(&mut presenter, "[ Cancel ]");
+    click_nth(&mut presenter, "{", 0);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    presenter.input(Event::Paste("{".into())).unwrap();
+    click(&mut presenter, "[ Save composition ]");
+    click(&mut presenter, "[ Confirm ]");
+    await_screen(&mut presenter, "EOF while parsing");
+    assert_eq!(
+        runtime
+            .block_on(caller.application_head(deployment.deployment))
+            .unwrap(),
+        Some(deployment.clone())
+    );
+    click(&mut presenter, "[ Reload saved source ]");
+    await_screen(&mut presenter, "Discard this draft and reload?");
+    click(&mut presenter, "[ Cancel ]");
+    assert!(screen(&draw(&mut presenter)).contains('{'));
+    click(&mut presenter, "[ Reload saved source ]");
+    click(&mut presenter, "[ Confirm ]");
+    click(&mut presenter, "[ Save composition ]");
+    click(&mut presenter, "[ Confirm ]");
+    await_screen(&mut presenter, "Changes saved.");
+    let saved = runtime
+        .block_on(caller.application_head(deployment.deployment))
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.revision, deployment.revision + 1);
+    let saved_input = runtime
+        .block_on(caller.read_application_metadata_at(&saved))
+        .unwrap()
+        .unwrap()
+        .source
+        .input;
+    let original_input = runtime
+        .block_on(caller.read_application_metadata_at(&deployment))
+        .unwrap()
+        .unwrap()
+        .source
+        .input;
+    assert_eq!(saved_input, original_input);
+    // This fixture retains its explicitly admitted S1 registrations; production
+    // foreground adoption is separately tested with the original Connections.
+    click(&mut presenter, "[ Back ]");
     click(&mut presenter, "[ Back ]");
     await_screen(&mut presenter, "Hello product");
     // Ordinary settings owns the route; the original conversation editor is

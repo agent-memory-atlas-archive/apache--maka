@@ -126,3 +126,7 @@ Scene 文本使用稳定的可访问文本节点，保留完整 value。`Style.t
 隐藏、禁用、退休在下一帧前撤销输入并释放内部焦点；原 surface BaseRoot 提供窗口选区层。
 链接批次先于原 Kit 默认行为，失败拒绝；用户激活仅允许 HTTP(S) 打开。文档图片提供明确
 失败 source，不能隐式读取网络或文件；带资源图片需显式能力实现。
+
+统一字体投影为通用 `monospace` 选择平台首选：macOS 的 Menlo、Windows 的 Consolas、
+Linux 的 DejaVu Sans Mono，使用已安装的原生字体。显式字体名、字号、字重和字形
+fallback 仍由主题提供。

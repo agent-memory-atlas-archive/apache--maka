@@ -25,8 +25,19 @@ pub(super) fn color(value: data::Color) -> Hsla {
     rgba(value.0).into()
 }
 pub(super) fn font(value: &data::FontAppearance) -> Font {
+    // These platforms require a concrete primary family. FontFallbacks only
+    // selects glyph fallbacks; it cannot resolve an unknown primary alias.
+    let family = match value.family.0.as_str() {
+        #[cfg(target_os = "macos")]
+        "monospace" => "Menlo",
+        #[cfg(target_os = "windows")]
+        "monospace" => "Consolas",
+        #[cfg(target_os = "linux")]
+        "monospace" => "DejaVu Sans Mono",
+        family => family,
+    };
     Font {
-        family: value.family.0.clone().into(),
+        family: family.to_owned().into(),
         features: FontFeatures::default(),
         fallbacks: Some(FontFallbacks::from_fonts(
             value.fallbacks.iter().map(|f| f.0.clone()).collect(),

@@ -19,9 +19,7 @@
 
 //! Bounded asynchronous UTF-8 reads through explicit request-local resources.
 use super::actions::{NativeService, ServiceCompletion, ServiceFuture, ServiceRequest};
-use maka_plugin_core::contract::{
-    Contract, Interface, Method, MethodMode, ResourceType, Transport,
-};
+use maka_plugin_core::contract::{Contract, Interface, Method, MethodMode, Transport};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -38,12 +36,7 @@ pub struct TextChunk {
     pub text: String,
     pub metadata: Value,
 }
-pub fn text_resource_type() -> ResourceType {
-    ResourceType {
-        name: "maka.text.utf8".into(),
-        version: 1,
-    }
-}
+pub use maka_plugin_core::contract::text_resource_type;
 pub fn reader_contract() -> Contract {
     Contract {
         name: "maka.text.Reader".into(),
