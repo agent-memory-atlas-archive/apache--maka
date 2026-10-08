@@ -126,10 +126,17 @@ pub(super) fn text(text: &str, area: Placement, buffer: &mut Buffer, style: Styl
 #[derive(Clone)]
 pub(super) enum TargetKind {
     Action,
+    Item {
+        current: bool,
+        follow_focus: bool,
+        submit: bool,
+    },
     Focus(FocusChild),
     Native,
     Scroll,
-    Backdrop { body: Placement },
+    Backdrop {
+        body: Placement,
+    },
 }
 #[derive(Clone)]
 pub(super) struct TargetIdentity {
@@ -144,6 +151,8 @@ pub(super) struct Ancestor {
     pub identity: TargetIdentity,
     pub revision: u64,
     pub shortcuts: Vec<maka_ui::shortcut::Shortcut>,
+    pub focus_group: bool,
+    pub scroll: Option<super::scroll::Viewport>,
     pub focus_shortcuts: Vec<FocusBinding>,
 }
 #[derive(Clone)]
@@ -695,6 +704,7 @@ impl Presenter {
     ) -> maka_ui::Result<super::scene::Layout> {
         match node {
             Node::Dialog { background, .. } => self.node_layout(mount, background, measurements),
+            Node::Item { content, .. } => self.node_layout(mount, content, measurements),
             Node::Component(slot) => {
                 let child = self.application.child_mount(mount, &slot.key)?;
                 let native = &self.application.frame(child)?.view;
@@ -730,6 +740,9 @@ impl Presenter {
                         self.measure(mount, background, width, measurements)?
                     }
                     Node::Choice(choice) => super::choice::size(choice, width),
+                    Node::Item { content, .. } => {
+                        self.measure(mount, content, width, measurements)?
+                    }
                     Node::Text { text, truncate, .. } => {
                         if *truncate {
                             (
@@ -864,6 +877,61 @@ impl Presenter {
             return Ok(());
         }
         match node {
+            Node::Item {
+                key,
+                content,
+                disabled,
+                current,
+                selected_color,
+                follow_focus,
+                submit,
+            } => {
+                let target = Target {
+                    identity: TargetIdentity {
+                        mount: mount.clone(),
+                        key: key.clone(),
+                        owner: self.resources.owners[&mount.id()].identity.clone(),
+                        scope: scene.input_scope.clone(),
+                    },
+                    kind: TargetKind::Item {
+                        current: *current,
+                        follow_focus: *follow_focus,
+                        submit: *submit,
+                    },
+                    ancestors: scene.ancestry.clone(),
+                    revision: self.application.frame(mount)?.revision,
+                    area,
+                    tab_index: 0,
+                    autofocus: false,
+                };
+                // Retain the logical row even outside the viewport. Keyboard
+                // navigation reveals it; pointer hit testing still uses clip.
+                if !disabled {
+                    scene.targets.push(target.clone());
+                }
+                self.paint_node(mount, content, area, buffer, scene, pass)?;
+                // Original Surface: current fills the row, focus underlines,
+                // and hover adds emphasis without changing selection.
+                let style = if *disabled {
+                    Style::default().add_modifier(Modifier::DIM)
+                } else {
+                    let mut style = if *current {
+                        selected_color.map_or_else(
+                            || Style::default().add_modifier(Modifier::REVERSED),
+                            |selected| Style::default().bg(color(selected)),
+                        )
+                    } else {
+                        Style::default()
+                    };
+                    if self.focus.as_ref().is_some_and(|old| old.same(&target)) {
+                        style = style.add_modifier(Modifier::UNDERLINED);
+                    } else if self.hover.as_ref().is_some_and(|old| old.same(&target)) {
+                        style = style.add_modifier(Modifier::BOLD);
+                    }
+                    style
+                };
+                buffer.set_style(area.visible(), style);
+            }
             Node::Choice(choice) => {
                 self.paint_choice(mount, choice, area, buffer, scene, pass.choices)?
             }
@@ -977,6 +1045,7 @@ impl Presenter {
                 children,
                 shortcuts,
                 focus_shortcuts,
+                focus_group,
                 viewport,
                 ..
             } => {
@@ -1020,7 +1089,7 @@ impl Presenter {
                     |index, width| self.measure(mount, children[index], width, measurements),
                 )?;
                 let scrolling = *scroll != super::scene::ScrollPolicy::None;
-                let offset = if scrolling {
+                let viewport = if scrolling {
                     let identities: Vec<_> = children
                         .iter()
                         .zip(&flow.children)
@@ -1031,8 +1100,7 @@ impl Presenter {
                         .downcast_ref::<super::scroll::SceneState>()
                         .unwrap();
                     let viewport = state.candidate(key, *scroll, inner, flow.size.1, &identities);
-                    let offset = viewport.offset;
-                    pass.viewports.push((key.clone(), viewport));
+                    pass.viewports.push((key.clone(), viewport.clone()));
                     let identity = TargetIdentity {
                         mount: mount.clone(),
                         key: key.clone(),
@@ -1050,12 +1118,13 @@ impl Presenter {
                             ancestors: scene.ancestry.clone(),
                         });
                     }
-                    offset
+                    Some(viewport)
                 } else {
-                    0
+                    None
                 };
+                let offset = viewport.as_ref().map_or(0, |viewport| viewport.offset);
                 let focus_shortcuts = self.freeze_focus_shortcuts(mount, focus_shortcuts)?;
-                let scoped = !shortcuts.is_empty() || !focus_shortcuts.is_empty();
+                let scoped = *focus_group || !shortcuts.is_empty() || !focus_shortcuts.is_empty();
                 if !shortcuts.is_empty() && scene.input_scope.is_some() && scene.ancestry.is_empty()
                 {
                     scene.keyboard = Some(std::rc::Rc::new(Ancestor {
@@ -1067,6 +1136,8 @@ impl Presenter {
                         },
                         revision: self.application.frame(mount)?.revision,
                         shortcuts: shortcuts.clone(),
+                        focus_group: *focus_group,
+                        scroll: viewport.clone(),
                         focus_shortcuts: focus_shortcuts.clone(),
                     }));
                 }
@@ -1080,6 +1151,8 @@ impl Presenter {
                         },
                         revision: self.application.frame(mount)?.revision,
                         shortcuts: shortcuts.clone(),
+                        focus_group: *focus_group,
+                        scroll: viewport.clone(),
                         focus_shortcuts: focus_shortcuts.clone(),
                     }));
                 }

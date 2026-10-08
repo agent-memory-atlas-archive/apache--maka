@@ -84,7 +84,7 @@ impl Presenter {
                     .filter(|target| {
                         dialog::same_scope(&scope, &target.scope)
                             && self.target_admitted(target)
-                            && self.resources.admits(target)
+                            && self.resources.owns(target)
                             && self.application.mount_visible(&target.mount)
                     })
             }
@@ -160,13 +160,13 @@ impl Presenter {
         }
         let mounts = self.application.mounted_subtree(&binding.child)?;
         let target = self
-            .scene
-            .iter()
+            .focus_stops(|target| mounts.contains(&target.mount))
+            .into_iter()
             .filter(|target| {
                 target.tab_index >= 0
                     && mounts.contains(&target.mount)
                     && self.target_admitted(target)
-                    && self.resources.admits(target)
+                    && self.resources.owns(target)
                     && !self.application.is_retiring(&target.mount)
                     && self.application.mount_visible(&target.mount)
                     && self
@@ -176,12 +176,153 @@ impl Presenter {
             })
             .min_by_key(|target| (target.tab_index == 0, target.tab_index))
             .cloned();
-        if let Some(target) = target
-            && self.resources.enter_focus(&target)?
-        {
-            self.focus = Some(target);
-            self.track_focus_return()?;
+        if let Some(target) = target {
+            self.focus_item(target)?;
         }
         Ok(())
+    }
+}
+
+// Original Surface grouping: one Tab stop, declaration-order arrow navigation,
+// and focus-following activation. There is no second native selection cursor.
+impl super::paint::Target {
+    fn group(&self) -> Option<&super::paint::Ancestor> {
+        self.ancestors
+            .iter()
+            .rev()
+            .find(|ancestor| ancestor.focus_group)
+            .map(|a| a.as_ref())
+    }
+    fn same_group(&self, other: &Self) -> bool {
+        self.group().zip(other.group()).is_some_and(|(a, b)| {
+            a.mount == b.mount
+                && a.key == b.key
+                && std::rc::Rc::ptr_eq(&a.owner, &b.owner)
+                && dialog::same_scope(&a.scope, &b.scope)
+        })
+    }
+}
+impl Presenter {
+    pub(super) fn tab_stops(&self) -> Vec<&super::paint::Target> {
+        self.focus_stops(|_| true)
+    }
+    fn focus_stops(
+        &self,
+        include: impl Fn(&super::paint::Target) -> bool,
+    ) -> Vec<&super::paint::Target> {
+        use super::paint::TargetKind;
+        let priority = |target: &super::paint::Target| {
+            (
+                self.focus.as_ref().is_some_and(|focus| focus.same(target)),
+                matches!(target.kind, TargetKind::Item { current: true, .. }),
+                !target.area.is_empty(),
+            )
+        };
+        let mut stops: Vec<&super::paint::Target> = Vec::new();
+        for target in self
+            .scene
+            .iter()
+            .filter(|target| target.tab_index >= 0 && include(target))
+        {
+            if let Some(stop) = stops.iter_mut().find(|stop| stop.same_group(target)) {
+                if priority(target) > priority(stop) {
+                    *stop = target;
+                }
+            } else {
+                stops.push(target);
+            }
+        }
+        stops.sort_by_key(|target| (target.tab_index == 0, target.tab_index));
+        stops
+    }
+    pub(super) fn focus_item(&mut self, target: super::paint::Target) -> maka_ui::Result<()> {
+        use super::paint::TargetKind;
+        if self.application.is_retiring(&target.mount)
+            || !self.application.mount_visible(&target.mount)
+            || !self.target_admitted(&target)
+            || (matches!(target.kind, TargetKind::Item { .. })
+                && self.application.frame(&target.mount)?.revision != target.revision)
+            || !(if matches!(target.kind, TargetKind::Item { .. }) {
+                self.resources.owns(&target)
+            } else {
+                self.resources.enter_focus(&target)?
+            })
+        {
+            return Ok(());
+        }
+        let changed = !self.focus.as_ref().is_some_and(|old| old.same(&target));
+        let mut bounds = target.area.bounds;
+        for ancestor in target.ancestors.iter().rev() {
+            if self.target_admitted(ancestor)
+                && self.resources.owns(ancestor)
+                && self.application.frame(&ancestor.mount)?.revision == ancestor.revision
+                && let Some(viewport) = &ancestor.scroll
+                && let Some(state) = self
+                    .resources
+                    .owners
+                    .get_mut(&ancestor.mount.id())
+                    .and_then(|owner| owner.state.downcast_mut::<super::scroll::SceneState>())
+            {
+                state.reveal(&ancestor.key, viewport, &mut bounds);
+            }
+        }
+        self.focus = Some(target.clone());
+        if let TargetKind::Item {
+            current,
+            follow_focus: true,
+            ..
+        } = target.kind
+            && (changed || !current)
+        {
+            self.application.dispatch(
+                &target.mount,
+                target.revision,
+                &target.key,
+                serde_json::json!({"kind":"activate"}),
+            )?;
+            self.sync_native()?;
+        }
+        self.track_focus_return()
+    }
+    pub(super) fn navigate_items(
+        &mut self,
+        event: &crossterm::event::Event,
+    ) -> maka_ui::Result<bool> {
+        use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+        let Event::Key(key) = event else {
+            return Ok(false);
+        };
+        if key.kind == KeyEventKind::Release
+            || key.modifiers != KeyModifiers::NONE
+            || !matches!(
+                key.code,
+                KeyCode::Up | KeyCode::Down | KeyCode::Home | KeyCode::End
+            )
+        {
+            return Ok(false);
+        }
+        let Some(focus) = self
+            .focus
+            .as_ref()
+            .filter(|target| matches!(target.kind, super::paint::TargetKind::Item { .. }))
+        else {
+            return Ok(false);
+        };
+        let peers: Vec<_> = self
+            .scene
+            .iter()
+            .filter(|target| target.tab_index >= 0 && target.same_group(focus))
+            .collect();
+        let Some(at) = peers.iter().position(|target| target.same(focus)) else {
+            return Ok(false);
+        };
+        let next = match key.code {
+            KeyCode::Up => at.saturating_sub(1),
+            KeyCode::Down => (at + 1).min(peers.len() - 1),
+            KeyCode::Home => 0,
+            _ => peers.len() - 1,
+        };
+        self.focus_item(peers[next].clone())?;
+        Ok(true)
     }
 }

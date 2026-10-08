@@ -236,26 +236,46 @@ function frame<N extends Node>(
   const ui = presentation.paint(props.theme);
   const text = copy(props.locale);
   const chosen = state.staleSelection ? null : props.selection?.choice;
-  const compact = (label: string) =>
-    [...label].length > 44 ? [...label].slice(0, 43).join('') + '…' : label;
-  const trigger = ui.button(
-    'toggle',
-    chosen ? (target === 'desktop' ? chosen.label : compact(chosen.label)) : text.chooseModel,
-    props.busy,
-    false,
-    {
-      width: fill,
-      minWidth: 0,
-      justify: 'start',
-      truncate: true,
-    },
-  );
+  const trigger = ui.button('toggle', chosen ? chosen.label : text.chooseModel, props.busy, false, {
+    width: fill,
+    minWidth: 0,
+    justify: 'start',
+    truncate: true,
+  });
 
   const modelRows = state.choices.map((choice, at) => {
-    const active = at === state.active;
+    const active = !!state.draft && sameModel(state.draft.choice, choice);
+    if (ui.item) {
+      const detail =
+        choice.label === choice.selection.modelId
+          ? choice.connectionName
+          : `${choice.connectionName} · ${choice.selection.modelId}`;
+      return ui.item(
+        `choose-${at}`,
+        ui.box(
+          `model-${at}`,
+          [
+            ui.text(
+              `model-name-${at}`,
+              `${active ? '›' : ' '} ${choice.label}`,
+              13,
+              props.theme.text,
+              400,
+              { truncate: true },
+            ),
+            ui.text(`model-detail-${at}`, `  ${detail}`, 13, props.theme.muted, 400, {
+              truncate: true,
+            }),
+          ],
+          { gap: 0, surface: true },
+        ),
+        active,
+        !editableChoices(state, props),
+      );
+    }
     const button = ui.button(
       `choose-${at}`,
-      `${target === 'tui' && active ? '› ' : ''}${target === 'desktop' ? choice.label : compact(choice.label)} · ${target === 'desktop' ? choice.connectionName : compact(choice.connectionName)}`,
+      `${choice.label} · ${choice.connectionName}`,
       !editableChoices(state, props),
       false,
       {
@@ -274,6 +294,7 @@ function frame<N extends Node>(
     {
       content: ui.box('model-viewport', modelRows, {
         scroll: 'manual',
+        focusGroup: target === 'tui',
         gap: target === 'desktop' ? 2 : 0,
         terminal: { grow: 1, basis: 0 },
         style: { width: fill, height: pixels(160), minWidth: 0, minHeight: 0 },
@@ -383,20 +404,32 @@ function frame<N extends Node>(
             ],
             {
               gap: 0,
-              shortcuts: [
-                {
-                  key: 'down',
-                  modifiers: [],
-                  input: 'next-choice',
-                  enabled: editableChoices(state, props),
-                },
-                {
-                  key: 'up',
-                  modifiers: [],
-                  input: 'previous-choice',
-                  enabled: editableChoices(state, props),
-                },
-              ],
+              focusShortcuts:
+                target === 'tui'
+                  ? ['down', 'up'].map((key) => ({
+                      key,
+                      modifiers: [],
+                      child: 'model-rows',
+                      enabled: editableChoices(state, props),
+                    }))
+                  : [],
+              shortcuts:
+                target === 'tui'
+                  ? []
+                  : [
+                      {
+                        key: 'down',
+                        modifiers: [],
+                        input: 'next-choice',
+                        enabled: editableChoices(state, props),
+                      },
+                      {
+                        key: 'up',
+                        modifiers: [],
+                        input: 'previous-choice',
+                        enabled: editableChoices(state, props),
+                      },
+                    ],
             },
           ),
           ...(state.queryError
@@ -744,6 +777,7 @@ export function models<N extends Node>(
           else if (input.key === 'more' && !state.pending) {
             if (state.next) actions.push(...read(state, true));
           } else if (
+            presentation.target === 'desktop' &&
             (input.key === 'next-choice' || input.key === 'previous-choice') &&
             editableChoices(state, props)
           ) {
@@ -762,6 +796,12 @@ export function models<N extends Node>(
             if (choice) {
               state.active = Number(input.key.slice(7));
               selectDraft(state, choice);
+              if (
+                (input.event as { kind?: string }).kind === 'submit' &&
+                state.draft &&
+                supports(state.draft)
+              )
+                actions.push(...capture(state, state.draft));
             }
           }
         }

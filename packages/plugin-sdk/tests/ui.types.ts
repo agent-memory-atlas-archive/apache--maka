@@ -195,3 +195,16 @@ ui.terminal.stack({ ...terminal, children: [terminalChoice] });
 ui.terminal.choice({ ...terminalChoice, current: 1 });
 // @ts-expect-error A terminal choice cannot enter a desktop scene.
 ui.desktop.stack({ ...desktop, children: [terminalChoice] });
+
+const terminalItem = ui.terminal.item({
+  key: 'model-row',
+  content: terminal,
+  current: true,
+  follow_focus: true,
+  submit: true,
+});
+ui.terminal.stack({ ...terminal, focus_group: true, children: [terminalItem] });
+// @ts-expect-error Rich item content keeps the terminal authoring target.
+ui.terminal.item({ key: 'wrong-item', content: desktop });
+// @ts-expect-error Interaction policy is a typed flag, not a callback or string.
+ui.terminal.item({ ...terminalItem, follow_focus: 'yes' });

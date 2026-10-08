@@ -59,7 +59,10 @@ impl NativeComponent<dyn Widget> for Root {
                 if matches!(
                     *key,
                     "__reading_observation" | "reading-observed" | "row-activated"
-                ) || input.get("kind").and_then(Value::as_str) == Some("selected") =>
+                ) || matches!(
+                    input.get("kind").and_then(Value::as_str),
+                    Some("selected" | "activate" | "submit")
+                ) =>
             {
                 (*input).clone()
             }
@@ -374,6 +377,13 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
             152,
         )];
         if matches!(view, View::InteractiveScene(..)) {
+            components.push((
+                "reading",
+                "ReadingArea",
+                "maka.ui.reading",
+                maka_ui::reading::reading_contract(),
+                154,
+            ));
             components.push((
                 "editor",
                 "Textarea",

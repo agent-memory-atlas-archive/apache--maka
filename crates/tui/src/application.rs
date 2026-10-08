@@ -493,17 +493,15 @@ impl Presenter {
             Some(target) => self.resources.handles_tab(target)?,
             None => false,
         };
+        if self.navigate_items(&event)? {
+            return Ok(());
+        }
         let target = match &event {
             Event::Key(key) if key.kind != KeyEventKind::Release => match key.code {
                 KeyCode::Tab | KeyCode::BackTab if !returnable && !native_tab => {
                     let reverse =
                         key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
-                    let mut stops: Vec<_> = self
-                        .scene
-                        .iter()
-                        .filter(|target| target.tab_index >= 0)
-                        .collect();
-                    stops.sort_by_key(|target| (target.tab_index == 0, target.tab_index));
+                    let stops = self.tab_stops();
                     if !stops.is_empty() {
                         let index = self
                             .focus
@@ -517,13 +515,8 @@ impl Presenter {
                             (None, false) => 0,
                         };
                         let target = stops[next];
-                        if !self.focus.as_ref().is_some_and(|old| old.same(target))
-                            && !self.application.is_retiring(&target.mount)
-                            && self.application.mount_visible(&target.mount)
-                            && self.target_admitted(target)
-                            && self.resources.enter_focus(target)?
-                        {
-                            self.focus = Some(target.clone());
+                        if !self.focus.as_ref().is_some_and(|old| old.same(target)) {
+                            self.focus_item(target.clone())?;
                         }
                     }
                     self.track_focus_return()?;
@@ -648,7 +641,9 @@ impl Presenter {
             }
             if !matches!(
                 target.kind,
-                paint::TargetKind::Action | paint::TargetKind::Focus(_)
+                paint::TargetKind::Action
+                    | paint::TargetKind::Focus(_)
+                    | paint::TargetKind::Item { .. }
             ) {
                 if matches!(event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left))
                 {
@@ -670,11 +665,24 @@ impl Presenter {
                 }
                 return Ok(());
             }
+            if matches!(target.kind, paint::TargetKind::Item { .. })
+                && (self.application.frame(&target.mount)?.revision != target.revision
+                    || matches!(event, Event::Key(key) if key.kind != KeyEventKind::Press))
+            {
+                return Ok(());
+            }
+            let kind = match target.kind {
+                paint::TargetKind::Item { submit: true, .. } if matches!(event, Event::Key(key) if key.code == KeyCode::Enter) => {
+                    "submit"
+                }
+                paint::TargetKind::Item { .. } => "activate",
+                _ => "click",
+            };
             let decision = self.application.dispatch(
                 &target.mount,
                 target.revision,
                 &target.key,
-                json!({"kind":"click"}),
+                json!({"kind":kind}),
             )?;
             if !decision.prevent_default {
                 self.focus = Some(target);

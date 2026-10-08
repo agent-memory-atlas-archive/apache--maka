@@ -46,6 +46,7 @@ interface BoxOptions {
   visible?: boolean;
   terminal?: TerminalLayout;
   viewport?: boolean;
+  focusGroup?: boolean;
   border?: boolean;
   shortcuts?: Shortcut[];
   focusShortcuts?: FocusShortcut[];
@@ -73,6 +74,7 @@ interface Painter<N extends Node> {
     current: string | null,
     disabled: boolean,
   ): N;
+  item?(key: string, content: N, current: boolean, disabled: boolean): N;
   focusButton?(key: string, label: string, child: string): N;
   dialog(key: string, label: string, background: N, content: N, open: boolean): N;
   box(key: string, children: N[], options?: BoxOptions): N;
@@ -160,6 +162,16 @@ function desktopPaint(theme: Theme): Painter<DesktopNode> {
 }
 function terminalPaint(theme: Theme): Painter<TerminalNode> {
   return {
+    item: (key, content, current, disabled) =>
+      ui.terminal.item({
+        key,
+        content,
+        current,
+        disabled,
+        selected_color: rgba(theme.selected),
+        follow_focus: true,
+        submit: true,
+      }),
     choice: (key, label, options, current, disabled) =>
       ui.terminal.choice({
         key,
@@ -209,6 +221,7 @@ function terminalPaint(theme: Theme): Painter<TerminalNode> {
         shortcuts: options.shortcuts ?? [],
         focus_shortcuts: options.focusShortcuts ?? [],
         viewport: options.viewport ?? false,
+        focus_group: options.focusGroup ?? false,
         border: options.border
           ? { color: rgba(theme.border), focused_color: rgba(theme.accent), style: 'rounded' }
           : null,

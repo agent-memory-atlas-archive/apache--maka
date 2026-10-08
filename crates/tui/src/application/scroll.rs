@@ -67,6 +67,9 @@ impl Viewport {
 impl SceneState {
     pub fn commit(&mut self, node: &Node) {
         fn visit(node: &Node, keys: &mut Vec<String>) {
+            if let Node::Item { content, .. } = node {
+                visit(content, keys);
+            }
             if let Node::Dialog {
                 background,
                 content,
@@ -251,5 +254,33 @@ impl SceneState {
         let changed = state.offset != next;
         state.offset = next;
         changed
+    }
+}
+
+impl SceneState {
+    /// Original Surface reveal_offsets: expose the complete logical row with
+    /// the least scroll, preserving the same native offset and intent owner.
+    pub fn reveal(&mut self, key: &str, viewport: &Viewport, row: &mut super::CellRect) {
+        let Some(state) = self.scrolls.get_mut(key) else {
+            return;
+        };
+        // The allocated viewport, not its physical clip: an outer scroller can
+        // hide this entire group. Carry the adjusted logical row outward.
+        row.height = row.height.min(viewport.area.height);
+        let above = viewport.area.y - row.y;
+        let below = row.bottom() - viewport.area.bottom();
+        let delta = if above > 0 { -above } else { below.max(0) };
+        let next = (i64::from(viewport.offset) + delta).clamp(0, i64::from(viewport.end())) as u32;
+        row.y += i64::from(viewport.offset) - i64::from(next);
+        state.intent += 1;
+        state.offset = next;
+        if let Some(reading) = self
+            .reading
+            .as_mut()
+            .filter(|reading| reading.root_key == key)
+        {
+            reading.scope.touch();
+            reading.cancel();
+        }
     }
 }

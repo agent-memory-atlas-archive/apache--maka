@@ -354,6 +354,19 @@ export type TerminalScene =
     }
   | {
       key: string;
+      content: TerminalScene;
+      disabled?: boolean;
+      current?: boolean;
+      /**
+       * Current-row fill; absent uses the terminal's reverse-video selection.
+       */
+      selected_color?: number | null;
+      follow_focus?: boolean;
+      submit?: boolean;
+      kind: 'item';
+    }
+  | {
+      key: string;
       label: string;
       background: TerminalScene;
       content: TerminalScene;
@@ -385,6 +398,10 @@ export type TerminalScene =
        * externally allocated root area to supply this container's size.
        */
       viewport?: boolean;
+      /**
+       * One Tab stop; arrows navigate its items in declaration order.
+       */
+      focus_group?: boolean;
       /**
        * @maxItems 32
        */

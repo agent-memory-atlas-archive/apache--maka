@@ -221,6 +221,8 @@ impl super::Widget for Node {
                     },
                     revision: slots.presenter.application.frame(slots.parent)?.revision,
                     shortcuts: shortcuts.clone(),
+                    focus_group: false,
+                    scroll: None,
                     focus_shortcuts: slots
                         .presenter
                         .freeze_focus_shortcuts(slots.parent, focus_shortcuts)?,

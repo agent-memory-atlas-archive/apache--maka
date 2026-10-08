@@ -141,6 +141,23 @@ impl Choice {
 #[schemars(rename = "TerminalScene")]
 pub enum Node {
     Choice(Choice),
+    /// An interactive rich-content item, using the original Surface semantics.
+    Item {
+        key: String,
+        content: Box<Node>,
+        #[serde(default)]
+        disabled: bool,
+        #[serde(default)]
+        current: bool,
+        /// Current-row fill; absent uses the terminal's reverse-video selection.
+        #[serde(default)]
+        #[schemars(range(max = 0xffffff))]
+        selected_color: Option<u32>,
+        #[serde(default)]
+        follow_focus: bool,
+        #[serde(default)]
+        submit: bool,
+    },
     Dialog {
         key: String,
         label: String,
@@ -170,6 +187,9 @@ pub enum Node {
         /// externally allocated root area to supply this container's size.
         #[serde(default)]
         viewport: bool,
+        /// One Tab stop; arrows navigate its items in declaration order.
+        #[serde(default)]
+        focus_group: bool,
         #[serde(default)]
         #[schemars(length(max = 32))]
         shortcuts: Vec<crate::shortcut::Shortcut>,
@@ -215,7 +235,8 @@ impl Node {
             Self::Stack { key, .. }
             | Self::Text { key, .. }
             | Self::Button { key, .. }
-            | Self::Dialog { key, .. } => key,
+            | Self::Dialog { key, .. }
+            | Self::Item { key, .. } => key,
             Self::Component(slot) => &slot.key,
             Self::Choice(choice) => &choice.key,
         }
@@ -224,6 +245,7 @@ impl Node {
         match self {
             Self::Stack { layout, .. } => *layout,
             Self::Dialog { background, .. } => background.layout(),
+            Self::Item { content, .. } => content.layout(),
             _ => Layout::default(),
         }
     }
@@ -246,7 +268,8 @@ impl Node {
             Self::Stack { key, .. }
             | Self::Text { key, .. }
             | Self::Button { key, .. }
-            | Self::Dialog { key, .. } => key,
+            | Self::Dialog { key, .. }
+            | Self::Item { key, .. } => key,
             Self::Component(slot) => &slot.key,
             Self::Choice(choice) => &choice.key,
         };
@@ -268,6 +291,16 @@ impl Node {
         }
         match self {
             Self::Choice(choice) => choice.validate()?,
+            Self::Item {
+                content,
+                selected_color,
+                ..
+            } => {
+                if selected_color.is_some_and(|color| color > 0xffffff) {
+                    return Err("invalid item selection color".into());
+                }
+                content.validate(depth + 1, keys, deadline)?;
+            }
             Self::Dialog {
                 label,
                 background,
@@ -342,6 +375,7 @@ impl Node {
     }
     pub fn validate_focus_targets(&self, slots: &[ComponentSlot]) -> Result<(), String> {
         match self {
+            Self::Item { content, .. } => content.validate_focus_targets(slots)?,
             Self::Button {
                 focus_child: Some(child),
                 ..
@@ -380,6 +414,9 @@ impl Node {
         inputs: &mut BTreeMap<String, Value>,
         visible: bool,
     ) -> Result<(), String> {
+        if let Self::Item { content, .. } = self {
+            content.shortcut_inputs(inputs, visible)?;
+        }
         if let Self::Dialog {
             background,
             content,
@@ -419,6 +456,29 @@ impl Node {
             return Err("scene compilation deadline".into());
         }
         match self {
+            Self::Item {
+                key,
+                content,
+                disabled,
+                submit,
+                ..
+            } => {
+                *input_count += 1;
+                if *input_count > 64 {
+                    return Err("scene input limit".into());
+                }
+                if visible && !disabled {
+                    let kinds = if *submit {
+                        vec!["activate", "submit"]
+                    } else {
+                        vec!["activate"]
+                    };
+                    if inputs.insert(key.clone(), json!({"type":"object","properties":{"kind":{"enum":kinds}},"required":["kind"],"additionalProperties":false})).is_some() {
+                        return Err("reserved scene input identity".into());
+                    }
+                }
+                content.metadata(slots, inputs, hidden_slots, input_count, visible, deadline)?;
+            }
             Self::Choice(choice) => {
                 *input_count += 1;
                 if *input_count > 64 {
@@ -531,6 +591,7 @@ impl Node {
                 }
             }
             Self::Stack { children, .. } => children.iter().find_map(|node| node.overlay(key)),
+            Self::Item { content, .. } => content.overlay(key),
             _ => None,
         }
     }

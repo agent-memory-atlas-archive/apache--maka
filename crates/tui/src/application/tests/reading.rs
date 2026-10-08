@@ -638,3 +638,6 @@ mod dialog;
 
 #[path = "reading/choice.rs"]
 mod choice;
+
+#[path = "reading/items.rs"]
+mod items;

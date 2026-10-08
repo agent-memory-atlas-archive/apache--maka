@@ -760,10 +760,11 @@ fn single_line_arrows_leave_list_navigation_to_the_original_outer_scope() {
             KeyCode::PageUp,
             KeyCode::PageDown,
         ] {
-            assert!(matches!(
-                tui.resources.input(&target, &key(code)).unwrap(),
-                Some(WidgetInput::Unhandled)
-            ));
+            let result = tui.resources.input(&target, &key(code)).unwrap();
+            assert!(match code {
+                KeyCode::Up | KeyCode::Down => matches!(result, Some(WidgetInput::Navigate)),
+                _ => matches!(result, Some(WidgetInput::Unhandled)),
+            });
         }
         assert_eq!(observation(&tui), before);
         close(&mut tui);

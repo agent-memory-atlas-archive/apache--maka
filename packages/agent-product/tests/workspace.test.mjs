@@ -837,7 +837,7 @@ const modelRaw = (out, key, p = modelProps) =>
     {},
   );
 function modelButtons(view, result = []) {
-  if (view.kind === 'button') result.push(view.key);
+  if (view.kind === 'button' || view.kind === 'item') result.push(view.key);
   for (const child of [
     ...(view.children ?? []),
     view.content,
@@ -1117,7 +1117,8 @@ for (const target of ['tui', 'desktop']) {
     modelNative(form, 'model', 2);
     modelRead(form, 'model', 2);
     form.query('models', modelPage());
-    for (let at = 0; at < 7; at++) form.raw('next-choice');
+    if (target === 'tui') form.raw('choose-7');
+    else for (let at = 0; at < 7; at++) form.raw('next-choice');
     const reveal = structuredClone(form.state.reveal);
     const choices = structuredClone(form.state.choices);
     const observation = modelObservation('model', 3);
@@ -1136,42 +1137,76 @@ for (const target of ['tui', 'desktop']) {
     assert.equal(form.state.queryBasis.revision, 3);
     assert.deepEqual(form.output.actions, []);
   });
-  test(`${target} model arrows keep the original query and reveal the active row in both directions`, () => {
-    const form = ready();
-    for (let at = 0; at < 15; at++) form.raw('next-choice');
-    assert.equal(form.state.active, 15);
-    assert.deepEqual(form.state.observation, modelObservation('', 1));
-    assert.equal(form.output.actions.length, 0);
-    const reading = modelSlots(form.output.frame.view).find((n) => n.key === 'model-rows');
-    assert.equal(reading.props.content.scroll, 'manual');
-    assert.equal(reading.props.content.children.length, 16);
-    assert.deepEqual(reading.props.command.target, { kind: 'reveal_child', key: 'choose-15' });
-    const sequence = reading.props.command.sequence;
-    form.input({
-      kind: 'component',
-      child: 'model-rows',
-      name: 'observed',
-      key: 'row-viewport',
-      event: {},
+  if (target === 'desktop')
+    test(`${target} model arrows keep the original query and reveal the active row in both directions`, () => {
+      const form = ready();
+      for (let at = 0; at < 15; at++) form.raw('next-choice');
+      assert.equal(form.state.active, 15);
+      assert.deepEqual(form.state.observation, modelObservation('', 1));
+      assert.equal(form.output.actions.length, 0);
+      const reading = modelSlots(form.output.frame.view).find((n) => n.key === 'model-rows');
+      assert.equal(reading.props.content.scroll, 'manual');
+      assert.equal(reading.props.content.children.length, 16);
+      assert.deepEqual(reading.props.command.target, { kind: 'reveal_child', key: 'choose-15' });
+      const sequence = reading.props.command.sequence;
+      form.input({
+        kind: 'component',
+        child: 'model-rows',
+        name: 'observed',
+        key: 'row-viewport',
+        event: {},
+      });
+      assert.equal(form.state.reveal.sequence, sequence);
+      form.input({
+        kind: 'component',
+        child: 'model-rows',
+        name: 'input',
+        key: 'row-input',
+        event: { kind: 'raw', key: 'choose-15', event: {} },
+      });
+      form.raw('apply');
+      modelRead(form, '', 1);
+      assert.deepEqual(form.output.events, [
+        { name: 'selected', value: selectedModel(modelChoices[15]) },
+      ]);
+      form.raw('toggle');
+      for (let at = 0; at < 15; at++) form.raw('previous-choice');
+      assert.equal(form.state.active, 0);
+      assert.deepEqual(form.state.reveal.target, { kind: 'reveal_child', key: 'choose-0' });
     });
-    assert.equal(form.state.reveal.sequence, sequence);
-    form.input({
-      kind: 'component',
-      child: 'model-rows',
-      name: 'input',
-      key: 'row-input',
-      event: { kind: 'raw', key: 'choose-15', event: {} },
+  if (target === 'tui')
+    test('TUI model rich rows delegate focus and submit the exact native item', () => {
+      const form = ready();
+      const reading = modelSlots(form.output.frame.view).find((n) => n.key === 'model-rows');
+      assert.equal(reading.props.content.focus_group, true);
+      const row = reading.props.content.children[5];
+      assert.equal(row.kind, 'item');
+      assert.equal(row.follow_focus, true);
+      assert.equal(row.submit, true);
+      assert.equal(row.content.children.length, 2);
+      const before = structuredClone(form.state.reveal);
+      form.input({
+        kind: 'component',
+        child: 'model-rows',
+        name: 'input',
+        key: 'row-input',
+        event: { kind: 'raw', key: 'choose-5', event: { kind: 'activate' } },
+      });
+      assert.deepEqual(form.state.draft, selectedModel(modelChoices[5]));
+      assert.deepEqual(form.state.reveal, before, 'native focus reveal has no guest scroll echo');
+      assert.deepEqual(form.output.actions, []);
+      form.input({
+        kind: 'component',
+        child: 'model-rows',
+        name: 'input',
+        key: 'row-input',
+        event: { kind: 'raw', key: 'choose-5', event: { kind: 'submit' } },
+      });
+      modelRead(form, '', 1);
+      assert.deepEqual(form.output.events, [
+        { name: 'selected', value: selectedModel(modelChoices[5]) },
+      ]);
     });
-    form.raw('apply');
-    modelRead(form, '', 1);
-    assert.deepEqual(form.output.events, [
-      { name: 'selected', value: selectedModel(modelChoices[15]) },
-    ]);
-    form.raw('toggle');
-    for (let at = 0; at < 15; at++) form.raw('previous-choice');
-    assert.equal(form.state.active, 0);
-    assert.deepEqual(form.state.reveal.target, { kind: 'reveal_child', key: 'choose-0' });
-  });
   test(`${target} hidden, defaults and busy model searches stop scanning and resume from the original cursor`, () => {
     for (const barrier of ['close', 'defaults', 'busy']) {
       const form = ready();

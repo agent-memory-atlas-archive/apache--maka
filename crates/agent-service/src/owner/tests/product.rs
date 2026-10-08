@@ -1339,14 +1339,20 @@ process.stdout.write(output.outputFiles[0].text);
     assert!(!screen(&draw(&mut presenter)).contains("Search models"));
     click(&mut presenter, "[ Choose model ]");
     await_screen(&mut presenter, "fixture-model-00");
-    // Tab makes a row the native target. Down must not change the search
-    // candidate behind that target; Enter drafts that row, then Apply confirms.
+    // The original list is one Tab stop. Down follows native row focus;
+    // Enter confirms that exact row, including its two-line presentation.
     presenter
         .input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
         .unwrap();
+    draw(&mut presenter);
     presenter
         .input(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))
         .unwrap();
+    await_screen(&mut presenter, "› fixture-model-01");
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)))
+        .unwrap();
+    await_screen(&mut presenter, "› fixture-model-00");
     let focused_row = screen(&draw(&mut presenter));
     assert!(
         focused_row.contains("› fixture-model-00") && !focused_row.contains("› fixture-model-01"),
@@ -1358,7 +1364,7 @@ process.stdout.write(output.outputFiles[0].text);
             KeyModifiers::NONE,
         )))
         .unwrap();
-    click(&mut presenter, "[ Apply ]");
+    await_models_closed(&mut presenter);
     await_screen(&mut presenter, "[ fixture-model-00 ]");
     assert!(!screen(&draw(&mut presenter)).contains("Search models"));
     click(&mut presenter, "[ fixture-model-00 ]");
@@ -1378,7 +1384,13 @@ process.stdout.write(output.outputFiles[0].text);
         draw(&mut presenter);
     }
     let scrolled = screen(&draw(&mut presenter));
-    assert!(!scrolled.contains("fixture-model-00 ·"), "{scrolled}");
+    assert!(!scrolled.contains("› fixture-model-00"), "{scrolled}");
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))
+        .unwrap();
+    // Search Down enters the original list at its current model; subsequent
+    // arrows belong to the native group, not a product navigation mirror.
+    await_screen(&mut presenter, "› fixture-model-00");
     presenter
         .input(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))
         .unwrap();
@@ -1390,7 +1402,7 @@ process.stdout.write(output.outputFiles[0].text);
         await_screen(&mut presenter, &format!("› fixture-model-{at:02}"));
     }
     let scrolled = screen(&draw(&mut presenter));
-    assert!(!scrolled.contains("fixture-model-00 ·"), "{scrolled}");
+    assert!(!scrolled.contains("› fixture-model-00"), "{scrolled}");
     // More now advances only the original bounded catalog cursor (16..19).
     click(&mut presenter, "More models");
     await_screen(&mut presenter, "fixture-model-16");
@@ -1415,6 +1427,10 @@ process.stdout.write(output.outputFiles[0].text);
         .input(Event::Paste("fixture-model-1".into()))
         .unwrap();
     await_screen(&mut presenter, "› fixture-model-10");
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))
+        .unwrap();
+    draw(&mut presenter);
     for at in 11..20 {
         presenter
             .input(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))

@@ -99,6 +99,7 @@ impl super::scroll::SceneState {
             openings: &std::collections::BTreeMap<String, Rc<Opening>>,
         ) {
             match node {
+                Node::Item { content, .. } => visit(content, visible, keys, choices, openings),
                 Node::Choice(choice) => {
                     if visible && !choice.disabled && !choice.options.is_empty() {
                         choices.push(choice.key.clone());
@@ -478,6 +479,8 @@ impl Presenter {
                 identity: identity.clone(),
                 revision: self.application.frame(&deferred.mount)?.revision,
                 shortcuts: Vec::new(),
+                focus_group: false,
+                scroll: None,
                 focus_shortcuts: Vec::new(),
             }));
             scene.targets.push(Target {
