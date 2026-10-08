@@ -1427,6 +1427,19 @@ process.stdout.write(output.outputFiles[0].text);
     await_screen(&mut presenter, "composer-row-19");
     for (width, height) in [(80, 30), (40, 16), (80, 24)] {
         let rendered = screen(&draw_at(&mut presenter, Rect::new(0, 0, width, height)));
+        let lines: Vec<_> = rendered.lines().collect();
+        let send = lines
+            .iter()
+            .position(|line| line.contains("[ Send ]"))
+            .unwrap();
+        assert!(
+            lines[send - 1].contains('╭') && lines[send].contains("composer-row-"),
+            "{rendered}"
+        );
+        assert!(
+            lines[send..].iter().any(|line| line.contains('╰')),
+            "{rendered}"
+        );
         assert!(rendered.contains("composer-row-19"), "{rendered}");
         assert!(rendered.contains("[ Send ]"), "{rendered}");
         presenter.input(Event::Paste("!".into())).unwrap();
@@ -1470,8 +1483,16 @@ process.stdout.write(output.outputFiles[0].text);
         "{layout}"
     );
     let narrow = screen(&draw_at(&mut presenter, Rect::new(0, 0, 40, 16)));
-    assert!(narrow.contains("[ Stop ]"), "{narrow}");
-    assert!(narrow.contains("[ Send ]"), "{narrow}");
+    let lines: Vec<_> = narrow.lines().collect();
+    let controls = lines
+        .iter()
+        .position(|line| line.contains("[ Stop ]"))
+        .unwrap();
+    assert!(lines[controls].contains("[ Send ]"), "{narrow}");
+    assert!(
+        lines[controls - 1].contains('╭') && lines[controls + 1].contains('╰'),
+        "{narrow}"
+    );
     click(&mut presenter, "What would you like to work on?");
     presenter
         .input(Event::Paste("Queued product followup".into()))

@@ -359,6 +359,10 @@ export type TerminalScene =
       background: number;
       children: TerminalScene[];
       /**
+       * One cell outside padding; absent means no border or border inset.
+       */
+      border?: TerminalBorder | null;
+      /**
        * Establish the allocated inner size as the descendants' layout viewport.
        * Children do not contribute intrinsic size; use grow/basis or an
        * externally allocated root area to supply this container's size.
@@ -412,6 +416,7 @@ export type TerminalScene =
       kind: 'component';
     };
 export type TerminalDirection = 'row' | 'column';
+export type TerminalBorderStyle = 'rounded' | 'square' | 'ascii';
 export type Modifier = 'control' | 'primary' | 'alt' | 'shift' | 'super';
 /**
  * Native scroll policy; offsets and accepted viewport geometry remain native.
@@ -1974,6 +1979,15 @@ export interface ComponentSlot {
     [k: string]: string | undefined;
   };
 }
+/**
+ * A one-cell frame. Colors follow the same RGB convention as terminal text.
+ * Focus color follows any focused native target inside this stack.
+ */
+export interface TerminalBorder {
+  color: number;
+  focused_color: number;
+  style: TerminalBorderStyle;
+}
 export interface Shortcut {
   key: string;
   /**
@@ -2181,6 +2195,9 @@ export interface TextareaAppearance {
   caret: Color;
   border: Color;
   focusedBorder: Color;
+  /**
+   * In TUI inputs, a positive width draws a one-cell border; zero has no inset.
+   */
   borderWidth: number;
   radius: number;
   padding: Insets;
@@ -2311,6 +2328,9 @@ export interface InputAppearance {
   caret: Color;
   border: Color;
   focusedBorder: Color;
+  /**
+   * In TUI inputs, a positive width draws a one-cell border; zero has no inset.
+   */
   borderWidth: number;
   radius: number;
   padding: Insets;

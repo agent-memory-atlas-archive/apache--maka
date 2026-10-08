@@ -756,12 +756,13 @@ impl Presenter {
                         direction,
                         gap,
                         padding,
+                        border,
                         children,
                         layout,
                         viewport,
                         ..
                     } => {
-                        let inset = padding.saturating_mul(2);
+                        let inset = (padding + u16::from(border.is_some())).saturating_mul(2);
                         if *viewport {
                             return Ok((inset.min(width), u32::from(inset)));
                         }
@@ -964,6 +965,7 @@ impl Presenter {
                 direction,
                 gap,
                 padding,
+                border,
                 background,
                 children,
                 shortcuts,
@@ -972,7 +974,13 @@ impl Presenter {
                 ..
             } => {
                 buffer.set_style(area.visible(), Style::default().bg(color(*background)));
-                let inner = area.inner(ratatui::layout::Margin::new(*padding, *padding));
+                let target_start = scene.targets.len();
+                let inner = if border.is_some() {
+                    super::border::inner(area)
+                } else {
+                    area
+                };
+                let inner = inner.inner(ratatui::layout::Margin::new(*padding, *padding));
                 let measurements = if *viewport {
                     measurements.within(Size {
                         width: inner.width,
@@ -1076,6 +1084,23 @@ impl Presenter {
                 }
                 if scrolling || scoped {
                     scene.ancestry.pop();
+                }
+                if let Some(border) = border {
+                    let focused = self.focus.as_ref().is_some_and(|focused| {
+                        scene.targets[target_start..]
+                            .iter()
+                            .any(|target| target.same(focused))
+                    });
+                    super::border::paint(
+                        buffer,
+                        area,
+                        color(if focused {
+                            border.focused_color
+                        } else {
+                            border.color
+                        }),
+                        border.style,
+                    );
                 }
             }
         }

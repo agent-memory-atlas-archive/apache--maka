@@ -503,6 +503,8 @@ export const contracts = {
                 $ref: '#/$defs/Color',
               },
               borderWidth: {
+                description:
+                  'In TUI inputs, a positive width draws a one-cell border; zero has no inset.',
                 type: 'number',
                 format: 'float',
                 minimum: 0,
@@ -1749,6 +1751,8 @@ export const contracts = {
                 $ref: '#/$defs/Color',
               },
               borderWidth: {
+                description:
+                  'In TUI inputs, a positive width draws a one-cell border; zero has no inset.',
                 type: 'number',
                 format: 'float',
                 minimum: 0,
@@ -2661,6 +2665,8 @@ export const contracts = {
                 $ref: '#/$defs/Color',
               },
               borderWidth: {
+                description:
+                  'In TUI inputs, a positive width draws a one-cell border; zero has no inset.',
                 type: 'number',
                 format: 'float',
                 minimum: 0,
@@ -3150,6 +3156,8 @@ export const contracts = {
                 $ref: '#/$defs/Color',
               },
               borderWidth: {
+                description:
+                  'In TUI inputs, a positive width draws a one-cell border; zero has no inset.',
                 type: 'number',
                 format: 'float',
                 minimum: 0,

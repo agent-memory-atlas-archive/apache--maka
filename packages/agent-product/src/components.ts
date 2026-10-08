@@ -76,7 +76,8 @@ export function components<N extends Node>(
       !state.observation?.snapshot.marked &&
       !!state.observation?.snapshot.text.bytes;
     const textarea: TextareaProps = {
-      appearance: props.theme.textarea,
+      appearance:
+        target === 'tui' ? { ...props.theme.textarea, borderWidth: 0 } : props.theme.textarea,
       menu: {
         appearance: props.theme.menu,
         labels: {
@@ -106,58 +107,47 @@ export function components<N extends Node>(
       placeholder: text.placeholder,
       command: props.command,
     };
+    const editor = ui.box(
+      'editor-area',
+      [
+        presentation.slot('draft', 'editor', textarea, {
+          changed: 'changed',
+          submitted: 'submitted',
+        }),
+      ],
+      {
+        style: { width: fill, height: pixels(112), shrink: 0 },
+        terminal: { basis: 0, grow: 1, shrink: true },
+      },
+    );
+    const controls = ui.box(
+      'composer-controls',
+      [
+        ...(target === 'desktop' ? [ui.text('hint', text.enterHint, 12, props.theme.muted)] : []),
+        ...(props.running
+          ? [
+              ui.button('stop', text.stop, props.busy),
+              ...(target === 'tui'
+                ? [ui.button('send', text.send, !available || !state.observation, true)]
+                : []),
+            ]
+          : [ui.button('send', text.send, !available || !state.observation, true)]),
+      ],
+      {
+        row: true,
+        terminal: { wrap: true },
+        style: { justify: 'between', align: 'center', width: fill },
+      },
+    );
     return output(
       state,
-      ui.box(
-        'composer',
-        [
-          ui.box(
-            'editor-area',
-            [
-              presentation.slot('draft', 'editor', textarea, {
-                changed: 'changed',
-                submitted: 'submitted',
-              }),
-            ],
-            {
-              style: { width: fill, height: pixels(112), shrink: 0 },
-              terminal: { shrink: true },
-            },
-          ),
-          ui.box(
-            'composer-controls',
-            [
-              ...(target === 'tui'
-                ? [
-                    ui.box(
-                      'composer-hint',
-                      [
-                        ui.text('hint', text.terminalEnterHint, 12, props.theme.muted, 400, {
-                          truncate: true,
-                        }),
-                      ],
-                      { terminal: { basis: 0, grow: 1 } },
-                    ),
-                  ]
-                : [ui.text('hint', text.enterHint, 12, props.theme.muted)]),
-              ...(props.running
-                ? [
-                    ui.button('stop', text.stop, props.busy),
-                    ...(target === 'tui'
-                      ? [ui.button('send', text.send, !available || !state.observation, true)]
-                      : []),
-                  ]
-                : [ui.button('send', text.send, !available || !state.observation, true)]),
-            ],
-            {
-              row: true,
-              terminal: { wrap: true },
-              style: { justify: 'between', align: 'center', width: fill },
-            },
-          ),
-        ],
-        { gap: target === 'tui' ? 0 : 12, terminal: { shrink: true }, style: { width: fill } },
-      ),
+      ui.box('composer', [editor, controls], {
+        row: target === 'tui',
+        border: target === 'tui',
+        gap: target === 'tui' ? 0 : 12,
+        terminal: { shrink: true },
+        style: { width: fill },
+      }),
       events,
     );
   };

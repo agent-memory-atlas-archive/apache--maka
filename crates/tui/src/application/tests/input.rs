@@ -113,6 +113,57 @@ fn close(tui: &mut Presenter) {
     tui.shutdown().unwrap();
 }
 #[test]
+fn input_border_appearance_changes_geometry_without_replacing_text_or_focus() {
+    for secret in [false, true] {
+        let (_runtime, mut tui) = input_presenter(secret, false);
+        draw(&mut tui, 50, 24);
+        let focus = tui.focus.clone().unwrap();
+        let mut appearance = support::brand_appearance()["textarea"].clone();
+        appearance.as_object_mut().unwrap().remove("scrollbar");
+        appearance["focusedBorder"] = json!(0x123456ffu32);
+        appearance["radius"] = json!(0);
+        for border in [1, 0, 1] {
+            appearance["borderWidth"] = json!(border);
+            dispatch(&mut tui, "configure", json!({"appearance":appearance}));
+            let buffer = draw(&mut tui, 50, 24);
+            assert!(tui.focus.as_ref().unwrap().same(&focus));
+            let area = tui
+                .scene
+                .iter()
+                .find(|target| target.same(&focus))
+                .unwrap()
+                .area
+                .visible();
+            assert_eq!(area.height, if border == 0 { 1 } else { 3 });
+            if border > 0 {
+                assert_eq!(buffer[(area.x, area.y)].symbol(), "┌");
+                assert_eq!(
+                    buffer[(area.x, area.y)].fg,
+                    ratatui::style::Color::Rgb(0x12, 0x34, 0x56)
+                );
+            }
+            tui.input(Event::Paste("x".into())).unwrap();
+            draw(&mut tui, 50, 24);
+            let owner = tui.resources.owners[&focus.mount.id()]
+                .state
+                .downcast_ref::<super::super::editor::Owner>()
+                .unwrap();
+            assert!(area.contains(owner.editor.cursor_position().unwrap()));
+        }
+        assert_eq!(
+            tui.resources.owners[&focus.mount.id()]
+                .state
+                .downcast_ref::<super::super::editor::Owner>()
+                .unwrap()
+                .editor
+                .text(),
+            "xxx"
+        );
+        close(&mut tui);
+    }
+}
+
+#[test]
 fn retained_presentation_preserves_input_custody_and_only_successful_flush_hides_geometry() {
     for secret in [false, true] {
         let (_runtime, mut tui) = input_presenter(secret, false);

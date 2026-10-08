@@ -19,6 +19,7 @@
 
 //! Native terminal presentation of the shared plugin application kernel.
 //! 统一插件应用内核的原生终端呈现器。
+mod border;
 mod dialog;
 mod editor;
 mod file;

@@ -62,6 +62,26 @@ pub enum ScrollPolicy {
     Anchor,
     FollowEnd,
 }
+/// A one-cell frame. Colors follow the same RGB convention as terminal text.
+/// Focus color follows any focused native target inside this stack.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "TerminalBorder")]
+pub struct Border {
+    #[schemars(range(max = 0xffffff))]
+    pub color: u32,
+    #[schemars(range(max = 0xffffff))]
+    pub focused_color: u32,
+    pub style: BorderStyle,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "TerminalBorderStyle")]
+pub enum BorderStyle {
+    Rounded,
+    Square,
+    Ascii,
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "TerminalScene")]
@@ -87,6 +107,9 @@ pub enum Node {
         padding: u16,
         background: u32,
         children: Vec<Node>,
+        /// One cell outside padding; absent means no border or border inset.
+        #[serde(default)]
+        border: Option<Border>,
         /// Establish the allocated inner size as the descendants' layout viewport.
         /// Children do not contribute intrinsic size; use grow/basis or an
         /// externally allocated root area to supply this container's size.
@@ -215,6 +238,7 @@ impl Node {
                 gap,
                 padding,
                 background,
+                border,
                 children,
                 layout,
                 direction,
@@ -227,7 +251,13 @@ impl Node {
                 {
                     return Err("invalid terminal layout".into());
                 }
-                if *gap > 1024 || *padding > 1024 || *background > 0xffffff {
+                if *gap > 1024
+                    || *padding > 1024
+                    || *background > 0xffffff
+                    || border.is_some_and(|border| {
+                        border.color > 0xffffff || border.focused_color > 0xffffff
+                    })
+                {
                     return Err("invalid UI style".into());
                 }
                 for child in children {

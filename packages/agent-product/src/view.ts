@@ -45,6 +45,7 @@ interface BoxOptions {
   visible?: boolean;
   terminal?: TerminalLayout;
   viewport?: boolean;
+  border?: boolean;
   shortcuts?: Shortcut[];
   focusShortcuts?: FocusShortcut[];
 }
@@ -187,6 +188,9 @@ function terminalPaint(theme: Theme): Painter<TerminalNode> {
         shortcuts: options.shortcuts ?? [],
         focus_shortcuts: options.focusShortcuts ?? [],
         viewport: options.viewport ?? false,
+        border: options.border
+          ? { color: rgba(theme.border), focused_color: rgba(theme.accent), style: 'rounded' }
+          : null,
         layout: options.terminal ?? {},
         scroll: options.scroll ?? 'none',
       }),

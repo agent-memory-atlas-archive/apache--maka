@@ -307,6 +307,142 @@ fn viewport_row_cap_uses_each_paint_without_replacing_the_native_draft_or_focus(
 }
 
 #[test]
+fn composer_boundary_shares_focus_and_keeps_the_borderless_editor_at_its_actual_cells() {
+    use ratatui::style::Color;
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
+    let mut appearance = support::brand_appearance()["textarea"].clone();
+    appearance["borderWidth"] = json!(0);
+    let field = json!({"kind":"component","key":"editor","binding":"editor","member":0,"on":{},"props":{
+        "appearance":appearance,"accessibilityLabel":"Composer","readOnly":false,"disabled":false,"softWrap":true,
+        "tabIndex":0,"autoFocus":true,"initialText":"","terminalRows":{"min":1,"max":8,"maxViewportFraction":1.0/3.0}}});
+    let composer = json!({"kind":"stack","key":"composer","direction":"row","gap":0,"padding":0,"background":0,
+        "border":{"color":0x112233,"focused_color":0xabcdef,"style":"rounded"},"children":[
+          {"kind":"stack","key":"editor-area","direction":"column","gap":0,"padding":0,"background":0,"layout":{"grow":1,"shrink":true},"children":[field]},
+          {"kind":"button","key":"send","label":"Send"}]});
+    let source = json!({"kind":"stack","key":"root","direction":"column","gap":0,"padding":0,"background":0,"children":[composer,
+        {"kind":"button","key":"back","label":"Outside"}]});
+    let (_runtime, mut tui) = layout::native(
+        layout::View::InteractiveScene(Rc::new(RefCell::new(source))),
+        Rc::new(Cell::new(true)),
+    );
+    draw(&mut tui, 40, 16);
+    let buffer = draw(&mut tui, 40, 16);
+    let focus = tui.focus.clone().unwrap();
+    let area = |tui: &Presenter| {
+        tui.scene
+            .iter()
+            .find(|target| target.mount == focus.mount)
+            .unwrap()
+            .area
+    };
+    assert_eq!(
+        (
+            area(&tui).x,
+            area(&tui).y,
+            area(&tui).width,
+            area(&tui).height
+        ),
+        (1, 1, 30, 1)
+    );
+    assert_eq!(buffer[(0, 0)].symbol(), "╭");
+    assert_eq!(buffer[(39, 2)].symbol(), "╯");
+    assert_eq!(buffer[(0, 0)].fg, Color::Rgb(0xab, 0xcd, 0xef));
+    assert_eq!(buffer[(31, 1)].symbol(), "[");
+    for (key, expected) in [
+        ("send", Color::Rgb(0xab, 0xcd, 0xef)),
+        ("back", Color::Rgb(0x11, 0x22, 0x33)),
+    ] {
+        let target = tui
+            .scene
+            .iter()
+            .find(|target| target.key == key)
+            .unwrap()
+            .area
+            .visible();
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            tui.input(Event::Mouse(MouseEvent {
+                kind,
+                column: target.x,
+                row: target.y,
+                modifiers: KeyModifiers::NONE,
+            }))
+            .unwrap();
+        }
+        assert_eq!(draw(&mut tui, 40, 16)[(0, 0)].fg, expected);
+    }
+    let target = area(&tui).visible();
+    for kind in [
+        MouseEventKind::Down(MouseButton::Left),
+        MouseEventKind::Up(MouseButton::Left),
+    ] {
+        tui.input(Event::Mouse(MouseEvent {
+            kind,
+            column: target.x,
+            row: target.y,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+    }
+    tui.input(Event::Paste(
+        (0..20)
+            .map(|n| format!("line-{n:02}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    ))
+    .unwrap();
+    for (width, height, expected_rows) in [(40, 16, 5), (20, 12, 4), (80, 30, 8)] {
+        let buffer = draw(&mut tui, width, height);
+        assert_eq!(area(&tui).height, expected_rows);
+        assert!(tui.focus.as_ref().unwrap().same(&focus));
+        assert!(
+            buffer
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+                .contains("line-19")
+        );
+        let caret = tui.resources.owners[&focus.mount.id()]
+            .state
+            .downcast_ref::<super::super::editor::Owner>()
+            .unwrap()
+            .editor
+            .cursor_position()
+            .unwrap();
+        assert!(area(&tui).contains(caret));
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            tui.input(Event::Mouse(MouseEvent {
+                kind,
+                column: caret.x,
+                row: caret.y,
+                modifiers: KeyModifiers::NONE,
+            }))
+            .unwrap();
+        }
+        tui.input(Event::Paste("!".into())).unwrap();
+        assert!(
+            tui.resources.owners[&focus.mount.id()]
+                .state
+                .downcast_ref::<super::super::editor::Owner>()
+                .unwrap()
+                .editor
+                .text()
+                .ends_with('!')
+        );
+    }
+    close(&mut tui);
+}
+
+#[test]
 fn session_viewport_uses_remaining_body_without_leaking_to_siblings_or_cached_measurements() {
     use std::{
         cell::{Cell, RefCell},

@@ -153,7 +153,14 @@ impl Widget for Recipe {
 
     fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
         let _ = slots.native_state::<Owner>()?;
-        Ok((width, 3))
+        Ok((
+            width,
+            if self.props.appearance.border_width > 0.0 {
+                3
+            } else {
+                1
+            },
+        ))
     }
 
     fn paint(
@@ -174,7 +181,25 @@ impl Widget for Recipe {
                 .bg(color(appearance.background))
                 .fg(color(appearance.text.foreground)),
         );
-        let inner = area.inner(ratatui::layout::Margin::new(1, 1));
+        let inner = if appearance.border_width > 0.0 {
+            super::border::paint(
+                buffer,
+                area,
+                color(if focused {
+                    appearance.focused_border
+                } else {
+                    appearance.border
+                }),
+                if appearance.radius > 0.0 {
+                    maka_ui::scene::terminal::BorderStyle::Rounded
+                } else {
+                    maka_ui::scene::terminal::BorderStyle::Square
+                },
+            );
+            super::border::inner(area)
+        } else {
+            area
+        };
         let geometry = owner.editor.paint_prepared(
             inner,
             buffer,

@@ -75,6 +75,7 @@ pub struct InputAppearance {
     pub border: Color,
     pub focused_border: Color,
     #[schemars(range(min = 0, max = 8))]
+    /// In TUI inputs, a positive width draws a one-cell border; zero has no inset.
     pub border_width: f32,
     #[schemars(range(min = 0, max = 64))]
     pub radius: f32,
@@ -92,6 +93,7 @@ pub struct TextareaAppearance {
     pub border: Color,
     pub focused_border: Color,
     #[schemars(range(min = 0, max = 8))]
+    /// In TUI inputs, a positive width draws a one-cell border; zero has no inset.
     pub border_width: f32,
     #[schemars(range(min = 0, max = 64))]
     pub radius: f32,

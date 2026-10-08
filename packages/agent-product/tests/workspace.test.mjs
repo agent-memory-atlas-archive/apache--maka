@@ -4704,8 +4704,13 @@ test('editor-local submission uses latest observation and the original send gate
     if (target === 'tui') {
       const controls = result.frame.view.children.find((node) => node.key === 'composer-controls');
       assert.equal(controls.layout.wrap, true);
-      assert.deepEqual(controls.children[0].layout, { basis: 0, grow: 1 });
-      assert.equal(controls.children[0].children[0].truncate, true);
+      assert.equal(result.frame.view.direction, 'row');
+      assert.equal(result.frame.view.border.style, 'rounded');
+      assert.equal(
+        modelSlots(result.frame.view).find((node) => node.key === 'draft').props.appearance
+          .borderWidth,
+        0,
+      );
     }
     assert.equal(
       modelSlots(result.frame.view).find((n) => n.key === 'draft').props.submit,

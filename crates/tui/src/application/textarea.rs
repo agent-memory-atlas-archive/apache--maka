@@ -185,6 +185,11 @@ impl Widget for Recipe {
     }
     fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
         let owner = slots.native_state::<Owner>()?;
+        let inset = if self.props.appearance.border_width > 0.0 {
+            2
+        } else {
+            0
+        };
         let rows = self.props.terminal_rows;
         let maximum = rows.max_viewport_fraction.map_or(rows.max, |fraction| {
             ((f64::from(slots.viewport().height) * fraction) as u16).clamp(rows.min, rows.max)
@@ -193,9 +198,9 @@ impl Widget for Recipe {
             width,
             owner
                 .editor
-                .rows(width.saturating_sub(2))
+                .rows(width.saturating_sub(inset))
                 .clamp(rows.min, maximum)
-                .saturating_add(2)
+                .saturating_add(inset)
                 .into(),
         ))
     }
@@ -217,7 +222,25 @@ impl Widget for Recipe {
                 .bg(color(appearance.background))
                 .fg(color(appearance.text.foreground)),
         );
-        let inner = area.inner(ratatui::layout::Margin::new(1, 1));
+        let inner = if appearance.border_width > 0.0 {
+            super::border::paint(
+                buffer,
+                area,
+                color(if focused {
+                    appearance.focused_border
+                } else {
+                    appearance.border
+                }),
+                if appearance.radius > 0.0 {
+                    maka_ui::scene::terminal::BorderStyle::Rounded
+                } else {
+                    maka_ui::scene::terminal::BorderStyle::Square
+                },
+            );
+            super::border::inner(area)
+        } else {
+            area
+        };
         let geometry = owner.editor.paint_prepared(
             inner,
             buffer,
