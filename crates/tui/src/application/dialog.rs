@@ -30,7 +30,7 @@ pub(super) struct Opening {
     pub pending_flush: std::cell::Cell<bool>,
 }
 impl Opening {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             pending_flush: std::cell::Cell::new(true),
         }
@@ -91,8 +91,22 @@ pub(super) struct FocusReturn {
 
 impl super::scroll::SceneState {
     pub fn prepare_dialogs(&mut self, node: &Node, visible: bool) {
-        fn visit(node: &Node, visible: bool, keys: &mut Vec<String>) {
+        fn visit(
+            node: &Node,
+            visible: bool,
+            keys: &mut Vec<String>,
+            choices: &mut Vec<String>,
+            openings: &std::collections::BTreeMap<String, Rc<Opening>>,
+        ) {
             match node {
+                Node::Choice(choice) => {
+                    if visible && !choice.disabled && !choice.options.is_empty() {
+                        choices.push(choice.key.clone());
+                        if openings.contains_key(&choice.key) {
+                            keys.push(choice.key.clone());
+                        }
+                    }
+                }
                 Node::Dialog {
                     key,
                     background,
@@ -100,11 +114,11 @@ impl super::scroll::SceneState {
                     open,
                     ..
                 } => {
-                    visit(background, visible, keys);
+                    visit(background, visible, keys, choices, openings);
                     if visible && *open {
                         keys.push(key.clone());
                     }
-                    visit(content, visible && *open, keys);
+                    visit(content, visible && *open, keys, choices, openings);
                 }
                 Node::Stack {
                     children,
@@ -112,14 +126,19 @@ impl super::scroll::SceneState {
                     ..
                 } => {
                     for child in children {
-                        visit(child, visible && *local, keys);
+                        visit(child, visible && *local, keys, choices, openings);
                     }
                 }
                 _ => {}
             }
         }
         let mut keys = Vec::new();
-        visit(node, visible, &mut keys);
+        let mut choices = Vec::new();
+        visit(node, visible, &mut keys, &mut choices, &self.dialogs);
+        self.choices.retain(|key, _| choices.contains(key));
+        for key in choices {
+            self.choices.entry(key).or_default();
+        }
         self.dialogs.retain(|key, _| keys.contains(key));
         for key in keys {
             self.dialogs
@@ -360,6 +379,7 @@ pub(super) struct Deferred {
     pub key: String,
     pub opening: Scope,
     pub parent_path: Vec<Scope>,
+    pub anchor: Option<super::Placement>,
 }
 impl Presenter {
     pub(super) fn paint_dialogs(
@@ -374,62 +394,74 @@ impl Presenter {
         };
         while let Some(deferred) = scene.dialogs.pop_front() {
             let recipe = &self.application.frame(&deferred.mount)?.view.view;
-            let Node::Dialog {
-                label,
-                content,
-                width,
-                height,
-                background_color,
-                border_color,
-                padding,
-                ..
-            } = recipe
+            let node = recipe
                 .scene()
-                .and_then(|node| node.dialog(&deferred.key))
-                .expect("original deferred dialog")
-            else {
-                unreachable!()
-            };
+                .and_then(|node| node.overlay(&deferred.key))
+                .expect("original deferred overlay");
             let full = scene.viewport;
-            let margin = if full.width >= 4 && full.height >= 4 {
-                1
-            } else {
-                0
+            let (body, padding) = match node {
+                Node::Dialog {
+                    content,
+                    width,
+                    height,
+                    padding,
+                    ..
+                } => {
+                    let margin = if full.width >= 4 && full.height >= 4 {
+                        1
+                    } else {
+                        0
+                    };
+                    let width = (*width).min(full.width.saturating_sub(margin * 2));
+                    let maximum_height = (*height).min(full.height.saturating_sub(margin * 2));
+                    let padding = (*padding)
+                        .min(width.saturating_sub(3) / 2)
+                        .min(maximum_height.saturating_sub(3) / 2);
+                    let inset = padding.saturating_add(1).saturating_mul(2);
+                    let (_, content_height) = self.measure(
+                        &deferred.mount,
+                        content,
+                        width.saturating_sub(inset),
+                        measurements,
+                    )?;
+                    // Growing content needs a bounded viewport before flex allocation;
+                    // its zero-basis children intentionally have no intrinsic height.
+                    let height = if self
+                        .node_layout(&deferred.mount, content, measurements)?
+                        .grow
+                        > 0
+                    {
+                        maximum_height
+                    } else {
+                        maximum_height.min(
+                            content_height
+                                .saturating_add(u32::from(inset))
+                                .min(u32::from(u16::MAX)) as u16,
+                        )
+                    }
+                    .max(1);
+                    let body = ratatui::layout::Rect::new(
+                        full.x + full.width.saturating_sub(width) / 2,
+                        full.y + full.height.saturating_sub(height) / 2,
+                        width,
+                        height,
+                    );
+
+                    (body, padding)
+                }
+                Node::Choice(choice) => {
+                    let Some(body) = super::choice::bounds(
+                        choice,
+                        deferred.anchor.expect("choice anchor"),
+                        full,
+                    ) else {
+                        // Absence in this successful batch closes the local opening.
+                        continue;
+                    };
+                    (body, 0)
+                }
+                _ => unreachable!(),
             };
-            let width = (*width).min(full.width.saturating_sub(margin * 2));
-            let maximum_height = (*height).min(full.height.saturating_sub(margin * 2));
-            let padding = (*padding)
-                .min(width.saturating_sub(3) / 2)
-                .min(maximum_height.saturating_sub(3) / 2);
-            let inset = padding.saturating_add(1).saturating_mul(2);
-            let (_, content_height) = self.measure(
-                &deferred.mount,
-                content,
-                width.saturating_sub(inset),
-                measurements,
-            )?;
-            // Growing content needs a bounded viewport before flex allocation;
-            // its zero-basis children intentionally have no intrinsic height.
-            let height = if self
-                .node_layout(&deferred.mount, content, measurements)?
-                .grow
-                > 0
-            {
-                maximum_height
-            } else {
-                maximum_height.min(
-                    content_height
-                        .saturating_add(u32::from(inset))
-                        .min(u32::from(u16::MAX)) as u16,
-                )
-            }
-            .max(1);
-            let body = ratatui::layout::Rect::new(
-                full.x + full.width.saturating_sub(width) / 2,
-                full.y + full.height.saturating_sub(height) / 2,
-                width,
-                height,
-            );
             let previous_scope = scene.scope.take();
             let previous_input = scene.input_scope.replace(deferred.opening.clone());
             let previous_path = std::mem::replace(&mut scene.input_path, deferred.parent_path);
@@ -454,7 +486,11 @@ impl Presenter {
                 area: full.into(),
                 tab_index: -1,
                 autofocus: false,
-                kind: TargetKind::Backdrop { body: body.into() },
+                kind: if matches!(node, Node::Choice(_)) {
+                    TargetKind::Native
+                } else {
+                    TargetKind::Backdrop { body: body.into() }
+                },
                 ancestors: Vec::new(),
             });
             for y in body.y..body.bottom() {
@@ -462,28 +498,54 @@ impl Presenter {
                     buffer[(x, y)].reset();
                 }
             }
-            Block::new()
-                .borders(Borders::ALL)
-                .title(super::sanitize(label))
-                .style(Style::default().bg(super::paint::color(*background_color)))
-                .border_style(Style::default().fg(super::paint::color(*border_color)))
-                .render(body, buffer);
             let remaining = std::mem::take(&mut scene.dialogs);
             let mut viewports = Vec::new();
-            self.paint_node(
-                &deferred.mount,
-                content,
-                super::Placement::from(body).inner(ratatui::layout::Margin::new(
-                    padding.saturating_add(1),
-                    padding.saturating_add(1),
-                )),
-                buffer,
-                scene,
-                &mut super::paint::NodePaint {
-                    measurements,
-                    viewports: &mut viewports,
-                },
-            )?;
+            let mut choices = Vec::new();
+            match node {
+                Node::Choice(choice) => {
+                    buffer.set_style(
+                        body,
+                        Style::default().bg(super::paint::color(choice.background)),
+                    );
+                    choices.push(self.paint_choice_menu(
+                        &deferred.mount,
+                        choice,
+                        body,
+                        buffer,
+                        scene,
+                    ));
+                }
+                Node::Dialog {
+                    label,
+                    content,
+                    background_color,
+                    border_color,
+                    ..
+                } => {
+                    Block::new()
+                        .borders(Borders::ALL)
+                        .title(super::sanitize(label))
+                        .style(Style::default().bg(super::paint::color(*background_color)))
+                        .border_style(Style::default().fg(super::paint::color(*border_color)))
+                        .render(body, buffer);
+                    self.paint_node(
+                        &deferred.mount,
+                        content,
+                        super::Placement::from(body).inner(ratatui::layout::Margin::new(
+                            padding.saturating_add(1),
+                            padding.saturating_add(1),
+                        )),
+                        buffer,
+                        scene,
+                        &mut super::paint::NodePaint {
+                            measurements,
+                            viewports: &mut viewports,
+                            choices: &mut choices,
+                        },
+                    )?;
+                }
+                _ => unreachable!(),
+            }
             scene.geometries.push(super::paint::NativeGeometry {
                 mount: deferred.mount.clone(),
                 owner: self.resources.owners[&deferred.mount.id()].identity.clone(),
@@ -494,6 +556,7 @@ impl Presenter {
                         .unwrap()
                         .generation,
                     viewports,
+                    choices,
                 }),
             });
             self.paint_dialogs(buffer, scene, measurements)?;

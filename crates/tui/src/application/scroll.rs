@@ -26,6 +26,7 @@ use std::collections::BTreeMap;
 #[derive(Default)]
 pub(super) struct SceneState {
     pub generation: u64,
+    pub choices: BTreeMap<String, super::choice::State>,
     pub dialogs: BTreeMap<String, std::rc::Rc<super::dialog::Opening>>,
     pub reading: Option<super::reading::ReadingState>,
     pub scrolls: BTreeMap<String, ScrollState>,
@@ -51,6 +52,7 @@ pub(super) struct Viewport {
 }
 pub(super) struct Geometry {
     pub generation: u64,
+    pub choices: Vec<super::choice::Geometry>,
     pub viewports: Vec<(String, Viewport)>,
 }
 impl Viewport {
@@ -182,6 +184,11 @@ impl SceneState {
     pub fn present(&mut self, geometry: Geometry) {
         if geometry.generation != self.generation {
             return;
+        }
+        for choice in geometry.choices {
+            if let Some(state) = self.choices.get_mut(&choice.choice.key) {
+                state.geometry = Some(choice);
+            }
         }
         for (key, viewport) in geometry.viewports {
             if let Some(state) = self.scrolls.get_mut(&key) {

@@ -338,6 +338,23 @@ export type TerminalScene =
   | {
       key: string;
       label: string;
+      /**
+       * @maxItems 64
+       */
+      options: TerminalChoiceOption[];
+      current?: string | null;
+      disabled?: boolean;
+      ascii?: boolean;
+      foreground: number;
+      background: number;
+      border: number;
+      selected: number;
+      accent: number;
+      kind: 'choice';
+    }
+  | {
+      key: string;
+      label: string;
       background: TerminalScene;
       content: TerminalScene;
       open: boolean;
@@ -1978,6 +1995,10 @@ export interface ComponentSlot {
   on: {
     [k: string]: string | undefined;
   };
+}
+export interface TerminalChoiceOption {
+  key: string;
+  label: string;
 }
 /**
  * A one-cell frame. Colors follow the same RGB convention as terminal text.

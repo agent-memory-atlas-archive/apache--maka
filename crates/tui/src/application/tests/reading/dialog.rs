@@ -19,23 +19,23 @@
 
 use super::*;
 
-fn dialog(key: &str, open: bool, background: Value, content: Value) -> Value {
+pub(super) fn dialog(key: &str, open: bool, background: Value, content: Value) -> Value {
     json!({"kind":"dialog","key":key,"label":"Commands","open":open,
         "width":24,"height":8,"padding":0,"background_color":0x17171a,"border_color":0x888888,
         "background":background,"content":content})
 }
-fn column(key: &str, children: Vec<Value>) -> Value {
+pub(super) fn column(key: &str, children: Vec<Value>) -> Value {
     json!({"kind":"stack","key":key,"direction":"column","gap":0,"padding":0,"background":0,"children":children})
 }
 fn open(props: &Rc<RefCell<Value>>, presenter: &mut Presenter, value: bool) {
     props.borrow_mut()["content"]["children"][0]["open"] = json!(value);
     refresh(presenter);
 }
-fn pending(presenter: &Presenter, width: u16, height: u16) -> PaintedScene {
+pub(super) fn pending(presenter: &Presenter, width: u16, height: u16) -> PaintedScene {
     let area = Rect::new(0, 0, width, height);
     presenter.paint(area, &mut Buffer::empty(area)).unwrap()
 }
-fn root_count(presenter: &Presenter) -> u64 {
+pub(super) fn root_count(presenter: &Presenter) -> u64 {
     presenter.application.frame(&presenter.root).unwrap().state["count"]
         .as_u64()
         .unwrap()

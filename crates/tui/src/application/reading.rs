@@ -250,11 +250,13 @@ impl Widget for Reading {
         {
             return Ok(WidgetInput::Unhandled);
         }
-        Ok(if state_mut(state).input(key, event) {
-            WidgetInput::Consumed(None)
-        } else {
-            WidgetInput::Unhandled
-        })
+        self.node.input(state, key, event)
+    }
+    fn handles_tab(&self, state: &dyn Any, key: &str) -> bool {
+        self.node.handles_tab(state, key)
+    }
+    fn hover(&self, state: &mut dyn Any, key: &str, point: Option<ratatui::layout::Position>) {
+        self.node.hover(state, key, point);
     }
     fn present(&self, state: &mut dyn Any, geometry: Box<dyn Any>) -> Option<NativeInput> {
         let state = state_mut(state);

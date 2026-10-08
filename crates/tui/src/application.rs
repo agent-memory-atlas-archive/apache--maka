@@ -20,6 +20,7 @@
 //! Native terminal presentation of the shared plugin application kernel.
 //! 统一插件应用内核的原生终端呈现器。
 mod border;
+mod choice;
 mod dialog;
 mod editor;
 mod file;
@@ -100,6 +101,10 @@ pub trait Widget: std::any::Any {
     /// original frame/owner admission. Geometry alone cannot consume an offer.
     /// Compact selectors may return to the original outer typing target.
     fn returns_focus(&self) -> bool {
+        false
+    }
+    /// A native transient selector can consume Tab without acquiring focus-return ownership.
+    fn handles_tab(&self, _: &dyn std::any::Any, _: &str) -> bool {
         false
     }
     /// A physical keyboard traversal enters this target. Returning false keeps
@@ -484,9 +489,13 @@ impl Presenter {
             Some(target) => self.resources.returns_focus(target)?,
             None => false,
         };
+        let native_tab = match self.focus.as_ref() {
+            Some(target) => self.resources.handles_tab(target)?,
+            None => false,
+        };
         let target = match &event {
             Event::Key(key) if key.kind != KeyEventKind::Release => match key.code {
-                KeyCode::Tab | KeyCode::BackTab if !returnable => {
+                KeyCode::Tab | KeyCode::BackTab if !returnable && !native_tab => {
                     let reverse =
                         key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
                     let mut stops: Vec<_> = self
@@ -529,7 +538,7 @@ impl Presenter {
             Event::Mouse(mouse)
                 if matches!(
                     mouse.kind,
-                    MouseEventKind::Down(MouseButton::Left)
+                    MouseEventKind::Down(MouseButton::Left | MouseButton::Right)
                         | MouseEventKind::ScrollUp
                         | MouseEventKind::ScrollDown
                 ) =>

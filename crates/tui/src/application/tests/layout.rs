@@ -59,7 +59,7 @@ impl NativeComponent<dyn Widget> for Root {
                 if matches!(
                     *key,
                     "__reading_observation" | "reading-observed" | "row-activated"
-                ) =>
+                ) || input.get("kind").and_then(Value::as_str) == Some("selected") =>
             {
                 (*input).clone()
             }

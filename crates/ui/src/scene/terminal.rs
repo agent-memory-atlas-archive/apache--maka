@@ -82,10 +82,65 @@ pub enum BorderStyle {
     Square,
     Ascii,
 }
+/// Native single-choice menu. Only committed selections leave the presenter.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "TerminalChoice")]
+pub struct Choice {
+    pub key: String,
+    pub label: String,
+    #[schemars(length(max = 64))]
+    pub options: Vec<ChoiceOption>,
+    pub current: Option<String>,
+    #[serde(default)]
+    pub disabled: bool,
+    #[serde(default)]
+    pub ascii: bool,
+    pub foreground: u32,
+    pub background: u32,
+    pub border: u32,
+    pub selected: u32,
+    pub accent: u32,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "TerminalChoiceOption")]
+pub struct ChoiceOption {
+    pub key: String,
+    pub label: String,
+}
+impl Choice {
+    fn validate(&self) -> Result<(), String> {
+        let mut keys = BTreeSet::new();
+        if self.label.len() > 4096
+            || self.options.len() > 64
+            || [
+                self.foreground,
+                self.background,
+                self.border,
+                self.selected,
+                self.accent,
+            ]
+            .iter()
+            .any(|color| *color > 0xffffff)
+            || self.options.iter().any(|option| {
+                option.key.is_empty()
+                    || option.key.len() > 128
+                    || option.label.len() > 4096
+                    || !keys.insert(&option.key)
+            })
+            || self.current.as_ref().is_some_and(|key| !keys.contains(key))
+        {
+            return Err("invalid terminal choice".into());
+        }
+        Ok(())
+    }
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "TerminalScene")]
 pub enum Node {
+    Choice(Choice),
     Dialog {
         key: String,
         label: String,
@@ -162,6 +217,7 @@ impl Node {
             | Self::Button { key, .. }
             | Self::Dialog { key, .. } => key,
             Self::Component(slot) => &slot.key,
+            Self::Choice(choice) => &choice.key,
         }
     }
     pub fn layout(&self) -> Layout {
@@ -192,6 +248,7 @@ impl Node {
             | Self::Button { key, .. }
             | Self::Dialog { key, .. } => key,
             Self::Component(slot) => &slot.key,
+            Self::Choice(choice) => &choice.key,
         };
         if depth > 32
             || keys.len() >= 4096
@@ -210,6 +267,7 @@ impl Node {
             crate::shortcut::validate_focus(shortcuts, focus_shortcuts)?;
         }
         match self {
+            Self::Choice(choice) => choice.validate()?,
             Self::Dialog {
                 label,
                 background,
@@ -361,6 +419,23 @@ impl Node {
             return Err("scene compilation deadline".into());
         }
         match self {
+            Self::Choice(choice) => {
+                *input_count += 1;
+                if *input_count > 64 {
+                    return Err("scene input limit".into());
+                }
+                if visible && !choice.disabled && !choice.options.is_empty() {
+                    let schema = json!({
+                        "type":"object", "properties":{
+                            "kind":{"const":"selected"},
+                            "key":{"enum":choice.options.iter().map(|option| &option.key).collect::<Vec<_>>()}
+                        }, "required":["kind","key"], "additionalProperties":false
+                    });
+                    if inputs.insert(choice.key.clone(), schema).is_some() {
+                        return Err("reserved scene input identity".into());
+                    }
+                }
+            }
             Self::Dialog {
                 key,
                 background,
@@ -440,8 +515,9 @@ impl Node {
 }
 
 impl Node {
-    pub fn dialog(&self, key: &str) -> Option<&Node> {
+    pub fn overlay(&self, key: &str) -> Option<&Node> {
         match self {
+            Self::Choice(choice) if choice.key == key => Some(self),
             Self::Dialog {
                 key: own,
                 background,
@@ -451,10 +527,10 @@ impl Node {
                 if own == key {
                     Some(self)
                 } else {
-                    background.dialog(key).or_else(|| content.dialog(key))
+                    background.overlay(key).or_else(|| content.overlay(key))
                 }
             }
-            Self::Stack { children, .. } => children.iter().find_map(|node| node.dialog(key)),
+            Self::Stack { children, .. } => children.iter().find_map(|node| node.overlay(key)),
             _ => None,
         }
     }

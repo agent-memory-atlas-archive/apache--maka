@@ -112,6 +112,27 @@ impl super::Widget for Node {
             .dialogs
             .clear();
     }
+    fn handles_tab(&self, state: &dyn std::any::Any, key: &str) -> bool {
+        matches!(self.overlay(key), Some(Node::Choice(_)))
+            && state
+                .downcast_ref::<super::scroll::SceneState>()
+                .unwrap()
+                .dialogs
+                .contains_key(key)
+    }
+    fn hover(
+        &self,
+        state: &mut dyn std::any::Any,
+        key: &str,
+        point: Option<ratatui::layout::Position>,
+    ) {
+        if let Some(Node::Choice(choice)) = self.overlay(key) {
+            state
+                .downcast_mut::<super::scroll::SceneState>()
+                .unwrap()
+                .choice_hover(choice, point);
+        }
+    }
     fn same_presentation(&self, previous: &dyn std::any::Any) -> bool {
         previous
             .downcast_ref::<Self>()
@@ -138,6 +159,12 @@ impl super::Widget for Node {
         key: &str,
         event: &crossterm::event::Event,
     ) -> maka_ui::Result<super::WidgetInput> {
+        if let Some(Node::Choice(choice)) = self.overlay(key) {
+            return Ok(state
+                .downcast_mut::<super::scroll::SceneState>()
+                .unwrap()
+                .choice_input(choice, event));
+        }
         Ok(
             if state
                 .downcast_mut::<super::scroll::SceneState>()
@@ -203,6 +230,7 @@ impl super::Widget for Node {
             .native_state::<super::scroll::SceneState>()?
             .generation;
         let mut viewports = Vec::new();
+        let mut choices = Vec::new();
         slots.presenter.paint_node(
             slots.parent,
             self,
@@ -215,11 +243,13 @@ impl super::Widget for Node {
             &mut super::paint::NodePaint {
                 measurements: slots.measurements,
                 viewports: &mut viewports,
+                choices: &mut choices,
             },
         )?;
         slots.native_geometry(Box::new(super::scroll::Geometry {
             generation,
             viewports,
+            choices,
         }))
     }
 }

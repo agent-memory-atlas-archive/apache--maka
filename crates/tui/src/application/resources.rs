@@ -308,6 +308,13 @@ impl Resources {
             }
         }
     }
+    pub(super) fn handles_tab(&mut self, target: &paint::TargetIdentity) -> maka_ui::Result<bool> {
+        Ok(self
+            .read_native(target, |recipe, state| {
+                recipe.handles_tab(state, &target.key)
+            })?
+            .unwrap_or(false))
+    }
     pub(super) fn returns_focus(
         &mut self,
         target: &paint::TargetIdentity,

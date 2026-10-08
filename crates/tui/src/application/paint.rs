@@ -290,6 +290,7 @@ impl MeasureContext<'_> {
 pub(super) struct NodePaint<'a> {
     pub measurements: MeasureContext<'a>,
     pub viewports: &'a mut Vec<(String, super::scroll::Viewport)>,
+    pub choices: &'a mut Vec<super::choice::Geometry>,
 }
 
 /// Synchronous terminal geometry over one parent's committed component slots.
@@ -555,6 +556,7 @@ impl Presenter {
             }
             frames_current &= frame_current;
         }
+        self.reconcile_choices(&scene);
         let scope = scene.foreground_path.last().cloned();
         scene
             .targets
@@ -727,6 +729,7 @@ impl Presenter {
                     Node::Dialog { background, .. } => {
                         self.measure(mount, background, width, measurements)?
                     }
+                    Node::Choice(choice) => super::choice::size(choice, width),
                     Node::Text { text, truncate, .. } => {
                         if *truncate {
                             (
@@ -861,6 +864,9 @@ impl Presenter {
             return Ok(());
         }
         match node {
+            Node::Choice(choice) => {
+                self.paint_choice(mount, choice, area, buffer, scene, pass.choices)?
+            }
             Node::Dialog {
                 key,
                 background,
@@ -879,6 +885,7 @@ impl Presenter {
                             key: key.clone(),
                             opening: std::rc::Rc::downgrade(opening),
                             parent_path: scene.input_path.clone(),
+                            anchor: None,
                         });
                     }
                 }
@@ -992,6 +999,7 @@ impl Presenter {
                 let mut pass = NodePaint {
                     measurements,
                     viewports: pass.viewports,
+                    choices: pass.choices,
                 };
                 let children = self.visible_children(mount, children)?;
                 let layouts: Vec<_> = children

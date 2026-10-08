@@ -175,3 +175,23 @@ const component: Component<null, null, DesktopNode> = {
   }),
 };
 void [component, inferredTerminal];
+
+const terminalChoice = ui.terminal.choice({
+  key: 'thinking',
+  label: 'Thinking',
+  options: [
+    { key: 'low', label: 'Low' },
+    { key: 'high', label: 'High' },
+  ],
+  current: 'high',
+  foreground: 0xffffff,
+  background: 0,
+  border: 0x888888,
+  selected: 0x224466,
+  accent: 0x4488ff,
+});
+ui.terminal.stack({ ...terminal, children: [terminalChoice] });
+// @ts-expect-error Choice values are stable string keys, not array positions.
+ui.terminal.choice({ ...terminalChoice, current: 1 });
+// @ts-expect-error A terminal choice cannot enter a desktop scene.
+ui.desktop.stack({ ...desktop, children: [terminalChoice] });

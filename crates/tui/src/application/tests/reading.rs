@@ -635,3 +635,6 @@ fn delayed_hidden_flush_cannot_suspend_new_original_reading_and_source_geometry(
 
 #[path = "reading/dialog.rs"]
 mod dialog;
+
+#[path = "reading/choice.rs"]
+mod choice;
