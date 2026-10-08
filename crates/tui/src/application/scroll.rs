@@ -27,6 +27,7 @@ use std::collections::BTreeMap;
 pub(super) struct SceneState {
     pub generation: u64,
     pub choices: BTreeMap<String, super::choice::State>,
+    pub panes: BTreeMap<String, super::adaptive::State>,
     pub dialogs: BTreeMap<String, std::rc::Rc<super::dialog::Opening>>,
     pub reading: Option<super::reading::ReadingState>,
     pub scrolls: BTreeMap<String, ScrollState>,
@@ -53,6 +54,7 @@ pub(super) struct Viewport {
 pub(super) struct Geometry {
     pub generation: u64,
     pub choices: Vec<super::choice::Geometry>,
+    pub panes: Vec<super::adaptive::Geometry>,
     pub viewports: Vec<(String, Viewport)>,
 }
 impl Viewport {
@@ -71,6 +73,11 @@ impl SceneState {
                 visit(content, keys);
             }
             if let Node::Dialog {
+                background,
+                content,
+                ..
+            }
+            | Node::AdaptivePane {
                 background,
                 content,
                 ..
@@ -94,6 +101,7 @@ impl SceneState {
                 }
             }
         }
+        self.commit_panes(node);
         let mut keys = Vec::new();
         visit(node, &mut keys);
         self.scrolls.retain(|key, _| keys.contains(key));
@@ -185,6 +193,13 @@ impl SceneState {
         }
     }
     pub fn present(&mut self, geometry: Geometry) {
+        // The whole batch already accepted this exact presentation recipe,
+        // including panes, even if a guest refresh advanced the generation.
+        for pane in geometry.panes {
+            if let Some(state) = self.panes.get_mut(&pane.key) {
+                state.present(pane);
+            }
+        }
         if geometry.generation != self.generation {
             return;
         }

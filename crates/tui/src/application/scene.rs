@@ -233,6 +233,7 @@ impl super::Widget for Node {
             .generation;
         let mut viewports = Vec::new();
         let mut choices = Vec::new();
+        let mut panes = Vec::new();
         slots.presenter.paint_node(
             slots.parent,
             self,
@@ -246,12 +247,14 @@ impl super::Widget for Node {
                 measurements: slots.measurements,
                 viewports: &mut viewports,
                 choices: &mut choices,
+                panes: &mut panes,
             },
         )?;
         slots.native_geometry(Box::new(super::scroll::Geometry {
             generation,
             viewports,
             choices,
+            panes,
         }))
     }
 }

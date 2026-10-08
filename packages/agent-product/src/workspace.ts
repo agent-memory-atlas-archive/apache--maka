@@ -55,6 +55,7 @@ import type {
   EditorCommand,
   EditorObservation,
   TextChunk,
+  TerminalPaneCommand,
 } from '../../plugin-sdk/src/index.js';
 import type {
   PaletteCommand,
@@ -149,7 +150,7 @@ export interface State {
   modelRefreshing: boolean;
   settingsOpen: boolean;
   deploymentOpen: boolean;
-  navigationOpen: boolean;
+  sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
   dialog: 'palette' | 'directories' | 'details' | 'help' | 'queue' | null;
   window: { page: Extract<AgentHistoryPage, { kind: 'ready' }>; latest: boolean } | null;
   navigation: number;
@@ -514,7 +515,7 @@ function rootCommands(state: State, locale: string): (PaletteCommand & { kind: R
     {
       kind: 'navigation-toggle',
       id: 'navigation-toggle',
-      label: state.navigationOpen ? text.hideSidebar : text.showSidebar,
+      label: sidebarLabel(state, text),
       hint: 'Ctrl/⌘ B',
       disabled: !route,
     },
@@ -553,6 +554,20 @@ function rootCommands(state: State, locale: string): (PaletteCommand & { kind: R
     });
   return commands;
 }
+function sidebarLabel(state: State, text: ReturnType<typeof copy>) {
+  return 'open' in state.sidebar
+    ? state.sidebar.open
+      ? text.hideSidebar
+      : text.showSidebar
+    : text.toggleSidebar;
+}
+function controlSidebar(state: State, op: TerminalPaneCommand['op']) {
+  if ('open' in state.sidebar) {
+    if (op === 'toggle') state.sidebar.open = !state.sidebar.open;
+  } else {
+    state.sidebar.command = { sequence: (state.sidebar.command?.sequence ?? 0) + 1, op };
+  }
+}
 function rootCommand(state: State, actions: Action[], locale: string, kind: RootCommand) {
   if (!rootCommands(state, locale).some((command) => command.kind === kind && !command.disabled))
     return false;
@@ -560,7 +575,7 @@ function rootCommand(state: State, actions: Action[], locale: string, kind: Root
   else if (kind === 'create') createSession(state, actions, locale);
   else if (kind === 'create-workspace') state.dialog = 'directories';
   else if (kind === 'details-open') state.dialog = 'details';
-  else if (kind === 'navigation-toggle') state.navigationOpen = !state.navigationOpen;
+  else if (kind === 'navigation-toggle') controlSidebar(state, 'toggle');
   else if (kind === 'settings') {
     state.settingsOpen = true;
     state.deploymentOpen = false;
@@ -1266,11 +1281,7 @@ function frame<N extends Node>(
       theme,
       locale,
       image: state.image,
-      active:
-        !!state.image &&
-        !state.settingsOpen &&
-        !state.deploymentOpen &&
-        (target === 'desktop' || !state.navigationOpen),
+      active: !!state.image && !state.settingsOpen && !state.deploymentOpen,
     },
     { closed: 'image-closed' },
   );
@@ -1377,13 +1388,7 @@ function frame<N extends Node>(
             ? [
                 ui.box(
                   'context',
-                  [
-                    title,
-                    ui.button(
-                      'navigation-toggle',
-                      state.navigationOpen ? text.hideSidebar : text.showSidebar,
-                    ),
-                  ],
+                  [title, ui.button('navigation-toggle', sidebarLabel(state, text))],
                   { row: true, gap: 8, style: { width: fill, align: 'center' } },
                 ),
                 ui.box(
@@ -1422,7 +1427,7 @@ function frame<N extends Node>(
                     ),
                     ui.button('settings', text.settings),
                     ui.button('deployment-open', text.deploymentTitle),
-                    ui.button('navigation-toggle', text.showSidebar),
+                    ui.button('navigation-toggle', text.toggleSidebar),
                   ],
                   { row: true, gap: 0, terminal: { wrap: true } },
                 ),
@@ -1543,17 +1548,26 @@ function frame<N extends Node>(
     target === 'desktop'
       ? [
           ui.box('sidebar', [navigation], {
-            visible: state.navigationOpen,
+            visible: 'open' in state.sidebar && state.sidebar.open,
             style: { width: pixels(240), height: fill, shrink: 0 },
           }),
           main,
         ]
       : [
-          ui.box('main-route', [main], { visible: !state.navigationOpen, terminal: { grow: 1 } }),
-          ui.box('navigation-route', [ui.button('navigation-back', text.hideSidebar), navigation], {
-            visible: state.navigationOpen,
-            terminal: { grow: 1 },
-          }),
+          ui.adaptivePane!(
+            'navigation-pane',
+            text.conversations,
+            main,
+            ui.box(
+              'navigation-content',
+              [ui.button('navigation-back', text.hideSidebar), navigation],
+              {
+                gap: 0,
+                terminal: { grow: 1 },
+              },
+            ),
+            'command' in state.sidebar ? state.sidebar.command : null,
+          ),
         ],
     {
       row: target === 'desktop',
@@ -1616,16 +1630,6 @@ function frame<N extends Node>(
             !mutationPending(state) &&
             !catalogPending(state),
         },
-        ...(state.navigationOpen && !state.settingsOpen && !state.deploymentOpen
-          ? [
-              {
-                key: 'escape',
-                modifiers: [],
-                input: 'navigation-back',
-                enabled: true,
-              } satisfies import('../../plugin-sdk/src/index.js').Shortcut,
-            ]
-          : []),
       ],
     },
   );
@@ -1764,7 +1768,7 @@ export function workspace<N extends Node>(
         modelRefreshing: false,
         settingsOpen: false,
         deploymentOpen: false,
-        navigationOpen: target === 'desktop',
+        sidebar: target === 'desktop' ? { open: true } : { command: null },
         dialog: null,
         image: null,
         window: null,
@@ -2094,7 +2098,7 @@ export function workspace<N extends Node>(
           const session = state.catalog?.sessions.find((item) => item.id === sessionId);
           if (session) {
             select(state, actions, session);
-            if (target === 'tui') state.navigationOpen = false;
+            if (target === 'tui') controlSidebar(state, 'dismiss_transient');
           }
         } else if (input.child === 'image-viewer' && input.name === 'closed') {
           state.image = null;
@@ -2264,9 +2268,10 @@ export function workspace<N extends Node>(
         else if (input.key === 'help-open') {
           if (state.dialog === null) rootCommand(state, actions, locale, 'help-open');
         } else if (input.key === 'workspace-dialog') closeDialog(state);
-        else if (input.key === 'navigation-back' && state.dialog === null)
-          state.navigationOpen = false;
-        else {
+        else if (input.key === 'navigation-back' && state.dialog === null) {
+          if ('open' in state.sidebar) state.sidebar.open = false;
+          else controlSidebar(state, 'toggle');
+        } else {
           const command = rootCommands(state, locale).find((command) => command.kind === input.key);
           if (command) rootCommand(state, actions, locale, command.kind);
         }

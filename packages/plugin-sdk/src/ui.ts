@@ -137,6 +137,9 @@ export const ui = {
     },
   },
   terminal: {
+    adaptivePane(value: Props<TerminalKind<'adaptive_pane'>>): TerminalKind<'adaptive_pane'> {
+      return node('tui', { ...value, kind: 'adaptive_pane' });
+    },
     item(value: Props<TerminalKind<'item'>>): TerminalKind<'item'> {
       return node('tui', { ...value, kind: 'item' });
     },

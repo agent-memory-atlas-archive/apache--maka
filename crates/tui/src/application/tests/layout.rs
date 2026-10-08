@@ -1060,9 +1060,9 @@ fn packaged_session_navigation_keeps_paging_controls_outside_the_scrolling_list(
         const pair=[];
         for(const rows of [sessions,[...sessions.slice(22),...sessions.slice(0,22)]]) {
           const initial=workspace.mount({},values).frame.state;
-          const state={...initial,restoring:false,pending:{},catalog:{revision:'fixture',sessions:rows,before:'before',after:'after'},navigationOpen:true};
+          const state={...initial,restoring:false,pending:{},catalog:{revision:'fixture',sessions:rows,before:'before',after:'after'}};
           const view=workspace.update(state,{},values).frame.view;
-          const route=find(view,'navigation-route');
+          const route=find(view,'navigation-content');
           const panel=find(route,'navigation-panel');
           const slot=panel.children.findIndex(node=>node.key==='navigation');
           // Project actual parent and child declarations for this layout-only fixture.

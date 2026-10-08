@@ -32,6 +32,7 @@ import type {
   TextAppearance,
   ReadingProps,
   TerminalChoiceOption,
+  TerminalPaneCommand,
 } from '../../plugin-sdk/src/index.js';
 import type { Theme } from './contracts.js';
 export type Target = 'desktop' | 'tui';
@@ -82,6 +83,13 @@ interface Painter<N extends Node> {
     interaction?: { followFocus?: boolean; submit?: boolean },
   ): N;
   focusButton?(key: string, label: string, child: string): N;
+  adaptivePane?(
+    key: string,
+    label: string,
+    background: N,
+    content: N,
+    command: TerminalPaneCommand | null,
+  ): N;
   dialog(key: string, label: string, background: N, content: N, open: boolean): N;
   box(key: string, children: N[], options?: BoxOptions): N;
 }
@@ -168,6 +176,25 @@ function desktopPaint(theme: Theme): Painter<DesktopNode> {
 }
 function terminalPaint(theme: Theme): Painter<TerminalNode> {
   return {
+    adaptivePane: (key, label, background, content, command) =>
+      ui.terminal.adaptivePane({
+        key,
+        background,
+        content,
+        command,
+        pane_width: 32,
+        inline_min_width: 60,
+        auto_inline_min_width: 90,
+        motion: true,
+        overlay: {
+          label,
+          width: 72,
+          height: 24,
+          padding: 1,
+          background_color: rgba(theme.surface),
+          border_color: rgba(theme.border),
+        },
+      }),
     item: (key, content, current, disabled, interaction = {}) =>
       ui.terminal.item({
         key,

@@ -228,13 +228,25 @@ type MeasurementCache =
     std::collections::BTreeMap<(uuid::Uuid, MeasurementKey, u16, (u16, u16)), (u16, u32)>;
 /// Derived, paint-local memoization. No entry survives the immutable render pass
 /// or participates in input/continuation/geometry admission.
-#[derive(Default)]
 pub(super) struct Measurements {
+    time: std::time::Instant,
     cache: std::cell::RefCell<MeasurementCache>,
     #[cfg(test)]
     requests: std::cell::Cell<usize>,
     #[cfg(test)]
     limit: std::cell::Cell<usize>,
+}
+impl Default for Measurements {
+    fn default() -> Self {
+        Self {
+            time: std::time::Instant::now(),
+            cache: Default::default(),
+            #[cfg(test)]
+            requests: Default::default(),
+            #[cfg(test)]
+            limit: Default::default(),
+        }
+    }
 }
 impl Measurements {
     pub(super) fn context(&self, viewport: Size) -> MeasureContext<'_> {
@@ -300,6 +312,7 @@ pub(super) struct NodePaint<'a> {
     pub measurements: MeasureContext<'a>,
     pub viewports: &'a mut Vec<(String, super::scroll::Viewport)>,
     pub choices: &'a mut Vec<super::choice::Geometry>,
+    pub panes: &'a mut Vec<super::adaptive::Geometry>,
 }
 
 /// Synchronous terminal geometry over one parent's committed component slots.
@@ -703,7 +716,9 @@ impl Presenter {
         measurements: MeasureContext<'_>,
     ) -> maka_ui::Result<super::scene::Layout> {
         match node {
-            Node::Dialog { background, .. } => self.node_layout(mount, background, measurements),
+            Node::Dialog { background, .. } | Node::AdaptivePane { background, .. } => {
+                self.node_layout(mount, background, measurements)
+            }
             Node::Item { content, .. } => self.node_layout(mount, content, measurements),
             Node::Component(slot) => {
                 let child = self.application.child_mount(mount, &slot.key)?;
@@ -738,6 +753,37 @@ impl Presenter {
                 Ok(match node {
                     Node::Dialog { background, .. } => {
                         self.measure(mount, background, width, measurements)?
+                    }
+                    Node::AdaptivePane {
+                        key,
+                        background,
+                        content,
+                        ..
+                    } => {
+                        let state = self.resources.owners[&mount.id()]
+                            .state
+                            .downcast_ref::<super::scroll::SceneState>()
+                            .unwrap();
+                        let inline = if state.dialogs.contains_key(key) {
+                            0
+                        } else {
+                            state.panes[key].width(node, width, measurements.cache.time)
+                        };
+                        let (body_width, body_height) = self.measure(
+                            mount,
+                            background,
+                            width.saturating_sub(inline),
+                            measurements,
+                        )?;
+                        let (pane_width, pane_height) = if inline > 0 {
+                            self.measure(mount, content, inline, measurements)?
+                        } else {
+                            (0, 0)
+                        };
+                        (
+                            body_width.saturating_add(pane_width),
+                            body_height.max(pane_height),
+                        )
                     }
                     Node::Choice(choice) => super::choice::size(choice, width),
                     Node::Item { content, .. } => {
@@ -932,6 +978,56 @@ impl Presenter {
                 };
                 buffer.set_style(area.visible(), style);
             }
+            Node::AdaptivePane {
+                key,
+                background,
+                content,
+                ..
+            } => {
+                let state = self.resources.owners[&mount.id()]
+                    .state
+                    .downcast_ref::<super::scroll::SceneState>()
+                    .unwrap();
+                let opening = state.dialogs.get(key);
+                let inline = if opening.is_some() {
+                    0
+                } else {
+                    state.panes[key].width(node, area.width, measurements.cache.time)
+                };
+                pass.panes.push(super::adaptive::Geometry {
+                    key: key.clone(),
+                    width: area.width,
+                    inline_width: inline,
+                    target: state.panes[key].target(node, area.width),
+                    time: measurements.cache.time,
+                });
+                if inline > 0 {
+                    let pane = Placement::new(
+                        CellRect::new(area.x, area.y, inline, area.height),
+                        area.clip,
+                    );
+                    self.paint_node(mount, content, pane, buffer, scene, pass)?;
+                }
+                let body = Placement::new(
+                    CellRect::new(
+                        area.x + i64::from(inline),
+                        area.y,
+                        area.width.saturating_sub(inline),
+                        area.height,
+                    ),
+                    area.clip,
+                );
+                self.paint_node(mount, background, body, buffer, scene, pass)?;
+                if let Some(opening) = opening {
+                    scene.dialogs.push_back(super::dialog::Deferred {
+                        mount: mount.clone(),
+                        key: key.clone(),
+                        opening: std::rc::Rc::downgrade(opening),
+                        parent_path: scene.input_path.clone(),
+                        anchor: None,
+                    });
+                }
+            }
             Node::Choice(choice) => {
                 self.paint_choice(mount, choice, area, buffer, scene, pass.choices)?
             }
@@ -1069,6 +1165,7 @@ impl Presenter {
                     measurements,
                     viewports: pass.viewports,
                     choices: pass.choices,
+                    panes: pass.panes,
                 };
                 let children = self.visible_children(mount, children)?;
                 let layouts: Vec<_> = children

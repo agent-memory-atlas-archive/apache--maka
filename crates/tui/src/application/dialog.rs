@@ -108,6 +108,20 @@ impl super::scroll::SceneState {
                         }
                     }
                 }
+                Node::AdaptivePane {
+                    key,
+                    background,
+                    content,
+                    ..
+                } => {
+                    visit(background, visible, keys, choices, openings);
+                    if visible && openings.contains_key(key) {
+                        keys.push(key.clone());
+                    }
+                    // Layout visibility is acknowledged by the complete paint
+                    // batch, including openings declared in an unplaced pane.
+                    visit(content, visible, keys, choices, openings);
+                }
                 Node::Dialog {
                     key,
                     background,
@@ -247,6 +261,9 @@ impl Presenter {
             .or_else(|| self.focus.as_ref().map(WeakTarget::new));
         let retained = prior
             .as_ref()
+            // A pane can reappear inline with the same target identity after
+            // its drawer closes. That must not defeat the modal focus return.
+            .filter(|_| same_scope(&self.physical_path.last().cloned(), &path.last().cloned()))
             .and_then(|target| target.resolve(targets))
             .map(|target| (Some(target), self.native_return.clone()));
         let restore = |memory: &FocusReturn| {
@@ -342,6 +359,33 @@ impl Presenter {
         if !self.target_admitted(target) || !self.resources.admits(target) {
             return Ok(());
         }
+        if self
+            .application
+            .frame(&target.mount)?
+            .view
+            .view
+            .scene()
+            .and_then(|node| node.overlay(&target.key))
+            .is_some_and(|node| matches!(node, Node::AdaptivePane { .. }))
+        {
+            let state = self
+                .resources
+                .owners
+                .get_mut(&target.mount.id())
+                .unwrap()
+                .state
+                .downcast_mut::<super::scroll::SceneState>()
+                .unwrap();
+            if state.dialogs.get(&target.key).is_some_and(|opening| {
+                target
+                    .scope
+                    .as_ref()
+                    .is_some_and(|scope| scope.ptr_eq(&Rc::downgrade(opening)))
+            }) {
+                state.dialogs.remove(&target.key);
+            }
+            return self.sync_native();
+        }
         self.application.dispatch(
             &target.mount,
             target.revision,
@@ -401,13 +445,14 @@ impl Presenter {
                 .expect("original deferred overlay");
             let full = scene.viewport;
             let (body, padding) = match node {
-                Node::Dialog {
-                    content,
-                    width,
-                    height,
-                    padding,
-                    ..
-                } => {
+                Node::Dialog { .. } | Node::AdaptivePane { .. } => {
+                    let (appearance, content) = node.dialog_content().unwrap();
+                    let maka_ui::scene::terminal::DialogAppearance {
+                        width,
+                        height,
+                        padding,
+                        ..
+                    } = appearance;
                     let margin = if full.width >= 4 && full.height >= 4 {
                         1
                     } else {
@@ -504,6 +549,7 @@ impl Presenter {
             let remaining = std::mem::take(&mut scene.dialogs);
             let mut viewports = Vec::new();
             let mut choices = Vec::new();
+            let mut panes = Vec::new();
             match node {
                 Node::Choice(choice) => {
                     buffer.set_style(
@@ -518,13 +564,14 @@ impl Presenter {
                         scene,
                     ));
                 }
-                Node::Dialog {
-                    label,
-                    content,
-                    background_color,
-                    border_color,
-                    ..
-                } => {
+                Node::Dialog { .. } | Node::AdaptivePane { .. } => {
+                    let (appearance, content) = node.dialog_content().unwrap();
+                    let maka_ui::scene::terminal::DialogAppearance {
+                        label,
+                        background_color,
+                        border_color,
+                        ..
+                    } = appearance;
                     Block::new()
                         .borders(Borders::ALL)
                         .title(super::sanitize(label))
@@ -544,6 +591,7 @@ impl Presenter {
                             measurements,
                             viewports: &mut viewports,
                             choices: &mut choices,
+                            panes: &mut panes,
                         },
                     )?;
                 }
@@ -560,6 +608,7 @@ impl Presenter {
                         .generation,
                     viewports,
                     choices,
+                    panes,
                 }),
             });
             self.paint_dialogs(buffer, scene, measurements)?;

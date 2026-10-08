@@ -136,6 +136,53 @@ impl Choice {
         Ok(())
     }
 }
+/// Appearance shared by controlled dialogs and transient adaptive panes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "TerminalDialogAppearance")]
+pub struct DialogAppearance {
+    pub label: String,
+    /// Maximum foreground body dimensions, in terminal cells.
+    pub width: u16,
+    pub height: u16,
+    pub background_color: u32,
+    pub border_color: u32,
+    #[serde(default)]
+    pub padding: u16,
+}
+impl DialogAppearance {
+    fn validate(&self) -> Result<(), String> {
+        if self.label.is_empty()
+            || self.label.len() > 512
+            || self.width == 0
+            || self.height == 0
+            || self.background_color > 0xffffff
+            || self.border_color > 0xffffff
+            || self.padding > 1024
+        {
+            return Err("invalid terminal dialog presentation".into());
+        }
+        Ok(())
+    }
+}
+/// A one-shot mechanical command. Repeated or older sequences are ignored.
+/// Toggle uses the last successfully placed viewport; before first placement it
+/// is consumed without changing state. Dismiss never changes inline preference.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "TerminalPaneCommand")]
+pub struct PaneCommand {
+    #[schemars(range(min = 1))]
+    pub sequence: u64,
+    pub op: PaneOperation,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "TerminalPaneOperation")]
+pub enum PaneOperation {
+    Toggle,
+    DismissTransient,
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "TerminalScene")]
@@ -160,17 +207,24 @@ pub enum Node {
     },
     Dialog {
         key: String,
-        label: String,
         background: Box<Node>,
         content: Box<Node>,
         open: bool,
-        /// Maximum foreground body dimensions, in terminal cells.
-        width: u16,
-        height: u16,
-        background_color: u32,
-        border_color: u32,
-        #[serde(default)]
-        padding: u16,
+        #[serde(flatten)]
+        appearance: DialogAppearance,
+    },
+    /// One retained pane: native inline preference plus an independent transient
+    /// dialog. Resizing never opens or dismisses the transient.
+    AdaptivePane {
+        key: String,
+        background: Box<Node>,
+        content: Box<Node>,
+        pane_width: u16,
+        inline_min_width: u16,
+        auto_inline_min_width: u16,
+        overlay: DialogAppearance,
+        motion: bool,
+        command: Option<PaneCommand>,
     },
     Stack {
         key: String,
@@ -236,6 +290,7 @@ impl Node {
             | Self::Text { key, .. }
             | Self::Button { key, .. }
             | Self::Dialog { key, .. }
+            | Self::AdaptivePane { key, .. }
             | Self::Item { key, .. } => key,
             Self::Component(slot) => &slot.key,
             Self::Choice(choice) => &choice.key,
@@ -244,7 +299,9 @@ impl Node {
     pub fn layout(&self) -> Layout {
         match self {
             Self::Stack { layout, .. } => *layout,
-            Self::Dialog { background, .. } => background.layout(),
+            Self::Dialog { background, .. } | Self::AdaptivePane { background, .. } => {
+                background.layout()
+            }
             Self::Item { content, .. } => content.layout(),
             _ => Layout::default(),
         }
@@ -269,6 +326,7 @@ impl Node {
             | Self::Text { key, .. }
             | Self::Button { key, .. }
             | Self::Dialog { key, .. }
+            | Self::AdaptivePane { key, .. }
             | Self::Item { key, .. } => key,
             Self::Component(slot) => &slot.key,
             Self::Choice(choice) => &choice.key,
@@ -302,25 +360,34 @@ impl Node {
                 content.validate(depth + 1, keys, deadline)?;
             }
             Self::Dialog {
-                label,
+                appearance,
                 background,
                 content,
-                width,
-                height,
-                background_color,
-                border_color,
-                padding,
                 ..
             } => {
-                if label.is_empty()
-                    || label.len() > 512
-                    || *width == 0
-                    || *height == 0
-                    || *background_color > 0xffffff
-                    || *border_color > 0xffffff
-                    || *padding > 1024
+                appearance.validate()?;
+                background.validate(depth + 1, keys, deadline)?;
+                content.validate(depth + 1, keys, deadline)?;
+            }
+            Self::AdaptivePane {
+                background,
+                content,
+                pane_width,
+                inline_min_width,
+                auto_inline_min_width,
+                overlay,
+                command,
+                ..
+            } => {
+                overlay.validate()?;
+                if *pane_width == 0
+                    || inline_min_width <= pane_width
+                    || auto_inline_min_width < inline_min_width
+                    || command
+                        .as_ref()
+                        .is_some_and(|command| command.sequence == 0)
                 {
-                    return Err("invalid terminal dialog presentation".into());
+                    return Err("invalid terminal adaptive pane".into());
                 }
                 background.validate(depth + 1, keys, deadline)?;
                 content.validate(depth + 1, keys, deadline)?;
@@ -401,6 +468,11 @@ impl Node {
                 background,
                 content,
                 ..
+            }
+            | Self::AdaptivePane {
+                background,
+                content,
+                ..
             } => {
                 background.validate_focus_targets(slots)?;
                 content.validate_focus_targets(slots)?;
@@ -426,6 +498,15 @@ impl Node {
         {
             background.shortcut_inputs(inputs, visible)?;
             content.shortcut_inputs(inputs, visible && *open)?;
+        }
+        if let Self::AdaptivePane {
+            background,
+            content,
+            ..
+        } = self
+        {
+            background.shortcut_inputs(inputs, visible)?;
+            content.shortcut_inputs(inputs, visible)?;
         }
         if let Self::Stack {
             children,
@@ -525,6 +606,16 @@ impl Node {
                     deadline,
                 )?;
             }
+            Self::AdaptivePane {
+                background,
+                content,
+                ..
+            } => {
+                // Adaptive visibility is local layout; both declarations keep
+                // their original component owners and input schemas.
+                background.metadata(slots, inputs, hidden_slots, input_count, visible, deadline)?;
+                content.metadata(slots, inputs, hidden_slots, input_count, visible, deadline)?;
+            }
             Self::Component(slot) => {
                 if slots.len() >= 64 {
                     return Err("scene slot limit".into());
@@ -583,6 +674,12 @@ impl Node {
                 background,
                 content,
                 ..
+            }
+            | Self::AdaptivePane {
+                key: own,
+                background,
+                content,
+                ..
             } => {
                 if own == key {
                     Some(self)
@@ -592,6 +689,22 @@ impl Node {
             }
             Self::Stack { children, .. } => children.iter().find_map(|node| node.overlay(key)),
             Self::Item { content, .. } => content.overlay(key),
+            _ => None,
+        }
+    }
+}
+
+impl Node {
+    pub fn dialog_content(&self) -> Option<(&DialogAppearance, &Node)> {
+        match self {
+            Self::Dialog {
+                appearance,
+                content,
+                ..
+            } => Some((appearance, content)),
+            Self::AdaptivePane {
+                overlay, content, ..
+            } => Some((overlay, content)),
             _ => None,
         }
     }

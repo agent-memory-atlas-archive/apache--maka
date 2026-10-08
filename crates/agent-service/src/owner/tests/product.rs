@@ -74,9 +74,11 @@ fn screen(buffer: &Buffer) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+#[track_caller]
 fn click(presenter: &mut maka_tui::application::Presenter, label: &str) {
     click_nth(presenter, label, 0);
 }
+#[track_caller]
 fn click_nth(presenter: &mut maka_tui::application::Presenter, label: &str, nth: usize) {
     let (x, y) = wait_for_target(presenter, label, nth);
     presenter
@@ -88,34 +90,48 @@ fn click_nth(presenter: &mut maka_tui::application::Presenter, label: &str, nth:
         }))
         .unwrap();
 }
+#[track_caller]
 fn wait_for_target(
     presenter: &mut maka_tui::application::Presenter,
     label: &str,
     nth: usize,
 ) -> (u16, u16) {
+    wait_for_target_at(presenter, label, nth, Rect::new(0, 0, 80, 24))
+}
+#[track_caller]
+fn wait_for_target_at(
+    presenter: &mut maka_tui::application::Presenter,
+    label: &str,
+    nth: usize,
+    area: Rect,
+) -> (u16, u16) {
     // Disabled buttons retain their label. This fixture uses the ordinary light
     // theme, whose enabled button foreground is its accent. Await that painted
     // state before one click; never replay a potentially committed operation.
-    static BUTTON_COLOR: OnceLock<Color> = OnceLock::new();
-    let enabled = label.starts_with("[ ").then(|| {
-        *BUTTON_COLOR.get_or_init(|| {
+    static COLORS: OnceLock<[Color; 3]> = OnceLock::new();
+    let directory_row = label.starts_with("    ");
+    let colors = (label.starts_with("[ ") || directory_row).then(|| {
+        *COLORS.get_or_init(|| {
             let module = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../packages/agent-product/dist/packages/appearance/tui.js");
             let output = Command::new("node")
-                .args(["--input-type=module", "-e", "const {activate}=await import(process.argv[1]); const theme=activate({scheme:'light'}).Appearance.value; console.log(JSON.stringify({accent:theme.accent>>>8,muted:theme.muted>>>8}));"])
+                .args(["--input-type=module", "-e", "const {activate}=await import(process.argv[1]); const theme=activate({scheme:'light'}).Appearance.value; console.log(JSON.stringify({accent:theme.accent>>>8,muted:theme.muted>>>8,text:theme.text>>>8}));"])
                 .arg(format!("file://{}", module.display()))
                 .output()
                 .unwrap();
             assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
             let colors: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
             assert_ne!(colors["accent"], colors["muted"], "fixture must distinguish enabled and disabled buttons");
-            let rgb = colors["accent"].as_u64().unwrap() as u32;
-            Color::Rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
+            ["accent", "muted", "text"].map(|key| {
+                let rgb = colors[key].as_u64().unwrap() as u32;
+                Color::Rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
+            })
         })
     });
+    let enabled = label.starts_with("[ ").then(|| colors.unwrap()[0]);
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     let (x, y) = loop {
-        let buffer = draw(presenter);
+        let buffer = draw_at(presenter, area);
         let position = (0..buffer.area.height)
             .filter_map(|y| {
                 let row = (0..buffer.area.width)
@@ -130,6 +146,12 @@ fn wait_for_target(
                         let start = offset;
                         offset += buffer[(*x, y)].symbol().len();
                         start == byte
+                    })
+                    // An inline pane puts the main title beside its Hide
+                    // button. Blank padding before that title is not the
+                    // painted four-space prefix of an actual directory row.
+                    .filter(|x| {
+                        !directory_row || colors.unwrap()[1..].contains(&buffer[(*x, y)].fg)
                     })
                     .map(|x| (x, y))
             })
@@ -163,6 +185,21 @@ fn await_screen(presenter: &mut maka_tui::application::Presenter, expected: &str
         assert!(
             std::time::Instant::now() < deadline,
             "missing {expected}: {rendered}"
+        );
+        std::thread::yield_now();
+    }
+}
+#[track_caller]
+fn await_sidebar_closed(presenter: &mut maka_tui::application::Presenter) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let rendered = screen(&draw(presenter));
+        if !rendered.contains("[ Hide sidebar ]") {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "sidebar did not close: {rendered}"
         );
         std::thread::yield_now();
     }
@@ -614,7 +651,7 @@ process.stdout.write(output.outputFiles[0].text);
             .unwrap()
     };
     let mut presenter = start();
-    await_screen(&mut presenter, "[ Show sidebar ]");
+    await_screen(&mut presenter, "[ Toggle sidebar ]");
     presenter
         .input(Event::Key(KeyEvent::new(
             KeyCode::Char('b'),
@@ -674,11 +711,55 @@ process.stdout.write(output.outputFiles[0].text);
     presenter
         .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
         .unwrap();
+    // Selection and Escape leave the explicitly pinned inline sidebar open.
+    // Close it through the same real shortcut before the full-width workflow.
+    wait_for_target(&mut presenter, "[ Hide sidebar ]", 0);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('b'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    await_sidebar_closed(&mut presenter);
     await_screen(&mut presenter, "A place to think.");
     // Closing navigation restores the retained native composer through its
     // declared tab order. This command/draft path needs no mouse or forged input.
     presenter
         .input(Event::Paste("Hello product".into()))
+        .unwrap();
+    await_screen(&mut presenter, "Hello product");
+    // Narrow navigation uses the original modal input scope. Resizing keeps
+    // that drawer, Escape returns to the same draft, and its close button is
+    // reachable with an actual mouse click at the narrow geometry.
+    let narrow_area = Rect::new(0, 0, 40, 16);
+    draw_at(&mut presenter, narrow_area);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('b'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    wait_for_target_at(&mut presenter, "[ Hide sidebar ]", 0, narrow_area);
+    assert!(screen(&draw(&mut presenter)).contains("[ Hide sidebar ]"));
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+        .unwrap();
+    await_screen(&mut presenter, "Hello product");
+    draw_at(&mut presenter, narrow_area);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('b'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    let (x, y) = wait_for_target_at(&mut presenter, "[ Hide sidebar ]", 0, narrow_area);
+    presenter
+        .input(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: x,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        }))
         .unwrap();
     await_screen(&mut presenter, "Hello product");
     // Help is an ordinary guest under the existing modal. Native dismissal
@@ -840,7 +921,7 @@ process.stdout.write(output.outputFiles[0].text);
     if fail_labels_initialization {
         // Saved notice, retained old fields, an actual different selected
         // Session and a two-row CJK workspace path used to hide all actions.
-        click(&mut presenter, "[ Show sidebar ]");
+        click(&mut presenter, "[ Toggle sidebar ]");
         click(&mut presenter, "[ New conversation ]");
         wait_for_target(&mut presenter, "    New conversation", 0);
         click(&mut presenter, "[ Hide sidebar ]");
@@ -2058,12 +2139,20 @@ process.stdout.write(output.outputFiles[0].text);
         session
     });
     let mut reopened = start();
-    await_screen(&mut reopened, "[ Show sidebar ]");
-    click(&mut reopened, "[ Show sidebar ]");
+    await_screen(&mut reopened, "[ Toggle sidebar ]");
+    click(&mut reopened, "[ Toggle sidebar ]");
     click(&mut reopened, "▸ Archived");
-    // Native directory rows use the original unboxed layout. Selecting a
-    // destination closes the terminal directory and restores the conversation.
+    // Wide selection preserves the pinned pane. Close it explicitly before
+    // continuing the original full-width tool-source acceptance sequence.
     click(&mut reopened, "    Native tool inspection");
+    await_screen(&mut reopened, "This conversation is archived.");
+    // The same title is now also in the main header. Select its actual
+    // directory row again, without hitting the adjacent pane's Hide button.
+    click(&mut reopened, "    Native tool inspection");
+    await_screen(&mut reopened, "This conversation is archived.");
+    assert!(screen(&draw(&mut reopened)).contains("[ Hide sidebar ]"));
+    click(&mut reopened, "[ Hide sidebar ]");
+    await_sidebar_closed(&mut reopened);
     await_screen(&mut reopened, "This conversation is archived.");
     assert!(!screen(&draw(&mut reopened)).contains("[ Send ]"));
     await_screen(&mut reopened, "Tool output · Count");
@@ -2103,9 +2192,11 @@ process.stdout.write(output.outputFiles[0].text);
             .block_on(fixture.owner.session(&tool_session))
             .is_ok()
     );
-    click(&mut reopened, "[ Show sidebar ]");
+    click(&mut reopened, "[ Toggle sidebar ]");
     await_screen(&mut reopened, "[ New conversation ]");
     click(&mut reopened, "    New conversation");
+    click(&mut reopened, "[ Hide sidebar ]");
+    await_sidebar_closed(&mut reopened);
     assert!(screen(&draw(&mut reopened)).contains("What would you like to work on?"));
     click(&mut reopened, "[ Connections ]");
     await_screen(&mut reopened, "[ API key ]");

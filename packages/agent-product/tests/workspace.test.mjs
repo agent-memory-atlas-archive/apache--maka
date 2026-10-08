@@ -1754,7 +1754,7 @@ test('sidebar presentation retains the same children, draft command, and active 
   const originalState = structuredClone(client.state);
   const originalSlots = modelSlots(client.output.frame.view.background);
   client.raw('navigation-toggle');
-  assert.equal(client.state.navigationOpen, false);
+  assert.equal(client.state.sidebar.open, false);
   assert.equal(client.output.frame.view.background.children[0].children[0].visible, false);
   assert.deepEqual(modelSlots(client.output.frame.view.background), originalSlots);
   assert.deepEqual(client.output.actions, []);
@@ -1763,9 +1763,9 @@ test('sidebar presentation retains the same children, draft command, and active 
   assert.deepEqual(client.state.model, originalState.model);
   client.raw('settings');
   client.input({ kind: 'component', child: 'connections', name: 'closed', event: {} });
-  assert.equal(client.state.navigationOpen, false);
+  assert.equal(client.state.sidebar.open, false);
   client.raw('navigation-toggle');
-  assert.equal(client.state.navigationOpen, true);
+  assert.equal(client.state.sidebar.open, true);
   assert.deepEqual(modelSlots(client.output.frame.view.background), originalSlots);
 });
 test('desktop model trigger retains its full label for native measurement and accessibility', async () => {
@@ -3773,7 +3773,7 @@ for (const target of ['desktop', 'tui']) {
   );
 }
 
-test('TUI reader declares a flexible body and wrapped controls while keeping draft and navigation routes', async () => {
+test('TUI reader declares a flexible body and retained adaptive pane without a visibility mirror', async () => {
   const module = await import(pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js')));
   module.activate({ locale: 'en' });
   const { component: timeline } = await import(
@@ -3785,9 +3785,9 @@ test('TUI reader declares a flexible body and wrapped controls while keeping dra
       historyChunk('中文😀\n'.repeat(700), { sequence: 400, offset: 100, totalBytes: 7800 }),
     ],
   });
-  const routes = () => client.output.frame.view.background.children[0].children;
-  assert.equal(client.state.navigationOpen, false);
-  assert.equal(routes().find((node) => node.key === 'main-route').visible, true);
+  const pane = () => client.output.frame.view.background.children[0].children[0];
+  assert.deepEqual(client.state.sidebar, { command: null });
+  assert.equal(pane().kind, 'adaptive_pane');
   const originalTimeline = timeline.mount(client.timeline, {}).frame.view;
   const retained = originalTimeline.children.find((node) => node.key === 'retained-conversation');
   assert.equal(retained.layout.grow, 1);
@@ -3805,7 +3805,7 @@ test('TUI reader declares a flexible body and wrapped controls while keeping dra
   assert.equal(reading.props.content.scroll, 'anchor');
   assert.equal(frame.children.at(-1).layout.wrap, true);
   assert.equal(frame.children.at(-1).gap, 1);
-  const main = routes().find((node) => node.key === 'main-route').children[0];
+  const main = pane().background;
   const body = main.children.find((node) => node.key === 'session-body');
   assert.equal(body.viewport, true);
   assert.equal(body.layout.grow, 1);
@@ -3829,16 +3829,16 @@ test('TUI reader declares a flexible body and wrapped controls while keeping dra
   );
   const originalSource = structuredClone(client.state.source);
   client.raw('navigation-toggle');
-  assert.equal(routes().find((node) => node.key === 'main-route').visible, false);
-  assert.equal(routes().find((node) => node.key === 'navigation-route').visible, true);
+  assert.deepEqual(pane().command, { sequence: 1, op: 'toggle' });
+  assert.equal(pane().background.key, 'main');
+  assert.equal(pane().content.key, 'navigation-content');
   client.raw('navigation-toggle');
-  assert.equal(routes().find((node) => node.key === 'main-route').visible, true);
+  assert.deepEqual(pane().command, { sequence: 2, op: 'toggle' });
   assert.deepEqual(client.state.source, originalSource);
   client.component('sourceBack');
   assert.equal(
-    routes()
-      .find((node) => node.key === 'main-route')
-      .children[0].children.find((node) => node.key === 'session-body')
+    pane()
+      .background.children.find((node) => node.key === 'session-body')
       .children.find((node) => node.key === 'retained-composer').visible,
     true,
   );
@@ -5762,7 +5762,7 @@ test('ordinary root shortcuts share creation policy and close only presented pag
   );
   const watch = structuredClone(client.state.watch);
   client.raw('navigation-back');
-  assert.equal(client.state.navigationOpen, false);
+  assert.equal(client.state.sidebar.open, false);
   assert.equal(
     shortcuts().some((shortcut) => shortcut.key === 'escape'),
     false,
@@ -7157,7 +7157,7 @@ for (const target of ['tui', 'desktop']) {
       assert.equal(client.state.dialog, 'help');
       assert.equal(client.state.settingsOpen, before.settingsOpen);
       assert.equal(client.state.deploymentOpen, before.deploymentOpen);
-      assert.equal(client.state.navigationOpen, before.navigationOpen);
+      assert.deepEqual(client.state.sidebar, before.sidebar);
       assert.deepEqual(client.state.command, before.command);
       assert.deepEqual(client.state.watch, before.watch);
       assert.deepEqual(client.output.actions, []);
@@ -7251,9 +7251,7 @@ test('TUI queue controls retain original revision and lane and working-send keep
   const rows = modelSlots(client.output.frame.view).find((node) => node.binding === 'rows');
   assert.equal(rows.props.maxRows, 3);
   assert.deepEqual(rows.props.compactBelow, { height: 12, maxRows: 1 });
-  const main = client.output.frame.view.background.children[0].children.find(
-    (node) => node.key === 'main-route',
-  ).children[0];
+  const main = client.output.frame.view.background.children[0].children[0].background;
   const badge = main.children
     .find((node) => node.key === 'session-body')
     .children.find((node) => node.key === 'retained-composer')
@@ -7937,3 +7935,26 @@ for (const target of ['desktop', 'tui']) {
     assert.deepEqual(form.output.actions, []);
   });
 }
+
+test('TUI sidebar controls share native commands and selection dismisses only the transient', async () => {
+  const { component } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js'))
+  );
+  const client = new Client(component).start();
+  const original = structuredClone(client.state.watch);
+  client.raw('navigation-toggle');
+  assert.deepEqual(client.state.sidebar, { command: { sequence: 1, op: 'toggle' } });
+  client.raw('navigation-back');
+  assert.deepEqual(client.state.sidebar, { command: { sequence: 2, op: 'toggle' } });
+  client.component('select', { sessionId: session.id });
+  assert.deepEqual(client.state.sidebar, { command: { sequence: 3, op: 'dismiss_transient' } });
+  const pane = client.output.frame.view.background.children[0].children[0];
+  assert.deepEqual(
+    [pane.pane_width, pane.inline_min_width, pane.auto_inline_min_width],
+    [32, 60, 90],
+  );
+  assert.equal(modelSlots(pane).filter((n) => n.key === 'composer').length, 1);
+  assert.equal(modelSlots(pane).filter((n) => n.key === 'navigation').length, 1);
+  assert.equal(Object.hasOwn(client.state, 'navigationOpen'), false);
+  assert.equal(client.state.watch?.input.sessionId ?? session.id, original.input.sessionId);
+});

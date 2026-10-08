@@ -17,6 +17,8 @@
  * under the License.
  */
 
+#[path = "tests/adaptive.rs"]
+mod adaptive;
 #[path = "tests/continuations.rs"]
 mod continuations;
 #[path = "tests/layout.rs"]

@@ -367,10 +367,10 @@ export type TerminalScene =
     }
   | {
       key: string;
-      label: string;
       background: TerminalScene;
       content: TerminalScene;
       open: boolean;
+      label: string;
       /**
        * Maximum foreground body dimensions, in terminal cells.
        */
@@ -380,6 +380,18 @@ export type TerminalScene =
       border_color: number;
       padding?: number;
       kind: 'dialog';
+    }
+  | {
+      key: string;
+      background: TerminalScene;
+      content: TerminalScene;
+      pane_width: number;
+      inline_min_width: number;
+      auto_inline_min_width: number;
+      overlay: TerminalDialogAppearance;
+      motion: boolean;
+      command?: TerminalPaneCommand | null;
+      kind: 'adaptive_pane';
     }
   | {
       key: string;
@@ -449,6 +461,7 @@ export type TerminalScene =
       };
       kind: 'component';
     };
+export type TerminalPaneOperation = 'toggle' | 'dismiss_transient';
 export type TerminalDirection = 'row' | 'column';
 export type TerminalBorderStyle = 'rounded' | 'square' | 'ascii';
 export type Modifier = 'control' | 'primary' | 'alt' | 'shift' | 'super';
@@ -2016,6 +2029,29 @@ export interface ComponentSlot {
 export interface TerminalChoiceOption {
   key: string;
   label: string;
+}
+/**
+ * Appearance shared by controlled dialogs and transient adaptive panes.
+ */
+export interface TerminalDialogAppearance {
+  label: string;
+  /**
+   * Maximum foreground body dimensions, in terminal cells.
+   */
+  width: number;
+  height: number;
+  background_color: number;
+  border_color: number;
+  padding?: number;
+}
+/**
+ * A one-shot mechanical command. Repeated or older sequences are ignored.
+ * Toggle uses the last successfully placed viewport; before first placement it
+ * is consumed without changing state. Dismiss never changes inline preference.
+ */
+export interface TerminalPaneCommand {
+  sequence: number;
+  op: TerminalPaneOperation;
 }
 /**
  * A one-cell frame. Colors follow the same RGB convention as terminal text.
