@@ -29,6 +29,7 @@ use std::{any::Any, cell::Cell, collections::BTreeMap, rc::Rc};
 pub(super) enum View {
     Scene(Value),
     ChangingScene(Rc<std::cell::RefCell<Value>>),
+    FocusRows(Rc<std::cell::RefCell<Value>>),
     MetadataVisibility {
         scene: Rc<super::super::scene::Node>,
         visible: Rc<Cell<bool>>,
@@ -93,7 +94,7 @@ impl NativeComponent<dyn Widget> for Root {
                 source,
                 std::time::Instant::now() + std::time::Duration::from_secs(1),
             )?,
-            View::ChangingScene(source) => super::super::scene::compile(
+            View::ChangingScene(source) | View::FocusRows(source) => super::super::scene::compile(
                 &source.borrow(),
                 std::time::Instant::now() + std::time::Duration::from_secs(1),
             )?,
@@ -354,56 +355,76 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
             packages.push(reading);
         }
     }
-    if matches!(view, View::Rows(..) | View::NestedRows(..)) {
+    if matches!(
+        view,
+        View::Rows(..) | View::NestedRows(..) | View::FocusRows(..)
+    ) {
         use maka_plugin_core::{
             composition::Target,
             contract::{Availability, Cardinality, Export, Import},
             package::{Declaration, EntryDeclaration},
         };
-        let contract = maka_ui::rows::rows_contract();
-        entry.imports.insert(
-            "rows".into(),
-            Import {
-                contract: contract.clone(),
-                cardinality: Cardinality::One,
-            },
-        );
-        let rows = support::package(
-            "test.rows",
-            Declaration {
-                entries: BTreeMap::from([(
-                    EntryTarget::Tui,
-                    EntryDeclaration {
-                        scene: None,
-                        implementation: Implementation::Native {
-                            implementation: "maka.ui.rows".into(),
-                        },
-                        configuration: json!({"type":"object"}),
-                        imports: BTreeMap::new(),
-                        exports: BTreeMap::from([(
-                            "Rows".into(),
-                            Export {
-                                contract,
-                                availability: Availability::Required,
+        let mut components = vec![(
+            "rows",
+            "Rows",
+            "maka.ui.rows",
+            maka_ui::rows::rows_contract(),
+            152,
+        )];
+        if matches!(view, View::FocusRows(..)) {
+            components.push((
+                "editor",
+                "Textarea",
+                "maka.ui.textarea",
+                maka_ui::textarea::textarea_contract(),
+                153,
+            ));
+        }
+        for (binding, export, implementation, contract, identity) in components {
+            entry.imports.insert(
+                binding.into(),
+                Import {
+                    contract: contract.clone(),
+                    cardinality: Cardinality::One,
+                },
+            );
+            let rows = support::package(
+                &format!("test.{binding}"),
+                Declaration {
+                    entries: BTreeMap::from([(
+                        EntryTarget::Tui,
+                        EntryDeclaration {
+                            scene: None,
+                            implementation: Implementation::Native {
+                                implementation: implementation.into(),
                             },
-                        )]),
-                    },
-                )]),
-                composition: None,
-            },
-            None,
-        );
-        input
-            .instances
-            .insert("rows".into(), support::node(&rows, 152));
-        input.instances.get_mut("app").unwrap().bindings.insert(
-            "rows".into(),
-            vec![Target::Instance {
-                path: vec!["rows".into()],
-                export: "Rows".into(),
-            }],
-        );
-        packages.push(rows);
+                            configuration: json!({"type":"object"}),
+                            imports: BTreeMap::new(),
+                            exports: BTreeMap::from([(
+                                export.into(),
+                                Export {
+                                    contract,
+                                    availability: Availability::Required,
+                                },
+                            )]),
+                        },
+                    )]),
+                    composition: None,
+                },
+                None,
+            );
+            input
+                .instances
+                .insert(binding.into(), support::node(&rows, identity));
+            input.instances.get_mut("app").unwrap().bindings.insert(
+                binding.into(),
+                vec![Target::Instance {
+                    path: vec![binding.into()],
+                    export: export.into(),
+                }],
+            );
+            packages.push(rows);
+        }
     }
     let contract = entry.exports["App"].contract.clone();
     let package = support::package(

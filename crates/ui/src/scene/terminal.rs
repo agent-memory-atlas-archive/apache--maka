@@ -88,6 +88,9 @@ pub enum Node {
         #[schemars(length(max = 32))]
         shortcuts: Vec<crate::shortcut::Shortcut>,
         #[serde(default)]
+        #[schemars(length(max = 32))]
+        focus_shortcuts: Vec<crate::shortcut::FocusShortcut>,
+        #[serde(default)]
         layout: Layout,
         #[serde(default)]
         scroll: ScrollPolicy,
@@ -161,8 +164,13 @@ impl Node {
         {
             return Err("invalid or duplicate UI node identity".into());
         }
-        if let Self::Stack { shortcuts, .. } = self {
-            crate::shortcut::validate(shortcuts, false)?;
+        if let Self::Stack {
+            shortcuts,
+            focus_shortcuts,
+            ..
+        } = self
+        {
+            crate::shortcut::validate_focus(shortcuts, focus_shortcuts)?;
         }
         match self {
             Self::Dialog {
@@ -227,6 +235,35 @@ impl Node {
                     return Err("invalid slot binding".into());
                 }
             }
+        }
+        Ok(())
+    }
+    pub fn validate_focus_targets(&self, slots: &[ComponentSlot]) -> Result<(), String> {
+        match self {
+            Self::Stack {
+                focus_shortcuts,
+                children,
+                ..
+            } => {
+                if focus_shortcuts
+                    .iter()
+                    .any(|binding| !slots.iter().any(|slot| slot.key == binding.child))
+                {
+                    return Err("focus shortcut names an undeclared child".into());
+                }
+                for child in children {
+                    child.validate_focus_targets(slots)?;
+                }
+            }
+            Self::Dialog {
+                background,
+                content,
+                ..
+            } => {
+                background.validate_focus_targets(slots)?;
+                content.validate_focus_targets(slots)?;
+            }
+            _ => {}
         }
         Ok(())
     }

@@ -186,6 +186,8 @@ pub struct NativeInput {
 pub enum WidgetInput {
     ExitFocus,
     Unhandled,
+    /// Native editing yields a navigation gesture to its declared focus scope.
+    Navigate,
     Consumed(Option<NativeInput>),
     /// Handled pointer work that preserves the original keyboard focus.
     PreserveFocus,
@@ -608,7 +610,11 @@ impl Presenter {
                 self.sync_native()?;
                 return Ok(());
             }
-            if self.dispatch_shortcut(&target.ancestors, &event)? {
+            if self.dispatch_shortcut(
+                &target.ancestors,
+                &event,
+                matches!(native, WidgetInput::Navigate),
+            )? {
                 return Ok(());
             }
             // Bubble unconsumed navigation through the original flushed scroll ancestors.
@@ -659,7 +665,7 @@ impl Presenter {
         if self.focus.is_none()
             && let Some(scope) = self.keyboard.clone()
         {
-            self.dispatch_shortcut(&[scope], &event)?;
+            self.dispatch_shortcut(&[scope], &event, false)?;
         }
         Ok(())
     }
@@ -667,6 +673,7 @@ impl Presenter {
         &mut self,
         ancestors: &[std::rc::Rc<paint::Ancestor>],
         event: &Event,
+        navigation: bool,
     ) -> maka_ui::Result<bool> {
         let Event::Key(key) = event else {
             return Ok(false);
@@ -675,6 +682,23 @@ impl Presenter {
             return Ok(false);
         };
         for ancestor in ancestors.iter().rev() {
+            if navigation
+                && let Some(binding) = ancestor
+                    .focus_shortcuts
+                    .iter()
+                    .find(|binding| binding.declaration.matches(&key, modifiers))
+            {
+                if binding.declaration.enabled
+                    && self.target_admitted(ancestor)
+                    && self.resources.admits(ancestor)
+                    && !self.application.is_retiring(&ancestor.mount)
+                    && self.application.mount_visible(&ancestor.mount)
+                    && self.application.frame(&ancestor.mount)?.revision == ancestor.revision
+                {
+                    self.focus_child(binding)?;
+                }
+                return Ok(true);
+            }
             if let Some(shortcut) = ancestor
                 .shortcuts
                 .iter()

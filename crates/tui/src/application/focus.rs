@@ -108,3 +108,74 @@ impl Presenter {
         Ok(())
     }
 }
+
+impl Presenter {
+    pub(super) fn freeze_focus_shortcuts(
+        &self,
+        parent: &maka_plugin_core::runtime::Mount,
+        bindings: &[maka_ui::shortcut::FocusShortcut],
+    ) -> maka_ui::Result<Vec<super::paint::FocusBinding>> {
+        bindings
+            .iter()
+            .map(|declaration| {
+                let child = self
+                    .application
+                    .child_mount(parent, &declaration.child)?
+                    .clone();
+                let owner = self.resources.owners.get(&child.id()).ok_or_else(|| {
+                    maka_ui::Error::Invalid("focus child native owner unavailable".into())
+                })?;
+                Ok(super::paint::FocusBinding {
+                    declaration: declaration.clone(),
+                    child,
+                    owner: std::rc::Rc::downgrade(&owner.identity),
+                })
+            })
+            .collect()
+    }
+    pub(super) fn focus_child(
+        &mut self,
+        binding: &super::paint::FocusBinding,
+    ) -> maka_ui::Result<()> {
+        if self.application.is_retiring(&binding.child)
+            || !self.application.mount_visible(&binding.child)
+            || !self
+                .resources
+                .owners
+                .get(&binding.child.id())
+                .is_some_and(|owner| {
+                    owner.live
+                        && binding
+                            .owner
+                            .ptr_eq(&std::rc::Rc::downgrade(&owner.identity))
+                })
+        {
+            return Ok(());
+        }
+        let mounts = self.application.mounted_subtree(&binding.child)?;
+        let target = self
+            .scene
+            .iter()
+            .filter(|target| {
+                target.tab_index >= 0
+                    && mounts.contains(&target.mount)
+                    && self.target_admitted(target)
+                    && self.resources.admits(target)
+                    && !self.application.is_retiring(&target.mount)
+                    && self.application.mount_visible(&target.mount)
+                    && self
+                        .application
+                        .frame(&target.mount)
+                        .is_ok_and(|frame| frame.revision == target.revision)
+            })
+            .min_by_key(|target| (target.tab_index == 0, target.tab_index))
+            .cloned();
+        if let Some(target) = target
+            && self.resources.enter_focus(&target)?
+        {
+            self.focus = Some(target);
+            self.track_focus_return()?;
+        }
+        Ok(())
+    }
+}

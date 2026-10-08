@@ -37,6 +37,21 @@ pub struct Shortcut {
     pub input: String,
     pub enabled: bool,
 }
+/// Route navigation yielded by a native editor to a declared child component.
+/// Ordinary unhandled button keys do not activate this binding.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FocusShortcut {
+    pub key: String,
+    pub modifiers: Vec<Modifier>,
+    pub child: String,
+    pub enabled: bool,
+}
+impl FocusShortcut {
+    pub fn matches(&self, key: &str, modifiers: Modifiers) -> bool {
+        self.key == key && physical(&self.modifiers, false) == modifiers
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Modifier {
@@ -56,30 +71,56 @@ pub struct Modifiers {
 }
 impl Shortcut {
     pub fn physical(&self, primary_is_super: bool) -> Modifiers {
-        let mut result = Modifiers::default();
-        for modifier in &self.modifiers {
-            match modifier {
-                Modifier::Control => result.control = true,
-                Modifier::Primary if primary_is_super => result.super_key = true,
-                Modifier::Primary => result.control = true,
-                Modifier::Alt => result.alt = true,
-                Modifier::Shift => result.shift = true,
-                Modifier::Super => result.super_key = true,
-            }
-        }
-        result
+        physical(&self.modifiers, primary_is_super)
     }
     pub fn matches(&self, key: &str, modifiers: Modifiers, primary_is_super: bool) -> bool {
         self.key == key && self.physical(primary_is_super) == modifiers
     }
 }
-pub fn validate(shortcuts: &[Shortcut], primary_is_super: bool) -> Result<(), String> {
-    if shortcuts.len() > 32 {
-        return Err("shortcut scope limit".into());
+fn physical(modifiers: &[Modifier], primary_is_super: bool) -> Modifiers {
+    let mut result = Modifiers::default();
+    for modifier in modifiers {
+        match modifier {
+            Modifier::Control => result.control = true,
+            Modifier::Primary if primary_is_super => result.super_key = true,
+            Modifier::Primary => result.control = true,
+            Modifier::Alt => result.alt = true,
+            Modifier::Shift => result.shift = true,
+            Modifier::Super => result.super_key = true,
+        }
     }
+    result
+}
+pub fn validate(shortcuts: &[Shortcut], primary_is_super: bool) -> Result<(), String> {
+    validate_chords(
+        shortcuts
+            .iter()
+            .map(|s| (s.key.as_str(), s.modifiers.as_slice(), s.input.as_str())),
+        primary_is_super,
+    )
+}
+pub fn validate_focus(shortcuts: &[Shortcut], focus: &[FocusShortcut]) -> Result<(), String> {
+    validate_chords(
+        shortcuts
+            .iter()
+            .map(|s| (s.key.as_str(), s.modifiers.as_slice(), s.input.as_str()))
+            .chain(
+                focus
+                    .iter()
+                    .map(|s| (s.key.as_str(), s.modifiers.as_slice(), s.child.as_str())),
+            ),
+        false,
+    )
+}
+fn validate_chords<'a>(
+    bindings: impl IntoIterator<Item = (&'a str, &'a [Modifier], &'a str)>,
+    primary_is_super: bool,
+) -> Result<(), String> {
     let mut chords = BTreeSet::new();
-    for shortcut in shortcuts {
-        let key = shortcut.key.as_str();
+    for (index, (key, modifiers, target)) in bindings.into_iter().enumerate() {
+        if index >= 32 {
+            return Err("shortcut scope limit".into());
+        }
         let printable = key == "space"
             || key.len() == 1
                 && key
@@ -103,16 +144,15 @@ pub fn validate(shortcuts: &[Shortcut], primary_is_super: bool) -> Result<(), St
             .strip_prefix('f')
             .and_then(|n| n.parse::<u8>().ok())
             .is_some_and(|n| (1..=12).contains(&n) && key == format!("f{n}"));
-        let physical = shortcut.physical(primary_is_super);
-        let unique_modifiers = shortcut
-            .modifiers
+        let physical = physical(modifiers, primary_is_super);
+        let unique_modifiers = modifiers
             .iter()
             .enumerate()
-            .all(|(i, m)| !shortcut.modifiers[..i].contains(m));
+            .all(|(i, m)| !modifiers[..i].contains(m));
         if (!printable && !named)
-            || shortcut.input.is_empty()
-            || shortcut.input.len() > 128
-            || shortcut.modifiers.len() > 4
+            || target.is_empty()
+            || target.len() > 128
+            || modifiers.len() > 4
             || !unique_modifiers
             || (printable && !physical.control && !physical.alt && !physical.super_key)
             || !chords.insert((key, physical))

@@ -446,6 +446,7 @@ impl Presenter {
                 identity: identity.clone(),
                 revision: self.application.frame(&deferred.mount)?.revision,
                 shortcuts: Vec::new(),
+                focus_shortcuts: Vec::new(),
             }));
             scene.targets.push(Target {
                 identity,

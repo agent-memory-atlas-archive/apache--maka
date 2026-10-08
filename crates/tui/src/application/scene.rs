@@ -86,6 +86,8 @@ pub(super) fn compile_with_inputs(
         deadline,
     )
     .map_err(maka_ui::Error::Invalid)?;
+    node.validate_focus_targets(&slots)
+        .map_err(maka_ui::Error::Invalid)?;
     node.shortcut_inputs(&mut inputs, true)
         .map_err(maka_ui::Error::Invalid)?;
     let visible = node.visible();
@@ -172,7 +174,12 @@ impl super::Widget for Node {
         buffer: &mut ratatui::buffer::Buffer,
     ) -> maka_ui::Result<()> {
         if slots.parent == &slots.presenter.root
-            && let Self::Stack { key, shortcuts, .. } = self
+            && let Self::Stack {
+                key,
+                shortcuts,
+                focus_shortcuts,
+                ..
+            } = self
             && !shortcuts.is_empty()
         {
             slots.scene.as_deref_mut().expect("paint scene").keyboard =
@@ -187,6 +194,9 @@ impl super::Widget for Node {
                     },
                     revision: slots.presenter.application.frame(slots.parent)?.revision,
                     shortcuts: shortcuts.clone(),
+                    focus_shortcuts: slots
+                        .presenter
+                        .freeze_focus_shortcuts(slots.parent, focus_shortcuts)?,
                 }));
         }
         let generation = slots

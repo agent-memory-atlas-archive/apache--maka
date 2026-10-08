@@ -121,6 +121,13 @@ pub(super) struct Ancestor {
     pub identity: TargetIdentity,
     pub revision: u64,
     pub shortcuts: Vec<maka_ui::shortcut::Shortcut>,
+    pub focus_shortcuts: Vec<FocusBinding>,
+}
+#[derive(Clone)]
+pub(super) struct FocusBinding {
+    pub declaration: maka_ui::shortcut::FocusShortcut,
+    pub child: Mount,
+    pub owner: std::rc::Weak<()>,
 }
 impl std::ops::Deref for Ancestor {
     type Target = TargetIdentity;
@@ -876,6 +883,7 @@ impl Presenter {
                 background,
                 children,
                 shortcuts,
+                focus_shortcuts,
                 ..
             } => {
                 buffer.set_style(area.visible(), Style::default().bg(color(*background)));
@@ -933,6 +941,8 @@ impl Presenter {
                 } else {
                     0
                 };
+                let focus_shortcuts = self.freeze_focus_shortcuts(mount, focus_shortcuts)?;
+                let scoped = !shortcuts.is_empty() || !focus_shortcuts.is_empty();
                 if !shortcuts.is_empty() && scene.input_scope.is_some() && scene.ancestry.is_empty()
                 {
                     scene.keyboard = Some(std::rc::Rc::new(Ancestor {
@@ -944,9 +954,10 @@ impl Presenter {
                         },
                         revision: self.application.frame(mount)?.revision,
                         shortcuts: shortcuts.clone(),
+                        focus_shortcuts: focus_shortcuts.clone(),
                     }));
                 }
-                if scrolling || !shortcuts.is_empty() {
+                if scrolling || scoped {
                     scene.ancestry.push(std::rc::Rc::new(Ancestor {
                         identity: TargetIdentity {
                             mount: mount.clone(),
@@ -956,6 +967,7 @@ impl Presenter {
                         },
                         revision: self.application.frame(mount)?.revision,
                         shortcuts: shortcuts.clone(),
+                        focus_shortcuts: focus_shortcuts.clone(),
                     }));
                 }
                 for (child, relative) in children.into_iter().zip(flow.children) {
@@ -965,7 +977,7 @@ impl Presenter {
                     );
                     self.paint_node(mount, child, area, buffer, scene, pass)?;
                 }
-                if scrolling || !shortcuts.is_empty() {
+                if scrolling || scoped {
                     scene.ancestry.pop();
                 }
             }

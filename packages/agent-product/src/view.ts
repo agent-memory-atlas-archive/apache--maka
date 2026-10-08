@@ -28,6 +28,7 @@ import type {
   Output,
   TerminalLayout,
   Shortcut,
+  FocusShortcut,
   TextAppearance,
   ReadingProps,
 } from '../../plugin-sdk/src/index.js';
@@ -44,6 +45,7 @@ interface BoxOptions {
   visible?: boolean;
   terminal?: TerminalLayout;
   shortcuts?: Shortcut[];
+  focusShortcuts?: FocusShortcut[];
 }
 interface Painter<N extends Node> {
   text(
@@ -179,6 +181,7 @@ function terminalPaint(theme: Theme): Painter<TerminalNode> {
         children,
         visible: options.visible ?? true,
         shortcuts: options.shortcuts ?? [],
+        focus_shortcuts: options.focusShortcuts ?? [],
         layout: options.terminal ?? {},
         scroll: options.scroll ?? 'none',
       }),

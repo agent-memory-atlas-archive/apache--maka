@@ -470,3 +470,147 @@ fn native_rows_keyboard_entry_waits_for_current_props_to_be_presented() {
     );
     close(tui);
 }
+
+fn focus_scene() -> Value {
+    let mut row_props = props();
+    row_props["entry"] = json!("row-5");
+    json!({"kind":"stack","key":"root","direction":"column","gap":0,"padding":0,"background":0,"children":[
+        {"kind":"button","key":"back","label":"Outside"},
+        {"kind":"stack","key":"local","direction":"column","gap":0,"padding":0,"background":0,
+         "focus_shortcuts":[{"key":"up","modifiers":[],"child":"rows","enabled":true}],
+         "children":[
+            {"kind":"component","key":"editor","binding":"editor","member":0,"on":{},"props":{
+                "appearance":support::brand_appearance()["textarea"],"accessibilityLabel":"Composer",
+                "readOnly":false,"disabled":false,"softWrap":true,"tabIndex":0,"initialText":""}},
+            {"kind":"button","key":"send","label":"Send"}]},
+        {"kind":"component","key":"rows","binding":"rows","member":0,"props":row_props,"on":{"activated":"row-activated"}}
+    ]})
+}
+#[test]
+fn native_focus_shortcut_is_local_and_selects_original_child_entry() {
+    let source = Rc::new(RefCell::new(focus_scene()));
+    let (_runtime, mut tui) =
+        layout::native(layout::View::FocusRows(source), Rc::new(Cell::new(true)));
+    draw(&mut tui, 40, 10);
+    let outside = tui.focus.clone().unwrap();
+    assert_eq!(outside.key, "back");
+    tui.input(key(KeyCode::Up)).unwrap();
+    assert!(tui.focus.as_ref().unwrap().same(&outside));
+    tui.input(key(KeyCode::Tab)).unwrap();
+    assert_eq!(tui.focus.as_ref().unwrap().key, "observe");
+    let mut held = KeyEvent::new(KeyCode::Up, KeyModifiers::NONE);
+    held.kind = KeyEventKind::Repeat;
+    tui.input(Event::Key(held)).unwrap();
+    assert_eq!(tui.focus.as_ref().unwrap().key, "observe");
+    tui.input(Event::Paste("draft".into())).unwrap();
+    tui.input(key(KeyCode::Up)).unwrap();
+    assert_eq!(tui.focus.as_ref().unwrap().key, "observe");
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    tui.input(key(KeyCode::Backspace)).unwrap();
+    draw(&mut tui, 40, 10);
+    tui.input(key(KeyCode::Tab)).unwrap();
+    assert_eq!(tui.focus.as_ref().unwrap().key, "send");
+    tui.input(key(KeyCode::Up)).unwrap();
+    assert_eq!(tui.focus.as_ref().unwrap().key, "send");
+    tui.input(key(KeyCode::BackTab)).unwrap();
+    tui.input(key(KeyCode::Up)).unwrap();
+    assert_eq!(tui.focus.as_ref().unwrap().key, "rows");
+    assert!(text(&draw(&mut tui, 40, 10)).contains("pending 5"));
+    tui.input(key(KeyCode::Delete)).unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["observation"]["row"],
+        "row-5"
+    );
+    close(tui);
+}
+#[test]
+fn native_focus_shortcut_never_retargets_an_unflushed_replacement_or_hidden_child() {
+    for replace in [true, false] {
+        let source = Rc::new(RefCell::new(focus_scene()));
+        let (_runtime, mut tui) = layout::native(
+            layout::View::FocusRows(source.clone()),
+            Rc::new(Cell::new(true)),
+        );
+        draw(&mut tui, 40, 10);
+        tui.input(key(KeyCode::Tab)).unwrap();
+        let composer = tui.focus.clone().unwrap();
+        if replace {
+            // Remove then recreate the same declared name: the old physical
+            // shortcut must not resolve the replacement by that name.
+            source.borrow_mut()["children"]
+                .as_array_mut()
+                .unwrap()
+                .pop();
+            source.borrow_mut()["children"][1]["focus_shortcuts"] = json!([]);
+            refresh(&mut tui);
+            *source.borrow_mut() = focus_scene();
+            refresh(&mut tui);
+        } else {
+            let child = source.borrow()["children"][2].clone();
+            source.borrow_mut()["children"][2] = json!({"kind":"stack","key":"hidden","direction":"column","gap":0,"padding":0,"background":0,"visible":false,"children":[child]});
+            refresh(&mut tui);
+        }
+        tui.input(key(KeyCode::Up)).unwrap();
+        assert!(tui.focus.as_ref().unwrap().same(&composer));
+        draw(&mut tui, 40, 10);
+        tui.input(key(KeyCode::Up)).unwrap();
+        assert_eq!(
+            tui.focus.as_ref().unwrap().key,
+            if replace { "rows" } else { "observe" }
+        );
+        close(tui);
+    }
+}
+
+#[test]
+fn native_focus_shortcut_respects_disabled_scope_and_modal_boundary() {
+    let mut scene = focus_scene();
+    scene["focus_shortcuts"] = scene["children"][1]["focus_shortcuts"].clone();
+    scene["children"][1]["focus_shortcuts"][0]["enabled"] = json!(false);
+    let source = Rc::new(RefCell::new(scene));
+    let (_runtime, mut tui) = layout::native(
+        layout::View::FocusRows(source.clone()),
+        Rc::new(Cell::new(true)),
+    );
+    draw(&mut tui, 40, 20);
+    tui.input(key(KeyCode::Tab)).unwrap();
+    let editor = tui.focus.clone().unwrap();
+    tui.input(key(KeyCode::Up)).unwrap();
+    assert!(tui.focus.as_ref().unwrap().same(&editor));
+    let background = focus_scene();
+    let mut foreground = background["children"][1].clone();
+    foreground["key"] = json!("foreground");
+    foreground["children"][0]["key"] = json!("foreground-editor");
+    foreground["children"].as_array_mut().unwrap().pop();
+    *source.borrow_mut() = json!({"kind":"dialog","key":"modal","label":"Modal","open":true,
+        "width":30,"height":10,"background_color":0,"border_color":0xffffff,
+        "background":background,"content":foreground});
+    refresh(&mut tui);
+    draw(&mut tui, 40, 20);
+    let foreground = tui.focus.clone().unwrap();
+    assert!(!foreground.same(&editor));
+    assert_eq!(foreground.key, "observe");
+    tui.input(key(KeyCode::Up)).unwrap();
+    assert!(tui.focus.as_ref().unwrap().same(&foreground));
+    close(tui);
+}
+#[test]
+fn focus_shortcuts_require_declared_children_and_unambiguous_chords() {
+    let compile = |value: &Value| {
+        super::super::scene::compile(
+            value,
+            std::time::Instant::now() + std::time::Duration::from_secs(1),
+        )
+    };
+    let mut scene = focus_scene();
+    scene["children"][1]["focus_shortcuts"][0]["child"] = json!("missing");
+    assert!(compile(&scene).is_err());
+    let mut scene = focus_scene();
+    scene["children"][1]["shortcuts"] =
+        json!([{"key":"up","modifiers":[],"input":"back","enabled":true}]);
+    assert!(compile(&scene).is_err());
+}

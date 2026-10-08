@@ -1392,7 +1392,16 @@ function frame<N extends Node>(
             ui.box(
               'retained-composer',
               [
-                composer,
+                ui.box('composer-navigation', [composer], {
+                  focusShortcuts: [
+                    {
+                      key: 'up',
+                      modifiers: [],
+                      child: 'queue',
+                      enabled: queueProps.rows.length > 0,
+                    },
+                  ],
+                }),
                 presentation.slot('queue', 'rows', queueProps, { activated: 'queue-action' }),
               ],
               { visible: !state.source && !state.image },

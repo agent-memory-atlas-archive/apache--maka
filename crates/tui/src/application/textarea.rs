@@ -103,6 +103,13 @@ impl Widget for Recipe {
                 WidgetInput::Consumed(None)
             });
         }
+        // An empty editor yields upward navigation to its declared scope.
+        // Nonempty text, including a cursor on the first line, stays in Editor.
+        if owner.editor.text().is_empty()
+            && matches!(event, Event::Key(key) if key.code == KeyCode::Up && key.modifiers.is_empty())
+        {
+            return Ok(WidgetInput::Navigate);
+        }
         if !self.props.read_only
             && let Event::Key(key) = event
             && key.code == KeyCode::Enter

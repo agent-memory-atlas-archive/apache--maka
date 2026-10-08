@@ -1462,10 +1462,36 @@ process.stdout.write(output.outputFiles[0].text);
         pending.entries[0].source.unprepared_content.text,
         "Queued product followup"
     );
+    // Empty native Composer Up enters the last queued row through the
+    // product's declared focus binding; Enter opens that exact row's editor.
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)))
+        .unwrap();
+    draw(&mut presenter);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    await_screen(&mut presenter, "[ Save message ]");
+    await_screen(&mut presenter, "Extra queued three");
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+        .unwrap();
+    draw(&mut presenter);
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+        .unwrap();
     presenter
         .input(Event::Paste("Unsent composer draft".into()))
         .unwrap();
     await_screen(&mut presenter, "Unsent composer draft");
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)))
+        .unwrap();
+    presenter.input(Event::Paste("!".into())).unwrap();
+    await_screen(&mut presenter, "Unsent composer draft!");
     click(&mut presenter, "│");
     await_screen(&mut presenter, "Queued product followup");
     click(&mut presenter, "Queued product followup");

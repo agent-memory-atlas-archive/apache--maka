@@ -362,6 +362,10 @@ export type TerminalScene =
        * @maxItems 32
        */
       shortcuts?: Shortcut[];
+      /**
+       * @maxItems 32
+       */
+      focus_shortcuts?: FocusShortcut[];
       layout?: TerminalLayout;
       scroll?: TerminalScrollPolicy & string;
       visible?: boolean;
@@ -1968,6 +1972,16 @@ export interface Shortcut {
     | [Modifier, Modifier, Modifier]
     | [Modifier, Modifier, Modifier, Modifier];
   input: string;
+  enabled: boolean;
+}
+/**
+ * Route navigation yielded by a native editor to a declared child component.
+ * Ordinary unhandled button keys do not activate this binding.
+ */
+export interface FocusShortcut {
+  key: string;
+  modifiers: Modifier[];
+  child: string;
   enabled: boolean;
 }
 /**
