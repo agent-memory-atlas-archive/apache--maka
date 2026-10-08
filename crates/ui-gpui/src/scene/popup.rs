@@ -17,41 +17,25 @@
  * under the License.
  */
 
-use super::Style;
+use super::{Style, StylePresentation};
 use crate::LiveInput;
 use gpui_kit::{base::Popup, *};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use std::{
     cell::Cell,
     rc::{Rc, Weak},
 };
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Anchor {
-    TopLeft,
-    TopCenter,
-    #[default]
-    TopRight,
-    BottomLeft,
-    BottomCenter,
-    BottomRight,
-    LeftCenter,
-    RightCenter,
-}
-impl Anchor {
-    fn native(self) -> gpui_kit::Anchor {
-        match self {
-            Self::TopLeft => gpui_kit::Anchor::TopLeft,
-            Self::TopCenter => gpui_kit::Anchor::TopCenter,
-            Self::TopRight => gpui_kit::Anchor::TopRight,
-            Self::BottomLeft => gpui_kit::Anchor::BottomLeft,
-            Self::BottomCenter => gpui_kit::Anchor::BottomCenter,
-            Self::BottomRight => gpui_kit::Anchor::BottomRight,
-            Self::LeftCenter => gpui_kit::Anchor::LeftCenter,
-            Self::RightCenter => gpui_kit::Anchor::RightCenter,
-        }
+use maka_ui::scene::desktop::Anchor;
+fn native(anchor: Anchor) -> gpui_kit::Anchor {
+    match anchor {
+        Anchor::TopLeft => gpui_kit::Anchor::TopLeft,
+        Anchor::TopCenter => gpui_kit::Anchor::TopCenter,
+        Anchor::TopRight => gpui_kit::Anchor::TopRight,
+        Anchor::BottomLeft => gpui_kit::Anchor::BottomLeft,
+        Anchor::BottomCenter => gpui_kit::Anchor::BottomCenter,
+        Anchor::BottomRight => gpui_kit::Anchor::BottomRight,
+        Anchor::LeftCenter => gpui_kit::Anchor::LeftCenter,
+        Anchor::RightCenter => gpui_kit::Anchor::RightCenter,
     }
 }
 use maka_ui::dismiss::{Input, Reason};
@@ -193,7 +177,7 @@ impl State {
     ) -> AnyElement {
         let measured_trigger = self.trigger.clone();
         let popup = Popup::new(SharedString::from(format!("popup:{key}")), trigger)
-            .anchor(anchor.native())
+            .anchor(native(anchor))
             .offset(px(offset.into()))
             .on_position(move |_, bounds| measured_trigger.set(bounds));
         let Some(content) = content else {

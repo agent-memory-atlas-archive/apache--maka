@@ -283,26 +283,6 @@ pub(super) struct Deferred {
     pub opening: Scope,
     pub parent_path: Vec<Scope>,
 }
-impl Node {
-    fn dialog(&self, key: &str) -> Option<&Node> {
-        match self {
-            Self::Dialog {
-                key: own,
-                background,
-                content,
-                ..
-            } => {
-                if own == key {
-                    Some(self)
-                } else {
-                    background.dialog(key).or_else(|| content.dialog(key))
-                }
-            }
-            Self::Stack { children, .. } => children.iter().find_map(|node| node.dialog(key)),
-            _ => None,
-        }
-    }
-}
 impl Presenter {
     pub(super) fn paint_dialogs(
         &self,

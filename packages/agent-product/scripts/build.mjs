@@ -255,17 +255,19 @@ for (const [name, spec] of Object.entries(specifications)) {
     if (name === 'appearance')
       contents = `export {activate} from '${resolve(root, 'src/theme.ts')}';`;
     else if (name === 'workspace')
-      contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace('${target}',configuration.locale);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
+      contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace(presentations.${target},configuration.locale);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
     else if (name === 'studio')
-      contents = `import {studio,activate as exports} from '${resolve(root, 'src/studio.ts')}';export let component;export function activate(configuration){component=studio('${target}',configuration.locale);return exports();}`;
+      contents = `import {studio,activate as exports} from '${resolve(root, 'src/studio.ts')}';export let component;export function activate(configuration){component=studio(presentations.${target},configuration.locale);return exports();}`;
     else if (name === 'connection-form')
-      contents = `import {connectionForm,activate} from '${resolve(root, 'src/connection-form.ts')}';import * as validation from '${validationPath}';export const component=connectionForm('${target}',validation);export {activate};`;
+      contents = `import {connectionForm,activate} from '${resolve(root, 'src/connection-form.ts')}';import * as validation from '${validationPath}';export const component=connectionForm(presentations.${target},validation);export {activate};`;
     else if (spec.module === 'components')
-      contents = `import {components,exports} from '${resolve(root, 'src/components.ts')}';export const component=components('${target}').${name};export function activate(){const declaration=exports().${spec.export};return {${spec.export}:{...declaration,component:['component']}};}`;
+      contents = `import {components,exports} from '${resolve(root, 'src/components.ts')}';export const component=components(presentations.${target}).${name};export function activate(){const declaration=exports().${spec.export};return {${spec.export}:{...declaration,component:['component']}};}`;
     else {
       const factory = spec.module.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
-      contents = `import {${factory},activate} from '${resolve(root, 'src/' + spec.module + '.ts')}';export const component=${factory}('${target}');export {activate};`;
+      contents = `import {${factory},activate} from '${resolve(root, 'src/' + spec.module + '.ts')}';export const component=${factory}(presentations.${target});export {activate};`;
     }
+    if (name !== 'appearance')
+      contents = `import {presentations} from '${resolve(root, 'src/view.ts')}';` + contents;
     const bundled = await build({
       absWorkingDir: root,
       stdin: { contents, resolveDir: root, sourcefile: `${name}-${target}.ts`, loader: 'ts' },
@@ -277,7 +279,7 @@ for (const [name, spec] of Object.entries(specifications)) {
       logLevel: 'silent',
       metafile: true,
       banner: {
-        js: (await readFile(resolve(root, 'src/view.ts'), 'utf8')).split('import type')[0].trim(),
+        js: (await readFile(resolve(root, 'src/view.ts'), 'utf8')).split('\n\n', 1)[0].trim(),
       },
     });
     for (const input of Object.keys(bundled.metafile.inputs))

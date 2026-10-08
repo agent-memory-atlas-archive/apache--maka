@@ -17,6 +17,19 @@
  * under the License.
  */
 
+import { ui } from '../../src/index.js';
 import { createApp } from './counter.js';
 export { activate } from './counter.js';
-export const app = createApp({ kind: 'terminal', binding: 'surface' });
+export const app = createApp({ kind: 'terminal', binding: 'surface' }, (state) =>
+  ui.terminal.stack({
+    key: 'root',
+    direction: 'column',
+    padding: 1,
+    gap: 1,
+    background: 1513239,
+    children: [
+      ui.terminal.text({ key: 'count', text: String(state.count), color: 16777215 }),
+      ui.terminal.button({ key: 'inc', label: 'Increment' }),
+    ],
+  }),
+);

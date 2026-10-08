@@ -40,7 +40,7 @@ import type {
 import { connectionFormContract, type ConnectionFormProps } from './contracts.js';
 import { copy, type Copy } from './locale.js';
 import { sameValue } from './value.js';
-import { compactLabel, fill, pixels, output, paint, slot, type Target } from './view.js';
+import { compactLabel, fill, pixels, output, type Presentation, type Node } from './view.js';
 
 type Detail = Extract<SettingsConnectionDetail, { kind: 'ready' }>;
 export interface SettingsValidation {
@@ -405,14 +405,15 @@ function fieldLabel(name: FieldName, text: Copy) {
     overlay: text.connectionOverlay,
   }[name];
 }
-function frame(
-  target: Target,
+function frame<N extends Node>(
+  presentation: Presentation<N>,
   state: State,
   props: ConnectionFormProps,
   actions: Action[] = [],
   events: Emission[] = [],
 ) {
-  const ui = paint(target, props.theme),
+  const target = presentation.target;
+  const ui = presentation.paint(props.theme),
     text = copy(props.locale);
   const locked = busy(state);
   const identity: Identity | undefined =
@@ -600,7 +601,7 @@ function frame(
             ui.box(
               'owner-pane-' + name,
               [
-                slot(
+                presentation.slot(
                   'field-' + name,
                   name === 'slug' ? 'input' : 'editor',
                   {
@@ -803,10 +804,11 @@ function frame(
   out.actions = actions;
   return out;
 }
-export function connectionForm(
-  target: Target,
+export function connectionForm<N extends Node>(
+  presentation: Presentation<N>,
   validation: SettingsValidation,
-): Component<State, ConnectionFormProps> {
+): Component<State, ConnectionFormProps, N> {
+  const target = presentation.target;
   return {
     mount(props) {
       const state: State = {
@@ -852,11 +854,11 @@ export function connectionForm(
       const actions: Action[] = [];
       if (!props.connection)
         request(state, actions, { kind: 'providers' }, 'settings', 'providers', { offset: 0 });
-      return frame(target, state, props, actions);
+      return frame(presentation, state, props, actions);
     },
     update(state, props) {
       state.revision++;
-      return frame(target, state, props);
+      return frame(presentation, state, props);
     },
     event(state, input, props) {
       state.revision++;
@@ -865,7 +867,7 @@ export function connectionForm(
       if (input.kind === 'component' && input.child.startsWith('field-')) {
         const name = input.child.slice(6) as FieldName,
           field = state.fields[name];
-        if (!field) return frame(target, state, props);
+        if (!field) return frame(presentation, state, props);
         if (input.name === 'changed') {
           field.observation = input.event as EditorObservation;
           const r = field.observation.receipt;
@@ -882,7 +884,7 @@ export function connectionForm(
         } else if (input.name === 'submitted') save(state, props, actions, validation);
       } else if (input.kind === 'action') {
         const r = state.pending[input.key];
-        if (!r) return frame(target, state, props);
+        if (!r) return frame(presentation, state, props);
         delete state.pending[input.key];
         const outcome = input.event as ActionOutcome;
         if (r.kind === 'providers') {
@@ -1124,7 +1126,7 @@ export function connectionForm(
           }
         }
       }
-      return frame(target, state, props, actions, events);
+      return frame(presentation, state, props, actions, events);
     },
   };
 }

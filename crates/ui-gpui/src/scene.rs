@@ -22,9 +22,8 @@ mod dialog;
 mod popup;
 
 use gpui_kit::AppContext;
-use maka_ui::{ComponentSlot, NativeView};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use maka_ui::NativeView;
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::{rc::Rc, time::Instant};
@@ -37,460 +36,7 @@ pub fn language() -> maka_plugin_core::package::SceneLanguage {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Direction {
-    Row,
-    Column,
-}
-/// A scroll policy belongs to native presentation, never a plugin pixel mirror.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Scroll {
-    #[default]
-    None,
-    Manual,
-    Anchor,
-    FollowEnd,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-#[schemars(rename = "DesktopScene")]
-pub enum Node {
-    Dialog {
-        key: String,
-        label: String,
-        background: Box<Node>,
-        content: Box<Node>,
-        open: bool,
-        /// Styles the bounded foreground body; background layout remains original.
-        #[serde(default)]
-        style: Style,
-        #[serde(default = "dialog::backdrop")]
-        backdrop: maka_ui::appearance::Color,
-    },
-    Popup {
-        key: String,
-        label: String,
-        trigger: Box<Node>,
-        content: Box<Node>,
-        open: bool,
-        #[serde(default)]
-        anchor: popup::Anchor,
-        #[serde(default)]
-        offset: u16,
-        /// Styles the floating content; the trigger keeps its own layout.
-        #[serde(default)]
-        style: Style,
-    },
-    Stack {
-        key: String,
-        direction: Direction,
-        gap: u16,
-        padding: u16,
-        background: u32,
-        children: Vec<Node>,
-        #[serde(default)]
-        #[schemars(length(max = 32))]
-        shortcuts: Vec<maka_ui::shortcut::Shortcut>,
-        #[serde(default = "visible")]
-        visible: bool,
-        #[serde(default)]
-        style: Style,
-        #[serde(default)]
-        scroll: Scroll,
-    },
-    Text {
-        key: String,
-        text: String,
-        color: u32,
-        #[serde(default)]
-        style: Style,
-    },
-    Button {
-        key: String,
-        label: String,
-        #[serde(default)]
-        style: Style,
-        #[serde(default)]
-        hover: Box<Style>,
-        #[serde(default)]
-        active: Box<Style>,
-        #[serde(default)]
-        focus: Box<Style>,
-        #[serde(default)]
-        disabled: bool,
-        #[serde(default)]
-        tab_index: i16,
-    },
-    Canvas {
-        key: String,
-        contents: canvas::Contents,
-        #[serde(default)]
-        style: Style,
-    },
-    Component(ComponentSlot),
-}
-fn visible() -> bool {
-    true
-}
-impl Node {
-    pub(crate) fn validate_root(&self, deadline: Instant) -> Result<(), String> {
-        self.validate(0, &mut BTreeSet::new(), deadline)
-    }
-    pub(crate) fn key(&self) -> &str {
-        match self {
-            Self::Stack { key, .. }
-            | Self::Text { key, .. }
-            | Self::Button { key, .. }
-            | Self::Canvas { key, .. }
-            | Self::Popup { key, .. }
-            | Self::Dialog { key, .. } => key,
-            Self::Component(slot) => &slot.key,
-        }
-    }
-    pub(crate) fn reading_key(&self) -> Option<&str> {
-        match self {
-            Self::Stack {
-                key,
-                direction: Direction::Column,
-                scroll,
-                ..
-            } if *scroll != Scroll::None => Some(key),
-            _ => None,
-        }
-    }
-    pub(crate) fn reading_target(&self, key: &str) -> bool {
-        match self {
-            Self::Stack { children, .. } => children.iter().any(|child| {
-                child.key() == key && !matches!(child, Self::Stack { visible: false, .. })
-            }),
-            _ => false,
-        }
-    }
-    pub(crate) fn reading_visible(&self, state: &dyn std::any::Any) -> bool {
-        state
-            .downcast_ref::<SceneState>()
-            .expect("scene owner")
-            .visible
-            && matches!(self, Self::Stack { visible: true, .. })
-    }
-    fn validate(
-        &self,
-        depth: usize,
-        keys: &mut BTreeSet<String>,
-        deadline: Instant,
-    ) -> Result<(), String> {
-        if Instant::now() >= deadline {
-            return Err("scene compilation deadline".into());
-        }
-        let key = match self {
-            Self::Stack { key, .. }
-            | Self::Text { key, .. }
-            | Self::Button { key, .. }
-            | Self::Canvas { key, .. }
-            | Self::Popup { key, .. }
-            | Self::Dialog { key, .. } => key,
-            Self::Component(slot) => &slot.key,
-        };
-        if depth > 32
-            || keys.len() >= 4096
-            || key.is_empty()
-            || key.len() > 128
-            || !keys.insert(key.clone())
-        {
-            return Err("invalid or duplicate UI node identity".into());
-        }
-        if let Self::Stack { shortcuts, .. } = self {
-            maka_ui::shortcut::validate(shortcuts, cfg!(target_os = "macos"))?;
-        }
-        match self {
-            Self::Stack { style, .. }
-            | Self::Text { style, .. }
-            | Self::Canvas { style, .. }
-            | Self::Popup { style, .. }
-            | Self::Dialog { style, .. } => style.validate()?,
-            Self::Button {
-                style,
-                hover,
-                active,
-                focus,
-                tab_index,
-                ..
-            } => {
-                for style in [style, hover.as_ref(), active.as_ref(), focus.as_ref()] {
-                    style.validate()?;
-                }
-                if !(-1..=32767).contains(tab_index) {
-                    return Err("invalid tab index".into());
-                }
-            }
-            Self::Component(_) => {}
-        }
-        match self {
-            Self::Dialog {
-                background,
-                content,
-                label,
-                ..
-            } => {
-                if label.is_empty() || label.len() > 4096 {
-                    return Err("invalid dialog presentation".into());
-                }
-                background.validate(depth + 1, keys, deadline)?;
-                content.validate(depth + 1, keys, deadline)?;
-            }
-            Self::Popup {
-                trigger,
-                content,
-                label,
-                offset,
-                ..
-            } => {
-                if label.is_empty() || label.len() > 4096 || *offset > 1024 {
-                    return Err("invalid popup presentation".into());
-                }
-                trigger.validate(depth + 1, keys, deadline)?;
-                content.validate(depth + 1, keys, deadline)?;
-            }
-            Self::Stack {
-                gap,
-                padding,
-                background,
-                children,
-                ..
-            } => {
-                if *gap > 1024 || *padding > 1024 || *background > 0xffffff {
-                    return Err("invalid UI style".into());
-                }
-                for child in children {
-                    child.validate(depth + 1, keys, deadline)?;
-                }
-            }
-            Self::Text { text, color, .. } => {
-                if text.len() > 64 * 1024 || *color > 0xffffff {
-                    return Err("invalid text".into());
-                }
-            }
-            Self::Button { label, .. } => {
-                if label.len() > 4096 {
-                    return Err("invalid button label".into());
-                }
-            }
-            Self::Canvas { contents, .. } => contents.validate(deadline)?,
-            Self::Component(slot) => {
-                if slot.binding.is_empty() || slot.binding.len() > 128 {
-                    return Err("invalid slot binding".into());
-                }
-            }
-        }
-        Ok(())
-    }
-    fn render_depth(
-        &self,
-        enclosing: u16,
-        visible: bool,
-        depth: &mut u16,
-        slots: &mut BTreeMap<String, u16>,
-    ) {
-        if !visible {
-            return;
-        }
-        *depth = (*depth).max(enclosing);
-        match self {
-            Self::Dialog {
-                background,
-                content,
-                open,
-                ..
-            } => {
-                background.render_depth(enclosing, true, depth, slots);
-                content.render_depth(enclosing + 1, *open, depth, slots);
-            }
-            Self::Popup {
-                trigger,
-                content,
-                open,
-                ..
-            } => {
-                trigger.render_depth(enclosing, true, depth, slots);
-                content.render_depth(enclosing + 1, *open, depth, slots);
-            }
-            Self::Stack {
-                children, visible, ..
-            } => {
-                for child in children {
-                    child.render_depth(enclosing, *visible, depth, slots);
-                }
-            }
-            Self::Component(slot) => {
-                slots.insert(slot.key.clone(), enclosing);
-            }
-            _ => {}
-        }
-    }
-    fn shortcut_inputs(
-        &self,
-        inputs: &mut BTreeMap<String, Value>,
-        visible: bool,
-    ) -> Result<(), String> {
-        match self {
-            Self::Stack {
-                children,
-                shortcuts,
-                visible: local,
-                ..
-            } => {
-                if visible && *local {
-                    maka_ui::shortcut::inputs(shortcuts, inputs)?;
-                }
-                for child in children {
-                    child.shortcut_inputs(inputs, visible && *local)?;
-                }
-            }
-            Self::Dialog {
-                background,
-                content,
-                open,
-                ..
-            } => {
-                background.shortcut_inputs(inputs, visible)?;
-                content.shortcut_inputs(inputs, visible && *open)?;
-            }
-            Self::Popup {
-                trigger,
-                content,
-                open,
-                ..
-            } => {
-                trigger.shortcut_inputs(inputs, visible)?;
-                content.shortcut_inputs(inputs, visible && *open)?;
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-    fn metadata(
-        &self,
-        slots: &mut Vec<ComponentSlot>,
-        inputs: &mut BTreeMap<String, Value>,
-        hidden_slots: &mut BTreeSet<String>,
-        input_count: &mut usize,
-        visible: bool,
-        deadline: Instant,
-    ) -> Result<(), String> {
-        if Instant::now() >= deadline {
-            return Err("scene compilation deadline".into());
-        }
-        match self {
-            Self::Dialog {
-                key,
-                background,
-                content,
-                open,
-                ..
-            } => {
-                *input_count += 1;
-                if *input_count > 64 {
-                    return Err("scene input limit".into());
-                }
-                if visible && *open {
-                    inputs.insert(
-                        key.clone(),
-                        serde_json::to_value(schemars::schema_for!(maka_ui::dismiss::Input))
-                            .expect("dialog input schema"),
-                    );
-                }
-                background.metadata(slots, inputs, hidden_slots, input_count, visible, deadline)?;
-                content.metadata(
-                    slots,
-                    inputs,
-                    hidden_slots,
-                    input_count,
-                    visible && *open,
-                    deadline,
-                )?;
-            }
-            Self::Popup {
-                key,
-                trigger,
-                content,
-                open,
-                ..
-            } => {
-                *input_count += 1;
-                if *input_count > 64 {
-                    return Err("scene input limit".into());
-                }
-                if visible && *open {
-                    inputs.insert(
-                        key.clone(),
-                        serde_json::to_value(schemars::schema_for!(maka_ui::dismiss::Input))
-                            .expect("popup input schema"),
-                    );
-                }
-                trigger.metadata(slots, inputs, hidden_slots, input_count, visible, deadline)?;
-                content.metadata(
-                    slots,
-                    inputs,
-                    hidden_slots,
-                    input_count,
-                    visible && *open,
-                    deadline,
-                )?;
-            }
-            Self::Component(slot) => {
-                if slots.len() >= 64 {
-                    return Err("scene slot limit".into());
-                }
-                slots.push(slot.clone());
-                if !visible {
-                    hidden_slots.insert(slot.key.clone());
-                }
-            }
-            Self::Button { key, .. } => {
-                *input_count += 1;
-                if *input_count > 64 {
-                    return Err("scene input limit".into());
-                }
-                if visible {
-                    inputs.insert(key.clone(), json!(true));
-                }
-            }
-            Self::Canvas { key, .. } => {
-                *input_count += 1;
-                if *input_count > 64 {
-                    return Err("scene input limit".into());
-                }
-                if visible {
-                    inputs.insert(
-                        key.clone(),
-                        serde_json::to_value(schemars::schema_for!(canvas::CanvasInput))
-                            .expect("canvas input schema"),
-                    );
-                }
-            }
-            Self::Stack {
-                children,
-                visible: local,
-                ..
-            } => {
-                for child in children {
-                    child.metadata(
-                        slots,
-                        inputs,
-                        hidden_slots,
-                        input_count,
-                        visible && *local,
-                        deadline,
-                    )?;
-                }
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-}
+pub use maka_ui::scene::desktop::{Align, Dimension, Direction, Justify, Node, Scroll, Style};
 
 pub fn compile(
     source: &Value,
@@ -605,7 +151,7 @@ struct ShortcutState {
     admitted: bool,
     shortcuts: Vec<maka_ui::shortcut::Shortcut>,
 }
-struct SceneState {
+pub(crate) struct SceneState {
     visible: bool,
     keyboard_focus: Option<(String, gpui_kit::FocusHandle)>,
     input: super::LiveInput,
@@ -933,15 +479,49 @@ impl super::Widget for Node {
         self.element(state, slots, window, cx)
     }
 }
-impl Node {
-    pub(crate) fn reading_handle(&self, state: &dyn std::any::Any) -> gpui_kit::ScrollHandle {
+pub(crate) trait NodePresentation {
+    fn reading_visible(&self, state: &dyn std::any::Any) -> bool;
+    fn reading_handle(&self, state: &dyn std::any::Any) -> gpui_kit::ScrollHandle;
+    fn render_reading(
+        &self,
+        state: &dyn std::any::Any,
+        slots: &super::Slots,
+        scope: gpui_kit::base::TextSelectionScopeId,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) -> maka_ui::Result<gpui_kit::AnyElement>;
+    fn element(
+        &self,
+        state: &SceneState,
+        slots: &super::Slots,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) -> maka_ui::Result<gpui_kit::AnyElement>;
+    fn element_root(
+        &self,
+        state: &SceneState,
+        slots: &super::Slots,
+        reading: Option<gpui_kit::base::TextSelectionScopeId>,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) -> maka_ui::Result<gpui_kit::AnyElement>;
+}
+impl NodePresentation for Node {
+    fn reading_visible(&self, state: &dyn std::any::Any) -> bool {
+        state
+            .downcast_ref::<SceneState>()
+            .expect("scene owner")
+            .visible
+            && matches!(self, Self::Stack { visible: true, .. })
+    }
+    fn reading_handle(&self, state: &dyn std::any::Any) -> gpui_kit::ScrollHandle {
         state
             .downcast_ref::<SceneState>()
             .expect("scene owner")
             .scrolls[self.reading_key().expect("reading root")]
         .clone()
     }
-    pub(crate) fn render_reading(
+    fn render_reading(
         &self,
         state: &dyn std::any::Any,
         slots: &super::Slots,
@@ -1273,72 +853,10 @@ impl Node {
     }
 }
 
-/// Desktop layout and appearance are a presenter ABI, never kernel policy.
-/// Unspecified refinements inherit from the explicit surrounding scene scope.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Style {
-    pub width: Option<Dimension>,
-    pub height: Option<Dimension>,
-    #[schemars(range(min = 0, max = 16000))]
-    pub min_width: Option<f32>,
-    #[schemars(range(min = 0, max = 16000))]
-    pub max_width: Option<f32>,
-    #[schemars(range(min = 0, max = 16000))]
-    pub min_height: Option<f32>,
-    #[schemars(range(min = 0, max = 16000))]
-    pub max_height: Option<f32>,
-    #[schemars(range(min = 0, max = 100))]
-    pub grow: Option<f32>,
-    #[schemars(range(min = 0, max = 100))]
-    pub shrink: Option<f32>,
-    pub wrap: Option<bool>,
-    /// Draw one measured line with an ellipsis; retain the complete text in AX.
-    #[serde(default)]
-    pub truncate: bool,
-    pub align: Option<Align>,
-    pub justify: Option<Justify>,
-    pub text: Option<maka_ui::appearance::TextAppearance>,
-    pub background: Option<maka_ui::appearance::Color>,
-    pub border: Option<maka_ui::appearance::Color>,
-    #[schemars(range(min = 0, max = 8))]
-    pub border_width: Option<f32>,
-    #[schemars(range(min = 0, max = 128))]
-    pub radius: Option<f32>,
-    pub padding: Option<maka_ui::appearance::Insets>,
+trait DimensionPresentation {
+    fn length(self) -> gpui_kit::Length;
 }
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(
-    tag = "unit",
-    content = "value",
-    rename_all = "snake_case",
-    deny_unknown_fields
-)]
-pub enum Dimension {
-    Pixels(#[schemars(range(min = 0, max = 16000))] f32),
-    Fraction(#[schemars(range(min = 0, max = 1))] f32),
-    Auto,
-}
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Align {
-    Start,
-    Center,
-    End,
-    Stretch,
-    Baseline,
-}
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Justify {
-    Start,
-    Center,
-    End,
-    Between,
-    Around,
-    Evenly,
-}
-impl Dimension {
+impl DimensionPresentation for Dimension {
     fn length(self) -> gpui_kit::Length {
         match self {
             Self::Pixels(n) => gpui_kit::px(n).into(),
@@ -1347,7 +865,11 @@ impl Dimension {
         }
     }
 }
-impl Style {
+trait StylePresentation {
+    fn bounded(&self, available: gpui_kit::Size<gpui_kit::Pixels>) -> Self;
+    fn apply<T: gpui_kit::Styled>(&self, element: T) -> T;
+}
+impl StylePresentation for Style {
     fn bounded(&self, available: gpui_kit::Size<gpui_kit::Pixels>) -> Self {
         let mut style = self.clone();
         let width = style
@@ -1398,38 +920,6 @@ impl Style {
         style
     }
 
-    fn schema() -> &'static jsonschema::Validator {
-        static SCHEMA: std::sync::LazyLock<jsonschema::Validator> =
-            std::sync::LazyLock::new(|| {
-                jsonschema::validator_for(
-                    &serde_json::to_value(schemars::schema_for!(Style)).expect("style schema"),
-                )
-                .expect("valid style schema")
-            });
-        &SCHEMA
-    }
-    fn validate_source(source: &Value) -> Result<(), String> {
-        Self::schema().validate(source).map_err(|e| e.to_string())
-    }
-    fn validate(&self) -> Result<(), String> {
-        if [
-            self.min_width,
-            self.max_width,
-            self.min_height,
-            self.max_height,
-            self.grow,
-            self.shrink,
-            self.border_width,
-            self.radius,
-        ]
-        .into_iter()
-        .flatten()
-        .any(|v| !v.is_finite())
-        {
-            return Err("non-finite desktop style".into());
-        }
-        Self::validate_source(&serde_json::to_value(self).map_err(|e| e.to_string())?)
-    }
     fn apply<T: gpui_kit::Styled>(&self, mut element: T) -> T {
         use gpui_kit::px;
         if let Some(v) = self.width {

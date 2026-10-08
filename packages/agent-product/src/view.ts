@@ -17,123 +17,196 @@
  * under the License.
  */
 
+import { ui } from '../../plugin-sdk/src/index.js';
 import type {
-  ComponentSlot,
+  DesktopNode,
+  TerminalNode,
+  DesktopStyle,
+  DesktopDimension,
+  DesktopProps,
   Emission,
   Output,
   TerminalLayout,
   Shortcut,
+  TextAppearance,
+  ReadingProps,
 } from '../../plugin-sdk/src/index.js';
 import type { Theme } from './contracts.js';
 export type Target = 'desktop' | 'tui';
-export type Node = Record<string, unknown>;
-export function paint(target: Target, theme: Theme) {
-  const desktop = target === 'desktop';
-  const rgba = (n: number) => n >>> 8;
-  const font = (size: number, weight = 400, color = theme.text) => ({
+export type Node = DesktopNode | TerminalNode;
+interface BoxOptions {
+  row?: boolean;
+  gap?: number;
+  padding?: number;
+  surface?: boolean;
+  style?: DesktopStyle;
+  scroll?: 'none' | 'manual' | 'anchor' | 'follow_end';
+  visible?: boolean;
+  terminal?: TerminalLayout;
+  shortcuts?: Shortcut[];
+}
+interface Painter<N extends Node> {
+  text(
+    key: string,
+    text: string,
+    size?: number,
+    color?: number,
+    weight?: number,
+    style?: DesktopStyle,
+  ): N;
+  button(
+    key: string,
+    label: string,
+    disabled?: boolean,
+    primary?: boolean,
+    style?: DesktopStyle,
+  ): N;
+  dialog(key: string, label: string, background: N, content: N, open: boolean): N;
+  box(key: string, children: N[], options?: BoxOptions): N;
+}
+export interface Presentation<N extends Node> {
+  readonly target: Target;
+  paint(theme: Theme): Painter<N>;
+  slot<P>(key: string, binding: string, props: P, on: Record<string, string>): N;
+  reading(
+    key: string,
+    props: Omit<ReadingProps, 'content'> & { content: N },
+    on: Record<string, string>,
+  ): N;
+  popup?: (
+    value: Omit<DesktopProps<'popup'>, 'trigger' | 'content'> & { trigger: N; content: N },
+  ) => N;
+}
+const rgba = (n: number) => n >>> 8;
+function font(theme: Theme, size: number, weight = 400, color = theme.text): TextAppearance {
+  return {
     font: { family: '.SystemUIFont', fallbacks: [], size, lineHeight: 1.55, weight },
     foreground: color,
-  });
-  return {
-    text: (key: string, text: string, size = 15, color = theme.text, weight = 400): Node => ({
-      kind: 'text',
-      key,
-      text,
-      color: rgba(color),
-      ...(desktop ? { style: { text: font(size, weight, color) } } : {}),
-    }),
-    button: (key: string, label: string, disabled = false, primary = false): Node => ({
-      kind: 'button',
-      key,
-      label,
-      disabled,
-      ...(desktop
-        ? {
-            style: {
-              text: font(
-                14,
-                500,
-                disabled ? theme.muted : primary ? theme.background : theme.accent,
-              ),
-              background: disabled ? theme.surface : primary ? theme.accent : 0,
-              padding: { top: 8, right: 12, bottom: 8, left: 12 },
-              radius: 8,
-            },
-            hover: disabled ? {} : { background: primary ? theme.accent : theme.selected },
-            focus: { border: theme.accent, borderWidth: 2 },
-            active: disabled ? {} : { background: primary ? theme.accent : theme.selected },
-          }
-        : { color: rgba(disabled ? theme.muted : theme.accent) }),
-    }),
-    dialog: (key: string, label: string, background: Node, content: Node, open: boolean): Node => ({
-      kind: 'dialog',
-      key,
-      label,
-      background,
-      content,
-      open,
-      ...(desktop
-        ? {
-            style: {
-              width: pixels(560),
-              padding: { top: 20, right: 20, bottom: 20, left: 20 },
-              background: theme.surface,
-              radius: 16,
-              border: theme.border,
-              borderWidth: 1,
-            },
-          }
-        : {
-            width: 72,
-            height: 20,
-            padding: 1,
-            background_color: rgba(theme.surface),
-            border_color: rgba(theme.border),
-          }),
-    }),
-    box: (
-      key: string,
-      children: Node[],
-      options: {
-        row?: boolean;
-        gap?: number;
-        padding?: number;
-        surface?: boolean;
-        style?: Node;
-        scroll?: 'none' | 'manual' | 'anchor' | 'follow_end';
-        visible?: boolean;
-        terminal?: TerminalLayout;
-        shortcuts?: Shortcut[];
-      } = {},
-    ): Node => ({
-      kind: 'stack',
-      key,
-      direction: options.row ? 'row' : 'column',
-      gap: options.gap ?? (desktop ? 12 : 1),
-      padding: options.padding ?? 0,
-      background: rgba(options.surface ? theme.surface : theme.background),
-      children,
-      visible: options.visible ?? true,
-      shortcuts: options.shortcuts ?? [],
-      ...(desktop
-        ? { style: options.style ?? {}, scroll: options.scroll ?? 'none' }
-        : { layout: options.terminal ?? {}, scroll: options.scroll ?? 'none' }),
-    }),
   };
 }
-export function slot(
-  key: string,
-  binding: string,
-  props: unknown,
-  on: Record<string, string>,
-): Node {
-  return { kind: 'component', ...({ key, binding, member: 0, props, on } satisfies ComponentSlot) };
+function desktopPaint(theme: Theme): Painter<DesktopNode> {
+  return {
+    text: (key, text, size = 15, color = theme.text, weight = 400, style = {}) =>
+      ui.desktop.text({
+        key,
+        text,
+        color: rgba(color),
+        style: { text: font(theme, size, weight, color), ...style },
+      }),
+    button: (key, label, disabled = false, primary = false, style = {}) =>
+      ui.desktop.button({
+        key,
+        label,
+        disabled,
+        style: {
+          text: font(
+            theme,
+            14,
+            500,
+            disabled ? theme.muted : primary ? theme.background : theme.accent,
+          ),
+          background: disabled ? theme.surface : primary ? theme.accent : 0,
+          padding: { top: 8, right: 12, bottom: 8, left: 12 },
+          radius: 8,
+          ...style,
+        },
+        hover: disabled ? {} : { background: primary ? theme.accent : theme.selected },
+        focus: { border: theme.accent, borderWidth: 2 },
+        active: disabled ? {} : { background: primary ? theme.accent : theme.selected },
+      }),
+    dialog: (key, label, background, content, open) =>
+      ui.desktop.dialog({
+        key,
+        label,
+        background,
+        content,
+        open,
+        style: {
+          width: pixels(560),
+          padding: { top: 20, right: 20, bottom: 20, left: 20 },
+          background: theme.surface,
+          radius: 16,
+          border: theme.border,
+          borderWidth: 1,
+        },
+      }),
+    box: (key, children, options = {}) =>
+      ui.desktop.stack({
+        key,
+        direction: options.row ? 'row' : 'column',
+        gap: options.gap ?? 12,
+        padding: options.padding ?? 0,
+        background: rgba(options.surface ? theme.surface : theme.background),
+        children,
+        visible: options.visible ?? true,
+        shortcuts: options.shortcuts ?? [],
+        style: options.style ?? {},
+        scroll: options.scroll ?? 'none',
+      }),
+  };
 }
-export function output<S extends { revision: number }>(
+function terminalPaint(theme: Theme): Painter<TerminalNode> {
+  return {
+    text: (key, text, _size = 15, color = theme.text) =>
+      ui.terminal.text({ key, text, color: rgba(color) }),
+    button: (key, label, disabled = false) =>
+      ui.terminal.button({
+        key,
+        label,
+        disabled,
+        color: rgba(disabled ? theme.muted : theme.accent),
+      }),
+    dialog: (key, label, background, content, open) =>
+      ui.terminal.dialog({
+        key,
+        label,
+        background,
+        content,
+        open,
+        width: 72,
+        height: 20,
+        padding: 1,
+        background_color: rgba(theme.surface),
+        border_color: rgba(theme.border),
+      }),
+    box: (key, children, options = {}) =>
+      ui.terminal.stack({
+        key,
+        direction: options.row ? 'row' : 'column',
+        gap: options.gap ?? 1,
+        padding: options.padding ?? 0,
+        background: rgba(options.surface ? theme.surface : theme.background),
+        children,
+        visible: options.visible ?? true,
+        shortcuts: options.shortcuts ?? [],
+        layout: options.terminal ?? {},
+        scroll: options.scroll ?? 'none',
+      }),
+  };
+}
+export const presentations: {
+  desktop: Presentation<DesktopNode>;
+  tui: Presentation<TerminalNode>;
+} = {
+  desktop: {
+    target: 'desktop',
+    paint: desktopPaint,
+    slot: (key, binding, props, on) => ui.desktop.component({ key, binding, props, on }),
+    reading: (key, props, on) => ui.desktop.reading({ key, binding: 'reading', props, on }),
+    popup: ui.desktop.popup,
+  },
+  tui: {
+    target: 'tui',
+    paint: terminalPaint,
+    slot: (key, binding, props, on) => ui.terminal.component({ key, binding, props, on }),
+    reading: (key, props, on) => ui.terminal.reading({ key, binding: 'reading', props, on }),
+  },
+};
+export function output<S extends { revision: number }, N extends Node>(
   state: S,
-  view: Node,
+  view: N,
   events: Emission[] = [],
-): Output<S> {
+): Output<S, N> {
   return {
     frame: { state, revision: state.revision, surface: null, view },
     events,
@@ -141,8 +214,8 @@ export function output<S extends { revision: number }>(
     subscriptions: [],
   };
 }
-export const fill = { unit: 'fraction', value: 1 };
-export const pixels = (value: number) => ({ unit: 'pixels', value });
+export const fill: DesktopDimension = { unit: 'fraction', value: 1 };
+export const pixels = (value: number): DesktopDimension => ({ unit: 'pixels', value });
 
 // Disposable labels must not turn one catalog entry into an unbounded terminal
 // layout. The full immutable identity/configuration remains in the domain DTO.

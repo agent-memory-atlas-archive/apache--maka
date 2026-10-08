@@ -17,7 +17,15 @@
  * under the License.
  */
 
-import type { Component, UiExport, Contract, Output, Surface } from '../../src/index.js';
+import type {
+  Component,
+  UiExport,
+  Contract,
+  Output,
+  Surface,
+  DesktopNode,
+  TerminalNode,
+} from '../../src/index.js';
 
 export const contract = {
   name: 'example.App',
@@ -39,8 +47,11 @@ export interface CounterState {
   count: number;
   revision: number;
 }
-export function createApp(surface: Surface): Component<CounterState> {
-  function frame(state: CounterState): Output<CounterState> {
+export function createApp<N extends DesktopNode | TerminalNode>(
+  surface: Surface,
+  scene: (state: CounterState) => N,
+): Component<CounterState, unknown, N> {
+  function frame(state: CounterState): Output<CounterState, N> {
     return {
       actions: [],
       events: [],
@@ -48,18 +59,7 @@ export function createApp(surface: Surface): Component<CounterState> {
         revision: state.revision,
         state,
         surface,
-        view: {
-          kind: 'stack',
-          key: 'root',
-          direction: 'column',
-          padding: surface.kind === 'terminal' ? 1 : 16,
-          gap: surface.kind === 'terminal' ? 1 : 8,
-          background: 1513239,
-          children: [
-            { kind: 'text', key: 'count', text: String(state.count), color: 16777215 },
-            { kind: 'button', key: 'inc', label: 'Increment' },
-          ],
-        },
+        view: scene(state),
       },
     };
   }

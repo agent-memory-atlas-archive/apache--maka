@@ -282,13 +282,20 @@ fn packaged_product(fail_labels_initialization: bool) {
             // This fixture changes one ordinary guest command's CAS basis.
             // The original native Textarea must produce the real conflict;
             // no fabricated observation or receipt enters the presenter.
-            let mut files = package.files().clone();
-            files.get_mut("tui.js").unwrap().extend_from_slice(
-                br#"
+            // Wrap the public export, never an unstable bundler-local name.
+            let wrapped = Command::new("node")
+                .arg("--input-type=module")
+                .arg("-e")
+                .arg(
+                    r#"
+import { build } from 'esbuild';
+const contents = `
+import { component, activate } from ${JSON.stringify(process.argv[1])};
+export { component, activate };
 let failedLabels = false;
 for (const method of ['event', 'update']) {
-    const original = component2[method];
-    component2[method] = (...args) => {
+    const original = component[method];
+    component[method] = (...args) => {
         const out = original(...args);
         const command = out.frame.state.fields.labels.command;
         if (command && !failedLabels) {
@@ -298,8 +305,26 @@ for (const method of ['event', 'update']) {
         return out;
     };
 }
+`;
+const output = await build({
+    stdin: { contents, resolveDir: process.cwd(), loader: 'js' },
+    bundle: true, format: 'esm', platform: 'neutral', target: 'es2022',
+    write: false, logLevel: 'silent',
+});
+process.stdout.write(output.outputFiles[0].text);
 "#,
+                )
+                .arg(directory.join(name).join("tui.js"))
+                .current_dir(&repository)
+                .output()
+                .unwrap();
+            assert!(
+                wrapped.status.success(),
+                "{}",
+                String::from_utf8_lossy(&wrapped.stderr)
             );
+            let mut files = package.files().clone();
+            *files.get_mut("tui.js").unwrap() = wrapped.stdout;
             Package::new(files).unwrap()
         })
         .collect::<Vec<_>>();

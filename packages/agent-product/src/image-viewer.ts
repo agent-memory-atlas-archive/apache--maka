@@ -30,7 +30,7 @@ import type {
 import { imageViewerContract, type ImageViewerProps } from './contracts.js';
 import { copy } from './locale.js';
 import { sameValue } from './value.js';
-import { output, paint, slot, fill, type Target } from './view.js';
+import { output, fill, type Presentation, type Node } from './view.js';
 
 type Page = Extract<AgentToolImagePage, { kind: 'ready' }>;
 interface State {
@@ -141,16 +141,17 @@ function accept(state: State, request: { epoch: number; offset: number }, page: 
   }
   state.queue.push(page);
 }
-function frame(
-  target: Target,
+function frame<N extends Node>(
+  presentation: Presentation<N>,
   state: State,
   props: ImageViewerProps,
   actions: Action[] = [],
   closed = false,
 ) {
+  const target = presentation.target;
   if (!sameValue(state.identity, props.image)) reset(state, props.image);
   if (target === 'desktop' && !closed) pump(state, props, actions);
-  const ui = paint(target, props.theme),
+  const ui = presentation.paint(props.theme),
     text = copy(props.locale);
   const current = state.descriptor && state.observation?.source === state.descriptor.key;
   const failed = state.failed || (current && state.observation?.phase === 'failed');
@@ -187,7 +188,7 @@ function frame(
                 ),
               ]
             : []),
-          slot('pixels', 'image', native, { observed: 'image-observed' }),
+          presentation.slot('pixels', 'image', native, { observed: 'image-observed' }),
           ...(ready
             ? [
                 ui.text(
@@ -215,11 +216,13 @@ function frame(
   out.actions = actions;
   return out;
 }
-export function imageViewer(target: Target): Component<State, ImageViewerProps> {
+export function imageViewer<N extends Node>(
+  presentation: Presentation<N>,
+): Component<State, ImageViewerProps, N> {
   return {
     mount(props) {
       return frame(
-        target,
+        presentation,
         {
           revision: 0,
           serial: 0,
@@ -241,7 +244,7 @@ export function imageViewer(target: Target): Component<State, ImageViewerProps> 
     },
     update(state, props) {
       state.revision++;
-      return frame(target, state, props);
+      return frame(presentation, state, props);
     },
     event(state, input, props) {
       state.revision++;
@@ -295,11 +298,11 @@ export function imageViewer(target: Target): Component<State, ImageViewerProps> 
           }
         }
       } else if (input.kind === 'raw') {
-        if (input.key === 'image-back') return frame(target, state, props, [], true);
+        if (input.key === 'image-back') return frame(presentation, state, props, [], true);
         if (input.key === 'image-retry' && (state.failed || state.observation?.phase === 'failed'))
           reset(state, props.image);
       }
-      return frame(target, state, props, actions);
+      return frame(presentation, state, props, actions);
     },
   };
 }

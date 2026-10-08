@@ -46,6 +46,8 @@ export type RuntimeProtocol =
   | ComponentOutput
   | ComponentSlot
   | TerminalScene
+  | DesktopScene
+  | DesktopCanvasInput
   | CapturePlan
   | ActionOutcome
   | CallerHistoryPage
@@ -354,10 +356,7 @@ export type TerminalScene =
        */
       shortcuts?: Shortcut[];
       layout?: TerminalLayout;
-      /**
-       * Native scroll policy; offsets and accepted viewport geometry remain native.
-       */
-      scroll?: 'none' | 'manual' | 'anchor' | 'follow_end';
+      scroll?: TerminalScrollPolicy & string;
       visible?: boolean;
       kind: 'stack';
     }
@@ -389,6 +388,183 @@ export type TerminalScene =
     };
 export type TerminalDirection = 'row' | 'column';
 export type Modifier = 'control' | 'primary' | 'alt' | 'shift' | 'super';
+/**
+ * Native scroll policy; offsets and accepted viewport geometry remain native.
+ */
+export type TerminalScrollPolicy = 'none' | 'manual' | 'anchor' | 'follow_end';
+export type DesktopScene =
+  | {
+      key: string;
+      label: string;
+      background: DesktopScene;
+      content: DesktopScene;
+      open: boolean;
+      /**
+       * Styles the bounded foreground body; background layout remains original.
+       */
+      style?: DesktopStyle;
+      backdrop?: Color;
+      kind: 'dialog';
+    }
+  | {
+      key: string;
+      label: string;
+      trigger: DesktopScene;
+      content: DesktopScene;
+      open: boolean;
+      anchor?: DesktopAnchor & string;
+      offset?: number;
+      /**
+       * Styles the floating content; the trigger keeps its own layout.
+       */
+      style?: DesktopStyle;
+      kind: 'popup';
+    }
+  | {
+      key: string;
+      direction: DesktopDirection;
+      gap: number;
+      padding: number;
+      background: number;
+      children: DesktopScene[];
+      /**
+       * @maxItems 32
+       */
+      shortcuts?: Shortcut[];
+      visible?: boolean;
+      style?: DesktopStyle;
+      scroll?: DesktopScroll & string;
+      kind: 'stack';
+    }
+  | {
+      key: string;
+      text: string;
+      color: number;
+      style?: DesktopStyle;
+      kind: 'text';
+    }
+  | {
+      key: string;
+      label: string;
+      style?: DesktopStyle;
+      hover?: DesktopStyle;
+      active?: DesktopStyle;
+      focus?: DesktopStyle;
+      disabled?: boolean;
+      tab_index?: number;
+      kind: 'button';
+    }
+  | {
+      key: string;
+      contents: DesktopCanvasContents;
+      style?: DesktopStyle;
+      kind: 'canvas';
+    }
+  | {
+      key: string;
+      binding: string;
+      member: number;
+      props: unknown;
+      on: {
+        [k: string]: string | undefined;
+      };
+      kind: 'component';
+    };
+export type DesktopDimension =
+  | {
+      unit: 'pixels';
+      value: number;
+    }
+  | {
+      unit: 'fraction';
+      value: number;
+    }
+  | {
+      unit: 'auto';
+    };
+export type DesktopAlign = 'start' | 'center' | 'end' | 'stretch' | 'baseline';
+export type DesktopJustify = 'start' | 'center' | 'end' | 'between' | 'around' | 'evenly';
+export type FontFamily = string;
+/**
+ * Packed RGBA, including explicit alpha zero.
+ */
+export type Color = number;
+export type DesktopAnchor =
+  | 'top_left'
+  | 'top_center'
+  | 'top_right'
+  | 'bottom_left'
+  | 'bottom_center'
+  | 'bottom_right'
+  | 'left_center'
+  | 'right_center';
+export type DesktopDirection = 'row' | 'column';
+/**
+ * A scroll policy belongs to native presentation, never a plugin pixel mirror.
+ */
+export type DesktopScroll = 'none' | 'manual' | 'anchor' | 'follow_end';
+export type DesktopCanvasCommand =
+  | {
+      rect: DesktopCanvasRect;
+      color: number;
+      radius?: number;
+      kind: 'rect';
+    }
+  | {
+      from: DesktopCanvasPoint;
+      to: DesktopCanvasPoint;
+      color: number;
+      width: number;
+      kind: 'line';
+    }
+  | {
+      position: DesktopCanvasPoint;
+      text: string;
+      color: number;
+      size: number;
+      font?: string | null;
+      kind: 'text';
+    };
+export type DesktopCanvasEventKind =
+  | 'pointer_down'
+  | 'drag_move'
+  | 'drop'
+  | 'key_down'
+  | 'activate';
+export type DesktopCanvasInput =
+  | {
+      region: string;
+      position: DesktopCanvasPoint;
+      gesture?: number | null;
+      kind: 'pointer_down';
+    }
+  | {
+      region: string;
+      gesture: number;
+      start: DesktopCanvasPoint;
+      position: DesktopCanvasPoint;
+      delta: DesktopCanvasPoint;
+      kind: 'drag_move';
+    }
+  | {
+      region: string;
+      gesture: number;
+      start: DesktopCanvasPoint;
+      position: DesktopCanvasPoint;
+      delta: DesktopCanvasPoint;
+      target?: string | null;
+      kind: 'drop';
+    }
+  | {
+      region: string;
+      key: string;
+      modifiers: DesktopCanvasModifiers;
+      kind: 'key_down';
+    }
+  | {
+      region: string;
+      kind: 'activate';
+    };
 export type CapturePlan =
   | {
       source: CaptureSource;
@@ -465,11 +641,6 @@ export type OperationCleanup =
       diagnostic: string;
       kind: 'failed';
     };
-export type FontFamily = string;
-/**
- * Packed RGBA, including explicit alpha zero.
- */
-export type Color = number;
 export type ScrollbarMode = 'scrolling' | 'hover' | 'always';
 export type ScrollbarEntrance = 'fade' | 'slide_and_fade';
 /**
@@ -1382,7 +1553,7 @@ export interface CompositionNode {
   package: PackageSelection;
   usePackage: PackageUse;
   configuration?: Configuration;
-  parameters?: Configuration1;
+  parameters?: Configuration;
   bindings?: {
     [k: string]: Target[] | undefined;
   };
@@ -1394,17 +1565,6 @@ export interface PackageRef {
   revision: string;
 }
 export interface Configuration {
-  values?: {
-    [k: string]: unknown | undefined;
-  };
-  /**
-   * Configuration field -> parameter name of the containing template.
-   */
-  parameters?: {
-    [k: string]: string | undefined;
-  };
-}
-export interface Configuration1 {
   values?: {
     [k: string]: unknown | undefined;
   };
@@ -1733,33 +1893,32 @@ export interface TerminalLayout {
   basis?: number | null;
   wrap?: boolean;
 }
-export interface OperationReply {
-  reference: RecoveryRef;
-  receipt: Receipt;
-}
-export interface RecoveryRef {
-  source: DeploymentRef;
-  namespace: InstanceId;
-  export: string;
-  method: string;
-  operation: string;
-  fingerprint: string;
-  contract: Contract;
-  recovery: RecoveryProtocol;
-}
-export interface CallerHistoryPage {
-  after: number;
-  limit: number;
-}
-export interface CallerIntent {
-  cursor: number;
-  caller: DeploymentRef;
-  consumer: InstanceId;
-  reference: RecoveryRef;
-}
-export interface LabelProps {
-  text: string;
-  appearance: TextAppearance;
+/**
+ * Desktop layout and appearance are a presenter ABI, never kernel policy.
+ * Unspecified refinements inherit from the explicit surrounding scene scope.
+ */
+export interface DesktopStyle {
+  width?: DesktopDimension | null;
+  height?: DesktopDimension | null;
+  minWidth?: number | null;
+  maxWidth?: number | null;
+  minHeight?: number | null;
+  maxHeight?: number | null;
+  grow?: number | null;
+  shrink?: number | null;
+  wrap?: boolean | null;
+  /**
+   * Draw one measured line with an ellipsis; retain the complete text in AX.
+   */
+  truncate?: boolean;
+  align?: DesktopAlign | null;
+  justify?: DesktopJustify | null;
+  text?: TextAppearance | null;
+  background?: Color | null;
+  border?: Color | null;
+  borderWidth?: number | null;
+  radius?: number | null;
+  padding?: Insets | null;
 }
 export interface TextAppearance {
   font: FontAppearance;
@@ -1795,6 +1954,75 @@ export interface FontAppearance {
    */
   lineHeight: number;
   weight: number;
+}
+export interface Insets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+export interface DesktopCanvasContents {
+  commands: DesktopCanvasCommand[];
+  regions: DesktopCanvasRegion[];
+  focusColor?: number | null;
+  dragColor?: number | null;
+}
+export interface DesktopCanvasRect {
+  origin: DesktopCanvasPoint;
+  width: number;
+  height: number;
+}
+export interface DesktopCanvasPoint {
+  x: number;
+  y: number;
+}
+export interface DesktopCanvasRegion {
+  key: string;
+  rect: DesktopCanvasRect;
+  /**
+   * Corner radius of mechanical outlines; the hit area remains `rect`.
+   */
+  radius?: number;
+  label: string;
+  draggable?: boolean;
+  disabled?: boolean;
+  tabIndex?: number;
+  listen?: DesktopCanvasEventKind[];
+}
+export interface DesktopCanvasModifiers {
+  control: boolean;
+  alt: boolean;
+  shift: boolean;
+  platform: boolean;
+  function: boolean;
+}
+export interface OperationReply {
+  reference: RecoveryRef;
+  receipt: Receipt;
+}
+export interface RecoveryRef {
+  source: DeploymentRef;
+  namespace: InstanceId;
+  export: string;
+  method: string;
+  operation: string;
+  fingerprint: string;
+  contract: Contract;
+  recovery: RecoveryProtocol;
+}
+export interface CallerHistoryPage {
+  after: number;
+  limit: number;
+}
+export interface CallerIntent {
+  cursor: number;
+  caller: DeploymentRef;
+  consumer: InstanceId;
+  reference: RecoveryRef;
+}
+export interface LabelProps {
+  text: string;
+  appearance: TextAppearance;
 }
 export interface TextareaProps {
   appearance: TextareaAppearance;
@@ -1833,12 +2061,6 @@ export interface TextareaAppearance {
   radius: number;
   padding: Insets;
   scrollbar: ScrollbarAppearance;
-}
-export interface Insets {
-  top: number;
-  right: number;
-  bottom: number;
-  left: number;
 }
 export interface ScrollbarAppearance {
   mode: ScrollbarMode;

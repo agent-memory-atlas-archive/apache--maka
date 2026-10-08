@@ -68,7 +68,32 @@ TUI declares `{ name: "maka.tui.scene", version: 1 }`. This requirement is separ
 from public props/events/captures. Pure Value/Service and native entries omit it. Original scene
 JSON counts toward callback, transaction and retained-frame budgets.
 
-`TerminalScene` and `TerminalLayout` are generated from the actual TUI compiler.
+`ui.desktop` and `ui.terminal` construct strongly typed native scenes. Both provide
+`text`, `button`, `stack`, `dialog`, and `component`; Desktop also provides `popup`
+and `canvas`. Their `input`, `textarea`, `label`, `markdown`, `filePicker`, `image`,
+`sourceText`, `selectionMenu`, and `reading` helpers check the built-in props.
+Bindings and event routes remain explicit. `component` accepts the props of an
+external plugin's declared contract; it does not infer that contract from a binding name.
+
+Use `DesktopNode` or `TerminalNode` as the `Component` view type. Constructors
+reject cross-target children, including variables and nested reading content.
+A nonserialized symbol marks the authoring target; it changes neither the JSON
+protocol nor native admission. The generated `DesktopScene` and `TerminalScene`
+are the wire types used by the actual renderers, defined together in `maka-ui`.
+The SDK supplies declarations; theme, defaults, and product interaction wrappers
+belong to the product plugin. See the counter entries for independent typed scenes
+sharing one reducer, without a portable intermediate tree.
+
+```ts
+import { ui } from '@maka-agent/plugin-sdk';
+
+const view = ui.terminal.stack({
+  key: 'root', direction: 'column', gap: 1, padding: 1, background: 0,
+  children: [ui.terminal.button({ key: 'save', label: 'Save' })],
+});
+```
+
+`TerminalLayout` is generated from the actual terminal protocol.
 A Stack's `layout.grow` distributes remaining cells after fixed siblings;
 `basis` sets its base length in the parent's main axis. Row `wrap` lays out
 controls on successive rows, including per-row growth and height measurement

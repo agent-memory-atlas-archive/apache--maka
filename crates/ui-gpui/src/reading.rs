@@ -18,7 +18,10 @@
  */
 
 //! Original scene/scroll/selection custody, with weak post-paint observation.
-use crate::{LiveInput, Slots, Widget, scene::Node};
+use crate::{
+    LiveInput, Slots, Widget,
+    scene::{Node, NodePresentation},
+};
 use gpui_kit::base::{ElementExt as _, TextSelection, TextSelectionGroup, TextSelectionScopeId};
 use gpui_kit::{
     AnyElement, App, AppContext, Bounds, Element, ElementId, Entity, GlobalElementId,

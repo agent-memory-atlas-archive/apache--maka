@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use super::{Dimension, Style};
+use super::{Dimension, Style, StylePresentation};
 use crate::{Input, LiveInput};
 use gpui_kit::{
     base::{Dialog, DialogChangeReason, DialogPopup, Popup, TextSelectionLayer},
@@ -169,10 +169,6 @@ impl State {
         }
         .into_any_element()
     }
-}
-
-pub(super) fn backdrop() -> maka_ui::appearance::Color {
-    maka_ui::appearance::Color(0x00000066)
 }
 
 // Transparent background layout. The controlled native host uses its own

@@ -30,7 +30,7 @@ import type {
 import { connectionsContract, type ConnectionsProps } from './contracts.js';
 import { compactLabel } from './view.js';
 import { copy } from './locale.js';
-import { fill, output, paint, slot, type Target } from './view.js';
+import { fill, output, type Presentation, type Node } from './view.js';
 interface State {
   revision: number;
   serial: number;
@@ -75,18 +75,19 @@ function page(state: State, more = false) {
       : { kind: 'start' },
   );
 }
-function frame(
-  target: Target,
+function frame<N extends Node>(
+  presentation: Presentation<N>,
   state: State,
   props: ConnectionsProps,
   actions: Action[] = [],
   events: Emission[] = [],
 ) {
-  const ui = paint(target, props.theme),
+  const target = presentation.target;
+  const ui = presentation.paint(props.theme),
     text = copy(props.locale);
   const view =
     state.route === 'form'
-      ? slot(
+      ? presentation.slot(
           'form-' + state.mount,
           'form',
           {
@@ -97,7 +98,7 @@ function frame(
           { closed: 'closed', changed: 'changed' },
         )
       : state.route === 'credential' && state.detail
-        ? slot(
+        ? presentation.slot(
             'credential-' + state.mount,
             'credential',
             { ...props, target: state.detail.target },
@@ -197,7 +198,10 @@ function frame(
   out.actions = actions;
   return out;
 }
-export function connections(target: Target): Component<State, ConnectionsProps> {
+export function connections<N extends Node>(
+  presentation: Presentation<N>,
+): Component<State, ConnectionsProps, N> {
+  const target = presentation.target;
   return {
     mount(props) {
       const state: State = {
@@ -214,11 +218,11 @@ export function connections(target: Target): Component<State, ConnectionsProps> 
         failed: false,
         mount: 0,
       };
-      return frame(target, state, props, page(state));
+      return frame(presentation, state, props, page(state));
     },
     update(state, props) {
       state.revision++;
-      return frame(target, state, props);
+      return frame(presentation, state, props);
     },
     event(state, input, props) {
       state.revision++;
@@ -288,7 +292,7 @@ export function connections(target: Target): Component<State, ConnectionsProps> 
           }
         }
       }
-      return frame(target, state, props, actions, events);
+      return frame(presentation, state, props, actions, events);
     },
   };
 }

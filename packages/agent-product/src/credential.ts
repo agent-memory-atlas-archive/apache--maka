@@ -39,7 +39,7 @@ import type {
 import { credentialContract, type CredentialProps } from './contracts.js';
 import { copy, type Copy } from './locale.js';
 import { sameValue } from './value.js';
-import { compactLabel, fill, output, paint, pixels, slot, type Target } from './view.js';
+import { compactLabel, fill, output, pixels, type Presentation, type Node } from './view.js';
 
 type Request =
   | { kind: 'status' }
@@ -267,14 +267,15 @@ function earlierLabel(entry: Earlier, text: Copy): string {
   return text.historyRejected;
 }
 
-function frame(
-  target: Target,
+function frame<N extends Node>(
+  presentation: Presentation<N>,
   state: State,
   props: CredentialProps,
   actions: Action[] = [],
   events: Emission[] = [],
 ) {
-  const ui = paint(target, props.theme),
+  const target = presentation.target;
+  const ui = presentation.paint(props.theme),
     text = copy(props.locale);
   const pendingStatus = Object.values(state.pending).some((r) => r.kind === 'status');
   const status = state.statusFailed
@@ -308,7 +309,7 @@ function frame(
       ui.box(
         'key-input',
         [
-          slot(
+          presentation.slot(
             'secret',
             'secret',
             {
@@ -504,7 +505,10 @@ function frame(
   return out;
 }
 
-export function credential(target: Target): Component<State, CredentialProps> {
+export function credential<N extends Node>(
+  presentation: Presentation<N>,
+): Component<State, CredentialProps, N> {
+  const target = presentation.target;
   return {
     mount(props) {
       const state: State = {
@@ -532,11 +536,11 @@ export function credential(target: Target): Component<State, CredentialProps> {
       };
       const actions: Action[] = [];
       readStatus(state, actions);
-      return frame(target, state, props, actions);
+      return frame(presentation, state, props, actions);
     },
     update(state, props) {
       state.revision++;
-      return frame(target, state, props);
+      return frame(presentation, state, props);
     },
     event(state, input, props) {
       state.revision++;
@@ -544,7 +548,7 @@ export function credential(target: Target): Component<State, CredentialProps> {
         events: Emission[] = [];
       if (input.kind === 'action') {
         const r = state.pending[input.key];
-        if (!r) return frame(target, state, props);
+        if (!r) return frame(presentation, state, props);
         delete state.pending[input.key];
         const result = input.event as ActionOutcome;
         if (r.kind === 'mutate') {
@@ -736,7 +740,7 @@ export function credential(target: Target): Component<State, CredentialProps> {
             );
         }
       }
-      return frame(target, state, props, actions, events);
+      return frame(presentation, state, props, actions, events);
     },
   };
 }

@@ -26,8 +26,10 @@ use gpui_kit::{
     AnyWindowHandle, AppContext, Context, Entity, Modifiers as NativeModifiers, Render,
     TestAppContext, VisualTestContext,
 };
+use serde_json::Value;
 use serde_json::json;
 use std::any::Any;
+use std::time::Instant;
 
 struct Harness {
     recipe: Rc<dyn Widget>,

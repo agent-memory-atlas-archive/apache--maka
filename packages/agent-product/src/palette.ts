@@ -33,7 +33,7 @@ import type {
 } from '../../plugin-sdk/src/index.js';
 import { paletteContract, type PaletteCommand, type PaletteProps } from './contracts.js';
 import { copy } from './locale.js';
-import { compactLabel, fill, output, paint, pixels, slot, type Target } from './view.js';
+import { compactLabel, fill, output, pixels, type Presentation, type Node } from './view.js';
 
 type Choice =
   | { kind: 'command'; command: PaletteCommand }
@@ -184,14 +184,15 @@ function hasMore(state: State) {
     !!state.source && (state.scanOffset < state.source.sessions.length || !!state.source.after)
   );
 }
-function frame(
-  target: Target,
+function frame<N extends Node>(
+  presentation: Presentation<N>,
   state: State,
   props: PaletteProps,
   actions: Action[] = [],
   events: Emission[] = [],
 ) {
-  const ui = paint(target, props.theme),
+  const target = presentation.target;
+  const ui = presentation.paint(props.theme),
     text = copy(props.locale);
   const all = rows(state, props);
   const buttons = all.slice(state.offset, state.offset + 32).map(({ key, choice }, index) => {
@@ -205,16 +206,16 @@ function frame(
       (target === 'tui' && active ? '› ' : '') +
         (target === 'tui' ? compactLabel(label, 68) : label),
       !enabled(state, props, choice),
-    );
-    if (target === 'desktop')
-      button.style = {
-        ...(button.style as object),
+      false,
+      {
         width: fill,
         minWidth: 0,
         truncate: true,
         justify: 'start',
         ...(active ? { background: props.theme.selected } : {}),
-      };
+      },
+    );
+
     return button;
   });
   const available =
@@ -226,7 +227,7 @@ function frame(
     'palette-content',
     [
       ui.text('palette-title', text.paletteTitle, 17, props.theme.text, 550),
-      slot(
+      presentation.slot(
         'palette-query',
         'input',
         {
@@ -259,9 +260,8 @@ function frame(
       ...(!all.length && !state.pending && !state.queryError && !state.failed && !dirty(state)
         ? [ui.text('palette-empty', text.paletteEmpty, 13, props.theme.muted)]
         : []),
-      slot(
+      presentation.reading(
         'palette-rows',
-        'reading',
         {
           content: ui.box('palette-viewport', buttons, {
             scroll: 'manual',
@@ -326,7 +326,10 @@ function frame(
 function close(state: State) {
   if (state.pending?.kind === 'text') state.pending.choice = null;
 }
-export function palette(target: Target): Component<State, PaletteProps> {
+export function palette<N extends Node>(
+  presentation: Presentation<N>,
+): Component<State, PaletteProps, N> {
+  const target = presentation.target;
   return {
     mount(props) {
       const state: State = {
@@ -349,7 +352,7 @@ export function palette(target: Target): Component<State, PaletteProps> {
         reveal: null,
       };
       reveal(state, props);
-      return frame(target, state, props);
+      return frame(presentation, state, props);
     },
     update(previous, props) {
       const state = { ...previous, revision: previous.revision + 1 };
@@ -370,7 +373,7 @@ export function palette(target: Target): Component<State, PaletteProps> {
         state.reveal.target.key !== row.key
       )
         reveal(state, props);
-      return frame(target, state, props, resume(state, props));
+      return frame(presentation, state, props, resume(state, props));
     },
     event(state, input, props) {
       state.revision++;
@@ -477,7 +480,7 @@ export function palette(target: Target): Component<State, PaletteProps> {
           }
         }
       }
-      return frame(target, state, props, actions, events);
+      return frame(presentation, state, props, actions, events);
     },
   };
 }

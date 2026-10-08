@@ -31,7 +31,7 @@ import type {
 import { modelDefaultContract, type ModelDefaultProps } from './contracts.js';
 import { copy, type Copy } from './locale.js';
 import { sameValue } from './value.js';
-import { compactLabel, output, paint, type Target } from './view.js';
+import { compactLabel, output, type Presentation, type Node } from './view.js';
 
 type Request =
   | { kind: 'mutate' }
@@ -118,14 +118,15 @@ function history(state: State, actions: Action[], after: number) {
   state.historyFailed = false;
   request(state, actions, { kind: 'history', after }, 'history', 'page', { after, limit: 2 });
 }
-function frame(
-  target: Target,
+function frame<N extends Node>(
+  presentation: Presentation<N>,
   state: State,
   props: ModelDefaultProps,
   actions: Action[] = [],
   events: Emission[] = [],
 ) {
-  const ui = paint(target, props.theme),
+  const target = presentation.target;
+  const ui = presentation.paint(props.theme),
     text = copy(props.locale);
   const saved = props.defaultModel;
   const summary =
@@ -275,7 +276,10 @@ function frame(
   out.actions = actions;
   return out;
 }
-export function modelDefault(target: Target): Component<State, ModelDefaultProps> {
+export function modelDefault<N extends Node>(
+  presentation: Presentation<N>,
+): Component<State, ModelDefaultProps, N> {
+  const target = presentation.target;
   return {
     mount(props) {
       const state: State = {
@@ -292,11 +296,11 @@ export function modelDefault(target: Target): Component<State, ModelDefaultProps
         historyNext: null,
         historyFailed: false,
       };
-      return frame(target, state, props);
+      return frame(presentation, state, props);
     },
     update(state, props) {
       state.revision++;
-      return frame(target, state, props);
+      return frame(presentation, state, props);
     },
     event(state, input, props) {
       state.revision++;
@@ -304,7 +308,7 @@ export function modelDefault(target: Target): Component<State, ModelDefaultProps
         events: Emission[] = [];
       if (input.kind === 'action') {
         const r = state.pending[input.key];
-        if (!r) return frame(target, state, props);
+        if (!r) return frame(presentation, state, props);
         delete state.pending[input.key];
         const outcome = input.event as ActionOutcome;
         if (r.kind === 'mutate') {
@@ -427,7 +431,7 @@ export function modelDefault(target: Target): Component<State, ModelDefaultProps
           }
         }
       }
-      return frame(target, state, props, actions, events);
+      return frame(presentation, state, props, actions, events);
     },
   };
 }

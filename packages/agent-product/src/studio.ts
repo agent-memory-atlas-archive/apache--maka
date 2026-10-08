@@ -24,7 +24,7 @@ import type {
 } from '../../plugin-sdk/src/index.js';
 import { studioContract, type Theme } from './contracts.js';
 import { copy } from './locale.js';
-import { fill, output, paint, pixels, slot, type Target } from './view.js';
+import { fill, output, pixels, type Presentation, type Node } from './view.js';
 
 type Route = 'overview' | 'connections' | 'models' | 'deployment';
 interface State {
@@ -33,10 +33,16 @@ interface State {
   catalogEpoch: number;
   selection: SettingsModelChoice | null;
 }
-function frame(target: Target, locale: string, state: State, values: ComponentValues) {
+function frame<N extends Node>(
+  presentation: Presentation<N>,
+  locale: string,
+  state: State,
+  values: ComponentValues,
+) {
+  const target = presentation.target;
   const theme = values.appearance![0] as unknown as Theme;
   const text = copy(locale);
-  const ui = paint(target, theme);
+  const ui = presentation.paint(theme);
   const labels = {
     overview: text.studioOverview,
     connections: text.settings,
@@ -113,7 +119,7 @@ function frame(target: Target, locale: string, state: State, values: ComponentVa
           ),
         ]),
         page('connections', [
-          slot(
+          presentation.slot(
             'connections',
             'connections',
             { theme, locale },
@@ -123,7 +129,7 @@ function frame(target: Target, locale: string, state: State, values: ComponentVa
         page('models', [
           ui.text('models-title', text.models, 20, theme.text, 600),
           ui.text('models-help', text.studioModelsHelp, 14, theme.muted),
-          slot(
+          presentation.slot(
             'models',
             'models',
             {
@@ -137,7 +143,7 @@ function frame(target: Target, locale: string, state: State, values: ComponentVa
           ),
         ]),
         page('deployment', [
-          slot('deployment', 'deployment', { theme, locale }, { closed: 'closed' }),
+          presentation.slot('deployment', 'deployment', { theme, locale }, { closed: 'closed' }),
         ]),
       ],
       {
@@ -149,7 +155,7 @@ function frame(target: Target, locale: string, state: State, values: ComponentVa
     ),
   );
   if (target === 'desktop')
-    out.frame.view = ui.box('studio-surface', [out.frame.view as Record<string, unknown>], {
+    out.frame.view = ui.box('studio-surface', [out.frame.view], {
       gap: 0,
       style: { width: fill, height: fill, align: 'center' },
     });
@@ -159,18 +165,21 @@ function frame(target: Target, locale: string, state: State, values: ComponentVa
       : { kind: 'terminal', binding: 'surface' };
   return out;
 }
-export function studio(target: Target, locale: string): Component<State, Record<string, never>> {
+export function studio<N extends Node>(
+  presentation: Presentation<N>,
+  locale: string,
+): Component<State, Record<string, never>, N> {
   return {
     mount(_props, values) {
       return frame(
-        target,
+        presentation,
         locale,
         { revision: 0, route: 'overview', catalogEpoch: 0, selection: null },
         values,
       );
     },
     update(state, _props, values) {
-      return frame(target, locale, { ...state, revision: state.revision + 1 }, values);
+      return frame(presentation, locale, { ...state, revision: state.revision + 1 }, values);
     },
     event(previous, event, _props, values) {
       const state = { ...previous, revision: previous.revision + 1 };
@@ -187,7 +196,7 @@ export function studio(target: Target, locale: string): Component<State, Record<
         if (event.child === 'models' && event.name === 'selected')
           state.selection = event.event as SettingsModelChoice;
       }
-      return frame(target, locale, state, values);
+      return frame(presentation, locale, state, values);
     },
   };
 }

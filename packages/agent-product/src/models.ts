@@ -35,7 +35,7 @@ import type {
 import type { ModelsProps } from './contracts.js';
 import { modelsContract } from './contracts.js';
 import { copy, type Copy } from './locale.js';
-import { fill, output, paint, pixels, slot, type Target } from './view.js';
+import { fill, output, pixels, type Presentation, type Node } from './view.js';
 type Request =
   | { kind: 'page'; key: string; query: string }
   | { kind: 'text'; key: string; basis: EditorTextRef; choice: SettingsModelChoice | null };
@@ -174,14 +174,15 @@ function close(state: State) {
   state.open = false;
   if (state.pending?.kind === 'text') state.pending.choice = null;
 }
-function frame(
-  target: Target,
+function frame<N extends Node>(
+  presentation: Presentation<N>,
   state: State,
   props: ModelsProps,
   actions: Action[] = [],
   events: Emission[] = [],
 ) {
-  const ui = paint(target, props.theme);
+  const target = presentation.target;
+  const ui = presentation.paint(props.theme);
   const text = copy(props.locale);
   const chosen = state.staleSelection ? null : props.selection;
   const compact = (label: string) =>
@@ -190,15 +191,15 @@ function frame(
     'toggle',
     chosen ? (target === 'desktop' ? chosen.label : compact(chosen.label)) : text.chooseModel,
     props.busy,
-  );
-  if (target === 'desktop')
-    trigger.style = {
-      ...(trigger.style as object),
+    false,
+    {
       width: fill,
       minWidth: 0,
       justify: 'start',
       truncate: true,
-    };
+    },
+  );
+
   const modelRows = (
     target === 'desktop' ? state.choices : state.choices.slice(state.offset, state.offset + 3)
   ).map((choice, index) => {
@@ -208,16 +209,16 @@ function frame(
       `choose-${at}`,
       `${target === 'tui' && active ? '› ' : ''}${target === 'desktop' ? choice.label : compact(choice.label)} · ${target === 'desktop' ? choice.connectionName : compact(choice.connectionName)}`,
       !editableChoices(state, props),
-    );
-    if (target === 'desktop')
-      button.style = {
-        ...(button.style as object),
+      false,
+      {
         width: fill,
         minWidth: 0,
         truncate: true,
         justify: 'start',
         ...(active ? { background: props.theme.selected } : {}),
-      };
+      },
+    );
+
     return button;
   });
   const content = ui.box(
@@ -227,7 +228,7 @@ function frame(
         'model-choices',
         [
           ui.text('model-heading', text.models, 13, props.theme.muted),
-          slot(
+          presentation.slot(
             'model-query',
             'input',
             {
@@ -281,9 +282,8 @@ function frame(
           ),
           ...(target === 'desktop'
             ? [
-                slot(
+                presentation.reading(
                   'model-rows',
-                  'reading',
                   {
                     content: ui.box('model-viewport', modelRows, {
                       scroll: 'manual',
@@ -329,7 +329,7 @@ function frame(
             ],
             { row: target === 'desktop', gap: 0, style: { wrap: true } },
           ),
-          slot(
+          presentation.slot(
             'default-settings',
             'defaults',
             {
@@ -353,33 +353,34 @@ function frame(
       style: { width: fill, minWidth: 0, background: 0 },
     },
   );
-  const view =
-    target === 'desktop'
-      ? {
-          kind: 'popup',
-          key: 'model-popup',
-          label: text.models,
-          trigger,
-          content,
-          open: state.open,
-          anchor: 'top_right',
-          offset: 8,
-          style: {
-            width: pixels(360),
-            maxHeight: 320,
-            minWidth: 0,
-            background: props.theme.menu.background,
-            border: props.theme.menu.border,
-            borderWidth: props.theme.menu.borderWidth,
-            radius: props.theme.menu.radius,
-          },
-        }
-      : ui.box('models', [trigger, content], { gap: 0 });
+  const view = presentation.popup
+    ? presentation.popup({
+        key: 'model-popup',
+        label: text.models,
+        trigger,
+        content,
+        open: state.open,
+        anchor: 'top_right',
+        offset: 8,
+        style: {
+          width: pixels(360),
+          maxHeight: 320,
+          minWidth: 0,
+          background: props.theme.menu.background,
+          border: props.theme.menu.border,
+          borderWidth: props.theme.menu.borderWidth,
+          radius: props.theme.menu.radius,
+        },
+      })
+    : ui.box('models', [trigger, content], { gap: 0 });
   const out = output(state, view, events);
   out.actions = actions;
   return out;
 }
-export function models(target: Target): Component<State, ModelsProps> {
+export function models<N extends Node>(
+  presentation: Presentation<N>,
+): Component<State, ModelsProps, N> {
+  const target = presentation.target;
   return {
     mount(props) {
       const state: State = {
@@ -405,7 +406,7 @@ export function models(target: Target): Component<State, ModelsProps> {
         failed: false,
         offset: 0,
       };
-      return frame(target, state, props, read(state));
+      return frame(presentation, state, props, read(state));
     },
     update(previous, props) {
       if (previous.catalogEpoch !== props.catalogEpoch) {
@@ -423,14 +424,19 @@ export function models(target: Target): Component<State, ModelsProps> {
           next: null,
           offset: 0,
         };
-        return frame(target, state, props, state.defaultsOpen ? readPage(state) : read(state));
+        return frame(
+          presentation,
+          state,
+          props,
+          state.defaultsOpen ? readPage(state) : read(state),
+        );
       }
       if (props.selection && !previous.staleSelection) previous.suggestDefault = false;
       const initial = candidate(previous, props);
       if (initial && previous.staleSelection) previous.staleSelection = false;
       const state = { ...previous, revision: previous.revision + 1 };
       return frame(
-        target,
+        presentation,
         state,
         props,
         defaultsInteractive(state, props) && state.catalogRevision === null && !state.failed
@@ -592,7 +598,7 @@ export function models(target: Target): Component<State, ModelsProps> {
       }
       if (defaultsInteractive(state, props) && state.catalogRevision === null && !state.failed)
         actions.push(...readPage(state));
-      const out = frame(target, state, props, actions, events);
+      const out = frame(presentation, state, props, actions, events);
       if (
         input.kind === 'raw' &&
         input.key === 'model-popup' &&

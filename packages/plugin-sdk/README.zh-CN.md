@@ -56,7 +56,29 @@ Desktop 为 `{ name: "maka.desktop.scene", version: 1 }`，TUI 为
 `{ name: "maka.tui.scene", version: 1 }`。该本地要求不改变公开 props/events/captures；
 纯 Value/Service 与原生 entry 省略 scene。原场景 JSON 参与回调、事务及驻留预算。
 
-`TerminalScene` 与 `TerminalLayout` 从实际 TUI 编译器生成。Stack 的 `layout.grow`
+`ui.desktop` 和 `ui.terminal` 提供完整、强类型的原生场景声明。
+两者都有 `text`、`button`、`stack`、`dialog`、`component`，Desktop 另有 `popup`、
+`canvas`。`input`、`textarea`、`label`、`markdown`、`filePicker`、`image`、
+`sourceText`、`selectionMenu`、`reading` 会检查内置组件 props；绑定和事件路由仍需显式提供。
+`component` 接受外部插件契约的 props，不会根据绑定名称推测契约。
+
+入口使用 `Component<State, Props, DesktopNode>` 或 `TerminalNode`。
+构造接口阻止跨目标子节点混用，包括变量与 reading 的嵌套内容。
+非序列化 symbol 只标记编写时的目标，不改变场景 JSON，也不替代原生准入。
+生成的 `DesktopScene`、`TerminalScene` 是两个渲染器直接使用的 wire 类型，统一定义在
+`maka-ui`。SDK 提供界面声明；主题、默认样式、产品交互封装由产品插件负责。
+计数器示例展示独立的强类型场景和共享业务逻辑，无需另一套可移植中间树。
+
+```ts
+import { ui } from '@maka-agent/plugin-sdk';
+
+const view = ui.terminal.stack({
+  key: 'root', direction: 'column', gap: 1, padding: 1, background: 0,
+  children: [ui.terminal.button({ key: 'save', label: '保存' })],
+});
+```
+
+`TerminalLayout` 从实际终端协议生成。Stack 的 `layout.grow`
 在固定兄弟节点占位后分配剩余格子；`basis` 指定其在父主轴上的基础长度。Row 的
 `wrap` 将控件分到后续行，每行分别分配弹性宽度，并按实际宽度测量换行高度。
 Column Stack 的 `scroll` 选择 `none`、`manual`、`anchor` 或 `follow_end`。

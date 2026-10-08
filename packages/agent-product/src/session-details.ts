@@ -38,7 +38,7 @@ import type {
 import { sessionDetailsContract, type SessionDetailsProps } from './contracts.js';
 import { copy, type Copy } from './locale.js';
 import { sameValue } from './value.js';
-import { compactLabel, fill, output, paint, pixels, slot, type Target } from './view.js';
+import { compactLabel, fill, output, pixels, type Presentation, type Node } from './view.js';
 
 const names = ['title', 'labels'] as const;
 type FieldName = (typeof names)[number];
@@ -225,14 +225,15 @@ function history(state: State, actions: Action[], after: number) {
   state.historyFailed = false;
   request(state, actions, { kind: 'history', after }, 'history', 'page', { after, limit: 4 });
 }
-function frame(
-  target: Target,
+function frame<N extends Node>(
+  presentation: Presentation<N>,
   state: State,
   props: SessionDetailsProps,
   actions: Action[] = [],
   events: Emission[] = [],
 ) {
-  const ui = paint(target, props.theme),
+  const target = presentation.target;
+  const ui = presentation.paint(props.theme),
     text = copy(props.locale);
   const locked = !active(state, props) || busy(state) || !!state.reviewed || state.historyOpen;
   const form = ui.box(
@@ -277,7 +278,7 @@ function frame(
                 ui.box(
                   `details-editor-${name}`,
                   [
-                    slot(
+                    presentation.slot(
                       `details-${name}`,
                       name === 'title' ? 'input' : 'editor',
                       name === 'title'
@@ -367,9 +368,8 @@ function frame(
         13,
         props.theme.muted,
       ),
-      slot(
+      presentation.reading(
         'details-review-content',
-        'reading',
         {
           content: ui.box(
             'details-review-lines',
@@ -493,7 +493,10 @@ function frame(
   out.actions = actions;
   return out;
 }
-export function sessionDetails(target: Target): Component<State, SessionDetailsProps> {
+export function sessionDetails<N extends Node>(
+  presentation: Presentation<N>,
+): Component<State, SessionDetailsProps, N> {
+  const target = presentation.target;
   return {
     mount(props) {
       const field = (): Field => ({
@@ -518,13 +521,13 @@ export function sessionDetails(target: Target): Component<State, SessionDetailsP
         historyNext: null,
         historyFailed: false,
       };
-      return frame(target, state, props);
+      return frame(presentation, state, props);
     },
     update(state, props) {
       state.revision++;
       if (props.open && !state.target && props.session) state.target = props.session;
       if (props.open) initialize(state);
-      return frame(target, state, props);
+      return frame(presentation, state, props);
     },
     event(state, input, props) {
       state.revision++;
@@ -552,7 +555,7 @@ export function sessionDetails(target: Target): Component<State, SessionDetailsP
         } else if (input.name === 'submitted') save(state, props, actions);
       } else if (input.kind === 'action') {
         const r = state.pending[input.key];
-        if (!r) return frame(target, state, props);
+        if (!r) return frame(presentation, state, props);
         delete state.pending[input.key];
         const result = input.event as ActionOutcome;
         if (r.kind === 'read' && state.current?.attempt === r.attempt) {
@@ -690,7 +693,7 @@ export function sessionDetails(target: Target): Component<State, SessionDetailsP
             );
         }
       }
-      return frame(target, state, props, actions, events);
+      return frame(presentation, state, props, actions, events);
     },
   };
 }

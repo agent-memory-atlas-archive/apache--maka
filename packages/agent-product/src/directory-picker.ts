@@ -33,7 +33,7 @@ import type {
 } from '../../plugin-sdk/src/index.js';
 import { directoryPickerContract, type DirectoryPickerProps } from './contracts.js';
 import { copy } from './locale.js';
-import { compactLabel, fill, output, paint, pixels, slot, type Target } from './view.js';
+import { compactLabel, fill, output, pixels, type Presentation, type Node } from './view.js';
 
 type Navigation = 'roots' | 'child' | 'parent' | 'page';
 interface State {
@@ -146,14 +146,15 @@ function children(
 ) {
   return query(state, { kind: 'children', selection, after }, navigation);
 }
-function frame(
-  target: Target,
+function frame<N extends Node>(
+  presentation: Presentation<N>,
   state: State,
   props: DirectoryPickerProps,
   actions: Action[] = [],
   events: Emission[] = [],
 ) {
-  const ui = paint(target, props.theme),
+  const target = presentation.target;
+  const ui = presentation.paint(props.theme),
     text = copy(props.locale);
   const enabled = available(state, props);
   const page = state.page;
@@ -163,16 +164,14 @@ function frame(
     const label =
       (target === 'tui' && active ? '› ' : '') +
       compactLabel(directory.name, target === 'tui' ? 64 : 120);
-    const button = ui.button(key, label, !enabled);
-    if (target === 'desktop')
-      button.style = {
-        ...(button.style as object),
-        width: fill,
-        minWidth: 0,
-        truncate: true,
-        justify: 'start',
-        ...(active ? { background: props.theme.selected } : {}),
-      };
+    const button = ui.button(key, label, !enabled, false, {
+      width: fill,
+      minWidth: 0,
+      truncate: true,
+      justify: 'start',
+      ...(active ? { background: props.theme.selected } : {}),
+    });
+
     return button;
   });
   const view = ui.box(
@@ -183,7 +182,7 @@ function frame(
       ui.box(
         'directory-query-scope',
         [
-          slot(
+          presentation.slot(
             'directory-query',
             'input',
             {
@@ -237,9 +236,8 @@ function frame(
       ...(!state.pending && !state.failed && page && !buttons.length
         ? [ui.text('directory-empty', text.directoryEmpty, 13, props.theme.muted)]
         : []),
-      slot(
+      presentation.reading(
         'directory-rows',
-        'reading',
         {
           content: ui.box('directory-viewport', buttons, {
             scroll: 'manual',
@@ -290,7 +288,9 @@ function frame(
   out.actions = actions;
   return out;
 }
-export function directoryPicker(target: Target): Component<State, DirectoryPickerProps> {
+export function directoryPicker<N extends Node>(
+  presentation: Presentation<N>,
+): Component<State, DirectoryPickerProps, N> {
   return {
     mount(props) {
       const state: State = {
@@ -310,7 +310,7 @@ export function directoryPicker(target: Target): Component<State, DirectoryPicke
         active: 0,
         reveal: null,
       };
-      return frame(target, state, props, props.open ? roots(state) : []);
+      return frame(presentation, state, props, props.open ? roots(state) : []);
     },
     update(previous, props) {
       const state = { ...previous, revision: previous.revision + 1 };
@@ -327,7 +327,7 @@ export function directoryPicker(target: Target): Component<State, DirectoryPicke
         actions = roots(state);
       }
       actions.push(...resume(state, props));
-      return frame(target, state, props, actions);
+      return frame(presentation, state, props, actions);
     },
     event(state, input, props) {
       state.revision++;
@@ -442,7 +442,7 @@ export function directoryPicker(target: Target): Component<State, DirectoryPicke
           }
         }
       }
-      return frame(target, state, props, actions, events);
+      return frame(presentation, state, props, actions, events);
     },
   };
 }

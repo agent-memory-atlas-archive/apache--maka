@@ -57,10 +57,37 @@ const header = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8')
 const banner =
   header +
   '\n\n// Generated from Rust runtime schemas. Run npm run schema:generate -w @maka-agent/plugin-sdk.\n';
+// A $ref with annotation siblings makes the dereferencer clone its definition.
+// Put annotations on an equivalent allOf wrapper so named Rust DTOs retain one
+// TypeScript declaration, including their per-property documentation. Literal
+// JSON data is never traversed as a schema.
+function declarationSchema(value) {
+  if (Array.isArray(value)) return value.map(declarationSchema);
+  if (value === null || typeof value !== 'object') return value;
+  const result = Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [
+      key,
+      ['default', 'const', 'enum', 'examples'].includes(key) ? child : declarationSchema(child),
+    ]),
+  );
+  if (
+    typeof result.$ref === 'string' &&
+    Object.keys(result).length > 1 &&
+    Object.keys(result).every((key) =>
+      ['$ref', 'description', 'default', 'title', 'deprecated', '$comment', 'examples'].includes(
+        key,
+      ),
+    )
+  ) {
+    const { $ref, ...annotations } = result;
+    return { ...annotations, allOf: [{ $ref }] };
+  }
+  return result;
+}
 const outputs = new Map();
 outputs.set(
   new URL('../src/generated/runtime.ts', import.meta.url),
-  await compile(catalog.schema, catalog.schema.title, {
+  await compile(declarationSchema(catalog.schema), catalog.schema.title, {
     bannerComment: banner.trimEnd(),
     unknownAny: true,
     strictIndexSignatures: true,

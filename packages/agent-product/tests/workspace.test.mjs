@@ -75,6 +75,128 @@ test('busy TUI navigation preserves native buttons and restores their original a
   assert.deepEqual(result.events, [{ name: 'create', value: {} }]);
 });
 const sdk = await import(pathToFileURL(resolve(root, 'dist/authoring/plugin-sdk/src/index.mjs')));
+test('typed scene constructors serialize directly into the actual Rust scene schemas', async () => {
+  const desktopText = sdk.ui.desktop.text({ key: 'desktop-text', text: '界面', color: 0xffffff });
+  const terminalText = sdk.ui.terminal.text({
+    key: 'terminal-text',
+    text: '界面',
+    color: 0xffffff,
+  });
+  const desktop = sdk.ui.desktop.stack({
+    key: 'desktop',
+    direction: 'column',
+    gap: 8,
+    padding: 0,
+    background: 0,
+    children: [desktopText],
+    scroll: 'anchor',
+  });
+  const terminal = sdk.ui.terminal.stack({
+    key: 'terminal',
+    direction: 'column',
+    gap: 1,
+    padding: 0,
+    background: 0,
+    children: [terminalText],
+    scroll: 'anchor',
+  });
+  const desktopScenes = [
+    desktop,
+    desktopText,
+    sdk.ui.desktop.button({ key: 'button', label: 'Save' }),
+    sdk.ui.desktop.dialog({
+      key: 'dialog',
+      label: 'Dialog',
+      background: desktop,
+      content: desktopText,
+      open: true,
+    }),
+    sdk.ui.desktop.popup({
+      key: 'popup',
+      label: 'Menu',
+      trigger: desktopText,
+      content: desktop,
+      open: true,
+    }),
+    sdk.ui.desktop.canvas({
+      key: 'canvas',
+      contents: {
+        commands: [
+          { kind: 'line', from: { x: 0, y: 0 }, to: { x: 20, y: 20 }, color: 0xffffff, width: 1 },
+        ],
+        regions: [],
+      },
+    }),
+    sdk.ui.desktop.reading({
+      key: 'reading',
+      binding: 'reading',
+      props: { content: desktop },
+      on: { observed: 'viewport' },
+    }),
+  ];
+  const terminalScenes = [
+    terminal,
+    terminalText,
+    sdk.ui.terminal.button({ key: 'button', label: 'Save' }),
+    sdk.ui.terminal.dialog({
+      key: 'dialog',
+      label: 'Dialog',
+      background: terminal,
+      content: terminalText,
+      open: true,
+      width: 40,
+      height: 10,
+      background_color: 0,
+      border_color: 0xffffff,
+    }),
+    sdk.ui.terminal.reading({
+      key: 'reading',
+      binding: 'reading',
+      props: { content: terminal },
+      on: { observed: 'viewport' },
+    }),
+  ];
+  const encoded = JSON.stringify(desktop);
+  assert.deepEqual(JSON.parse(encoded), {
+    key: 'desktop',
+    direction: 'column',
+    gap: 8,
+    padding: 0,
+    background: 0,
+    children: [{ key: 'desktop-text', text: '界面', color: 0xffffff, kind: 'text' }],
+    scroll: 'anchor',
+    kind: 'stack',
+  });
+  assert.equal(Object.getOwnPropertySymbols(desktop).length, 1);
+  assert.equal(encoded.includes('maka.scene.target'), false);
+  assert.equal(desktopScenes.at(-1).member, 0);
+  if (process.env.MAKA_PRODUCT_CLI_CHECK) {
+    const binary = resolve(root, '../..', process.env.CARGO_TARGET_DIR ?? 'target', 'debug/maka');
+    const catalog = JSON.parse(
+      execFileSync(binary, ['application', 'schema'], {
+        encoding: 'utf8',
+        maxBuffer: 4 * 1024 * 1024,
+      }),
+    );
+    const { default: Ajv } = await import('ajv/dist/2020.js');
+    for (const [name, scenes] of [
+      ['DesktopScene', desktopScenes],
+      ['TerminalScene', terminalScenes],
+    ]) {
+      const validate = new Ajv({ strict: false }).compile({
+        $ref: '#/$defs/' + name,
+        $defs: catalog.schema.$defs,
+      });
+      for (const scene of scenes)
+        assert.equal(
+          validate(JSON.parse(JSON.stringify(scene))),
+          true,
+          JSON.stringify(validate.errors),
+        );
+    }
+  }
+});
+
 const uuid = (n) => `00000000-0000-0000-0000-${n.toString().padStart(12, '0')}`;
 const reference = {
   source: { stateDomain: uuid(1), deployment: uuid(2), revision: 1 },

@@ -36,6 +36,7 @@ pub mod markdown;
 mod native;
 pub mod operations;
 pub mod reading;
+pub mod scene;
 pub mod selection_menu;
 pub mod shortcut;
 pub mod source;

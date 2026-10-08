@@ -26,7 +26,7 @@ import type {
 import type { ConnectionsProps } from './contracts.js';
 import { copy } from './locale.js';
 import { sameValue } from './value.js';
-import { fill, paint, pixels, slot, type Target } from './view.js';
+import { fill, pixels, type Presentation, type Node } from './view.js';
 
 export const documentLimit = 1024 * 1024;
 export interface DocumentEditor {
@@ -136,8 +136,8 @@ export function canSaveDocument(editor: DocumentEditor, busy: boolean) {
     editor.observation.snapshot.text.bytes <= documentLimit
   );
 }
-export function documentView(
-  target: Target,
+export function documentView<N extends Node>(
+  presentation: Presentation<N>,
   props: ConnectionsProps,
   editor: DocumentEditor,
   open: boolean,
@@ -147,7 +147,8 @@ export function documentView(
   recoverable: boolean,
   pending: boolean,
 ) {
-  const ui = paint(target, props.theme),
+  const target = presentation.target;
+  const ui = presentation.paint(props.theme),
     text = copy(props.locale);
   const confirming = !!editor.confirmation || editor.reloadConfirmation;
   return ui.box(
@@ -225,7 +226,7 @@ export function documentView(
       ui.box(
         'deployment-document-owner',
         [
-          slot(
+          presentation.slot(
             'deployment-document-editor',
             'editor',
             {

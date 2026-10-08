@@ -36,7 +36,7 @@ import {
   type TimelineProps,
 } from './contracts.js';
 import { copy } from './locale.js';
-import { paint, slot, output, fill, pixels, compactLabel, type Target, type Node } from './view.js';
+import { output, fill, pixels, compactLabel, type Presentation, type Node } from './view.js';
 interface Revision {
   revision: number;
 }
@@ -49,17 +49,20 @@ interface Reading extends Revision {
   command: ReadingCommand | null;
   landing: TimelineProps['landing'];
 }
-export function components(target: Target): {
-  composer: Component<Draft, ComposerProps>;
-  navigation: Component<Revision, NavigationProps>;
-  timeline: Component<Reading, TimelineProps>;
+export function components<N extends Node>(
+  presentation: Presentation<N>,
+): {
+  composer: Component<Draft, ComposerProps, N>;
+  navigation: Component<Revision, NavigationProps, N>;
+  timeline: Component<Reading, TimelineProps, N>;
 } {
+  const target = presentation.target;
   const composerFrame = (
     state: Draft,
     props: ComposerProps,
     events: Parameters<typeof output>[2] = [],
   ) => {
-    const ui = paint(target, props.theme),
+    const ui = presentation.paint(props.theme),
       text = copy(props.locale);
     const pending =
       props.command !== null &&
@@ -109,7 +112,12 @@ export function components(target: Target): {
         [
           ui.box(
             'editor-area',
-            [slot('draft', 'editor', textarea, { changed: 'changed', submitted: 'submitted' })],
+            [
+              presentation.slot('draft', 'editor', textarea, {
+                changed: 'changed',
+                submitted: 'submitted',
+              }),
+            ],
             {
               style: { width: fill, height: pixels(112), shrink: 0 },
             },
@@ -136,7 +144,7 @@ export function components(target: Target): {
     );
   };
   const navigationFrame = (state: Revision, props: NavigationProps) => {
-    const ui = paint(target, props.theme),
+    const ui = presentation.paint(props.theme),
       text = copy(props.locale);
     return output(
       state,
@@ -169,15 +177,15 @@ export function components(target: Target): {
                 session.id,
                 target === 'desktop' ? session.title : compactLabel(session.title, 48),
                 props.busy,
-              );
-              if (target === 'desktop')
-                button.style = {
-                  ...(button.style as object),
+                false,
+                {
                   width: fill,
                   minWidth: 0,
                   justify: 'start',
                   truncate: true,
-                };
+                },
+              );
+
               return ui.box('session-' + session.id, [button], {
                 surface: session.id === props.selected,
                 style: { width: fill, minWidth: 0, radius: 8, shrink: 0 },
@@ -200,7 +208,7 @@ export function components(target: Target): {
     );
   };
   const timelineFrame = (state: Reading, props: TimelineProps) => {
-    const ui = paint(target, props.theme),
+    const ui = presentation.paint(props.theme),
       text = copy(props.locale);
     const tools = props.messages.filter(
       (message) =>
@@ -208,7 +216,7 @@ export function components(target: Target): {
         (message.source !== null || message.text.length > 0),
     );
     state.expanded = state.expanded.filter((id) => tools.some((message) => message.id === id));
-    const messages: Node[] = props.messages.map((message) => {
+    const messages: N[] = props.messages.map((message) => {
       const tool = message.role === 'tool_call' || message.role === 'tool_result';
       const expanded = state.expanded.includes(message.id);
       const caption =
@@ -227,23 +235,29 @@ export function components(target: Target): {
         props.theme.muted,
         550,
       );
-      const sourceAction = ui.button('source-' + message.source, text.readSource, props.loading);
-      if (target === 'desktop') {
-        const style = sourceAction.style as Node;
-        const typography = style.text as Node;
-        sourceAction.style = {
-          ...style,
+      const sourceAction = ui.button(
+        'source-' + message.source,
+        text.readSource,
+        props.loading,
+        false,
+        {
           padding: { top: 4, right: 0, bottom: 4, left: 0 },
           text: {
-            ...typography,
             foreground: props.theme.muted,
-            font: { ...(typography.font as Node), size: 12, weight: 400 },
+            font: {
+              family: '.SystemUIFont',
+              fallbacks: [],
+              size: 12,
+              lineHeight: 1.55,
+              weight: 400,
+            },
           },
-        };
-      }
+        },
+      );
+
       const body =
         target === 'desktop' && message.role === 'assistant' && !message.continued
-          ? slot(
+          ? presentation.slot(
               'text-' + message.contentKey,
               'markdown',
               {
@@ -254,7 +268,7 @@ export function components(target: Target): {
               } satisfies MarkdownProps,
               {},
             )
-          : slot(
+          : presentation.slot(
               'text-' + message.contentKey,
               'source',
               {
@@ -403,7 +417,7 @@ export function components(target: Target): {
         terminal: { grow: 1 },
       },
     );
-    const controls: Node[] = props.source
+    const controls: N[] = props.source
       ? [
           ui.button('source-back', text.sourceBack),
           ...(!props.source.atStart
@@ -436,8 +450,7 @@ export function components(target: Target): {
           ui.box(
             'retained-conversation',
             [
-              slot(
-                'reading',
+              presentation.reading(
                 'reading',
                 { content, command: state.command },
                 { observed: 'reading-observed', input: 'reading-input' },
@@ -483,7 +496,7 @@ export function components(target: Target): {
                         13,
                         props.theme.muted,
                       ),
-                      slot(
+                      presentation.slot(
                         'source-text-' + source.key,
                         'source',
                         {
@@ -518,9 +531,8 @@ export function components(target: Target): {
                   return ui.box(
                     'source-pane',
                     [
-                      slot(
+                      presentation.reading(
                         'source-reading',
-                        'reading',
                         {
                           content: sourceContent,
                           command: {

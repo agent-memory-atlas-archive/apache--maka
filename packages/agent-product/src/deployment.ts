@@ -38,7 +38,7 @@ import type {
 import { deploymentContract, type ConnectionsProps } from './contracts.js';
 import { copy, type Copy } from './locale.js';
 import { sameValue } from './value.js';
-import { compactLabel, fill, output, paint, pixels, type Target } from './view.js';
+import { compactLabel, fill, output, pixels, type Presentation, type Node } from './view.js';
 import {
   acceptDocumentChunk,
   canSaveDocument,
@@ -177,14 +177,15 @@ function settle(state: State, reply: OperationReply, actions: Action[]) {
               : 'deploymentRejected';
   }
 }
-function frame(
-  target: Target,
+function frame<N extends Node>(
+  presentation: Presentation<N>,
   state: State,
   props: ConnectionsProps,
   actions: Action[] = [],
   events: Emission[] = [],
 ) {
-  const ui = paint(target, props.theme),
+  const target = presentation.target;
+  const ui = presentation.paint(props.theme),
     text = copy(props.locale);
   const loading = state.document?.phase === 'loading';
   const busy = !!state.pending || !!state.current || loading;
@@ -375,9 +376,9 @@ function frame(
   out.frame.view = ui.box(
     'deployment-pages',
     [
-      out.frame.view as Record<string, unknown>,
+      out.frame.view,
       importView(
-        target,
+        presentation,
         props,
         state.importer,
         busy,
@@ -389,7 +390,7 @@ function frame(
       ...(state.document
         ? [
             documentView(
-              target,
+              presentation,
               props,
               state.document,
               state.documentOpen,
@@ -410,14 +411,16 @@ function frame(
     },
   );
   if (target === 'desktop')
-    out.frame.view = ui.box('deployment-surface', [out.frame.view as Record<string, unknown>], {
+    out.frame.view = ui.box('deployment-surface', [out.frame.view], {
       gap: 0,
       style: { width: fill, height: fill, align: 'center' },
     });
   out.actions = actions;
   return out;
 }
-export function deployment(target: Target): Component<State, ConnectionsProps> {
+export function deployment<N extends Node>(
+  presentation: Presentation<N>,
+): Component<State, ConnectionsProps, N> {
   return {
     mount(props) {
       const state: State = {
@@ -441,11 +444,11 @@ export function deployment(target: Target): Component<State, ConnectionsProps> {
       };
       const actions: Action[] = [];
       page(state, actions, { kind: 'start' });
-      return frame(target, state, props, actions);
+      return frame(presentation, state, props, actions);
     },
     update(state, props) {
       state.revision++;
-      return frame(target, state, props);
+      return frame(presentation, state, props);
     },
     event(state, input, props) {
       state.revision++;
@@ -480,7 +483,7 @@ export function deployment(target: Target): Component<State, ConnectionsProps> {
         if (next !== null) readDocument(state, actions, next);
       } else if (input.kind === 'action') {
         const pending = state.pending;
-        if (!pending || pending.key !== input.key) return frame(target, state, props);
+        if (!pending || pending.key !== input.key) return frame(presentation, state, props);
         state.pending = null;
         const outcome = input.event as ActionOutcome,
           r = pending.request;
@@ -566,7 +569,7 @@ export function deployment(target: Target): Component<State, ConnectionsProps> {
           input.key !== 'deployment-document-back' &&
           input.key !== 'deployment-back'
         )
-          return frame(target, state, props);
+          return frame(presentation, state, props);
         let key = input.key;
         if (key === 'deployment-import-check') key = 'deployment-check';
         if (key === 'deployment-import-refresh') key = 'deployment-refresh';
@@ -802,7 +805,7 @@ export function deployment(target: Target): Component<State, ConnectionsProps> {
           }
         }
       }
-      return frame(target, state, props, actions, events);
+      return frame(presentation, state, props, actions, events);
     },
   };
 }

@@ -25,7 +25,7 @@ import type {
 import type { ConnectionsProps } from './contracts.js';
 import { copy } from './locale.js';
 import { sameValue } from './value.js';
-import { fill, paint, pixels, slot, type Target } from './view.js';
+import { fill, pixels, type Presentation, type Node } from './view.js';
 
 export interface InstallIntent {
   source: DeploymentRef;
@@ -45,8 +45,8 @@ export function canInstall(importer: PackageImport, busy: boolean, conflict: boo
     !busy && !conflict && importer.observation?.phase === 'ready' && !!importer.observation.file
   );
 }
-export function importView(
-  target: Target,
+export function importView<N extends Node>(
+  presentation: Presentation<N>,
   props: ConnectionsProps,
   importer: PackageImport,
   busy: boolean,
@@ -55,7 +55,8 @@ export function importView(
   recoverable: boolean,
   pending: boolean,
 ) {
-  const ui = paint(target, props.theme),
+  const target = presentation.target;
+  const ui = presentation.paint(props.theme),
     text = copy(props.locale),
     observed = importer.observation;
   const confirmation = importer.confirmation;
@@ -94,7 +95,7 @@ export function importView(
           ui.box(
             'deployment-import-file-owner',
             [
-              slot(
+              presentation.slot(
                 'deployment-import-file',
                 'file',
                 {

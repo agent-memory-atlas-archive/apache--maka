@@ -20,7 +20,7 @@
 //! Bounded desktop drawing and mechanical input. Business geometry lives in
 //! the plugin's committed scene; native owners retain only focus and gestures.
 
-use super::Style;
+use super::{Style, StylePresentation};
 use crate::{Input, LiveInput};
 use gpui_kit::{
     App, AppContext, Bounds, DispatchPhase, FocusHandle, Hitbox, HitboxBehavior,
@@ -28,33 +28,20 @@ use gpui_kit::{
     ParentElement, Pixels, Point as NativePoint, SharedString, StatefulInteractiveElement, Styled,
     Subscription, Window, WindowId, canvas, div, fill, outline, point, px, rgba, size,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet},
     rc::Rc,
-    time::Instant,
 };
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Point {
-    pub x: f64,
-    pub y: f64,
+pub use maka_ui::scene::desktop::canvas::{
+    CanvasInput, Command, Contents, EventKind, Modifiers, Point, Rect, Region,
+};
+trait PointPresentation: Sized {
+    fn native(self) -> NativePoint<Pixels>;
+    fn from_native(p: NativePoint<Pixels>) -> Option<Self>;
 }
-impl Point {
-    fn validate(self) -> Result<(), String> {
-        if [self.x, self.y]
-            .into_iter()
-            .all(|v| v.is_finite() && (-16000.0..=16000.0).contains(&v))
-        {
-            Ok(())
-        } else {
-            Err("invalid canvas position".into())
-        }
-    }
+impl PointPresentation for Point {
     fn native(self) -> NativePoint<Pixels> {
         point(px(self.x as f32), px(self.y as f32))
     }
@@ -69,25 +56,10 @@ impl Point {
         .then_some(p)
     }
 }
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Rect {
-    pub origin: Point,
-    pub width: f64,
-    pub height: f64,
+trait RectPresentation {
+    fn native(self, origin: NativePoint<Pixels>) -> Bounds<Pixels>;
 }
-impl Rect {
-    fn validate(self) -> Result<(), String> {
-        self.origin.validate()?;
-        if [self.width, self.height]
-            .into_iter()
-            .all(|v| v.is_finite() && (0.0..=16000.0).contains(&v))
-        {
-            Ok(())
-        } else {
-            Err("invalid canvas extent".into())
-        }
-    }
+impl RectPresentation for Rect {
     fn native(self, origin: NativePoint<Pixels>) -> Bounds<Pixels> {
         Bounds::new(
             origin + self.origin.native(),
@@ -95,228 +67,14 @@ impl Rect {
         )
     }
 }
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum Command {
-    Rect {
-        rect: Rect,
-        color: u32,
-        #[serde(default)]
-        radius: f64,
-    },
-    Line {
-        from: Point,
-        to: Point,
-        color: u32,
-        width: f64,
-    },
-    Text {
-        position: Point,
-        text: String,
-        color: u32,
-        size: f64,
-        #[serde(default)]
-        font: Option<String>,
-    },
-}
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum EventKind {
-    PointerDown,
-    DragMove,
-    Drop,
-    KeyDown,
-    Activate,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Region {
-    pub key: String,
-    pub rect: Rect,
-    /// Corner radius of mechanical outlines; the hit area remains `rect`.
-    #[serde(default)]
-    pub radius: f64,
-    pub label: String,
-    #[serde(default)]
-    pub draggable: bool,
-    #[serde(default)]
-    pub disabled: bool,
-    #[serde(default)]
-    pub tab_index: i16,
-    #[serde(default)]
-    pub listen: BTreeSet<EventKind>,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Contents {
-    pub commands: Vec<Command>,
-    pub regions: Vec<Region>,
-    pub focus_color: Option<u32>,
-    pub drag_color: Option<u32>,
-}
-impl Contents {
-    pub(super) fn preflight(
-        source: &Value,
-        work: &mut usize,
-        deadline: Instant,
-    ) -> Result<(), String> {
-        let mut text_bytes = 0;
-        for (field, limit) in [("commands", 1024), ("regions", 256)] {
-            let Some(items) = source.get(field).and_then(Value::as_array) else {
-                continue;
-            };
-            *work += items.len();
-            if items.len() > limit || *work > 4096 {
-                return Err("canvas work limit".into());
-            }
-            for item in items {
-                if Instant::now() >= deadline {
-                    return Err("scene compilation deadline".into());
-                }
-                for (name, max) in [("text", 4096), ("label", 4096), ("key", 128), ("font", 128)] {
-                    if item
-                        .get(name)
-                        .and_then(Value::as_str)
-                        .is_some_and(|s| s.len() > max)
-                    {
-                        return Err("canvas string limit".into());
-                    }
-                }
-                text_bytes += item.get("text").and_then(Value::as_str).map_or(0, str::len);
-                if text_bytes > 64 * 1024 {
-                    return Err("canvas text limit".into());
-                }
-                if item
-                    .get("listen")
-                    .and_then(Value::as_array)
-                    .is_some_and(|s| s.len() > 5)
-                {
-                    return Err("canvas subscription limit".into());
-                }
-            }
-        }
-        Ok(())
+fn modifiers(m: gpui_kit::Modifiers) -> Modifiers {
+    Modifiers {
+        control: m.control,
+        alt: m.alt,
+        shift: m.shift,
+        platform: m.platform,
+        function: m.function,
     }
-    pub(super) fn validate(&self, deadline: Instant) -> Result<(), String> {
-        if self.commands.len() > 1024 || self.regions.len() > 256 {
-            return Err("canvas work limit".into());
-        }
-        let mut text_bytes = 0;
-        for command in &self.commands {
-            if Instant::now() >= deadline {
-                return Err("scene compilation deadline".into());
-            }
-            match command {
-                Command::Rect { rect, radius, .. } => {
-                    rect.validate()?;
-                    if !radius.is_finite() || !(0.0..=8000.0).contains(radius) {
-                        return Err("invalid canvas radius".into());
-                    }
-                }
-                Command::Line {
-                    from, to, width, ..
-                } => {
-                    from.validate()?;
-                    to.validate()?;
-                    if !width.is_finite() || !(0.0..=128.0).contains(width) {
-                        return Err("invalid canvas stroke".into());
-                    }
-                }
-                Command::Text {
-                    position,
-                    text,
-                    size,
-                    font,
-                    ..
-                } => {
-                    position.validate()?;
-                    text_bytes += text.len();
-                    if text.len() > 4096
-                        || text_bytes > 64 * 1024
-                        || text.contains(['\n', '\r'])
-                        || !size.is_finite()
-                        || !(1.0..=256.0).contains(size)
-                        || font.as_ref().is_some_and(|s| s.is_empty() || s.len() > 128)
-                    {
-                        return Err("invalid canvas text".into());
-                    }
-                }
-            }
-        }
-        let mut keys = BTreeSet::new();
-        for region in &self.regions {
-            if Instant::now() >= deadline {
-                return Err("scene compilation deadline".into());
-            }
-            region.rect.validate()?;
-            if !region.radius.is_finite() || !(0.0..=8000.0).contains(&region.radius) {
-                return Err("invalid canvas region radius".into());
-            }
-            if region.key.is_empty()
-                || region.key.len() > 128
-                || !keys.insert(&region.key)
-                || region.label.len() > 4096
-                || region.tab_index < -1
-            {
-                return Err("invalid canvas region".into());
-            }
-        }
-        Ok(())
-    }
-}
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Modifiers {
-    pub control: bool,
-    pub alt: bool,
-    pub shift: bool,
-    pub platform: bool,
-    pub function: bool,
-}
-impl From<gpui_kit::Modifiers> for Modifiers {
-    fn from(m: gpui_kit::Modifiers) -> Self {
-        Self {
-            control: m.control,
-            alt: m.alt,
-            shift: m.shift,
-            platform: m.platform,
-            function: m.function,
-        }
-    }
-}
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum CanvasInput {
-    PointerDown {
-        region: String,
-        position: Point,
-        gesture: Option<u32>,
-    },
-    DragMove {
-        region: String,
-        gesture: u32,
-        start: Point,
-        position: Point,
-        delta: Point,
-    },
-    Drop {
-        region: String,
-        gesture: u32,
-        start: Point,
-        position: Point,
-        delta: Point,
-        target: Option<String>,
-    },
-    KeyDown {
-        region: String,
-        key: String,
-        modifiers: Modifiers,
-    },
-    Activate {
-        region: String,
-    },
 }
 
 struct RegionOwner {
@@ -668,7 +426,7 @@ impl State {
                 CanvasInput::KeyDown {
                     region: region.key.clone(),
                     key: event.keystroke.key.clone(),
-                    modifiers: event.keystroke.modifiers.into(),
+                    modifiers: modifiers(event.keystroke.modifiers),
                 },
                 window,
                 cx,

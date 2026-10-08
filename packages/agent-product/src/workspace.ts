@@ -52,7 +52,7 @@ import type {
 import type { PaletteCommand, Message, Theme } from './contracts.js';
 import { sameValue } from './value.js';
 import { copy, type Copy } from './locale.js';
-import { fill, output, paint, pixels, slot, type Target } from './view.js';
+import { fill, output, pixels, type Presentation, type Node } from './view.js';
 
 type Notice = keyof Copy | null;
 type Request =
@@ -966,18 +966,19 @@ function delivery(state: State, page: AgentDeliveryPage, actions: Action[]) {
   watch.last = Math.max(watch.last, page.nextAfter);
   if (canonicalChanged) follow(state, actions);
 }
-function frame(
-  target: Target,
+function frame<N extends Node>(
+  presentation: Presentation<N>,
   locale: string,
   state: State,
   values: ComponentValues,
   actions: Action[] = [],
 ) {
+  const target = presentation.target;
   const theme = values.appearance?.[0] as Theme;
   const text = copy(locale),
-    ui = paint(target, theme),
+    ui = presentation.paint(theme),
     busy = mutationPending(state);
-  const navigation = slot(
+  const navigation = presentation.slot(
     'navigation',
     'navigation',
     {
@@ -992,7 +993,7 @@ function frame(
     },
     { create: 'create', select: 'select', more: 'more', previous: 'previous', refresh: 'refresh' },
   );
-  const timeline = slot(
+  const timeline = presentation.slot(
     'timeline',
     'timeline',
     {
@@ -1046,7 +1047,7 @@ function frame(
       tailReady: 'tail-ready',
     },
   );
-  const imageViewer = slot(
+  const imageViewer = presentation.slot(
     'image-viewer',
     'imageViewer',
     {
@@ -1061,7 +1062,7 @@ function frame(
     },
     { closed: 'image-closed' },
   );
-  const composer = slot(
+  const composer = presentation.slot(
     'composer',
     'composer',
     {
@@ -1086,8 +1087,13 @@ function frame(
         ? text.waiting
         : text.working
       : '';
-  const title = ui.text('title', state.selected?.title ?? 'maka', 17, theme.text, 550);
-  const models = slot(
+  const title = ui.text('title', state.selected?.title ?? 'maka', 17, theme.text, 550, {
+    width: pixels(0),
+    grow: 1,
+    minWidth: 0,
+    truncate: true,
+  });
+  const models = presentation.slot(
     'models',
     'models',
     {
@@ -1099,14 +1105,7 @@ function frame(
     },
     { selected: 'model' },
   );
-  if (target === 'desktop')
-    title.style = {
-      ...(title.style as object),
-      width: pixels(0),
-      grow: 1,
-      minWidth: 0,
-      truncate: true,
-    };
+
   const main = ui.box(
     'main',
     [
@@ -1269,11 +1268,18 @@ function frame(
     [
       conversation,
       ...(state.deploymentOpen
-        ? [slot('deployment', 'deployment', { theme, locale }, { closed: 'deployment-closed' })]
+        ? [
+            presentation.slot(
+              'deployment',
+              'deployment',
+              { theme, locale },
+              { closed: 'deployment-closed' },
+            ),
+          ]
         : []),
       ...(state.settingsOpen
         ? [
-            slot(
+            presentation.slot(
               'connections',
               'connections',
               { theme, locale },
@@ -1335,7 +1341,7 @@ function frame(
       ui.box(
         'dialog-content',
         [
-          slot(
+          presentation.slot(
             'session-details',
             'details',
             {
@@ -1347,7 +1353,7 @@ function frame(
             },
             { changed: 'changed', closed: 'closed' },
           ),
-          slot(
+          presentation.slot(
             'directory-picker',
             'directories',
             {
@@ -1358,7 +1364,7 @@ function frame(
             },
             { selected: 'selected', closed: 'closed' },
           ),
-          slot(
+          presentation.slot(
             'command-palette',
             'palette',
             {
@@ -1397,7 +1403,11 @@ function frame(
     : [];
   return out;
 }
-export function workspace(target: Target, locale: string): Component<State, Record<string, never>> {
+export function workspace<N extends Node>(
+  presentation: Presentation<N>,
+  locale: string,
+): Component<State, Record<string, never>, N> {
+  const target = presentation.target;
   return {
     mount(_props, values) {
       const state: State = {
@@ -1440,10 +1450,10 @@ export function workspace(target: Target, locale: string): Component<State, Reco
       const actions: Action[] = [];
       catalog(state, actions);
       intent(state, actions, { kind: 'restorePage' }, 'history', 'page', { after: 0, limit: 1 });
-      return frame(target, locale, state, values, actions);
+      return frame(presentation, locale, state, values, actions);
     },
     update(state, _props, values) {
-      return frame(target, locale, { ...state, revision: state.revision + 1 }, values);
+      return frame(presentation, locale, { ...state, revision: state.revision + 1 }, values);
     },
     event(previous, input, _props, values) {
       // Callbacks receive detached committed state. Mutations here belong only to
@@ -1485,7 +1495,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
             if (state.selected?.id === (input.event as { sessionId: string }).sessionId)
               observe(state, actions);
           }
-          return frame(target, locale, state, values, actions);
+          return frame(presentation, locale, state, values, actions);
         }
         if (input.child === 'directory-picker') {
           if (state.dialog === 'directories' && conversationRoute(state)) {
@@ -1503,7 +1513,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
               state.dialog = null;
             }
           }
-          return frame(target, locale, state, values, actions);
+          return frame(presentation, locale, state, values, actions);
         }
         if (input.child === 'command-palette') {
           if (state.dialog === 'palette' && conversationRoute(state)) {
@@ -1527,7 +1537,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
               state.dialog = null;
             }
           }
-          return frame(target, locale, state, values, actions);
+          return frame(presentation, locale, state, values, actions);
         }
 
         if (input.child === 'timeline' && input.name === 'tailReady') {
@@ -1781,7 +1791,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
           if (command) rootCommand(state, actions, locale, command.kind);
         }
       }
-      return frame(target, locale, state, values, actions);
+      return frame(presentation, locale, state, values, actions);
     },
   };
 }

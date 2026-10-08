@@ -17,12 +17,27 @@
  * under the License.
  */
 
+import { ui } from '../../src/index.js';
 import { createApp } from './counter.js';
 export { activate } from './counter.js';
-export const app = createApp({
-  kind: 'window',
-  binding: 'surface',
-  title: 'SDK counter',
-  width: 640,
-  height: 400,
-});
+export const app = createApp(
+  {
+    kind: 'window',
+    binding: 'surface',
+    title: 'SDK counter',
+    width: 640,
+    height: 400,
+  },
+  (state) =>
+    ui.desktop.stack({
+      key: 'root',
+      direction: 'column',
+      padding: 16,
+      gap: 8,
+      background: 1513239,
+      children: [
+        ui.desktop.text({ key: 'count', text: String(state.count), color: 16777215 }),
+        ui.desktop.button({ key: 'inc', label: 'Increment' }),
+      ],
+    }),
+);
