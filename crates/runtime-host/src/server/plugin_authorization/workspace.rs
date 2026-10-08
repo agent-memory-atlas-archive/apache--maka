@@ -72,3 +72,45 @@ fn child(parent: &Dir, name: &str) -> std::io::Result<Dir> {
     }
     parent.open_dir_nofollow(name)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use maka_plugins::composition::Scope;
+
+    #[tokio::test]
+    async fn allocated_plugin_workspace_does_not_modify_enclosing_git_repository() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let output = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .arg(root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let exclude = root.join(".git/info/exclude");
+        let original = std::fs::read(&exclude).unwrap();
+        let namespace = Namespace::new("fixture.workspace", Scope::Profile).unwrap();
+        let (workspace, identity) = prepare(root, &namespace).await.unwrap();
+        assert!(
+            Path::new(&workspace.host_cwd)
+                .canonicalize()
+                .unwrap()
+                .starts_with(root.join("plugin-workspaces").canonicalize().unwrap())
+        );
+        assert_eq!(
+            maka_fs_tools::workspace::read_identity(Path::new(&workspace.host_cwd)).unwrap(),
+            identity
+        );
+        assert_eq!(std::fs::read(&exclude).unwrap(), original);
+        assert!(!root.join(maka_fs_tools::workspace::MARKER_FILE).exists());
+        let (same, same_identity) = prepare(root, &namespace).await.unwrap();
+        assert_eq!(same, workspace);
+        assert_eq!(same_identity, identity);
+        assert_eq!(std::fs::read(&exclude).unwrap(), original);
+    }
+}

@@ -66,7 +66,34 @@ pub(super) async fn verify(
                 else {
                     panic!()
                 };
-                assert!(artifact.is_none());
+                if attachment["kind"] != "image" {
+                    assert!(artifact.is_none());
+                    continue;
+                }
+                artifact
+                    .unwrap()
+                    .validate_attachment(&serde_json::from_value(attachment.clone()).unwrap())
+                    .unwrap();
+                let ArtifactQueryResult::Chunk {
+                    chunk_base64,
+                    next_offset,
+                    ..
+                } = client
+                    .query_artifact(ArtifactQueryInput::ReadChunk {
+                        session_id: item.turn["sessionId"].as_str().unwrap().into(),
+                        artifact_id: attachment["ref"]["relativePath"].as_str().unwrap().into(),
+                        offset: 0,
+                    })
+                    .await
+                    .unwrap()
+                else {
+                    panic!()
+                };
+                assert_eq!(
+                    STANDARD.decode(chunk_base64).unwrap(),
+                    STANDARD.decode(PNG).unwrap()
+                );
+                assert_eq!(next_offset, None);
             }
         }
         return;
@@ -209,13 +236,17 @@ pub(super) async fn verify(
         );
         assert_eq!(results[1]["content"]["ref"]["sessionId"], session);
         for attachment in attachments.as_array().unwrap() {
-            client
+            let deletion = client
                 .delete_artifact(ArtifactDeleteInput {
                     session_id: session.into(),
                     artifact_id: attachment["ref"]["relativePath"].as_str().unwrap().into(),
                 })
-                .await
-                .unwrap();
+                .await;
+            if attachment["kind"] == "image" {
+                support::rejected(deletion, Code::OperationConflict);
+            } else {
+                deletion.unwrap();
+            }
         }
         assert_eq!(
             client

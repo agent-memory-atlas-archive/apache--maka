@@ -58,32 +58,38 @@ pub fn open_directory(path: &Path, expected: &WorkspaceIdentity) -> io::Result<D
     Ok(workspace.dir)
 }
 
-/// Prepare an execution workspace. A concurrent first publisher wins; an existing
-/// malformed or changing marker is an error, not permission to mint another identity.
+/// Prepare an ambient execution workspace, including repository-local Git exclusion.
+/// A concurrent first publisher wins; malformed or changing markers are never repaired.
 pub async fn ensure_identity(path: &Path) -> io::Result<WorkspaceIdentity> {
     let path = path.to_owned();
-    ensure_captured(move || Workspace::capture(&path)).await
+    ensure_captured(move || Workspace::capture(&path), true).await
 }
 
 /// Initialize the already-opened directory, rejecting replacement of its name.
-/// Callers allocating private workspaces must not recapture a replaced ambient path.
+/// Only the original directory marker may change. This does not discover Git or
+/// modify repository metadata outside the captured directory. Callers must not
+/// recapture a replaced ambient path.
 pub async fn ensure_directory_identity(
     path: PathBuf,
     directory: Dir,
 ) -> io::Result<WorkspaceIdentity> {
-    ensure_captured(move || {
-        let workspace = Workspace {
-            path,
-            dir: directory,
-        };
-        workspace.validate_directory()?;
-        Ok(workspace)
-    })
+    ensure_captured(
+        move || {
+            let workspace = Workspace {
+                path,
+                dir: directory,
+            };
+            workspace.validate_directory()?;
+            Ok(workspace)
+        },
+        false,
+    )
     .await
 }
 
 async fn ensure_captured(
     capture: impl FnOnce() -> io::Result<Workspace> + Send + 'static,
+    exclude_git_marker: bool,
 ) -> io::Result<WorkspaceIdentity> {
     let (workspace, existing, in_git) = tokio::task::spawn_blocking(move || {
         let workspace = capture()?;
@@ -92,7 +98,7 @@ async fn ensure_captured(
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => return Err(error),
         };
-        let in_git = git::has_entry(&workspace.path)?;
+        let in_git = exclude_git_marker && git::has_entry(&workspace.path)?;
         Ok::<_, io::Error>((workspace, existing, in_git))
     })
     .await

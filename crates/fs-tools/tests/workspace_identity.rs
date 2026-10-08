@@ -307,3 +307,118 @@ async fn linked_worktree_marker_uses_git_owned_exclusion_without_overwriting_it(
         );
     }
 }
+
+#[tokio::test]
+async fn opened_directory_identity_never_updates_ancestor_git_metadata() {
+    use maka_fs_tools::{directory, workspace::ensure_directory_identity};
+    let temp = tempfile::tempdir().unwrap();
+    let repository = temp.path().join("repository");
+    std::fs::create_dir(&repository).unwrap();
+    git(&repository, &["init", "-q"]);
+    let selected = repository.join("published-subdirectory");
+    std::fs::create_dir(&selected).unwrap();
+    let exclude = repository.join(".git/info/exclude");
+    let original = std::fs::read(&exclude).unwrap();
+    let (path, observed) = directory::capture(&selected).unwrap();
+    let opened = directory::open(&path, &observed).unwrap();
+    let identity = ensure_directory_identity(path, opened).await.unwrap();
+    assert_eq!(read_identity(&selected).unwrap(), identity);
+    assert_eq!(std::fs::read(&exclude).unwrap(), original);
+    assert!(!repository.join(MARKER_FILE).exists());
+    let bytes = std::fs::read(selected.join(MARKER_FILE)).unwrap();
+    let (path, observed) = directory::capture(&selected).unwrap();
+    let opened = directory::open(&path, &observed).unwrap();
+    assert_eq!(
+        ensure_directory_identity(path, opened).await.unwrap(),
+        identity
+    );
+    assert_eq!(std::fs::read(selected.join(MARKER_FILE)).unwrap(), bytes);
+    assert_eq!(std::fs::read(&exclude).unwrap(), original);
+}
+
+#[tokio::test]
+async fn opened_directory_identity_does_not_depend_on_ambient_git_metadata() {
+    use maka_fs_tools::{directory, workspace::ensure_directory_identity};
+    let temp = tempfile::tempdir().unwrap();
+    let selected = temp.path().join("published");
+    std::fs::create_dir(&selected).unwrap();
+    std::fs::write(
+        selected.join(".git"),
+        "gitdir: missing-outside-repository\n",
+    )
+    .unwrap();
+    let (path, observed) = directory::capture(&selected).unwrap();
+    let opened = directory::open(&path, &observed).unwrap();
+    let identity = ensure_directory_identity(path, opened).await.unwrap();
+    assert_eq!(read_identity(&selected).unwrap(), identity);
+    assert_eq!(
+        std::fs::read_to_string(selected.join(".git")).unwrap(),
+        "gitdir: missing-outside-repository\n"
+    );
+    assert!(!temp.path().join("missing-outside-repository").exists());
+}
+
+#[tokio::test]
+async fn opened_directory_identity_rejects_replacement_without_marker_effects() {
+    use maka_fs_tools::{directory, workspace::ensure_directory_identity};
+    let temp = tempfile::tempdir().unwrap();
+    let selected = temp.path().join("published");
+    let retired = temp.path().join("retired");
+    std::fs::create_dir(&selected).unwrap();
+    let (path, observed) = directory::capture(&selected).unwrap();
+    let opened = directory::open(&path, &observed).unwrap();
+    std::fs::rename(&selected, &retired).unwrap();
+    std::fs::create_dir(&selected).unwrap();
+    git(&selected, &["init", "-q"]);
+    let exclude = selected.join(".git/info/exclude");
+    let original = std::fs::read(&exclude).unwrap();
+    assert!(ensure_directory_identity(path, opened).await.is_err());
+    assert!(!selected.join(MARKER_FILE).exists());
+    assert!(!retired.join(MARKER_FILE).exists());
+    assert_eq!(std::fs::read(&exclude).unwrap(), original);
+}
+
+#[tokio::test]
+async fn opened_directory_identity_never_updates_linked_worktree_common_metadata() {
+    use maka_fs_tools::{directory, workspace::ensure_directory_identity};
+    let temp = tempfile::tempdir().unwrap();
+    let repository = temp.path().join("repository");
+    let selected = temp.path().join("published-worktree");
+    std::fs::create_dir(&repository).unwrap();
+    git(&repository, &["init", "-q"]);
+    git(
+        &repository,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "fixture",
+        ],
+    );
+    git(
+        &repository,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            selected.to_str().unwrap(),
+            "HEAD",
+        ],
+    );
+    let exclude = repository.join(".git/info/exclude");
+    let original = std::fs::read(&exclude).unwrap();
+    let (path, observed) = directory::capture(&selected).unwrap();
+    let opened = directory::open(&path, &observed).unwrap();
+    let identity = ensure_directory_identity(path, opened).await.unwrap();
+    assert_eq!(read_identity(&selected).unwrap(), identity);
+    assert_eq!(std::fs::read(&exclude).unwrap(), original);
+    assert!(selected.join(".git").is_file());
+    assert!(!repository.join(MARKER_FILE).exists());
+}
