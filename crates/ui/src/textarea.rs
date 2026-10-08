@@ -71,29 +71,8 @@ pub struct TextareaProps {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextareaMenu {
-    pub appearance: TextareaMenuAppearance,
+    pub appearance: crate::appearance::MenuAppearance,
     pub labels: TextareaMenuLabels,
-}
-
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct TextareaMenuAppearance {
-    pub text: crate::appearance::TextAppearance,
-    pub background: crate::appearance::Color,
-    pub border: crate::appearance::Color,
-    pub active_background: crate::appearance::Color,
-    pub active_foreground: crate::appearance::Color,
-    pub disabled_foreground: crate::appearance::Color,
-    #[schemars(range(min = 0, max = 8))]
-    pub border_width: f32,
-    #[schemars(range(min = 0, max = 64))]
-    pub radius: f32,
-    pub padding: crate::appearance::Insets,
-    pub row_padding: crate::appearance::Insets,
-    #[schemars(range(min = 32, max = 1024))]
-    pub width: f32,
-    #[schemars(range(min = 0, max = 128))]
-    pub window_margin: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]

@@ -60,6 +60,7 @@ export type RuntimeProtocol =
   | ImageProps
   | ImageObservation
   | SourceTextProps
+  | SelectionMenuProps
   | ReadingProps
   | ReadingObservation
   | InputProps
@@ -1748,10 +1749,10 @@ export interface ScrollbarThumb {
  * a command interface: clipboard access still requires native activation.
  */
 export interface TextareaMenu {
-  appearance: TextareaMenuAppearance;
+  appearance: MenuAppearance;
   labels: TextareaMenuLabels;
 }
-export interface TextareaMenuAppearance {
+export interface MenuAppearance {
   text: TextAppearance;
   background: Color;
   border: Color;
@@ -1903,6 +1904,16 @@ export interface SourceTextProps {
   appearance: TextAppearance;
   selection: Color;
   disabled: boolean;
+}
+export interface SelectionMenuProps {
+  appearance: MenuAppearance;
+  labels: SelectionMenuLabels;
+  disabled: boolean;
+}
+export interface SelectionMenuLabels {
+  title: string;
+  copy: string;
+  selectAll: string;
 }
 export interface ReadingProps {
   /**

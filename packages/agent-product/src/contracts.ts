@@ -28,7 +28,7 @@ import {
   type InputAppearance,
   type ConnectionCredentialTarget,
   type SettingsConnectionDetail,
-  type TextareaMenuAppearance,
+  type MenuAppearance,
   type EditorCommand,
   type EditorObservation,
   type Role,
@@ -55,7 +55,7 @@ export interface Theme {
   selected: number;
   textarea: TextareaAppearance;
   input: InputAppearance;
-  menu: TextareaMenuAppearance;
+  menu: MenuAppearance;
   markdown: MarkdownAppearance;
 }
 export interface Message {
@@ -167,7 +167,7 @@ const themeSchema = object({
   selected: { type: 'integer', minimum: 0, maximum: 4294967295 },
   textarea: editor.props.properties.appearance,
   input: native.secretInput.interface.props.properties.appearance,
-  menu: { $ref: '#/$defs/TextareaMenuAppearance' },
+  menu: { $ref: '#/$defs/MenuAppearance' },
   markdown: { $ref: '#/$defs/MarkdownAppearance' },
 });
 const messageSchema = object({

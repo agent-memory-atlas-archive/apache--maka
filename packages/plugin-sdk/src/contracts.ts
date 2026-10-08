@@ -832,6 +832,217 @@ export const contracts = {
       captures: {},
     },
   },
+  selectionMenu: {
+    name: 'maka.ui.SelectionMenu',
+    version: 1,
+    transport: 'local',
+    interface: {
+      kind: 'component',
+      props: {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        title: 'SelectionMenuProps',
+        type: 'object',
+        properties: {
+          appearance: {
+            $ref: '#/$defs/MenuAppearance',
+          },
+          labels: {
+            $ref: '#/$defs/SelectionMenuLabels',
+          },
+          disabled: {
+            type: 'boolean',
+          },
+        },
+        additionalProperties: false,
+        required: ['appearance', 'labels', 'disabled'],
+        $defs: {
+          MenuAppearance: {
+            type: 'object',
+            properties: {
+              text: {
+                $ref: '#/$defs/TextAppearance',
+              },
+              background: {
+                $ref: '#/$defs/Color',
+              },
+              border: {
+                $ref: '#/$defs/Color',
+              },
+              activeBackground: {
+                $ref: '#/$defs/Color',
+              },
+              activeForeground: {
+                $ref: '#/$defs/Color',
+              },
+              disabledForeground: {
+                $ref: '#/$defs/Color',
+              },
+              borderWidth: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 8,
+              },
+              radius: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 64,
+              },
+              padding: {
+                $ref: '#/$defs/Insets',
+              },
+              rowPadding: {
+                $ref: '#/$defs/Insets',
+              },
+              width: {
+                type: 'number',
+                format: 'float',
+                minimum: 32,
+                maximum: 1024,
+              },
+              windowMargin: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'text',
+              'background',
+              'border',
+              'activeBackground',
+              'activeForeground',
+              'disabledForeground',
+              'borderWidth',
+              'radius',
+              'padding',
+              'rowPadding',
+              'width',
+              'windowMargin',
+            ],
+          },
+          TextAppearance: {
+            type: 'object',
+            properties: {
+              font: {
+                $ref: '#/$defs/FontAppearance',
+              },
+              foreground: {
+                $ref: '#/$defs/Color',
+              },
+            },
+            additionalProperties: false,
+            required: ['font', 'foreground'],
+          },
+          FontAppearance: {
+            type: 'object',
+            properties: {
+              family: {
+                $ref: '#/$defs/FontFamily',
+              },
+              fallbacks: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/FontFamily',
+                },
+                maxItems: 8,
+              },
+              size: {
+                type: 'number',
+                format: 'float',
+                minimum: 6,
+                maximum: 96,
+              },
+              lineHeight: {
+                description: 'Line height relative to this font size.',
+                type: 'number',
+                format: 'float',
+                minimum: 1,
+                maximum: 3,
+              },
+              weight: {
+                type: 'integer',
+                format: 'uint16',
+                minimum: 1,
+                maximum: 1000,
+              },
+            },
+            additionalProperties: false,
+            required: ['family', 'fallbacks', 'size', 'lineHeight', 'weight'],
+          },
+          FontFamily: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+          },
+          Color: {
+            description: 'Packed RGBA, including explicit alpha zero.',
+            type: 'integer',
+            format: 'uint32',
+            minimum: 0,
+          },
+          Insets: {
+            type: 'object',
+            properties: {
+              top: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+              right: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+              bottom: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+              left: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['top', 'right', 'bottom', 'left'],
+          },
+          SelectionMenuLabels: {
+            type: 'object',
+            properties: {
+              title: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              copy: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              selectAll: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+            },
+            additionalProperties: false,
+            required: ['title', 'copy', 'selectAll'],
+          },
+        },
+      },
+      events: {},
+      captures: {},
+    },
+  },
   readingArea: {
     name: 'maka.ui.ReadingArea',
     version: 1,
@@ -1537,7 +1748,7 @@ export const contracts = {
             type: 'object',
             properties: {
               appearance: {
-                $ref: '#/$defs/TextareaMenuAppearance',
+                $ref: '#/$defs/MenuAppearance',
               },
               labels: {
                 $ref: '#/$defs/TextareaMenuLabels',
@@ -1546,7 +1757,7 @@ export const contracts = {
             additionalProperties: false,
             required: ['appearance', 'labels'],
           },
-          TextareaMenuAppearance: {
+          MenuAppearance: {
             type: 'object',
             properties: {
               text: {

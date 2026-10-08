@@ -29,6 +29,7 @@ pub mod input;
 mod markdown;
 mod reading;
 pub mod scene;
+mod selection_menu;
 mod source;
 pub mod textarea;
 
@@ -272,6 +273,7 @@ pub fn registry() -> NativeRegistry<dyn Widget> {
     image::register(&mut registry);
     reading::register(&mut registry);
     source::register(&mut registry);
+    selection_menu::register(&mut registry);
     input::register(&mut registry);
     file::register(&mut registry);
     registry

@@ -145,7 +145,7 @@ impl IntoElement for SelectableText {
 
 impl Element for SelectableText {
     type RequestLayoutState = TextSelectionHandle;
-    type PrepaintState = TextSelectionRegistration;
+    type PrepaintState = (TextSelectionRegistration, crate::TouchHandleLayout);
 
     fn id(&self) -> Option<ElementId> {
         Some(self.id.clone())
@@ -203,7 +203,7 @@ impl Element for SelectableText {
         if let Some(focus) = &self.focus {
             registration = registration.with_native_focus(focus.clone(), window);
         }
-        registration
+        (registration, handle.prepaint_touch_handles(window, cx))
     }
 
     fn paint(
@@ -216,14 +216,14 @@ impl Element for SelectableText {
         window: &mut Window,
         cx: &mut App,
     ) {
-        handle.register(registration.clone(), window, cx);
+        let (registration, touch_handles) = registration;
         let layout = self.styled_text.layout().clone();
         let selected_text_before = handle.selected_text_in_scope(window, cx);
-        let projection = handle.update_runs(
-            &[
-                TextSelectionRun::new(self.text.clone(), layout.clone(), bounds)
-                    .with_document_order(self.document_order),
-            ],
+        let projection = handle.register_plain_text(
+            registration.clone(),
+            TextSelectionRun::new(self.text.clone(), layout.clone(), bounds)
+                .with_document_order(self.document_order),
+            window,
             cx,
         );
         if selected_text_before != handle.selected_text_in_scope(window, cx) {
@@ -244,6 +244,7 @@ impl Element for SelectableText {
             window,
             cx,
         );
+        handle.paint_touch_handles(touch_handles, color, window, cx);
     }
 }
 

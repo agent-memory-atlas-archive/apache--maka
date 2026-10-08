@@ -150,3 +150,24 @@ pub struct ScrollbarThumb {
     #[schemars(range(min = 1, max = 4096))]
     pub min_length: f32,
 }
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MenuAppearance {
+    pub text: TextAppearance,
+    pub background: Color,
+    pub border: Color,
+    pub active_background: Color,
+    pub active_foreground: Color,
+    pub disabled_foreground: Color,
+    #[schemars(range(min = 0, max = 8))]
+    pub border_width: f32,
+    #[schemars(range(min = 0, max = 64))]
+    pub radius: f32,
+    pub padding: Insets,
+    pub row_padding: Insets,
+    #[schemars(range(min = 32, max = 1024))]
+    pub width: f32,
+    #[schemars(range(min = 0, max = 128))]
+    pub window_margin: f32,
+}

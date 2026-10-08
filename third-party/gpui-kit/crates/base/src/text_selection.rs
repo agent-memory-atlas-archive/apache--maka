@@ -705,7 +705,7 @@ fn resolve_copy_items(mut items: Vec<CopyItem>, cx: &mut App) -> String {
                 .map(|callback| callback(cx))
                 .unwrap_or(item.fallback)
         })
-        .filter(|text| !text.trim().is_empty())
+        .filter(|text| !text.is_empty())
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -749,6 +749,37 @@ impl TextSelectionGroup {
                 .read(cx)
                 .has_selection_in_scope(scope, cx),
         )
+    }
+    /// Whether this exact original owner is the physical group in this window.
+    pub fn is_current(&self, window: &Window, cx: &App) -> bool {
+        self.key.0 == window.window_handle().window_id()
+            && window.input_group_is_admitted(self.key.1)
+            && WindowSelectionState::existing(window, cx)
+                .is_some_and(|owner| owner.entity_id() == self.owner.entity_id())
+    }
+    /// Observe original touch presentation without retaining its selection owner.
+    pub fn observe_touch_selection(
+        &self,
+        cx: &mut App,
+        callback: impl Fn(&mut App) + 'static,
+    ) -> Option<Subscription> {
+        let owner = self.owner.upgrade()?;
+        Some(cx.observe(&owner, move |_, cx| callback(cx)))
+    }
+    pub fn touch_selection(&self, cx: &App) -> Option<TouchSelectionSnapshot> {
+        self.owner.upgrade()?.read(cx).touch_selection()
+    }
+    /// Read the exact original group's selected bytes. This grants no input.
+    pub fn selected_text(&self, window: &Window, cx: &mut App) -> Option<String> {
+        let owner = self.in_window(window)?;
+        let items = owner.query(cx, |state, cx| state.copy_items(cx));
+        Some(resolve_copy_items(items, cx))
+    }
+    /// Close only this original native menu, without resolving another group.
+    pub fn close_edit_menu(&self, window: &Window, cx: &mut App) {
+        if let Some(owner) = self.in_window(window) {
+            owner.update(cx, |state, cx| state.close_edit_menu(cx));
+        }
     }
     fn in_window(&self, window: &Window) -> Option<Entity<WindowSelectionState>> {
         (self.key.0 == window.window_handle().window_id())
@@ -1157,6 +1188,60 @@ impl TextSelectionHandle {
         schedule_selection_finish_frame(&state, window, cx);
     }
 
+    // Plain text supplies its own original laid-out caret geometry. Preserve
+    // preceding edges during registration, then update them once from the
+    // projection after exact group binding, avoiding alternating None/Some
+    // touch notifications on every paint.
+    pub(crate) fn register_plain_text(
+        &self,
+        mut registration: TextSelectionRegistration,
+        run: TextSelectionRun,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> TextSelectionProjection {
+        let placed = || {
+            self.group(cx)
+                .filter(|group| group.key == placement_group(window))
+                .and_then(|group| group.in_window(window))
+        };
+        registration.selection_edges = placed().and_then(|state| {
+            state
+                .read(cx)
+                .participants
+                .get(&self.entity_id())
+                .and_then(|participant| participant.registration.selection_edges)
+        });
+        self.register(registration, window, cx);
+        let projection = self.update_runs(std::slice::from_ref(&run), cx);
+        let edges = projection
+            .ranges()
+            .first()
+            .and_then(|range| range.as_ref())
+            .and_then(|range| {
+                let start = run.layout.position_for_index(range.start)?;
+                let end = run.layout.position_for_index(range.end)?;
+                let caret = gpui::Size::new(px(0.), run.layout.line_height());
+                Some((Bounds::new(start, caret), Bounds::new(end, caret)))
+            });
+        if let Some(state) = self
+            .group(cx)
+            .filter(|group| group.key == placement_group(window))
+            .and_then(|group| group.in_window(window))
+        {
+            state.query(cx, |state, cx| {
+                if let Some(participant) = state.participants.get_mut(&self.entity_id())
+                    && participant.registration.selection_edges != edges
+                {
+                    Rc::make_mut(&mut participant.registration).selection_edges = edges;
+                    if state.touch.active {
+                        state.touch_changed(cx);
+                    }
+                }
+            });
+        }
+        projection
+    }
+
     /// Projects the current snapshot onto plain-text runs and caches their copy text.
     pub fn update_runs(&self, runs: &[TextSelectionRun], cx: &mut App) -> TextSelectionProjection {
         self.0.query(cx, |state, _| state.update_runs(runs))
@@ -1182,7 +1267,11 @@ impl TextSelectionHandle {
         let window = window.window_handle();
         self.subscribe(
             move |event, cx| {
-                if matches!(event, TextSelectionEvent::SelectionChanged(_)) {
+                if matches!(
+                    event,
+                    TextSelectionEvent::SelectionChanged(_)
+                        | TextSelectionEvent::TouchSelectionChanged
+                ) {
                     _ = window.update(cx, |_, window, _| window.refresh());
                 }
             },

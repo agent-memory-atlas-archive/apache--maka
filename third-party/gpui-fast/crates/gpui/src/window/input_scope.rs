@@ -298,6 +298,14 @@ impl Window {
         self.physical_input_scope()
             .and_then(|scope| scope.focus(self))
     }
+    /// Exact group admission, including an unpublished revoked-scope barrier.
+    /// Unlike active_input_group, an absent group does not imply background input.
+    pub fn input_group_is_admitted(&self, group: Option<FocusId>) -> bool {
+        match self.physical_input_scope() {
+            Some(scope) => scope.admitted(self) && scope.focus(self) == group,
+            None => group.is_none(),
+        }
+    }
     /// Admission for creation-time native interceptors with an original focus owner.
     pub fn input_focus_is_admitted(&self, focus: &FocusHandle) -> bool {
         self.focus_is_admitted_in(&self.rendered_frame.dispatch_tree, focus.id)
