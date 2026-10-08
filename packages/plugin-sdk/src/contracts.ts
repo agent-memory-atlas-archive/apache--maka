@@ -1097,6 +1097,9 @@ export const contracts = {
           hovered: {
             $ref: '#/$defs/Color',
           },
+          scrollbar: {
+            $ref: '#/$defs/RowScrollbar',
+          },
         },
         additionalProperties: false,
         required: [
@@ -1109,6 +1112,7 @@ export const contracts = {
           'muted',
           'selected',
           'hovered',
+          'scrollbar',
         ],
         $defs: {
           Row: {
@@ -1189,6 +1193,29 @@ export const contracts = {
             type: 'integer',
             format: 'uint32',
             minimum: 0,
+          },
+          RowScrollbar: {
+            type: 'object',
+            properties: {
+              thumb: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 1,
+              },
+              track: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 1,
+              },
+              thumbColor: {
+                $ref: '#/$defs/Color',
+              },
+              trackColor: {
+                $ref: '#/$defs/Color',
+              },
+            },
+            additionalProperties: false,
+            required: ['thumb', 'track', 'thumbColor', 'trackColor'],
           },
         },
       },

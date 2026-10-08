@@ -41,6 +41,15 @@ pub struct RowsProps {
     pub muted: Color,
     pub selected: Color,
     pub hovered: Color,
+    pub scrollbar: RowScrollbar,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RowScrollbar {
+    pub thumb: char,
+    pub track: char,
+    pub thumb_color: Color,
+    pub track_color: Color,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

@@ -182,6 +182,8 @@ pub enum WidgetInput {
     ExitFocus,
     Unhandled,
     Consumed(Option<NativeInput>),
+    /// Handled pointer work that preserves the original keyboard focus.
+    PreserveFocus,
     /// An immediate business event; never replaces retryable native observations.
     Emitted(NativeInput),
 }
@@ -434,6 +436,10 @@ impl Presenter {
         ) {
             self.clear_hover()?;
         }
+        if matches!(event, Event::FocusLost | Event::Resize(..)) {
+            self.resources.cancel_pointer()?;
+            self.drag = None;
+        }
         if !self.surface.is_live() || !self.resources.ready(&self.application, &self.root)? {
             return Ok(());
         }
@@ -564,6 +570,12 @@ impl Presenter {
                 }
                 other => other,
             };
+            let preserve_focus = matches!(native, WidgetInput::PreserveFocus);
+            let native = if preserve_focus {
+                WidgetInput::Consumed(None)
+            } else {
+                native
+            };
             if let WidgetInput::Consumed(observed) = native {
                 if self.resources.pointer_capture(&target)? {
                     self.drag = Some(target.clone());
@@ -574,7 +586,8 @@ impl Presenter {
                 if let Some(observed) = observed {
                     self.resources.observe(&target.mount, observed);
                 }
-                if !matches!(event,Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown | MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)))
+                if !preserve_focus
+                    && !matches!(event,Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown | MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)))
                 {
                     self.focus = Some(target);
                 }
@@ -590,15 +603,16 @@ impl Presenter {
                 if self.application.is_retiring(&ancestor.mount) {
                     continue;
                 }
-                if let Some(WidgetInput::Consumed(observed)) =
-                    self.resources.input(ancestor, &event)?
-                {
-                    if let Some(observed) = observed {
-                        self.resources.observe(&ancestor.mount, observed);
-                    }
-                    self.sync_native()?;
-                    return Ok(());
+                let observed = match self.resources.input(ancestor, &event)? {
+                    Some(WidgetInput::Consumed(observed)) => observed,
+                    Some(WidgetInput::PreserveFocus) => None,
+                    _ => continue,
+                };
+                if let Some(observed) = observed {
+                    self.resources.observe(&ancestor.mount, observed);
                 }
+                self.sync_native()?;
+                return Ok(());
             }
             if self.dismiss_escape(&event)? {
                 return Ok(());

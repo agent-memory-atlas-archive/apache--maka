@@ -26,7 +26,7 @@ use std::{
 fn props() -> Value {
     json!({"revision":1,"rows":(0..6).map(|n|json!({"key":format!("row-{n}"),"text":format!(" ↳ pending {n}"),"actions":[{"key":"delete","label":"Delete","enabled":true}]})).collect::<Vec<_>>(),
         "shortcuts":[{"key":"delete","modifiers":[],"input":"delete","enabled":true}],
-        "maxRows":3,"tabIndex":0,"foreground":0xffffffffu32,"muted":0x888888ffu32,"selected":0x222222ffu32,"hovered":0x333333ffu32})
+        "scrollbar":{"thumb":"┃","track":"│","thumbColor":0xffffffffu32,"trackColor":0x888888ffu32},"maxRows":3,"tabIndex":0,"foreground":0xffffffffu32,"muted":0x888888ffu32,"selected":0x222222ffu32,"hovered":0x333333ffu32})
 }
 fn mouse(kind: MouseEventKind, x: u16, y: u16) -> Event {
     Event::Mouse(MouseEvent {
@@ -72,12 +72,12 @@ fn native_rows_hover_is_local_and_only_flushed_controls_can_activate() {
     let pending = tui.paint(area, &mut buffer).unwrap();
     assert!(text(&buffer).contains("Delete"));
     // Visible in an unflushed candidate only: the last actual geometry is preview.
-    tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 37, 2))
+    tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 36, 2))
         .unwrap();
     assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 0);
     drop(pending);
     draw(&mut tui, 40, 10);
-    tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 37, 2))
+    tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 36, 2))
         .unwrap();
     assert_eq!(
         tui.application.frame(&tui.root).unwrap().state["observation"],
@@ -308,4 +308,90 @@ fn native_rows_consumed_under_nested_modals_keep_the_surviving_ancestor_return()
             .is_some_and(|focus| focus.same(&original))
     );
     close(tui);
+}
+
+#[test]
+fn native_rows_scrollbar_drag_uses_presented_track_without_selecting_or_taking_focus() {
+    let props = Rc::new(RefCell::new(props()));
+    let (_runtime, mut tui) = layout::native(
+        layout::View::Rows(props, Rc::new(Cell::new(false))),
+        Rc::new(Cell::new(true)),
+    );
+    let buffer = draw(&mut tui, 40, 10);
+    let original = tui.focus.clone().unwrap();
+    assert_eq!(buffer[(39, 1)].symbol(), "┃");
+    assert_eq!(buffer[(39, 3)].symbol(), "│");
+    tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 39, 3))
+        .unwrap();
+    assert!(tui.drag.is_some());
+    assert!(tui.focus.as_ref().unwrap().same(&original));
+    let buffer = draw(&mut tui, 40, 10);
+    assert!(text(&buffer).contains("pending 5"));
+    assert!(!text(&buffer).contains("pending 0"));
+    assert_eq!(buffer[(39, 3)].symbol(), "┃");
+    tui.input(mouse(MouseEventKind::Drag(MouseButton::Left), 0, 0))
+        .unwrap();
+    assert!(text(&draw(&mut tui, 40, 10)).contains("pending 0"));
+    tui.input(mouse(MouseEventKind::Drag(MouseButton::Left), 0, 9))
+        .unwrap();
+    assert!(text(&draw(&mut tui, 40, 10)).contains("pending 5"));
+    tui.input(mouse(MouseEventKind::Up(MouseButton::Left), 0, 9))
+        .unwrap();
+    assert!(tui.drag.is_none());
+    assert!(tui.focus.as_ref().unwrap().same(&original));
+    assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 0);
+    // The selected row was not transferred to the row underneath the track.
+    tui.input(key(KeyCode::Tab)).unwrap();
+    tui.input(key(KeyCode::Up)).unwrap();
+    assert!(text(&draw(&mut tui, 40, 10)).contains("pending 0"));
+    tui.input(key(KeyCode::Delete)).unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["observation"]["row"],
+        "row-0"
+    );
+    close(tui);
+}
+
+#[test]
+fn native_rows_scrollbar_style_and_interruption_keep_original_capture() {
+    for interruption in [Event::FocusLost, Event::Resize(30, 10)] {
+        let props = Rc::new(RefCell::new(props()));
+        props.borrow_mut()["scrollbar"]["thumb"] = json!("#");
+        props.borrow_mut()["scrollbar"]["track"] = json!("|");
+        let modal = Rc::new(Cell::new(false));
+        let (_runtime, mut tui) = layout::native(
+            layout::View::Rows(props.clone(), modal.clone()),
+            Rc::new(Cell::new(true)),
+        );
+        let buffer = draw(&mut tui, 40, 10);
+        assert_eq!(buffer[(39, 1)].symbol(), "#");
+        assert_eq!(buffer[(39, 3)].symbol(), "|");
+        tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 39, 1))
+            .unwrap();
+        let area = Rect::new(0, 0, 40, 10);
+        let mut buffer = Buffer::empty(area);
+        let held = tui.paint(area, &mut buffer).unwrap();
+        tui.input(mouse(MouseEventKind::Drag(MouseButton::Left), 0, 9))
+            .unwrap();
+        tui.present(held);
+        assert!(text(&draw(&mut tui, 40, 10)).contains("pending 5"));
+        tui.input(interruption).unwrap();
+        assert!(tui.drag.is_none());
+        tui.input(mouse(MouseEventKind::Drag(MouseButton::Left), 0, 0))
+            .unwrap();
+        assert!(text(&draw(&mut tui, 40, 10)).contains("pending 5"));
+        tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 39, 3))
+            .unwrap();
+        modal.set(true);
+        refresh(&mut tui);
+        draw(&mut tui, 40, 10);
+        assert!(tui.drag.is_none());
+        modal.set(false);
+        refresh(&mut tui);
+        draw(&mut tui, 40, 10);
+        tui.input(mouse(MouseEventKind::Drag(MouseButton::Left), 39, 1))
+            .unwrap();
+        assert!(text(&draw(&mut tui, 40, 10)).contains("pending 5"));
+        close(tui);
+    }
 }

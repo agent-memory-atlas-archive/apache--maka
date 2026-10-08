@@ -1254,6 +1254,7 @@ function frame<N extends Node>(
     muted: theme.muted,
     selected: theme.selected,
     hovered: theme.surface,
+    scrollbar: { thumb: '┃', track: '│', thumbColor: theme.text, trackColor: theme.border },
   };
   const status = state.notice
     ? text[state.notice]

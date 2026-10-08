@@ -2403,6 +2403,7 @@ export interface RowsProps {
   muted: Color;
   selected: Color;
   hovered: Color;
+  scrollbar: RowScrollbar;
 }
 export interface Row {
   key: string;
@@ -2425,6 +2426,12 @@ export interface RowAction {
   key: string;
   label: string;
   enabled: boolean;
+}
+export interface RowScrollbar {
+  thumb: string;
+  track: string;
+  thumbColor: Color;
+  trackColor: Color;
 }
 export interface RowActivated {
   revision: number;

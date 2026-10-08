@@ -27,12 +27,12 @@ use maka_ui::{
 };
 use ratatui::{
     buffer::Buffer,
-    layout::Position,
+    layout::{Position, Rect},
     style::{Color, Modifier, Style},
 };
 use serde_json::json;
 use std::{any::Any, collections::BTreeMap, rc::Rc};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[derive(Default)]
 struct Owner {
@@ -42,6 +42,7 @@ struct Owner {
     reveal: bool,
     exit: bool,
     geometry: Option<Geometry>,
+    drag: Option<Rect>,
 }
 struct Hit {
     row: String,
@@ -54,6 +55,7 @@ struct Geometry {
     hits: Vec<Hit>,
     offset: usize,
     rows: usize,
+    bar: Option<Rect>,
     intent: (usize, bool, Option<String>),
 }
 struct Rows {
@@ -81,6 +83,12 @@ impl Rows {
     }
 }
 impl Widget for Rows {
+    fn cancel_pointer(&self, state: &mut dyn Any) {
+        state.downcast_mut::<Owner>().unwrap().drag = None;
+    }
+    fn pointer_capture(&self, state: &dyn Any) -> bool {
+        state.downcast_ref::<Owner>().unwrap().drag.is_some()
+    }
     fn create(&self, _: super::NativeContext) -> Box<dyn Any> {
         Box::new(Owner {
             selected: self.props.rows.first().map(|row| row.key.clone()),
@@ -107,6 +115,7 @@ impl Widget for Rows {
         {
             owner.selected = None;
             owner.exit = true;
+            owner.drag = None;
         }
         if owner
             .hover
@@ -121,6 +130,14 @@ impl Widget for Rows {
     fn hover(&self, state: &mut dyn Any, _: &str, point: Option<Position>) {
         let owner = state.downcast_mut::<Owner>().unwrap();
         owner.hover = point.and_then(|point| {
+            if owner
+                .geometry
+                .as_ref()?
+                .bar
+                .is_some_and(|bar| bar.contains(point))
+            {
+                return None;
+            }
             owner
                 .geometry
                 .as_ref()?
@@ -133,6 +150,11 @@ impl Widget for Rows {
     }
     fn input(&self, state: &mut dyn Any, _: &str, event: &Event) -> maka_ui::Result<WidgetInput> {
         let owner = state.downcast_mut::<Owner>().unwrap();
+        if matches!(event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Up(MouseButton::Left))
+            && owner.drag.take().is_some()
+        {
+            return Ok(WidgetInput::PreserveFocus);
+        }
         let Some(geometry) = &owner.geometry else {
             return Ok(WidgetInput::Consumed(None));
         };
@@ -142,11 +164,35 @@ impl Widget for Rows {
         // New props can arrive before the next successful flush. They cannot
         // authorize a control that the user has not seen at that revision.
         if geometry.props != self.props {
-            return Ok(WidgetInput::Consumed(None));
+            return Ok(WidgetInput::PreserveFocus);
         }
         match event {
             Event::Mouse(mouse) => {
                 let point = (mouse.column, mouse.row).into();
+                let bar = match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        geometry.bar.filter(|bar| bar.contains(point))
+                    }
+                    MouseEventKind::Drag(MouseButton::Left) => {
+                        owner.drag.filter(|bar| Some(*bar) == geometry.bar)
+                    }
+                    _ => None,
+                };
+                if let Some(bar) = bar {
+                    // Original Surface mapping: the track endpoints are the
+                    // content endpoints, including captured drags outside it.
+                    let maximum = self.props.rows.len().saturating_sub(geometry.rows);
+                    let row = mouse
+                        .row
+                        .saturating_sub(bar.y)
+                        .min(bar.height.saturating_sub(1));
+                    owner.offset = usize::from(row) * maximum
+                        / usize::from(bar.height.saturating_sub(1).max(1));
+                    owner.reveal = false;
+                    owner.hover = None;
+                    owner.drag = Some(bar);
+                    return Ok(WidgetInput::PreserveFocus);
+                }
                 if !geometry.area.contains(point) {
                     return Ok(WidgetInput::Unhandled);
                 }
@@ -184,6 +230,7 @@ impl Widget for Rows {
                 }
             }
             Event::Key(key) if key.kind != KeyEventKind::Release => {
+                owner.drag = None;
                 if matches!(key.code, KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab) {
                     return Ok(WidgetInput::ExitFocus);
                 }
@@ -241,11 +288,15 @@ impl Widget for Rows {
             let owner = state.downcast_mut::<Owner>().unwrap();
             owner.geometry = None;
             owner.hover = None;
+            owner.drag = None;
         }
     }
     fn present(&self, state: &mut dyn Any, geometry: Box<dyn Any>) -> Option<NativeInput> {
         let owner = state.downcast_mut::<Owner>().unwrap();
         let geometry = *geometry.downcast::<Geometry>().unwrap();
+        if owner.drag.is_some_and(|bar| Some(bar) != geometry.bar) {
+            owner.drag = None;
+        }
         if (owner.offset, owner.reveal, owner.selected.clone()) == geometry.intent {
             owner.offset = geometry.offset;
             owner.reveal = false;
@@ -290,11 +341,24 @@ impl Widget for Rows {
                 (color.0 >> 8) as u8,
             )
         };
+        let viewport = Placement::new(
+            CellRect {
+                height: rows as u32,
+                ..area.bounds
+            },
+            area.clip,
+        )
+        .clipped(buffer.area)
+        .visible();
+        let bar = (self.props.rows.len() > rows && viewport.height > 1 && viewport.width > 0)
+            .then(|| Rect::new(viewport.right() - 1, viewport.y, 1, viewport.height));
+        // Reserve the original trailing scrollbar column, even when content fits.
+        let width = area.width.saturating_sub(1);
         let mut hits = vec![];
         for (line, row) in self.props.rows.iter().skip(offset).take(rows).enumerate() {
             let selected = owner.selected.as_ref() == Some(&row.key);
             let hovered = owner.hover.as_ref() == Some(&row.key);
-            let bounds = CellRect::new(area.x, area.y + line as i64, area.width, 1);
+            let bounds = CellRect::new(area.x, area.y + line as i64, width, 1);
             let row_area = Placement::new(bounds, area.clip).clipped(buffer.area);
             let mut style = Style::default().fg(color(self.props.muted));
             if selected && focused {
@@ -332,10 +396,10 @@ impl Widget for Rows {
                 .iter()
                 .copied()
                 .fold(0u16, u16::saturating_add)
-                .min(area.width);
+                .min(width);
             let preview = Placement::new(
                 CellRect {
-                    width: area.width - total,
+                    width: width - total,
                     ..bounds
                 },
                 area.clip,
@@ -371,6 +435,24 @@ impl Widget for Rows {
                 x += i64::from(width);
             }
         }
+        if let Some(bar) = bar {
+            // Reuse the original Surface's proportional thumb calculation.
+            let maximum = self.props.rows.len() - rows;
+            let visible = usize::from(bar.height);
+            let thumb = (visible * visible / (maximum + visible)).max(1);
+            let top = offset * (visible - thumb) / maximum;
+            for line in 0..visible {
+                let active = (top..top + thumb).contains(&line);
+                let style = &self.props.scrollbar;
+                buffer[(bar.x, bar.y + line as u16)]
+                    .set_char(if active { style.thumb } else { style.track })
+                    .set_style(Style::default().fg(color(if active {
+                        style.thumb_color
+                    } else {
+                        style.track_color
+                    })));
+            }
+        }
         slots.native_target("rows", area, self.props.tab_index, false)?;
         slots.native_geometry(Box::new(Geometry {
             props: self.props.clone(),
@@ -378,6 +460,7 @@ impl Widget for Rows {
             hits,
             offset,
             rows,
+            bar,
             intent,
         }))
     }
@@ -427,6 +510,14 @@ impl NativeComponent<dyn Widget> for Component {
         let props: RowsProps = serde_json::from_value(props.clone())
             .map_err(|error| maka_ui::Error::Invalid(error.to_string()))?;
         props.validate()?;
+        if [props.scrollbar.thumb, props.scrollbar.track]
+            .iter()
+            .any(|symbol| symbol.width() != Some(1))
+        {
+            return Err(maka_ui::Error::Invalid(
+                "scrollbar symbols must occupy one terminal cell".into(),
+            ));
+        }
         Ok(Frame {
             revision,
             state: json!({"revision":revision}),

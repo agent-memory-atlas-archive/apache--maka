@@ -121,7 +121,17 @@ fn wait_for_target(
                 let row = (0..buffer.area.width)
                     .map(|x| buffer[(x, y)].symbol())
                     .collect::<String>();
-                row.find(label).map(|x| (x as u16, y))
+                let byte = row.find(label)?;
+                // Unicode previews precede trailing controls: byte offsets are
+                // not terminal columns. Resolve against the painted cells.
+                let mut offset = 0;
+                (0..buffer.area.width)
+                    .find(|x| {
+                        let start = offset;
+                        offset += buffer[(*x, y)].symbol().len();
+                        start == byte
+                    })
+                    .map(|x| (x, y))
             })
             .nth(nth);
         if let Some((x, y)) = position
@@ -1425,19 +1435,39 @@ process.stdout.write(output.outputFiles[0].text);
     await_screen(&mut presenter, "Queued product followup");
     await_screen(&mut presenter, "What would you like to work on?");
     await_screen(&mut presenter, "[ Send ]");
+    let extra_messages = ["Extra queued one", "Extra queued two", "Extra queued three"];
+    for message in extra_messages {
+        click(&mut presenter, "What would you like to work on?");
+        presenter.input(Event::Paste(message.into())).unwrap();
+        await_screen(&mut presenter, "[ Send ]");
+        presenter
+            .input(Event::Key(KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::NONE,
+            )))
+            .unwrap();
+        await_screen(&mut presenter, "What would you like to work on?");
+        await_screen(&mut presenter, "[ Send ]");
+    }
+    // Four actual queue messages overflow the original three-line native strip.
+    // Clicking the bottom of its track must keep typing in the original Composer.
+    await_screen(&mut presenter, "│");
+    click(&mut presenter, "│");
+    await_screen(&mut presenter, "Extra queued three");
     let pending = runtime
         .block_on(fixture.store.message_queue(&session_id))
         .unwrap();
-    assert_eq!(pending.entries.len(), 1);
+    assert_eq!(pending.entries.len(), 4);
     assert_eq!(
         pending.entries[0].source.unprepared_content.text,
         "Queued product followup"
     );
-    click(&mut presenter, "What would you like to work on?");
     presenter
         .input(Event::Paste("Unsent composer draft".into()))
         .unwrap();
     await_screen(&mut presenter, "Unsent composer draft");
+    click(&mut presenter, "│");
+    await_screen(&mut presenter, "Queued product followup");
     click(&mut presenter, "Queued product followup");
     draw(&mut presenter);
     presenter
@@ -1549,6 +1579,25 @@ process.stdout.write(output.outputFiles[0].text);
             "native queue retraction did not settle"
         );
         std::thread::yield_now();
+    }
+    for message in extra_messages {
+        await_screen(&mut presenter, message);
+        click(&mut presenter, message);
+        draw(&mut presenter);
+        presenter
+            .input(Event::Key(KeyEvent::new(
+                KeyCode::Delete,
+                KeyModifiers::NONE,
+            )))
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while screen(&draw(&mut presenter)).contains(message) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "extra queued message did not retract"
+            );
+            std::thread::yield_now();
+        }
     }
     assert!(
         runtime
