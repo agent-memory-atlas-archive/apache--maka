@@ -94,11 +94,11 @@ export function components<N extends Node>(
       disabled: false,
       softWrap: true,
       submit:
-        props.enabled && !props.busy && !props.running && !pending
-          ? target === 'desktop'
+        target === 'tui'
+          ? 'enter'
+          : props.enabled && !props.busy && !props.running && !pending
             ? 'primary_enter'
-            : 'control_enter'
-          : null,
+            : null,
       tabIndex: 1,
       autoFocus: true,
       initialText: '',

@@ -393,6 +393,11 @@ impl Editor {
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
         if control {
             match key.code {
+                KeyCode::Char('j')
+                    if !self.single_line && key.modifiers == KeyModifiers::CONTROL =>
+                {
+                    return self.insert("\n");
+                }
                 KeyCode::Char('z') => {
                     self.undo(shift);
                     return true;

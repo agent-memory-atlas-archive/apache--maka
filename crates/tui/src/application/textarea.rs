@@ -105,7 +105,6 @@ impl Widget for Recipe {
         }
         if !self.props.read_only
             && let Event::Key(key) = event
-            && key.kind == KeyEventKind::Press
             && key.code == KeyCode::Enter
             && match self.props.submit {
                 Some(SubmitKey::Enter) => key.modifiers.is_empty(),
@@ -115,6 +114,9 @@ impl Widget for Recipe {
                 None => false,
             }
         {
+            if key.kind != KeyEventKind::Press {
+                return Ok(WidgetInput::Consumed(None));
+            }
             owner.refresh();
             let mut observation = owner.observation();
             observation.key = "submit".into();

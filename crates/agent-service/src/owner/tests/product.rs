@@ -1351,7 +1351,7 @@ process.stdout.write(output.outputFiles[0].text);
     presenter
         .input(Event::Key(KeyEvent::new(
             KeyCode::Enter,
-            KeyModifiers::CONTROL,
+            KeyModifiers::NONE,
         )))
         .unwrap();
     // The actual canonical user row must appear through guarded native follow

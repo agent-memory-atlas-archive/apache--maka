@@ -4674,7 +4674,7 @@ test('editor-local submission uses latest observation and the original send gate
     let result = composer.mount(props, {});
     assert.equal(
       modelSlots(result.frame.view).find((n) => n.key === 'draft').props.submit,
-      target === 'desktop' ? 'primary_enter' : 'control_enter',
+      target === 'desktop' ? 'primary_enter' : 'enter',
       'the first native edit can submit before a changed observation is published',
     );
     const submit = (observation, configuration = props) =>
@@ -4687,7 +4687,7 @@ test('editor-local submission uses latest observation and the original send gate
     result = submit(draft);
     assert.deepEqual(result.events, [{ name: 'send', value: draft }]);
     const slot = modelSlots(result.frame.view).find((n) => n.key === 'draft');
-    assert.equal(slot.props.submit, target === 'desktop' ? 'primary_enter' : 'control_enter');
+    assert.equal(slot.props.submit, target === 'desktop' ? 'primary_enter' : 'enter');
     const latest = {
       ...draft,
       revision: 5,
@@ -4707,7 +4707,13 @@ test('editor-local submission uses latest observation and the original send gate
         },
       },
     ]) {
-      assert.deepEqual(submit(latest, { ...props, ...override }).events, []);
+      const blocked = submit(latest, { ...props, ...override });
+      assert.deepEqual(blocked.events, []);
+      assert.equal(
+        modelSlots(blocked.frame.view).find((node) => node.key === 'draft').props.submit,
+        target === 'tui' ? 'enter' : null,
+        'blocked TUI Enter keeps the draft instead of becoming a newline',
+      );
     }
     assert.deepEqual(
       submit({ ...latest, snapshot: { ...latest.snapshot, marked: { start: 0, end: 2 } } }).events,

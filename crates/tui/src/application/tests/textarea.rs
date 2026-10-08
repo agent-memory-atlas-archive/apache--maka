@@ -579,6 +579,50 @@ fn terminal_textarea_submit_keeps_native_draft_and_obeys_current_editor_policy()
 }
 
 #[test]
+fn terminal_enter_submit_keeps_shift_enter_control_j_and_paste_in_the_original_draft() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 20);
+    dispatch(&mut tui, "configure", json!({"submit":"enter"}));
+    draw(&mut tui, 50, 20);
+    tui.input(Event::Paste("first\n第二行".into())).unwrap();
+    for event in [
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
+        KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL),
+    ] {
+        let before = observation(&tui)["snapshot"]["text"]["bytes"]
+            .as_u64()
+            .unwrap();
+        tui.input(Event::Key(event)).unwrap();
+        assert_eq!(observation(&tui)["snapshot"]["text"]["bytes"], before + 1);
+        assert_eq!(
+            tui.application.frame(&tui.root).unwrap().state["submissions"]
+                .as_u64()
+                .unwrap_or(0),
+            0
+        );
+    }
+    let draft = observation(&tui);
+    tui.input(key(KeyCode::Enter)).unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["submissions"],
+        1
+    );
+    assert_eq!(observation(&tui), draft);
+    tui.input(Event::Key(KeyEvent::new_with_kind(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+        crossterm::event::KeyEventKind::Repeat,
+    )))
+    .unwrap();
+    assert_eq!(observation(&tui), draft);
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["submissions"],
+        1
+    );
+    close(&mut tui);
+}
+
+#[test]
 fn failed_submit_is_not_replayed_and_preserves_unpublished_command_receipt() {
     let (_runtime, mut tui) = presenter();
     draw(&mut tui, 50, 24);
