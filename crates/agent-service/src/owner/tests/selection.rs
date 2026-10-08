@@ -516,3 +516,25 @@ async fn queued_model_route_change_settles_original_message_without_retargeting(
         fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn queue_promotion_rejects_a_different_accepted_model_execution() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let fixture = Fixture::new(&base, 1, None).await;
+        let session = fixture.create("Different queued model").await;
+        let started = fixture.send(&session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        edit(&fixture, |changes| changes.configuration = Some(json!({"baseUrl":"http://127.0.0.1:1/v1"}))).await;
+        let queued = fixture.send(&session).await.unwrap();
+        let result = fixture.mutation(2, "editQueue", json!({"sessionId":session,"expectedRevision":queued["revision"],"edit":{"kind":"promote","messageId":queued["messageId"]}}), Uuid::new_v4()).await.unwrap();
+        assert_eq!(result, json!({"kind":"rejected","reason":"execution_changed"}));
+        assert_eq!(fixture.query("queue", json!({"sessionId":session})).await.unwrap()["entries"][0]["kind"], "followup");
+        fixture.mutation(2, "stop", json!({"sessionId":session,"invocationId":started["invocationId"]}), Uuid::new_v4()).await.unwrap();
+        fixture.drained().await;
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}

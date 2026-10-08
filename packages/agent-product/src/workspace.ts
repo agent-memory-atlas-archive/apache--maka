@@ -23,6 +23,7 @@ import type {
   ModelSelection,
   SettingsModelChoice,
   AgentDeliveryPage,
+  AgentQueue,
   AgentHistoryPage,
   AgentHistoryChunk,
   AgentToolSourcePage,
@@ -137,6 +138,7 @@ export interface State {
   followAttempt: { through: number; landing: number; readingRevision: number } | null;
   parts: DisplayPart[];
   run: AgentRun | null;
+  queue: AgentQueue | null;
   runThrough: number;
   loading: boolean;
   live: {
@@ -355,6 +357,7 @@ function select(state: State, actions: Action[], session: AgentSession) {
   state.navigation++;
   state.parts = [];
   state.run = null;
+  state.queue = null;
   state.watch = null;
   state.runThrough = 0;
   state.live = [];
@@ -904,6 +907,10 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
   }
 }
 function delivery(state: State, page: AgentDeliveryPage, actions: Action[]) {
+  if (page.kind === 'queue') {
+    if (!state.queue || page.queue.revision > state.queue.revision) state.queue = page.queue;
+    return;
+  }
   const watch = state.watch;
   if (!watch) return;
   state.latestKnown = Math.max(state.latestKnown, page.through);
@@ -1452,6 +1459,7 @@ export function workspace<N extends Node>(
         followAttempt: null,
         parts: [],
         run: null,
+        queue: null,
         runThrough: 0,
         loading: false,
         live: [],

@@ -3636,6 +3636,181 @@ export const contracts = {
           },
           resources: {},
         },
+        editQueue: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentQueueMutation',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              expectedRevision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+              edit: {
+                $ref: '#/$defs/AgentQueueAction',
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'expectedRevision', 'edit'],
+            $defs: {
+              AgentQueueAction: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      messageId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'retract',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'messageId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      messageId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'promote',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'messageId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      messageId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      message: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 65536,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'update',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'messageId', 'message'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      messageIds: {
+                        type: 'array',
+                        items: {
+                          type: 'string',
+                        },
+                        minItems: 1,
+                        maxItems: 64,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'reorder',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'messageIds'],
+                  },
+                ],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentQueueMutationResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'committed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  expected: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  actual: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'revision_conflict',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expected', 'actual'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/AgentQueueRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+            ],
+            $defs: {
+              AgentQueueRejection: {
+                type: 'string',
+                enum: [
+                  'closed',
+                  'missing',
+                  'in_flight',
+                  'invalid_edit',
+                  'execution_changed',
+                  'not_running',
+                ],
+              },
+            },
+          },
+          resources: {},
+        },
         history: {
           mode: 'query',
           input: {
@@ -4437,6 +4612,155 @@ export const contracts = {
           },
           resources: {},
         },
+        queue: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentSessionRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentQueue',
+            type: 'object',
+            properties: {
+              revision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              entries: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/AgentQueueEntry',
+                },
+                maxItems: 64,
+              },
+            },
+            additionalProperties: false,
+            required: ['revision', 'entries'],
+            $defs: {
+              AgentQueueEntry: {
+                type: 'object',
+                properties: {
+                  messageId: {
+                    type: 'string',
+                  },
+                  kind: {
+                    $ref: '#/$defs/AgentQueueKind',
+                  },
+                  preview: {
+                    type: 'string',
+                    maxLength: 80,
+                  },
+                },
+                additionalProperties: false,
+                required: ['messageId', 'kind', 'preview'],
+              },
+              AgentQueueKind: {
+                type: 'string',
+                enum: ['in_flight', 'steering', 'followup'],
+              },
+            },
+          },
+          resources: {},
+        },
+        queueMessage: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentQueueMessage',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              messageId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              expectedRevision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'messageId', 'expectedRevision'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentQueueMessageResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  message: {
+                    type: 'string',
+                    maxLength: 65536,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'ready',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'revision', 'message'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  expected: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  actual: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'revision_conflict',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expected', 'actual'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'missing',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+          },
+          resources: {},
+        },
         send: {
           mode: 'mutation',
           input: {
@@ -4954,27 +5278,49 @@ export const contracts = {
           output: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
             title: 'AgentDeliveryPage',
-            type: 'object',
-            properties: {
-              through: {
-                type: 'integer',
-                format: 'uint64',
-                minimum: 0,
-              },
-              nextAfter: {
-                type: 'integer',
-                format: 'uint64',
-                minimum: 0,
-              },
-              events: {
-                type: 'array',
-                items: {
-                  $ref: '#/$defs/AgentDelivery',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  through: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  nextAfter: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  events: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/AgentDelivery',
+                    },
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'events',
+                  },
                 },
+                additionalProperties: false,
+                required: ['kind', 'through', 'nextAfter', 'events'],
               },
-            },
-            additionalProperties: false,
-            required: ['through', 'nextAfter', 'events'],
+              {
+                type: 'object',
+                properties: {
+                  queue: {
+                    $ref: '#/$defs/AgentQueue',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'queue',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'queue'],
+              },
+            ],
             $defs: {
               AgentDelivery: {
                 type: 'object',
@@ -5113,6 +5459,46 @@ export const contracts = {
               AgentContentKind: {
                 type: 'string',
                 enum: ['text', 'thinking'],
+              },
+              AgentQueue: {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  entries: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/AgentQueueEntry',
+                    },
+                    maxItems: 64,
+                  },
+                },
+                additionalProperties: false,
+                required: ['revision', 'entries'],
+              },
+              AgentQueueEntry: {
+                type: 'object',
+                properties: {
+                  messageId: {
+                    type: 'string',
+                  },
+                  kind: {
+                    $ref: '#/$defs/AgentQueueKind',
+                  },
+                  preview: {
+                    type: 'string',
+                    maxLength: 80,
+                  },
+                },
+                additionalProperties: false,
+                required: ['messageId', 'kind', 'preview'],
+              },
+              AgentQueueKind: {
+                type: 'string',
+                enum: ['in_flight', 'steering', 'followup'],
               },
             },
           },

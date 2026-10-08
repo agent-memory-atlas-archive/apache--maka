@@ -65,6 +65,7 @@ struct MessageBasis {
 }
 struct Control {
     invocation: Invocation,
+    basis: MessageBasis,
     cancellation: CancellationToken,
     failure: Option<&'static str>,
 }
@@ -410,18 +411,14 @@ impl Owner {
         };
         if queued.is_some() {
             loop {
-                let queue = self
+                let revision = self
                     .store
-                    .message_queue(&id)
+                    .message_queue_revision(&id)
                     .await
                     .map_err(|_| "agent_queue_unavailable")?;
                 match self
                     .store
-                    .admit_queued_message(
-                        &self.revision.activation,
-                        queue.revision,
-                        admission.clone(),
-                    )
+                    .admit_queued_message(&self.revision.activation, revision, admission.clone())
                     .await
                 {
                     Ok(receipt) => {
@@ -442,7 +439,13 @@ impl Owner {
             .await
             .map_err(|_| "agent_admission_failed")?;
         let cancellation = self.stop.child_token();
-        let input = self.input(invocation.clone(), source, prepared, basis, delivered);
+        let input = self.input(
+            invocation.clone(),
+            source,
+            prepared,
+            basis.clone(),
+            delivered,
+        );
         let running = match self.engine.start(input, cancellation.clone()).await {
             Ok(running) => running,
             Err(error) => {
@@ -456,6 +459,7 @@ impl Owner {
             id.clone(),
             Control {
                 invocation: invocation.clone(),
+                basis,
                 cancellation,
                 failure: None,
             },

@@ -373,12 +373,136 @@ pub struct Part {
     pub text_kind: ContentKind,
 }
 #[derive(Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 #[schemars(rename = "AgentDeliveryPage")]
-pub struct DeliveryPage {
-    pub through: u64,
-    pub next_after: u64,
-    pub events: Vec<Delivery>,
+pub enum DeliveryPage {
+    Events {
+        through: u64,
+        next_after: u64,
+        events: Vec<Delivery>,
+    },
+    Queue {
+        queue: Queue,
+    },
+}
+
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentQueue")]
+pub struct Queue {
+    pub revision: u64,
+    #[schemars(length(max = 64))]
+    pub entries: Vec<QueueEntry>,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentQueueEntry")]
+pub struct QueueEntry {
+    pub message_id: String,
+    pub kind: QueueKind,
+    #[schemars(length(max = 80))]
+    pub preview: String,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "AgentQueueKind")]
+pub enum QueueKind {
+    InFlight,
+    Steering,
+    Followup,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentQueueMessage")]
+pub struct QueueMessage {
+    #[schemars(length(min = 1, max = 128))]
+    pub session_id: String,
+    #[schemars(length(min = 1, max = 128))]
+    pub message_id: String,
+    #[schemars(range(max = 9_007_199_254_740_991u64))]
+    pub expected_revision: u64,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename = "AgentQueueMessageResult")]
+pub enum QueueMessageResult {
+    Ready {
+        revision: u64,
+        #[schemars(length(max = 65536))]
+        message: String,
+    },
+    RevisionConflict {
+        expected: u64,
+        actual: u64,
+    },
+    Missing,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentQueueMutation")]
+pub struct QueueMutation {
+    #[schemars(length(min = 1, max = 128))]
+    pub session_id: String,
+    #[schemars(range(max = 9_007_199_254_740_991u64))]
+    pub expected_revision: u64,
+    pub edit: QueueAction,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename = "AgentQueueAction")]
+pub enum QueueAction {
+    Retract {
+        #[schemars(length(min = 1, max = 128))]
+        message_id: String,
+    },
+    Promote {
+        #[schemars(length(min = 1, max = 128))]
+        message_id: String,
+    },
+    Update {
+        #[schemars(length(min = 1, max = 128))]
+        message_id: String,
+        #[schemars(length(min = 1, max = 65536))]
+        message: String,
+    },
+    Reorder {
+        #[schemars(length(min = 1, max = 64))]
+        message_ids: Vec<String>,
+    },
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "AgentQueueMutationResult")]
+pub enum QueueMutationResult {
+    Committed { revision: u64 },
+    RevisionConflict { expected: u64, actual: u64 },
+    Rejected { reason: QueueRejection },
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "AgentQueueRejection")]
+pub enum QueueRejection {
+    Closed,
+    Missing,
+    InFlight,
+    InvalidEdit,
+    ExecutionChanged,
+    NotRunning,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -556,6 +680,18 @@ pub fn contract() -> Contract {
                     method::<Send, SendResult>(MethodMode::Mutation),
                 ),
                 ("stop".into(), method::<Stop, Stopped>(MethodMode::Mutation)),
+                (
+                    "queue".into(),
+                    method::<SessionRead, Queue>(MethodMode::Query),
+                ),
+                (
+                    "queueMessage".into(),
+                    method::<QueueMessage, QueueMessageResult>(MethodMode::Query),
+                ),
+                (
+                    "editQueue".into(),
+                    method::<QueueMutation, QueueMutationResult>(MethodMode::Mutation),
+                ),
                 (
                     "watch".into(),
                     method::<Watch, DeliveryPage>(MethodMode::Subscription),

@@ -200,3 +200,68 @@ async fn activation_recovers_more_pending_sessions_than_capacity_without_new_sen
         fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn queue_controls_are_bounded_revisioned_and_observed_without_transcript_progress() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let fixture = Fixture::new(&base, 1, None).await;
+        let session = fixture.create("Queue controls").await;
+        let started = fixture.send(&session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        let selection = fixture.selection().await;
+        let mut ids = Vec::new();
+        for _ in 0..64 {
+            let result = fixture.mutation(2, "send", json!({"sessionId":session,"message":"🦀\"\n".repeat(80),"model":selection}), Uuid::new_v4()).await.unwrap();
+            ids.push(result["messageId"].as_str().unwrap().to_owned());
+        }
+        let queue = fixture.query("queue", json!({"sessionId":session})).await.unwrap();
+        assert_eq!(queue["entries"].as_array().unwrap().len(), 64);
+        assert!(serde_json::to_vec(&queue).unwrap().len() < 48 * 1024);
+        assert!(!queue.to_string().contains("private-fixture-key"));
+        assert!(!queue.to_string().contains("execution"));
+        let through = fixture.query("observe", json!({"sessionId":session})).await.unwrap()["through"].as_u64().unwrap();
+        let mut watch = fixture.app.client().subscribe(fixture.binding(2).await, "watch".into(), json!({"sessionId":session,"after":through}), scope(&fixture.issuer, true), Attachments::new().into()).await.unwrap();
+        let first = watch.recv().await.unwrap();
+        assert_eq!(first["kind"], "queue");
+        assert_eq!(first["queue"], queue);
+        let events = watch.recv().await.unwrap();
+        assert_eq!(events["kind"], "events");
+        assert_eq!(events["events"], json!([]));
+        let message = "x".repeat(64 * 1024);
+        let update = json!({"sessionId":session,"expectedRevision":queue["revision"],"edit":{"kind":"update","messageId":ids[0],"message":message}});
+        let operation = Uuid::new_v4();
+        let changed = fixture.mutation(2, "editQueue", update.clone(), operation).await.unwrap();
+        assert_eq!(changed["kind"], "committed");
+        assert_eq!(fixture.mutation(2, "editQueue", update.clone(), operation).await.unwrap(), changed);
+        assert_eq!(fixture.mutation(2, "editQueue", update, Uuid::new_v4()).await.unwrap()["kind"], "revision_conflict");
+        let notice = loop {
+            let update = watch.recv().await.unwrap();
+            if update["kind"] == "queue" { break update; }
+            assert_eq!(update["through"], through);
+            assert_eq!(update["events"], json!([]));
+        };
+        assert_eq!(notice["queue"]["revision"], changed["revision"]);
+        assert_eq!(notice["queue"]["entries"][0]["preview"], "x".repeat(80));
+        assert_eq!(fixture.query("observe", json!({"sessionId":session})).await.unwrap()["through"], through);
+        let read = fixture.query("queueMessage", json!({"sessionId":session,"messageId":ids[0],"expectedRevision":changed["revision"]})).await.unwrap();
+        assert_eq!(read, json!({"kind":"ready","revision":changed["revision"],"message":message}));
+        assert_eq!(fixture.query("queueMessage", json!({"sessionId":session,"messageId":ids[0],"expectedRevision":queue["revision"]})).await.unwrap()["kind"], "revision_conflict");
+        ids.reverse();
+        let reordered = fixture.mutation(2, "editQueue", json!({"sessionId":session,"expectedRevision":changed["revision"],"edit":{"kind":"reorder","messageIds":ids}}), Uuid::new_v4()).await.unwrap();
+        assert_eq!(reordered["kind"], "committed");
+        assert_eq!(fixture.query("queue", json!({"sessionId":session})).await.unwrap()["entries"][0]["messageId"], ids[0]);
+        let retracted = fixture.mutation(2, "editQueue", json!({"sessionId":session,"expectedRevision":reordered["revision"],"edit":{"kind":"retract","messageId":ids[0]}}), Uuid::new_v4()).await.unwrap();
+        assert_eq!(retracted["kind"], "committed");
+        assert!(fixture.store.message_cancelled(&session, &ids[0]).await.unwrap());
+        assert_eq!(fixture.query("queueMessage", json!({"sessionId":session,"messageId":ids[0],"expectedRevision":retracted["revision"]})).await.unwrap()["kind"], "missing");
+        assert!(fixture.query("queue", json!({"sessionId":"foreign_session"})).await.is_err());
+        drop(watch);
+        fixture.mutation(2, "stop", json!({"sessionId":session,"invocationId":started["invocationId"]}), Uuid::new_v4()).await.unwrap();
+        fixture.drained().await;
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}

@@ -111,6 +111,11 @@ export type RuntimeProtocol =
   | AgentSessionRead
   | AgentHistoryRead
   | AgentDeliveryPage
+  | AgentQueue
+  | AgentQueueMessage
+  | AgentQueueMessageResult
+  | AgentQueueMutation
+  | AgentQueueMutationResult
   | AgentHistoryChunk
   | AgentHistoryPage
   | AgentToolSourceRead
@@ -1393,6 +1398,75 @@ export type HistoryPosition =
       sequence: number;
       kind: 'event';
     };
+export type AgentDeliveryPage =
+  | {
+      through: number;
+      nextAfter: number;
+      events: AgentDelivery[];
+      kind: 'events';
+    }
+  | {
+      queue: AgentQueue;
+      kind: 'queue';
+    };
+export type AgentQueueKind = 'in_flight' | 'steering' | 'followup';
+export type AgentQueueMessageResult =
+  | {
+      revision: number;
+      message: string;
+      kind: 'ready';
+    }
+  | {
+      expected: number;
+      actual: number;
+      kind: 'revision_conflict';
+    }
+  | {
+      kind: 'missing';
+    };
+export type AgentQueueAction =
+  | {
+      messageId: string;
+      kind: 'retract';
+    }
+  | {
+      messageId: string;
+      kind: 'promote';
+    }
+  | {
+      messageId: string;
+      message: string;
+      kind: 'update';
+    }
+  | {
+      /**
+       * @minItems 1
+       * @maxItems 64
+       */
+      messageIds: [string, ...string[]];
+      kind: 'reorder';
+    };
+export type AgentQueueMutationResult =
+  | {
+      revision: number;
+      kind: 'committed';
+    }
+  | {
+      expected: number;
+      actual: number;
+      kind: 'revision_conflict';
+    }
+  | {
+      reason: AgentQueueRejection;
+      kind: 'rejected';
+    };
+export type AgentQueueRejection =
+  | 'closed'
+  | 'missing'
+  | 'in_flight'
+  | 'invalid_edit'
+  | 'execution_changed'
+  | 'not_running';
 /**
  * Text visible in the durable conversation; reasoning and runtime metadata are
  * not conversation text. Tool JSON contributes string values, never its keys.
@@ -2787,10 +2861,27 @@ export interface Cursor {
   sequence: number;
   offset: number;
 }
-export interface AgentDeliveryPage {
-  through: number;
-  nextAfter: number;
-  events: AgentDelivery[];
+export interface AgentQueue {
+  revision: number;
+  /**
+   * @maxItems 64
+   */
+  entries: AgentQueueEntry[];
+}
+export interface AgentQueueEntry {
+  messageId: string;
+  kind: AgentQueueKind;
+  preview: string;
+}
+export interface AgentQueueMessage {
+  sessionId: string;
+  messageId: string;
+  expectedRevision: number;
+}
+export interface AgentQueueMutation {
+  sessionId: string;
+  expectedRevision: number;
+  edit: AgentQueueAction;
 }
 export interface AgentHistoryChunk {
   messageId: string;

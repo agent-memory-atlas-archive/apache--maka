@@ -838,3 +838,33 @@ async fn admitted_message_keeps_original_model_workspace_and_dispatcher_when_ope
     fixture.app.shutdown().await.unwrap();
     fixture.config.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn queue_promotion_steers_original_run_at_the_next_step_without_a_successor() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let fixture = Fixture::with_services(&base, 1, None, None, Some(Setup::javascript())).await;
+        let session = fixture.create("Steer original run").await;
+        let started = fixture.send(&session).await.unwrap();
+        let (mut first, _) = listener.accept().await.unwrap();
+        request(&mut first).await;
+        let queued = fixture.mutation(2, "send", json!({"sessionId":session,"message":"steering instruction","model":fixture.selection().await}), Uuid::new_v4()).await.unwrap();
+        let promoted = fixture.mutation(2, "editQueue", json!({"sessionId":session,"expectedRevision":queued["revision"],"edit":{"kind":"promote","messageId":queued["messageId"]}}), Uuid::new_v4()).await.unwrap();
+        assert_eq!(promoted["kind"], "committed");
+        assert_eq!(fixture.query("queue", json!({"sessionId":session})).await.unwrap()["entries"][0]["kind"], "steering");
+        tool_response(&mut first).await;
+        let (mut second, _) = listener.accept().await.unwrap();
+        let next = request(&mut second).await;
+        assert!(next["messages"].as_array().unwrap().iter().any(|message| message["content"] == "The user sent a message while you were working:\n<user_query>\nsteering instruction\n</user_query>"));
+        assert_eq!(fixture.query("observe", json!({"sessionId":session})).await.unwrap()["run"]["invocationId"], started["invocationId"]);
+        response(&mut second).await;
+        fixture.drained().await;
+        assert!(fixture.store.pending_messages(&session).await.unwrap().is_empty());
+        let recorded = facts(&fixture, &session).await;
+        assert_eq!(recorded.iter().filter(|fact| matches!(fact, Fact::InvocationOpened { .. })).count(), 1);
+        assert!(recorded.iter().any(|fact| matches!(fact, Fact::MessageSteered { .. })));
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}

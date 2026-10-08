@@ -64,6 +64,15 @@ pub(crate) struct QueueChange {
 }
 
 impl EventLog {
+    /// Read the control revision without loading the potentially large pending bodies.
+    pub async fn message_queue_revision(&self, session: &str) -> Result<u64, StoreError> {
+        self.validate_root()?;
+        crate::sessions::validate_id(session)?;
+        let session = session.to_owned();
+        self.connection
+            .run(move |connection| Box::pin(async move { revision(connection, &session).await }))
+            .await
+    }
     pub async fn message_queue(&self, session: &str) -> Result<MessageQueue, StoreError> {
         self.validate_root()?;
         crate::sessions::validate_id(session)?;

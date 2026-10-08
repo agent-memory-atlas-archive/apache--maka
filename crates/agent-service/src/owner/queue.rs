@@ -17,6 +17,8 @@
  * under the License.
  */
 
+mod controls;
+
 use super::*;
 use futures_util::FutureExt;
 use maka_agent::{ModelSource, RunningInvocation};
@@ -69,8 +71,8 @@ impl Owner {
                     return Ok(());
                 };
                 match self.next(session).await {
-                    Ok(Some(running)) => {
-                        Self::publish(runs, &running);
+                    Ok(Some((running, basis))) => {
+                        Self::publish(runs, &running, basis);
                         self.workers.spawn(self.clone().drive(running, permit));
                     }
                     Ok(None) => drop(permit),
@@ -85,11 +87,12 @@ impl Owner {
             after = sessions.last().cloned();
         }
     }
-    fn publish(runs: &mut Runs, running: &RunningInvocation) {
+    fn publish(runs: &mut Runs, running: &RunningInvocation, basis: MessageBasis) {
         runs.controls.insert(
             running.invocation().session_id.clone(),
             Control {
                 invocation: running.invocation().clone(),
+                basis,
                 cancellation: running.cancellation(),
                 failure: None,
             },
@@ -123,8 +126,8 @@ impl Owner {
                     self.next(&session).await
                 };
                 match next {
-                    Ok(Some(next)) => {
-                        Self::publish(&mut runs, &next);
+                    Ok(Some((next, basis))) => {
+                        Self::publish(&mut runs, &next, basis);
                         running = next;
                     }
                     Ok(None) => {
@@ -151,7 +154,10 @@ impl Owner {
             }
         })
     }
-    async fn next(&self, session: &str) -> Result<Option<RunningInvocation>, RunError> {
+    async fn next(
+        &self,
+        session: &str,
+    ) -> Result<Option<(RunningInvocation, MessageBasis)>, RunError> {
         loop {
             if self.stop.is_cancelled() {
                 return Ok(None);
@@ -187,7 +193,11 @@ impl Owner {
                 return Ok(None);
             }
             let result = match prepared {
-                Ok(input) => self.engine.start(input, self.stop.child_token()).await,
+                Ok((input, basis)) => self
+                    .engine
+                    .start(input, self.stop.child_token())
+                    .await
+                    .map(|running| (running, basis)),
                 Err(reason) => {
                     self.fail_pending(invocation, entry, reason).await?;
                     continue;
@@ -209,7 +219,7 @@ impl Owner {
         &self,
         entry: &PendingMessageAdmission,
         invocation: Invocation,
-    ) -> Result<RunInput, String> {
+    ) -> Result<(RunInput, MessageBasis), String> {
         let basis: MessageBasis = serde_json::from_value(entry.execution.basis.clone())
             .map_err(|_| "agent_message_basis_invalid")?;
         if basis.tools != self.tool_basis {
@@ -233,7 +243,16 @@ impl Owner {
         )
         .map_err(public_error)?;
         let prepared = source.capture().await.map_err(public_error)?;
-        Ok(self.input(invocation, source, prepared, basis, entry.source.clone()))
+        Ok((
+            self.input(
+                invocation,
+                source,
+                prepared,
+                basis.clone(),
+                entry.source.clone(),
+            ),
+            basis,
+        ))
     }
     pub(super) fn input(
         &self,
@@ -331,14 +350,14 @@ impl Owner {
             run_id: control.invocation.run_id.clone(),
         };
         loop {
-            let queue = self
+            let revision = self
                 .store
-                .message_queue(session)
+                .message_queue_revision(session)
                 .await
                 .map_err(|_| "agent_queue_unavailable")?;
             match self
                 .store
-                .interrupt_message_queue(&command, queue.revision, Some(&control.invocation))
+                .interrupt_message_queue(&command, revision, Some(&control.invocation))
                 .await
             {
                 Ok(InterruptReceipt::Fenced(_)) => {

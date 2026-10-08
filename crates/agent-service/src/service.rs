@@ -328,38 +328,53 @@ impl Handler for Agent {
                             .await?,
                     })
                 }
+                "queue" => {
+                    let input: SessionRead = decode(input)?;
+                    encode(owner.queue(&input.session_id).await?)
+                }
+                "queueMessage" => encode(owner.queue_message(decode(input)?).await?),
+                "editQueue" => {
+                    let operation = context.operation().ok_or("agent_mutation_required")?;
+                    encode(owner.edit_queue(decode(input)?, operation).await?)
+                }
                 "watch" => {
                     let input: Watch = decode(input)?;
                     owner.session(&input.session_id).await?;
                     let mut commits = owner.store.subscribe_commits();
                     let mut after = input.after;
+                    let mut queue_revision = None;
                     loop {
                         if context.scope().cancellation.is_cancelled() {
                             return Err("agent_observation_cancelled".into());
                         }
-                        let observation = owner
+                        // Queue edits need not advance the transcript cursor. Deliver
+                        // them fairly even while catching up a growing transcript.
+                        let revision = owner
                             .store
-                            .session_projection::<SessionConfiguration>(&input.session_id)
+                            .message_queue_revision(&input.session_id)
                             .await
-                            .map_err(|_| "agent_observation_unavailable")?
-                            .ok_or("agent_session_unavailable")?;
-                        if after > observation.through_sequence {
+                            .map_err(|_| "agent_queue_unavailable")?;
+                        if queue_revision != Some(revision) {
+                            let queue = owner.queue(&input.session_id).await?;
+                            queue_revision = Some(queue.revision);
+                            let update = encode(DeliveryPage::Queue { queue })?;
+                            maka_js_runtime::plugin::check_json_delivery(&update, 48 * 1024)
+                                .map_err(|_| "agent_queue_unavailable")?;
+                            context.emit(update).await?;
+                        }
+                        owner.session(&input.session_id).await?;
+                        let through = *commits.borrow();
+                        if after > through {
                             return Err("agent_cursor_invalid".into());
                         }
                         let page = owner
                             .store
-                            .session_stream_events(
-                                &input.session_id,
-                                after,
-                                observation.through_sequence,
-                                32,
-                                48 * 1024,
-                            )
+                            .session_stream_events(&input.session_id, after, through, 32, 48 * 1024)
                             .await
                             .map_err(|_| "agent_observation_unavailable")?;
                         after = page.next_after.unwrap_or(page.through_sequence);
                         context
-                            .emit(encode(DeliveryPage {
+                            .emit(encode(DeliveryPage::Events {
                                 through: page.through_sequence,
                                 next_after: after,
                                 events: page.events.into_iter().filter_map(delivery).collect(),

@@ -342,7 +342,7 @@ class Client {
     return this.input({
       kind: 'action',
       key: this.state.watch.key,
-      event: { status: 'updated', value: { events, through, nextAfter: through } },
+      event: { status: 'updated', value: { kind: 'events', events, through, nextAfter: through } },
     });
   }
 }
@@ -7041,3 +7041,33 @@ for (const target of ['tui', 'desktop']) {
     assert.equal(client.state.dialog, 'help', 'old modal dismissal cannot dismiss help');
   });
 }
+
+test('queue revisions advance independently of transcript delivery and reject stale snapshots', () => {
+  const client = new Client().start();
+  const queue = (revision, preview) =>
+    client.input({
+      kind: 'action',
+      key: client.state.watch.key,
+      event: {
+        status: 'updated',
+        value: {
+          kind: 'queue',
+          queue: {
+            revision,
+            entries: [{ messageId: 'queued', kind: 'followup', preview }],
+          },
+        },
+      },
+    });
+  client.page([], 5);
+  queue(3, 'original');
+  assert.equal(client.state.watch.last, 5);
+  assert.equal(client.state.latestKnown, 5);
+  assert.equal(client.state.queue.entries[0].preview, 'original');
+  client.page([], 8);
+  assert.equal(client.state.queue.revision, 3);
+  queue(4, 'edited');
+  queue(3, 'late');
+  assert.equal(client.state.queue.entries[0].preview, 'edited');
+  assert.equal(client.state.watch.last, 8);
+});
