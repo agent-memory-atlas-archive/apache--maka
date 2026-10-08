@@ -202,6 +202,8 @@ pub enum MetadataResult {
 #[schemars(rename = "AgentSend")]
 pub struct Send {
     pub model: ModelSelection,
+    /// Omission/null uses the configured model default; `off` is explicit.
+    pub thinking_level: Option<maka_runtime::execution::ThinkingLevel>,
     #[schemars(length(min = 1, max = 128))]
     pub session_id: String,
     #[schemars(length(min = 1, max = 65536))]

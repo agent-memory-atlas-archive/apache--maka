@@ -250,3 +250,90 @@ async fn account_metadata_and_reply_capacity_survive_plugin_policy_resolution() 
     );
     assert_eq!(model.main_output_limit, None);
 }
+
+#[tokio::test]
+async fn catalog_metadata_and_execution_share_provider_facts_and_explicit_overrides() {
+    let (catalog, _owner, _registration) = registry();
+    let binding = binding(&catalog, "openai");
+    for (reported, overrides) in [
+        (ModelInfo::new("gpt-5.2"), ModelOverride::default()),
+        (
+            ModelInfo {
+                thinking_levels: Some(vec![]),
+                ..ModelInfo::new("gpt-5.2")
+            },
+            ModelOverride::default(),
+        ),
+        (
+            ModelInfo::new("gpt-5.2"),
+            ModelOverride {
+                thinking_levels: Some(vec![Low, High]),
+                default_thinking_level: Some(High),
+                ..Default::default()
+            },
+        ),
+    ] {
+        let mut input = request(&binding, "gpt-5.2", overrides.clone());
+        let metadata = ApiProviders::model_metadata(
+            "openai",
+            input.connection.clone(),
+            reported.clone(),
+            Some(overrides),
+        )
+        .unwrap();
+        input.model = reported;
+        let model = binding.prepare(input).await.unwrap();
+        assert_eq!(
+            serde_json::to_value(&model.info).unwrap(),
+            serde_json::to_value(&metadata.info).unwrap()
+        );
+        assert_eq!(model.thinking_levels, metadata.thinking_levels);
+    }
+}
+
+#[tokio::test]
+async fn selectable_thinking_choices_respect_native_encoder_and_invalid_default() {
+    let (catalog, _owner, _registration) = registry();
+    let binding = binding(&catalog, "anthropic-compatible");
+    let mut input = request(
+        &binding,
+        "future-model",
+        ModelOverride {
+            thinking_levels: Some(vec![High]),
+            ..Default::default()
+        },
+    );
+    let metadata = ApiProviders::model_metadata(
+        "anthropic-compatible",
+        input.connection.clone(),
+        input.model.clone(),
+        input.overrides.clone(),
+    )
+    .unwrap();
+    assert!(metadata.thinking_levels.is_empty());
+    assert_eq!(metadata.default_thinking_level, None);
+    binding.prepare(input.clone()).await.unwrap();
+    input.thinking_level = Some(High);
+    assert!(binding.prepare(input.clone()).await.is_err());
+    input.overrides.as_mut().unwrap().default_thinking_level = Some(High);
+    assert!(
+        ApiProviders::model_metadata(
+            "anthropic-compatible",
+            input.connection.clone(),
+            input.model.clone(),
+            input.overrides.clone()
+        )
+        .is_err()
+    );
+    input.overrides.as_mut().unwrap().thinking_levels = Some(vec![Low]);
+    // Invalid configured defaults are also rejected for encoders that do support thinking.
+    assert!(
+        ApiProviders::model_metadata(
+            "openai-compatible",
+            input.connection,
+            input.model,
+            input.overrides
+        )
+        .is_err()
+    );
+}

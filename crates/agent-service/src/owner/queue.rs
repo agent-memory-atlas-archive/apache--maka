@@ -263,6 +263,7 @@ impl Owner {
         delivered: RootSourceMessage,
     ) -> RunInput {
         let binding = source.accepted.binding.clone();
+        let thinking_level = source.accepted.thinking_level;
         RunInput {
             model_source: Some(Arc::new(source)),
             model_revision: Some(prepared.revision),
@@ -285,7 +286,7 @@ impl Owner {
                 orchestration_mode: BehaviorId::default(),
                 tool_mode: ToolMode::Direct,
                 model: Some(binding),
-                thinking_level: None,
+                thinking_level,
                 system_prompt: None,
                 tool_composition: None,
             },

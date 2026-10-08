@@ -318,6 +318,7 @@ impl Owner {
         id: String,
         text: String,
         selection: crate::ModelSelection,
+        thinking_level: Option<maka_runtime::execution::ThinkingLevel>,
         operation: &maka_plugin_core::operation::RecoveryRef,
     ) -> Result<crate::contract::SendResult, String> {
         if text.trim().is_empty() || text.len() > 64 * 1024 {
@@ -351,6 +352,7 @@ impl Owner {
         let (source, prepared) = crate::model::Source::select(
             self.configuration.clone(),
             selection,
+            thinking_level,
             id.clone(),
             self.revision.clone(),
         )

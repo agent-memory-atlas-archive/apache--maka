@@ -332,6 +332,8 @@ class Client {
       event: {
         selection: { connectionId: 'fixture', revision: 2, modelId: 'fixture-model' },
         connectionName: 'Fixture',
+        thinkingLevels: [],
+        defaultThinkingLevel: null,
         label: 'Fixture model',
       },
     });
@@ -816,6 +818,8 @@ modelGuest.activate();
 const modelChoices = Array.from({ length: 16 }, (_, at) => ({
   selection: { connectionId: 'connection', revision: 5, modelId: `model-${at}` },
   connectionName: 'Account',
+  thinkingLevels: [],
+  defaultThinkingLevel: null,
   label: `Model ${at}`,
 }));
 const modelAction = (out, key, reply, p = modelProps) =>
@@ -1676,6 +1680,8 @@ test('desktop model trigger retains its full label for native measurement and ac
     selection: {
       selection: { connectionId: 'fixture', revision: 2, modelId: 'fixture-model' },
       connectionName: 'Fixture',
+      thinkingLevels: [],
+      defaultThinkingLevel: null,
       label,
     },
     busy: false,
@@ -1693,6 +1699,8 @@ test('changed settings discard late model query and old default before selecting
     selection: {
       selection: { connectionId: 'fixture', revision: 2, modelId: 'fixture-model' },
       connectionName: 'Fixture',
+      thinkingLevels: [],
+      defaultThinkingLevel: null,
       label: 'Fixture model',
     },
     busy: false,
@@ -1705,6 +1713,8 @@ test('changed settings discard late model query and old default before selecting
   const choice = {
     selection: { connectionId: 'fixture', revision: 2, modelId: 'fixture-model' },
     connectionName: 'Fixture',
+    thinkingLevels: [],
+    defaultThinkingLevel: null,
     label: 'Fixture model',
   };
   form.complete(old, {
@@ -1814,6 +1824,8 @@ test('a refreshed catalog never replaces a chosen nondefault model with an unrel
   const chosen = {
     selection: { connectionId: 'chosen', revision: 2, modelId: 'chosen-model' },
     connectionName: 'Chosen',
+    thinkingLevels: [],
+    defaultThinkingLevel: null,
     label: 'Chosen model',
   };
   const form = new FormClient(module.component, {
@@ -1834,6 +1846,8 @@ test('a refreshed catalog never replaces a chosen nondefault model with an unrel
   const other = {
     selection: { connectionId: 'other', revision: 8, modelId: 'default-model' },
     connectionName: 'Other',
+    thinkingLevels: [],
+    defaultThinkingLevel: null,
     label: 'Default model',
   };
   form.query('models', {
@@ -2700,6 +2714,8 @@ for (const [target, module] of defaultModules) {
       const selected = {
         selection: { connectionId: 'original-connection', revision: 3, modelId: 'm'.repeat(512) },
         connectionName: '界'.repeat(255) + '\n',
+        thinkingLevels: [],
+        defaultThinkingLevel: null,
         label: '🙂'.repeat(256),
       };
       const form = make({ selection: selected });

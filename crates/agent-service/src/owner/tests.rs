@@ -1091,6 +1091,7 @@ async fn cleanup_case(panic: bool) {
                     session.clone(),
                     "after failed cleanup".into(),
                     selection,
+                    None,
                     &reference
                 )
                 .await

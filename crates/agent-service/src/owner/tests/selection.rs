@@ -158,6 +158,7 @@ async fn captured_execution_ignores_catalog_labels_and_other_models_but_rejects_
     let (mut source, _) = crate::model::Source::select(
         fixture.config.clone(),
         fixture.selection().await,
+        None,
         session.clone(),
         fixture.owner.revision.clone(),
     )
@@ -241,6 +242,7 @@ async fn captured_execution_ignores_catalog_labels_and_other_models_but_rejects_
     let (current, _) = crate::model::Source::select(
         fixture.config.clone(),
         fixture.selection().await,
+        None,
         "current".into(),
         fixture.owner.revision.clone(),
     )
@@ -254,6 +256,7 @@ async fn captured_execution_ignores_catalog_labels_and_other_models_but_rejects_
     let (current, _) = crate::model::Source::select(
         fixture.config.clone(),
         fixture.selection().await,
+        None,
         "current".into(),
         fixture.owner.revision.clone(),
     )
@@ -537,4 +540,160 @@ async fn queue_promotion_rejects_a_different_accepted_model_execution() {
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
+}
+
+pub(super) async fn thinking(
+    fixture: &Fixture,
+    levels: Vec<maka_runtime::execution::ThinkingLevel>,
+    default: maka_runtime::execution::ThinkingLevel,
+) {
+    edit(fixture, |changes| {
+        changes.model_overrides = Patch::Set(BTreeMap::from([(
+            "fixture-model".into(),
+            ModelOverride {
+                thinking_levels: Some(levels),
+                default_thinking_level: Some(default),
+                ..Default::default()
+            },
+        )]));
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn thinking_choices_reach_requests_and_queued_policy_cannot_steer_another_run() {
+    use maka_runtime::execution::ThinkingLevel::{High, Low, Off};
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let fixture = Fixture::new(&base, 1, None).await;
+        thinking(&fixture, vec![Off, Low, High], High).await;
+        let page = models(&fixture, json!({"kind":"start"})).await.unwrap();
+        assert_eq!(page["choices"][0]["thinkingLevels"], json!(["off", "low", "high"]));
+        assert_eq!(page["choices"][0]["defaultThinkingLevel"], "high");
+        let session = fixture.create("Per-message thinking").await;
+        let selection = fixture.selection().await;
+        // Omission selects the configured default; explicit Off is a different policy.
+        fixture.send(&session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        assert_eq!(request(&mut socket).await["reasoning_effort"], "high");
+        for level in [Off, Low] {
+            let result = fixture.mutation(2, "send", json!({"sessionId":session,"message":"chosen thinking","model":selection,"thinkingLevel":level}), Uuid::new_v4()).await.unwrap();
+            assert_eq!(result["kind"], "queued");
+        }
+        assert!(fixture.mutation(2, "send", json!({"sessionId":session,"message":"unsupported","model":selection,"thinkingLevel":"ultra"}), Uuid::new_v4()).await.is_err());
+        let pending = fixture.store.pending_messages(&session).await.unwrap();
+        assert_eq!(pending.len(), 2);
+        for (entry, level) in pending.iter().zip([Off, Low]) {
+            let basis: MessageBasis = serde_json::from_value(entry.execution.basis.clone()).unwrap();
+            assert_eq!(basis.model.thinking_level, Some(level));
+        }
+        let queue = fixture.query("queue", json!({"sessionId":session})).await.unwrap();
+        let rejected = fixture.mutation(2, "editQueue", json!({"sessionId":session,"expectedRevision":queue["revision"],"edit":{"kind":"promote","messageId":pending[0].source.message.message_id}}), Uuid::new_v4()).await.unwrap();
+        assert_eq!(rejected, json!({"kind":"rejected","reason":"execution_changed"}));
+        response(&mut socket).await;
+        for expected in ["none", "low"] {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            assert_eq!(request(&mut socket).await["reasoning_effort"], expected);
+            response(&mut socket).await;
+        }
+        fixture.drained().await;
+        assert!(fixture.store.pending_messages(&session).await.unwrap().is_empty());
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn restored_thinking_preserves_explicit_choice_and_refuses_changed_default_or_support() {
+    use maka_runtime::execution::ThinkingLevel::{High, Low};
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    thinking(&fixture, vec![Low, High], High).await;
+    let session = fixture.create("Restored thinking policy").await;
+    let mut sources = Vec::new();
+    for level in [None, Some(High)] {
+        let (source, prepared) = crate::model::Source::select(
+            fixture.config.clone(),
+            fixture.selection().await,
+            level,
+            session.clone(),
+            fixture.owner.revision.clone(),
+        )
+        .await
+        .unwrap();
+        let encoded = serde_json::to_vec(&source.accepted).unwrap();
+        let restored = crate::model::Source::restore(
+            fixture.config.clone(),
+            serde_json::from_slice(&encoded).unwrap(),
+            session.clone(),
+            fixture.owner.revision.clone(),
+        )
+        .unwrap();
+        assert_eq!(restored.capture().await.unwrap().options, prepared.options);
+        sources.push((restored, prepared.options));
+    }
+    thinking(&fixture, vec![Low, High], Low).await;
+    assert!(sources[0].0.capture().await.is_err());
+    assert_eq!(sources[1].0.capture().await.unwrap().options, sources[1].1);
+    thinking(&fixture, vec![Low], Low).await;
+    assert!(sources[1].0.capture().await.is_err());
+    fixture.app.shutdown().await.unwrap();
+    fixture.config.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn invalid_thinking_default_remains_unavailable_without_poisoning_other_models() {
+    use maka_runtime::execution::ThinkingLevel::{High, Low};
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    thinking(&fixture, vec![Low], High).await;
+    edit(&fixture, |changes| {
+        changes
+            .enabled_model_ids
+            .as_mut()
+            .unwrap()
+            .extend((0..260).map(|at| format!("other-{at}")));
+    })
+    .await;
+    let catalog = fixture.config.catalog().await.unwrap();
+    let target = ConnectionTarget {
+        connection_id: catalog.connections[0].connection_id.clone(),
+        model_id: "fixture-model".into(),
+    };
+    fixture
+        .config
+        .set_default_target(SetDefaultConnectionTargetInput {
+            expected_catalog_revision: catalog.revision,
+            target: Some(target.clone()),
+        })
+        .await
+        .unwrap();
+    let page = models(&fixture, json!({"kind":"start"})).await.unwrap();
+    assert_eq!(
+        page["defaultModel"],
+        json!({"kind":"unavailable","target":target})
+    );
+    assert_eq!(page["choices"].as_array().unwrap().len(), 16);
+    assert!(
+        page["choices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["selection"]["modelId"] != "fixture-model")
+    );
+    // Search still advances over the omitted model and non-matching rows.
+    let page = models(&fixture, json!({"kind":"start","query":"fixture-model"}))
+        .await
+        .unwrap();
+    assert!(page["choices"].as_array().unwrap().is_empty());
+    assert_eq!(page["next"]["model"], 256);
+    let last = models(
+        &fixture,
+        json!({"kind":"continue","revision":page["revision"],"cursor":page["next"]}),
+    )
+    .await
+    .unwrap();
+    assert!(last["choices"].as_array().unwrap().is_empty());
+    assert!(last["next"].is_null());
+    fixture.app.shutdown().await.unwrap();
+    fixture.config.shutdown().await.unwrap();
 }

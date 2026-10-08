@@ -919,6 +919,15 @@ export type SettingsModelsPage =
       next: SettingsModelCursor | null;
       kind: 'ready';
     };
+export type ThinkingLevel =
+  | 'off'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max'
+  | 'ultra';
 export type SettingsDefaultModel =
   | {
       kind: 'none';
@@ -1160,15 +1169,6 @@ export type SettingsCredentialRejection =
   | 'capacity'
   | 'slug_taken'
   | 'authentication';
-export type ThinkingLevel =
-  | 'off'
-  | 'minimal'
-  | 'low'
-  | 'medium'
-  | 'high'
-  | 'xhigh'
-  | 'max'
-  | 'ultra';
 export type ApiProtocol = 'openai-chat' | 'openai-responses' | 'anthropic-messages';
 export type ModelModality = 'text' | 'image' | 'audio' | 'pdf' | 'video';
 export type RelayServiceTier = 'fast';
@@ -2647,6 +2647,37 @@ export interface SettingsModelChoice {
   selection: ModelSelection;
   connectionName: string;
   label: string;
+  /**
+   * @maxItems 8
+   */
+  thinkingLevels:
+    | []
+    | [ThinkingLevel]
+    | [ThinkingLevel, ThinkingLevel]
+    | [ThinkingLevel, ThinkingLevel, ThinkingLevel]
+    | [ThinkingLevel, ThinkingLevel, ThinkingLevel, ThinkingLevel]
+    | [ThinkingLevel, ThinkingLevel, ThinkingLevel, ThinkingLevel, ThinkingLevel]
+    | [ThinkingLevel, ThinkingLevel, ThinkingLevel, ThinkingLevel, ThinkingLevel, ThinkingLevel]
+    | [
+        ThinkingLevel,
+        ThinkingLevel,
+        ThinkingLevel,
+        ThinkingLevel,
+        ThinkingLevel,
+        ThinkingLevel,
+        ThinkingLevel,
+      ]
+    | [
+        ThinkingLevel,
+        ThinkingLevel,
+        ThinkingLevel,
+        ThinkingLevel,
+        ThinkingLevel,
+        ThinkingLevel,
+        ThinkingLevel,
+        ThinkingLevel,
+      ];
+  defaultThinkingLevel: ThinkingLevel | null;
 }
 export interface ConnectionTarget {
   connectionId: string;
@@ -2933,6 +2964,10 @@ export interface AgentMetadata {
 }
 export interface AgentSend {
   model: ModelSelection;
+  /**
+   * Omission/null uses the configured model default; `off` is explicit.
+   */
+  thinkingLevel?: ThinkingLevel | null;
   sessionId: string;
   message: string;
 }

@@ -55,7 +55,7 @@ async fn queued_followup_uses_original_worker_capacity_and_a_new_invocation() {
         drop(prepared);
         let gate = fixture.owner.runs.lock().await;
         let completed = gate.controls[&session].cancellation.clone();
-        let mut tail = Box::pin(fixture.owner.send(session.clone(), "tail followup".into(), selection, &reference));
+        let mut tail = Box::pin(fixture.owner.send(session.clone(), "tail followup".into(), selection, None, &reference));
         assert!(futures_util::poll!(tail.as_mut()).is_pending());
         response(&mut second_socket).await;
         completed.cancelled().await;
@@ -135,6 +135,7 @@ async fn stopping_original_run_retracts_queue_and_fences_tail_admission() {
             session.clone(),
             "after stop".into(),
             selection,
+            None,
             &tail_reference,
         ));
         assert!(futures_util::poll!(tail.as_mut()).is_pending());
@@ -170,13 +171,15 @@ async fn activation_recovers_more_pending_sessions_than_capacity_without_new_sen
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
         let fixture = Fixture::new(&base, 1, None).await;
+        use maka_runtime::execution::ThinkingLevel::{Off, Low, High};
+        selection::thinking(&fixture, vec![Off, Low, High], High).await;
         let deployment = fixture.app.client().snapshot().effective.unwrap().deployment;
         let mut sessions = Vec::new();
         let raw = rusqlite::Connection::open(fixture.root.join(maka_event_log::root::ROOT_DATABASE)).unwrap();
         raw.execute_batch("CREATE TRIGGER hold_opening BEFORE INSERT ON event_log WHEN NEW.kind='invocation_opened' BEGIN SELECT RAISE(ABORT, 'fixture opening failure'); END;").unwrap();
-        for index in 0..3 {
+        for (index, level) in [Some(Off), Some(Low), None].into_iter().enumerate() {
             let session = fixture.create(&format!("Recovery {index}")).await;
-            assert!(fixture.send(&session).await.is_err());
+            assert!(fixture.mutation(2, "send", json!({"sessionId":session,"message":"restored thinking","model":fixture.selection().await,"thinkingLevel":level}), Uuid::new_v4()).await.is_err());
             assert_eq!(fixture.store.pending_messages(&session).await.unwrap().len(), 1);
             sessions.push(session);
         }
@@ -188,11 +191,16 @@ async fn activation_recovers_more_pending_sessions_than_capacity_without_new_sen
         maka_settings_service::provide(&mut native).unwrap();
         let app = Application::start_from_store(fixture.store.clone(), deployment, native, fixture.issuer.clone(), Arc::new(Grant(fixture.issuer.clone(), None)), maka_js_runtime::plugin::Limits::default()).await.unwrap();
         app.ready().await.unwrap();
+        let mut efforts = Vec::new();
         for _ in 0..3 {
             let (mut socket, _) = listener.accept().await.unwrap();
-            assert_eq!(request(&mut socket).await["model"], "fixture-model");
+            let body = request(&mut socket).await;
+            assert_eq!(body["model"], "fixture-model");
+            efforts.push(body["reasoning_effort"].as_str().unwrap().to_owned());
             response(&mut socket).await;
         }
+        efforts.sort();
+        assert_eq!(efforts, ["high", "low", "none"]);
         for session in sessions {
             while !fixture.store.pending_messages(&session).await.unwrap().is_empty() { tokio::task::yield_now().await; }
         }

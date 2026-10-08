@@ -5055,6 +5055,17 @@ export const contracts = {
               model: {
                 $ref: '#/$defs/ModelSelection',
               },
+              thinkingLevel: {
+                description: 'Omission/null uses the configured model default; `off` is explicit.',
+                anyOf: [
+                  {
+                    $ref: '#/$defs/ThinkingLevel',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
               sessionId: {
                 type: 'string',
                 minLength: 1,
@@ -5093,6 +5104,10 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['connectionId', 'revision', 'modelId'],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
               },
             },
           },
@@ -7153,9 +7168,32 @@ export const contracts = {
                     type: 'string',
                     maxLength: 512,
                   },
+                  thinkingLevels: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/ThinkingLevel',
+                    },
+                    maxItems: 8,
+                  },
+                  defaultThinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                 },
                 additionalProperties: false,
-                required: ['selection', 'connectionName', 'label'],
+                required: [
+                  'selection',
+                  'connectionName',
+                  'label',
+                  'thinkingLevels',
+                  'defaultThinkingLevel',
+                ],
               },
               ModelSelection: {
                 description:
@@ -7181,6 +7219,10 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['connectionId', 'revision', 'modelId'],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
               },
               SettingsDefaultModel: {
                 oneOf: [

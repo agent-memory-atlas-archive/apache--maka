@@ -60,6 +60,12 @@ pub struct ModelChoice {
     pub connection_name: String,
     #[schemars(length(max = 512))]
     pub label: String,
+    #[schemars(length(max = 8))]
+    pub thinking_levels: Vec<maka_runtime::execution::ThinkingLevel>,
+    #[schemars(
+        with = "maka_runtime::schema::RequiredNullable<maka_runtime::execution::ThinkingLevel>"
+    )]
+    pub default_thinking_level: Option<maka_runtime::execution::ThinkingLevel>,
 }
 #[derive(Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]

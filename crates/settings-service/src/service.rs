@@ -59,19 +59,29 @@ fn selectable(row: &ConnectionCatalogEntry) -> bool {
         && row.provider.package_id == maka_providers::api::ID
         && row.provider.entry_id == maka_providers::api::ID
 }
-fn model_choice(row: &ConnectionCatalogEntry, model: &str) -> ModelChoice {
+fn model_choice(row: &ConnectionCatalogEntry, model: &str) -> Option<ModelChoice> {
     let info = row
         .models
         .iter()
         .find(|info| info.id == model)
         .cloned()
         .unwrap_or_else(|| ModelInfo::new(model));
-    let info = row
-        .model_overrides
-        .as_ref()
-        .and_then(|all| all.get(model))
-        .map_or_else(|| info.clone(), |overrides| overrides.apply(&info));
-    ModelChoice {
+    let metadata = maka_providers::api::ApiProviders::model_metadata(
+        &row.provider.name,
+        maka_plugins::provider::Connection {
+            id: row.connection_id.clone(),
+            revision: row.revision,
+            configuration: row.configuration.clone(),
+        },
+        info,
+        row.model_overrides
+            .as_ref()
+            .and_then(|all| all.get(model))
+            .cloned(),
+    )
+    .ok()?;
+    let info = metadata.info;
+    Some(ModelChoice {
         selection: ModelSelection {
             connection_id: row.connection_id.clone(),
             revision: row.revision,
@@ -79,25 +89,31 @@ fn model_choice(row: &ConnectionCatalogEntry, model: &str) -> ModelChoice {
         },
         connection_name: row.name.clone(),
         label: info.display_name.unwrap_or_else(|| model.into()),
-    }
+        default_thinking_level: metadata.default_thinking_level,
+        thinking_levels: metadata.thinking_levels,
+    })
 }
 fn default_model(catalog: &ConnectionCatalogSnapshot) -> DefaultModel {
     match &catalog.default_target {
         None => DefaultModel::None,
-        Some(target) => match catalog.connections.iter().find(|row| {
-            row.connection_id == target.connection_id
-                && selectable(row)
-                && row.enabled_model_ids.contains(&target.model_id)
-        }) {
-            Some(row) => DefaultModel::Ready {
-                choice: model_choice(row, &target.model_id),
-            },
+        Some(target) => match catalog
+            .connections
+            .iter()
+            .find(|row| {
+                row.connection_id == target.connection_id
+                    && selectable(row)
+                    && row.enabled_model_ids.contains(&target.model_id)
+            })
+            .and_then(|row| model_choice(row, &target.model_id))
+        {
+            Some(choice) => DefaultModel::Ready { choice },
             None => DefaultModel::Unavailable {
                 target: target.clone(),
             },
         },
     }
 }
+
 impl Handler for Settings {
     fn call(
         &self,
@@ -248,7 +264,9 @@ impl Handler for Settings {
                                 break 'rows;
                             }
                             scanned += 1;
-                            let choice = model_choice(row, model);
+                            let Some(choice) = model_choice(row, model) else {
+                                continue;
+                            };
                             let matches = terms.is_empty() || {
                                 let label = choice.label.to_lowercase();
                                 let model = model.to_lowercase();

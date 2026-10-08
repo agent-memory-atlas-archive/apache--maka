@@ -25,7 +25,7 @@ use maka_plugins::provider::{Connection, Definition, Model, Resolve};
 use maka_runtime::{
     composition::SourceRevision,
     configuration::{ModelCapabilities, ModelInfo, ModelSelection},
-    execution::ModelBinding,
+    execution::{ModelBinding, ThinkingLevel},
     scope::Scope,
 };
 use serde::{Deserialize, Serialize};
@@ -63,6 +63,7 @@ impl ExecutionBasis {
 #[serde(deny_unknown_fields)]
 pub(crate) struct AcceptedModel {
     pub binding: ModelBinding,
+    pub thinking_level: Option<ThinkingLevel>,
     provider: maka_runtime::provider::Identity,
     provider_configuration: Value,
     basis: ExecutionBasis,
@@ -78,6 +79,7 @@ impl Source {
     pub async fn select(
         configuration: Arc<ConfigurationStore>,
         selection: ModelSelection,
+        thinking_level: Option<ThinkingLevel>,
         session: String,
         mut revision: SourceRevision,
     ) -> Result<(Self, PreparedModel), RunError> {
@@ -97,7 +99,7 @@ impl Source {
             maka_providers::api::ApiProviders::definition(&row.provider.name)
                 .map_err(|_| unavailable())?,
         );
-        let model = resolve(&definition, row, &selection.model_id).await?;
+        let model = resolve(&definition, row, &selection.model_id, thinking_level).await?;
         revision.name = row.provider.name.clone();
         let source = Self {
             configuration,
@@ -107,6 +109,7 @@ impl Source {
                     connection_slug: row.slug.clone(),
                     model: selection.model_id,
                 },
+                thinking_level,
                 provider: row.provider.clone(),
                 provider_configuration: row.configuration.clone(),
                 basis: ExecutionBasis::new(&model, row),
@@ -215,7 +218,13 @@ impl ModelSource for Source {
             {
                 return Err(unavailable());
             }
-            let model = resolve(&self.definition, row, &self.accepted.binding.model).await?;
+            let model = resolve(
+                &self.definition,
+                row,
+                &self.accepted.binding.model,
+                self.accepted.thinking_level,
+            )
+            .await?;
             if ExecutionBasis::new(&model, row) != self.accepted.basis {
                 return Err(unavailable());
             }
@@ -227,6 +236,7 @@ async fn resolve(
     definition: &Definition,
     row: &maka_runtime::configuration::ConnectionCatalogEntry,
     model: &str,
+    thinking_level: Option<ThinkingLevel>,
 ) -> Result<Model, RunError> {
     definition
         .prepare(Resolve {
@@ -242,7 +252,7 @@ async fn resolve(
                 .as_ref()
                 .and_then(|models| models.get(model))
                 .cloned(),
-            thinking_level: None,
+            thinking_level,
         })
         .await
         .map_err(|_| unavailable())

@@ -41,11 +41,50 @@ mod route;
 
 pub const ID: &str = "maka.providers";
 
+/// Catalog metadata and configured execution choices remain distinct: `info`
+/// contains model facts; thinking policy includes the user's overrides.
+pub struct ModelMetadata {
+    pub info: ModelInfo,
+    pub thinking_levels: Vec<maka_runtime::execution::ThinkingLevel>,
+    pub default_thinking_level: Option<maka_runtime::execution::ThinkingLevel>,
+}
+
 pub struct ApiProviders;
 impl ApiProviders {
     /// A compiled API implementation for a native application owner. Availability
     /// does not activate legacy contributions or grant execution authority.
     pub fn definition(id: &str) -> Result<Definition, String> {
+        Self::provider(id)?.definition()
+    }
+
+    /// Selectable model metadata, checked by the same preparation policy as
+    /// execution. No credentials or network access are needed. An invalid
+    /// configured default is an error, never silently replaced by another level.
+    pub fn model_metadata(
+        id: &str,
+        connection: Connection,
+        model: ModelInfo,
+        overrides: Option<ModelOverride>,
+    ) -> Result<ModelMetadata, String> {
+        let provider = Self::provider(id)?;
+        let mut metadata = provider.model_metadata(model.clone(), overrides.as_ref());
+        let mut request = Resolve {
+            connection,
+            model,
+            overrides,
+            thinking_level: None,
+        };
+        provider
+            .prepare(request.clone())
+            .map_err(|error| error.to_string())?;
+        metadata.thinking_levels.retain(|level| {
+            request.thinking_level = Some(*level);
+            provider.prepare(request.clone()).is_ok()
+        });
+        Ok(metadata)
+    }
+
+    fn provider(id: &str) -> Result<ApiProvider, String> {
         let (id, facts) = facts::all()
             .map_err(|error| error.to_string())?
             .iter()
@@ -53,11 +92,10 @@ impl ApiProviders {
                 name.as_str() == id && !facts.retired && facts.auth_kind != AuthKind::OauthToken
             })
             .ok_or("API provider is unavailable")?;
-        ApiProvider {
+        Ok(ApiProvider {
             id: id.as_str(),
             facts,
-        }
-        .definition()
+        })
     }
 
     /// Available compiled API policies, without activating legacy contributions.
@@ -173,13 +211,31 @@ impl ApiProvider {
         .map_err(|error| error.to_string())
     }
 
+    fn model_metadata(&self, model: ModelInfo, overrides: Option<&ModelOverride>) -> ModelMetadata {
+        let reported = metadata::enrich(self.id, self.facts, model);
+        let info =
+            overrides.map_or_else(|| reported.clone(), |overrides| overrides.apply(&reported));
+        let thinking_levels = overrides
+            .and_then(|o| o.thinking_levels.clone())
+            .or_else(|| info.thinking_levels.clone())
+            .unwrap_or_default();
+        let default_thinking_level = overrides.and_then(|o| o.default_thinking_level).or(info
+            .default_thinking_level
+            .filter(|level| thinking_levels.contains(level)));
+        ModelMetadata {
+            info,
+            thinking_levels,
+            default_thinking_level,
+        }
+    }
+
     fn prepare(&self, request: Resolve) -> Result<Model, Error> {
         let configuration = Configuration::read(&request.connection)?;
-        let reported = metadata::enrich(self.id, self.facts, request.model);
-        let info = request
-            .overrides
-            .as_ref()
-            .map_or_else(|| reported.clone(), |overrides| overrides.apply(&reported));
+        let ModelMetadata {
+            info,
+            thinking_levels,
+            default_thinking_level,
+        } = self.model_metadata(request.model, request.overrides.as_ref());
         let selection = Selection {
             provider: self.id,
             connection: &request.connection,
@@ -189,23 +245,7 @@ impl ApiProvider {
         };
         let route = route::resolve(&selection, self.facts)?;
         route.check_execution()?;
-        let thinking_levels = request
-            .overrides
-            .as_ref()
-            .and_then(|o| o.thinking_levels.clone())
-            .or_else(|| info.thinking_levels.clone())
-            .unwrap_or_default();
-        let level = request
-            .thinking_level
-            .or_else(|| {
-                request
-                    .overrides
-                    .as_ref()
-                    .and_then(|o| o.default_thinking_level)
-            })
-            .or(info
-                .default_thinking_level
-                .filter(|level| thinking_levels.contains(level)));
+        let level = request.thinking_level.or(default_thinking_level);
         if level.is_some_and(|level| !thinking_levels.contains(&level)) {
             return Err(Error::Invalid("unsupported model thinking level".into()));
         }

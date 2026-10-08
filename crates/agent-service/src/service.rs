@@ -315,7 +315,13 @@ impl Handler for Agent {
                     let operation = context.operation().ok_or("agent_mutation_required")?;
                     encode(
                         owner
-                            .send(input.session_id, input.message, input.model, operation)
+                            .send(
+                                input.session_id,
+                                input.message,
+                                input.model,
+                                input.thinking_level,
+                                operation,
+                            )
                             .await?,
                     )
                 }
