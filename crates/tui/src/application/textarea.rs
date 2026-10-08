@@ -46,6 +46,13 @@ struct Recipe {
     props: TextareaProps,
 }
 impl Widget for Recipe {
+    fn cancel_pointer(&self, state: &mut dyn Any) {
+        state
+            .downcast_mut::<Owner>()
+            .unwrap()
+            .editor
+            .cancel_pointer();
+    }
     fn create(&self, _: super::NativeContext) -> Box<dyn Any> {
         Box::new(Owner::new(
             Editor::bounded(maka_ui::textarea::MAX_BUFFER_BYTES, "composer-too-large"),

@@ -106,12 +106,14 @@ pub(super) enum TargetKind {
     Action,
     Native,
     Scroll,
+    Backdrop { body: Placement },
 }
 #[derive(Clone)]
 pub(super) struct TargetIdentity {
     pub mount: Mount,
     pub key: String,
     pub owner: std::rc::Rc<()>,
+    pub scope: Option<super::dialog::Scope>,
 }
 /// Original successfully painted ancestry, including across component slots.
 #[derive(Clone)]
@@ -152,13 +154,19 @@ impl Target {
 /// A pending scene is not input geometry until the embedding confirms a flush.
 /// 绘制成功并完成实际 flush 后，才发布对应的命中区域。
 pub struct PaintedScene {
+    pub(super) viewport: Rect,
     pub(super) targets: Vec<Target>,
     pub(super) keyboard: Option<std::rc::Rc<Ancestor>>,
     placed: std::collections::BTreeSet<uuid::Uuid>,
     laid_out: std::collections::BTreeMap<uuid::Uuid, PaintedMount>,
     pub(super) scope: Option<super::selection::ScopePaint>,
-    geometries: Vec<NativeGeometry>,
-    ancestry: Vec<std::rc::Rc<Ancestor>>,
+    pub(super) geometries: Vec<NativeGeometry>,
+    pub(super) ancestry: Vec<std::rc::Rc<Ancestor>>,
+    pub(super) input_scope: Option<super::dialog::Scope>,
+    pub(super) dialogs: std::collections::VecDeque<super::dialog::Deferred>,
+    openings: Vec<super::dialog::Scope>,
+    pub(super) input_path: Vec<super::dialog::Scope>,
+    pub(super) foreground_path: Vec<super::dialog::Scope>,
 }
 
 struct PaintedMount {
@@ -237,10 +245,10 @@ pub struct Slots<'a> {
     pub(super) measurements: &'a Measurements,
     placement: Option<Placement>,
 }
-struct NativeGeometry {
-    mount: Mount,
-    owner: std::rc::Rc<()>,
-    geometry: Box<dyn std::any::Any>,
+pub(super) struct NativeGeometry {
+    pub mount: Mount,
+    pub owner: std::rc::Rc<()>,
+    pub geometry: Box<dyn std::any::Any>,
 }
 impl Slots<'_> {
     pub fn native_state<T: std::any::Any>(&self) -> maka_ui::Result<&T> {
@@ -299,6 +307,7 @@ impl Slots<'_> {
                 mount: self.parent.clone(),
                 key: key.into(),
                 owner: owner.identity.clone(),
+                scope: self.scene.as_ref().unwrap().input_scope.clone(),
             },
             revision: self.presenter.application.frame(self.parent)?.revision,
             area,
@@ -397,7 +406,7 @@ impl Slots<'_> {
     }
 }
 
-fn color(rgb: u32) -> Color {
+pub(super) fn color(rgb: u32) -> Color {
     Color::Rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
 }
 impl Presenter {
@@ -413,6 +422,7 @@ impl Presenter {
                 .fg(Color::Rgb(235, 235, 240)),
         );
         let mut scene = PaintedScene {
+            viewport: area,
             targets: Vec::new(),
             placed: Default::default(),
             laid_out: Default::default(),
@@ -420,15 +430,24 @@ impl Presenter {
             geometries: Vec::new(),
             ancestry: Vec::new(),
             keyboard: None,
+            input_scope: None,
+            dialogs: Default::default(),
+            openings: self.opening_witnesses()?,
+            input_path: Vec::new(),
+            foreground_path: Vec::new(),
         };
         if !self.resources.ready(&self.application, &self.root)? {
             return Ok(scene);
         }
         let measurements = Measurements::default();
         self.paint_mount(&self.root, area.into(), buffer, &mut scene, &measurements)?;
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.paint_dialogs(buffer, &mut scene, &measurements)
+        }))
+        .map_err(|_| maka_ui::Error::Invalid("terminal native painting panicked".into()))??;
         Ok(scene)
     }
-    pub fn present(&mut self, scene: PaintedScene) {
+    pub fn present(&mut self, mut scene: PaintedScene) {
         if !self.surface.is_live() {
             return;
         }
@@ -436,7 +455,9 @@ impl Presenter {
         // geometry. Native observations can revise business state while the
         // complete immutable recipe remains the same (e.g. selection during a
         // resize). Validate that distinction and the original owner as a batch.
-        if !scene.laid_out.contains_key(&self.root.id()) {
+        if !self.scene_openings_current(&scene.openings)
+            || !scene.laid_out.contains_key(&self.root.id())
+        {
             return;
         }
         let mut frames_current = true;
@@ -468,6 +489,35 @@ impl Presenter {
             }
             frames_current &= frame_current;
         }
+        let scope = scene.foreground_path.last().cloned();
+        scene
+            .targets
+            .retain(|target| super::dialog::same_scope(&target.scope, &scope));
+        if !scene
+            .keyboard
+            .as_ref()
+            .is_some_and(|keyboard| super::dialog::same_scope(&keyboard.scope, &scope))
+        {
+            scene.keyboard = None;
+        }
+        if !super::dialog::same_path(&self.physical_path, &scene.foreground_path) {
+            if let Err(error) = self.resources.cancel_pointer() {
+                self.report(&error);
+                return;
+            }
+            self.drag = None;
+            if self.focus_before_flush.is_none() {
+                self.focus_before_flush = self.focus.as_ref().map(super::dialog::WeakTarget::new);
+            }
+            self.focus = None;
+        }
+        for opening in &scene.openings {
+            if let Some(opening) = opening.upgrade() {
+                opening.pending_flush.set(false);
+            }
+        }
+        self.publish_modal_focus(&scene.foreground_path, &scene.targets);
+        self.physical_path = scene.foreground_path;
         self.resources.presentation(&scene.placed);
         for pending in scene.geometries {
             self.resources
@@ -489,6 +539,11 @@ impl Presenter {
             .filter(|target| self.resources.pointer_capture(target).unwrap_or(false))
             .and_then(|old| scene.targets.iter().find(|new| new.same(&old)).cloned());
         self.focus = autofocus
+            .or_else(|| {
+                self.restore_focus
+                    .take()
+                    .and_then(|target| target.resolve(&scene.targets))
+            })
             .or_else(|| {
                 self.focus
                     .take()
@@ -550,14 +605,26 @@ impl Presenter {
         }
         Ok(visible)
     }
-    fn node_layout(&self, mount: &Mount, node: &Node) -> maka_ui::Result<super::scene::Layout> {
+    pub(super) fn node_layout(
+        &self,
+        mount: &Mount,
+        node: &Node,
+        measurements: &Measurements,
+    ) -> maka_ui::Result<super::scene::Layout> {
         match node {
-            Node::Component(slot) => Ok(self
-                .application
-                .frame(self.application.child_mount(mount, &slot.key)?)?
-                .view
-                .view
-                .layout()),
+            Node::Dialog { background, .. } => self.node_layout(mount, background, measurements),
+            Node::Component(slot) => {
+                let child = self.application.child_mount(mount, &slot.key)?;
+                let native = &self.application.frame(child)?.view;
+                native.view.layout(&Slots {
+                    presenter: self,
+                    parent: child,
+                    declarations: native.slots(),
+                    scene: None,
+                    measurements,
+                    placement: None,
+                })
+            }
             _ => Ok(node.layout()),
         }
     }
@@ -577,6 +644,9 @@ impl Presenter {
                     return Ok((0, 0));
                 }
                 Ok(match node {
+                    Node::Dialog { background, .. } => {
+                        self.measure(mount, background, width, measurements)?
+                    }
                     Node::Text { text, .. } => text_size(text, width),
                     Node::Button { label, .. } => (
                         sanitize(label)
@@ -606,7 +676,7 @@ impl Presenter {
                         let children = self.visible_children(mount, children)?;
                         let layouts: Vec<_> = children
                             .iter()
-                            .map(|child| self.node_layout(mount, child))
+                            .map(|child| self.node_layout(mount, child, measurements))
                             .collect::<maka_ui::Result<Vec<_>>>()?;
                         let flow = super::layout::measured(
                             *direction,
@@ -697,6 +767,28 @@ impl Presenter {
             return Ok(());
         }
         match node {
+            Node::Dialog {
+                key,
+                background,
+                open,
+                ..
+            } => {
+                self.paint_node(mount, background, area, buffer, scene, pass)?;
+                if *open {
+                    let state = self.resources.owners[&mount.id()]
+                        .state
+                        .downcast_ref::<super::scroll::SceneState>()
+                        .unwrap();
+                    if let Some(opening) = state.dialogs.get(key) {
+                        scene.dialogs.push_back(super::dialog::Deferred {
+                            mount: mount.clone(),
+                            key: key.clone(),
+                            opening: std::rc::Rc::downgrade(opening),
+                            parent_path: scene.input_path.clone(),
+                        });
+                    }
+                }
+            }
             Node::Text {
                 text: content,
                 color: rgb,
@@ -744,6 +836,7 @@ impl Presenter {
                             })?
                             .identity
                             .clone(),
+                        scope: scene.input_scope.clone(),
                     },
                 };
                 if self.focus.as_ref().is_some_and(|old| old.same(&target)) {
@@ -776,7 +869,7 @@ impl Presenter {
                 let children = self.visible_children(mount, children)?;
                 let layouts: Vec<_> = children
                     .iter()
-                    .map(|child| self.node_layout(mount, child))
+                    .map(|child| self.node_layout(mount, child, measurements))
                     .collect::<maka_ui::Result<Vec<_>>>()?;
                 let flow = super::layout::measured(
                     *direction,
@@ -809,6 +902,7 @@ impl Presenter {
                         mount: mount.clone(),
                         key: key.clone(),
                         owner: self.resources.owners[&mount.id()].identity.clone(),
+                        scope: scene.input_scope.clone(),
                     };
                     if !inner.is_empty() {
                         scene.targets.push(Target {
@@ -825,12 +919,26 @@ impl Presenter {
                 } else {
                     0
                 };
+                if !shortcuts.is_empty() && scene.input_scope.is_some() && scene.ancestry.is_empty()
+                {
+                    scene.keyboard = Some(std::rc::Rc::new(Ancestor {
+                        identity: TargetIdentity {
+                            mount: mount.clone(),
+                            key: key.clone(),
+                            owner: self.resources.owners[&mount.id()].identity.clone(),
+                            scope: scene.input_scope.clone(),
+                        },
+                        revision: self.application.frame(mount)?.revision,
+                        shortcuts: shortcuts.clone(),
+                    }));
+                }
                 if scrolling || !shortcuts.is_empty() {
                     scene.ancestry.push(std::rc::Rc::new(Ancestor {
                         identity: TargetIdentity {
                             mount: mount.clone(),
                             key: key.clone(),
                             owner: self.resources.owners[&mount.id()].identity.clone(),
+                            scope: scene.input_scope.clone(),
                         },
                         revision: self.application.frame(mount)?.revision,
                         shortcuts: shortcuts.clone(),

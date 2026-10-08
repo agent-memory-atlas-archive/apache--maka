@@ -19,6 +19,7 @@
 
 //! Native terminal presentation of the shared plugin application kernel.
 //! 统一插件应用内核的原生终端呈现器。
+mod dialog;
 mod editor;
 mod file;
 mod geometry;
@@ -65,12 +66,19 @@ pub trait Widget: std::any::Any {
     /// Prove the complete immutable presentation recipe unchanged across a
     /// business revision. This permits an actual resize flush after native
     /// observations, while owner identity and opening admission stay separate.
+    /// The original declarative scene, when this recipe uses the scene language.
+    /// Deferred foreground painting resolves the original scene declaration.
+    fn scene(&self) -> Option<&TerminalScene> {
+        None
+    }
+    /// Interrupt an original pointer gesture without changing text or selection.
+    fn cancel_pointer(&self, _: &mut dyn std::any::Any) {}
     fn same_presentation(&self, _: &dyn std::any::Any) -> bool {
         false
     }
     /// Immutable root constraints participate in the parent's original cell flow.
-    fn layout(&self) -> TerminalLayout {
-        TerminalLayout::default()
+    fn layout(&self, _: &Slots<'_>) -> maka_ui::Result<TerminalLayout> {
+        Ok(TerminalLayout::default())
     }
     fn create(&self, _: NativeContext) -> Box<dyn std::any::Any> {
         Box::new(())
@@ -204,6 +212,10 @@ pub struct Presenter {
     resources: resources::Resources,
     focus: Option<paint::Target>,
     drag: Option<paint::Target>,
+    modal_focus: Vec<dialog::FocusReturn>,
+    restore_focus: Option<dialog::WeakTarget>,
+    physical_path: Vec<dialog::Scope>,
+    focus_before_flush: Option<dialog::WeakTarget>,
     jobs: FuturesUnordered<Job>,
     surface: SurfaceState,
     reported: std::collections::BTreeSet<String>,
@@ -353,6 +365,10 @@ impl Presenter {
             resources: Default::default(),
             focus: None,
             drag: None,
+            modal_focus: Vec::new(),
+            restore_focus: None,
+            physical_path: Vec::new(),
+            focus_before_flush: None,
             jobs: FuturesUnordered::new(),
             surface: SurfaceState::Live,
             reported: Default::default(),
@@ -395,6 +411,9 @@ impl Presenter {
     /// 输入立即绑定到最后成功输出的场景和真实 mount/revision。
     pub fn input(&mut self, event: Event) -> maka_ui::Result<()> {
         if !self.surface.is_live() || !self.resources.ready(&self.application, &self.root)? {
+            return Ok(());
+        }
+        if !self.physical_admitted() {
             return Ok(());
         }
         let target = match &event {
@@ -455,7 +474,16 @@ impl Presenter {
             _ => None,
         };
         if let Some(target) = target {
-            if self.application.is_retiring(&target.mount) {
+            if self.application.is_retiring(&target.mount) || !self.target_admitted(&target) {
+                return Ok(());
+            }
+            if let paint::TargetKind::Backdrop { body } = target.kind {
+                if matches!(event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) && !body.contains((mouse.column, mouse.row).into()))
+                {
+                    self.dismiss(&target, maka_ui::dismiss::Reason::Outside)?;
+                } else {
+                    self.dismiss_escape(&event)?;
+                }
                 return Ok(());
             }
             let Some(native) = self.resources.input(&target, &event)? else {
@@ -511,6 +539,9 @@ impl Presenter {
                     return Ok(());
                 }
             }
+            if self.dismiss_escape(&event)? {
+                return Ok(());
+            }
             if target.kind != paint::TargetKind::Action {
                 if matches!(event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left))
                 {
@@ -533,6 +564,9 @@ impl Presenter {
                 self.focus = Some(target);
             }
             self.sync_native()?;
+        }
+        if self.dismiss_escape(&event)? {
+            return Ok(());
         }
         if self.focus.is_none()
             && let Some(scope) = self.keyboard.clone()
@@ -559,6 +593,7 @@ impl Presenter {
                 .find(|shortcut| shortcut.matches(&key, modifiers, false))
             {
                 if shortcut.enabled
+                    && self.target_admitted(ancestor)
                     && self.resources.admits(ancestor)
                     && self.application.mount_visible(&ancestor.mount)
                 {
@@ -578,10 +613,16 @@ impl Presenter {
     /// Copy only the focused original live native scope through the bounded
     /// terminal writer. An OSC52 write is not an OS clipboard acknowledgement.
     pub fn copy(&mut self, writer: &mut impl std::io::Write) -> maka_ui::Result<bool> {
+        if !self.physical_admitted() {
+            return Ok(false);
+        }
         let Some(target) = self.focus.clone() else {
             return Ok(false);
         };
         if self.application.is_retiring(&target.mount) {
+            return Ok(false);
+        }
+        if !self.target_admitted(&target) {
             return Ok(false);
         }
         let Some(text) = self.resources.copy(&target)? else {

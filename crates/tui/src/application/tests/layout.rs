@@ -36,7 +36,10 @@ pub(super) enum View {
     StandaloneSource(Rc<std::cell::RefCell<Value>>),
     Reading(Rc<std::cell::RefCell<Value>>),
     ReadingSlot(Rc<std::cell::RefCell<Value>>),
+    OmittedReadingSlot(Rc<std::cell::RefCell<Value>>, Rc<Cell<bool>>),
+    WrappedReadingSlot(Rc<std::cell::RefCell<Value>>, Rc<Cell<bool>>),
     Flush,
+    PanicLayout(Rc<Cell<usize>>),
 }
 struct Root {
     view: View,
@@ -80,7 +83,7 @@ impl NativeComponent<dyn Widget> for Root {
                 (state["revision"].as_u64().unwrap() + 1, count)
             }
         };
-        let view = match &self.view {
+        let mut view = match &self.view {
             View::Scene(source) => super::super::scene::compile(
                 source,
                 std::time::Instant::now() + std::time::Duration::from_secs(1),
@@ -104,15 +107,21 @@ impl NativeComponent<dyn Widget> for Root {
                 )?
                 .with_declaration(source.borrow().clone())?
             }
-            View::ReadingSlot(props) => super::super::scene::compile(
-                &json!({
-                    "kind":"stack","key":"container","direction":"column","gap":0,"padding":0,"background":0,"children":[
-                        {"kind":"component","key":"reader","binding":"reading","member":0,"props":props.borrow().clone(),"on":{"observed":"reading-observed"}},
-                        {"kind":"button","key":"back","label":"Back"}
-                    ]
-                }),
-                std::time::Instant::now() + std::time::Duration::from_secs(1),
-            )?,
+            View::ReadingSlot(props)
+            | View::OmittedReadingSlot(props, _)
+            | View::WrappedReadingSlot(props, _) => {
+                let mut reader = json!({"kind":"component","key":"reader","binding":"reading","member":0,"props":props.borrow().clone(),"on":{"observed":"reading-observed"}});
+                if matches!(&self.view, View::WrappedReadingSlot(_, wrapped) if wrapped.get()) {
+                    reader = json!({"kind":"dialog","key":"wrapper","label":"Commands","open":false,
+                        "width":20,"height":8,"background_color":0,"border_color":0xffffff,"background":reader,
+                        "content":{"kind":"text","key":"unused","text":"","color":0}});
+                }
+                super::super::scene::compile(
+                    &json!({"kind":"stack","key":"container","direction":"column","gap":0,"padding":0,"background":0,
+                    "children":[reader,{"kind":"button","key":"back","label":"Back"}]}),
+                    std::time::Instant::now() + std::time::Duration::from_secs(1),
+                )?
+            }
             View::Reading(props) => {
                 super::super::reading::Component
                     .call(
@@ -124,12 +133,27 @@ impl NativeComponent<dyn Widget> for Root {
                     .frame
                     .view
             }
+            View::PanicLayout(_) => super::super::scene::compile(
+                &json!({
+                "kind":"dialog","key":"modal","label":"Commands","open":true,"width":24,"height":8,"background_color":0,"border_color":0xffffff,
+                "background":{"kind":"text","key":"background","text":"Background","color":0xffffff},
+                "content":{"kind":"stack","key":"foreground","direction":"column","gap":0,"padding":0,"background":0,"children":[
+                    {"kind":"component","key":"reader","binding":"reading","member":0,"on":{},"props":{"content":{"kind":"stack","key":"reading","direction":"column","gap":0,"padding":0,"background":0,"scroll":"manual","children":[]},"command":null}}
+                ]}}),
+                std::time::Instant::now() + std::time::Duration::from_secs(1),
+            )?,
             View::Flush => NativeView::<dyn Widget>::new(
                 Rc::new(Flush),
                 BTreeMap::from([("flushed".into(), json!({"type":"integer","minimum":0}))]),
                 vec![],
             )?,
         };
+        if let View::OmittedReadingSlot(_, shown) = &self.view {
+            view.view = Rc::new(ConditionalSlots {
+                scene: view.view.clone(),
+                shown: shown.clone(),
+            });
+        }
         Ok(Frame {
             revision,
             state: json!({"revision":revision,"count":count,"observation":observation}),
@@ -178,7 +202,14 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
     entry.implementation = Implementation::Native {
         implementation: "test.layout".into(),
     };
-    if matches!(view, View::Reading(_) | View::ReadingSlot(_)) {
+    if matches!(
+        view,
+        View::Reading(_)
+            | View::ReadingSlot(_)
+            | View::OmittedReadingSlot(_, _)
+            | View::WrappedReadingSlot(_, _)
+            | View::PanicLayout(_)
+    ) {
         use maka_plugin_core::{
             composition::Target,
             contract::{Availability, Cardinality, Export, Import},
@@ -228,7 +259,13 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
             .instances
             .insert("source".into(), support::node(&source, 150));
         packages.push(source);
-        if matches!(view, View::ReadingSlot(_)) {
+        if matches!(
+            view,
+            View::ReadingSlot(_)
+                | View::OmittedReadingSlot(_, _)
+                | View::WrappedReadingSlot(_, _)
+                | View::PanicLayout(_)
+        ) {
             let contract = maka_ui::reading::reading_contract();
             entry.imports.insert(
                 "reading".into(),
@@ -245,7 +282,12 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
                         EntryDeclaration {
                             scene: None,
                             implementation: Implementation::Native {
-                                implementation: "maka.ui.reading".into(),
+                                implementation: if matches!(view, View::PanicLayout(_)) {
+                                    "test.layout-panic"
+                                } else {
+                                    "maka.ui.reading"
+                                }
+                                .into(),
                             },
                             configuration: json!({"type":"object"}),
                             imports: BTreeMap::from([(
@@ -299,8 +341,22 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
     );
     input.instances.get_mut("app").unwrap().package = package.application_ref().into();
     packages.push(package);
-    let root = Rc::new(Root { view, accept });
     let mut registry = registry();
+    if let View::PanicLayout(counter) = &view {
+        let counter = counter.clone();
+        registry
+            .register("test.layout-panic", move |_, _| {
+                Ok(BTreeMap::from([(
+                    "ReadingArea".into(),
+                    NativeExport {
+                        contract: maka_ui::reading::reading_contract(),
+                        value: NativeCapability::Component(Rc::new(PanicLayout(counter.clone()))),
+                    },
+                )]))
+            })
+            .unwrap();
+    }
+    let root = Rc::new(Root { view, accept });
     registry
         .register("test.layout", move |_, _| {
             Ok(BTreeMap::from([(
@@ -999,4 +1055,148 @@ fn delayed_hidden_metadata_cannot_replace_same_native_recipe_foreground() {
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
     presenter.shutdown().unwrap();
+}
+
+/// A genuine native parent omits an ordinary live declared child from placement.
+struct ConditionalSlots {
+    scene: Rc<dyn Widget>,
+    shown: Rc<Cell<bool>>,
+}
+impl Widget for ConditionalSlots {
+    fn create(&self, cx: NativeContext) -> Box<dyn Any> {
+        self.scene.create(cx)
+    }
+    fn commit(&self, state: &mut dyn Any) -> maka_ui::Result<Option<NativeInput>> {
+        self.scene.commit(state)
+    }
+    fn prepare_focus(&self, state: &mut dyn Any, visible: bool) {
+        self.scene.prepare_focus(state, visible);
+    }
+    fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
+        self.scene.measure(slots, width)
+    }
+    fn paint(
+        &self,
+        slots: &mut Slots<'_>,
+        area: Placement,
+        buffer: &mut Buffer,
+    ) -> maka_ui::Result<()> {
+        if self.shown.get() {
+            self.scene.paint(slots, area, buffer)
+        } else {
+            let button = super::super::scene::Node::Button {
+                key: "back".into(),
+                label: "Back".into(),
+                disabled: false,
+                color: None,
+            };
+            button.paint(slots, area, buffer)
+        }
+    }
+}
+
+#[test]
+fn dialog_wrapping_original_reading_slot_keeps_grow_basis_and_footer_geometry() {
+    let props = Rc::new(std::cell::RefCell::new(
+        json!({"content":{"kind":"stack","key":"reading","direction":"column","gap":0,"padding":0,"background":0,
+        "scroll":"manual","layout":{"grow":1,"basis":0},"children":[{"kind":"text","key":"line","text":"one\ntwo\nthree","color":0xffffff}]},"command":null}),
+    ));
+    let wrapped = Rc::new(Cell::new(false));
+    let (_runtime, mut presenter) = native(
+        View::WrappedReadingSlot(props, wrapped.clone()),
+        Rc::new(Cell::new(true)),
+    );
+    draw(&mut presenter, 30, 8);
+    let original = draw(&mut presenter, 30, 8);
+    let footer = presenter
+        .scene
+        .iter()
+        .find(|target| target.key == "back")
+        .unwrap()
+        .area;
+    wrapped.set(true);
+    let revision = presenter
+        .application
+        .frame(&presenter.root)
+        .unwrap()
+        .revision;
+    presenter
+        .application
+        .dispatch(&presenter.root, revision, "back", json!({}))
+        .unwrap();
+    let wrapped_buffer = draw(&mut presenter, 30, 8);
+    assert_eq!(wrapped_buffer, original);
+    assert_eq!(
+        presenter
+            .scene
+            .iter()
+            .find(|target| target.key == "back")
+            .unwrap()
+            .area,
+        footer
+    );
+    assert_eq!(footer.visible().y, 7);
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
+    presenter.shutdown().unwrap();
+}
+
+struct PanicLayout(Rc<Cell<usize>>);
+struct OriginalDrop(Rc<Cell<usize>>);
+impl Drop for OriginalDrop {
+    fn drop(&mut self) {
+        self.0.set(self.0.get() + 1);
+    }
+}
+impl Widget for PanicLayout {
+    fn create(&self, _: NativeContext) -> Box<dyn Any> {
+        Box::new(OriginalDrop(self.0.clone()))
+    }
+    fn layout(&self, _: &Slots<'_>) -> maka_ui::Result<TerminalLayout> {
+        panic!("original native layout failure")
+    }
+    fn measure(&self, _: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
+        Ok((width, 1))
+    }
+    fn paint(&self, _: &mut Slots<'_>, _: Placement, _: &mut Buffer) -> maka_ui::Result<()> {
+        Ok(())
+    }
+}
+impl NativeComponent<dyn Widget> for PanicLayout {
+    fn call(
+        &self,
+        _: ComponentCall<'_>,
+        _: &maka_ui::abi::ValueBindings,
+    ) -> maka_ui::Result<ComponentOutput<NativeView<dyn Widget>>> {
+        Ok(Frame {
+            revision: 0,
+            state: json!({}),
+            surface: None,
+            view: NativeView::<dyn Widget>::new(
+                Rc::new(Self(self.0.clone())),
+                BTreeMap::new(),
+                vec![],
+            )?,
+        }
+        .output(vec![]))
+    }
+}
+#[test]
+fn dialog_deferred_native_layout_panic_returns_error_and_releases_original_owner() {
+    let drops = Rc::new(Cell::new(0));
+    let (_runtime, mut presenter) =
+        native(View::PanicLayout(drops.clone()), Rc::new(Cell::new(true)));
+    let area = Rect::new(0, 0, 40, 12);
+    let result = presenter.paint(area, &mut Buffer::empty(area));
+    assert!(
+        matches!(result,Err(Error::Invalid(message)) if message=="terminal native painting panicked")
+    );
+    assert_eq!(drops.get(), 0);
+    assert!(!presenter.physical_admitted());
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
+    presenter.shutdown().unwrap();
+    assert_eq!(drops.get(), 1);
 }

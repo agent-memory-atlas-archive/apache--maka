@@ -41,6 +41,13 @@ struct Recipe {
     secret: bool,
 }
 impl Widget for Recipe {
+    fn cancel_pointer(&self, state: &mut dyn Any) {
+        state
+            .downcast_mut::<Owner>()
+            .unwrap()
+            .editor
+            .cancel_pointer();
+    }
     fn create(&self, _: super::NativeContext) -> Box<dyn Any> {
         Box::new(Owner::new(Editor::single_line(65536, self.secret), ""))
     }

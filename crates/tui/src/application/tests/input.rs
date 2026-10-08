@@ -23,7 +23,7 @@ use maka_plugin_core::{
     package::{EntryTarget, Implementation},
 };
 use std::{collections::BTreeMap, rc::Rc};
-fn input_presenter(secret: bool) -> (tokio::runtime::Runtime, Presenter) {
+fn input_presenter(secret: bool, dialog: bool) -> (tokio::runtime::Runtime, Presenter) {
     let (runtime, mut input, packages) = textarea::editor_fixture();
     let contract = if secret {
         maka_ui::input::secret_input_contract()
@@ -55,12 +55,29 @@ fn input_presenter(secret: bool) -> (tokio::runtime::Runtime, Presenter) {
    }
    Implementation::JavaScript{module,..}=>{
     if let Some(export)=entry.exports.get_mut("Textarea"){export.contract=contract.clone();}
-    let source=std::str::from_utf8(original.file(module).unwrap()).unwrap().replace(&old,&new)
+    let mut source=std::str::from_utf8(original.file(module).unwrap()).unwrap().replace(&old,&new)
       .replace("initialText:'Start',", "").replace("menu:state.brand.menu,", "").replace("softWrap:true,", "")
       .replace("appearance:state.brand.textarea", "appearance:Object.fromEntries(Object.entries(state.brand.textarea).filter(([key])=>key!=='scrollbar'))")
       .replace("on:{changed:'changed'}", "on:{changed:'changed',submitted:'submitted'}")
       .replace("name:'changed',value:event.event", "name:event.name,value:event.event")
       .replace("else if(event.kind==='component'){next.observation=event.event;if(event.name==='submitted')next.submissions=(state.submissions??0)+1;}", "else if(event.kind==='component'){if(event.name==='submitted')next.submits=(next.submits??0)+1;else next.observation=event.event;}");
+    if dialog && original.manifest().id=="dynamic.app" {
+      source=source.replace("if(event.key==='configure')", "if(event.key==='modalToggle')next.modal=event.event.open;if(event.key==='dialog')next.modal=false;if(event.key==='configure')");
+      source.push_str(r#"
+        const ordinaryFrame=frame;
+        frame=function(state){
+          const out=ordinaryFrame(state),background=out.frame.view;
+          const original=background.children.find(child=>child.key==='presentation').children[0];
+          background.children.push({kind:'button',key:'modalToggle',label:'Commands'});
+          out.frame.view={kind:'dialog',key:'dialog',label:'Commands',open:state.modal??false,
+            width:28,height:8,padding:0,background_color:0x17171a,border_color:0x888888,
+            background,content:{kind:'component',key:'query',binding:'editor',member:0,
+              props:{...original.props,command:null,autoFocus:true,accessibilityLabel:'Query'},
+              on:{changed:'changed',submitted:'submitted'}}};
+          return out;
+        };
+      "#);
+    }
     files.insert(module.clone(),source.into_bytes());
    }
    _=>{}
@@ -98,7 +115,7 @@ fn close(tui: &mut Presenter) {
 #[test]
 fn retained_presentation_preserves_input_custody_and_only_successful_flush_hides_geometry() {
     for secret in [false, true] {
-        let (_runtime, mut tui) = input_presenter(secret);
+        let (_runtime, mut tui) = input_presenter(secret, false);
         draw(&mut tui, 80, 24);
         tui.input(Event::Paste("Draft🙂".into())).unwrap();
         draw(&mut tui, 80, 24);
@@ -246,7 +263,7 @@ fn retained_presentation_preserves_input_custody_and_only_successful_flush_hides
 }
 #[test]
 fn native_single_line_filters_raw_paste_masks_and_captures_original_utf8_before_reset() {
-    let (_runtime, mut tui) = input_presenter(true);
+    let (_runtime, mut tui) = input_presenter(true, false);
     draw(&mut tui, 80, 24);
     assert_eq!(observation(&tui)["snapshot"]["text"]["bytes"], 0);
     let secret = "密钥🙂e\u{301}".to_owned();
@@ -298,7 +315,7 @@ fn native_single_line_filters_raw_paste_masks_and_captures_original_utf8_before_
 }
 #[test]
 fn submit_preserves_retryable_reset_receipt_and_next_command_settles() {
-    let (_runtime, mut tui) = input_presenter(false);
+    let (_runtime, mut tui) = input_presenter(false, false);
     draw(&mut tui, 80, 24);
     let original = observation(&tui)["snapshot"]["text"]["owner"].clone();
     dispatch(&mut tui, "reject", json!({"reject":true}));
@@ -518,7 +535,7 @@ fn disabled_editor_leaves_outer_commands_available_before_another_flush() {
 #[test]
 fn reveal_focus_uses_committed_visibility_and_only_successful_native_presentation() {
     for secret in [false, true] {
-        let (_runtime, mut tui) = input_presenter(secret);
+        let (_runtime, mut tui) = input_presenter(secret, false);
         draw(&mut tui, 80, 24);
         let outer = tui
             .application
@@ -660,7 +677,7 @@ fn reveal_focus_uses_committed_visibility_and_only_successful_native_presentatio
 #[test]
 fn single_line_arrows_leave_list_navigation_to_the_original_outer_scope() {
     for secret in [false, true] {
-        let (_runtime, mut tui) = input_presenter(secret);
+        let (_runtime, mut tui) = input_presenter(secret, false);
         draw(&mut tui, 80, 24);
         tui.input(Event::Paste("query".into())).unwrap();
         draw(&mut tui, 80, 24);
@@ -680,4 +697,81 @@ fn single_line_arrows_leave_list_navigation_to_the_original_outer_scope() {
         assert_eq!(observation(&tui), before);
         close(&mut tui);
     }
+}
+
+#[test]
+fn dialog_js_composition_keeps_original_editor_and_routes_first_text_paste_submit_and_return() {
+    let (_runtime, mut tui) = input_presenter(false, true);
+    draw(&mut tui, 50, 20);
+    let original = tui
+        .application
+        .child_mount(&tui.root, "editor")
+        .unwrap()
+        .clone();
+    let original = tui
+        .application
+        .child_mount(&original, "draft")
+        .unwrap()
+        .clone();
+    let query = tui
+        .application
+        .child_mount(&tui.root, "query")
+        .unwrap()
+        .clone();
+    let query = tui
+        .application
+        .child_mount(&query, "draft")
+        .unwrap()
+        .clone();
+    let text = |tui: &Presenter, mount: &Mount| {
+        tui.resources.owners[&mount.id()]
+            .state
+            .downcast_ref::<super::super::editor::Owner>()
+            .unwrap()
+            .editor
+            .text()
+            .to_owned()
+    };
+    tui.input(key(KeyCode::Char('x'))).unwrap();
+    assert_eq!(text(&tui, &original), "x");
+    let background_focus = tui.focus.clone().unwrap();
+    dispatch(&mut tui, "modalToggle", json!({"open":true}));
+    assert!(!tui.physical_admitted());
+    tui.input(key(KeyCode::Char('z'))).unwrap();
+    tui.input(Event::Paste("blocked".into())).unwrap();
+    assert_eq!(text(&tui, &original), "x");
+    assert_eq!(text(&tui, &query), "");
+    draw(&mut tui, 50, 20);
+    assert_eq!(tui.focus.as_ref().unwrap().mount, query);
+    tui.input(key(KeyCode::Char('界'))).unwrap();
+    tui.input(Event::Paste(" ab".into())).unwrap();
+    assert_eq!(text(&tui, &query), "界 ab");
+    assert_eq!(text(&tui, &original), "x");
+    draw(&mut tui, 50, 20);
+    tui.input(key(KeyCode::Enter)).unwrap();
+    assert!(
+        tui.application.frame(&tui.root).unwrap().state["modal"]
+            .as_bool()
+            .unwrap()
+    );
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["submits"],
+        1
+    );
+    draw(&mut tui, 50, 20);
+    tui.input(key(KeyCode::Esc)).unwrap();
+    assert!(
+        !tui.application.frame(&tui.root).unwrap().state["modal"]
+            .as_bool()
+            .unwrap()
+    );
+    assert!(!tui.physical_admitted());
+    tui.input(Event::Paste("blocked".into())).unwrap();
+    assert_eq!(text(&tui, &original), "x");
+    draw(&mut tui, 50, 20);
+    assert!(tui.focus.as_ref().unwrap().same(&background_focus));
+    tui.input(key(KeyCode::Char('y'))).unwrap();
+    assert_eq!(text(&tui, &original), "xy");
+    assert_eq!(text(&tui, &query), "界 ab");
+    close(&mut tui);
 }

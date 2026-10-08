@@ -459,7 +459,10 @@ impl SelectionScope {
                         },
                     ));
                     self.0.borrow_mut().drag = None;
-                } else if key.code == KeyCode::Esc {
+                } else if key.code == KeyCode::Esc && key.modifiers.is_empty() {
+                    if self.0.borrow().selection.is_none() && self.0.borrow().drag.is_none() {
+                        return false;
+                    }
                     self.0.borrow_mut().selection = None;
                     self.0.borrow_mut().drag = None;
                 } else if key.modifiers.contains(KeyModifiers::SHIFT) {

@@ -203,6 +203,10 @@ impl Editor {
         )
     }
 
+    pub fn cancel_pointer(&mut self) {
+        self.dragging = false;
+    }
+
     pub fn dragging(&self) -> bool {
         self.dragging
     }

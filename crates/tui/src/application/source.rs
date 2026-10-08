@@ -99,6 +99,12 @@ impl Widget for Recipe {
             WidgetInput::Unhandled
         })
     }
+    fn cancel_pointer(&self, state: &mut dyn Any) {
+        let owner = state.downcast_mut::<Owner>().unwrap();
+        if let Some(scope) = SelectionScope::active(&owner.document) {
+            scope.release_pointer(&owner.document);
+        }
+    }
     fn pointer_capture(&self, state: &dyn Any) -> bool {
         let owner = state.downcast_ref::<Owner>().unwrap();
         let doc = owner.document.borrow();
@@ -335,4 +341,15 @@ pub(super) fn register(registry: &mut NativeRegistry<dyn Widget>) {
             )]))
         })
         .expect("unique source implementation");
+}
+
+#[cfg(test)]
+pub(super) fn painted_area(state: &dyn Any) -> Option<Placement> {
+    state
+        .downcast_ref::<Owner>()?
+        .document
+        .borrow()
+        .glyphs
+        .as_ref()
+        .map(|glyphs| glyphs.area)
 }

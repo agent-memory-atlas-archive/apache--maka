@@ -47,6 +47,22 @@ pub(super) struct Resources {
     budget: maka_ui::budget::NativeBudget,
 }
 impl Resources {
+    pub fn cancel_pointer(&mut self) -> maka_ui::Result<()> {
+        for (id, owner) in &mut self.owners {
+            if owner.live
+                && catch_unwind(AssertUnwindSafe(|| {
+                    owner.recipe.cancel_pointer(owner.state.as_mut())
+                }))
+                .is_err()
+            {
+                owner.live = false;
+                let error = "terminal pointer interruption cleanup unconfirmed".to_owned();
+                self.failed.insert(*id, error.clone());
+                return Err(Error::Invalid(error));
+            }
+        }
+        Ok(())
+    }
     pub fn prepare(
         &mut self,
         app: &Application<dyn Widget>,
@@ -100,6 +116,18 @@ impl Resources {
             }
             let owner = self.owners.get_mut(&mount.id()).unwrap();
             owner.recipe = recipe;
+            if catch_unwind(AssertUnwindSafe(|| {
+                owner
+                    .recipe
+                    .prepare_focus(owner.state.as_mut(), app.mount_visible(&mount))
+            }))
+            .is_err()
+            {
+                owner.live = false;
+                let error = "terminal native focus preparation cleanup unconfirmed".to_owned();
+                self.failed.insert(mount.id(), error.clone());
+                return Err(Error::Invalid(error));
+            }
         }
         Ok(true)
     }
@@ -135,18 +163,6 @@ impl Resources {
                 .owners
                 .get_mut(&mount.id())
                 .expect("prepared terminal native owner");
-            if catch_unwind(AssertUnwindSafe(|| {
-                owner
-                    .recipe
-                    .prepare_focus(owner.state.as_mut(), app.mount_visible(&mount))
-            }))
-            .is_err()
-            {
-                owner.live = false;
-                let error = "terminal native focus preparation cleanup unconfirmed".to_owned();
-                self.failed.insert(mount.id(), error.clone());
-                return Err(Error::Invalid(error));
-            }
             if owner.revision != Some(frame.revision) {
                 let observed = match catch_unwind(AssertUnwindSafe(|| {
                     owner.recipe.commit(owner.state.as_mut())
@@ -475,6 +491,7 @@ impl Presenter {
             self.drag = None;
             return Ok(());
         }
+        self.sync_modal_focus()?;
         if let Some(target) = &self.drag
             && !self.resources.pointer_capture(target)?
         {

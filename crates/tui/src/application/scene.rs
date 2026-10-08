@@ -67,6 +67,20 @@ pub enum ScrollPolicy {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "TerminalScene")]
 pub enum Node {
+    Dialog {
+        key: String,
+        label: String,
+        background: Box<Node>,
+        content: Box<Node>,
+        open: bool,
+        /// Maximum foreground body dimensions, in terminal cells.
+        width: u16,
+        height: u16,
+        background_color: u32,
+        border_color: u32,
+        #[serde(default)]
+        padding: u16,
+    },
     Stack {
         key: String,
         direction: Direction,
@@ -107,13 +121,17 @@ fn visible() -> bool {
 impl Node {
     pub(super) fn key(&self) -> &str {
         match self {
-            Self::Stack { key, .. } | Self::Text { key, .. } | Self::Button { key, .. } => key,
+            Self::Stack { key, .. }
+            | Self::Text { key, .. }
+            | Self::Button { key, .. }
+            | Self::Dialog { key, .. } => key,
             Self::Component(slot) => &slot.key,
         }
     }
     pub(super) fn layout(&self) -> Layout {
         match self {
             Self::Stack { layout, .. } => *layout,
+            Self::Dialog { background, .. } => background.layout(),
             _ => Layout::default(),
         }
     }
@@ -133,7 +151,10 @@ impl Node {
             return Err("scene compilation deadline".into());
         }
         let key = match self {
-            Self::Stack { key, .. } | Self::Text { key, .. } | Self::Button { key, .. } => key,
+            Self::Stack { key, .. }
+            | Self::Text { key, .. }
+            | Self::Button { key, .. }
+            | Self::Dialog { key, .. } => key,
             Self::Component(slot) => &slot.key,
         };
         if depth > 32
@@ -148,6 +169,30 @@ impl Node {
             maka_ui::shortcut::validate(shortcuts, false)?;
         }
         match self {
+            Self::Dialog {
+                label,
+                background,
+                content,
+                width,
+                height,
+                background_color,
+                border_color,
+                padding,
+                ..
+            } => {
+                if label.is_empty()
+                    || label.len() > 512
+                    || *width == 0
+                    || *height == 0
+                    || *background_color > 0xffffff
+                    || *border_color > 0xffffff
+                    || *padding > 1024
+                {
+                    return Err("invalid terminal dialog presentation".into());
+                }
+                background.validate(depth + 1, keys, deadline)?;
+                content.validate(depth + 1, keys, deadline)?;
+            }
             Self::Stack {
                 gap,
                 padding,
@@ -194,6 +239,16 @@ impl Node {
         inputs: &mut BTreeMap<String, Value>,
         visible: bool,
     ) -> Result<(), String> {
+        if let Self::Dialog {
+            background,
+            content,
+            open,
+            ..
+        } = self
+        {
+            background.shortcut_inputs(inputs, visible)?;
+            content.shortcut_inputs(inputs, visible && *open)?;
+        }
         if let Self::Stack {
             children,
             shortcuts,
@@ -223,6 +278,35 @@ impl Node {
             return Err("scene compilation deadline".into());
         }
         match self {
+            Self::Dialog {
+                key,
+                background,
+                content,
+                open,
+                ..
+            } => {
+                if visible
+                    && *open
+                    && inputs
+                        .insert(
+                            key.clone(),
+                            serde_json::to_value(schemars::schema_for!(maka_ui::dismiss::Input))
+                                .expect("dismiss schema"),
+                        )
+                        .is_some()
+                {
+                    return Err("reserved scene input identity".into());
+                }
+                background.metadata(slots, inputs, hidden_slots, input_count, visible, deadline)?;
+                content.metadata(
+                    slots,
+                    inputs,
+                    hidden_slots,
+                    input_count,
+                    visible && *open,
+                    deadline,
+                )?;
+            }
             Self::Component(slot) => {
                 if slots.len() >= 64 {
                     return Err("scene slot limit".into());
@@ -289,6 +373,11 @@ pub(super) fn compile_with_inputs(
                 "scene source depth/node/deadline limit".into(),
             ));
         }
+        for field in ["background", "content"] {
+            if let Some(child) = source.get(field) {
+                scan(child, depth + 1, count, deadline)?;
+            }
+        }
         if let Some(children) = source.get("children").and_then(Value::as_array) {
             for child in children {
                 scan(child, depth + 1, count, deadline)?;
@@ -320,13 +409,31 @@ pub(super) fn compile_with_inputs(
         .map(|view| view.with_root_visibility(visible))
 }
 impl super::Widget for Node {
+    fn scene(&self) -> Option<&Node> {
+        Some(self)
+    }
+    fn prepare_focus(&self, state: &mut dyn std::any::Any, visible: bool) {
+        state
+            .downcast_mut::<super::scroll::SceneState>()
+            .unwrap()
+            .prepare_dialogs(self, visible);
+    }
+    fn deactivate(&self, state: &mut dyn std::any::Any) {
+        state
+            .downcast_mut::<super::scroll::SceneState>()
+            .unwrap()
+            .dialogs
+            .clear();
+    }
     fn same_presentation(&self, previous: &dyn std::any::Any) -> bool {
         previous
             .downcast_ref::<Self>()
             .is_some_and(|previous| self == previous)
     }
-    fn layout(&self) -> Layout {
-        Node::layout(self)
+    fn layout(&self, slots: &super::Slots<'_>) -> maka_ui::Result<Layout> {
+        slots
+            .presenter
+            .node_layout(slots.parent, self, slots.measurements)
     }
     fn create(&self, _: super::NativeContext) -> Box<dyn std::any::Any> {
         Box::<super::scroll::SceneState>::default()
@@ -391,6 +498,7 @@ impl super::Widget for Node {
                         owner: slots.presenter.resources.owners[&slots.parent.id()]
                             .identity
                             .clone(),
+                        scope: slots.scene.as_ref().unwrap().input_scope.clone(),
                     },
                     revision: slots.presenter.application.frame(slots.parent)?.revision,
                     shortcuts: shortcuts.clone(),

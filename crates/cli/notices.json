@@ -90,7 +90,7 @@
     "packages/plugin-sdk/src/database.ts": "08e7faafe4feab6090a07bfc6b822faa628aad1f797337b356d3693039f88f9a",
     "packages/plugin-sdk/src/execution.ts": "4be313da4dbfe2e62fd36f6738c463f4fc9c508dc576d07f32725cff8c773be2",
     "packages/plugin-sdk/src/filesystem.ts": "09116cc3b9cd444ed735a077fddb05087c60a704987b791080d70930a40c2448",
-    "packages/plugin-sdk/src/generated/runtime.ts": "c6944594297458dc340f1762c8a5ca045cabd8e76c64bf719ceb212d7e200ada",
+    "packages/plugin-sdk/src/generated/runtime.ts": "b37889f657af80da7f015d711eb8ecb3697c734a7a6314089dc228b462d62b5d",
     "packages/plugin-sdk/src/history.ts": "a70ee1f139de12290566bc0d28c2e8946302428b452a17726d5d0ead726025d0",
     "packages/plugin-sdk/src/host.ts": "28780e95c708311805fa10f11a817cc4699eb291f797d52c9d949551f5fcc21c",
     "packages/plugin-sdk/src/http.ts": "bd47e4c08f80fd5e899d106d50df054c78c8e5f3cc74600f84938a417456293d",

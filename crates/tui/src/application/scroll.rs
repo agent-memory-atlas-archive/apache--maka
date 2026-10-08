@@ -26,6 +26,7 @@ use std::collections::BTreeMap;
 #[derive(Default)]
 pub(super) struct SceneState {
     pub generation: u64,
+    pub dialogs: BTreeMap<String, std::rc::Rc<super::dialog::Opening>>,
     pub reading: Option<super::reading::ReadingState>,
     pub scrolls: BTreeMap<String, ScrollState>,
 }
@@ -64,6 +65,15 @@ impl Viewport {
 impl SceneState {
     pub fn commit(&mut self, node: &Node) {
         fn visit(node: &Node, keys: &mut Vec<String>) {
+            if let Node::Dialog {
+                background,
+                content,
+                ..
+            } = node
+            {
+                visit(background, keys);
+                visit(content, keys);
+            }
             if let Node::Stack {
                 key,
                 scroll,
@@ -223,7 +233,11 @@ impl SceneState {
         };
         let next = (i64::from(state.offset) + delta).clamp(0, i64::from(viewport.end())) as u32;
         state.intent += 1;
-        if let Some(reading) = &mut self.reading {
+        if let Some(reading) = self
+            .reading
+            .as_mut()
+            .filter(|reading| reading.root_key == key)
+        {
             reading.scope.touch();
             reading.cancel();
         }

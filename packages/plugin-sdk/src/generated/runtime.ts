@@ -323,6 +323,22 @@ export type Surface =
 export type TerminalScene =
   | {
       key: string;
+      label: string;
+      background: TerminalScene;
+      content: TerminalScene;
+      open: boolean;
+      /**
+       * Maximum foreground body dimensions, in terminal cells.
+       */
+      width: number;
+      height: number;
+      background_color: number;
+      border_color: number;
+      padding?: number;
+      kind: 'dialog';
+    }
+  | {
+      key: string;
       direction: TerminalDirection;
       gap: number;
       padding: number;

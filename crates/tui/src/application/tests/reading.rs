@@ -632,3 +632,6 @@ fn delayed_hidden_flush_cannot_suspend_new_original_reading_and_source_geometry(
     assert_eq!(copied(&mut presenter).unwrap(), b"rig");
     close(&mut presenter);
 }
+
+#[path = "reading/dialog.rs"]
+mod dialog;

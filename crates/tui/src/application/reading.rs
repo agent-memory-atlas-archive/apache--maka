@@ -173,13 +173,19 @@ fn state_mut(state: &mut dyn Any) -> &mut SceneState {
         .expect("reading scene owner")
 }
 impl Widget for Reading {
+    fn scene(&self) -> Option<&Node> {
+        Some(&self.node)
+    }
+    fn prepare_focus(&self, state: &mut dyn Any, visible: bool) {
+        state_mut(state).prepare_dialogs(&self.node, visible);
+    }
     fn same_presentation(&self, previous: &dyn Any) -> bool {
         previous
             .downcast_ref::<Self>()
             .is_some_and(|previous| self.node == previous.node && self.command == previous.command)
     }
-    fn layout(&self) -> super::TerminalLayout {
-        self.node.layout()
+    fn layout(&self, slots: &Slots<'_>) -> maka_ui::Result<super::TerminalLayout> {
+        Widget::layout(&self.node, slots)
     }
     fn create(&self, _: super::NativeContext) -> Box<dyn Any> {
         Box::new(SceneState {
@@ -280,6 +286,7 @@ impl Widget for Reading {
         }
     }
     fn deactivate(&self, state: &mut dyn Any) {
+        state_mut(state).dialogs.clear();
         let reading = state_mut(state).reading.as_mut().unwrap();
         reading.alive = false;
         reading.cancel();
