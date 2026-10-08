@@ -1144,6 +1144,7 @@ fn delayed_hidden_metadata_cannot_replace_same_native_recipe_foreground() {
     let scene = Rc::new(super::super::scene::Node::Button {
         key: "back".into(),
         label: "Continue".into(),
+        focus_child: None,
         disabled: false,
         color: None,
     });
@@ -1217,6 +1218,7 @@ impl Widget for ConditionalSlots {
             let button = super::super::scene::Node::Button {
                 key: "back".into(),
                 label: "Back".into(),
+                focus_child: None,
                 disabled: false,
                 color: None,
             };

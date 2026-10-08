@@ -110,6 +110,20 @@ impl Presenter {
 }
 
 impl Presenter {
+    pub(super) fn freeze_focus_child(
+        &self,
+        parent: &maka_plugin_core::runtime::Mount,
+        name: &str,
+    ) -> maka_ui::Result<super::paint::FocusChild> {
+        let child = self.application.child_mount(parent, name)?.clone();
+        let owner = self.resources.owners.get(&child.id()).ok_or_else(|| {
+            maka_ui::Error::Invalid("focus child native owner unavailable".into())
+        })?;
+        Ok(super::paint::FocusChild {
+            child,
+            owner: std::rc::Rc::downgrade(&owner.identity),
+        })
+    }
     pub(super) fn freeze_focus_shortcuts(
         &self,
         parent: &maka_plugin_core::runtime::Mount,
@@ -118,24 +132,16 @@ impl Presenter {
         bindings
             .iter()
             .map(|declaration| {
-                let child = self
-                    .application
-                    .child_mount(parent, &declaration.child)?
-                    .clone();
-                let owner = self.resources.owners.get(&child.id()).ok_or_else(|| {
-                    maka_ui::Error::Invalid("focus child native owner unavailable".into())
-                })?;
                 Ok(super::paint::FocusBinding {
                     declaration: declaration.clone(),
-                    child,
-                    owner: std::rc::Rc::downgrade(&owner.identity),
+                    target: self.freeze_focus_child(parent, &declaration.child)?,
                 })
             })
             .collect()
     }
     pub(super) fn focus_child(
         &mut self,
-        binding: &super::paint::FocusBinding,
+        binding: &super::paint::FocusChild,
     ) -> maka_ui::Result<()> {
         if self.application.is_retiring(&binding.child)
             || !self.application.mount_visible(&binding.child)

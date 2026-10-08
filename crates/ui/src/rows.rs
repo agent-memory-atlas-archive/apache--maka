@@ -38,6 +38,9 @@ pub struct RowsProps {
     pub shortcuts: Vec<Shortcut>,
     #[schemars(range(min = 1, max = 64))]
     pub max_rows: u16,
+    /// Optional smaller row cap below a surface viewport height, in cells.
+    #[serde(default)]
+    pub compact_below: Option<CompactRows>,
     #[schemars(range(min = -1, max = 32767))]
     pub tab_index: i16,
     pub foreground: Color,
@@ -45,6 +48,14 @@ pub struct RowsProps {
     pub selected: Color,
     pub hovered: Color,
     pub scrollbar: RowScrollbar,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompactRows {
+    #[schemars(range(min = 1))]
+    pub height: u16,
+    #[schemars(range(min = 1, max = 64))]
+    pub max_rows: u16,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -82,6 +93,14 @@ pub struct RowActivated {
 }
 impl RowsProps {
     pub fn validate(&self) -> crate::Result<()> {
+        if self
+            .compact_below
+            .is_some_and(|compact| compact.max_rows > self.max_rows)
+        {
+            return Err(crate::Error::Invalid(
+                "compact row cap exceeds normal cap".into(),
+            ));
+        }
         let mut rows = BTreeSet::new();
         for row in &self.rows {
             if !rows.insert(&row.key) {

@@ -1250,6 +1250,7 @@ function frame<N extends Node>(
       { key: 'down', modifiers: ['alt'], input: 'down', enabled: true },
     ],
     maxRows: 3,
+    compactBelow: { height: 12, maxRows: 1 },
     tabIndex: 2,
     foreground: theme.text,
     muted: theme.muted,
@@ -1405,6 +1406,18 @@ function frame<N extends Node>(
               'retained-composer',
               [
                 presentation.slot('queue', 'rows', queueProps, { activated: 'queue-action' }),
+                ...(queueProps.rows.length && ui.focusButton
+                  ? [
+                      ui.box(
+                        'queue-status',
+                        [
+                          ui.box('queue-status-space', [], { terminal: { basis: 0, grow: 1 } }),
+                          ui.focusButton('queue-focus', `≡ ${queueProps.rows.length}`, 'queue'),
+                        ],
+                        { row: true, gap: 0 },
+                      ),
+                    ]
+                  : []),
                 ui.box('composer-navigation', [composer], {
                   terminal: { shrink: true },
                   focusShortcuts: [

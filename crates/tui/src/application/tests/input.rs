@@ -397,7 +397,10 @@ fn shortcut_presenter() -> (tokio::runtime::Runtime, Presenter) {
 fn shortcuts_bubble_across_mounts_after_editing_and_disabled_scopes_shadow() {
     let (_runtime, mut tui) = shortcut_presenter();
     draw(&mut tui, 80, 24);
-    assert!(tui.focus.as_ref().unwrap().kind == paint::TargetKind::Native);
+    assert!(matches!(
+        tui.focus.as_ref().unwrap().kind,
+        paint::TargetKind::Native
+    ));
     tui.input(Event::Paste("Draft".into())).unwrap();
     draw(&mut tui, 80, 24);
     let child = tui
@@ -452,7 +455,10 @@ fn shortcuts_bubble_across_mounts_after_editing_and_disabled_scopes_shadow() {
 fn hidden_parent_revokes_old_shortcut_without_changing_child_revision_or_flushing() {
     let (_runtime, mut tui) = shortcut_presenter();
     draw(&mut tui, 80, 24);
-    assert!(tui.focus.as_ref().unwrap().kind == paint::TargetKind::Native);
+    assert!(matches!(
+        tui.focus.as_ref().unwrap().kind,
+        paint::TargetKind::Native
+    ));
     let child = tui
         .application
         .child_mount(&tui.root, "editor")
@@ -500,7 +506,10 @@ fn unfocused_root_commands_use_the_successfully_painted_scope() {
 fn disabled_editor_leaves_outer_commands_available_before_another_flush() {
     let (_runtime, mut tui) = shortcut_presenter();
     draw(&mut tui, 80, 24);
-    assert!(tui.focus.as_ref().unwrap().kind == paint::TargetKind::Native);
+    assert!(matches!(
+        tui.focus.as_ref().unwrap().kind,
+        paint::TargetKind::Native
+    ));
     let child = tui
         .application
         .child_mount(&tui.root, "editor")

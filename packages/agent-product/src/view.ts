@@ -63,6 +63,7 @@ interface Painter<N extends Node> {
     primary?: boolean,
     style?: DesktopStyle,
   ): N;
+  focusButton?(key: string, label: string, child: string): N;
   dialog(key: string, label: string, background: N, content: N, open: boolean): N;
   box(key: string, children: N[], options?: BoxOptions): N;
 }
@@ -149,6 +150,8 @@ function desktopPaint(theme: Theme): Painter<DesktopNode> {
 }
 function terminalPaint(theme: Theme): Painter<TerminalNode> {
   return {
+    focusButton: (key, label, child) =>
+      ui.terminal.button({ key, label, focus_child: child, color: rgba(theme.muted) }),
     text: (key, text, _size = 15, color = theme.text, _weight = 400, style = {}) =>
       ui.terminal.text({ key, text, color: rgba(color), truncate: style.truncate ?? false }),
     button: (key, label, disabled = false) =>

@@ -1513,6 +1513,23 @@ process.stdout.write(output.outputFiles[0].text);
         pending.entries[0].source.unprepared_content.text,
         "Queued product followup"
     );
+    // The original queue count enters the last row without a product focus mirror.
+    click(&mut presenter, "≡ 4");
+    draw(&mut presenter);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    await_screen(&mut presenter, "[ Save message ]");
+    await_screen(&mut presenter, "Extra queued three");
+    click(&mut presenter, "[ Cancel ]");
+    await_screen(&mut presenter, "≡ 4");
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+        .unwrap();
+    draw(&mut presenter);
     // Empty native Composer Up enters the last queued row through the
     // product's declared focus binding; Enter opens that exact row's editor.
     presenter

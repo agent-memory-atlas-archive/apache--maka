@@ -7123,6 +7123,17 @@ test('TUI queue controls retain original revision and lane and working-send keep
     event: { status: 'updated', value: { kind: 'queue', queue } },
   });
   const rows = modelSlots(client.output.frame.view).find((node) => node.binding === 'rows');
+  assert.equal(rows.props.maxRows, 3);
+  assert.deepEqual(rows.props.compactBelow, { height: 12, maxRows: 1 });
+  const main = client.output.frame.view.background.children[0].children.find(
+    (node) => node.key === 'main-route',
+  ).children[0];
+  const badge = main.children
+    .find((node) => node.key === 'retained-composer')
+    .children.find((node) => node.key === 'queue-status')
+    .children.at(-1);
+  assert.equal(badge.label, '≡ 3');
+  assert.equal(badge.focus_child, 'queue');
   assert.deepEqual(
     rows.props.rows.map((row) => row.key),
     ['first', 'steering', 'second'],

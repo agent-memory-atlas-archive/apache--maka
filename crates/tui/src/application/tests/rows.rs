@@ -486,6 +486,168 @@ fn focus_scene() -> Value {
         {"kind":"component","key":"rows","binding":"rows","member":0,"props":row_props,"on":{"activated":"row-activated"}}
     ]})
 }
+fn badge_scene() -> Value {
+    let mut scene = focus_scene();
+    scene["children"][1]["children"][0]["props"]["tabIndex"] = json!(1);
+    scene["children"][2]["props"]["tabIndex"] = json!(2);
+    scene["children"][2]["props"]["compactBelow"] = json!({"height":12,"maxRows":1});
+    scene["children"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"kind":"button","key":"badge","label":"≡ 6","focus_child":"rows"}));
+    scene
+}
+#[test]
+fn queue_count_enters_last_row_and_resize_keeps_visible_action_and_original_draft() {
+    for activation in [None, Some(KeyCode::Enter), Some(KeyCode::Char(' '))] {
+        let source = Rc::new(RefCell::new(badge_scene()));
+        let (_runtime, mut tui) = layout::native(
+            layout::View::InteractiveScene(source),
+            Rc::new(Cell::new(true)),
+        );
+        draw(&mut tui, 40, 12);
+        let editor = tui
+            .scene
+            .iter()
+            .find(|target| target.key == "observe")
+            .unwrap()
+            .clone();
+        let area = editor.area.visible();
+        tui.input(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            area.x + 1,
+            area.y + 1,
+        ))
+        .unwrap();
+        tui.input(Event::Paste("original draft".into())).unwrap();
+        draw(&mut tui, 40, 12);
+        let row = tui
+            .scene
+            .iter()
+            .find(|target| target.key == "rows")
+            .unwrap()
+            .area
+            .visible();
+        tui.input(mouse(MouseEventKind::ScrollDown, row.x, row.y))
+            .unwrap();
+        draw(&mut tui, 40, 12);
+        // While typing, shrinking must retain the wheel offset, not reveal the old selection.
+        let buffer = draw(&mut tui, 40, 11);
+        assert!(text(&buffer).contains("pending 3"));
+        assert!(!text(&buffer).contains("pending 0"));
+        draw(&mut tui, 40, 12);
+        let count = tui.application.frame(&tui.root).unwrap().state["count"].clone();
+        if let Some(code) = activation {
+            tui.input(key(KeyCode::BackTab)).unwrap();
+            assert_eq!(tui.focus.as_ref().unwrap().key, "badge");
+            let mut held = KeyEvent::new(code, KeyModifiers::NONE);
+            held.kind = KeyEventKind::Repeat;
+            tui.input(Event::Key(held)).unwrap();
+            assert_eq!(tui.focus.as_ref().unwrap().key, "badge");
+            tui.input(key(code)).unwrap();
+        } else {
+            let badge = tui
+                .scene
+                .iter()
+                .find(|target| target.key == "badge")
+                .unwrap()
+                .area
+                .visible();
+            tui.input(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                badge.x,
+                badge.y,
+            ))
+            .unwrap();
+        }
+        assert_eq!(tui.focus.as_ref().unwrap().key, "rows");
+        assert_eq!(
+            tui.application.frame(&tui.root).unwrap().state["count"],
+            count
+        );
+        assert!(text(&draw(&mut tui, 40, 12)).contains("pending 5"));
+        // A settled three-row viewport must still show the selected last row when reduced to one.
+        let buffer = draw(&mut tui, 40, 11);
+        assert!(text(&buffer).contains("pending 5"));
+        assert!(!text(&buffer).contains("pending 3"));
+        assert_eq!(
+            tui.scene
+                .iter()
+                .find(|target| target.key == "rows")
+                .unwrap()
+                .area
+                .height,
+            1
+        );
+        tui.input(key(KeyCode::Delete)).unwrap();
+        assert_eq!(
+            tui.application.frame(&tui.root).unwrap().state["observation"]["row"],
+            "row-5"
+        );
+        draw(&mut tui, 40, 11);
+        tui.input(key(KeyCode::Esc)).unwrap();
+        assert!(tui.focus.as_ref().unwrap().same(&editor));
+        assert!(text(&draw(&mut tui, 40, 12)).contains("original draft"));
+        close(tui);
+    }
+}
+#[test]
+fn queue_count_cannot_enter_unflushed_replacement_hidden_disabled_or_modal_targets() {
+    for change in ["replace", "hidden", "disabled", "modal"] {
+        let source = Rc::new(RefCell::new(badge_scene()));
+        let (_runtime, mut tui) = layout::native(
+            layout::View::InteractiveScene(source.clone()),
+            Rc::new(Cell::new(true)),
+        );
+        draw(&mut tui, 40, 12);
+        let badge = tui
+            .scene
+            .iter()
+            .find(|target| target.key == "badge")
+            .unwrap()
+            .area
+            .visible();
+        match change {
+            "replace" => {
+                source.borrow_mut()["children"]
+                    .as_array_mut()
+                    .unwrap()
+                    .truncate(2);
+                source.borrow_mut()["children"][1]["focus_shortcuts"] = json!([]);
+                refresh(&mut tui);
+                *source.borrow_mut() = badge_scene();
+            }
+            "hidden" => {
+                let row = source.borrow()["children"][2].clone();
+                source.borrow_mut()["children"][2] = json!({"kind":"stack","key":"hidden","direction":"column","gap":0,"padding":0,"background":0,"visible":false,"children":[row]});
+            }
+            "disabled" => source.borrow_mut()["children"][3]["disabled"] = json!(true),
+            _ => {
+                let background = source.borrow().clone();
+                *source.borrow_mut() = json!({"kind":"dialog","key":"modal","label":"Modal","open":true,"width":30,"height":8,"background_color":0,"border_color":0xffffff,"background":background,"content":{"kind":"button","key":"close","label":"Close"}});
+            }
+        }
+        refresh(&mut tui);
+        tui.input(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            badge.x,
+            badge.y,
+        ))
+        .unwrap();
+        assert!(tui.focus.as_ref().is_none_or(|focus| focus.key != "rows"));
+        draw(&mut tui, 40, 12);
+        if change == "replace" {
+            tui.input(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                badge.x,
+                badge.y,
+            ))
+            .unwrap();
+            assert_eq!(tui.focus.as_ref().unwrap().key, "rows");
+        }
+        close(tui);
+    }
+}
 #[test]
 fn native_focus_shortcut_is_local_and_selects_original_child_entry() {
     let source = Rc::new(RefCell::new(focus_scene()));
@@ -610,6 +772,9 @@ fn focus_shortcuts_require_declared_children_and_unambiguous_chords() {
     };
     let mut scene = focus_scene();
     scene["children"][1]["focus_shortcuts"][0]["child"] = json!("missing");
+    assert!(compile(&scene).is_err());
+    let mut scene = badge_scene();
+    scene["children"][3]["focus_child"] = json!("missing");
     assert!(compile(&scene).is_err());
     let mut scene = focus_scene();
     scene["children"][1]["shortcuts"] =

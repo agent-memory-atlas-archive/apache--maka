@@ -62,6 +62,14 @@ struct Rows {
     props: Rc<RowsProps>,
 }
 impl Rows {
+    fn max_rows(&self, slots: &Slots<'_>) -> usize {
+        usize::from(
+            self.props
+                .compact_below
+                .filter(|compact| slots.viewport().height < compact.height)
+                .map_or(self.props.max_rows, |compact| compact.max_rows),
+        )
+    }
     fn action(&self, row: &str, key: &str) -> WidgetInput {
         let Some(action) = self
             .props
@@ -324,10 +332,10 @@ impl Widget for Rows {
         owner.geometry = Some(geometry);
         None
     }
-    fn measure(&self, _: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
+    fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
         Ok((
             width,
-            self.props.rows.len().min(usize::from(self.props.max_rows)) as u32,
+            self.props.rows.len().min(self.max_rows(slots)) as u32,
         ))
     }
     fn paint(
@@ -342,9 +350,15 @@ impl Widget for Rows {
             .rows
             .len()
             .min(area.height as usize)
-            .min(usize::from(self.props.max_rows));
+            .min(self.max_rows(slots));
         let mut offset = owner.offset.min(self.props.rows.len().saturating_sub(rows));
-        if owner.reveal
+        let focused = slots.focused();
+        let resized = focused
+            && owner
+                .geometry
+                .as_ref()
+                .is_some_and(|geometry| geometry.rows != rows);
+        if (owner.reveal || resized)
             && let Some(index) = owner
                 .selected
                 .as_ref()
@@ -353,7 +367,6 @@ impl Widget for Rows {
             offset = offset.min(index).max((index + 1).saturating_sub(rows));
         }
         let intent = (owner.offset, owner.reveal, owner.selected.clone());
-        let focused = slots.focused();
         let color = |color: maka_ui::appearance::Color| {
             Color::Rgb(
                 (color.0 >> 24) as u8,

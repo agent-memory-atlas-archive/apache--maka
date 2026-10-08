@@ -111,6 +111,9 @@ pub enum Node {
     Button {
         key: String,
         label: String,
+        /// Enter a declared child's native focus target instead of emitting a click.
+        #[serde(default)]
+        focus_child: Option<String>,
         #[serde(default)]
         disabled: bool,
         /// Absent foreground uses the terminal's default text color.
@@ -246,6 +249,12 @@ impl Node {
     }
     pub fn validate_focus_targets(&self, slots: &[ComponentSlot]) -> Result<(), String> {
         match self {
+            Self::Button {
+                focus_child: Some(child),
+                ..
+            } if !slots.iter().any(|slot| slot.key == *child) => {
+                return Err("focus button names an undeclared child".into());
+            }
             Self::Stack {
                 focus_shortcuts,
                 children,
@@ -355,12 +364,21 @@ impl Node {
                     hidden_slots.insert(slot.key.clone());
                 }
             }
-            Self::Button { key, disabled, .. } => {
+            Self::Button {
+                key,
+                disabled,
+                focus_child,
+                ..
+            } => {
                 *input_count += 1;
                 if *input_count > 64 {
                     return Err("scene input limit".into());
                 }
-                if visible && !disabled && inputs.insert(key.clone(), json!(true)).is_some() {
+                if visible
+                    && !disabled
+                    && focus_child.is_none()
+                    && inputs.insert(key.clone(), json!(true)).is_some()
+                {
                     return Err("reserved scene input identity".into());
                 }
             }

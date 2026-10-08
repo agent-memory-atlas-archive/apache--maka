@@ -553,7 +553,7 @@ impl Presenter {
             if self.application.is_retiring(&target.mount) || !self.target_admitted(&target) {
                 return Ok(());
             }
-            if let paint::TargetKind::Backdrop { body } = target.kind {
+            if let paint::TargetKind::Backdrop { body } = &target.kind {
                 if matches!(event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) && !body.contains((mouse.column, mouse.row).into()))
                 {
                     self.dismiss(&target, maka_ui::dismiss::Reason::Outside)?;
@@ -636,7 +636,10 @@ impl Presenter {
             if self.dismiss_escape(&event)? {
                 return Ok(());
             }
-            if target.kind != paint::TargetKind::Action {
+            if !matches!(
+                target.kind,
+                paint::TargetKind::Action | paint::TargetKind::Focus(_)
+            ) {
                 if matches!(event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left))
                 {
                     self.focus = Some(target);
@@ -646,6 +649,15 @@ impl Presenter {
             if !matches!(event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left))
                 && !matches!(event,Event::Key(key) if (key.code==KeyCode::Enter || key.code==KeyCode::Char(' ')) && key.modifiers.is_empty())
             {
+                return Ok(());
+            }
+            if let paint::TargetKind::Focus(binding) = &target.kind {
+                if self.application.frame(&target.mount)?.revision == target.revision
+                    && self.application.mount_visible(&target.mount)
+                    && !matches!(event, Event::Key(key) if key.kind != KeyEventKind::Press)
+                {
+                    self.focus_child(binding)?;
+                }
                 return Ok(());
             }
             let decision = self.application.dispatch(
@@ -695,7 +707,7 @@ impl Presenter {
                     && self.application.mount_visible(&ancestor.mount)
                     && self.application.frame(&ancestor.mount)?.revision == ancestor.revision
                 {
-                    self.focus_child(binding)?;
+                    self.focus_child(&binding.target)?;
                 }
                 return Ok(true);
             }

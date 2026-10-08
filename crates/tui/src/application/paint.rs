@@ -123,9 +123,10 @@ pub(super) fn text(text: &str, area: Placement, buffer: &mut Buffer, style: Styl
         }
     }
 }
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone)]
 pub(super) enum TargetKind {
     Action,
+    Focus(FocusChild),
     Native,
     Scroll,
     Backdrop { body: Placement },
@@ -148,6 +149,10 @@ pub(super) struct Ancestor {
 #[derive(Clone)]
 pub(super) struct FocusBinding {
     pub declaration: maka_ui::shortcut::FocusShortcut,
+    pub target: FocusChild,
+}
+#[derive(Clone)]
+pub(super) struct FocusChild {
     pub child: Mount,
     pub owner: std::rc::Weak<()>,
 }
@@ -866,6 +871,7 @@ impl Presenter {
             Node::Button {
                 key,
                 label,
+                focus_child,
                 disabled,
                 color: foreground,
             } => {
@@ -887,7 +893,10 @@ impl Presenter {
                     return Ok(());
                 }
                 let target = Target {
-                    kind: TargetKind::Action,
+                    kind: match focus_child {
+                        Some(child) => TargetKind::Focus(self.freeze_focus_child(mount, child)?),
+                        None => TargetKind::Action,
+                    },
                     ancestors: scene.ancestry.clone(),
                     revision: self.application.frame(mount)?.revision,
                     area: button_area,

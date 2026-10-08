@@ -384,6 +384,10 @@ export type TerminalScene =
   | {
       key: string;
       label: string;
+      /**
+       * Enter a declared child's native focus target instead of emitting a click.
+       */
+      focus_child?: string | null;
       disabled?: boolean;
       /**
        * Absent foreground uses the terminal's default text color.
@@ -2438,6 +2442,10 @@ export interface RowsProps {
    */
   shortcuts: Shortcut[];
   maxRows: number;
+  /**
+   * Optional smaller row cap below a surface viewport height, in cells.
+   */
+  compactBelow?: CompactRows | null;
   tabIndex: number;
   foreground: Color;
   muted: Color;
@@ -2466,6 +2474,10 @@ export interface RowAction {
   key: string;
   label: string;
   enabled: boolean;
+}
+export interface CompactRows {
+  height: number;
+  maxRows: number;
 }
 export interface RowScrollbar {
   thumb: string;

@@ -1084,6 +1084,18 @@ export const contracts = {
             minimum: 1,
             maximum: 64,
           },
+          compactBelow: {
+            description: 'Optional smaller row cap below a surface viewport height, in cells.',
+            anyOf: [
+              {
+                $ref: '#/$defs/CompactRows',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
           tabIndex: {
             type: 'integer',
             format: 'int16',
@@ -1192,6 +1204,25 @@ export const contracts = {
           Modifier: {
             type: 'string',
             enum: ['control', 'primary', 'alt', 'shift', 'super'],
+          },
+          CompactRows: {
+            type: 'object',
+            properties: {
+              height: {
+                type: 'integer',
+                format: 'uint16',
+                minimum: 1,
+                maximum: 65535,
+              },
+              maxRows: {
+                type: 'integer',
+                format: 'uint16',
+                minimum: 1,
+                maximum: 64,
+              },
+            },
+            additionalProperties: false,
+            required: ['height', 'maxRows'],
           },
           Color: {
             description: 'Packed RGBA, including explicit alpha zero.',
