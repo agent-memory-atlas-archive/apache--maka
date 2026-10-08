@@ -162,7 +162,13 @@ function resume(state: State, props: PaletteProps): Action[] {
   const active = rows(state, props)[state.active]?.key;
   while (state.scanOffset < state.source.sessions.length && state.matches.length < 32) {
     const session = state.source.sessions[state.scanOffset++];
-    if (matches(state.query, session.id + ' ' + session.title)) state.matches.push(session);
+    if (
+      matches(
+        state.query,
+        [session.id, session.title, session.workspace.path, ...session.labels].join(' '),
+      )
+    )
+      state.matches.push(session);
   }
   if (rows(state, props)[state.active]?.key !== active) reveal(state, props);
   if (state.matches.length < 32 && state.source.after)

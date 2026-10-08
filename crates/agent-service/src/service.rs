@@ -19,7 +19,7 @@
 
 use crate::{
     contract::*,
-    owner::{Owner, SessionConfiguration, now},
+    owner::{Owner, SessionConfiguration},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use futures_util::future::BoxFuture;
@@ -69,38 +69,39 @@ impl Handler for Agent {
                         )
                         .await
                         .map_err(|_| "agent_catalog_unavailable")?;
-                    encode(SessionPage {
+                    let reverse = matches!(input, List::Before { .. });
+                    let mut result = SessionPage {
                         revision: page.revision,
                         sessions: page.sessions.into_iter().map(summary).collect(),
                         before: page.previous_cursor,
                         after: page.next_cursor,
-                    })
+                    };
+                    while !crate::workspace::fits(&result) {
+                        if result.sessions.len() <= 1 {
+                            return Err("agent_catalog_unavailable".into());
+                        }
+                        if reverse {
+                            result.sessions.remove(0);
+                            result.before =
+                                result.sessions.first().map(|session| session.id.clone());
+                        } else {
+                            result.sessions.pop();
+                            result.after = result.sessions.last().map(|session| session.id.clone());
+                        }
+                    }
+                    encode(result)
                 }
+                "directories" => encode(
+                    crate::workspace::query(owner.workspace_roots.clone(), decode(input)?).await?,
+                ),
                 "create" => {
                     let input: Create = decode(input)?;
-                    if input.title.trim().is_empty()
-                        || input.title.chars().count() > 128
-                        || input.title.len() > 512
-                        || input.title.chars().any(char::is_control)
-                    {
-                        return Err("agent_title_invalid".into());
-                    }
                     let operation = context.operation().ok_or("agent_mutation_required")?;
-                    let id = owner.operation_id(operation);
-                    let session = owner
-                        .store
-                        .create_session(
-                            &id,
-                            &operation.fingerprint,
-                            &SessionConfiguration {
-                                schema_version: 1,
-                                title: input.title,
-                            },
-                            now(),
-                        )
-                        .await
-                        .map_err(|_| "agent_creation_failed")?;
-                    encode(summary(session))
+                    encode(owner.create(input, operation).await?)
+                }
+                "metadata" => {
+                    context.operation().ok_or("agent_mutation_required")?;
+                    encode(owner.metadata(decode(input)?).await?)
                 }
                 "observe" => {
                     use maka_event_log::turns::InvocationState;
@@ -385,11 +386,13 @@ fn decode<T: DeserializeOwned>(input: Value) -> Result<T, String> {
 fn encode<T: Serialize>(value: T) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|_| "agent_output_unavailable".into())
 }
-fn summary(session: SessionRecord<SessionConfiguration>) -> Session {
+pub(crate) fn summary(session: SessionRecord<SessionConfiguration>) -> Session {
     Session {
         id: session.id,
         revision: session.revision,
         title: session.configuration.title,
+        labels: session.configuration.labels,
+        workspace: session.configuration.workspace,
         updated_at: session.updated_at,
         archived: session.archived,
     }

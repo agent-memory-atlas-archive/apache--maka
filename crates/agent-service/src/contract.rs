@@ -19,6 +19,7 @@
 
 use maka_plugin_core::contract::{Contract, Interface, Method, MethodMode, Transport};
 use maka_plugins::session::history::{Cursor, Role};
+use maka_runtime::execution::{DirectoryIdentity, WorkspaceIdentity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -29,6 +30,9 @@ pub use maka_runtime::configuration::ModelSelection;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentConfiguration")]
 pub struct Configuration {
+    /// Installation-published directories, captured without creating workspace markers.
+    #[schemars(length(min = 1, max = 8))]
+    pub workspace_roots: Vec<maka_runtime_host::server::DirectoryRootSpec>,
     #[schemars(range(min = 1, max = 16))]
     pub max_active_runs: usize,
     #[schemars(range(min = 1, max = 16))]
@@ -71,11 +75,127 @@ pub enum List {
     },
 }
 #[derive(Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentCreate")]
 pub struct Create {
     #[schemars(length(min = 1, max = 128))]
     pub title: String,
+    #[schemars(length(max = 32))]
+    pub labels: Vec<String>,
+    pub workspace: WorkspaceSelection,
+}
+
+#[derive(Clone, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename = "AgentWorkspaceSelection")]
+pub enum WorkspaceSelection {
+    Directory {
+        selection: DirectorySelection,
+    },
+    Session {
+        #[schemars(length(min = 1, max = 128))]
+        session_id: String,
+    },
+}
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentDirectorySelection")]
+pub struct DirectorySelection {
+    #[schemars(length(min = 1, max = 64))]
+    pub root_id: String,
+    #[schemars(length(max = 64))]
+    pub segments: Vec<String>,
+    #[schemars(with = "String", regex(pattern = "^sha256:[a-f0-9]{64}$"))]
+    pub directory_identity: DirectoryIdentity,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "AgentDirectories")]
+pub enum Directories {
+    Roots,
+    Children {
+        selection: DirectorySelection,
+        #[schemars(with = "maka_runtime::schema::RequiredNullable<String>")]
+        after: Option<String>,
+    },
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentDirectory")]
+pub struct Directory {
+    pub name: String,
+    pub path: String,
+    pub selection: DirectorySelection,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "AgentDirectoryPage")]
+pub enum DirectoryPage {
+    Roots {
+        #[schemars(length(max = 8))]
+        roots: Vec<Directory>,
+    },
+    Children {
+        directory: Directory,
+        #[schemars(length(max = 32))]
+        children: Vec<Directory>,
+        #[schemars(with = "maka_runtime::schema::RequiredNullable<String>")]
+        after: Option<String>,
+    },
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentWorkspace")]
+pub struct Workspace {
+    #[schemars(length(min = 1, max = 4096))]
+    pub path: String,
+    #[schemars(with = "String", regex(pattern = "^sha256:[a-f0-9]{64}$"))]
+    pub directory_identity: DirectoryIdentity,
+    #[schemars(with = "String", regex(pattern = "^workspace:v1:[A-Fa-f0-9-]{36}$"))]
+    pub identity: WorkspaceIdentity,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentMetadata")]
+pub struct Metadata {
+    #[schemars(length(min = 1, max = 128))]
+    pub session_id: String,
+    #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
+    pub expected_revision: u64,
+    #[schemars(length(min = 1, max = 128))]
+    pub title: String,
+    #[schemars(length(max = 32))]
+    pub labels: Vec<String>,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "AgentRejection")]
+pub enum Rejection {
+    TitleInvalid,
+    LabelsInvalid,
+    WorkspaceUnavailable,
+    SessionUnavailable,
+    Closed,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "AgentCreated")]
+pub enum Created {
+    Created { session: Session },
+    Rejected { reason: Rejection },
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "AgentMetadataResult")]
+pub enum MetadataResult {
+    Committed { session: Session },
+    RevisionConflict { expected: u64, actual: u64 },
+    Rejected { reason: Rejection },
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -111,6 +231,8 @@ pub struct Watch {
 pub struct Session {
     pub id: String,
     pub title: String,
+    pub labels: Vec<String>,
+    pub workspace: Workspace,
     pub revision: u64,
     pub updated_at: u64,
     pub archived: bool,
@@ -388,6 +510,10 @@ pub fn contract() -> Contract {
                     method::<List, SessionPage>(MethodMode::Query),
                 ),
                 (
+                    "directories".into(),
+                    method::<Directories, DirectoryPage>(MethodMode::Query),
+                ),
+                (
                     "observe".into(),
                     method::<SessionRead, Observation>(MethodMode::Query),
                 ),
@@ -405,7 +531,11 @@ pub fn contract() -> Contract {
                 ),
                 (
                     "create".into(),
-                    method::<Create, Session>(MethodMode::Mutation),
+                    method::<Create, Created>(MethodMode::Mutation),
+                ),
+                (
+                    "metadata".into(),
+                    method::<Metadata, MetadataResult>(MethodMode::Mutation),
                 ),
                 // Authorizes the entire bounded run against the immutable selected
                 // account/model. A started reply is not a terminal business verdict.

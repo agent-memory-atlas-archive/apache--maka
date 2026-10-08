@@ -25,6 +25,7 @@ mod model;
 mod owner;
 mod service;
 mod tools;
+mod workspace;
 pub use contract::{Configuration, ModelSelection, configuration_schema, contract};
 use futures_util::future::BoxFuture;
 use maka_runtime_host::application::{

@@ -48,6 +48,16 @@ pub fn read_identity(path: &Path) -> io::Result<WorkspaceIdentity> {
     Workspace::capture(path)?.read()
 }
 
+/// Observe the marker through an original opened directory, without recapturing its name.
+pub fn read_directory_identity(path: PathBuf, directory: Dir) -> io::Result<WorkspaceIdentity> {
+    let workspace = Workspace {
+        path,
+        dir: directory,
+    };
+    workspace.validate_directory()?;
+    workspace.read()
+}
+
 /// Return the very directory whose intrinsic identity was verified, rather than
 /// reopening its ambient name between admission and a filesystem operation.
 pub fn open_directory(path: &Path, expected: &WorkspaceIdentity) -> io::Result<Dir> {

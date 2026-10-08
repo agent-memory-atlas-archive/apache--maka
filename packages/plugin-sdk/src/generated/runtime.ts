@@ -90,6 +90,11 @@ export type RuntimeProtocol =
   | CatalogMutationResult
   | AgentList
   | AgentCreate
+  | AgentCreated
+  | AgentDirectories
+  | AgentDirectoryPage
+  | AgentMetadata
+  | AgentMetadataResult
   | AgentSend
   | AgentStop
   | AgentWatch
@@ -1048,6 +1053,103 @@ export type AgentList =
       revision: string;
       cursor: string;
       kind: 'before';
+    };
+export type AgentWorkspaceSelection =
+  | {
+      selection: AgentDirectorySelection;
+      kind: 'directory';
+    }
+  | {
+      sessionId: string;
+      kind: 'session';
+    };
+export type AgentCreated =
+  | {
+      session: AgentSession;
+      kind: 'created';
+    }
+  | {
+      reason: AgentRejection;
+      kind: 'rejected';
+    };
+export type AgentRejection =
+  | 'title_invalid'
+  | 'labels_invalid'
+  | 'workspace_unavailable'
+  | 'session_unavailable'
+  | 'closed';
+export type AgentDirectories =
+  | {
+      kind: 'roots';
+    }
+  | {
+      selection: AgentDirectorySelection;
+      after: string | null;
+      kind: 'children';
+    };
+export type AgentDirectoryPage =
+  | {
+      /**
+       * @maxItems 8
+       */
+      roots:
+        | []
+        | [AgentDirectory]
+        | [AgentDirectory, AgentDirectory]
+        | [AgentDirectory, AgentDirectory, AgentDirectory]
+        | [AgentDirectory, AgentDirectory, AgentDirectory, AgentDirectory]
+        | [AgentDirectory, AgentDirectory, AgentDirectory, AgentDirectory, AgentDirectory]
+        | [
+            AgentDirectory,
+            AgentDirectory,
+            AgentDirectory,
+            AgentDirectory,
+            AgentDirectory,
+            AgentDirectory,
+          ]
+        | [
+            AgentDirectory,
+            AgentDirectory,
+            AgentDirectory,
+            AgentDirectory,
+            AgentDirectory,
+            AgentDirectory,
+            AgentDirectory,
+          ]
+        | [
+            AgentDirectory,
+            AgentDirectory,
+            AgentDirectory,
+            AgentDirectory,
+            AgentDirectory,
+            AgentDirectory,
+            AgentDirectory,
+            AgentDirectory,
+          ];
+      kind: 'roots';
+    }
+  | {
+      directory: AgentDirectory;
+      /**
+       * @maxItems 32
+       */
+      children: AgentDirectory[];
+      after: string | null;
+      kind: 'children';
+    };
+export type AgentMetadataResult =
+  | {
+      session: AgentSession;
+      kind: 'committed';
+    }
+  | {
+      expected: number;
+      actual: number;
+      kind: 'revision_conflict';
+    }
+  | {
+      reason: AgentRejection;
+      kind: 'rejected';
     };
 export type AgentDeliveryFact =
   | {
@@ -2024,6 +2126,51 @@ export interface TextChunk {
   metadata: unknown;
 }
 export interface AgentConfiguration {
+  /**
+   * Installation-published directories, captured without creating workspace markers.
+   *
+   * @minItems 1
+   * @maxItems 8
+   */
+  workspaceRoots:
+    | [DirectoryRootSpec]
+    | [DirectoryRootSpec, DirectoryRootSpec]
+    | [DirectoryRootSpec, DirectoryRootSpec, DirectoryRootSpec]
+    | [DirectoryRootSpec, DirectoryRootSpec, DirectoryRootSpec, DirectoryRootSpec]
+    | [
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+      ]
+    | [
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+      ]
+    | [
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+      ]
+    | [
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+        DirectoryRootSpec,
+      ];
   maxActiveRuns: number;
   maxSteps: number;
   /**
@@ -2032,6 +2179,10 @@ export interface AgentConfiguration {
    * @maxItems 128
    */
   tools: AgentServiceTool[];
+}
+export interface DirectoryRootSpec {
+  label: string;
+  path: string;
 }
 export interface AgentServiceTool {
   name: string;
@@ -2298,6 +2449,47 @@ export interface SetDefaultConnectionTargetInput {
 }
 export interface AgentCreate {
   title: string;
+  /**
+   * @maxItems 32
+   */
+  labels: string[];
+  workspace: AgentWorkspaceSelection;
+}
+export interface AgentDirectorySelection {
+  rootId: string;
+  /**
+   * @maxItems 64
+   */
+  segments: string[];
+  directoryIdentity: string;
+}
+export interface AgentSession {
+  id: string;
+  title: string;
+  labels: string[];
+  workspace: AgentWorkspace;
+  revision: number;
+  updatedAt: number;
+  archived: boolean;
+}
+export interface AgentWorkspace {
+  path: string;
+  directoryIdentity: string;
+  identity: string;
+}
+export interface AgentDirectory {
+  name: string;
+  path: string;
+  selection: AgentDirectorySelection;
+}
+export interface AgentMetadata {
+  sessionId: string;
+  expectedRevision: number;
+  title: string;
+  /**
+   * @maxItems 32
+   */
+  labels: string[];
 }
 export interface AgentSend {
   model: ModelSelection;
@@ -2311,13 +2503,6 @@ export interface AgentStop {
 export interface AgentWatch {
   sessionId: string;
   after: number;
-}
-export interface AgentSession {
-  id: string;
-  title: string;
-  revision: number;
-  updatedAt: number;
-  archived: boolean;
 }
 export interface AgentSessionPage {
   revision: string;

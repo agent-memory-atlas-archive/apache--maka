@@ -32,6 +32,9 @@ mod images;
 #[path = "tests/product.rs"]
 mod product;
 
+#[path = "tests/workspaces.rs"]
+mod workspaces;
+
 use super::*;
 use crate::{EXPORT, ModelSelection, contract, service::Agent};
 use maka_event_log::root::{RootNamespaces, RootOwner};
@@ -340,6 +343,7 @@ struct Fixture {
     _dir: tempfile::TempDir,
     namespaces: RootNamespaces,
     root: std::path::PathBuf,
+    workspace: std::path::PathBuf,
     store: Arc<EventLog>,
     config: Arc<ConfigurationStore>,
     app: Application,
@@ -367,6 +371,10 @@ impl Fixture {
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("root");
+        let workspace = dir.path().join("workspace");
+        let other_workspace = dir.path().join("other-workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        std::fs::create_dir(&other_workspace).unwrap();
         let namespaces = RootNamespaces {
             ownership: dir.path().join("owners"),
             control: dir.path().join("control"),
@@ -422,6 +430,16 @@ impl Fixture {
             maka_config::oauth::enrollment::LoginCompletion::Committed(_)
         ));
         let mut settings = Configuration {
+            workspace_roots: vec![
+                maka_runtime_host::server::DirectoryRootSpec {
+                    label: "Workspace".into(),
+                    path: workspace.clone(),
+                },
+                maka_runtime_host::server::DirectoryRootSpec {
+                    label: "Other workspace".into(),
+                    path: other_workspace,
+                },
+            ],
             max_active_runs: cap,
             max_steps: 1,
             tools: vec![],
@@ -514,6 +532,7 @@ impl Fixture {
             _dir: dir,
             namespaces,
             root,
+            workspace: workspace.canonicalize().unwrap(),
             store,
             config,
             app,
@@ -571,12 +590,19 @@ impl Fixture {
         }
     }
     async fn create(&self, title: &str) -> String {
-        self.mutation(2, "create", json!({"title":title}), Uuid::new_v4())
+        self.mutation(2, "create", self.create_input(title).await, Uuid::new_v4())
             .await
-            .unwrap()["id"]
+            .unwrap()["session"]["id"]
             .as_str()
             .unwrap()
             .into()
+    }
+    async fn create_input(&self, title: &str) -> Value {
+        let roots = self
+            .query("directories", json!({"kind":"roots"}))
+            .await
+            .unwrap();
+        json!({"title":title, "labels":[], "workspace":{"kind":"directory","selection":roots["roots"][0]["selection"]}})
     }
     async fn selection(&self) -> ModelSelection {
         let row = self.config.catalog().await.unwrap().connections.remove(0);
@@ -825,19 +851,19 @@ async fn original_operation_conflicts_and_private_namespace_never_cross_sessions
         let fixture = Fixture::new("http://127.0.0.1:1/v1", 2, None).await;
         let operation = Uuid::new_v4();
         let first = fixture
-            .mutation(2, "create", json!({"title":"A"}), operation)
+            .mutation(2, "create", fixture.create_input("A").await, operation)
             .await
             .unwrap();
         let conflict = fixture
-            .mutation(3, "create", json!({"title":"B"}), operation)
+            .mutation(3, "create", fixture.create_input("B").await, operation)
             .await
             .unwrap_err();
         assert!(conflict.contains("event identity conflicts"));
         let second = fixture
-            .mutation(3, "create", json!({"title":"B"}), Uuid::new_v4())
+            .mutation(3, "create", fixture.create_input("B").await, Uuid::new_v4())
             .await
             .unwrap();
-        assert_ne!(first["id"], second["id"]);
+        assert_ne!(first["session"]["id"], second["session"]["id"]);
         fixture
             .store
             .create_session("foreign_session", "foreign", &json!({"foreign":true}), 1)
@@ -1045,6 +1071,7 @@ async fn cleanup_case(panic: bool) {
         _dir,
         namespaces,
         root,
+        workspace: _,
         store,
         config,
         app,
@@ -1307,6 +1334,8 @@ async fn tool_source_uses_original_agent_grant_and_frozen_canonical_fields() {
     use maka_plugins::{composition::Scope as StorageScope, storage::Namespace};
     use maka_runtime::import::{Content, Record, Source};
     let fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+    let seed = fixture.create("Tool source").await;
+    let configuration = fixture.owner.session(&seed).await.unwrap().configuration;
     let session = format!("{}{}", fixture.owner.prefix, Uuid::new_v4().simple());
     let plugin = PluginSession {
         session_id: session.clone(),
@@ -1323,7 +1352,7 @@ async fn tool_source_uses_original_agent_grant_and_frozen_canonical_fields() {
                 adapter: "fixture".into(),
                 session_id: "foreign".into(),
             },
-            &json!({"schemaVersion":1,"title":"Tool source"}),
+            &configuration,
             1,
         )
         .await

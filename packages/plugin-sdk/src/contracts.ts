@@ -3300,37 +3300,339 @@ export const contracts = {
                 minLength: 1,
                 maxLength: 128,
               },
+              labels: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                },
+                maxItems: 32,
+              },
+              workspace: {
+                $ref: '#/$defs/AgentWorkspaceSelection',
+              },
             },
             additionalProperties: false,
-            required: ['title'],
+            required: ['title', 'labels', 'workspace'],
+            $defs: {
+              AgentWorkspaceSelection: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentDirectorySelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'directory',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'selection'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      sessionId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'session',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'sessionId'],
+                  },
+                ],
+              },
+              AgentDirectorySelection: {
+                type: 'object',
+                properties: {
+                  rootId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 64,
+                  },
+                  segments: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    maxItems: 64,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['rootId', 'segments', 'directoryIdentity'],
+              },
+            },
           },
           output: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
-            title: 'AgentSession',
-            type: 'object',
-            properties: {
-              id: {
+            title: 'AgentCreated',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  session: {
+                    $ref: '#/$defs/AgentSession',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'created',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'session'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/AgentRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+            ],
+            $defs: {
+              AgentSession: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  labels: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  workspace: {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  archived: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'title',
+                  'labels',
+                  'workspace',
+                  'revision',
+                  'updatedAt',
+                  'archived',
+                ],
+              },
+              AgentWorkspace: {
+                type: 'object',
+                properties: {
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
+              AgentRejection: {
                 type: 'string',
-              },
-              title: {
-                type: 'string',
-              },
-              revision: {
-                type: 'integer',
-                format: 'uint64',
-                minimum: 0,
-              },
-              updatedAt: {
-                type: 'integer',
-                format: 'uint64',
-                minimum: 0,
-              },
-              archived: {
-                type: 'boolean',
+                enum: [
+                  'title_invalid',
+                  'labels_invalid',
+                  'workspace_unavailable',
+                  'session_unavailable',
+                  'closed',
+                ],
               },
             },
-            additionalProperties: false,
-            required: ['id', 'title', 'revision', 'updatedAt', 'archived'],
+          },
+          resources: {},
+        },
+        directories: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentDirectories',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'roots',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  selection: {
+                    $ref: '#/$defs/AgentDirectorySelection',
+                  },
+                  after: {
+                    type: ['string', 'null'],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'children',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'selection', 'after'],
+              },
+            ],
+            $defs: {
+              AgentDirectorySelection: {
+                type: 'object',
+                properties: {
+                  rootId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 64,
+                  },
+                  segments: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    maxItems: 64,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['rootId', 'segments', 'directoryIdentity'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentDirectoryPage',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  roots: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/AgentDirectory',
+                    },
+                    maxItems: 8,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'roots',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'roots'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  directory: {
+                    $ref: '#/$defs/AgentDirectory',
+                  },
+                  children: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/AgentDirectory',
+                    },
+                    maxItems: 32,
+                  },
+                  after: {
+                    type: ['string', 'null'],
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'children',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'directory', 'children', 'after'],
+              },
+            ],
+            $defs: {
+              AgentDirectory: {
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  path: {
+                    type: 'string',
+                  },
+                  selection: {
+                    $ref: '#/$defs/AgentDirectorySelection',
+                  },
+                },
+                additionalProperties: false,
+                required: ['name', 'path', 'selection'],
+              },
+              AgentDirectorySelection: {
+                type: 'object',
+                properties: {
+                  rootId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 64,
+                  },
+                  segments: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    maxItems: 64,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['rootId', 'segments', 'directoryIdentity'],
+              },
+            },
           },
           resources: {},
         },
@@ -3750,6 +4052,15 @@ export const contracts = {
                   title: {
                     type: 'string',
                   },
+                  labels: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  workspace: {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
                   revision: {
                     type: 'integer',
                     format: 'uint64',
@@ -3765,7 +4076,201 @@ export const contracts = {
                   },
                 },
                 additionalProperties: false,
-                required: ['id', 'title', 'revision', 'updatedAt', 'archived'],
+                required: [
+                  'id',
+                  'title',
+                  'labels',
+                  'workspace',
+                  'revision',
+                  'updatedAt',
+                  'archived',
+                ],
+              },
+              AgentWorkspace: {
+                type: 'object',
+                properties: {
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
+            },
+          },
+          resources: {},
+        },
+        metadata: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentMetadata',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              expectedRevision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 1,
+                maximum: 9007199254740991,
+              },
+              title: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              labels: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                },
+                maxItems: 32,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'expectedRevision', 'title', 'labels'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentMetadataResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  session: {
+                    $ref: '#/$defs/AgentSession',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'committed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'session'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  expected: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  actual: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'revision_conflict',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expected', 'actual'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/AgentRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+            ],
+            $defs: {
+              AgentSession: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  labels: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  workspace: {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  archived: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'title',
+                  'labels',
+                  'workspace',
+                  'revision',
+                  'updatedAt',
+                  'archived',
+                ],
+              },
+              AgentWorkspace: {
+                type: 'object',
+                properties: {
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
+              AgentRejection: {
+                type: 'string',
+                enum: [
+                  'title_invalid',
+                  'labels_invalid',
+                  'workspace_unavailable',
+                  'session_unavailable',
+                  'closed',
+                ],
               },
             },
           },
@@ -3829,6 +4334,15 @@ export const contracts = {
                   title: {
                     type: 'string',
                   },
+                  labels: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  workspace: {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
                   revision: {
                     type: 'integer',
                     format: 'uint64',
@@ -3844,7 +4358,35 @@ export const contracts = {
                   },
                 },
                 additionalProperties: false,
-                required: ['id', 'title', 'revision', 'updatedAt', 'archived'],
+                required: [
+                  'id',
+                  'title',
+                  'labels',
+                  'workspace',
+                  'revision',
+                  'updatedAt',
+                  'archived',
+                ],
+              },
+              AgentWorkspace: {
+                type: 'object',
+                properties: {
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'directoryIdentity', 'identity'],
               },
               AgentRun: {
                 type: 'object',

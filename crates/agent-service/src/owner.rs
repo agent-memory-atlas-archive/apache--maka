@@ -17,7 +17,9 @@
  * under the License.
  */
 
-use crate::{Configuration, IMPLEMENTATION, NativeContext, configuration_schema};
+use crate::{
+    Configuration, IMPLEMENTATION, NativeContext, configuration_schema, contract::*, workspace,
+};
 use futures_util::{FutureExt, future::BoxFuture};
 use maka_agent::{Engine, RunError, RunInput, RunWork};
 use maka_config::ConfigurationStore;
@@ -45,8 +47,9 @@ use uuid::Uuid;
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SessionConfiguration {
-    pub schema_version: u32,
     pub title: String,
+    pub labels: Vec<String>,
+    pub workspace: Workspace,
 }
 struct Control {
     invocation: String,
@@ -65,7 +68,8 @@ pub(crate) struct Owner {
     pub prefix: String,
     configuration: Arc<ConfigurationStore>,
     revision: SourceRevision,
-    cwd: String,
+    pub workspace_roots: Vec<workspace::Root>,
+    managed_worktrees: std::path::PathBuf,
     engine: Engine,
     tools: maka_tools::ToolCatalog,
     runs: Mutex<Runs>,
@@ -91,11 +95,9 @@ impl Owner {
             persistence.source().deployment,
             context.activation().instance(),
         );
-        let cwd = root
-            .canonical_path()
-            .to_str()
-            .ok_or("agent_root_path_invalid")?
-            .to_owned();
+        let managed_worktrees = root.canonical_path().join("subagent-worktrees");
+        let workspace_roots =
+            workspace::open(settings.workspace_roots.clone(), &managed_worktrees)?;
         let models = ModelExecutor::new(1, Duration::from_secs(60))
             .map_err(|_| "agent_executor_unavailable")?;
         let cells = maka_js_runtime::CodeExecutor::new(1, maka_js_runtime::CellLimits::default())
@@ -119,7 +121,8 @@ impl Owner {
         Ok(Arc::new(Self {
             store: persistence.store().clone(),
             prefix,
-            cwd,
+            workspace_roots,
+            managed_worktrees,
             revision,
             permits: Arc::new(Semaphore::new(settings.max_active_runs)),
             settings,
@@ -157,6 +160,143 @@ impl Owner {
             .map_err(|_| "agent_store_unavailable".to_owned())?
             .ok_or("agent_session_unavailable".into())
     }
+    pub async fn create(
+        &self,
+        input: Create,
+        operation: &maka_plugin_core::operation::RecoveryRef,
+    ) -> Result<Created, String> {
+        if let Some(reason) = metadata_rejection(&input.title, &input.labels) {
+            return Ok(Created::Rejected { reason });
+        }
+        let runs = self.runs.lock().await;
+        if runs.closing {
+            return Ok(Created::Rejected {
+                reason: Rejection::Closed,
+            });
+        }
+        let selected = match input.workspace {
+            WorkspaceSelection::Directory { selection } => {
+                let Some(workspace) = workspace::initialize(
+                    &self.workspace_roots,
+                    selection,
+                    &self.managed_worktrees,
+                )
+                .await?
+                else {
+                    return Ok(Created::Rejected {
+                        reason: Rejection::WorkspaceUnavailable,
+                    });
+                };
+                workspace
+            }
+            WorkspaceSelection::Session { session_id } => {
+                if !self.owns(&session_id) {
+                    return Ok(Created::Rejected {
+                        reason: Rejection::SessionUnavailable,
+                    });
+                }
+                let Some(session) = self
+                    .store
+                    .get_session::<SessionConfiguration>(&session_id)
+                    .await
+                    .map_err(|_| "agent_store_unavailable")?
+                else {
+                    return Ok(Created::Rejected {
+                        reason: Rejection::SessionUnavailable,
+                    });
+                };
+                if session.archived {
+                    return Ok(Created::Rejected {
+                        reason: Rejection::SessionUnavailable,
+                    });
+                }
+                if workspace::validate(
+                    &self.workspace_roots,
+                    &session.configuration.workspace,
+                    &self.managed_worktrees,
+                )
+                .await
+                .is_err()
+                {
+                    return Ok(Created::Rejected {
+                        reason: Rejection::WorkspaceUnavailable,
+                    });
+                }
+                session.configuration.workspace
+            }
+        };
+        let id = self.operation_id(operation);
+        let record = self
+            .store
+            .create_session(
+                &id,
+                &operation.fingerprint,
+                &SessionConfiguration {
+                    title: input.title,
+                    labels: input.labels,
+                    workspace: selected,
+                },
+                now(),
+            )
+            .await
+            .map_err(|_| "agent_creation_failed")?;
+        Ok(Created::Created {
+            session: crate::service::summary(record),
+        })
+    }
+    pub async fn metadata(&self, input: Metadata) -> Result<MetadataResult, String> {
+        if let Some(reason) = metadata_rejection(&input.title, &input.labels) {
+            return Ok(MetadataResult::Rejected { reason });
+        }
+        let runs = self.runs.lock().await;
+        if runs.closing {
+            return Ok(MetadataResult::Rejected {
+                reason: Rejection::Closed,
+            });
+        }
+        if !self.owns(&input.session_id) {
+            return Ok(MetadataResult::Rejected {
+                reason: Rejection::SessionUnavailable,
+            });
+        }
+        let Some(session) = self
+            .store
+            .get_session::<SessionConfiguration>(&input.session_id)
+            .await
+            .map_err(|_| "agent_store_unavailable")?
+        else {
+            return Ok(MetadataResult::Rejected {
+                reason: Rejection::SessionUnavailable,
+            });
+        };
+        if session.archived {
+            return Ok(MetadataResult::Rejected {
+                reason: Rejection::SessionUnavailable,
+            });
+        }
+        use maka_event_log::sessions::SessionMutation;
+        match self
+            .store
+            .update_session_metadata::<SessionConfiguration, _>(
+                &input.session_id,
+                input.expected_revision,
+                move |configuration| {
+                    configuration.title = input.title;
+                    configuration.labels = input.labels;
+                    Ok(())
+                },
+            )
+            .await
+            .map_err(|_| "agent_metadata_failed")?
+        {
+            SessionMutation::Committed(record) => Ok(MetadataResult::Committed {
+                session: crate::service::summary(record),
+            }),
+            SessionMutation::RevisionConflict { expected, actual } => {
+                Ok(MetadataResult::RevisionConflict { expected, actual })
+            }
+        }
+    }
     pub async fn send(
         self: &Arc<Self>,
         id: String,
@@ -182,7 +322,7 @@ impl Owner {
             return Err("agent_session_busy".into());
         }
         let session = self.session(&id).await?;
-        if session.archived || session.configuration.schema_version != 1 {
+        if session.archived {
             return Err("agent_session_configuration_changed".into());
         }
         let (source, prepared) = crate::model::Source::select(
@@ -193,6 +333,12 @@ impl Owner {
         )
         .await
         .map_err(public_error)?;
+        workspace::validate(
+            &self.workspace_roots,
+            &session.configuration.workspace,
+            &self.managed_worktrees,
+        )
+        .await?;
         let binding = source.binding.clone();
         let source = Arc::new(source);
         let identity = self.operation_id(operation);
@@ -241,8 +387,8 @@ impl Owner {
             supports_vision: prepared.supports_vision,
             request_fingerprint: Some(operation.fingerprint.clone()),
             configuration: InvocationConfiguration {
-                cwd: self.cwd.clone(),
-                workspace_identity: None,
+                cwd: session.configuration.workspace.path,
+                workspace_identity: Some(session.configuration.workspace.identity),
                 workspace_origin: WorkspaceOrigin::Selected,
                 sandbox_mode: SandboxMode::WorkspaceWrite,
                 approval_policy: ApprovalPolicy::OnRequest,
@@ -311,6 +457,23 @@ impl Owner {
             return Ok(true);
         }
         Ok(false)
+    }
+}
+fn metadata_rejection(title: &str, labels: &[String]) -> Option<Rejection> {
+    if title.trim().is_empty()
+        || title.chars().count() > 128
+        || title.len() > 512
+        || title.chars().any(char::is_control)
+    {
+        Some(Rejection::TitleInvalid)
+    } else if labels.len() > 32
+        || labels.iter().any(|label| {
+            label.trim().is_empty() || label.len() > 128 || label.chars().any(char::is_control)
+        })
+    {
+        Some(Rejection::LabelsInvalid)
+    } else {
+        None
     }
 }
 impl Owner {

@@ -260,7 +260,7 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         .collect::<BTreeMap<_, _>>();
     // The authoring function accepts actual Rust-computed package refs. Do not
     // duplicate package hashing or native manifest schemas in a fixture.
-    let script = r#"const {composition,packageNames}=await import(process.argv[1]);const refs=JSON.parse(process.argv[2]);const keys=Object.fromEntries(packageNames.map((name,i)=>[name,'00000000-0000-0000-0000-'+String(i+20).padStart(12,'0')]));keys.agent='00000000-0000-0000-0000-000000000001';keys.receipts='00000000-0000-0000-0000-000000000004';keys.settings='00000000-0000-0000-0000-000000000005';for(const name of packageNames)refs[name]??={id:'unused.'+name,revision:'sha256-'+ 'a'.repeat(64)};const result=composition({presentation:'tui',locale:'en',scheme:'light',packages:refs,keys,agent:{maxActiveRuns:1,maxSteps:1,tools:[]},hostRoot:'/fixture',hostDeployment:'00000000-0000-0000-0000-000000000080',managementDeployment:'00000000-0000-0000-0000-000000000081'});console.log(JSON.stringify({input:result.ui,observations:result.remoteExports,managementHost:result.managementHost,managementConfiguration:result.connections.hosts.find(h=>h.name==='manager')}));"#;
+    let script = r#"const {composition,packageNames}=await import(process.argv[1]);const refs=JSON.parse(process.argv[2]);const keys=Object.fromEntries(packageNames.map((name,i)=>[name,'00000000-0000-0000-0000-'+String(i+20).padStart(12,'0')]));keys.agent='00000000-0000-0000-0000-000000000001';keys.receipts='00000000-0000-0000-0000-000000000004';keys.settings='00000000-0000-0000-0000-000000000005';for(const name of packageNames)refs[name]??={id:'unused.'+name,revision:'sha256-'+ 'a'.repeat(64)};const result=composition({presentation:'tui',locale:'en',scheme:'light',packages:refs,keys,agent:{workspaceRoots:[{label:"Fixture",path:"/fixture-workspace"}],maxActiveRuns:1,maxSteps:1,tools:[]},hostRoot:'/fixture',hostDeployment:'00000000-0000-0000-0000-000000000080',managementDeployment:'00000000-0000-0000-0000-000000000081'});console.log(JSON.stringify({input:result.ui,observations:result.remoteExports,managementHost:result.managementHost,managementConfiguration:result.connections.hosts.find(h=>h.name==='manager')}));"#;
     let authored = Command::new("node")
         .arg("--input-type=module")
         .arg("-e")
@@ -1088,6 +1088,20 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         use maka_event_log::sessions::PluginSession;
         use maka_plugins::{composition::Scope as StorageScope, storage::Namespace};
         use maka_runtime::import::{Content, Record, Source};
+        let mut configuration = fixture
+            .store
+            .scoped_sessions::<SessionConfiguration>(
+                maka_event_log::sessions::CatalogScope::IdPrefix(fixture.owner.prefix.clone()),
+                None,
+                maka_event_log::sessions::SessionPosition::Start,
+                false,
+            )
+            .await
+            .unwrap()
+            .sessions
+            .remove(0)
+            .configuration;
+        configuration.title = "Native tool inspection".into();
         let session = format!("{}{}", fixture.owner.prefix, Uuid::new_v4().simple());
         fixture
             .store
@@ -1103,7 +1117,7 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
                     adapter: "fixture".into(),
                     session_id: "tools".into(),
                 },
-                &json!({"schemaVersion":1,"title":"Native tool inspection"}),
+                &configuration,
                 1,
             )
             .await

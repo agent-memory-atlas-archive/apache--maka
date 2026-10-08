@@ -8175,6 +8175,7 @@ dependencies = [
  "maka-application-bridge",
  "maka-config",
  "maka-event-log",
+ "maka-fs-tools",
  "maka-js-runtime",
  "maka-model",
  "maka-network",

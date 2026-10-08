@@ -86,9 +86,16 @@ const reference = {
   contract: sdk.contracts.agent,
   recovery: 'journal_v1',
 };
+const workspaceFact = {
+  path: '/projects/maka',
+  directoryIdentity: 'sha256:' + 'a'.repeat(64),
+  identity: 'workspace:v1:' + uuid(99),
+};
 const session = {
   id: 'session',
   title: 'A thoughtful conversation',
+  labels: [],
+  workspace: workspaceFact,
   revision: 1,
   updatedAt: 1,
   archived: false,
@@ -481,6 +488,7 @@ test('both product compositions use actual immutable package refs and check in t
           scheme: 'light',
           keys,
           agent: {
+            workspaceRoots: [{ label: 'Projects', path: '/private/product-workspace' }],
             maxActiveRuns: 1,
             maxSteps: 1,
             tools: [],
@@ -5334,7 +5342,7 @@ for (const target of ['desktop', 'tui']) {
     // Creation leaves the revisioned page intact until the fresh catalog returns.
     client.component('create');
     const created = { ...session, id: 'created', title: 'Newly created' };
-    client.complete(client.find('create'), returned(created));
+    client.complete(client.find('create'), returned({ kind: 'created', session: created }));
     client.query('list', { revision: 'catalog-3', sessions: [created], before: null, after: null });
     assert.deepEqual(client.state.selected, created);
     const replay = new Client(component);
@@ -5379,6 +5387,88 @@ test('session catalog contracts require explicit boundaries and bound the page s
   assert.equal(position({ kind: 'after', cursor: 'session' }), false);
 });
 
+test('first creation captures a published directory and guards the complete preparation', () => {
+  const client = new Client();
+  client.query('page', []);
+  client.query('list', { revision: 'empty', sessions: [], before: null, after: null });
+  client.raw('create');
+  const query = client.find('directories');
+  assert.deepEqual(query.input, { kind: 'roots' });
+  assert.equal(
+    [...client.actions.values()].some((action) => action.method === 'create'),
+    false,
+  );
+  const requests = client.actions.size;
+  client.raw('create');
+  assert.equal(client.actions.size, requests);
+  const selection = {
+    rootId: 'root-1',
+    segments: [],
+    directoryIdentity: workspaceFact.directoryIdentity,
+  };
+  client.query('directories', {
+    kind: 'roots',
+    roots: [{ name: 'Projects', path: workspaceFact.path, selection }],
+  });
+  assert.deepEqual(client.find('create').input, {
+    title: 'New conversation',
+    labels: [],
+    workspace: { kind: 'directory', selection },
+  });
+  client.complete(client.find('create'), returned({ kind: 'created', session }));
+  assert.deepEqual(client.state.selected, session);
+});
+
+test('confirmed creation refusal keeps the original session and does not become Unknown', () => {
+  const client = new Client().start();
+  const original = {
+    selected: structuredClone(client.state.selected),
+    watch: structuredClone(client.state.watch),
+    epoch: client.state.epoch,
+    command: structuredClone(client.state.command),
+  };
+  client.raw('create');
+  client.complete(
+    client.find('create'),
+    returned({ kind: 'rejected', reason: 'workspace_unavailable' }),
+  );
+  assert.deepEqual(
+    {
+      selected: client.state.selected,
+      watch: client.state.watch,
+      epoch: client.state.epoch,
+      command: client.state.command,
+    },
+    original,
+  );
+  assert.equal(client.state.uncertain, null);
+  assert.equal(client.state.notice, 'createRejected');
+  assert.equal(
+    modelSlots(client.output.frame.view).find((node) => node.binding === 'composer').props.enabled,
+    true,
+  );
+  client.component('send', draft);
+  assert.equal(client.find('read').method, 'read');
+});
+
+test('creation refusal cannot erase a watch failure that arrived during creation', () => {
+  const client = new Client().start();
+  client.raw('create');
+  client.input({
+    kind: 'action',
+    key: client.state.watch.key,
+    event: { status: 'failed', reason: 'connection lost' },
+  });
+  client.complete(client.find('create'), returned({ kind: 'rejected', reason: 'labels_invalid' }));
+  assert.equal(client.state.notice, 'unavailable');
+  assert.equal(
+    modelSlots(client.output.frame.view).find((node) => node.binding === 'composer').props.enabled,
+    false,
+  );
+  client.component('send', draft);
+  assert.deepEqual(client.output.actions, []);
+});
+
 test('ordinary root shortcuts share creation policy and close only presented pages', () => {
   const client = new Client().start();
   const shortcuts = () => client.output.frame.view.background.shortcuts;
@@ -5402,7 +5492,11 @@ test('ordinary root shortcuts share creation policy and close only presented pag
   client.input({ kind: 'component', child: 'connections', name: 'closed', event: {} });
   assert.equal(client.state.settingsOpen, false);
   client.raw('create');
-  assert.deepEqual(client.find('create').input, { title: 'New conversation' });
+  assert.deepEqual(client.find('create').input, {
+    title: 'New conversation',
+    labels: [],
+    workspace: { kind: 'session', sessionId: session.id },
+  });
   assert.equal(shortcuts().find((shortcut) => shortcut.key === 'n').enabled, false);
   const requests = client.actions.size;
   client.raw('create');
@@ -5464,6 +5558,8 @@ for (const target of ['tui', 'desktop']) {
       sessions: titles.map((title, index) => ({
         id: `session-${at + index}`,
         title,
+        labels: [],
+        workspace: workspaceFact,
         revision: 1,
         updatedAt: 1,
         archived: false,
@@ -5542,6 +5638,38 @@ for (const target of ['tui', 'desktop']) {
     assert.equal(form.output.frame.view.visible, true);
     form.update({ open: false });
     assert.equal(form.output.frame.view.visible, false);
+  });
+  test(`${target} palette searches canonical labels and workspace without title matches`, () => {
+    const form = make([]);
+    native(form, 'research orchid', 2);
+    read(form, 'research orchid', 2);
+    const matching = {
+      ...session,
+      title: 'A conversation',
+      labels: ['Research'],
+      workspace: { ...workspaceFact, path: '/projects/orchid' },
+    };
+    const other = {
+      ...matching,
+      id: 'other',
+      workspace: { ...workspaceFact, path: '/projects/fern' },
+    };
+    form.query('list', {
+      revision: 'metadata',
+      sessions: [matching, other],
+      before: null,
+      after: null,
+    });
+    assert.deepEqual(form.state.matches, [matching]);
+    form.input({
+      kind: 'component',
+      child: 'palette-query',
+      name: 'submitted',
+      key: 'choose',
+      event: {},
+    });
+    read(form, 'research orchid', 2);
+    assert.deepEqual(form.output.events, [{ name: 'selected', value: matching }]);
   });
   test(`${target} palette reaches a session beyond 1024 catalog rows without borrowing the sidebar page`, () => {
     const form = make();

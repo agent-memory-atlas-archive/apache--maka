@@ -35,6 +35,8 @@ import type {
   AgentRun,
   AgentSession,
   AgentSessionPage,
+  AgentCreated,
+  AgentDirectoryPage,
   AgentList,
   AgentStarted,
   CallerIntent,
@@ -82,6 +84,7 @@ type Request =
       position: SourcePosition;
     }
   | { kind: 'create' }
+  | { kind: 'createDirectory'; title: string }
   | { kind: 'send'; draft: EditorObservation; sessionId: string; model: ModelSelection }
   | { kind: 'stop'; sessionId: string }
   | { kind: 'receipt' }
@@ -255,8 +258,18 @@ function intent(
   actions.push({ key, binding, member: 0, method, input, resources, continuations });
 }
 function createSession(state: State, actions: Action[], locale: string) {
-  if (!mutationPending(state) && !catalogPending(state))
-    intent(state, actions, { kind: 'create' }, 'agent', 'create', { title: copy(locale).new });
+  if (mutationPending(state) || catalogPending(state)) return;
+  const title = copy(locale).new;
+  if (state.selected)
+    intent(state, actions, { kind: 'create' }, 'agent', 'create', {
+      title,
+      labels: [],
+      workspace: { kind: 'session', sessionId: state.selected.id },
+    });
+  else
+    intent(state, actions, { kind: 'createDirectory', title }, 'agent', 'directories', {
+      kind: 'roots',
+    });
 }
 function catalogPending(state: State): boolean {
   return Object.values(state.pending).some(
@@ -384,7 +397,7 @@ function mutationPending(state: State) {
     state.restoring ||
     state.uncertain !== null ||
     Object.values(state.pending).some((request) =>
-      ['read', 'create', 'send', 'stop', 'receipt'].includes(request.kind),
+      ['read', 'create', 'createDirectory', 'send', 'stop', 'receipt'].includes(request.kind),
     )
   );
 }
@@ -502,8 +515,12 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
     });
     catalog(state, actions);
   } else if (request.kind === 'create') {
-    const session = value as AgentSession;
-    select(state, actions, session);
+    const created = value as AgentCreated;
+    if (created.kind === 'rejected') {
+      if (state.notice !== 'unavailable') state.notice = 'createRejected';
+      return;
+    }
+    select(state, actions, created.session);
     catalog(state, actions);
   } else if (request.kind === 'send') {
     const started = value as AgentStarted;
@@ -557,7 +574,9 @@ function queryFailed(state: State, request: Request) {
       state.notice = 'unavailable';
     }
   } else {
-    if (request.kind === 'restoreReceipt') {
+    if (request.kind === 'createDirectory') {
+      if (state.notice !== 'unavailable') state.notice = 'createRejected';
+    } else if (request.kind === 'restoreReceipt') {
       state.uncertain = { reference: request.reference, request: { kind: 'restored' } };
       state.restoring = false;
       state.notice = 'unknown';
@@ -566,6 +585,19 @@ function queryFailed(state: State, request: Request) {
 }
 function querySucceeded(state: State, actions: Action[], request: Request, value: unknown) {
   switch (request.kind) {
+    case 'createDirectory': {
+      const page = value as AgentDirectoryPage;
+      if (page.kind !== 'roots' || !page.roots.length) {
+        state.notice = 'createRejected';
+        break;
+      }
+      intent(state, actions, { kind: 'create' }, 'agent', 'create', {
+        title: request.title,
+        labels: [],
+        workspace: { kind: 'directory', selection: page.roots[0].selection },
+      });
+      break;
+    }
     case 'list': {
       if (request.generation !== state.catalogGeneration) break;
       state.catalog = value as AgentSessionPage;

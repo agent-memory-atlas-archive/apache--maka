@@ -57,7 +57,7 @@ node packages/agent-product/scripts/compose.mjs \
   --maka /absolute/path/to/maka
 ```
 
-`installation.json` supplies `presentation` (`desktop` or `tui`), the full `locale` tag, `scheme` (`light` or `dark`), `hostRoot`, `hostDeployment`, `managementDeployment`, `agent` and `keys`. `agent` is the SDK's generated `AgentConfiguration`: finite `maxActiveRuns`/`maxSteps` and explicit `tools` (use `[]` for a text-only composition). Credentials and endpoint settings belong to that Host Root; they do not belong in the product source.
+`installation.json` supplies `presentation` (`desktop` or `tui`), the full `locale` tag, `scheme` (`light` or `dark`), `hostRoot`, `hostDeployment`, `managementDeployment`, `agent` and `keys`. `agent` is the SDK's generated `AgentConfiguration`: explicit `workspaceRoots` (`[{ label, path }]`, absolute directories), finite `maxActiveRuns`/`maxSteps` and explicit `tools` (use `[]` for a text-only composition). Credentials and endpoint settings belong to that Host Root; they do not belong in the product source.
 
 `keys` maps every name exported by `src/composition.ts` to a nonnil UUID. Allocate these once for an installation and keep them across rebuilds. `managementDeployment` is a stable Host UUID in the UI Root, distinct from the UI and business Host deployment. New package revisions do not imply new data namespaces.
 
@@ -156,3 +156,5 @@ The advanced composition draft remains intact; explicitly reload it to include n
 saved package references. Export an authored directory with
 `maka application export-package --package DIRECTORY --output FILE.maka-plugin`;
 an existing destination is never overwritten.
+
+The native Agent captures published workspace roots without creating markers. New conversations reuse the selected conversation’s immutable workspace; the first conversation queries a published directory selection before creation. Sessions project canonical workspace path/identities and labels. `metadata` changes only title/labels with the original Session revision CAS; `create` and `metadata` report confirmed refusals as ordinary closed results, while uncertain persistence still uses the original operation journal. The command palette searches title, ID, workspace path and labels. A directory picker and metadata editor are still pending product UI work.

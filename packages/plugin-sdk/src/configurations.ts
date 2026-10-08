@@ -24,6 +24,16 @@ export const configurations = {
     title: 'AgentConfiguration',
     type: 'object',
     properties: {
+      workspaceRoots: {
+        description:
+          'Installation-published directories, captured without creating workspace markers.',
+        type: 'array',
+        items: {
+          $ref: '#/$defs/DirectoryRootSpec',
+        },
+        minItems: 1,
+        maxItems: 8,
+      },
       maxActiveRuns: {
         type: 'integer',
         format: 'uint',
@@ -46,8 +56,21 @@ export const configurations = {
       },
     },
     additionalProperties: false,
-    required: ['maxActiveRuns', 'maxSteps', 'tools'],
+    required: ['workspaceRoots', 'maxActiveRuns', 'maxSteps', 'tools'],
     $defs: {
+      DirectoryRootSpec: {
+        type: 'object',
+        properties: {
+          label: {
+            type: 'string',
+          },
+          path: {
+            type: 'string',
+          },
+        },
+        additionalProperties: false,
+        required: ['label', 'path'],
+      },
       AgentServiceTool: {
         type: 'object',
         properties: {
