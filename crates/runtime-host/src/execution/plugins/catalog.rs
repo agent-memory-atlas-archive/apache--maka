@@ -58,7 +58,10 @@ impl Executions {
                 scope,
                 input.revision.as_deref(),
                 input.cursor.as_deref().into(),
-                input.include_archived,
+                maka_event_log::sessions::CatalogFilter {
+                    include_archived: input.include_archived,
+                    pending_only: false,
+                },
             )
             .await
             .map_err(|error| match error {

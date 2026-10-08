@@ -166,7 +166,8 @@ fn packaged_product_component_schemas_compile_independently_for_both_presentatio
                     checked_palette += 1;
                     assert!(check(&events["selected"]).is_valid(&json!({
                         "id":"session", "title":"Native schema checked", "revision":1,
-                        "updatedAt":1, "archived":false,
+                        "updatedAt":1, "archived":false, "activity":"idle", "labels":[],
+                        "workspace":{"path":"/workspace", "directoryIdentity":format!("sha256:{}", "a".repeat(64)), "identity":"workspace:v1:00000000-0000-0000-0000-000000000001"},
                     })));
                     assert!(!check(&events["selected"]).is_valid(&json!({"id":"session"})));
                 }

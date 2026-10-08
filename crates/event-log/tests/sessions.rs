@@ -61,7 +61,10 @@ async fn create_replay_conflict_reopen_and_anchored_catalog_pages() {
             maka_event_log::sessions::CatalogScope::Workspace("/chosen".into()),
             None,
             None.into(),
-            false,
+            maka_event_log::sessions::CatalogFilter {
+                include_archived: false,
+                pending_only: false,
+            },
         )
         .await
         .unwrap();
@@ -97,7 +100,10 @@ async fn create_replay_conflict_reopen_and_anchored_catalog_pages() {
             maka_event_log::sessions::CatalogScope::Profile,
             Some(&page.revision),
             maka_event_log::sessions::SessionPosition::Before("c"),
-            true,
+            maka_event_log::sessions::CatalogFilter {
+                include_archived: true,
+                pending_only: false,
+            },
         )
         .await
         .unwrap();
@@ -130,7 +136,10 @@ async fn create_replay_conflict_reopen_and_anchored_catalog_pages() {
             maka_event_log::sessions::CatalogScope::Session("a".into()),
             None,
             None.into(),
-            false,
+            maka_event_log::sessions::CatalogFilter {
+                include_archived: false,
+                pending_only: false
+            },
         )
         .await
         .unwrap()

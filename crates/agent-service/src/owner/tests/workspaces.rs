@@ -163,7 +163,7 @@ async fn malformed_existing_marker_is_a_recorded_refusal_without_repair() {
     assert_eq!(std::fs::read(&marker).unwrap(), b"{broken");
     assert!(
         fixture
-            .query("list", json!({"kind":"start"}))
+            .query("list", json!({"filter":"all","position":{"kind":"start"}}))
             .await
             .unwrap()["sessions"]
             .as_array()
@@ -203,7 +203,7 @@ async fn original_uppercase_marker_and_two_workspaces_reach_exact_execution_conf
         let observed = fixture.query("observe", json!({"sessionId":first})).await.unwrap();
         assert_eq!(observed["session"]["workspace"]["identity"], format!("workspace:v1:{uppercase}"));
         assert_eq!(std::fs::read(&marker).unwrap(), bytes);
-        let listed = fixture.query("list", json!({"kind":"start"})).await.unwrap();
+        let listed = fixture.query("list", json!({"filter":"all","position":{"kind":"start"}})).await.unwrap();
         assert_eq!(listed["sessions"].as_array().unwrap().len(), 2);
         let events = fixture.store.prefix(128, 512 * 1024).await.unwrap();
         let mut configurations = BTreeMap::new();
@@ -247,7 +247,7 @@ async fn metadata_cas_replay_and_noop_preserve_active_run_workspace_and_activity
         let started = fixture.send(&id).await.unwrap();
         entered.acquire().await.unwrap().forget();
         let before = fixture.query("observe", json!({"sessionId":id})).await.unwrap();
-        let original_catalog = fixture.query("list", json!({"kind":"start"})).await.unwrap();
+        let original_catalog = fixture.query("list", json!({"filter":"all","position":{"kind":"start"}})).await.unwrap();
         let input = json!({"sessionId":id,"expectedRevision":before["session"]["revision"],"title":"Research","labels":["orchid","rust"]});
         let operation = Uuid::new_v4();
         let updated = fixture.mutation(2, "metadata", input.clone(), operation).await.unwrap();
@@ -268,7 +268,7 @@ async fn metadata_cas_replay_and_noop_preserve_active_run_workspace_and_activity
         let after = fixture.query("observe", json!({"sessionId":id})).await.unwrap();
         assert_eq!(after["through"], before["through"]);
         assert_eq!(after["run"]["invocationId"], started["invocationId"]);
-        assert!(fixture.query("list", json!({"kind":"after","revision":original_catalog["revision"],"cursor":id})).await.is_err());
+        assert!(fixture.query("list", json!({"filter":"all","position":{"kind":"after","revision":original_catalog["revision"],"cursor":id}})).await.is_err());
         release.add_permits(1);
         server.await.unwrap();
         fixture.drained().await;
@@ -298,7 +298,10 @@ async fn full_session_projection_budget_preserves_forward_and_reverse_catalog_bo
             maka_event_log::sessions::CatalogScope::IdPrefix(fixture.owner.prefix.clone()),
             None,
             maka_event_log::sessions::SessionPosition::Start,
-            false,
+            maka_event_log::sessions::CatalogFilter {
+                include_archived: false,
+                pending_only: false,
+            },
         )
         .await
         .unwrap()
@@ -308,7 +311,7 @@ async fn full_session_projection_budget_preserves_forward_and_reverse_catalog_bo
         .collect::<Vec<_>>();
     assert_eq!(expected.len(), 14);
     let mut page = fixture
-        .query("list", json!({"kind":"start"}))
+        .query("list", json!({"filter":"all","position":{"kind":"start"}}))
         .await
         .unwrap();
     assert!(page["sessions"].as_array().unwrap().len() < 14);
@@ -329,7 +332,7 @@ async fn full_session_projection_budget_preserves_forward_and_reverse_catalog_bo
         page = fixture
             .query(
                 "list",
-                json!({"kind":"after","revision":revision,"cursor":page["after"]}),
+                json!({"filter":"all","position":{"kind":"after","revision":revision,"cursor":page["after"]}}),
             )
             .await
             .unwrap();
@@ -346,7 +349,7 @@ async fn full_session_projection_budget_preserves_forward_and_reverse_catalog_bo
         page = fixture
             .query(
                 "list",
-                json!({"kind":"before","revision":revision,"cursor":page["before"]}),
+                json!({"filter":"all","position":{"kind":"before","revision":revision,"cursor":page["before"]}}),
             )
             .await
             .unwrap();

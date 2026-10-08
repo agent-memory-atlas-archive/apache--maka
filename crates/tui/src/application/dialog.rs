@@ -524,7 +524,7 @@ impl Presenter {
                 identity: identity.clone(),
                 revision: self.application.frame(&deferred.mount)?.revision,
                 shortcuts: Vec::new(),
-                focus_group: false,
+                focus_group: None,
                 scroll: None,
                 focus_shortcuts: Vec::new(),
             }));

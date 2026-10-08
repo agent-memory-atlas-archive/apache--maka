@@ -46,12 +46,12 @@ impl Handler for Agent {
                 "list" => {
                     let input: List = decode(input)?;
                     use maka_event_log::sessions::SessionPosition;
-                    let (revision, position) = match &input {
-                        List::Start => (None, SessionPosition::Start),
-                        List::After { revision, cursor } => {
+                    let (revision, position) = match &input.position {
+                        crate::contract::SessionPosition::Start => (None, SessionPosition::Start),
+                        crate::contract::SessionPosition::After { revision, cursor } => {
                             (Some(revision.as_str()), SessionPosition::After(cursor))
                         }
-                        List::Before { revision, cursor } => {
+                        crate::contract::SessionPosition::Before { revision, cursor } => {
                             (Some(revision.as_str()), SessionPosition::Before(cursor))
                         }
                     };
@@ -65,11 +65,17 @@ impl Handler for Agent {
                             CatalogScope::IdPrefix(owner.prefix.clone()),
                             revision,
                             position,
-                            true,
+                            maka_event_log::sessions::CatalogFilter {
+                                include_archived: true,
+                                pending_only: matches!(input.filter, SessionFilter::NeedsYou),
+                            },
                         )
                         .await
                         .map_err(|_| "agent_catalog_unavailable")?;
-                    let reverse = matches!(input, List::Before { .. });
+                    let reverse = matches!(
+                        input.position,
+                        crate::contract::SessionPosition::Before { .. }
+                    );
                     let mut result = SessionPage {
                         revision: page.revision,
                         sessions: page.sessions.into_iter().map(summary).collect(),
@@ -408,7 +414,26 @@ fn encode<T: Serialize>(value: T) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|_| "agent_output_unavailable".into())
 }
 pub(crate) fn summary(session: SessionRecord<SessionConfiguration>) -> Session {
+    use maka_event_log::sessions::SessionExecutionState;
+    use maka_runtime::event::TerminalStatus;
+    let activity = if session.pending_interaction_since.is_some() {
+        SessionActivity::Waiting
+    } else if matches!(
+        session.execution.map(|execution| execution.state),
+        Some(
+            SessionExecutionState::Live { .. }
+                | SessionExecutionState::Ended {
+                    status: TerminalStatus::Paused,
+                    ..
+                }
+        )
+    ) {
+        SessionActivity::Working
+    } else {
+        SessionActivity::Idle
+    };
     Session {
+        activity,
         id: session.id,
         revision: session.revision,
         title: session.configuration.title,

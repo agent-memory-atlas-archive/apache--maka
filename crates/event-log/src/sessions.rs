@@ -79,14 +79,19 @@ pub struct SessionRecord<T> {
     pub copy_state: Option<maka_runtime::session::CopyState>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub enum CatalogScope {
     Profile,
-    PendingInteractions,
     Session(String),
     Workspace(String),
     /// Server-owned namespace. This is a data filter, never authorization.
     IdPrefix(String),
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct CatalogFilter {
+    pub include_archived: bool,
+    pub pending_only: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -228,8 +233,17 @@ impl EventLog {
         cursor: Option<&str>,
         limit: usize,
     ) -> Result<SessionPage<T>, StoreError> {
-        self.session_page(None, expected_revision, cursor.into(), limit, true)
-            .await
+        self.session_page(
+            CatalogScope::Profile,
+            expected_revision,
+            cursor.into(),
+            limit,
+            CatalogFilter {
+                include_archived: true,
+                pending_only: false,
+            },
+        )
+        .await
     }
 
     /// Metadata within a Host-authorized scope; never plugin-defined SQL.
@@ -238,25 +252,19 @@ impl EventLog {
         scope: CatalogScope,
         expected_revision: Option<&str>,
         position: SessionPosition<'_>,
-        include_archived: bool,
+        filter: CatalogFilter,
     ) -> Result<SessionPage<T>, StoreError> {
-        self.session_page(
-            Some(scope),
-            expected_revision,
-            position,
-            MAX_SESSION_PAGE,
-            include_archived,
-        )
-        .await
+        self.session_page(scope, expected_revision, position, MAX_SESSION_PAGE, filter)
+            .await
     }
 
     async fn session_page<T: DeserializeOwned + Send + 'static>(
         &self,
-        scope: Option<CatalogScope>,
+        scope: CatalogScope,
         expected_revision: Option<&str>,
         position: SessionPosition<'_>,
         limit: usize,
-        include_archived: bool,
+        filter: CatalogFilter,
     ) -> Result<SessionPage<T>, StoreError> {
         self.validate_root()?;
         if limit == 0 || limit > MAX_SESSION_PAGE {
@@ -273,21 +281,19 @@ impl EventLog {
                 return Err(invalid("session continuation requires catalog revision"));
             }
         }
-        let active_only = !include_archived;
-        let pending_only = matches!(scope, Some(CatalogScope::PendingInteractions));
-        let (session, cwd, prefix) = match scope {
-            Some(CatalogScope::Session(id)) => {
-                validate_id(&id)?;
-                (Some(id), None, None)
+        let active_only = !filter.include_archived;
+        let pending_only = filter.pending_only;
+        let (session, cwd, prefix) = match &scope {
+            CatalogScope::Session(id) => {
+                validate_id(id)?;
+                (Some(id.clone()), None, None)
             }
-            Some(CatalogScope::Workspace(cwd)) => (None, Some(cwd), None),
-            Some(CatalogScope::IdPrefix(prefix)) => {
-                validate_id(&prefix)?;
-                (None, None, Some(prefix))
+            CatalogScope::Workspace(cwd) => (None, Some(cwd.clone()), None),
+            CatalogScope::IdPrefix(prefix) => {
+                validate_id(prefix)?;
+                (None, None, Some(prefix.clone()))
             }
-            Some(CatalogScope::Profile | CatalogScope::PendingInteractions) | None => {
-                (None, None, None)
-            }
+            CatalogScope::Profile => (None, None, None),
         };
         let expected_revision = expected_revision.map(str::to_owned);
         let cursor = cursor.map(str::to_owned);
@@ -302,11 +308,9 @@ impl EventLog {
                     .await?;
                     let revision = format!(
                         "sha256:{:x}",
-                        Sha256::digest(if pending_only {
-                            format!("session-pending:{counter}")
-                        } else {
-                            format!("session-catalog:{counter}")
-                        })
+                        Sha256::digest(serde_json::to_vec(&(
+                            "session-catalog", counter, scope, filter,
+                        ))?)
                     );
                     if let Some(expected) = expected_revision
                         && expected != revision

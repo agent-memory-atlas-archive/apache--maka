@@ -326,3 +326,42 @@ fn grouped_item_content_preserves_original_modal_opening_and_choice_owner() {
     assert_eq!(p.physical_path.len(), 1);
     close(&mut p);
 }
+
+#[test]
+fn horizontal_group_uses_its_published_axis_and_preserves_explicit_activation() {
+    let mut source = scene();
+    let group = &mut source["children"][1];
+    group["direction"] = json!("row");
+    group["scroll"] = json!("none");
+    group["children"] = json!((0..3).map(item).collect::<Vec<_>>());
+    for item in group["children"].as_array_mut().unwrap() {
+        item["follow_focus"] = json!(false);
+        item["submit"] = json!(false);
+    }
+    group["children"][1]["disabled"] = json!(true);
+    let (_runtime, mut p) = layout::native(
+        layout::View::InteractiveScene(Rc::new(RefCell::new(source))),
+        Rc::new(Cell::new(true)),
+    );
+    draw(&mut p, 60, 8);
+    p.input(key(KeyCode::Tab)).unwrap();
+    draw(&mut p, 60, 8);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-2");
+    let revision = p.application.frame(&p.root).unwrap().revision;
+    p.input(key(KeyCode::Left)).unwrap();
+    draw(&mut p, 60, 8);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
+    p.input(key(KeyCode::Down)).unwrap();
+    draw(&mut p, 60, 8);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
+    p.input(key(KeyCode::Right)).unwrap();
+    draw(&mut p, 60, 8);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-2");
+    assert_eq!(p.application.frame(&p.root).unwrap().revision, revision);
+    p.input(key(KeyCode::Enter)).unwrap();
+    draw(&mut p, 60, 8);
+    assert_eq!(observation(&p), json!({"kind":"activate"}));
+    p.input(key(KeyCode::Tab)).unwrap();
+    assert_eq!(p.focus.as_ref().unwrap().key, "after");
+    close(&mut p);
+}

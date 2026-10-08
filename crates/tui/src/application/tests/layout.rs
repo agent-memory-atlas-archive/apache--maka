@@ -1055,7 +1055,7 @@ fn packaged_session_navigation_keeps_paging_controls_outside_the_scrolling_list(
       for(const scheme of ['light','dark']) for(const locale of ['en','zh-CN','zh-TW']) {
         configure({locale});
         const values={appearance:[activate({scheme}).Appearance.value]};
-        const sessions=Array.from({length:32},(_,i)=>({id:'conversation-'+i,title:'Conversation '+i,labels:[],revision:1,updatedAt:1,archived:false,
+        const sessions=Array.from({length:32},(_,i)=>({id:'conversation-'+i,title:'Conversation '+i,labels:[],revision:1,updatedAt:1,archived:false,activity:i===0?"working":i===1?"waiting":"idle",
           workspace:{identity:'workspace-'+(i<11?'A':i<22?'B':'C'),directoryIdentity:'directory',path:'/Workspace '+(i<11?'A':i<22?'B':'C')}}));
         const pair=[];
         for(const rows of [sessions,[...sessions.slice(22),...sessions.slice(0,22)]]) {
@@ -1102,12 +1102,17 @@ fn packaged_session_navigation_keeps_paging_controls_outside_the_scrolling_list(
             }
             // The native tab traversal visits the fixed pager before the long list.
             assert_eq!(presenter.focus.as_ref().unwrap().key, "navigation-back");
-            for _ in 0..3 {
+            for expected in [
+                "create",
+                "catalog-filter-all",
+                "catalog-previous",
+                "catalog-more",
+            ] {
                 presenter
                     .input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
                     .unwrap();
+                assert_eq!(presenter.focus.as_ref().unwrap().key, expected);
             }
-            assert_eq!(presenter.focus.as_ref().unwrap().key, "catalog-more");
             presenter
                 .input(Event::Key(KeyEvent::new(
                     KeyCode::Enter,

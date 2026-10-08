@@ -190,7 +190,7 @@ impl super::paint::Target {
         self.ancestors
             .iter()
             .rev()
-            .find(|ancestor| ancestor.focus_group)
+            .find(|ancestor| ancestor.focus_group.is_some())
             .map(|a| a.as_ref())
     }
     fn same_group(&self, other: &Self) -> bool {
@@ -292,13 +292,7 @@ impl Presenter {
         let Event::Key(key) = event else {
             return Ok(false);
         };
-        if key.kind == KeyEventKind::Release
-            || key.modifiers != KeyModifiers::NONE
-            || !matches!(
-                key.code,
-                KeyCode::Up | KeyCode::Down | KeyCode::Home | KeyCode::End
-            )
-        {
+        if key.kind == KeyEventKind::Release || key.modifiers != KeyModifiers::NONE {
             return Ok(false);
         }
         let Some(focus) = self
@@ -308,6 +302,20 @@ impl Presenter {
         else {
             return Ok(false);
         };
+        use maka_ui::scene::terminal::Direction;
+        let along = match key.code {
+            KeyCode::Left | KeyCode::Right => {
+                focus.group().and_then(|group| group.focus_group) == Some(Direction::Row)
+            }
+            KeyCode::Up | KeyCode::Down => {
+                focus.group().and_then(|group| group.focus_group) == Some(Direction::Column)
+            }
+            KeyCode::Home | KeyCode::End => true,
+            _ => false,
+        };
+        if !along {
+            return Ok(false);
+        }
         let peers: Vec<_> = self
             .scene
             .iter()
@@ -317,8 +325,8 @@ impl Presenter {
             return Ok(false);
         };
         let next = match key.code {
-            KeyCode::Up => at.saturating_sub(1),
-            KeyCode::Down => (at + 1).min(peers.len() - 1),
+            KeyCode::Up | KeyCode::Left => at.saturating_sub(1),
+            KeyCode::Down | KeyCode::Right => (at + 1).min(peers.len() - 1),
             KeyCode::Home => 0,
             _ => peers.len() - 1,
         };

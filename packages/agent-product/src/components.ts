@@ -216,24 +216,77 @@ export function components<N extends Node>(
                   return ui.item
                     ? ui.item(
                         session.id,
-                        ui.text(
-                          `session-label-${index}-${at}`,
-                          `    ${session.title}`,
-                          13,
-                          session.archived ? props.theme.muted : props.theme.text,
-                          400,
-                          { truncate: true },
+                        ui.box(
+                          `session-row-${index}-${at}`,
+                          [
+                            ui.box(
+                              `session-status-${index}-${at}`,
+                              [
+                                ui.text(
+                                  `session-glyph-${index}-${at}`,
+                                  session.activity === 'working'
+                                    ? '  ⢁ '
+                                    : session.activity === 'waiting'
+                                      ? '  ◇ '
+                                      : '    ',
+                                  13,
+                                  session.activity === 'idle'
+                                    ? props.theme.muted
+                                    : props.theme.accent,
+                                ),
+                              ],
+                              { terminal: { basis: 4, shrink: false } },
+                            ),
+                            ui.box(
+                              `session-name-${index}-${at}`,
+                              [
+                                ui.text(
+                                  `session-label-${index}-${at}`,
+                                  session.title,
+                                  13,
+                                  session.archived ? props.theme.muted : props.theme.text,
+                                  400,
+                                  { truncate: true },
+                                ),
+                              ],
+                              { terminal: { grow: 1, shrink: true } },
+                            ),
+                            ...(session.activity === 'waiting'
+                              ? [
+                                  ui.text(
+                                    `session-waiting-${index}-${at}`,
+                                    ` ${copy(props.locale).needsYou} `,
+                                    12,
+                                    props.theme.accent,
+                                    400,
+                                    { truncate: true },
+                                  ),
+                                ]
+                              : []),
+                          ],
+                          { row: true, gap: 0 },
                         ),
                         current,
                         props.busy,
                       )
-                    : ui.button(session.id, session.title, props.busy, false, {
-                        width: fill,
-                        minWidth: 0,
-                        justify: 'start',
-                        truncate: true,
-                        ...(current ? { background: props.theme.selected } : {}),
-                      });
+                    : ui.button(
+                        session.id,
+                        session.title +
+                          (session.activity === 'waiting'
+                            ? ' · ' + copy(props.locale).needsYou
+                            : session.activity === 'working'
+                              ? ' · ' + copy(props.locale).working
+                              : ''),
+                        props.busy,
+                        false,
+                        {
+                          width: fill,
+                          minWidth: 0,
+                          justify: 'start',
+                          truncate: true,
+                          ...(current ? { background: props.theme.selected } : {}),
+                        },
+                      );
                 })
               : []),
           ];

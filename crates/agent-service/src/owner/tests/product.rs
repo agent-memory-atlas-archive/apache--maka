@@ -158,7 +158,9 @@ fn wait_for_target_at(
             .nth(nth);
         if let Some((x, y)) = position
             && enabled.is_none_or(|color| buffer[(x, y)].fg == color)
-            && (!(label.starts_with("    ") || label.starts_with(['▸', '▾']))
+            && (!(label.starts_with("    ")
+                || label.starts_with(['▸', '▾'])
+                || matches!(label, "All" | "Needs You"))
                 || !buffer[(x, y)]
                     .modifier
                     .contains(ratatui::style::Modifier::DIM))
@@ -959,6 +961,82 @@ process.stdout.write(output.outputFiles[0].text);
         runtime.block_on(caller.shutdown()).unwrap();
         return;
     }
+    // Actual catalog filtering changes only the directory. The native draft
+    // survives an empty page, then the canonical request appears on refresh.
+    click(&mut presenter, "[ Toggle sidebar ]");
+    click(&mut presenter, "All");
+    // Each physical key follows a published frame; activating All also
+    // advances the ordinary Root frame even when its filter is unchanged.
+    let (x, y) = wait_for_target(&mut presenter, "All", 0);
+    assert!(
+        draw(&mut presenter)[(x, y)]
+            .modifier
+            .contains(ratatui::style::Modifier::UNDERLINED)
+    );
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Right,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    let (x, y) = wait_for_target(&mut presenter, "Needs You", 0);
+    assert!(
+        draw(&mut presenter)[(x, y)]
+            .modifier
+            .contains(ratatui::style::Modifier::UNDERLINED)
+    );
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    await_screen(&mut presenter, "No conversations need you");
+    runtime
+        .block_on(
+            fixture
+                .store
+                .establish_interaction(&super::catalog_interaction(
+                    &session_id,
+                    "native-catalog-request",
+                )),
+        )
+        .unwrap();
+    click(&mut presenter, "[ Refresh ]");
+    await_screen(&mut presenter, "◇ New");
+    assert!(
+        screen(&draw(&mut presenter))
+            .lines()
+            .any(|line| line.contains("◇ New") && line.contains("Needs You"))
+    );
+    runtime
+        .block_on(fixture.store.commit_interaction_outcome(
+            "native-catalog-request",
+            maka_runtime::interaction::InteractionOutcome::Closure {
+                reason: maka_runtime::interaction::ClosureReason::ProducerCancelled,
+                committed_at: 20,
+            },
+        ))
+        .unwrap();
+    click(&mut presenter, "[ Refresh ]");
+    await_screen(&mut presenter, "No conversations need you");
+    click(&mut presenter, "All");
+    wait_for_target(&mut presenter, "    New conversation", 0);
+    click(&mut presenter, "[ Hide sidebar ]");
+    await_sidebar_closed(&mut presenter);
+    click(&mut presenter, "Hello product");
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE)))
+        .unwrap();
+    presenter.input(Event::Paste("!".into())).unwrap();
+    await_screen(&mut presenter, "Hello product!");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Backspace,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    await_screen(&mut presenter, "Hello product");
     // The ordinary Root Dialog retains the original composer while the original
     // single-line query consumes foreground physical input and returns focus.
     presenter
@@ -2063,7 +2141,10 @@ process.stdout.write(output.outputFiles[0].text);
                 maka_event_log::sessions::CatalogScope::IdPrefix(fixture.owner.prefix.clone()),
                 None,
                 maka_event_log::sessions::SessionPosition::Start,
-                false,
+                maka_event_log::sessions::CatalogFilter {
+                    include_archived: false,
+                    pending_only: false,
+                },
             )
             .await
             .unwrap()

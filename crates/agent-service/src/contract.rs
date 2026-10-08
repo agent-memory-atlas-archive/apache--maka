@@ -59,9 +59,23 @@ pub fn configuration_schema() -> Value {
 }
 
 #[derive(Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentList")]
-pub enum List {
+pub struct List {
+    pub filter: SessionFilter,
+    pub position: SessionPosition,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "AgentSessionFilter")]
+pub enum SessionFilter {
+    All,
+    NeedsYou,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "AgentSessionPosition")]
+pub enum SessionPosition {
     Start,
     After {
         revision: String,
@@ -238,6 +252,15 @@ pub struct Session {
     pub revision: u64,
     pub updated_at: u64,
     pub archived: bool,
+    pub activity: SessionActivity,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "AgentSessionActivity")]
+pub enum SessionActivity {
+    Idle,
+    Working,
+    Waiting,
 }
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

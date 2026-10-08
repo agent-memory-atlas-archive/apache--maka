@@ -284,12 +284,26 @@ fn packaged_session_navigation_renders_bounded_pages_and_keeps_controls_accessib
         String::from_utf8_lossy(&build.stderr)
     );
     let output = std::process::Command::new("node").args(["--input-type=module","-e",r#"
-        import {component} from './packages/agent-product/dist/packages/navigation/desktop.js';
+        import {component as directory} from './packages/agent-product/dist/packages/navigation/desktop.js';
+        import {component as workspace,activate as configure} from './packages/agent-product/dist/packages/workspace/desktop.js';
         import {activate} from './packages/agent-product/dist/packages/appearance/desktop.js';
         const frames=[];
+        function find(node,key) {
+          if(node?.key===key) return node;
+          for(const child of [...(node?.children??[]),node?.background,node?.content]) {
+            const found=child&&find(child,key); if(found) return found;
+          }
+        }
         for(const scheme of ['light','dark']) for(const locale of ['en','zh-CN','zh-TW']) for(const status of ['ready','busy','failed']) {
-          const props={theme:activate({scheme}).Appearance.value,locale,sessions:Array.from({length:32},(_,i)=>({id:'conversation-'+i,title:'Conversation '+i,revision:1,updatedAt:1,archived:false})),selected:'conversation-0',previous:true,more:true,busy:status==='busy',failed:status==='failed'};
-          frames.push(component.mount(props,{}).frame.view);
+          configure({locale});
+          const values={appearance:[activate({scheme}).Appearance.value]};
+          const sessions=Array.from({length:32},(_,i)=>({id:'conversation-'+i,title:'Conversation '+i,labels:[],revision:1,updatedAt:1,archived:false,activity:i===0?'working':i===1?'waiting':'idle',workspace:{identity:'workspace',directoryIdentity:'directory',path:'/workspace'}}));
+          const initial=workspace.mount({},values).frame.state;
+          const state={...initial,restoring:false,pending:status==='busy'?{catalog:{kind:'list',generation:initial.catalogGeneration}}:{},catalogFailed:status==='failed',catalog:{revision:'fixture',sessions,before:'before',after:'after'}};
+          const panel=find(workspace.update(state,{},values).frame.view,'navigation-panel');
+          const slot=panel.children.findIndex(node=>node.key==='navigation');
+          panel.children[slot]=directory.mount(panel.children[slot].props,{}).frame.view;
+          frames.push(panel);
         }
         console.log(JSON.stringify(frames));
     "#]).current_dir(repository).output().unwrap();
@@ -321,9 +335,17 @@ fn packaged_session_navigation_renders_bounded_pages_and_keeps_controls_accessib
         }
         cx.update_window(window, |_, _, cx| {
             let state = entity.read(cx).state();
-            assert_eq!(state.buttons.len(), 36);
-            assert!(state.scrolls.contains_key("session-list"));
-            for key in ["previous", "more", "refresh"] {
+            for index in 0..32 {
+                assert!(state.buttons.contains_key(&format!("conversation-{index}")));
+            }
+            assert!(state.scrolls.contains_key("session-groups"));
+            for key in [
+                "catalog-filter-all",
+                "catalog-filter-needs_you",
+                "catalog-previous",
+                "catalog-more",
+                "catalog-refresh",
+            ] {
                 assert!(state.buttons.contains_key(key));
             }
         })

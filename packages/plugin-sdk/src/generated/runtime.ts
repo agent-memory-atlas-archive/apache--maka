@@ -1288,7 +1288,8 @@ export type CatalogMutationResult =
       target: ConnectionTarget;
       kind: 'invalid_default_target';
     };
-export type AgentList =
+export type AgentSessionFilter = 'all' | 'needs_you';
+export type AgentSessionPosition =
   | {
       kind: 'start';
     }
@@ -1320,6 +1321,7 @@ export type AgentCreated =
       reason: AgentRejection;
       kind: 'rejected';
     };
+export type AgentSessionActivity = 'idle' | 'working' | 'waiting';
 export type AgentRejection =
   | 'title_invalid'
   | 'labels_invalid'
@@ -2992,6 +2994,10 @@ export interface SetDefaultConnectionTargetInput {
   expectedCatalogRevision: number;
   target: ConnectionTarget | null;
 }
+export interface AgentList {
+  filter: AgentSessionFilter;
+  position: AgentSessionPosition;
+}
 export interface AgentCreate {
   title: string;
   /**
@@ -3016,6 +3022,7 @@ export interface AgentSession {
   revision: number;
   updatedAt: number;
   archived: boolean;
+  activity: AgentSessionActivity;
 }
 export interface AgentWorkspace {
   path: string;

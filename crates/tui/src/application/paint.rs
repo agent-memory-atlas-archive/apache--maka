@@ -151,7 +151,7 @@ pub(super) struct Ancestor {
     pub identity: TargetIdentity,
     pub revision: u64,
     pub shortcuts: Vec<maka_ui::shortcut::Shortcut>,
-    pub focus_group: bool,
+    pub focus_group: Option<maka_ui::scene::terminal::Direction>,
     pub scroll: Option<super::scroll::Viewport>,
     pub focus_shortcuts: Vec<FocusBinding>,
 }
@@ -1233,7 +1233,7 @@ impl Presenter {
                         },
                         revision: self.application.frame(mount)?.revision,
                         shortcuts: shortcuts.clone(),
-                        focus_group: *focus_group,
+                        focus_group: focus_group.then_some(*direction),
                         scroll: viewport.clone(),
                         focus_shortcuts: focus_shortcuts.clone(),
                     }));
@@ -1248,7 +1248,7 @@ impl Presenter {
                         },
                         revision: self.application.frame(mount)?.revision,
                         shortcuts: shortcuts.clone(),
-                        focus_group: *focus_group,
+                        focus_group: focus_group.then_some(*direction),
                         scroll: viewport.clone(),
                         focus_shortcuts: focus_shortcuts.clone(),
                     }));

@@ -476,10 +476,12 @@ const sessionWindow = {
 // @ts-expect-error A missing boundary is not an end-of-catalog receipt.
 const missingSessionBoundary: AgentSessionPage = { revision: 'catalog', sessions: [], after: null };
 const nextSessionPage = {
-  kind: 'after',
-  revision: 'catalog',
-  cursor: 'session',
+  filter: 'needs_you',
+  position: { kind: 'after', revision: 'catalog', cursor: 'session' },
 } satisfies AgentList;
-// @ts-expect-error Every continuation belongs to one catalog revision.
-const unfencedSessionPage: AgentList = { kind: 'before', cursor: 'session' };
+const unfencedSessionPage: AgentList = {
+  filter: 'all',
+  // @ts-expect-error Every continuation belongs to one catalog revision.
+  position: { kind: 'before', cursor: 'session' },
+};
 void [sessionWindow, missingSessionBoundary, nextSessionPage, unfencedSessionPage];

@@ -299,10 +299,13 @@ async fn query(
     );
     let result = if pending {
         log.scoped_sessions::<SessionConfiguration>(
-            maka_event_log::sessions::CatalogScope::PendingInteractions,
+            maka_event_log::sessions::CatalogScope::Profile,
             revision,
             cursor.into(),
-            true,
+            maka_event_log::sessions::CatalogFilter {
+                include_archived: true,
+                pending_only: true,
+            },
         )
         .await
     } else {

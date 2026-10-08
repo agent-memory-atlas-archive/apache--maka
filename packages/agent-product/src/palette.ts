@@ -149,10 +149,19 @@ function capture(state: State, choice: Choice | null = null): Action[] {
     },
   ];
 }
-function page(state: State, position: AgentList): Action[] {
+function page(state: State, position: AgentList['position']): Action[] {
   const key = `palette-${++state.serial}`;
   state.pending = { kind: 'page', key, query: state.query };
-  return [{ key, binding: 'agent', member: 0, method: 'list', input: position, resources: {} }];
+  return [
+    {
+      key,
+      binding: 'agent',
+      member: 0,
+      method: 'list',
+      input: { filter: 'all', position },
+      resources: {},
+    },
+  ];
 }
 function resume(state: State, props: PaletteProps): Action[] {
   if (!interactive(state, props) || state.pending || state.queryError) return [];

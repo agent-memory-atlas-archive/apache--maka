@@ -826,6 +826,13 @@ async fn actual_http_runs_are_bounded_and_observer_loss_does_not_release_capacit
         let started = fixture.send(&first).await.unwrap(); entered.acquire().await.unwrap().forget();
         let active = fixture.query("observe", json!({"sessionId":first})).await.unwrap();
         assert_eq!(active["session"]["id"], first);
+        assert_eq!(active["session"]["activity"], "working");
+        fixture.store.establish_interaction(&catalog_interaction(&first, "working-request")).await.unwrap();
+        let waiting = fixture.query("observe", json!({"sessionId":first})).await.unwrap();
+        assert_eq!(waiting["session"]["activity"], "waiting");
+        fixture.store.commit_interaction_outcome("working-request", maka_runtime::interaction::InteractionOutcome::Closure { reason: maka_runtime::interaction::ClosureReason::ProducerCancelled, committed_at: 20 }).await.unwrap();
+        let resumed = fixture.query("observe", json!({"sessionId":first})).await.unwrap();
+        assert_eq!(resumed["session"]["activity"], "working");
         assert_eq!(active["run"]["invocationId"], started["invocationId"]);
         assert_eq!(active["run"]["state"], "running");
         assert!(!active.to_string().contains("private-fixture-key"));
@@ -840,6 +847,7 @@ async fn actual_http_runs_are_bounded_and_observer_loss_does_not_release_capacit
         assert!(fixture.owner.runs.lock().await.controls.is_empty()); assert_eq!(fixture.owner.permits.available_permits(),2);
         let completed = fixture.query("observe", json!({"sessionId":first})).await.unwrap();
         assert!(completed["run"].is_null());
+        assert_eq!(completed["session"]["activity"], "idle");
         assert_eq!(completed["parts"], json!([]));
         assert!(completed["through"].as_u64().unwrap() >= active["through"].as_u64().unwrap());
         let observation = fixture.store.session_projection::<Value>(&first).await.unwrap().unwrap();
@@ -878,7 +886,7 @@ async fn original_operation_conflicts_and_private_namespace_never_cross_sessions
             .start(
                 fixture.binding(2).await,
                 "list".into(),
-                json!({"kind":"start"}),
+                json!({"filter":"all","position":{"kind":"start"}}),
                 scope(&fixture.issuer, true),
                 Attachments::new().into(),
             )
@@ -1197,7 +1205,7 @@ async fn public_availability_resumes_stable_sessions_and_separates_deployments()
             .start(
                 binding.clone(),
                 "list".into(),
-                json!({"kind":"start"}),
+                json!({"filter":"all","position":{"kind":"start"}}),
                 scope(&fixture.issuer, true),
                 Attachments::new().into(),
             )
@@ -1238,7 +1246,7 @@ async fn public_availability_resumes_stable_sessions_and_separates_deployments()
             .start(
                 binding.clone(),
                 "list".into(),
-                json!({"kind":"start"}),
+                json!({"filter":"all","position":{"kind":"start"}}),
                 scope(&fixture.issuer, true),
                 Attachments::new().into(),
             )
@@ -1518,6 +1526,36 @@ async fn tool_source_uses_original_agent_grant_and_frozen_canonical_fields() {
     fixture.config.shutdown().await.unwrap();
 }
 
+fn catalog_interaction(
+    session_id: &str,
+    request_id: &str,
+) -> maka_runtime::interaction::InteractionRecord {
+    use maka_runtime::interaction::{
+        GrantCapability, GrantScope, GrantTarget, InteractionRecord, InteractionRequest,
+    };
+    InteractionRecord {
+        session_id: session_id.into(),
+        turn_id: "turn".into(),
+        run_id: "run".into(),
+        request_id: request_id.into(),
+        created_at: 10,
+        outcome: None,
+        request: InteractionRequest::ClientCapability {
+            tool_use_id: "tool".into(),
+            target: GrantTarget {
+                provider_id: "provider".into(),
+                contract_id: "contract".into(),
+                server_id: "browser".into(),
+                tool_name: "navigate".into(),
+                capability: GrantCapability::Browser,
+                scope: GrantScope::BrowserOrigin {
+                    origin: "https://example.com".into(),
+                },
+            },
+        },
+    }
+}
+
 #[tokio::test]
 async fn private_catalog_pages_reach_every_session_in_both_directions() {
     let fixture = Fixture::new("http://127.0.0.1:1/v1", 2, None).await;
@@ -1540,7 +1578,7 @@ async fn private_catalog_pages_reach_every_session_in_both_directions() {
         .await
         .unwrap();
     let mut page = fixture
-        .query("list", json!({"kind":"start"}))
+        .query("list", json!({"filter":"all","position":{"kind":"start"}}))
         .await
         .unwrap();
     let revision = page["revision"].clone();
@@ -1551,6 +1589,7 @@ async fn private_catalog_pages_reach_every_session_in_both_directions() {
         assert!(entries.len() <= 32);
         for entry in entries {
             let id = entry["id"].as_str().unwrap();
+            assert_eq!(entry["activity"], "idle");
             assert_eq!(
                 entry["archived"],
                 archived.iter().any(|archived| archived == id)
@@ -1567,7 +1606,7 @@ async fn private_catalog_pages_reach_every_session_in_both_directions() {
         page = fixture
             .query(
                 "list",
-                json!({"kind":"after", "revision":revision, "cursor":page["after"]}),
+                json!({"filter":"all","position":{"kind":"after", "revision":revision, "cursor":page["after"]}}),
             )
             .await
             .unwrap();
@@ -1578,7 +1617,7 @@ async fn private_catalog_pages_reach_every_session_in_both_directions() {
         page = fixture
             .query(
                 "list",
-                json!({"kind":"before", "revision":revision, "cursor":page["before"]}),
+                json!({"filter":"all","position":{"kind":"before", "revision":revision, "cursor":page["before"]}}),
             )
             .await
             .unwrap();
@@ -1599,7 +1638,7 @@ async fn private_catalog_pages_reach_every_session_in_both_directions() {
             fixture
                 .query(
                     "list",
-                    json!({"kind":kind,"revision":revision,"cursor":"foreign_session"})
+                    json!({"filter":"all","position":{"kind":kind,"revision":revision,"cursor":"foreign_session"}})
                 )
                 .await
                 .unwrap_err()
@@ -1669,13 +1708,82 @@ async fn private_catalog_pages_reach_every_session_in_both_directions() {
             fixture
                 .query(
                     "list",
-                    json!({"kind":kind,"revision":revision,"cursor":expected[32]})
+                    json!({"filter":"all","position":{"kind":kind,"revision":revision,"cursor":expected[32]}})
                 )
                 .await
                 .unwrap_err()
                 .contains("agent_catalog_unavailable")
         );
     }
+
+    use maka_runtime::interaction::{ClosureReason, InteractionOutcome};
+    let before_requests = fixture
+        .query(
+            "list",
+            json!({"filter":"needs_you","position":{"kind":"start"}}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(before_requests["sessions"], json!([]));
+    let waiting: Vec<_> = expected.iter().step_by(3).cloned().collect();
+    for (index, session_id) in waiting
+        .iter()
+        .chain(std::iter::once(&"foreign_session".to_owned()))
+        .enumerate()
+    {
+        fixture
+            .store
+            .establish_interaction(&catalog_interaction(
+                session_id,
+                &format!("catalog-request-{index}"),
+            ))
+            .await
+            .unwrap();
+    }
+    assert!(fixture.query("list", json!({"filter":"needs_you","position":{"kind":"after","revision":before_requests["revision"],"cursor":expected[0]}})).await.unwrap_err().contains("agent_catalog_unavailable"));
+    let mut pending = fixture
+        .query(
+            "list",
+            json!({"filter":"needs_you","position":{"kind":"start"}}),
+        )
+        .await
+        .unwrap();
+    let pending_first = pending.clone();
+    let pending_revision = pending["revision"].clone();
+    let mut found = Vec::new();
+    loop {
+        for row in pending["sessions"].as_array().unwrap() {
+            assert_eq!(row["activity"], "waiting");
+            found.push(row["id"].as_str().unwrap().to_owned());
+        }
+        if pending["after"].is_null() {
+            break;
+        }
+        pending = fixture.query("list", json!({"filter":"needs_you","position":{"kind":"after","revision":pending_revision,"cursor":pending["after"]}})).await.unwrap();
+    }
+    assert_eq!(found, waiting);
+    while !pending["before"].is_null() {
+        pending = fixture.query("list", json!({"filter":"needs_you","position":{"kind":"before","revision":pending_revision,"cursor":pending["before"]}})).await.unwrap();
+    }
+    assert_eq!(pending, pending_first);
+    assert!(fixture.query("list", json!({"filter":"all","position":{"kind":"after","revision":pending_revision,"cursor":pending_first["after"]}})).await.unwrap_err().contains("agent_catalog_unavailable"));
+    fixture
+        .store
+        .commit_interaction_outcome(
+            "catalog-request-0",
+            InteractionOutcome::Closure {
+                reason: ClosureReason::ProducerCancelled,
+                committed_at: 20,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(fixture.query("list", json!({"filter":"needs_you","position":{"kind":"after","revision":pending_revision,"cursor":pending_first["after"]}})).await.unwrap_err().contains("agent_catalog_unavailable"));
+    let resolved = fixture
+        .query("observe", json!({"sessionId":waiting[0]}))
+        .await
+        .unwrap();
+    assert_eq!(resolved["session"]["activity"], "idle");
     fixture.app.shutdown().await.unwrap();
     fixture.config.shutdown().await.unwrap();
 }

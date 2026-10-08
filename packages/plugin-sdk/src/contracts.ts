@@ -3722,6 +3722,9 @@ export const contracts = {
                   archived: {
                     type: 'boolean',
                   },
+                  activity: {
+                    $ref: '#/$defs/AgentSessionActivity',
+                  },
                 },
                 additionalProperties: false,
                 required: [
@@ -3732,6 +3735,7 @@ export const contracts = {
                   'revision',
                   'updatedAt',
                   'archived',
+                  'activity',
                 ],
               },
               AgentWorkspace: {
@@ -3753,6 +3757,10 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              AgentSessionActivity: {
+                type: 'string',
+                enum: ['idle', 'working', 'waiting'],
               },
               AgentRejection: {
                 type: 'string',
@@ -4425,57 +4433,76 @@ export const contracts = {
           input: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
             title: 'AgentList',
-            oneOf: [
-              {
-                type: 'object',
-                properties: {
-                  kind: {
-                    type: 'string',
-                    const: 'start',
-                  },
-                },
-                required: ['kind'],
-                additionalProperties: false,
+            type: 'object',
+            properties: {
+              filter: {
+                $ref: '#/$defs/AgentSessionFilter',
               },
-              {
-                type: 'object',
-                properties: {
-                  revision: {
-                    type: 'string',
-                  },
-                  cursor: {
-                    type: 'string',
-                    minLength: 1,
-                    maxLength: 128,
-                  },
-                  kind: {
-                    type: 'string',
-                    const: 'after',
-                  },
-                },
-                additionalProperties: false,
-                required: ['kind', 'revision', 'cursor'],
+              position: {
+                $ref: '#/$defs/AgentSessionPosition',
               },
-              {
-                type: 'object',
-                properties: {
-                  revision: {
-                    type: 'string',
-                  },
-                  cursor: {
-                    type: 'string',
-                    minLength: 1,
-                    maxLength: 128,
-                  },
-                  kind: {
-                    type: 'string',
-                    const: 'before',
-                  },
-                },
-                additionalProperties: false,
-                required: ['kind', 'revision', 'cursor'],
+            },
+            additionalProperties: false,
+            required: ['filter', 'position'],
+            $defs: {
+              AgentSessionFilter: {
+                type: 'string',
+                enum: ['all', 'needs_you'],
               },
-            ],
+              AgentSessionPosition: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'start',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      revision: {
+                        type: 'string',
+                      },
+                      cursor: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'after',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'revision', 'cursor'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      revision: {
+                        type: 'string',
+                      },
+                      cursor: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'before',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'revision', 'cursor'],
+                  },
+                ],
+              },
+            },
           },
           output: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
@@ -4533,6 +4560,9 @@ export const contracts = {
                   archived: {
                     type: 'boolean',
                   },
+                  activity: {
+                    $ref: '#/$defs/AgentSessionActivity',
+                  },
                 },
                 additionalProperties: false,
                 required: [
@@ -4543,6 +4573,7 @@ export const contracts = {
                   'revision',
                   'updatedAt',
                   'archived',
+                  'activity',
                 ],
               },
               AgentWorkspace: {
@@ -4564,6 +4595,10 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              AgentSessionActivity: {
+                type: 'string',
+                enum: ['idle', 'working', 'waiting'],
               },
             },
           },
@@ -4689,6 +4724,9 @@ export const contracts = {
                   archived: {
                     type: 'boolean',
                   },
+                  activity: {
+                    $ref: '#/$defs/AgentSessionActivity',
+                  },
                 },
                 additionalProperties: false,
                 required: [
@@ -4699,6 +4737,7 @@ export const contracts = {
                   'revision',
                   'updatedAt',
                   'archived',
+                  'activity',
                 ],
               },
               AgentWorkspace: {
@@ -4720,6 +4759,10 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              AgentSessionActivity: {
+                type: 'string',
+                enum: ['idle', 'working', 'waiting'],
               },
               AgentRejection: {
                 type: 'string',
@@ -4815,6 +4858,9 @@ export const contracts = {
                   archived: {
                     type: 'boolean',
                   },
+                  activity: {
+                    $ref: '#/$defs/AgentSessionActivity',
+                  },
                 },
                 additionalProperties: false,
                 required: [
@@ -4825,6 +4871,7 @@ export const contracts = {
                   'revision',
                   'updatedAt',
                   'archived',
+                  'activity',
                 ],
               },
               AgentWorkspace: {
@@ -4846,6 +4893,10 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['path', 'directoryIdentity', 'identity'],
+              },
+              AgentSessionActivity: {
+                type: 'string',
+                enum: ['idle', 'working', 'waiting'],
               },
               AgentRun: {
                 type: 'object',

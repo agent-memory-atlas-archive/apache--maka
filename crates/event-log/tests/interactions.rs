@@ -309,7 +309,15 @@ async fn pending_session_pages_use_canonical_outcomes_and_isolate_continuation_s
     second_request.session_id = "session-33".into();
     log.establish_interaction(&second_request).await.unwrap();
     let page = log
-        .scoped_sessions::<Value>(CatalogScope::PendingInteractions, None, None.into(), true)
+        .scoped_sessions::<Value>(
+            CatalogScope::Profile,
+            None,
+            None.into(),
+            maka_event_log::sessions::CatalogFilter {
+                include_archived: true,
+                pending_only: true,
+            },
+        )
         .await
         .unwrap();
     assert_eq!(page.sessions.len(), 32);
@@ -319,12 +327,35 @@ async fn pending_session_pages_use_canonical_outcomes_and_isolate_continuation_s
             .all(|row| row.pending_interaction_since == Some(10))
     );
     let cursor = page.next_cursor.as_deref();
+    for (scope, include_archived) in [
+        (CatalogScope::Profile, false),
+        (CatalogScope::IdPrefix("session-".into()), true),
+        (CatalogScope::Workspace("/other".into()), true),
+    ] {
+        assert!(matches!(
+            log.scoped_sessions::<Value>(
+                scope,
+                Some(&page.revision),
+                cursor.into(),
+                maka_event_log::sessions::CatalogFilter {
+                    include_archived,
+                    pending_only: true
+                }
+            )
+            .await,
+            Err(StoreError::RevisionConflict { .. })
+        ));
+    }
+
     let tail = log
         .scoped_sessions::<Value>(
-            CatalogScope::PendingInteractions,
+            CatalogScope::Profile,
             Some(&page.revision),
             cursor.into(),
-            true,
+            maka_event_log::sessions::CatalogFilter {
+                include_archived: true,
+                pending_only: true,
+            },
         )
         .await
         .unwrap();
@@ -346,10 +377,13 @@ async fn pending_session_pages_use_canonical_outcomes_and_isolate_continuation_s
         .unwrap();
     assert!(matches!(
         log.scoped_sessions::<Value>(
-            CatalogScope::PendingInteractions,
+            CatalogScope::Profile,
             Some(&page.revision),
             cursor.into(),
-            true
+            maka_event_log::sessions::CatalogFilter {
+                include_archived: true,
+                pending_only: true
+            }
         )
         .await,
         Err(StoreError::RevisionConflict { .. })
@@ -369,7 +403,15 @@ async fn pending_session_pages_use_canonical_outcomes_and_isolate_continuation_s
         .await
         .unwrap();
     let fresh = log
-        .scoped_sessions::<Value>(CatalogScope::PendingInteractions, None, None.into(), true)
+        .scoped_sessions::<Value>(
+            CatalogScope::Profile,
+            None,
+            None.into(),
+            maka_event_log::sessions::CatalogFilter {
+                include_archived: true,
+                pending_only: true,
+            },
+        )
         .await
         .unwrap();
     assert_eq!(fresh.sessions.len(), 32);

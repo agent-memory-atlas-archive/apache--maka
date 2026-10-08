@@ -143,6 +143,7 @@ export interface State {
   epoch: number;
   catalog: AgentSessionPage | null;
   catalogGeneration: number;
+  catalogFilter: AgentList['filter'];
   catalogFailed: boolean;
   selected: AgentSession | null;
   model: SelectedModel | null;
@@ -319,16 +320,16 @@ function catalogPending(state: State): boolean {
     (request) => request.kind === 'list' && request.generation === state.catalogGeneration,
   );
 }
-function catalog(state: State, actions: Action[], position: AgentList = { kind: 'start' }) {
+function catalog(
+  state: State,
+  actions: Action[],
+  position: AgentList['position'] = { kind: 'start' },
+) {
   state.catalogFailed = false;
-  intent(
-    state,
-    actions,
-    { kind: 'list', generation: ++state.catalogGeneration },
-    'agent',
-    'list',
+  intent(state, actions, { kind: 'list', generation: ++state.catalogGeneration }, 'agent', 'list', {
+    filter: state.catalogFilter,
     position,
-  );
+  });
 }
 function observe(state: State, actions: Action[]) {
   if (state.selected)
@@ -1178,6 +1179,34 @@ function frame<N extends Node>(
         ),
       ),
       ui.text('navigation-heading', text.conversations, 12, theme.muted, 550),
+      ui.box(
+        'catalog-filters',
+        (['all', 'needs_you'] as const).map((filter) => {
+          const label = filter === 'all' ? text.allSessions : text.needsYou;
+          const selected = state.catalogFilter === filter;
+          return ui.item
+            ? ui.item(
+                `catalog-filter-${filter}`,
+                ui.text(`catalog-filter-label-${filter}`, label, 12, theme.text),
+                selected,
+                catalogBusy,
+              )
+            : ui.button(
+                `catalog-filter-${filter}`,
+                label,
+                catalogBusy,
+                false,
+                selected ? { background: theme.selected } : {},
+              );
+        }),
+        { row: true, focusGroup: target === 'tui' },
+      ),
+      ...(!state.catalogFailed &&
+      !catalogPending(state) &&
+      state.catalogFilter === 'needs_you' &&
+      state.catalog?.sessions.length === 0
+        ? [ui.text('catalog-empty', text.noneNeedsYou, 12, theme.muted)]
+        : []),
       ...(state.catalogFailed
         ? [ui.text('catalog-error', text.sessionsUnavailable, 12, theme.muted)]
         : []),
@@ -1761,6 +1790,7 @@ export function workspace<N extends Node>(
         epoch: 0,
         catalog: null,
         catalogGeneration: 0,
+        catalogFilter: 'all',
         catalogFailed: false,
         selected: null,
         model: null,
@@ -2240,7 +2270,14 @@ export function workspace<N extends Node>(
             history(state, actions, { kind: 'tail' }, state.latestKnown, true);
         }
       } else if (input.kind === 'raw') {
-        if (['catalog-refresh', 'catalog-more', 'catalog-previous'].includes(input.key)) {
+        if (input.key === 'catalog-filter-all' || input.key === 'catalog-filter-needs_you') {
+          const filter = input.key === 'catalog-filter-all' ? 'all' : 'needs_you';
+          if (!mutationPending(state) && !catalogPending(state) && state.catalogFilter !== filter) {
+            state.catalogFilter = filter;
+            state.catalog = null;
+            catalog(state, actions);
+          }
+        } else if (['catalog-refresh', 'catalog-more', 'catalog-previous'].includes(input.key)) {
           if (!mutationPending(state) && !catalogPending(state)) {
             const page = state.catalog;
             if (input.key === 'catalog-refresh') catalog(state, actions);
