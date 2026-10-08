@@ -222,6 +222,7 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     let names = [
         "workspace",
         "command-palette",
+        "directory-picker",
         "deployment",
         "deployment-manager",
         "deployment-gateway",
@@ -505,12 +506,54 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         )))
         .unwrap();
     wait_for_target(&mut presenter, "[ New conversation ]", 0);
+    // The ordinary directory picker creates the initial Session through its
+    // original observed selection, physical query focus and recorded Root intent.
     presenter
         .input(Event::Key(KeyEvent::new(
-            KeyCode::Char('n'),
+            KeyCode::Char('k'),
             KeyModifiers::CONTROL,
         )))
         .unwrap();
+    await_screen(&mut presenter, "Search commands or conversations");
+    presenter
+        .input(Event::Paste("another folder".into()))
+        .unwrap();
+    wait_for_target(
+        &mut presenter,
+        "[ › New conversation in another folder ]",
+        0,
+    );
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    await_screen(&mut presenter, "[ › Workspace ]");
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))
+        .unwrap();
+    await_screen(&mut presenter, "[ › Other workspace ]");
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)))
+        .unwrap();
+    await_screen(&mut presenter, "[ › Workspace ]");
+    // Native button focus owns Enter after Tab; query arrows cannot redirect it.
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
+        .unwrap();
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))
+        .unwrap();
+    assert!(screen(&draw(&mut presenter)).contains("[ › Workspace ]"));
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    click(&mut presenter, "[ Create here ]");
+    await_screen(&mut presenter, "New conversation");
     draw(&mut presenter);
     presenter
         .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
@@ -530,7 +573,13 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
             KeyModifiers::CONTROL,
         )))
         .unwrap();
-    await_screen(&mut presenter, "Search commands or conversations");
+    await_screen(&mut presenter, "another folder");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
     presenter.input(Event::Paste("Hello query".into())).unwrap();
     await_screen(&mut presenter, "Hello query");
     presenter
@@ -549,6 +598,39 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
             row: 0,
             modifiers: KeyModifiers::NONE,
         }))
+        .unwrap();
+    await_screen(&mut presenter, "Hello product");
+    click(&mut presenter, "[ Commands ]");
+    await_screen(&mut presenter, "Hello query");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    presenter
+        .input(Event::Paste("another folder".into()))
+        .unwrap();
+    wait_for_target(
+        &mut presenter,
+        "[ › New conversation in another folder ]",
+        0,
+    );
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    await_screen(&mut presenter, "Filter folders on this page");
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+        .unwrap();
+    await_screen(&mut presenter, "Hello product");
+    click(&mut presenter, "[ Commands ]");
+    await_screen(&mut presenter, "another folder");
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
         .unwrap();
     await_screen(&mut presenter, "Hello product");
     click(&mut presenter, "[ Plugins ]");

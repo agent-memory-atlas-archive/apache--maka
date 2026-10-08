@@ -5879,7 +5879,9 @@ for (const target of ['desktop', 'tui']) {
   const { component: paletteComponent } = await import(
     pathToFileURL(resolve(root, `dist/packages/command-palette/${target}.js`))
   );
-  const props = (client) => client.output.frame.view.content.props;
+  const props = (client) =>
+    modelSlots(client.output.frame.view.content).find((node) => node.key === 'command-palette')
+      .props;
   const choose = (client, name, event) =>
     client.input({ kind: 'component', child: 'command-palette', name, event });
   const open = (client) => {
@@ -5907,12 +5909,16 @@ for (const target of ['desktop', 'tui']) {
     assert.equal(client.output.frame.view.open, true);
     assert.deepEqual(client.output.frame.view.background, background);
     assert.deepEqual(client.output.subscriptions, watch);
-    assert.equal(client.output.frame.view.content.binding, 'palette');
+    assert.equal(
+      modelSlots(client.output.frame.view.content).find((node) => node.key === 'command-palette')
+        .binding,
+      'palette',
+    );
     choose(client, 'closed', {});
-    assert.equal(client.state.paletteOpen, false);
+    assert.equal(client.state.dialog, null);
     client.raw('settings');
     client.raw('palette-open');
-    assert.equal(client.state.paletteOpen, false);
+    assert.equal(client.state.dialog, null);
     assert.ok(props(client).commands.every((command) => command.disabled));
     client.raw('deployment-open');
     assert.equal(
@@ -5960,7 +5966,7 @@ for (const target of ['desktop', 'tui']) {
     choose(client, 'invoked', form.output.events[0].value);
     assert.deepEqual(client.find('read').input, reference);
     assert.equal(client.state.command, null);
-    assert.equal(client.state.paletteOpen, false);
+    assert.equal(client.state.dialog, null);
     const count = client.actions.size;
     choose(client, 'invoked', { id: check.id });
     assert.equal(client.actions.size, count, 'closed palette cannot replay an admitted lookup');
@@ -6023,7 +6029,7 @@ for (const target of ['desktop', 'tui']) {
     assert.deepEqual(form.output.events, []);
     choose(client, 'invoked', { id: command.id });
     assert.deepEqual(client.output.actions, [], 'Root also rejects stale invocation identity');
-    assert.equal(client.state.paletteOpen, true);
+    assert.equal(client.state.dialog, 'palette');
     const newRow = modelSlots(form.output.frame.view)
       .find((node) => node.key === 'palette-rows')
       .props.content.children.find((row) => row.label.includes('Stop'));
@@ -6080,5 +6086,351 @@ for (const target of ['desktop', 'tui']) {
     client.component('send', draft);
     assert.deepEqual(client.output.actions, []);
     assert.equal(client.state.command, null);
+  });
+}
+
+for (const target of ['desktop', 'tui']) {
+  const { component: picker } = await import(
+    pathToFileURL(resolve(root, `dist/packages/directory-picker/${target}.js`))
+  );
+  const rootModule = await import(
+    pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+  );
+  rootModule.activate({ locale: 'en' });
+  const props = { theme: values.appearance[0], locale: 'en', open: true, busy: false };
+  const directory = (name, segments = [], rootId = 'root-0') => ({
+    name,
+    path: '/projects/' + [name, ...segments].join('/'),
+    selection: { rootId, segments, directoryIdentity: 'sha256:' + 'b'.repeat(64) },
+  });
+  const parent = directory('Maka');
+  const child = directory('Child', ['child']);
+  const children = (directory, children = [], after = null) => ({
+    kind: 'children',
+    directory,
+    children,
+    after,
+  });
+  const viewport = (form) =>
+    modelSlots(form.output.frame.view).find((node) => node.key === 'directory-rows').props;
+  const nativeQuery = (form, text = '', revision = 1) =>
+    form.input({
+      kind: 'component',
+      child: 'directory-query',
+      name: 'changed',
+      event: modelObservation(text, revision),
+    });
+  const readQuery = (form, text = '') =>
+    form.complete(form.find('read'), {
+      status: 'succeeded',
+      value: { text, metadata: form.state.observation.snapshot.text },
+    });
+  const press = (form, key) => {
+    form.raw(`${form.state.pageKey}-${key}`);
+    if (form.output.actions.some((action) => action.method === 'read'))
+      readQuery(form, form.state.query);
+  };
+  const openRow = (form) => {
+    form.input({ kind: 'component', child: 'directory-query', name: 'submitted', event: {} });
+    if (form.output.actions.some((action) => action.method === 'read'))
+      readQuery(form, form.state.query);
+  };
+  const rootChoice = (client, name, event = {}) =>
+    client.input({ kind: 'component', child: 'directory-picker', name, event });
+
+  test(`${target} picker browses original observed roots and ancestors through keyboard and native ReadingArea`, () => {
+    const form = new FormClient(picker, props);
+    assert.deepEqual(
+      form.output.frame.view.shortcuts.map((shortcut) => shortcut.key),
+      ['escape'],
+    );
+    const queryScope = form.output.frame.view.children.find(
+      (node) => node.key === 'directory-query-scope',
+    );
+    assert.deepEqual(
+      queryScope.shortcuts.map((shortcut) => shortcut.key),
+      ['down', 'up', 'home', 'end'],
+    );
+    assert.equal(queryScope.children[0].key, 'directory-query');
+    assert.equal(queryScope.children[0].props.autoFocus, true);
+    assert.deepEqual(form.find('directories').input, { kind: 'roots' });
+    press(form, 'choose');
+    assert.deepEqual(form.output.events, []);
+    nativeQuery(form);
+    form.query('directories', { kind: 'roots', roots: [directory('Other', [], 'root-1'), parent] });
+    form.raw('down');
+    assert.equal(viewport(form).command.target.key, `${form.state.pageKey}-1`);
+    openRow(form);
+    assert.deepEqual(form.find('directories').input, {
+      kind: 'children',
+      selection: parent.selection,
+      after: null,
+    });
+    form.query('directories', children(parent, [child]));
+    form.input({
+      kind: 'component',
+      child: 'directory-rows',
+      name: 'input',
+      event: { kind: 'raw', key: `${form.state.pageKey}-0`, event: {} },
+    });
+    readQuery(form);
+    assert.deepEqual(form.find('directories').input.selection, child.selection);
+    form.query('directories', children(child));
+    press(form, 'parent');
+    assert.deepEqual(form.find('directories').input.selection, parent.selection);
+    form.query('directories', children(parent));
+    press(form, 'choose');
+    assert.deepEqual(form.output.events, [{ name: 'selected', value: parent.selection }]);
+    press(form, 'parent');
+    assert.deepEqual(form.find('directories').input, { kind: 'roots' });
+  });
+
+  test(`${target} picker keeps one bounded page and blocks stale selection during failed navigation`, () => {
+    const form = new FormClient(picker, props);
+    nativeQuery(form);
+    form.query('directories', { kind: 'roots', roots: [parent] });
+    openRow(form);
+    const first = Array.from({ length: 32 }, (_, at) => directory(`Child ${at}`, [`child-${at}`]));
+    form.query('directories', children(parent, first, 'child-31'));
+    assert.equal(viewport(form).content.children.length, 32);
+    form.raw('last');
+    assert.equal(viewport(form).command.target.key, `${form.state.pageKey}-31`);
+    press(form, 'more');
+    assert.deepEqual(form.find('directories').input, {
+      kind: 'children',
+      selection: parent.selection,
+      after: 'child-31',
+    });
+    press(form, 'choose');
+    assert.deepEqual(form.output.events, []);
+    form.complete(form.find('directories'), { status: 'failed', diagnostic: 'changed' });
+    press(form, 'choose');
+    assert.deepEqual(form.output.events, []);
+    assert.equal(
+      viewport(form).content.children.length,
+      32,
+      'failed query retains visible old facts',
+    );
+    form.raw('refresh');
+    assert.equal(form.find('directories').input.after, null);
+    form.query('directories', children(parent, [child]));
+    assert.equal(
+      viewport(form).content.children.length,
+      1,
+      'next result replaces the original bounded page',
+    );
+    form.update({ busy: true });
+    press(form, 'choose');
+    openRow(form);
+    assert.deepEqual(form.output.events, []);
+    assert.deepEqual(form.output.actions, []);
+    form.update({ busy: false });
+    press(form, 'choose');
+    assert.deepEqual(form.output.events, [{ name: 'selected', value: parent.selection }]);
+  });
+
+  test(`${target} closed and reopened picker ignores its original late directory reply`, () => {
+    const form = new FormClient(picker, { ...props, open: false });
+    assert.deepEqual(form.output.actions, []);
+    form.update({ open: true });
+    const old = form.find('directories');
+    form.raw('close');
+    assert.deepEqual(form.output.events, [{ name: 'closed', value: {} }]);
+    form.update({ open: false });
+    form.update({ open: true });
+    const fresh = form.output.actions[0];
+    assert.notEqual(fresh.key, old.key);
+    form.complete(old, {
+      status: 'succeeded',
+      value: { kind: 'roots', roots: [directory('Stale')] },
+    });
+    assert.equal(form.state.page, null);
+    assert.equal(form.state.pending.key, fresh.key);
+    form.complete(fresh, { status: 'succeeded', value: { kind: 'roots', roots: [parent] } });
+    assert.deepEqual(form.state.page.roots, [parent]);
+  });
+
+  test(`${target} picker page identity prevents stale row and create callbacks from rebinding`, () => {
+    const form = new FormClient(picker, props);
+    nativeQuery(form);
+    form.query('directories', { kind: 'roots', roots: [parent] });
+    const rootKey = viewport(form).content.children[0].key;
+    form.raw(rootKey);
+    readQuery(form);
+    form.query('directories', children(parent, [child], 'child'));
+    const oldRow = viewport(form).content.children[0].key;
+    const oldChoose = `${form.state.pageKey}-choose`;
+    press(form, 'more');
+    form.query('directories', children(parent, [directory('Different', ['different'])]));
+    assert.notEqual(viewport(form).content.children[0].key, oldRow);
+    form.raw(oldRow);
+    assert.deepEqual(form.output.actions, []);
+    form.raw(oldChoose);
+    assert.deepEqual(form.output.actions, []);
+    assert.deepEqual(form.output.events, []);
+    form.raw(rootKey);
+    assert.deepEqual(form.output.actions, []);
+  });
+
+  test(`${target} picker original text capture preserves page row identity and superseded choices cannot select`, () => {
+    const form = new FormClient(picker, props);
+    nativeQuery(form);
+    form.query('directories', { kind: 'roots', roots: [directory('Other'), parent] });
+    const originalKey = viewport(form).content.children[1].key;
+    nativeQuery(form, 'Maka', 2);
+    const originalRead = form.find('read');
+    assert.deepEqual(originalRead.resources.text, {
+      child: 'directory-query',
+      method: 'snapshot',
+      input: { kind: 'at_revision', owner: 'model-editor', revision: 2 },
+    });
+    readQuery(form, 'Maka');
+    assert.equal(
+      viewport(form).content.children[0].key,
+      originalKey,
+      'filter retains original page index',
+    );
+    assert.equal(viewport(form).content.children.length, 1);
+    form.input({ kind: 'component', child: 'directory-query', name: 'submitted', event: {} });
+    const choice = form.find('read');
+    nativeQuery(form, 'Other', 3);
+    form.complete(choice, {
+      status: 'succeeded',
+      value: { text: 'Maka', metadata: modelObservation('Maka', 2).snapshot.text },
+    });
+    assert.deepEqual(form.output.events, []);
+    assert.ok(
+      form.output.actions.every((action) => action.method === 'read'),
+      'a superseded read cannot browse its old selected folder',
+    );
+    form.complete(form.find('read'), { status: 'failed', diagnostic: 'capture unavailable' });
+    assert.equal(form.state.queryError, 'unavailable');
+    form.raw(originalKey);
+    assert.deepEqual(form.output.actions, []);
+    form.raw('refresh');
+    readQuery(form, 'Other');
+    assert.equal(viewport(form).content.children.length, 1);
+    nativeQuery(form, 'x'.repeat(1025), 4);
+    assert.equal(form.state.queryError, 'long');
+    assert.deepEqual(form.output.actions, []);
+  });
+
+  test(`${target} Root retains both ordinary dialog slots while switching and cancelling`, () => {
+    const client = new Client(rootModule.component).start();
+    const mounted = () =>
+      modelSlots(client.output.frame.view.content).map((node) => ({
+        key: node.key,
+        binding: node.binding,
+      }));
+    const closed = mounted();
+    client.raw('palette-open');
+    assert.deepEqual(mounted(), closed);
+    client.input({
+      kind: 'component',
+      child: 'command-palette',
+      name: 'invoked',
+      event: { id: 'create-workspace' },
+    });
+    assert.deepEqual(mounted(), closed);
+    const slots = modelSlots(client.output.frame.view.content);
+    assert.equal(slots.find((node) => node.key === 'command-palette').props.open, false);
+    assert.equal(slots.find((node) => node.key === 'directory-picker').props.open, true);
+    rootChoice(client, 'closed');
+    client.raw('palette-open');
+    assert.deepEqual(mounted(), closed);
+    assert.equal(
+      modelSlots(client.output.frame.view.content).find((node) => node.key === 'command-palette')
+        .props.open,
+      true,
+    );
+  });
+
+  test(`${target} Root uses one controlled dialog and original recorded create without changing retained execution`, () => {
+    const client = new Client(rootModule.component).start({
+      run: { invocationId: 'original-run', state: 'running' },
+    });
+    const original = structuredClone({
+      epoch: client.state.epoch,
+      selected: client.state.selected,
+      window: client.state.window,
+      run: client.state.run,
+      command: client.state.command,
+      watch: client.output.subscriptions,
+    });
+    client.raw('palette-open');
+    client.input({
+      kind: 'component',
+      child: 'command-palette',
+      name: 'invoked',
+      event: { id: 'create-workspace' },
+    });
+    assert.equal(client.state.dialog, 'directories');
+    assert.equal(
+      modelSlots(client.output.frame.view.content).find((node) => node.key === 'directory-picker')
+        .binding,
+      'directories',
+    );
+    assert.deepEqual(client.output.actions, []);
+    client.raw('palette-open');
+    client.raw('create');
+    assert.equal(client.state.dialog, 'directories');
+    assert.deepEqual(client.output.actions, []);
+    rootChoice(client, 'selected', child.selection);
+    assert.equal(client.state.dialog, null);
+    const create = client.find('create');
+    assert.deepEqual(create.input, {
+      title: 'New conversation',
+      labels: [],
+      workspace: { kind: 'directory', selection: child.selection },
+    });
+    assert.deepEqual(
+      {
+        epoch: client.state.epoch,
+        selected: client.state.selected,
+        window: client.state.window,
+        run: client.state.run,
+        command: client.state.command,
+        watch: client.output.subscriptions,
+      },
+      original,
+    );
+    rootChoice(client, 'selected', parent.selection);
+    assert.deepEqual(client.output.actions, [], 'closed component cannot replay creation');
+    client.complete(create, returned({ kind: 'rejected', reason: 'workspace_unavailable' }));
+    assert.deepEqual(
+      {
+        epoch: client.state.epoch,
+        selected: client.state.selected,
+        window: client.state.window,
+        run: client.state.run,
+        command: client.state.command,
+        watch: client.output.subscriptions,
+      },
+      original,
+    );
+    assert.equal(client.state.uncertain, null);
+  });
+
+  test(`${target} Root rechecks current creation guard before accepting an asynchronous picker choice`, () => {
+    const client = new Client(rootModule.component).start();
+    client.raw('create-workspace');
+    client.component('refresh');
+    const listing = client.find('list');
+    rootChoice(client, 'selected', child.selection);
+    assert.equal(client.state.dialog, 'directories');
+    assert.deepEqual(client.output.actions, []);
+    client.complete(listing, {
+      status: 'succeeded',
+      value: { revision: 'new-catalog', sessions: [session], before: null, after: null },
+    });
+    rootChoice(client, 'closed');
+    rootChoice(client, 'selected', child.selection);
+    assert.deepEqual(client.output.actions, []);
+    client.raw('create');
+    assert.deepEqual(
+      client.find('create').input.workspace,
+      { kind: 'session', sessionId: session.id },
+      'ordinary New still reuses immutable original workspace',
+    );
   });
 }

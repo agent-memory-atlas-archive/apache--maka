@@ -29,6 +29,7 @@ import {
 export const packageNames = [
   'workspace',
   'command-palette',
+  'directory-picker',
   'studio',
   'studio-gateway',
   'deployment',
@@ -298,6 +299,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         history: [local('history', 'History')],
         composer: [local('composer', 'Composer')],
         palette: [local('command-palette', 'CommandPalette')],
+        directories: [local('directory-picker', 'DirectoryPicker')],
         models: [local('models', 'Models')],
         connections: [local('connections', 'Connections')],
         deployment: [local('deployment', 'Deployment')],
@@ -316,6 +318,16 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         input: [local('input', 'TextInput')],
         reader: [local('reader', 'Reader')],
         reading: [local('reading-area', 'ReadingArea')],
+      },
+    ),
+    'directory-picker': node(
+      'directory-picker',
+      {},
+      {
+        agent: [remote('agent', 'agent')],
+        reading: [local('reading-area', 'ReadingArea')],
+        input: [local('input', 'TextInput')],
+        reader: [local('reader', 'Reader')],
       },
     ),
     composer: node('composer', {}, { editor: [local('editor', 'Textarea')] }),

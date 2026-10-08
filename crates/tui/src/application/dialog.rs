@@ -350,13 +350,22 @@ impl Presenter {
                 width.saturating_sub(inset),
                 measurements,
             )?;
-            let height = maximum_height
-                .min(
+            // Growing content needs a bounded viewport before flex allocation;
+            // its zero-basis children intentionally have no intrinsic height.
+            let height = if self
+                .node_layout(&deferred.mount, content, measurements)?
+                .grow
+                > 0
+            {
+                maximum_height
+            } else {
+                maximum_height.min(
                     content_height
                         .saturating_add(u32::from(inset))
                         .min(u32::from(u16::MAX)) as u16,
                 )
-                .max(1);
+            }
+            .max(1);
             let body = ratatui::layout::Rect::new(
                 full.x + full.width.saturating_sub(width) / 2,
                 full.y + full.height.saturating_sub(height) / 2,

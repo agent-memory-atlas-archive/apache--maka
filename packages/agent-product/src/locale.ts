@@ -18,6 +18,18 @@
  */
 
 export const en = {
+  newWorkspace: 'New conversation in another folder',
+  directoryTitle: 'Choose a workspace',
+  directoryFilter: 'Filter folders on this page',
+  directoryHelp: 'Open a folder, then start a conversation here.',
+  directoryLoading: 'Loading folders…',
+  directoryFailed: 'Could not read this folder. Refresh to try again.',
+  directoryEmpty: 'No folders here.',
+  directoryParent: 'Parent',
+  directoryMore: 'Next folders',
+  directoryRefresh: 'Refresh / first page',
+  directoryChoose: 'Create here',
+
   paletteTitle: 'Commands',
   paletteFilter: 'Search commands or conversations',
   paletteSession: 'Conversation',
@@ -305,6 +317,18 @@ export const en = {
 } as const;
 export type Copy = { [K in keyof typeof en]: string };
 const zhCN: Copy = {
+  newWorkspace: '在其他目录新建对话',
+  directoryTitle: '选择工作区',
+  directoryFilter: '筛选本页目录',
+  directoryHelp: '打开目录，再在这里开始对话。',
+  directoryLoading: '正在读取目录…',
+  directoryFailed: '无法读取目录，请刷新后重试。',
+  directoryEmpty: '这里没有子目录。',
+  directoryParent: '上一级',
+  directoryMore: '下一页目录',
+  directoryRefresh: '刷新／首页',
+  directoryChoose: '在此新建',
+
   paletteTitle: '命令',
   paletteFilter: '搜索命令或对话',
   paletteSession: '对话',
@@ -572,6 +596,18 @@ const zhCN: Copy = {
   connecting: '正在连接…',
 };
 const zhTW: Copy = {
+  newWorkspace: '在其他目錄新增對話',
+  directoryTitle: '選擇工作區',
+  directoryFilter: '篩選本頁目錄',
+  directoryHelp: '開啟目錄，再在此開始對話。',
+  directoryLoading: '正在讀取目錄…',
+  directoryFailed: '無法讀取目錄，請重新整理後重試。',
+  directoryEmpty: '這裡沒有子目錄。',
+  directoryParent: '上一層',
+  directoryMore: '下一頁目錄',
+  directoryRefresh: '重新整理／首頁',
+  directoryChoose: '在此新增',
+
   paletteTitle: '命令',
   paletteFilter: '搜尋命令或對話',
   paletteSession: '對話',

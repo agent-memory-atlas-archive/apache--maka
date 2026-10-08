@@ -37,6 +37,7 @@ import type {
   AgentSessionPage,
   AgentCreated,
   AgentDirectoryPage,
+  AgentDirectorySelection,
   AgentList,
   AgentStarted,
   CallerIntent,
@@ -112,7 +113,7 @@ export interface State {
   settingsOpen: boolean;
   deploymentOpen: boolean;
   navigationOpen: boolean;
-  paletteOpen: boolean;
+  dialog: 'palette' | 'directories' | null;
   window: { page: Extract<AgentHistoryPage, { kind: 'ready' }>; latest: boolean } | null;
   navigation: number;
   image: { sessionId: string; through: number; sequence: number } | null;
@@ -409,6 +410,7 @@ function executionPending(state: State) {
 
 type RootCommand =
   | 'create'
+  | 'create-workspace'
   | 'navigation-toggle'
   | 'settings'
   | 'deployment-open'
@@ -420,13 +422,20 @@ function conversationRoute(state: State) {
 }
 function rootCommands(state: State, locale: string): (PaletteCommand & { kind: RootCommand })[] {
   const text = copy(locale);
-  const route = conversationRoute(state);
+  const route = conversationRoute(state) && state.dialog !== 'directories';
   const commands: (PaletteCommand & { kind: RootCommand })[] = [
     {
       kind: 'create',
       id: 'create',
       label: text.new,
       hint: 'Ctrl/⌘ N',
+      disabled: !route || mutationPending(state) || catalogPending(state),
+    },
+    {
+      kind: 'create-workspace',
+      id: 'create-workspace',
+      label: text.newWorkspace,
+      hint: '',
       disabled: !route || mutationPending(state) || catalogPending(state),
     },
     {
@@ -475,6 +484,7 @@ function rootCommand(state: State, actions: Action[], locale: string, kind: Root
   if (!rootCommands(state, locale).some((command) => command.kind === kind && !command.disabled))
     return false;
   if (kind === 'create') createSession(state, actions, locale);
+  else if (kind === 'create-workspace') state.dialog = 'directories';
   else if (kind === 'navigation-toggle') state.navigationOpen = !state.navigationOpen;
   else if (kind === 'settings') {
     state.settingsOpen = true;
@@ -1285,24 +1295,41 @@ function frame(
   const out = output(
     state,
     ui.dialog(
-      'command-dialog',
-      text.paletteTitle,
+      'workspace-dialog',
+      state.dialog === 'directories' ? text.directoryTitle : text.paletteTitle,
       background,
-      slot(
-        'command-palette',
-        'palette',
-        {
-          theme,
-          locale,
-          open: state.paletteOpen,
-          busy: false,
-          selectionDisabled:
-            !conversationRoute(state) || mutationPending(state) || catalogPending(state),
-          commands: rootCommands(state, locale).map(({ kind: _kind, ...command }) => command),
-        },
-        { invoked: 'invoked', selected: 'selected', closed: 'closed' },
+      ui.box(
+        'dialog-content',
+        [
+          slot(
+            'directory-picker',
+            'directories',
+            {
+              theme,
+              locale,
+              open: state.dialog === 'directories',
+              busy: mutationPending(state) || catalogPending(state),
+            },
+            { selected: 'selected', closed: 'closed' },
+          ),
+          slot(
+            'command-palette',
+            'palette',
+            {
+              theme,
+              locale,
+              open: state.dialog === 'palette',
+              busy: false,
+              selectionDisabled:
+                !conversationRoute(state) || mutationPending(state) || catalogPending(state),
+              commands: rootCommands(state, locale).map(({ kind: _kind, ...command }) => command),
+            },
+            { invoked: 'invoked', selected: 'selected', closed: 'closed' },
+          ),
+        ],
+        { gap: 0, terminal: { grow: 1 }, style: { width: fill, minWidth: 0 } },
       ),
-      state.paletteOpen,
+      state.dialog !== null,
     ),
   );
   out.frame.surface =
@@ -1341,7 +1368,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         settingsOpen: false,
         deploymentOpen: false,
         navigationOpen: target === 'desktop',
-        paletteOpen: false,
+        dialog: null,
         image: null,
         window: null,
         source: null,
@@ -1405,22 +1432,44 @@ export function workspace(target: Target, locale: string): Component<State, Reco
           }
         }
       } else if (input.kind === 'component') {
+        if (input.child === 'directory-picker') {
+          if (state.dialog === 'directories' && conversationRoute(state)) {
+            if (input.name === 'closed') state.dialog = null;
+            else if (
+              input.name === 'selected' &&
+              !mutationPending(state) &&
+              !catalogPending(state)
+            ) {
+              intent(state, actions, { kind: 'create' }, 'agent', 'create', {
+                title: copy(locale).new,
+                labels: [],
+                workspace: { kind: 'directory', selection: input.event as AgentDirectorySelection },
+              });
+              state.dialog = null;
+            }
+          }
+          return frame(target, locale, state, values, actions);
+        }
         if (input.child === 'command-palette') {
-          if (state.paletteOpen && conversationRoute(state)) {
-            if (input.name === 'closed') state.paletteOpen = false;
+          if (state.dialog === 'palette' && conversationRoute(state)) {
+            if (input.name === 'closed') state.dialog = null;
             else if (input.name === 'invoked') {
               const command = rootCommands(state, locale).find(
                 (command) => command.id === (input.event as { id: string }).id && !command.disabled,
               );
-              if (command && rootCommand(state, actions, locale, command.kind))
-                state.paletteOpen = false;
+              if (
+                command &&
+                rootCommand(state, actions, locale, command.kind) &&
+                state.dialog === 'palette'
+              )
+                state.dialog = null;
             } else if (
               input.name === 'selected' &&
               !mutationPending(state) &&
               !catalogPending(state)
             ) {
               select(state, actions, input.event as AgentSession);
-              state.paletteOpen = false;
+              state.dialog = null;
             }
           }
           return frame(target, locale, state, values, actions);
@@ -1661,8 +1710,9 @@ export function workspace(target: Target, locale: string): Component<State, Reco
             history(state, actions, { kind: 'tail' }, state.latestKnown, true);
         }
       } else if (input.kind === 'raw') {
-        if (input.key === 'palette-open' && conversationRoute(state)) state.paletteOpen = true;
-        else if (input.key === 'command-dialog') state.paletteOpen = false;
+        if (input.key === 'palette-open' && conversationRoute(state) && state.dialog === null)
+          state.dialog = 'palette';
+        else if (input.key === 'workspace-dialog') state.dialog = null;
         else if (input.key === 'navigation-back') state.navigationOpen = false;
         else {
           const command = rootCommands(state, locale).find((command) => command.kind === input.key);

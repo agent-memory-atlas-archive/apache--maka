@@ -110,6 +110,7 @@ const specifications = {
       reader: one(sdk.contracts.textReader),
       composer: one(own.composerContract),
       palette: one(own.paletteContract),
+      directories: one(own.directoryPickerContract),
       navigation: one(own.navigationContract),
       timeline: one(own.timelineContract),
       imageViewer: one(own.imageViewerContract),
@@ -170,6 +171,17 @@ specifications['command-palette'] = {
     input: one(sdk.contracts.textInput),
     reader: one(sdk.contracts.textReader),
     reading: one(sdk.contracts.readingArea),
+  },
+};
+specifications['directory-picker'] = {
+  contract: own.directoryPickerContract,
+  export: 'DirectoryPicker',
+  module: 'directory-picker',
+  imports: {
+    agent: one(sdk.contracts.agent),
+    reading: one(sdk.contracts.readingArea),
+    input: one(sdk.contracts.textInput),
+    reader: one(sdk.contracts.textReader),
   },
 };
 specifications['model-default'] = {

@@ -620,3 +620,40 @@ fn dialog_original_ancestor_revoke_interrupts_retained_inner_drag_and_allows_fre
     assert_ne!(copied(&mut presenter).unwrap(), selected);
     close(&mut presenter);
 }
+
+#[test]
+fn dialog_growing_content_gives_zero_basis_reading_rows_a_bounded_viewport() {
+    let mut rows = column(
+        "choices",
+        vec![
+            json!({"kind":"button","key":"one","label":"One"}),
+            json!({"kind":"button","key":"two","label":"Two"}),
+        ],
+    );
+    rows["layout"] = json!({"grow":1,"basis":0});
+    let mut body = column(
+        "body",
+        vec![
+            json!({"kind":"text","key":"title","text":"Choose","color":0}),
+            rows,
+            json!({"kind":"button","key":"cancel","label":"Cancel"}),
+        ],
+    );
+    body["layout"] = json!({"grow":1});
+    let mut wrapper = column("wrapper", vec![body]);
+    wrapper["layout"] = json!({"grow":1});
+    let (_runtime, mut presenter, _) = native(vec![dialog(
+        "modal",
+        true,
+        source("bg", "background"),
+        wrapper,
+    )]);
+    draw(&mut presenter, 40, 12);
+    for key in ["one", "two", "cancel"] {
+        assert!(
+            presenter.scene.iter().any(|target| target.key == key),
+            "growing dialog must publish {key} inside its bounded body"
+        );
+    }
+    close(&mut presenter);
+}

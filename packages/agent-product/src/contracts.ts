@@ -96,6 +96,12 @@ export interface PaletteProps {
   selectionDisabled: boolean;
   commands: PaletteCommand[];
 }
+export interface DirectoryPickerProps {
+  theme: Theme;
+  locale: string;
+  open: boolean;
+  busy: boolean;
+}
 export interface ModelDefaultProps {
   theme: Theme;
   locale: string;
@@ -151,6 +157,7 @@ export interface ComposerProps {
 const editor = native.textarea.interface;
 const session = native.agent.interface.methods.list.output;
 const defs = {
+  ...native.agent.interface.methods.directories.output.$defs,
   ...editor.props.$defs,
   ...native.markdown.interface.props.$defs,
   ...native.secretInput.interface.props.$defs,
@@ -244,6 +251,16 @@ export const paletteContract = component(
     selected: withDefs({ $ref: '#/$defs/AgentSession' }),
     closed: object({}),
   },
+);
+export const directoryPickerContract = component(
+  'maka.agent.DirectoryPicker',
+  object({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    busy: { type: 'boolean' },
+  }),
+  { selected: withDefs({ $ref: '#/$defs/AgentDirectorySelection' }), closed: object({}) },
 );
 export const studioContract = component('maka.studio.Workbench', object({}));
 export const navigationContract = component(
