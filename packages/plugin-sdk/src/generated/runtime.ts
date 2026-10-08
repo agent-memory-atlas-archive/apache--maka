@@ -2390,6 +2390,11 @@ export interface ReadingReceipt {
 export interface RowsProps {
   revision: number;
   /**
+   * Select this row on keyboard entry. None retains the current selection,
+   * or selects the first row when there is no current selection.
+   */
+  entry?: string | null;
+  /**
    * @maxItems 64
    */
   rows: Row[];

@@ -340,9 +340,8 @@ fn native_rows_scrollbar_drag_uses_presented_track_without_selecting_or_taking_f
     assert!(tui.drag.is_none());
     assert!(tui.focus.as_ref().unwrap().same(&original));
     assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 0);
-    // The selected row was not transferred to the row underneath the track.
+    // Keyboard entry reveals its original selection without another arrow key.
     tui.input(key(KeyCode::Tab)).unwrap();
-    tui.input(key(KeyCode::Up)).unwrap();
     assert!(text(&draw(&mut tui, 40, 10)).contains("pending 0"));
     tui.input(key(KeyCode::Delete)).unwrap();
     assert_eq!(
@@ -394,4 +393,80 @@ fn native_rows_scrollbar_style_and_interruption_keep_original_capture() {
         assert!(text(&draw(&mut tui, 40, 10)).contains("pending 5"));
         close(tui);
     }
+}
+
+#[test]
+fn native_rows_keyboard_entry_selects_arriving_rows_and_survives_late_paint_and_modal() {
+    let rows = Rc::new(RefCell::new(props()));
+    rows.borrow_mut()["rows"] = json!([]);
+    let modal = Rc::new(Cell::new(false));
+    let (_runtime, mut tui) = layout::native(
+        layout::View::Rows(rows.clone(), modal.clone()),
+        Rc::new(Cell::new(true)),
+    );
+    draw(&mut tui, 40, 10);
+    let composer = tui.focus.clone().unwrap();
+    *rows.borrow_mut() = props();
+    rows.borrow_mut()["entry"] = json!("row-5");
+    refresh(&mut tui);
+    draw(&mut tui, 40, 10);
+    let area = Rect::new(0, 0, 40, 10);
+    let mut buffer = Buffer::empty(area);
+    let old = tui.paint(area, &mut buffer).unwrap();
+    tui.input(key(KeyCode::Tab)).unwrap();
+    tui.present(old);
+    assert_eq!(tui.focus.as_ref().unwrap().key, "rows");
+    assert!(text(&draw(&mut tui, 40, 10)).contains("pending 5"));
+    tui.input(key(KeyCode::Delete)).unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["observation"]["row"],
+        "row-5"
+    );
+    tui.input(key(KeyCode::Up)).unwrap();
+    draw(&mut tui, 40, 10);
+    modal.set(true);
+    refresh(&mut tui);
+    draw(&mut tui, 40, 10);
+    modal.set(false);
+    refresh(&mut tui);
+    draw(&mut tui, 40, 10);
+    tui.input(key(KeyCode::Delete)).unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["observation"]["row"],
+        "row-4"
+    );
+    tui.input(key(KeyCode::Esc)).unwrap();
+    assert!(tui.focus.as_ref().unwrap().same(&composer));
+    tui.input(key(KeyCode::BackTab)).unwrap();
+    draw(&mut tui, 40, 10);
+    tui.input(key(KeyCode::Delete)).unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["observation"]["row"],
+        "row-5"
+    );
+    close(tui);
+}
+
+#[test]
+fn native_rows_keyboard_entry_waits_for_current_props_to_be_presented() {
+    let rows = Rc::new(RefCell::new(props()));
+    let (_runtime, mut tui) = layout::native(
+        layout::View::Rows(rows.clone(), Rc::new(Cell::new(false))),
+        Rc::new(Cell::new(true)),
+    );
+    draw(&mut tui, 40, 10);
+    let composer = tui.focus.clone().unwrap();
+    rows.borrow_mut()["entry"] = json!("row-5");
+    refresh(&mut tui);
+    tui.input(key(KeyCode::Tab)).unwrap();
+    assert!(tui.focus.as_ref().unwrap().same(&composer));
+    draw(&mut tui, 40, 10);
+    tui.input(key(KeyCode::Tab)).unwrap();
+    assert!(text(&draw(&mut tui, 40, 10)).contains("pending 5"));
+    tui.input(key(KeyCode::Delete)).unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["observation"]["row"],
+        "row-5"
+    );
+    close(tui);
 }

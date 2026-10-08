@@ -1213,6 +1213,7 @@ function frame<N extends Node>(
     { send: 'send', stop: 'stop', changed: 'draft' },
   );
   const queueProps: RowsProps = {
+    entry: state.queue?.entries.at(-1)?.messageId ?? null,
     revision: state.queue?.revision ?? 0,
     rows: (state.queue?.entries ?? []).map((entry): RowsProps['rows'][number] => {
       const lane = state.queue!.entries.filter((row) => row.kind === entry.kind);

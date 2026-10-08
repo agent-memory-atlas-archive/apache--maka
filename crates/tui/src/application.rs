@@ -101,6 +101,11 @@ pub trait Widget: std::any::Any {
     fn returns_focus(&self) -> bool {
         false
     }
+    /// A physical keyboard traversal enters this target. Returning false keeps
+    /// the previous focus; restoration and ordinary paints do not call this.
+    fn enter_focus(&self, _: &mut dyn std::any::Any, _: &str) -> bool {
+        true
+    }
     fn take_focus_exit(&self, _: &mut dyn std::any::Any) -> bool {
         false
     }
@@ -499,7 +504,15 @@ impl Presenter {
                             (None, true) => n - 1,
                             (None, false) => 0,
                         };
-                        self.focus = Some(stops[next].clone());
+                        let target = stops[next];
+                        if !self.focus.as_ref().is_some_and(|old| old.same(target))
+                            && !self.application.is_retiring(&target.mount)
+                            && self.application.mount_visible(&target.mount)
+                            && self.target_admitted(target)
+                            && self.resources.enter_focus(target)?
+                        {
+                            self.focus = Some(target.clone());
+                        }
                     }
                     self.track_focus_return()?;
                     None

@@ -29,6 +29,9 @@ use std::collections::{BTreeMap, BTreeSet};
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RowsProps {
     pub revision: u64,
+    /// Select this row on keyboard entry. None retains the current selection,
+    /// or selects the first row when there is no current selection.
+    pub entry: Option<String>,
     #[schemars(length(max = 64))]
     pub rows: Vec<Row>,
     #[schemars(length(max = 32))]
@@ -92,6 +95,9 @@ impl RowsProps {
             {
                 return Err(crate::Error::Invalid("duplicate row action".into()));
             }
+        }
+        if self.entry.as_ref().is_some_and(|key| !rows.contains(key)) {
+            return Err(crate::Error::Invalid("unknown row entry".into()));
         }
         let mut chords = BTreeSet::new();
         // Unlike bubbling command scopes, a native row selector owns printable

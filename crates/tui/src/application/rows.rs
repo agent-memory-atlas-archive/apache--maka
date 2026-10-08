@@ -103,6 +103,26 @@ impl Widget for Rows {
     fn returns_focus(&self) -> bool {
         true
     }
+    fn enter_focus(&self, state: &mut dyn Any, _: &str) -> bool {
+        let owner = state.downcast_mut::<Owner>().unwrap();
+        if owner
+            .geometry
+            .as_ref()
+            .is_none_or(|geometry| geometry.props != self.props)
+        {
+            return false;
+        }
+        owner.selected = self
+            .props
+            .entry
+            .clone()
+            .or_else(|| owner.selected.clone())
+            .or_else(|| self.props.rows.first().map(|row| row.key.clone()));
+        owner.reveal = true;
+        owner.drag = None;
+        owner.hover = None;
+        owner.selected.is_some()
+    }
     fn take_focus_exit(&self, state: &mut dyn Any) -> bool {
         std::mem::take(&mut state.downcast_mut::<Owner>().unwrap().exit)
     }

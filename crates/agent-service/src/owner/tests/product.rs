@@ -1580,9 +1580,13 @@ process.stdout.write(output.outputFiles[0].text);
         );
         std::thread::yield_now();
     }
-    for message in extra_messages {
+    // Each original row exit restores Composer; fresh Tab enters at the last
+    // queued message, including after the previous selected message disappears.
+    for message in extra_messages.into_iter().rev() {
         await_screen(&mut presenter, message);
-        click(&mut presenter, message);
+        presenter
+            .input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
+            .unwrap();
         draw(&mut presenter);
         presenter
             .input(Event::Key(KeyEvent::new(

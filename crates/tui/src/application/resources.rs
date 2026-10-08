@@ -275,13 +275,29 @@ impl Resources {
         target: &paint::TargetIdentity,
         event: &Event,
     ) -> maka_ui::Result<Option<WidgetInput>> {
+        self.interact(target, |recipe, state| {
+            recipe.input(state, &target.key, event)
+        })
+    }
+    pub(super) fn enter_focus(&mut self, target: &paint::TargetIdentity) -> maka_ui::Result<bool> {
+        Ok(self
+            .interact(target, |recipe, state| {
+                Ok(recipe.enter_focus(state, &target.key))
+            })?
+            .unwrap_or(false))
+    }
+    fn interact<T>(
+        &mut self,
+        target: &paint::TargetIdentity,
+        action: impl FnOnce(&dyn Widget, &mut dyn Any) -> maka_ui::Result<T>,
+    ) -> maka_ui::Result<Option<T>> {
         let Some(owner) = self.owners.get_mut(&target.mount.id()).filter(|owner| {
             owner.live && owner.presented && Rc::ptr_eq(&owner.identity, &target.owner)
         }) else {
             return Ok(None);
         };
         match catch_unwind(AssertUnwindSafe(|| {
-            owner.recipe.input(owner.state.as_mut(), &target.key, event)
+            action(owner.recipe.as_ref(), owner.state.as_mut())
         })) {
             Ok(result) => result.map(Some),
             Err(_) => {

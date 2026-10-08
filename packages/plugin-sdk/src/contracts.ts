@@ -1059,6 +1059,11 @@ export const contracts = {
             format: 'uint64',
             minimum: 0,
           },
+          entry: {
+            description:
+              'Select this row on keyboard entry. None retains the current selection,\nor selects the first row when there is no current selection.',
+            type: ['string', 'null'],
+          },
           rows: {
             type: 'array',
             items: {
