@@ -111,6 +111,7 @@ const specifications = {
       composer: one(own.composerContract),
       palette: one(own.paletteContract),
       directories: one(own.directoryPickerContract),
+      details: one(own.sessionDetailsContract),
       navigation: one(own.navigationContract),
       timeline: one(own.timelineContract),
       imageViewer: one(own.imageViewerContract),
@@ -182,6 +183,20 @@ specifications['directory-picker'] = {
     reading: one(sdk.contracts.readingArea),
     input: one(sdk.contracts.textInput),
     reader: one(sdk.contracts.textReader),
+  },
+};
+specifications['session-details'] = {
+  contract: own.sessionDetailsContract,
+  export: 'SessionDetails',
+  module: 'session-details',
+  imports: {
+    agent: one(sdk.contracts.agent),
+    input: one(sdk.contracts.textInput),
+    editor: one(sdk.contracts.textarea),
+    reader: one(sdk.contracts.textReader),
+    reading: one(sdk.contracts.readingArea),
+    receipts: one(sdk.contracts.receiptReader),
+    history: one(sdk.contracts.callerHistory),
   },
 };
 specifications['model-default'] = {

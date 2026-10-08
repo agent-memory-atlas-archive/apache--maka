@@ -94,9 +94,6 @@ impl Package {
         let bytes = files
             .get(MANIFEST_FILE)
             .ok_or_else(|| Error::Invalid("package manifest is missing".into()))?;
-        if bytes.len() > 256 * 1024 {
-            return Err(Error::Invalid("manifest exceeds 256 KiB".into()));
-        }
         let manifest: Manifest = serde_json::from_slice(bytes)
             .map_err(|error| Error::Invalid(format!("manifest: {error}")))?;
         manifest.validate()?;
@@ -169,6 +166,31 @@ fn content_digest(files: &BTreeMap<String, Vec<u8>>) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn manifest_uses_the_package_file_budget() {
+        // Multi-presentation applications carry complete nominal contracts.
+        // Their manifest has the same bounded byte budget as every other file.
+        let manifest = json!({
+            "schemaVersion":2,"id":"large.application",
+            "application":{"entries":{"host":{
+                "implementation":{"kind":"native","implementation":"example.host"},
+                "configuration":{"description":"a".repeat(300 * 1024)}
+            }}}
+        });
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        assert!(bytes.len() > 256 * 1024);
+        let files = BTreeMap::from([(MANIFEST_FILE.into(), bytes)]);
+        let package = Package::new(files).unwrap();
+        assert_eq!(
+            Package::from_bundle(&package.to_bundle()).unwrap().digest(),
+            package.digest()
+        );
+        let too_large = BTreeMap::from([(MANIFEST_FILE.into(), vec![b' '; MAX_FILE_BYTES + 1])]);
+        assert!(
+            matches!(Package::new(too_large), Err(Error::Invalid(reason)) if reason == "package exceeds byte limits")
+        );
+    }
 
     #[test]
     fn application_packages_validate_variants_and_allow_pure_composition() {

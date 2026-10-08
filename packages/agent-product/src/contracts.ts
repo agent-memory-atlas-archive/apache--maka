@@ -102,6 +102,13 @@ export interface DirectoryPickerProps {
   open: boolean;
   busy: boolean;
 }
+export interface SessionDetailsProps {
+  theme: Theme;
+  locale: string;
+  open: boolean;
+  busy: boolean;
+  session: AgentSession | null;
+}
 export interface ModelDefaultProps {
   theme: Theme;
   locale: string;
@@ -261,6 +268,17 @@ export const directoryPickerContract = component(
     busy: { type: 'boolean' },
   }),
   { selected: withDefs({ $ref: '#/$defs/AgentDirectorySelection' }), closed: object({}) },
+);
+export const sessionDetailsContract = component(
+  'maka.agent.SessionDetails',
+  object({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    busy: { type: 'boolean' },
+    session: { anyOf: [{ $ref: '#/$defs/AgentSession' }, { type: 'null' }] },
+  }),
+  { changed: object({ sessionId: string }), closed: object({}) },
 );
 export const studioContract = component('maka.studio.Workbench', object({}));
 export const navigationContract = component(

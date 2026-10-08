@@ -22,6 +22,15 @@ use maka_fs_tools::workspace::MARKER_FILE;
 use maka_runtime_host::server::DirectoryRootSpec;
 
 async fn publish(fixture: &mut Fixture, roots: Vec<DirectoryRootSpec>) {
+    let policy = Arc::new(Grant(fixture.issuer.clone(), None));
+    publish_with_policy(fixture, roots, policy).await;
+}
+
+pub(super) async fn publish_with_policy(
+    fixture: &mut Fixture,
+    roots: Vec<DirectoryRootSpec>,
+    policy: Arc<dyn Policy>,
+) {
     let source = fixture.app.source().unwrap().clone();
     fixture.app.shutdown().await.unwrap();
     let mut configuration = fixture.owner.settings.clone();
@@ -40,7 +49,7 @@ async fn publish(fixture: &mut Fixture, roots: Vec<DirectoryRootSpec>) {
         source.deployment,
         native,
         fixture.issuer.clone(),
-        Arc::new(Grant(fixture.issuer.clone(), None)),
+        policy,
         Default::default(),
     )
     .await

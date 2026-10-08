@@ -6434,3 +6434,386 @@ for (const target of ['desktop', 'tui']) {
     );
   });
 }
+
+class DetailsClient extends FormClient {
+  constructor(component) {
+    super(component, {
+      theme: values.appearance[0],
+      locale: 'en',
+      open: true,
+      busy: false,
+      session,
+    });
+    this.texts = new Map();
+    this.observe('title', '');
+    this.observe('labels', '');
+  }
+  observe(name, text, status = 'applied', marked = null) {
+    this.texts.set(name, text);
+    const field = this.state.fields[name],
+      command = field.command;
+    const revision = (field.observation?.revision ?? 0) + 1;
+    return this.input({
+      kind: 'component',
+      child: 'details-' + name,
+      name: 'changed',
+      event: {
+        revision,
+        snapshot: {
+          text: { owner: 'details-native-' + name, revision, bytes: Buffer.byteLength(text) },
+          selection: { start: Buffer.byteLength(text), end: Buffer.byteLength(text) },
+          reversed: false,
+          marked,
+        },
+        receipt: command
+          ? {
+              owner: command.owner,
+              sequence: command.sequence,
+              revision,
+              outcome: status === 'applied' ? { status } : { status, reason: 'revision' },
+            }
+          : null,
+      },
+    });
+  }
+  commands() {
+    for (const name of ['title', 'labels']) {
+      const command = this.state.fields[name].command;
+      if (command) this.observe(name, command.edit.text);
+    }
+    return this;
+  }
+  capture() {
+    this.raw('save');
+    return [...this.actions.values()]
+      .filter((a) => a.binding === 'reader')
+      .map((action) => ({
+        action,
+        text: this.texts.get(action.resources.text.child.slice(8)),
+      }));
+  }
+  readAll() {
+    const captures = this.capture();
+    for (const { action, text } of captures)
+      this.complete(action, {
+        status: 'succeeded',
+        value: {
+          text,
+          metadata: {
+            owner: action.resources.text.input.owner,
+            revision: action.resources.text.input.revision,
+            bytes: action.input.end,
+          },
+        },
+      });
+    return captures;
+  }
+}
+const metadataRef = { ...reference, method: 'metadata' };
+const metadataReply = (value) => ({
+  status: 'operation',
+  reply: {
+    reference: metadataRef,
+    receipt: {
+      kind: 'recorded',
+      outcome: { kind: 'returned', value },
+      cleanup: { kind: 'confirmed' },
+    },
+  },
+});
+for (const target of ['desktop', 'tui']) {
+  const { component: details } = await import(
+    pathToFileURL(resolve(root, `dist/packages/session-details/${target}.js`))
+  );
+  const slots = (form) => modelSlots(form.output.frame.view);
+  const button = (form, key) => {
+    const find = (node) =>
+      node.key === key ? node : (node.children ?? []).map(find).find(Boolean);
+    return find(form.output.frame.view);
+  };
+  test(`${target} metadata waits for original initialization and recovers failed labels without replacing the slot`, () => {
+    const form = new DetailsClient(details);
+    assert.equal(button(form, 'save').disabled, true);
+    const owner = slots(form).find((n) => n.key === 'details-labels').key;
+    form.observe('title', session.title);
+    form.observe('labels', '', 'conflict');
+    assert.equal(button(form, 'retry-labels').disabled, false);
+    assert.equal(button(form, 'save').disabled, true);
+    form.raw('retry-labels');
+    form.commands();
+    assert.equal(slots(form).find((n) => n.key === owner).key, owner);
+    assert.equal(button(form, 'save').disabled, false);
+    form.observe('labels', '未完成', 'applied', { start: 0, end: 3 });
+    form.raw('save');
+    assert.equal(form.output.actions.length, 0);
+  });
+  test(`${target} metadata captures both original revisions and freezes CAS despite run props and later typing`, () => {
+    const form = new DetailsClient(details).commands();
+    form.observe('title', 'Thoughtful 🙂');
+    form.observe('labels', 'rust\r\n设计');
+    const captures = form.capture();
+    assert.equal(captures.length, 2);
+    const captured = structuredClone(form.state.current.captured);
+    form.update({ session: { ...session, revision: 9 } });
+    form.observe('title', 'More typing');
+    for (const { action, text } of captures)
+      form.complete(action, {
+        status: 'succeeded',
+        value: { text, metadata: captured[action.resources.text.child.slice(8)].snapshot.text },
+      });
+    const mutation = form.find('metadata');
+    assert.deepEqual(mutation.input, {
+      sessionId: session.id,
+      expectedRevision: 1,
+      title: 'Thoughtful 🙂',
+      labels: ['rust', '设计'],
+    });
+    const observation = structuredClone(form.state.fields.title.observation);
+    form.complete(
+      mutation,
+      metadataReply({
+        kind: 'committed',
+        session: { ...session, title: 'Thoughtful 🙂', labels: ['rust', '设计'], revision: 10 },
+      }),
+    );
+    assert.equal(form.state.target.revision, 10);
+    assert.deepEqual(form.state.fields.title.observation, observation);
+    assert.equal(form.state.fields.title.command, null);
+    assert.deepEqual(form.output.events, [{ name: 'changed', value: { sessionId: session.id } }]);
+  });
+  test(`${target} failed capture and closed or switched target never reach metadata`, () => {
+    for (const change of ['failure', 'close', 'switch']) {
+      const form = new DetailsClient(details).commands();
+      const captures = form.capture();
+      if (change === 'failure')
+        form.complete(captures[0].action, {
+          status: 'failed',
+          reason: 'snapshot_revision_changed',
+        });
+      else
+        form.update(
+          change === 'close' ? { open: false } : { session: { ...session, id: 'other' } },
+        );
+      for (const { action, text } of captures)
+        if (form.actions.has(action.key))
+          form.complete(action, {
+            status: 'succeeded',
+            value: {
+              text,
+              metadata: {
+                owner: action.resources.text.input.owner,
+                revision: action.resources.text.input.revision,
+                bytes: action.input.end,
+              },
+            },
+          });
+      assert.equal(
+        [...form.actions.values()].some((a) => a.method === 'metadata'),
+        false,
+      );
+      assert.equal(form.state.current, null);
+    }
+  });
+  test(`${target} conflicts require explicit native review and keep fields through basis adoption`, () => {
+    const form = new DetailsClient(details).commands();
+    form.observe('title', 'My draft');
+    form.readAll();
+    form.complete(
+      form.find('metadata'),
+      metadataReply({ kind: 'revision_conflict', expected: 1, actual: 3 }),
+    );
+    assert.equal(form.state.conflict, true);
+    form.raw('save');
+    assert.equal(form.output.actions.length, 0);
+    form.update({ session: { ...session, revision: 8 } });
+    assert.equal(form.state.target.revision, 1);
+    form.raw('review');
+    form.query('observe', {
+      session: { ...session, revision: 8, title: 'Canonical' },
+      through: 0,
+      parts: [],
+      run: null,
+    });
+    const fields = structuredClone(form.state.fields);
+    form.raw('use-version');
+    assert.deepEqual(form.state.fields, fields);
+    assert.equal(form.state.target.revision, 8);
+    assert.equal(form.output.actions.length, 0);
+    form.readAll();
+    assert.equal(form.find('metadata').input.title, 'My draft');
+  });
+  test(`${target} target changes only discard drafts through confirmed reload`, () => {
+    const form = new DetailsClient(details).commands();
+    form.observe('title', 'Old draft');
+    form.update({ session: { ...session, id: 'new', revision: 2, title: 'New target' } });
+    form.raw('review');
+    assert.equal(form.find('observe').input.sessionId, 'new');
+    form.query('observe', { session: form.props.session, through: 0, parts: [], run: null });
+    form.raw('use-version');
+    assert.equal(form.state.target.id, session.id);
+    assert.equal(form.state.fields.title.command, null);
+    form.raw('reload');
+    assert.equal(form.state.fields.title.command, null);
+    form.raw('use-version');
+    assert.equal(form.state.target.id, 'new');
+    assert.equal(form.state.fields.title.command.edit.text, 'New target');
+    assert.equal(button(form, 'save').disabled, true);
+    form.commands();
+    assert.equal(button(form, 'save').disabled, false);
+  });
+  test(`${target} native validation rejection allows correction and never holds an unknown operation`, () => {
+    const form = new DetailsClient(details).commands();
+    form.observe('title', ' ');
+    form.readAll();
+    assert.equal(form.find('metadata').input.title, ' ');
+    form.complete(
+      form.find('metadata'),
+      metadataReply({ kind: 'rejected', reason: 'title_invalid' }),
+    );
+    assert.equal(form.state.current, null);
+    assert.equal(form.state.notice, 'detailsInvalid');
+    form.observe('title', 'Fixed');
+    form.readAll();
+    assert.equal(form.find('metadata').input.title, 'Fixed');
+  });
+  test(`${target} unknown metadata reads exact original receipt and bounded history cannot adopt a basis`, () => {
+    const form = new DetailsClient(details).commands();
+    form.readAll();
+    form.complete(form.find('metadata'), {
+      status: 'operation',
+      reply: {
+        reference: metadataRef,
+        receipt: {
+          kind: 'recorded',
+          outcome: { kind: 'unknown', diagnostic: 'lost' },
+          cleanup: { kind: 'confirmed' },
+        },
+      },
+    });
+    form.update({ session: { ...session, revision: 20 } });
+    form.raw('save');
+    assert.equal(form.output.actions.length, 0);
+    form.raw('check');
+    const check = form.find('read');
+    assert.deepEqual(check.input, metadataRef);
+    form.complete(check, {
+      status: 'succeeded',
+      value: {
+        ...metadataReply({ kind: 'committed', session: { ...session, revision: 20 } }).reply,
+        reference: { ...metadataRef, operation: uuid(900) },
+      },
+    });
+    assert.ok(form.state.current);
+    assert.equal(form.state.target.revision, 1);
+    form.raw('history');
+    assert.deepEqual(form.find('page').input, { after: 0, limit: 4 });
+    form.query('page', [{ cursor: 5, reference: { ...metadataRef, operation: uuid(5) } }]);
+    form.raw('earlier-5');
+    const earlier = form.find('read');
+    form.complete(earlier, {
+      status: 'succeeded',
+      value: {
+        ...metadataReply({ kind: 'committed', session: { ...session, revision: 50 } }).reply,
+        reference: earlier.input,
+      },
+    });
+    assert.equal(form.state.target.revision, 1);
+    assert.ok(form.state.current);
+    form.raw('history-back');
+    form.raw('check');
+    form.query(
+      'read',
+      metadataReply({ kind: 'committed', session: { ...session, revision: 21 } }).reply,
+    );
+    assert.equal(form.state.current, null);
+    assert.equal(form.state.target.revision, 21);
+    assert.equal(form.state.fields.title.command, null);
+  });
+}
+
+for (const target of ['desktop', 'tui']) {
+  const rootModule = await import(
+    pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+  );
+  rootModule.activate({ locale: 'en' });
+  const changed = (client) =>
+    client.input({
+      kind: 'component',
+      child: 'session-details',
+      name: 'changed',
+      event: { sessionId: session.id },
+    });
+  const nativeFacts = (client) =>
+    structuredClone({
+      epoch: client.state.epoch,
+      selected: client.state.selected,
+      run: client.state.run,
+      window: client.state.window,
+      command: client.state.command,
+      watch: client.output.subscriptions,
+    });
+  test(`${target} Root metadata dialog retains running conversation and semantically blocks switching`, () => {
+    const client = new Client(rootModule.component).start({
+      run: { invocationId: 'run', state: 'running' },
+    });
+    client.component('draft', draft);
+    const original = nativeFacts(client);
+    client.raw('details-open');
+    assert.equal(client.state.dialog, 'details');
+    const mounted = modelSlots(client.output.frame.view.content);
+    assert.equal(mounted.find((n) => n.key === 'session-details').props.session.id, session.id);
+    assert.equal(mounted.find((n) => n.key === 'session-details').props.open, true);
+    assert.deepEqual(nativeFacts(client), original);
+    client.component('select', { sessionId: session.id });
+    client.raw('create');
+    client.raw('settings');
+    assert.equal(client.output.actions.length, 0);
+    assert.equal(client.state.dialog, 'details');
+    assert.deepEqual(nativeFacts(client), original);
+    client.input({ kind: 'component', child: 'session-details', name: 'closed', event: {} });
+    assert.equal(client.state.dialog, null);
+    assert.deepEqual(nativeFacts(client), original);
+  });
+  test(`${target} Root refreshes native metadata without replacing epoch and rejects older metadata replies`, () => {
+    const client = new Client(rootModule.component).start();
+    const original = nativeFacts(client);
+    changed(client);
+    const first = client.find('observe');
+    changed(client);
+    const second = [...client.actions.values()].filter((a) => a.method === 'observe').at(-1);
+    assert.notEqual(first.key, second.key);
+    client.complete(second, {
+      status: 'succeeded',
+      value: {
+        session: { ...session, title: 'Canonical newer', revision: 5 },
+        through: 0,
+        parts: [],
+        run: null,
+      },
+    });
+    client.complete(first, {
+      status: 'succeeded',
+      value: {
+        session: { ...session, title: 'Canonical older', revision: 2 },
+        through: 0,
+        parts: [],
+        run: null,
+      },
+    });
+    assert.equal(client.state.selected.title, 'Canonical newer');
+    assert.equal(client.state.selected.revision, 5);
+    assert.equal(client.state.epoch, original.epoch);
+    assert.deepEqual(client.state.command, original.command);
+    assert.deepEqual(client.state.window, original.window);
+    assert.deepEqual(client.output.subscriptions, original.watch);
+    const before = structuredClone(client.state.selected);
+    client.input({
+      kind: 'component',
+      child: 'session-details',
+      name: 'changed',
+      event: { sessionId: 'other' },
+    });
+    assert.ok(client.output.actions.every((a) => a.method === 'list'));
+    assert.deepEqual(client.state.selected, before);
+  });
+}

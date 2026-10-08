@@ -156,6 +156,16 @@ fn await_screen(presenter: &mut maka_tui::application::Presenter, expected: &str
 #[test]
 #[ignore = "opt-in product authoring build and actual HTTP provider"]
 fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owners() {
+    packaged_product(false);
+}
+
+#[test]
+#[ignore = "opt-in product authoring build and actual HTTP provider"]
+fn packaged_metadata_recovers_a_real_native_initialization_conflict() {
+    packaged_product(true);
+}
+
+fn packaged_product(fail_labels_initialization: bool) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -185,7 +195,22 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         response(&mut socket).await;
     });
     let peer = Arc::new(maka_application_bridge::transport::PeerPolicy::default());
-    let fixture = runtime.block_on(Fixture::with_peer(&base, 1, None, Some(peer.clone())));
+    let mut fixture = runtime.block_on(Fixture::with_peer(&base, 1, None, Some(peer.clone())));
+    // A short temporary prefix lets the original compact path actually retain
+    // enough wide cells to require two terminal rows (macOS TMPDIR is longer).
+    let wide_root = fail_labels_initialization.then(|| tempfile::tempdir_in("/tmp").unwrap());
+    if let Some(root) = &wide_root {
+        let wide = root.path().join("界".repeat(65));
+        std::fs::create_dir(&wide).unwrap();
+        let mut roots = fixture.owner.settings.workspace_roots.clone();
+        roots[0].path = wide.clone();
+        runtime.block_on(super::workspaces::publish_with_policy(
+            &mut fixture,
+            roots,
+            peer.clone(),
+        ));
+        fixture.workspace = wide.canonicalize().unwrap();
+    }
     runtime.block_on(super::selection::edit(&fixture, |changes| {
         changes.enabled_model_ids =
             Some((0..20).map(|at| format!("fixture-model-{at:02}")).collect());
@@ -223,6 +248,7 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         "workspace",
         "command-palette",
         "directory-picker",
+        "session-details",
         "deployment",
         "deployment-manager",
         "deployment-gateway",
@@ -248,7 +274,34 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     ];
     let packages = names
         .iter()
-        .map(|name| Package::read_from(&directory.join(name)).unwrap())
+        .map(|name| {
+            let package = Package::read_from(&directory.join(name)).unwrap();
+            if *name != "session-details" || !fail_labels_initialization {
+                return package;
+            }
+            // This fixture changes one ordinary guest command's CAS basis.
+            // The original native Textarea must produce the real conflict;
+            // no fabricated observation or receipt enters the presenter.
+            let mut files = package.files().clone();
+            files.get_mut("tui.js").unwrap().extend_from_slice(
+                br#"
+let failedLabels = false;
+for (const method of ['event', 'update']) {
+    const original = component2[method];
+    component2[method] = (...args) => {
+        const out = original(...args);
+        const command = out.frame.state.fields.labels.command;
+        if (command && !failedLabels) {
+            failedLabels = true;
+            command.basedOn += 1000;
+        }
+        return out;
+    };
+}
+"#,
+            );
+            Package::new(files).unwrap()
+        })
         .collect::<Vec<_>>();
     let refs = packages
         .iter()
@@ -565,6 +618,159 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
         .input(Event::Paste("Hello product".into()))
         .unwrap();
     await_screen(&mut presenter, "Hello product");
+    // Both fields retain their original native editor owners under the Dialog.
+    // A real rejected initializer must leave its Retry physically reachable.
+    click(&mut presenter, "[ Details ]");
+    if fail_labels_initialization {
+        click(&mut presenter, "[ Retry loading this field ]");
+    }
+    wait_for_target(&mut presenter, "[ Save details ]", 0);
+    if fail_labels_initialization {
+        assert!(
+            screen(&draw(&mut presenter))
+                .lines()
+                .filter(|line| line.contains('界'))
+                .count()
+                >= 2
+        );
+    }
+    let before = runtime
+        .block_on(
+            fixture
+                .store
+                .list_sessions::<SessionConfiguration>(None, None, 32),
+        )
+        .unwrap()
+        .sessions
+        .pop()
+        .unwrap();
+    let session_id = before.id.clone();
+    let original_workspace = before.configuration.workspace.clone();
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    presenter
+        .input(Event::Paste("Metadata conversation".into()))
+        .unwrap();
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
+        .unwrap();
+    presenter
+        .input(Event::Paste("orchid\nrust".into()))
+        .unwrap();
+    click(&mut presenter, "[ Save details ]");
+    await_screen(&mut presenter, "Conversation details saved.");
+    let observed = runtime
+        .block_on(fixture.owner.session(&session_id))
+        .unwrap();
+    assert_eq!(observed.configuration.title, "Metadata conversation");
+    assert_eq!(observed.configuration.labels, ["orchid", "rust"]);
+    assert_eq!(observed.configuration.workspace, original_workspace);
+    assert_eq!(observed.revision, before.revision + 1);
+    // Resolve and click the original foreground field from one flushed frame;
+    // a concurrent canonical header refresh can add another title above it.
+    let buffer = draw(&mut presenter);
+    let (column, row) = screen(&buffer)
+        .lines()
+        .enumerate()
+        .find_map(|(row, line)| {
+            (row > 3 && row < 21)
+                .then(|| {
+                    line.find("Metadata conversation")
+                        .map(|column| (column as u16, row as u16))
+                })
+                .flatten()
+        })
+        .expect("retained foreground title must be painted");
+    presenter
+        .input(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    let restored_title = if fail_labels_initialization {
+        "Old metadata target"
+    } else {
+        "New conversation"
+    };
+    presenter
+        .input(Event::Paste(restored_title.into()))
+        .unwrap();
+    click(&mut presenter, "[ Save details ]");
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        draw(&mut presenter);
+        let observed = runtime
+            .block_on(fixture.owner.session(&session_id))
+            .unwrap();
+        if observed.configuration.title == restored_title {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "second original metadata operation did not settle: {} / {:?}\n{}",
+            observed.configuration.title,
+            observed.configuration.labels,
+            screen(&draw(&mut presenter))
+        );
+        std::thread::yield_now();
+    }
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+        .unwrap();
+    await_screen(&mut presenter, "Hello product");
+    if fail_labels_initialization {
+        // Saved notice, retained old fields, an actual different selected
+        // Session and a two-row CJK workspace path used to hide all actions.
+        click(&mut presenter, "[ Show sidebar ]");
+        click(&mut presenter, "[ New conversation ]");
+        wait_for_target(&mut presenter, "[ New conversation ]", 1);
+        click(&mut presenter, "[ Hide sidebar ]");
+        click(&mut presenter, "[ Details ]");
+        click(&mut presenter, "[ Review current details ]");
+        await_screen(&mut presenter, "Review these saved details.");
+        click(&mut presenter, "[ Discard draft and reload ]");
+        click(&mut presenter, "[ Discard draft and reload ]");
+        wait_for_target(&mut presenter, "[ Save details ]", 0);
+        presenter
+            .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+            .unwrap();
+        presenter
+            .surface_closed(&presenter.surface(), Ok(()))
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !presenter.can_shutdown() {
+            presenter.pump().unwrap();
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        presenter.shutdown().unwrap();
+        drop(presenter);
+        runtime.block_on(async {
+            let (physical, host_wire) = tokio::join!(connection.close(), wire_server.close());
+            physical.unwrap();
+            host_wire.unwrap();
+            manager_connection.close().await.unwrap();
+            manager_server.close().await.unwrap();
+        });
+        drop(registrations);
+        runtime.block_on(manager_app.shutdown()).unwrap();
+        runtime.block_on(fixture.app.shutdown()).unwrap();
+        runtime.block_on(fixture.config.shutdown()).unwrap();
+        runtime.block_on(caller.shutdown()).unwrap();
+        return;
+    }
     // The ordinary Root Dialog retains the original composer while the original
     // single-line query consumes foreground physical input and returns focus.
     presenter

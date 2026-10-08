@@ -113,7 +113,7 @@ export interface State {
   settingsOpen: boolean;
   deploymentOpen: boolean;
   navigationOpen: boolean;
-  dialog: 'palette' | 'directories' | null;
+  dialog: 'palette' | 'directories' | 'details' | null;
   window: { page: Extract<AgentHistoryPage, { kind: 'ready' }>; latest: boolean } | null;
   navigation: number;
   image: { sessionId: string; through: number; sequence: number } | null;
@@ -410,6 +410,7 @@ function executionPending(state: State) {
 
 type RootCommand =
   | 'create'
+  | 'details-open'
   | 'create-workspace'
   | 'navigation-toggle'
   | 'settings'
@@ -422,7 +423,7 @@ function conversationRoute(state: State) {
 }
 function rootCommands(state: State, locale: string): (PaletteCommand & { kind: RootCommand })[] {
   const text = copy(locale);
-  const route = conversationRoute(state) && state.dialog !== 'directories';
+  const route = conversationRoute(state) && (state.dialog === null || state.dialog === 'palette');
   const commands: (PaletteCommand & { kind: RootCommand })[] = [
     {
       kind: 'create',
@@ -437,6 +438,19 @@ function rootCommands(state: State, locale: string): (PaletteCommand & { kind: R
       label: text.newWorkspace,
       hint: '',
       disabled: !route || mutationPending(state) || catalogPending(state),
+    },
+    {
+      kind: 'details-open',
+      id: 'details-open',
+      label: text.detailsTitle,
+      hint: '',
+      disabled:
+        !route ||
+        !state.selected ||
+        state.loading ||
+        executionPending(state) ||
+        mutationPending(state) ||
+        catalogPending(state),
     },
     {
       kind: 'navigation-toggle',
@@ -485,6 +499,7 @@ function rootCommand(state: State, actions: Action[], locale: string, kind: Root
     return false;
   if (kind === 'create') createSession(state, actions, locale);
   else if (kind === 'create-workspace') state.dialog = 'directories';
+  else if (kind === 'details-open') state.dialog = 'details';
   else if (kind === 'navigation-toggle') state.navigationOpen = !state.navigationOpen;
   else if (kind === 'settings') {
     state.settingsOpen = true;
@@ -624,7 +639,8 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         state.notice = 'unavailable';
         break;
       }
-      state.selected = observation.session;
+      if (observation.session.revision >= state.selected!.revision)
+        state.selected = observation.session;
       if (observation.through >= state.runThrough) {
         state.run = observation.run ?? null;
         state.runThrough = observation.through;
@@ -1117,6 +1133,13 @@ function frame(
                       style: { width: pixels(0), grow: 1, minWidth: 0 },
                     }),
                     ui.button('palette-open', text.paletteTitle),
+                    ui.button(
+                      'details-open',
+                      text.detailsOpen,
+                      !rootCommands(state, locale).some(
+                        (command) => command.kind === 'details-open' && !command.disabled,
+                      ),
+                    ),
                     ui.button('settings', text.settings),
                     ui.button('deployment-open', text.deploymentTitle),
                   ],
@@ -1130,11 +1153,18 @@ function frame(
                   'toolbar',
                   [
                     ui.button('palette-open', text.paletteTitle),
+                    ui.button(
+                      'details-open',
+                      text.detailsOpen,
+                      !rootCommands(state, locale).some(
+                        (command) => command.kind === 'details-open' && !command.disabled,
+                      ),
+                    ),
                     ui.button('settings', text.settings),
                     ui.button('deployment-open', text.deploymentTitle),
                     ui.button('navigation-toggle', text.showSidebar),
                   ],
-                  { row: true, gap: 1 },
+                  { row: true, gap: 1, terminal: { wrap: true } },
                 ),
               ]),
           ...(status ? [ui.text('status', status, 13, theme.muted)] : []),
@@ -1296,11 +1326,27 @@ function frame(
     state,
     ui.dialog(
       'workspace-dialog',
-      state.dialog === 'directories' ? text.directoryTitle : text.paletteTitle,
+      state.dialog === 'directories'
+        ? text.directoryTitle
+        : state.dialog === 'details'
+          ? text.detailsTitle
+          : text.paletteTitle,
       background,
       ui.box(
         'dialog-content',
         [
+          slot(
+            'session-details',
+            'details',
+            {
+              theme,
+              locale,
+              open: state.dialog === 'details',
+              session: state.selected,
+              busy: mutationPending(state),
+            },
+            { changed: 'changed', closed: 'closed' },
+          ),
           slot(
             'directory-picker',
             'directories',
@@ -1432,6 +1478,15 @@ export function workspace(target: Target, locale: string): Component<State, Reco
           }
         }
       } else if (input.kind === 'component') {
+        if (input.child === 'session-details') {
+          if (input.name === 'closed' && state.dialog === 'details') state.dialog = null;
+          else if (input.name === 'changed') {
+            catalog(state, actions);
+            if (state.selected?.id === (input.event as { sessionId: string }).sessionId)
+              observe(state, actions);
+          }
+          return frame(target, locale, state, values, actions);
+        }
         if (input.child === 'directory-picker') {
           if (state.dialog === 'directories' && conversationRoute(state)) {
             if (input.name === 'closed') state.dialog = null;
@@ -1544,7 +1599,13 @@ export function workspace(target: Target, locale: string): Component<State, Reco
           state.model = input.event as SettingsModelChoice;
           state.modelRefreshing = false;
         } else if (input.name === 'create') rootCommand(state, actions, locale, 'create');
-        else if (input.name === 'select' && !mutationPending(state) && !catalogPending(state)) {
+        else if (
+          input.child === 'navigation' &&
+          input.name === 'select' &&
+          state.dialog === null &&
+          !mutationPending(state) &&
+          !catalogPending(state)
+        ) {
           const sessionId = (input.event as { sessionId: string }).sessionId;
           const session = state.catalog?.sessions.find((item) => item.id === sessionId);
           if (session) select(state, actions, session);
@@ -1713,7 +1774,8 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         if (input.key === 'palette-open' && conversationRoute(state) && state.dialog === null)
           state.dialog = 'palette';
         else if (input.key === 'workspace-dialog') state.dialog = null;
-        else if (input.key === 'navigation-back') state.navigationOpen = false;
+        else if (input.key === 'navigation-back' && state.dialog === null)
+          state.navigationOpen = false;
         else {
           const command = rootCommands(state, locale).find((command) => command.kind === input.key);
           if (command) rootCommand(state, actions, locale, command.kind);
