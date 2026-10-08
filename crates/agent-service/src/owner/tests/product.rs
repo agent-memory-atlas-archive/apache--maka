@@ -221,6 +221,7 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     let directory = repository.join("packages/agent-product/dist/packages");
     let names = [
         "workspace",
+        "command-palette",
         "deployment",
         "deployment-manager",
         "deployment-gateway",
@@ -520,6 +521,36 @@ fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owner
     presenter
         .input(Event::Paste("Hello product".into()))
         .unwrap();
+    await_screen(&mut presenter, "Hello product");
+    // The ordinary Root Dialog retains the original composer while the original
+    // single-line query consumes foreground physical input and returns focus.
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('k'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    await_screen(&mut presenter, "Search commands or conversations");
+    presenter.input(Event::Paste("Hello query".into())).unwrap();
+    await_screen(&mut presenter, "Hello query");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('k'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    await_screen(&mut presenter, "Hello product");
+    click(&mut presenter, "[ Commands ]");
+    await_screen(&mut presenter, "Hello query");
+    presenter
+        .input(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+    await_screen(&mut presenter, "Hello product");
     click(&mut presenter, "[ Plugins ]");
     await_screen(&mut presenter, "[ Refresh components ]");
     // The first requested component is the required Workspace. A recorded

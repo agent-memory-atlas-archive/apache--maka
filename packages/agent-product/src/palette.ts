@@ -45,7 +45,6 @@ interface State {
   revision: number;
   serial: number;
   open: boolean;
-  commands: PaletteCommand[];
   observation: EditorObservation | null;
   basis: EditorTextRef | null;
   query: string;
@@ -77,13 +76,13 @@ function matches(query: string, value: string) {
     .split(/\s+/u)
     .every((term) => lower.includes(term));
 }
-function rows(state: State) {
+function rows(state: State, props: PaletteProps) {
   return [
     ...(state.moreWindow
       ? []
-      : state.commands.flatMap((command, at) =>
+      : props.commands.flatMap((command) =>
           matches(state.query, command.label + ' ' + command.id + ' ' + command.hint)
-            ? [{ key: `command-${at}`, choice: { kind: 'command', command } as Choice }]
+            ? [{ key: `command-${command.id}`, choice: { kind: 'command', command } as Choice }]
             : [],
         )),
     ...state.matches.map((session, at) => ({
@@ -98,19 +97,20 @@ function enabled(state: State, props: PaletteProps, choice: Choice) {
     !dirty(state) &&
     !state.queryError &&
     state.pending?.kind !== 'text' &&
-    (choice.kind === 'session' ||
-      props.commands.some((command) => command.id === choice.command.id && !command.disabled))
+    (choice.kind === 'session'
+      ? !props.selectionDisabled
+      : props.commands.some((command) => command.id === choice.command.id && !command.disabled))
   );
 }
-function reveal(state: State) {
-  const row = rows(state)[state.active];
+function reveal(state: State, props: PaletteProps) {
+  const row = rows(state, props)[state.active];
   if (row)
     state.reveal = {
       sequence: (state.reveal?.sequence ?? 0) + 1,
       target: { kind: 'reveal_child', key: row.key },
     };
 }
-function reset(state: State) {
+function reset(state: State, props: PaletteProps) {
   state.source = null;
   state.scanOffset = 0;
   state.matches = [];
@@ -118,7 +118,7 @@ function reset(state: State) {
   state.batch++;
   state.moreWindow = false;
   state.active = state.offset = 0;
-  reveal(state);
+  reveal(state, props);
 }
 function capture(state: State, choice: Choice | null = null): Action[] {
   const basis = state.observation?.snapshot.text;
@@ -159,12 +159,12 @@ function resume(state: State, props: PaletteProps): Action[] {
   if (dirty(state)) return capture(state);
   if (!state.query || state.failed || state.matches.length === 32) return [];
   if (!state.source) return page(state, { kind: 'start' });
-  const active = rows(state)[state.active]?.key;
+  const active = rows(state, props)[state.active]?.key;
   while (state.scanOffset < state.source.sessions.length && state.matches.length < 32) {
     const session = state.source.sessions[state.scanOffset++];
     if (matches(state.query, session.id + ' ' + session.title)) state.matches.push(session);
   }
-  if (rows(state)[state.active]?.key !== active) reveal(state);
+  if (rows(state, props)[state.active]?.key !== active) reveal(state, props);
   if (state.matches.length < 32 && state.source.after)
     return page(state, {
       kind: 'after',
@@ -187,7 +187,7 @@ function frame(
 ) {
   const ui = paint(target, props.theme),
     text = copy(props.locale);
-  const all = rows(state);
+  const all = rows(state, props);
   const buttons = all.slice(state.offset, state.offset + 32).map(({ key, choice }, index) => {
     const active = index + state.offset === state.active;
     const label =
@@ -304,6 +304,9 @@ function frame(
       shortcuts: [
         { key: 'down', modifiers: [], input: 'down', enabled: available },
         { key: 'up', modifiers: [], input: 'up', enabled: available },
+        { key: 'home', modifiers: [], input: 'first', enabled: available },
+        { key: 'end', modifiers: [], input: 'last', enabled: available },
+        { key: 'k', modifiers: ['primary'], input: 'close', enabled: true },
         { key: 'pageup', modifiers: [], input: 'page-up', enabled: available },
         { key: 'pagedown', modifiers: [], input: 'page-down', enabled: available },
         { key: 'escape', modifiers: [], input: 'close', enabled: true },
@@ -324,7 +327,6 @@ export function palette(target: Target): Component<State, PaletteProps> {
         revision: 0,
         serial: 0,
         open: props.open,
-        commands: props.commands.map((command) => ({ ...command })),
         observation: null,
         basis: null,
         query: '',
@@ -340,7 +342,7 @@ export function palette(target: Target): Component<State, PaletteProps> {
         offset: 0,
         reveal: null,
       };
-      reveal(state);
+      reveal(state, props);
       return frame(target, state, props);
     },
     update(previous, props) {
@@ -350,10 +352,18 @@ export function palette(target: Target): Component<State, PaletteProps> {
         state.open = false;
       } else if (!state.open) {
         state.open = true;
-        state.commands = props.commands.map((command) => ({ ...command }));
         state.active = state.offset = 0;
-        reveal(state);
+        reveal(state, props);
       }
+      state.active = Math.min(state.active, Math.max(0, rows(state, props).length - 1));
+      state.offset = Math.floor(state.active / 32) * 32;
+      const row = rows(state, props)[state.active];
+      if (
+        row &&
+        state.reveal?.target.kind === 'reveal_child' &&
+        state.reveal.target.key !== row.key
+      )
+        reveal(state, props);
       return frame(target, state, props, resume(state, props));
     },
     event(state, input, props) {
@@ -387,7 +397,7 @@ export function palette(target: Target): Component<State, PaletteProps> {
               state.query = query;
               state.basis = request.basis;
               state.queryError = null;
-              if (changed) reset(state);
+              if (changed) reset(state, props);
               actions.push(...resume(state, props));
             }
           }
@@ -412,11 +422,11 @@ export function palette(target: Target): Component<State, PaletteProps> {
             const changed = state.query !== '';
             state.query = '';
             state.basis = state.observation.snapshot.text;
-            if (changed) reset(state);
+            if (changed) reset(state, props);
           }
           actions.push(...resume(state, props));
         } else if (input.name === 'submitted') {
-          const row = rows(state)[state.active];
+          const row = rows(state, props)[state.active];
           if (row && enabled(state, props, row.choice)) actions.push(...capture(state, row.choice));
         }
       } else if (input.kind === 'raw') {
@@ -424,11 +434,17 @@ export function palette(target: Target): Component<State, PaletteProps> {
           close(state);
           events.push({ name: 'closed', value: {} });
         } else if (interactive(state, props)) {
-          const all = rows(state);
+          const all = rows(state, props);
           const row = all.find((row) => row.key === input.key);
           if (row && enabled(state, props, row.choice)) actions.push(...capture(state, row.choice));
           else if (!dirty(state) && !state.queryError && state.pending?.kind !== 'text') {
-            if (['up', 'down', 'page-up', 'page-down', 'previous', 'next'].includes(input.key)) {
+            if (input.key === 'first' || input.key === 'last') {
+              state.active = input.key === 'first' ? 0 : Math.max(0, all.length - 1);
+              state.offset = Math.floor(state.active / 32) * 32;
+              reveal(state, props);
+            } else if (
+              ['up', 'down', 'page-up', 'page-down', 'previous', 'next'].includes(input.key)
+            ) {
               const delta =
                 input.key === 'up'
                   ? -1
@@ -439,7 +455,7 @@ export function palette(target: Target): Component<State, PaletteProps> {
                       : 32;
               state.active = Math.max(0, Math.min(all.length - 1, state.active + delta));
               state.offset = Math.floor(state.active / 32) * 32;
-              reveal(state);
+              reveal(state, props);
             } else if (input.key === 'more' && !state.pending && hasMore(state)) {
               state.matches = [];
               state.batch++;
@@ -450,7 +466,7 @@ export function palette(target: Target): Component<State, PaletteProps> {
           }
           if (input.key === 'refresh' && !state.pending) {
             if (state.queryError === 'unavailable') state.queryError = null;
-            reset(state);
+            reset(state, props);
             actions.push(...resume(state, props));
           }
         }

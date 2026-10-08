@@ -65,6 +65,32 @@ export function paint(target: Target, theme: Theme) {
           }
         : { color: rgba(disabled ? theme.muted : theme.accent) }),
     }),
+    dialog: (key: string, label: string, background: Node, content: Node, open: boolean): Node => ({
+      kind: 'dialog',
+      key,
+      label,
+      background,
+      content,
+      open,
+      ...(desktop
+        ? {
+            style: {
+              width: pixels(560),
+              padding: { top: 20, right: 20, bottom: 20, left: 20 },
+              background: theme.surface,
+              radius: 16,
+              border: theme.border,
+              borderWidth: 1,
+            },
+          }
+        : {
+            width: 72,
+            height: 20,
+            padding: 1,
+            background_color: rgba(theme.surface),
+            border_color: rgba(theme.border),
+          }),
+    }),
     box: (
       key: string,
       children: Node[],

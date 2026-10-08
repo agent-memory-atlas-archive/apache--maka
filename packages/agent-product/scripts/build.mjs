@@ -109,6 +109,7 @@ const specifications = {
       history: one(sdk.contracts.callerHistory),
       reader: one(sdk.contracts.textReader),
       composer: one(own.composerContract),
+      palette: one(own.paletteContract),
       navigation: one(own.navigationContract),
       timeline: one(own.timelineContract),
       imageViewer: one(own.imageViewerContract),

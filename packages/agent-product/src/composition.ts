@@ -28,6 +28,7 @@ import {
 } from '../../plugin-sdk/src/index.js';
 export const packageNames = [
   'workspace',
+  'command-palette',
   'studio',
   'studio-gateway',
   'deployment',
@@ -296,6 +297,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         reader: [local('reader', 'Reader')],
         history: [local('history', 'History')],
         composer: [local('composer', 'Composer')],
+        palette: [local('command-palette', 'CommandPalette')],
         models: [local('models', 'Models')],
         connections: [local('connections', 'Connections')],
         deployment: [local('deployment', 'Deployment')],
@@ -304,6 +306,16 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         imageViewer: [local('image-viewer', 'ImageViewer')],
         appearance: [local('appearance', 'Appearance')],
         surface: [local('surface', 'Surface')],
+      },
+    ),
+    'command-palette': node(
+      'command-palette',
+      {},
+      {
+        agent: [remote('agent', 'agent')],
+        input: [local('input', 'TextInput')],
+        reader: [local('reader', 'Reader')],
+        reading: [local('reading-area', 'ReadingArea')],
       },
     ),
     composer: node('composer', {}, { editor: [local('editor', 'Textarea')] }),

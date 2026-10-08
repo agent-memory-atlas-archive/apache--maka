@@ -1469,12 +1469,18 @@ test('settings routing keeps original composer key and commands while invalidati
   const client = new Client().start();
   const slots = (node) => [
     ...(node.kind === 'component' ? [node] : []),
-    ...(node.children ?? []).flatMap(slots),
+    ...[
+      ...(node.children ?? []),
+      node.content,
+      typeof node.background === 'object' ? node.background : null,
+    ]
+      .filter(Boolean)
+      .flatMap(slots),
   ];
   const original = slots(client.output.frame.view).find((n) => n.binding === 'composer');
   client.raw('settings');
   assert.equal(client.state.settingsOpen, true);
-  const hidden = client.output.frame.view.children[0];
+  const hidden = client.output.frame.view.background.children[0];
   assert.equal(hidden.visible, false);
   assert.deepEqual(
     slots(hidden).find((n) => n.binding === 'composer'),
@@ -1499,7 +1505,7 @@ test('settings routing keeps original composer key and commands while invalidati
     event: {},
   });
   assert.equal(client.state.settingsOpen, false);
-  assert.equal(client.output.frame.view.children[0].visible, true);
+  assert.equal(client.output.frame.view.background.children[0].visible, true);
   assert.equal(
     slots(client.output.frame.view).find((n) => n.binding === 'composer').key,
     original.key,
@@ -1510,11 +1516,11 @@ test('sidebar presentation retains the same children, draft command, and active 
   client.state.selected.title = '长标题 · A🙂é '.repeat(25);
   client.component('draft', draft);
   const originalState = structuredClone(client.state);
-  const originalSlots = modelSlots(client.output.frame.view);
+  const originalSlots = modelSlots(client.output.frame.view.background);
   client.raw('navigation-toggle');
   assert.equal(client.state.navigationOpen, false);
-  assert.equal(client.output.frame.view.children[0].children[0].visible, false);
-  assert.deepEqual(modelSlots(client.output.frame.view), originalSlots);
+  assert.equal(client.output.frame.view.background.children[0].children[0].visible, false);
+  assert.deepEqual(modelSlots(client.output.frame.view.background), originalSlots);
   assert.deepEqual(client.output.actions, []);
   assert.deepEqual(client.state.watch, originalState.watch);
   assert.deepEqual(client.state.command, originalState.command);
@@ -1524,7 +1530,7 @@ test('sidebar presentation retains the same children, draft command, and active 
   assert.equal(client.state.navigationOpen, false);
   client.raw('navigation-toggle');
   assert.equal(client.state.navigationOpen, true);
-  assert.deepEqual(modelSlots(client.output.frame.view), originalSlots);
+  assert.deepEqual(modelSlots(client.output.frame.view.background), originalSlots);
 });
 test('desktop model trigger retains its full label for native measurement and accessibility', async () => {
   const module = await import(pathToFileURL(resolve(root, 'dist/packages/models/desktop.js')));
@@ -2594,7 +2600,12 @@ for (const [target, module] of defaultModules) {
 }
 function modelSlots(node, result = []) {
   if (node.kind === 'component') result.push(node);
-  for (const child of [...(node.children ?? []), node.trigger, node.content].filter(Boolean))
+  for (const child of [
+    ...(node.children ?? []),
+    node.trigger,
+    node.content,
+    typeof node.background === 'object' ? node.background : null,
+  ].filter(Boolean))
     modelSlots(child, result);
   return result;
 }
@@ -3525,7 +3536,7 @@ test('TUI reader declares a flexible body and wrapped controls while keeping dra
       historyChunk('中文😀\n'.repeat(700), { sequence: 400, offset: 100, totalBytes: 7800 }),
     ],
   });
-  const routes = () => client.output.frame.view.children[0].children;
+  const routes = () => client.output.frame.view.background.children[0].children;
   assert.equal(client.state.navigationOpen, false);
   assert.equal(routes().find((node) => node.key === 'main-route').visible, true);
   const originalTimeline = timeline.mount(client.timeline, {}).frame.view;
@@ -3578,7 +3589,12 @@ test('all ordinary TUI node identities remain unique including hidden routes', a
     const visit = (node) => {
       assert.equal(keys.has(node.key), false, node.key);
       keys.add(node.key);
-      for (const child of node.children ?? []) visit(child);
+      for (const child of [
+        ...(node.children ?? []),
+        node.content,
+        typeof node.background === 'object' ? node.background : null,
+      ].filter(Boolean))
+        visit(child);
     };
     visit(client.output.frame.view);
   };
@@ -5365,7 +5381,7 @@ test('session catalog contracts require explicit boundaries and bound the page s
 
 test('ordinary root shortcuts share creation policy and close only presented pages', () => {
   const client = new Client().start();
-  const shortcuts = () => client.output.frame.view.shortcuts;
+  const shortcuts = () => client.output.frame.view.background.shortcuts;
   assert.ok(
     shortcuts().some((shortcut) => shortcut.key === 'b' && shortcut.input === 'navigation-toggle'),
   );
@@ -5413,6 +5429,7 @@ for (const target of ['tui', 'desktop']) {
       locale: 'en',
       open: true,
       busy: false,
+      selectionDisabled: false,
       commands: items,
     });
     native(form, '', 1);
@@ -5455,18 +5472,55 @@ for (const target of ['tui', 'desktop']) {
   }
   const viewport = (form) =>
     modelSlots(form.output.frame.view).find((node) => node.key === 'palette-rows').props;
+  test(`${target} command IDs reserve the native key byte budget and labels retain Unicode`, async () => {
+    const { default: Ajv } = await import('ajv/dist/2020.js');
+    const { paletteContract } = await import(
+      pathToFileURL(resolve(root, 'dist/authoring/agent-product/src/contracts.mjs'))
+    );
+    const schema = paletteContract.interface.props.properties.commands.items;
+    const validate = new Ajv({ strict: false }).compile(schema);
+    const command = { id: 'A'.repeat(120), label: '界'.repeat(120), hint: '', disabled: false };
+    assert.equal(validate(command), true);
+    assert.equal(validate({ ...command, id: 'A'.repeat(121) }), false);
+    assert.equal(validate({ ...command, id: '界'.repeat(120) }), false);
+    const form = make([command]);
+    const row = viewport(form).content.children[0];
+    assert.equal(Buffer.byteLength(row.key), 128);
+    form.raw(row.key);
+    read(form, '', 1);
+    assert.deepEqual(form.output.events, [{ name: 'invoked', value: { id: command.id } }]);
+  });
+  test(`${target} availability and label updates preserve the original manual-reading command`, () => {
+    const form = make();
+    form.raw('page-down');
+    const command = structuredClone(viewport(form).command);
+    form.update({
+      commands: commands.map((command) => ({
+        ...command,
+        disabled: true,
+        label: command.label + ' updated',
+      })),
+    });
+    assert.deepEqual(viewport(form).command, command);
+    assert.equal(form.state.active, 32);
+    assert.equal(form.state.offset, 32);
+  });
   test(`${target} ordinary palette bounds native rows and keeps list keys, command guards and controlled open ownership`, () => {
     const form = make();
     assert.equal(viewport(form).content.children.length, 32);
     const original = structuredClone(form.state.observation);
+    form.raw('last');
+    assert.equal(form.state.active, 79);
+    form.raw('first');
+    assert.equal(form.state.active, 0);
     form.raw('page-down');
     assert.equal(form.state.active, 32);
-    assert.equal(viewport(form).command.target.key, 'command-32');
-    assert.equal(viewport(form).content.children[0].key, 'command-32');
+    assert.equal(viewport(form).command.target.key, 'command-action-32');
+    assert.equal(viewport(form).content.children[0].key, 'command-action-32');
     form.raw('up');
     assert.equal(form.state.active, 31);
     assert.deepEqual(form.state.observation, original);
-    form.raw('command-31');
+    form.raw('command-action-31');
     assert.deepEqual(form.output.events, []);
     form.update({
       commands: commands.map((command) =>
@@ -5475,7 +5529,7 @@ for (const target of ['tui', 'desktop']) {
     });
     read(form, '', 1);
     assert.deepEqual(form.output.events, []);
-    form.raw('command-30');
+    form.raw('command-action-30');
     read(form, '', 1);
     assert.deepEqual(form.output.events, [{ name: 'invoked', value: { id: 'action-30' } }]);
     assert.equal(
@@ -5567,7 +5621,7 @@ for (const target of ['tui', 'desktop']) {
     native(form, 'settings', 2);
     read(form, 'settings', 2);
     const directory = form.find('list');
-    form.raw('command-0');
+    form.raw('command-settings');
     const capture = form.find('read');
     form.complete(directory, {
       status: 'succeeded',
@@ -5584,7 +5638,7 @@ for (const target of ['tui', 'desktop']) {
     native(form, 'settings', 2);
     read(form, 'settings', 2);
     const old = form.find('list');
-    form.raw('command-0');
+    form.raw('command-settings');
     form.update({ commands: [{ ...command, disabled: true }] });
     read(form, 'settings', 2);
     assert.deepEqual(form.output.events, []);
@@ -5686,5 +5740,217 @@ for (const target of ['tui', 'desktop']) {
     assert.equal(form.state.queryError, null);
     assert.equal(form.state.query, '');
     assert.deepEqual(form.output.actions, []);
+  });
+}
+
+for (const target of ['desktop', 'tui']) {
+  const rootModule = await import(
+    pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+  );
+  rootModule.activate({ locale: 'en' });
+  const { component: paletteComponent } = await import(
+    pathToFileURL(resolve(root, `dist/packages/command-palette/${target}.js`))
+  );
+  const props = (client) => client.output.frame.view.content.props;
+  const choose = (client, name, event) =>
+    client.input({ kind: 'component', child: 'command-palette', name, event });
+  const open = (client) => {
+    client.raw('palette-open');
+    return new FormClient(paletteComponent, props(client));
+  };
+  const native = (form, text = '') =>
+    form.input({
+      kind: 'component',
+      child: 'palette-query',
+      name: 'changed',
+      event: modelObservation(text, 1),
+    });
+  const read = (form, text = '') =>
+    form.complete(form.find('read'), {
+      status: 'succeeded',
+      value: { text, metadata: modelObservation(text, 1).snapshot.text },
+    });
+  test(`${target} Root Dialog preserves original product and routes only conversation commands`, () => {
+    const client = new Client(rootModule.component).start();
+    const background = structuredClone(client.output.frame.view.background);
+    const watch = structuredClone(client.output.subscriptions);
+    assert.equal(client.output.frame.view.open, false);
+    open(client);
+    assert.equal(client.output.frame.view.open, true);
+    assert.deepEqual(client.output.frame.view.background, background);
+    assert.deepEqual(client.output.subscriptions, watch);
+    assert.equal(client.output.frame.view.content.binding, 'palette');
+    choose(client, 'closed', {});
+    assert.equal(client.state.paletteOpen, false);
+    client.raw('settings');
+    client.raw('palette-open');
+    assert.equal(client.state.paletteOpen, false);
+    assert.ok(props(client).commands.every((command) => command.disabled));
+    client.raw('deployment-open');
+    assert.equal(
+      client.state.settingsOpen,
+      true,
+      'management route cannot bypass its guarded Back',
+    );
+    assert.equal(client.state.deploymentOpen, false);
+    choose(client, 'invoked', { id: 'create' });
+    assert.deepEqual(client.output.actions, []);
+  });
+  test(`${target} Unknown permits original Check while independently disabling session choice`, () => {
+    const client = new Client(rootModule.component).start();
+    client.component('send', draft);
+    client.query('read', { text: 'Hello', metadata: draft.snapshot.text });
+    client.complete(client.find('send'), {
+      status: 'operation',
+      reply: {
+        reference,
+        receipt: {
+          kind: 'recorded',
+          outcome: { kind: 'unknown', diagnostic: 'lost' },
+          cleanup: { kind: 'confirmed' },
+        },
+      },
+    });
+    const form = open(client);
+    assert.equal(form.props.selectionDisabled, true);
+    assert.equal(form.props.busy, false);
+    native(form, 'Check');
+    read(form, 'Check');
+    form.query('list', {
+      revision: 'directory',
+      sessions: [{ ...session, title: 'Check conversation' }],
+      before: null,
+      after: null,
+    });
+    const rows = modelSlots(form.output.frame.view).find((node) => node.key === 'palette-rows')
+      .props.content.children;
+    assert.equal(rows.find((row) => row.key.startsWith('session-')).disabled, true);
+    const check = form.props.commands.find((command) => command.id.startsWith('check:'));
+    assert.equal(check.disabled, false);
+    form.raw(rows.find((row) => row.label.includes('Check')).key);
+    read(form, 'Check');
+    choose(client, 'invoked', form.output.events[0].value);
+    assert.deepEqual(client.find('read').input, reference);
+    assert.equal(client.state.command, null);
+    assert.equal(client.state.paletteOpen, false);
+    const count = client.actions.size;
+    choose(client, 'invoked', { id: check.id });
+    assert.equal(client.actions.size, count, 'closed palette cannot replay an admitted lookup');
+  });
+  test(`${target} already-open palette reveals a newly uncertain original operation`, () => {
+    const client = new Client(rootModule.component).start();
+    client.component('send', draft);
+    client.query('read', { text: 'Hello', metadata: draft.snapshot.text });
+    const send = client.find('send');
+    const form = open(client);
+    native(form);
+    assert.equal(
+      form.props.commands.some((command) => command.id.startsWith('check:')),
+      false,
+    );
+    client.complete(send, {
+      status: 'operation',
+      reply: {
+        reference,
+        receipt: {
+          kind: 'recorded',
+          outcome: { kind: 'unknown', diagnostic: 'lost' },
+          cleanup: { kind: 'confirmed' },
+        },
+      },
+    });
+    form.update(props(client));
+    const row = modelSlots(form.output.frame.view)
+      .find((node) => node.key === 'palette-rows')
+      .props.content.children.find((row) => row.label.includes('Check'));
+    assert.equal(row.disabled, false);
+    form.raw(row.key);
+    read(form);
+    choose(client, 'invoked', form.output.events[0].value);
+    assert.deepEqual(client.find('read').input, reference);
+    assert.equal(client.state.command, null);
+  });
+  test(`${target} asynchronous palette stop cannot replace its original invocation with a new run`, () => {
+    const client = new Client(rootModule.component).start({
+      through: 0,
+      run: { invocationId: 'run-A', state: 'running' },
+    });
+    const form = open(client);
+    native(form);
+    const command = form.props.commands.find((command) => command.id.startsWith('stop:'));
+    const row = modelSlots(form.output.frame.view)
+      .find((node) => node.key === 'palette-rows')
+      .props.content.children.find((row) => row.label.includes('Stop'));
+    form.raw(row.key);
+    client.page(
+      [
+        { sequence: 1, invocationId: 'run-A', fact: { kind: 'ended', failed: false } },
+        { sequence: 2, invocationId: 'run-B', fact: { kind: 'opened' } },
+      ],
+      2,
+    );
+    assert.equal(client.state.run.invocationId, 'run-B');
+    form.update(props(client));
+    read(form);
+    assert.deepEqual(form.output.events, []);
+    choose(client, 'invoked', { id: command.id });
+    assert.deepEqual(client.output.actions, [], 'Root also rejects stale invocation identity');
+    assert.equal(client.state.paletteOpen, true);
+    const newRow = modelSlots(form.output.frame.view)
+      .find((node) => node.key === 'palette-rows')
+      .props.content.children.find((row) => row.label.includes('Stop'));
+    assert.notEqual(newRow.key, row.key);
+    assert.equal(newRow.disabled, false);
+    form.raw(newRow.key);
+    read(form);
+    choose(client, 'invoked', form.output.events[0].value);
+    assert.deepEqual(client.find('stop').input, { sessionId: session.id, invocationId: 'run-B' });
+  });
+  test(`${target} palette session beyond sidebar follows original canonical observation without rewriting directory`, () => {
+    const client = new Client(rootModule.component).start();
+    const catalog = structuredClone(client.state.catalog);
+    const command = structuredClone(client.state.command);
+    const candidate = { ...session, id: 'outside-sidebar', title: 'Directory candidate' };
+    const form = open(client);
+    native(form, 'candidate');
+    read(form, 'candidate');
+    form.query('list', {
+      revision: 'independent-directory',
+      sessions: [candidate],
+      before: null,
+      after: null,
+    });
+    const row = modelSlots(form.output.frame.view)
+      .find((node) => node.key === 'palette-rows')
+      .props.content.children.find((row) => row.key.startsWith('session-'));
+    form.raw(row.key);
+    read(form, 'candidate');
+    choose(client, 'selected', form.output.events[0].value);
+    assert.deepEqual(client.state.catalog, catalog);
+    assert.deepEqual(client.state.command, command);
+    assert.deepEqual(client.find('observe').input, { sessionId: candidate.id });
+    assert.equal(client.state.watch, null);
+    assert.equal(client.state.loading, true);
+    const canonical = { ...candidate, title: 'Canonical owner title', revision: 2 };
+    client.query('observe', { session: canonical, through: 0, run: null, parts: [] });
+    assert.deepEqual(client.state.selected, canonical);
+    assert.deepEqual(client.state.watch.input, { sessionId: canonical.id, after: 0 });
+    assert.equal(client.find('history').input.sessionId, canonical.id);
+    assert.deepEqual(client.state.catalog, catalog);
+  });
+  test(`${target} rejected palette session observation keeps native draft and admits no send`, () => {
+    const client = new Client(rootModule.component).start();
+    open(client);
+    choose(client, 'selected', { ...session, id: 'unavailable' });
+    client.complete(client.find('observe'), { status: 'failed', reason: 'session unavailable' });
+    assert.equal(client.state.watch, null);
+    assert.equal(
+      modelSlots(client.output.frame.view).find((node) => node.binding === 'composer').props
+        .enabled,
+      false,
+    );
+    client.component('send', draft);
+    assert.deepEqual(client.output.actions, []);
+    assert.equal(client.state.command, null);
   });
 }

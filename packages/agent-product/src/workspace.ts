@@ -46,7 +46,7 @@ import type {
   EditorObservation,
   TextChunk,
 } from '../../plugin-sdk/src/index.js';
-import type { Message, Theme } from './contracts.js';
+import type { PaletteCommand, Message, Theme } from './contracts.js';
 import { sameValue } from './value.js';
 import { copy, type Copy } from './locale.js';
 import { fill, output, paint, pixels, slot, type Target } from './view.js';
@@ -109,6 +109,7 @@ export interface State {
   settingsOpen: boolean;
   deploymentOpen: boolean;
   navigationOpen: boolean;
+  paletteOpen: boolean;
   window: { page: Extract<AgentHistoryPage, { kind: 'ready' }>; latest: boolean } | null;
   navigation: number;
   image: { sessionId: string; through: number; sequence: number } | null;
@@ -391,6 +392,104 @@ function executionPending(state: State) {
   return Object.values(state.pending).some(
     (request) => request.kind === 'observe' && request.epoch === state.epoch,
   );
+}
+
+type RootCommand =
+  | 'create'
+  | 'navigation-toggle'
+  | 'settings'
+  | 'deployment-open'
+  | 'reload'
+  | 'stop'
+  | 'check';
+function conversationRoute(state: State) {
+  return !state.settingsOpen && !state.deploymentOpen;
+}
+function rootCommands(state: State, locale: string): (PaletteCommand & { kind: RootCommand })[] {
+  const text = copy(locale);
+  const route = conversationRoute(state);
+  const commands: (PaletteCommand & { kind: RootCommand })[] = [
+    {
+      kind: 'create',
+      id: 'create',
+      label: text.new,
+      hint: 'Ctrl/⌘ N',
+      disabled: !route || mutationPending(state) || catalogPending(state),
+    },
+    {
+      kind: 'navigation-toggle',
+      id: 'navigation-toggle',
+      label: state.navigationOpen ? text.hideSidebar : text.showSidebar,
+      hint: 'Ctrl/⌘ B',
+      disabled: !route,
+    },
+    { kind: 'settings', id: 'settings', label: text.settings, hint: '', disabled: !route },
+    {
+      kind: 'deployment-open',
+      id: 'deployment-open',
+      label: text.deploymentTitle,
+      hint: '',
+      disabled: !route,
+    },
+    {
+      kind: 'reload',
+      id: `reload:${state.epoch}`,
+      label: text.refreshSessions,
+      hint: '',
+      disabled: !route || state.loading,
+    },
+  ];
+  if (state.run)
+    commands.push({
+      kind: 'stop',
+      id: `stop:${state.epoch}:${state.run.invocationId}`,
+      label: text.stop,
+      hint: '',
+      disabled: !route || executionPending(state) || mutationPending(state) || !state.selected,
+    });
+  if (state.uncertain)
+    commands.push({
+      kind: 'check',
+      id: `check:${state.uncertain.reference.operation}:${state.uncertain.reference.fingerprint}`,
+      label: text.check,
+      hint: '',
+      disabled:
+        !route || Object.values(state.pending).some((request) => request.kind === 'receipt'),
+    });
+  return commands;
+}
+function rootCommand(state: State, actions: Action[], locale: string, kind: RootCommand) {
+  if (!rootCommands(state, locale).some((command) => command.kind === kind && !command.disabled))
+    return false;
+  if (kind === 'create') createSession(state, actions, locale);
+  else if (kind === 'navigation-toggle') state.navigationOpen = !state.navigationOpen;
+  else if (kind === 'settings') {
+    state.settingsOpen = true;
+    state.deploymentOpen = false;
+  } else if (kind === 'deployment-open') {
+    state.deploymentOpen = true;
+    state.settingsOpen = false;
+  } else if (kind === 'stop' && state.selected && state.run)
+    intent(state, actions, { kind: 'stop', sessionId: state.selected.id }, 'agent', 'stop', {
+      sessionId: state.selected.id,
+      invocationId: state.run.invocationId,
+    });
+  else if (kind === 'check' && state.uncertain)
+    intent(state, actions, { kind: 'receipt' }, 'receipts', 'read', state.uncertain.reference);
+  else if (kind === 'reload') {
+    if (state.restoring)
+      intent(state, actions, { kind: 'restorePage' }, 'history', 'page', {
+        after: state.restoreAfter,
+        limit: 1,
+      });
+    else if (!state.selected) catalog(state, actions);
+    else {
+      const window = state.window;
+      select(state, actions, state.selected);
+      state.window = window;
+    }
+  }
+  return true;
 }
 
 function settled(state: State, actions: Action[], request: Mutation, value: unknown) {
@@ -975,6 +1074,7 @@ function frame(
                     ui.box('model-control', [models], {
                       style: { width: pixels(0), grow: 1, minWidth: 0 },
                     }),
+                    ui.button('palette-open', text.paletteTitle),
                     ui.button('settings', text.settings),
                     ui.button('deployment-open', text.deploymentTitle),
                   ],
@@ -987,6 +1087,7 @@ function frame(
                 ui.box(
                   'toolbar',
                   [
+                    ui.button('palette-open', text.paletteTitle),
                     ui.button('settings', text.settings),
                     ui.button('deployment-open', text.deploymentTitle),
                     ui.button('navigation-toggle', text.showSidebar),
@@ -1091,59 +1192,85 @@ function frame(
       style: { width: fill, height: fill },
     },
   );
-  const out = output(
-    state,
-    ui.box(
-      'product',
-      [
-        conversation,
-        ...(state.deploymentOpen
-          ? [slot('deployment', 'deployment', { theme, locale }, { closed: 'deployment-closed' })]
-          : []),
-        ...(state.settingsOpen
+  const background = ui.box(
+    'product',
+    [
+      conversation,
+      ...(state.deploymentOpen
+        ? [slot('deployment', 'deployment', { theme, locale }, { closed: 'deployment-closed' })]
+        : []),
+      ...(state.settingsOpen
+        ? [
+            slot(
+              'connections',
+              'connections',
+              { theme, locale },
+              { closed: 'settings-closed', changed: 'settings-changed' },
+            ),
+          ]
+        : []),
+    ],
+    {
+      gap: 0,
+      style: { width: fill, height: fill, align: 'center' },
+      terminal: { grow: 1 },
+      shortcuts: [
+        {
+          key: 'k',
+          modifiers: ['primary'],
+          input: 'palette-open',
+          enabled: conversationRoute(state),
+        },
+        {
+          key: 'b',
+          modifiers: ['primary'],
+          input: 'navigation-toggle',
+          enabled: !state.settingsOpen && !state.deploymentOpen,
+        },
+        {
+          key: 'n',
+          modifiers: ['primary'],
+          input: 'create',
+          enabled:
+            !state.settingsOpen &&
+            !state.deploymentOpen &&
+            !mutationPending(state) &&
+            !catalogPending(state),
+        },
+        ...(state.navigationOpen && !state.settingsOpen && !state.deploymentOpen
           ? [
-              slot(
-                'connections',
-                'connections',
-                { theme, locale },
-                { closed: 'settings-closed', changed: 'settings-changed' },
-              ),
+              {
+                key: 'escape',
+                modifiers: [],
+                input: 'navigation-back',
+                enabled: true,
+              } satisfies import('../../plugin-sdk/src/index.js').Shortcut,
             ]
           : []),
       ],
-      {
-        gap: 0,
-        style: { width: fill, height: fill, align: 'center' },
-        terminal: { grow: 1 },
-        shortcuts: [
-          {
-            key: 'b',
-            modifiers: ['primary'],
-            input: 'navigation-toggle',
-            enabled: !state.settingsOpen && !state.deploymentOpen,
-          },
-          {
-            key: 'n',
-            modifiers: ['primary'],
-            input: 'create',
-            enabled:
-              !state.settingsOpen &&
-              !state.deploymentOpen &&
-              !mutationPending(state) &&
-              !catalogPending(state),
-          },
-          ...(state.navigationOpen && !state.settingsOpen && !state.deploymentOpen
-            ? [
-                {
-                  key: 'escape',
-                  modifiers: [],
-                  input: 'navigation-back',
-                  enabled: true,
-                } satisfies import('../../plugin-sdk/src/index.js').Shortcut,
-              ]
-            : []),
-        ],
-      },
+    },
+  );
+  const out = output(
+    state,
+    ui.dialog(
+      'command-dialog',
+      text.paletteTitle,
+      background,
+      slot(
+        'command-palette',
+        'palette',
+        {
+          theme,
+          locale,
+          open: state.paletteOpen,
+          busy: false,
+          selectionDisabled:
+            !conversationRoute(state) || mutationPending(state) || catalogPending(state),
+          commands: rootCommands(state, locale).map(({ kind: _kind, ...command }) => command),
+        },
+        { invoked: 'invoked', selected: 'selected', closed: 'closed' },
+      ),
+      state.paletteOpen,
     ),
   );
   out.frame.surface =
@@ -1182,6 +1309,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         settingsOpen: false,
         deploymentOpen: false,
         navigationOpen: target === 'desktop',
+        paletteOpen: false,
         image: null,
         window: null,
         source: null,
@@ -1245,6 +1373,27 @@ export function workspace(target: Target, locale: string): Component<State, Reco
           }
         }
       } else if (input.kind === 'component') {
+        if (input.child === 'command-palette') {
+          if (state.paletteOpen && conversationRoute(state)) {
+            if (input.name === 'closed') state.paletteOpen = false;
+            else if (input.name === 'invoked') {
+              const command = rootCommands(state, locale).find(
+                (command) => command.id === (input.event as { id: string }).id && !command.disabled,
+              );
+              if (command && rootCommand(state, actions, locale, command.kind))
+                state.paletteOpen = false;
+            } else if (
+              input.name === 'selected' &&
+              !mutationPending(state) &&
+              !catalogPending(state)
+            ) {
+              select(state, actions, input.event as AgentSession);
+              state.paletteOpen = false;
+            }
+          }
+          return frame(target, locale, state, values, actions);
+        }
+
         if (input.child === 'timeline' && input.name === 'tailReady') {
           const receipt = input.event as NonNullable<State['tailReceipt']>;
           if (receipt.landing === state.landing.sequence) {
@@ -1303,17 +1452,8 @@ export function workspace(target: Target, locale: string): Component<State, Reco
                 },
               },
             );
-        } else if (
-          input.name === 'stop' &&
-          !executionPending(state) &&
-          !mutationPending(state) &&
-          state.selected &&
-          state.run
-        ) {
-          intent(state, actions, { kind: 'stop', sessionId: state.selected.id }, 'agent', 'stop', {
-            sessionId: state.selected.id,
-            invocationId: state.run.invocationId,
-          });
+        } else if (input.child === 'composer' && input.name === 'stop') {
+          rootCommand(state, actions, locale, 'stop');
         } else if (
           input.child === 'models' &&
           input.name === 'selected' &&
@@ -1322,7 +1462,7 @@ export function workspace(target: Target, locale: string): Component<State, Reco
         ) {
           state.model = input.event as SettingsModelChoice;
           state.modelRefreshing = false;
-        } else if (input.name === 'create') createSession(state, actions, locale);
+        } else if (input.name === 'create') rootCommand(state, actions, locale, 'create');
         else if (input.name === 'select' && !mutationPending(state) && !catalogPending(state)) {
           const sessionId = (input.event as { sessionId: string }).sessionId;
           const session = state.catalog?.sessions.find((item) => item.id === sessionId);
@@ -1489,41 +1629,12 @@ export function workspace(target: Target, locale: string): Component<State, Reco
             history(state, actions, { kind: 'tail' }, state.latestKnown, true);
         }
       } else if (input.kind === 'raw') {
-        if (input.key === 'settings') {
-          state.settingsOpen = true;
-          state.deploymentOpen = false;
-        }
-        if (input.key === 'deployment-open') {
-          state.deploymentOpen = true;
-          state.settingsOpen = false;
-        } else if (input.key === 'navigation-toggle') state.navigationOpen = !state.navigationOpen;
+        if (input.key === 'palette-open' && conversationRoute(state)) state.paletteOpen = true;
+        else if (input.key === 'command-dialog') state.paletteOpen = false;
         else if (input.key === 'navigation-back') state.navigationOpen = false;
-        else if (input.key === 'create') createSession(state, actions, locale);
-        else if (
-          input.key === 'check' &&
-          state.uncertain &&
-          !Object.values(state.pending).some((request) => request.kind === 'receipt')
-        )
-          intent(
-            state,
-            actions,
-            { kind: 'receipt' },
-            'receipts',
-            'read',
-            state.uncertain.reference,
-          );
-        else if (input.key === 'reload' && !state.loading) {
-          if (state.restoring)
-            intent(state, actions, { kind: 'restorePage' }, 'history', 'page', {
-              after: state.restoreAfter,
-              limit: 1,
-            });
-          else if (!state.selected) catalog(state, actions);
-          else {
-            const window = state.window;
-            select(state, actions, state.selected);
-            state.window = window;
-          }
+        else {
+          const command = rootCommands(state, locale).find((command) => command.kind === input.key);
+          if (command) rootCommand(state, actions, locale, command.kind);
         }
       }
       return frame(target, locale, state, values, actions);

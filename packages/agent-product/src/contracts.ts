@@ -93,6 +93,7 @@ export interface PaletteProps {
   locale: string;
   open: boolean;
   busy: boolean;
+  selectionDisabled: boolean;
   commands: PaletteCommand[];
 }
 export interface ModelDefaultProps {
@@ -224,11 +225,12 @@ export const paletteContract = component(
     locale,
     open: { type: 'boolean' },
     busy: { type: 'boolean' },
+    selectionDisabled: { type: 'boolean' },
     commands: {
       type: 'array',
       maxItems: 128,
       items: object({
-        id: { type: 'string', minLength: 1, maxLength: 128 },
+        id: { type: 'string', minLength: 1, maxLength: 120, pattern: '^[A-Za-z0-9:._-]+$' },
         label: { type: 'string', minLength: 1, maxLength: 256 },
         hint: { type: 'string', maxLength: 64 },
         disabled: { type: 'boolean' },
@@ -236,7 +238,9 @@ export const paletteContract = component(
     },
   }),
   {
-    invoked: object({ id: { type: 'string', minLength: 1, maxLength: 128 } }),
+    invoked: object({
+      id: { type: 'string', minLength: 1, maxLength: 120, pattern: '^[A-Za-z0-9:._-]+$' },
+    }),
     selected: withDefs({ $ref: '#/$defs/AgentSession' }),
     closed: object({}),
   },
