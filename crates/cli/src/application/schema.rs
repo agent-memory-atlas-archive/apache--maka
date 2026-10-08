@@ -123,7 +123,7 @@ pub(super) fn catalog() -> Value {
         root::<maka_agent_service::contract::Watch>(&mut g),
         root::<maka_agent_service::contract::Session>(&mut g),
         root::<maka_agent_service::contract::SessionPage>(&mut g),
-        root::<maka_agent_service::contract::Started>(&mut g),
+        root::<maka_agent_service::contract::SendResult>(&mut g),
         root::<maka_agent_service::contract::Stopped>(&mut g),
         root::<maka_agent_service::contract::Delivery>(&mut g),
         root::<maka_agent_service::contract::DeliveryFact>(&mut g),

@@ -285,3 +285,97 @@ async fn execution_basis_panic_keeps_native_owner_for_actual_close() {
     app.shutdown().await.unwrap();
     assert_eq!(closed.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn native_activation_hook_starts_once_after_publish_and_panic_keeps_real_cleanup() {
+    struct Hook {
+        started: Arc<AtomicUsize>,
+        settled: Arc<AtomicUsize>,
+        closed: Arc<AtomicUsize>,
+        jobs: tokio_util::task::TaskTracker,
+        stop: CancellationToken,
+        panic: bool,
+    }
+    impl NativeOwner for Hook {
+        fn activated(&self) {
+            assert_eq!(self.started.fetch_add(1, Ordering::SeqCst), 0);
+            let stop = self.stop.clone();
+            let settled = self.settled.clone();
+            self.jobs.spawn(async move {
+                stop.cancelled().await;
+                settled.fetch_add(1, Ordering::SeqCst);
+            });
+            assert!(!self.panic, "fixture post-publication panic");
+        }
+        fn close(&self) -> BoxFuture<'static, Result<()>> {
+            let jobs = self.jobs.clone();
+            let stop = self.stop.clone();
+            let closed = self.closed.clone();
+            Box::pin(async move {
+                jobs.close();
+                stop.cancel();
+                jobs.wait().await;
+                closed.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+        }
+    }
+    for (reject, panic) in [(false, false), (true, false), (false, true)] {
+        let started = Arc::new(AtomicUsize::new(0));
+        let settled = Arc::new(AtomicUsize::new(0));
+        let closed = Arc::new(AtomicUsize::new(0));
+        let hook = Arc::new(Hook {
+            started: started.clone(),
+            settled: settled.clone(),
+            closed: closed.clone(),
+            jobs: tokio_util::task::TaskTracker::new(),
+            stop: CancellationToken::new(),
+            panic,
+        });
+        let mut native = NativeRegistry::default();
+        native
+            .insert(
+                "native.echo".into(),
+                Arc::new(move |_, _| {
+                    let hook = hook.clone();
+                    Box::pin(async move {
+                        NativeActivation {
+                            owner: hook,
+                            exports: if reject {
+                                Err("fixture rejected exports".into())
+                            } else {
+                                Ok(BTreeMap::from([(
+                                    "echo".into(),
+                                    Published {
+                                        contract: contract(MethodMode::Query),
+                                        value: Arc::new(Echo {
+                                            calls: Arc::new(AtomicUsize::new(0)),
+                                        })
+                                            as Arc<dyn Handler>,
+                                    },
+                                )]))
+                            },
+                        }
+                    })
+                }),
+            )
+            .unwrap();
+        let provider = native_package();
+        let consumer = consumer();
+        let issuer = Issuer::default();
+        let app = Application::start(
+            input(&provider, &consumer),
+            vec![provider, consumer],
+            native,
+            issuer.clone(),
+            Arc::new(Grant(issuer)),
+            Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(app.ready().await.is_err(), reject || panic);
+        app.shutdown().await.unwrap();
+        assert_eq!(started.load(Ordering::SeqCst), usize::from(!reject));
+        assert_eq!(settled.load(Ordering::SeqCst), usize::from(!reject));
+        assert_eq!(closed.load(Ordering::SeqCst), 1);
+    }
+}

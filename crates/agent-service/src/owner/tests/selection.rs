@@ -158,14 +158,20 @@ async fn captured_execution_ignores_catalog_labels_and_other_models_but_rejects_
     let (mut source, _) = crate::model::Source::select(
         fixture.config.clone(),
         fixture.selection().await,
-        session,
+        session.clone(),
         fixture.owner.revision.clone(),
     )
     .await
     .unwrap();
     let persisted = serde_json::to_string(&source.accepted).unwrap();
     assert!(!persisted.contains("private-fixture-key"));
-    source.accepted = serde_json::from_str(&persisted).unwrap();
+    source = crate::model::Source::restore(
+        fixture.config.clone(),
+        serde_json::from_str(&persisted).unwrap(),
+        session,
+        fixture.owner.revision.clone(),
+    )
+    .unwrap();
     edit(&fixture, |changes| {
         changes.name = Some("A different label".into());
         changes
@@ -485,4 +491,28 @@ async fn model_search_continues_its_query_across_bounded_scan_windows_and_catalo
     assert_eq!(changed["kind"], "changed");
     fixture.app.shutdown().await.unwrap();
     fixture.config.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn queued_model_route_change_settles_original_message_without_retargeting() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let fixture = Fixture::new(&base, 1, None).await;
+        let session = fixture.create("Queued original model").await;
+        fixture.send(&session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        let queued = fixture.send(&session).await.unwrap();
+        assert_eq!(queued["kind"], "queued");
+        edit(&fixture, |changes| changes.configuration = Some(json!({"baseUrl":"http://127.0.0.1:1/v1"}))).await;
+        response(&mut socket).await;
+        fixture.drained().await;
+        assert!(fixture.store.pending_messages(&session).await.unwrap().is_empty());
+        let facts = fixture.store.scoped_prefix(maka_runtime::event::LogScope::Session { id: session }, 256, 1024 * 1024).await.unwrap();
+        assert!(facts.events.iter().any(|event| matches!(&event.event.fact, maka_runtime::event::Fact::InvocationEnded { outcome: maka_runtime::event::InvocationOutcome::Failed { class, .. } } if class == "message_preparation_failed")));
+        assert_eq!(facts.events.iter().filter(|event| matches!(event.event.fact, maka_runtime::event::Fact::InvocationOpened { .. })).count(), 2);
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
 }

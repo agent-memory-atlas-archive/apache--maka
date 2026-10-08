@@ -393,7 +393,10 @@ test('a durable admission clears only the captured owner; unknown never replays 
   );
   client.raw('check');
   assert.deepEqual(client.find('read').input, reference);
-  client.query('read', returned({ sessionId: 'session', invocationId: 'run' }).reply);
+  client.query(
+    'read',
+    returned({ kind: 'started', sessionId: 'session', invocationId: 'run' }).reply,
+  );
   assert.deepEqual(client.state.command, {
     owner: 'original-editor',
     sequence: 1,
@@ -424,7 +427,10 @@ test('a new mount restores original references and never clears its new draft', 
   assert.deepEqual(client.state.uncertain.reference, reference);
   assert.equal(client.state.command, null);
   client.raw('check');
-  client.query('read', returned({ sessionId: 'session', invocationId: 'old-run' }).reply);
+  client.query(
+    'read',
+    returned({ kind: 'started', sessionId: 'session', invocationId: 'old-run' }).reply,
+  );
   assert.equal(client.state.command, null);
   assert.equal(
     [...client.actions.values()].some((action) => action.method === 'send'),

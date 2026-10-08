@@ -118,6 +118,31 @@ impl Source {
         let prepared = source.prepare(material, model).await?;
         Ok((source, prepared))
     }
+    pub fn restore(
+        configuration: Arc<ConfigurationStore>,
+        accepted: AcceptedModel,
+        session: String,
+        mut revision: SourceRevision,
+    ) -> Result<Self, RunError> {
+        if accepted.provider.package_id != maka_providers::api::ID
+            || accepted.provider.entry_id != maka_providers::api::ID
+            || accepted.provider.scope != Scope::Profile
+        {
+            return Err(unavailable());
+        }
+        let definition = Arc::new(
+            maka_providers::api::ApiProviders::definition(&accepted.provider.name)
+                .map_err(|_| unavailable())?,
+        );
+        revision.name = accepted.provider.name.clone();
+        Ok(Self {
+            configuration,
+            accepted,
+            definition,
+            session,
+            revision,
+        })
+    }
     async fn prepare(
         &self,
         material: ConnectionObservation,

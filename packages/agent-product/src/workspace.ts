@@ -39,7 +39,7 @@ import type {
   AgentDirectoryPage,
   AgentDirectorySelection,
   AgentList,
-  AgentStarted,
+  AgentSendResult,
   CallerIntent,
   Component,
   ComponentValues,
@@ -557,7 +557,7 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
     select(state, actions, created.session);
     catalog(state, actions);
   } else if (request.kind === 'send') {
-    const started = value as AgentStarted;
+    const started = value as AgentSendResult;
     if (started.sessionId !== request.sessionId) {
       state.notice = 'unknown';
       return;

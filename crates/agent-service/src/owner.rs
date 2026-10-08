@@ -20,8 +20,10 @@
 use crate::{
     Configuration, IMPLEMENTATION, NativeContext, configuration_schema, contract::*, workspace,
 };
-use futures_util::{FutureExt, future::BoxFuture};
+use futures_util::future::BoxFuture;
 use maka_agent::{Engine, RunError, RunInput, RunWork};
+
+mod queue;
 use maka_config::ConfigurationStore;
 use maka_event_log::{EventLog, sessions::SessionRecord};
 use maka_model::ModelExecutor;
@@ -52,7 +54,7 @@ pub(crate) struct SessionConfiguration {
     pub workspace: Workspace,
 }
 /// Frozen accepted message prerequisites, interpreted only by this Agent.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MessageBasis {
     model: crate::model::AcceptedModel,
@@ -62,8 +64,9 @@ struct MessageBasis {
     max_steps: usize,
 }
 struct Control {
-    invocation: String,
+    invocation: Invocation,
     cancellation: CancellationToken,
+    failure: Option<&'static str>,
 }
 #[derive(Default)]
 struct Runs {
@@ -315,24 +318,31 @@ impl Owner {
         text: String,
         selection: crate::ModelSelection,
         operation: &maka_plugin_core::operation::RecoveryRef,
-    ) -> Result<crate::contract::Started, String> {
+    ) -> Result<crate::contract::SendResult, String> {
         if text.trim().is_empty() || text.len() > 64 * 1024 {
             return Err("agent_message_invalid".into());
         }
-        // No waiting queue. Capacity covers preparation, durable admission and
-        // the original complete run, independently of request/observer lifetime.
-        let permit = self
-            .permits
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| "agent_capacity_exhausted")?;
         let mut runs = self.runs.lock().await;
         if runs.closing {
             return Err("agent_closed".into());
         }
-        if runs.controls.contains_key(&id) {
-            return Err("agent_session_busy".into());
+        let current = runs.controls.get(&id);
+        if let Some(reason) = current.and_then(|control| control.failure) {
+            return Err(reason.into());
         }
+        let queued = current.map(|control| control.invocation.clone());
+        // An existing worker already holds this Session's capacity through
+        // physical cleanup and the final queue read. Queueing needs no new slot.
+        let permit = if queued.is_none() {
+            Some(
+                self.permits
+                    .clone()
+                    .try_acquire_owned()
+                    .map_err(|_| "agent_capacity_exhausted")?,
+            )
+        } else {
+            None
+        };
         let session = self.session(&id).await?;
         if session.archived {
             return Err("agent_session_configuration_changed".into());
@@ -351,7 +361,6 @@ impl Owner {
             &self.managed_worktrees,
         )
         .await?;
-        let binding = source.accepted.binding.clone();
         let basis = MessageBasis {
             model: source.accepted.clone(),
             workspace: session.configuration.workspace.clone(),
@@ -359,14 +368,13 @@ impl Owner {
             tools: self.tool_basis.clone(),
             max_steps: self.settings.max_steps,
         };
-        let source = Arc::new(source);
         let identity = self.operation_id(operation);
-        let invocation = Invocation {
+        let invocation = queued.clone().unwrap_or_else(|| Invocation {
             session_id: id.clone(),
             turn_id: format!("t_{identity}"),
             run_id: format!("r_{identity}"),
             invocation_id: format!("i_{identity}"),
-        };
+        });
         let message: MessageInput = text.into();
         let delivered = RootSourceMessage {
             message: DeliveredMessage {
@@ -377,61 +385,64 @@ impl Owner {
                 content: message.clone(),
             },
             unprepared_content: message.clone(),
-            submitted_placement: Placement::CurrentTurn,
-            disposition: MessageDisposition::TurnStarted,
+            submitted_placement: if queued.is_some() {
+                Placement::NextTurn
+            } else {
+                Placement::CurrentTurn
+            },
+            disposition: if queued.is_some() {
+                MessageDisposition::Followup
+            } else {
+                MessageDisposition::TurnStarted
+            },
             submitted_intent: None,
         };
+        let admission = maka_event_log::message_admissions::PendingMessageAdmission {
+            execution: maka_event_log::message_admissions::PendingExecution {
+                owner: self.prefix.clone(),
+                basis: serde_json::to_value(&basis).expect("accepted message basis"),
+            },
+            invocation: invocation.clone(),
+            steering_invocation: None,
+            source: delivered.clone(),
+            required_tools: Default::default(),
+            admitted_at: now(),
+        };
+        if queued.is_some() {
+            loop {
+                let queue = self
+                    .store
+                    .message_queue(&id)
+                    .await
+                    .map_err(|_| "agent_queue_unavailable")?;
+                match self
+                    .store
+                    .admit_queued_message(
+                        &self.revision.activation,
+                        queue.revision,
+                        admission.clone(),
+                    )
+                    .await
+                {
+                    Ok(receipt) => {
+                        return Ok(SendResult::Queued {
+                            session_id: id,
+                            message_id: delivered.message.message_id,
+                            revision: receipt.queue_revision,
+                        });
+                    }
+                    Err(maka_event_log::StoreError::RevisionConflict { .. }) => continue,
+                    Err(_) => return Err("agent_admission_failed".into()),
+                }
+            }
+        }
+        let permit = permit.expect("new worker owns capacity");
         self.store
-            .admit_message(
-                maka_event_log::message_admissions::PendingMessageAdmission {
-                    execution: maka_event_log::message_admissions::PendingExecution {
-                        owner: self.prefix.clone(),
-                        basis: serde_json::to_value(basis).expect("accepted message basis"),
-                    },
-                    invocation: invocation.clone(),
-                    steering_invocation: None,
-                    source: delivered.clone(),
-                    required_tools: Default::default(),
-                    admitted_at: now(),
-                },
-            )
+            .admit_message(admission)
             .await
             .map_err(|_| "agent_admission_failed")?;
         let cancellation = self.stop.child_token();
-        let input = RunInput {
-            model_source: Some(source),
-            model_revision: Some(prepared.revision),
-            provider_id: prepared.provider_id,
-            invocation: invocation.clone(),
-            context: prepared.context,
-            provider: prepared.provider,
-            provider_options: prepared.options,
-            main_output_limit: prepared.main_output_limit,
-            supports_vision: prepared.supports_vision,
-            request_fingerprint: Some(operation.fingerprint.clone()),
-            configuration: InvocationConfiguration {
-                cwd: session.configuration.workspace.path,
-                workspace_identity: Some(session.configuration.workspace.identity),
-                workspace_origin: WorkspaceOrigin::Selected,
-                sandbox_mode: SandboxMode::WorkspaceWrite,
-                approval_policy: ApprovalPolicy::OnRequest,
-                boundary_revision: 0,
-                collaboration_mode: CollaborationMode::Agent,
-                orchestration_mode: BehaviorId::default(),
-                tool_mode: ToolMode::Direct,
-                model: Some(binding),
-                thinking_level: None,
-                system_prompt: None,
-                tool_composition: None,
-            },
-            work: RunWork::Message {
-                message,
-                source_messages: vec![delivered],
-                tools: self.tools.clone(),
-                max_steps: self.settings.max_steps,
-                allow_prior_unknown: false,
-            },
-        };
+        let input = self.input(invocation.clone(), source, prepared, basis, delivered);
         let running = match self.engine.start(input, cancellation.clone()).await {
             Ok(running) => running,
             Err(error) => {
@@ -444,42 +455,18 @@ impl Owner {
         runs.controls.insert(
             id.clone(),
             Control {
-                invocation: invocation.invocation_id.clone(),
+                invocation: invocation.clone(),
                 cancellation,
+                failure: None,
             },
         );
         let owner = self.clone();
-        // Publish original-handle custody before returning Started. A closed UI
-        // or finished mutation Scope cannot cancel or acknowledge this domain run.
-        self.workers.spawn(async move {
-            let completion = std::panic::AssertUnwindSafe(running.completion())
-                .catch_unwind()
-                .await;
-            let mut runs = owner.runs.lock().await;
-            let clean = matches!(completion, Ok(ref completion) if completion.cleanup.is_ok());
-            if clean {
-                runs.controls.remove(&id);
-                owner.engine.release_session_state(&id);
-                drop(permit);
-            } else {
-                runs.quarantined.push(permit);
-            }
-        });
-        Ok(crate::contract::Started {
+        self.workers
+            .spawn(async move { owner.drive(running, permit).await });
+        Ok(crate::contract::SendResult::Started {
             session_id: invocation.session_id.clone(),
             invocation_id: invocation.invocation_id,
         })
-    }
-    pub async fn stop_run(&self, session: &str, invocation: &str) -> Result<bool, String> {
-        self.session(session).await?;
-        let runs = self.runs.lock().await;
-        if let Some(control) = runs.controls.get(session)
-            && control.invocation == invocation
-        {
-            control.cancellation.cancel();
-            return Ok(true);
-        }
-        Ok(false)
     }
 }
 fn metadata_rejection(title: &str, labels: &[String]) -> Option<Rejection> {
@@ -512,7 +499,8 @@ impl Owner {
             owner.workers.wait().await;
             owner.engine.drain().await;
             let configuration = owner.configuration.shutdown().await;
-            if !owner.runs.lock().await.quarantined.is_empty() {
+            let runs = owner.runs.lock().await;
+            if !runs.quarantined.is_empty() {
                 return Err("agent_cleanup_unconfirmed".into());
             }
             configuration.map_err(|_| "agent_configuration_cleanup_unconfirmed".into())

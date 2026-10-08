@@ -250,11 +250,23 @@ pub struct SessionPage {
     pub after: Option<String>,
 }
 #[derive(Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[schemars(rename = "AgentStarted")]
-pub struct Started {
-    pub session_id: String,
-    pub invocation_id: String,
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename = "AgentSendResult")]
+pub enum SendResult {
+    Started {
+        session_id: String,
+        invocation_id: String,
+    },
+    Queued {
+        session_id: String,
+        message_id: String,
+        revision: u64,
+    },
 }
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -539,7 +551,10 @@ pub fn contract() -> Contract {
                 ),
                 // Authorizes the entire bounded run against the immutable selected
                 // account/model. A started reply is not a terminal business verdict.
-                ("send".into(), method::<Send, Started>(MethodMode::Mutation)),
+                (
+                    "send".into(),
+                    method::<Send, SendResult>(MethodMode::Mutation),
+                ),
                 ("stop".into(), method::<Stop, Stopped>(MethodMode::Mutation)),
                 (
                     "watch".into(),

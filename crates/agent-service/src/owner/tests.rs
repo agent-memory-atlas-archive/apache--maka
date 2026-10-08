@@ -20,6 +20,9 @@
 #[path = "tests/service_tools.rs"]
 mod service_tools;
 
+#[path = "tests/queue.rs"]
+mod queue;
+
 #[path = "tests/selection.rs"]
 mod selection;
 
@@ -952,7 +955,10 @@ async fn exact_stop_cannot_cancel_a_successor_and_close_waits_for_original_worke
         assert_eq!(stale["requested"], false);
         let runs = fixture.owner.runs.lock().await;
         let control = runs.controls.get(&session).unwrap();
-        assert_eq!(control.invocation, second["invocationId"].as_str().unwrap());
+        assert_eq!(
+            control.invocation.invocation_id,
+            second["invocationId"].as_str().unwrap()
+        );
         assert!(!control.cancellation.is_cancelled());
         drop(runs);
         release.add_permits(1);
@@ -1053,8 +1059,59 @@ async fn cleanup_case(panic: bool) {
     let session = fixture.create("Physical lifetime").await;
     fixture.send(&session).await.unwrap();
     fault.entered.acquire().await.unwrap().forget();
+    let selection = fixture.selection().await;
+    let reference = if panic {
+        assert_eq!(fixture.send(&session).await.unwrap()["kind"], "queued");
+        let prepared = fixture
+            .app
+            .client()
+            .prepare_mutation(
+                fixture.binding(2).await,
+                "send".into(),
+                json!({"sessionId":session,"message":"after failed cleanup","model":selection}),
+                scope(&fixture.issuer, true),
+                Uuid::new_v4(),
+                Attachments::new().into(),
+            )
+            .await
+            .unwrap();
+        Some(prepared.reference().clone())
+    } else {
+        None
+    };
     fault.release.add_permits(1);
     fixture.drained().await;
+    if let Some(reference) = reference {
+        // The fault closed the SQL owner. Test the original admission gate
+        // directly; a new Host intent would fail before reaching that gate.
+        assert!(
+            fixture
+                .owner
+                .send(
+                    session.clone(),
+                    "after failed cleanup".into(),
+                    selection,
+                    &reference
+                )
+                .await
+                .err()
+                .unwrap()
+                .contains("agent_cleanup_unconfirmed")
+        );
+        let raw = rusqlite::Connection::open_with_flags(
+            fixture.root.join(maka_event_log::root::ROOT_DATABASE),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let pending: i64 = raw
+            .query_row(
+                "SELECT COUNT(*) FROM message_admissions WHERE session_id = ?1",
+                [&session],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pending, 1);
+    }
     assert_eq!(
         fixture.owner.runs.lock().await.quarantined.len(),
         usize::from(panic)

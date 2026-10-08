@@ -321,10 +321,10 @@ impl Handler for Agent {
                 }
                 "stop" => {
                     let input: Stop = decode(input)?;
-                    context.operation().ok_or("agent_mutation_required")?;
+                    let operation = context.operation().ok_or("agent_mutation_required")?;
                     encode(Stopped {
                         requested: owner
-                            .stop_run(&input.session_id, &input.invocation_id)
+                            .stop_run(&input.session_id, &input.invocation_id, operation)
                             .await?,
                     })
                 }
@@ -438,6 +438,9 @@ fn delivery(event: StoreStreamEvent) -> Option<Delivery> {
 }
 
 impl maka_runtime_host::application::NativeOwner for Agent {
+    fn activated(&self) {
+        self.0.activated();
+    }
     fn close(&self) -> BoxFuture<'static, Result<(), String>> {
         self.0.close()
     }

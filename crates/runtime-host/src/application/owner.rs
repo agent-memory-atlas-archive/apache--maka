@@ -1330,7 +1330,12 @@ impl Owner {
                 let result = exports.and_then(|batch| {
                     self.runtime
                         .publish(&activation, batch)
-                        .map_err(|e| e.error.to_string())
+                        .map_err(|e| e.error.to_string())?;
+                    if let Some(owner) = &owned.native_owner {
+                        std::panic::catch_unwind(AssertUnwindSafe(|| owner.activated()))
+                            .map_err(|_| "native activation hook panicked".to_string())?;
+                    }
+                    Ok(())
                 });
                 if let Err(error) = result {
                     if self.closing || was_retiring {

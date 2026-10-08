@@ -125,6 +125,10 @@ pub struct RecoveryInvocation<'a> {
 /// Successful close confirms its resources have settled; dropping a close
 /// observer or future is not that confirmation.
 pub trait NativeOwner: Send + Sync + 'static {
+    /// Start activation-owned background work after exports are published.
+    /// Must return promptly; close must settle any work started here, even if
+    /// this hook panics. Rejected or already retiring activations never start.
+    fn activated(&self) {}
     /// Immutable execution facts not represented by the package, configuration
     /// or captured imports, including targets captured by the native factory.
     /// Returning Some attests that these facts fully identify this native

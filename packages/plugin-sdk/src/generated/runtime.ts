@@ -102,7 +102,7 @@ export type RuntimeProtocol =
   | AgentWatch
   | AgentSession
   | AgentSessionPage
-  | AgentStarted
+  | AgentSendResult
   | AgentStopped
   | AgentDelivery
   | AgentDeliveryFact
@@ -1321,6 +1321,18 @@ export type AgentMetadataResult =
   | {
       reason: AgentRejection;
       kind: 'rejected';
+    };
+export type AgentSendResult =
+  | {
+      sessionId: string;
+      invocationId: string;
+      kind: 'started';
+    }
+  | {
+      sessionId: string;
+      messageId: string;
+      revision: number;
+      kind: 'queued';
     };
 export type AgentDeliveryFact =
   | {
@@ -2734,10 +2746,6 @@ export interface AgentSessionPage {
   sessions: AgentSession[];
   before: string | null;
   after: string | null;
-}
-export interface AgentStarted {
-  sessionId: string;
-  invocationId: string;
 }
 export interface AgentStopped {
   requested: boolean;

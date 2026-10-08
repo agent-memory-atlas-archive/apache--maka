@@ -4490,18 +4490,48 @@ export const contracts = {
           },
           output: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
-            title: 'AgentStarted',
-            type: 'object',
-            properties: {
-              sessionId: {
-                type: 'string',
+            title: 'AgentSendResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  invocationId: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'started',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'sessionId', 'invocationId'],
               },
-              invocationId: {
-                type: 'string',
+              {
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  messageId: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'queued',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'sessionId', 'messageId', 'revision'],
               },
-            },
-            additionalProperties: false,
-            required: ['sessionId', 'invocationId'],
+            ],
           },
           resources: {},
         },
