@@ -468,6 +468,13 @@ impl Handler for Manager {
     }
 }
 impl NativeOwner for Manager {
+    fn execution_basis(&self) -> Option<Value> {
+        Some(serde_json::json!({
+            "stateDomain": self.source.state_domain,
+            "deployment": self.source.deployment,
+            "environment": self.environment,
+        }))
+    }
     fn close(&self) -> BoxFuture<'static, Result<()>> {
         // Accepted requests and their blocking/SQL work belong to original
         // Host execution Scopes; no independent activation work is started.

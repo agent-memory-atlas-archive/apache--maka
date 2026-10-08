@@ -58,6 +58,8 @@ struct MessageBasis {
     model: crate::model::AcceptedModel,
     workspace: Workspace,
     fingerprint: String,
+    tools: Vec<crate::tools::SelectedTool>,
+    max_steps: usize,
 }
 struct Control {
     invocation: String,
@@ -80,6 +82,7 @@ pub(crate) struct Owner {
     managed_worktrees: std::path::PathBuf,
     engine: Engine,
     tools: maka_tools::ToolCatalog,
+    tool_basis: Vec<crate::tools::SelectedTool>,
     runs: Mutex<Runs>,
     permits: Arc<Semaphore>,
     workers: TaskTracker,
@@ -92,7 +95,7 @@ impl Owner {
         }
         let settings: Configuration =
             serde_json::from_value(input).map_err(|_| "agent_configuration_invalid")?;
-        let tools = crate::tools::catalog(context.services(), &settings.tools)?;
+        let (tools, tool_basis) = crate::tools::catalog(context.services(), &settings.tools)?;
         let persistence = context.persistence().ok_or("agent_requires_persistence")?;
         let root = persistence
             .store()
@@ -137,6 +140,7 @@ impl Owner {
             configuration,
             engine,
             tools,
+            tool_basis,
             runs: Mutex::default(),
             workers: TaskTracker::new(),
             stop: CancellationToken::new(),
@@ -352,6 +356,8 @@ impl Owner {
             model: source.accepted.clone(),
             workspace: session.configuration.workspace.clone(),
             fingerprint: operation.fingerprint.clone(),
+            tools: self.tool_basis.clone(),
+            max_steps: self.settings.max_steps,
         };
         let source = Arc::new(source);
         let identity = self.operation_id(operation);

@@ -125,6 +125,14 @@ pub struct RecoveryInvocation<'a> {
 /// Successful close confirms its resources have settled; dropping a close
 /// observer or future is not that confirmation.
 pub trait NativeOwner: Send + Sync + 'static {
+    /// Immutable execution facts not represented by the package, configuration
+    /// or captured imports, including targets captured by the native factory.
+    /// Returning Some attests that these facts fully identify this native
+    /// implementation's execution semantics across equivalent activations.
+    /// None keeps its bindings specific to the current activation.
+    fn execution_basis(&self) -> Option<Value> {
+        None
+    }
     fn close(&self) -> BoxFuture<'static, Result<()>>;
 }
 pub struct NativeActivation {
@@ -190,10 +198,10 @@ impl Service {
 }
 
 /// An exact consumer/provider registration, never a JSON or name-based grant.
-pub struct Binding(Capability<Service>, Arc<Contract>);
+pub struct Binding(Capability<Service>, Arc<Contract>, Arc<str>);
 impl Clone for Binding {
     fn clone(&self) -> Self {
-        Self(self.0.clone(), self.1.clone())
+        Self(self.0.clone(), self.1.clone(), self.2.clone())
     }
 }
 impl Binding {
@@ -209,6 +217,12 @@ impl Binding {
     }
     pub fn provider(&self) -> &Activation {
         self.0.provider()
+    }
+    /// Comparable execution facts of this exact provider and captured imports.
+    /// Opaque native providers make this digest activation-specific. Equality
+    /// is not authorization or a handle for restoring a registration.
+    pub fn execution_basis(&self) -> &str {
+        &self.2
     }
     pub fn registration_epoch(&self) -> Uuid {
         self.0.registration_epoch()

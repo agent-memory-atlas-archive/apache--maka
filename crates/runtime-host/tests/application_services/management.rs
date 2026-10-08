@@ -1181,3 +1181,86 @@ async fn instance_pages_freeze_source_and_nested_enabled_intents_preserve_origin
     );
     f.close().await;
 }
+
+#[tokio::test]
+async fn execution_basis_includes_cohost_manager_target_but_not_source_revision() {
+    use maka_plugin_core::composition::PresentationTarget;
+    let f = Fixture::create(Some(PresentationTarget::Tui)).await;
+    let original = f.binding.execution_basis().to_owned();
+    f.app.shutdown().await.unwrap();
+    let input = Input {
+        environment: Environment {
+            location: ExecutionLocation::Ui,
+            presentation: Some(PresentationTarget::Tui),
+        },
+        instances: BTreeMap::new(),
+        launch: None,
+    };
+    let same = f
+        .store
+        .commit_application(
+            f.managed.deployment,
+            f.managed.revision,
+            input.clone(),
+            vec![],
+            vec![],
+        )
+        .await
+        .unwrap();
+    let different = f
+        .store
+        .commit_application(Uuid::new_v4(), 0, input, vec![], vec![])
+        .await
+        .unwrap();
+    for (target, equal) in [(same, true), (different, false)] {
+        let mut native = NativeRegistry::default();
+        let management = maka_runtime_host::application::management::ManagementTarget::from_source(
+            f.store.clone(),
+            target.clone(),
+        )
+        .await
+        .unwrap();
+        maka_runtime_host::application::management::provide_target(
+            &mut native,
+            "test.ui.management".into(),
+            management,
+        )
+        .unwrap();
+        let app = Application::start_from_store(
+            f.store.clone(),
+            f.source.deployment,
+            native,
+            f.issuer.clone(),
+            Arc::new(Grant(f.issuer.clone())),
+            Limits::default(),
+        )
+        .await
+        .unwrap();
+        app.ready().await.unwrap();
+        let client = app.client();
+        let binding = client
+            .bind(client.activation(&id(2)).unwrap(), "management".into())
+            .await
+            .unwrap()
+            .remove(0);
+        assert_eq!(original == binding.execution_basis(), equal);
+        // Exercise the closure's real target, not only its declared metadata.
+        let result = client
+            .start(
+                binding,
+                "read".into(),
+                json!({}),
+                scope(&f.issuer, true),
+                Attachments::new().into(),
+            )
+            .await
+            .unwrap()
+            .result()
+            .await
+            .unwrap();
+        let managed: ManagedDeployment = serde_json::from_value(result).unwrap();
+        assert_eq!(managed.source.reference, target);
+        app.shutdown().await.unwrap();
+    }
+    f.close().await;
+}

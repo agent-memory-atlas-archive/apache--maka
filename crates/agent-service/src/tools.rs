@@ -35,16 +35,25 @@ use maka_runtime::{
 };
 use maka_runtime_host::application::NativeServices;
 use maka_tools::ToolCatalog;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{panic::AssertUnwindSafe, sync::Arc};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SelectedTool {
+    selection: ServiceTool,
+    binding: String,
+}
+
 pub(crate) fn catalog(
     services: NativeServices,
     selected: &[ServiceTool],
-) -> Result<ToolCatalog, String> {
+) -> Result<(ToolCatalog, Vec<SelectedTool>), String> {
+    let mut basis = Vec::new();
     let registrations = selected
         .iter()
         .map(|selection| {
@@ -68,6 +77,10 @@ pub(crate) fn catalog(
             if selection.description.trim().is_empty() {
                 return Err("agent_tool_description_invalid".to_owned());
             }
+            basis.push(SelectedTool {
+                selection: selection.clone(),
+                binding: binding.execution_basis().into(),
+            });
             Ok(ToolRegistration {
                 definition: ToolDefinition {
                     provider: None,
@@ -91,7 +104,8 @@ pub(crate) fn catalog(
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    ToolCatalog::new(registrations).map_err(|_| "agent_tool_catalog_invalid".into())
+    let catalog = ToolCatalog::new(registrations).map_err(|_| "agent_tool_catalog_invalid")?;
+    Ok((catalog, basis))
 }
 struct Service {
     services: NativeServices,

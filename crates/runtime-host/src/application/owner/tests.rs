@@ -43,6 +43,11 @@ impl Handler for Count {
         })
     }
 }
+impl NativeOwner for Count {
+    fn close(&self) -> BoxFuture<'static, Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+}
 #[tokio::test]
 async fn final_admission_rejects_failed_consumer_before_terminal_notification_is_polled() {
     tokio::time::timeout(Duration::from_secs(10), async {
@@ -180,6 +185,23 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
             .activations
             .insert(consumer.instance().clone(), consumer.clone());
         let count = Arc::new(AtomicUsize::new(0));
+        let native = Arc::new(Count(count.clone()));
+        let closing = native.clone();
+        owner.owned.insert(
+            provider.instance().clone(),
+            Owned {
+                imports: Arc::new(BTreeMap::new()),
+                resource: owner
+                    .runtime
+                    .own_resource(&provider, "native provider")
+                    .unwrap(),
+                close: Some(Box::pin(async move { closing.close().await })),
+                initializing: false,
+                closing: false,
+                native_owner: Some(native.clone()),
+                vm: None,
+            },
+        );
         owner
             .runtime
             .publish(
@@ -188,11 +210,7 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
                     "echo".into(),
                     Published {
                         contract: contract.clone(),
-                        value: Service::new(
-                            contract,
-                            ImplementationValue::Native(Arc::new(Count(count.clone()))),
-                        )
-                        .unwrap(),
+                        value: Service::new(contract, ImplementationValue::Native(native)).unwrap(),
                     },
                 )]),
             )

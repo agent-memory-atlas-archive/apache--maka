@@ -774,7 +774,54 @@ impl Owner {
                     .map_err(|e| e.to_string())?
                     .contract
                     .clone();
-                Ok(Binding(capability, Arc::new(contract)))
+                let instance = self
+                    .runtime
+                    .instance(capability.provider())
+                    .map_err(|e| e.to_string())?;
+                let owned = self
+                    .owned
+                    .get(capability.provider().instance())
+                    .ok_or("provider has no captured imports")?;
+                // Use the actual activation's retained plan and captured imports,
+                // never the desired plan or a newly resolved dependency. Child
+                // digests carry the dependency closure without retaining values.
+                let imports: BTreeMap<_, Vec<_>> = owned
+                    .imports
+                    .iter()
+                    .map(|(name, bindings)| {
+                        (
+                            name,
+                            bindings.iter().map(Binding::execution_basis).collect(),
+                        )
+                    })
+                    .collect();
+                let native = owned
+                    .native_owner
+                    .as_ref()
+                    .map(|owner| {
+                        std::panic::catch_unwind(AssertUnwindSafe(|| owner.execution_basis()))
+                            .map(|basis| match basis {
+                                Some(facts) => serde_json::json!({"facts": facts}),
+                                None => {
+                                    serde_json::json!({"activation": capability.provider().epoch()})
+                                }
+                            })
+                            .map_err(|_| "native execution basis panicked")
+                    })
+                    .transpose()?;
+                let mut basis = serde_json::json!({
+                    "identity": instance.identity, "parent": instance.parent,
+                    "package": instance.package, "disabled": instance.disabled,
+                    "configuration": instance.configuration, "entry": instance.entry,
+                    "bindings": instance.bindings, "exports": instance.exports,
+                    "imports": imports, "export": capability.export(), "contract": contract,
+                    "native": native,
+                });
+                basis.sort_all_objects();
+                let digest = maka_runtime::artifact::content_digest(
+                    &serde_json::to_vec(&basis).map_err(|e| e.to_string())?,
+                );
+                Ok(Binding(capability, Arc::new(contract), digest.into()))
             })
             .collect()
     }
