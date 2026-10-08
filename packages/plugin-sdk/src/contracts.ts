@@ -3572,6 +3572,203 @@ export const contracts = {
     interface: {
       kind: 'service',
       methods: {
+        catalog: {
+          mode: 'subscription',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentList',
+            type: 'object',
+            properties: {
+              filter: {
+                $ref: '#/$defs/AgentSessionFilter',
+              },
+              position: {
+                $ref: '#/$defs/AgentSessionPosition',
+              },
+            },
+            additionalProperties: false,
+            required: ['filter', 'position'],
+            $defs: {
+              AgentSessionFilter: {
+                type: 'string',
+                enum: ['all', 'needs_you'],
+              },
+              AgentSessionPosition: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'start',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      cursor: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'at',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'cursor'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      revision: {
+                        type: 'string',
+                      },
+                      cursor: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'after',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'revision', 'cursor'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      revision: {
+                        type: 'string',
+                      },
+                      cursor: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'before',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'revision', 'cursor'],
+                  },
+                ],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentSessionPage',
+            type: 'object',
+            properties: {
+              revision: {
+                type: 'string',
+              },
+              needsYouCount: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              sessions: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/AgentSession',
+                },
+                maxItems: 32,
+              },
+              before: {
+                type: ['string', 'null'],
+              },
+              after: {
+                type: ['string', 'null'],
+              },
+            },
+            additionalProperties: false,
+            required: ['revision', 'needsYouCount', 'sessions', 'before', 'after'],
+            $defs: {
+              AgentSession: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  labels: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  workspace: {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  archived: {
+                    type: 'boolean',
+                  },
+                  activity: {
+                    $ref: '#/$defs/AgentSessionActivity',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'title',
+                  'labels',
+                  'workspace',
+                  'revision',
+                  'updatedAt',
+                  'archived',
+                  'activity',
+                ],
+              },
+              AgentWorkspace: {
+                type: 'object',
+                properties: {
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
+              AgentSessionActivity: {
+                type: 'string',
+                enum: ['idle', 'working', 'waiting'],
+              },
+            },
+          },
+          resources: {},
+        },
         create: {
           mode: 'mutation',
           input: {
@@ -5276,6 +5473,22 @@ export const contracts = {
                   {
                     type: 'object',
                     properties: {
+                      cursor: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'at',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'cursor'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
                       revision: {
                         type: 'string',
                       },
@@ -5323,6 +5536,11 @@ export const contracts = {
               revision: {
                 type: 'string',
               },
+              needsYouCount: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
               sessions: {
                 type: 'array',
                 items: {
@@ -5338,7 +5556,7 @@ export const contracts = {
               },
             },
             additionalProperties: false,
-            required: ['revision', 'sessions', 'before', 'after'],
+            required: ['revision', 'needsYouCount', 'sessions', 'before', 'after'],
             $defs: {
               AgentSession: {
                 type: 'object',

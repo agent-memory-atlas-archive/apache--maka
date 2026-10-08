@@ -469,12 +469,29 @@ void [nativeContinuation, capturedResource, removedCapture, stalePresentation, g
 
 const sessionWindow = {
   revision: 'catalog',
+  needsYouCount: 0,
   sessions: [],
   before: null,
   after: null,
 } satisfies AgentSessionPage;
 // @ts-expect-error A missing boundary is not an end-of-catalog receipt.
-const missingSessionBoundary: AgentSessionPage = { revision: 'catalog', sessions: [], after: null };
+const missingSessionBoundary: AgentSessionPage = {
+  revision: 'catalog',
+  needsYouCount: 0,
+  sessions: [],
+  after: null,
+};
+// @ts-expect-error A bounded page length is not the complete pending-session count.
+const missingSessionCount: AgentSessionPage = {
+  revision: 'catalog',
+  sessions: [],
+  before: null,
+  after: null,
+};
+const refreshSessionPage = {
+  filter: 'all',
+  position: { kind: 'at', cursor: 'session' },
+} satisfies AgentList;
 const nextSessionPage = {
   filter: 'needs_you',
   position: { kind: 'after', revision: 'catalog', cursor: 'session' },
@@ -484,4 +501,11 @@ const unfencedSessionPage: AgentList = {
   // @ts-expect-error Every continuation belongs to one catalog revision.
   position: { kind: 'before', cursor: 'session' },
 };
-void [sessionWindow, missingSessionBoundary, nextSessionPage, unfencedSessionPage];
+void [
+  sessionWindow,
+  missingSessionBoundary,
+  missingSessionCount,
+  refreshSessionPage,
+  nextSessionPage,
+  unfencedSessionPage,
+];

@@ -126,6 +126,8 @@ close/reopen. Terminal entries keep paged in-flow presentation.
 
 Desktop navigation can be collapsed without unmounting its component or the composer. Context and model controls use separate rows; long titles and model triggers are measured and truncated by the native renderer, with complete accessible values. Terminal navigation labels remain bounded by its own presentation.
 
+Conversation navigation subscribes to the native Agent catalog. Background activity, metadata and pending interactions update the current directory page without replacing the selected conversation, history window or native drafts. Needs You shows the complete private pending-session count, independent of the 32-row page. Refresh retains the current page's first-session anchor and falls back when its tail disappears; Next/Previous use the latest snapshot revision. Successful explicit creation reveals the new conversation. A failed subscription retains visible content until explicit Refresh. The command palette keeps its separate revision-bound list query.
+
 
 The `command-palette` package exports ordinary `CommandPalette` content for explicit compositions, with parent-controlled `open`, current command guards and `invoked`/`selected`/`closed` events. It imports TextInput, TextReader, ReadingArea and Agent. Search requires all whitespace-separated terms in a command's label/id/hint or a session's id/title; it scans the original revision-bound directory and keeps at most 32 matching sessions, with an explicit More window. Choice confirmation captures the original native query revision. The parent handles command ids and re-observes selected sessions through Agent; presentation and modal input isolation belong to its scene.
 

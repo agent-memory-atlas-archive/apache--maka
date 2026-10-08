@@ -21,6 +21,7 @@
 
 mod activity;
 mod admission;
+mod catalog;
 pub(crate) use admission::retain;
 pub(crate) mod copy;
 pub use copy::{AbandonRevision, SessionCopy, SessionCopyResult};
@@ -44,7 +45,6 @@ pub use execution::{CatalogMessage, SessionExecution, SessionExecutionState};
 pub use metadata::SessionMutation;
 pub use read_state::SessionReadState;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use sha2::{Digest, Sha256};
 use sqlx::{Connection, Row, SqliteConnection};
 
 use crate::{EventLog, StoreError};
@@ -98,6 +98,8 @@ pub struct CatalogFilter {
 pub struct SessionPage<T> {
     pub revision: String,
     pub sessions: Vec<SessionRecord<T>>,
+    /// All unresolved-interaction sessions in this scope, independent of page size.
+    pub pending_session_count: u64,
     pub next_cursor: Option<String>,
     pub previous_cursor: Option<String>,
 }
@@ -106,6 +108,8 @@ pub struct SessionPage<T> {
 #[derive(Clone, Copy, Debug)]
 pub enum SessionPosition<'a> {
     Start,
+    /// Inclusive anchor for a fresh snapshot, with backward fallback at the tail.
+    At(&'a str),
     After(&'a str),
     Before(&'a str),
 }
@@ -255,126 +259,6 @@ impl EventLog {
         filter: CatalogFilter,
     ) -> Result<SessionPage<T>, StoreError> {
         self.session_page(scope, expected_revision, position, MAX_SESSION_PAGE, filter)
-            .await
-    }
-
-    async fn session_page<T: DeserializeOwned + Send + 'static>(
-        &self,
-        scope: CatalogScope,
-        expected_revision: Option<&str>,
-        position: SessionPosition<'_>,
-        limit: usize,
-        filter: CatalogFilter,
-    ) -> Result<SessionPage<T>, StoreError> {
-        self.validate_root()?;
-        if limit == 0 || limit > MAX_SESSION_PAGE {
-            return Err(invalid("session page limit must be 1..=32"));
-        }
-        let (cursor, reverse) = match position {
-            SessionPosition::Start => (None, false),
-            SessionPosition::After(cursor) => (Some(cursor), false),
-            SessionPosition::Before(cursor) => (Some(cursor), true),
-        };
-        if let Some(cursor) = cursor {
-            validate_id(cursor)?;
-            if expected_revision.is_none() {
-                return Err(invalid("session continuation requires catalog revision"));
-            }
-        }
-        let active_only = !filter.include_archived;
-        let pending_only = filter.pending_only;
-        let (session, cwd, prefix) = match &scope {
-            CatalogScope::Session(id) => {
-                validate_id(id)?;
-                (Some(id.clone()), None, None)
-            }
-            CatalogScope::Workspace(cwd) => (None, Some(cwd.clone()), None),
-            CatalogScope::IdPrefix(prefix) => {
-                validate_id(prefix)?;
-                (None, None, Some(prefix.clone()))
-            }
-            CatalogScope::Profile => (None, None, None),
-        };
-        let expected_revision = expected_revision.map(str::to_owned);
-        let cursor = cursor.map(str::to_owned);
-        self.connection
-            .run(move |connection| {
-                Box::pin(async move {
-                    let mut tx = connection.begin().await?;
-                    let counter: i64 = sqlx::query_scalar(
-                        "SELECT revision FROM session_catalog_revision WHERE singleton = 1",
-                    )
-                    .fetch_one(&mut *tx)
-                    .await?;
-                    let revision = format!(
-                        "sha256:{:x}",
-                        Sha256::digest(serde_json::to_vec(&(
-                            "session-catalog", counter, scope, filter,
-                        ))?)
-                    );
-                    if let Some(expected) = expected_revision
-                        && expected != revision
-                    {
-                        return Err(StoreError::RevisionConflict {
-                            expected,
-                            actual: revision,
-                        });
-                    }
-                    // Direction is closed native state; every scope and user value
-                    // remains a bound parameter. Reverse reads return ascending pages.
-                    let (comparison, order) = if reverse { ("<", "DESC") } else { (">", "ASC") };
-                    let sql = format!(
-                        "SELECT id FROM session_control WHERE id {comparison} ?
-                         AND NOT EXISTS (SELECT 1 FROM session_retirements WHERE session_id=id AND remove_session=1)
-                         AND (? = 0 OR archived = 0)
-                         AND (? IS NULL OR id = ?)
-                         AND (? IS NULL OR json_extract(configuration, '$.workspace.hostCwd') = ?)
-                         AND (? IS NULL OR substr(id, 1, length(?)) = ?)
-                         AND (? = 0 OR EXISTS (
-                             SELECT 1 FROM interaction_requests request
-                             WHERE request.session_id = session_control.id AND NOT EXISTS (
-                                 SELECT 1 FROM interaction_outcomes outcome
-                                 WHERE outcome.request_id = request.request_id)))
-                         ORDER BY id {order} LIMIT ?"
-                    );
-                    let mut ids = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql))
-                    .bind(cursor.as_deref().unwrap_or(""))
-                    .bind(active_only)
-                    .bind(&session)
-                    .bind(&session)
-                    .bind(&cwd)
-                    .bind(&cwd)
-                    .bind(&prefix)
-                    .bind(&prefix)
-                    .bind(&prefix)
-                    .bind(pending_only)
-                    .bind((limit + 1) as i64)
-                    .fetch_all(&mut *tx)
-                    .await?;
-                    let has_more = ids.len() > limit;
-                    ids.truncate(limit);
-                    if reverse { ids.reverse(); }
-                    let mut sessions: Vec<SessionRecord<T>> = Vec::with_capacity(limit);
-                    for id in ids.iter().take(limit) {
-                        sessions.push(
-                            read(&mut tx, id)
-                                .await?
-                                .ok_or(StoreError::SessionNotFound)?,
-                        );
-                    }
-                    let next_cursor = if (!reverse && has_more) || (reverse && cursor.is_some()) {
-                        sessions.last().map(|record| record.id.clone())
-                    } else {
-                        None
-                    };
-                    let previous_cursor = if (reverse && has_more) || (!reverse && cursor.is_some()) {
-                        sessions.first().map(|record| record.id.clone())
-                    } else {
-                        None
-                    };
-                    Ok(SessionPage { revision, sessions, next_cursor, previous_cursor })
-                })
-            })
             .await
     }
 }

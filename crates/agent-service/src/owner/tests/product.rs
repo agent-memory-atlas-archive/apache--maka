@@ -980,7 +980,7 @@ process.stdout.write(output.outputFiles[0].text);
         return;
     }
     // Actual catalog filtering changes only the directory. The native draft
-    // survives an empty page, then the canonical request appears on refresh.
+    // survives an empty page, then canonical background changes arrive without refresh.
     click(&mut presenter, "[ Toggle sidebar ]");
     click(&mut presenter, "All");
     // Each physical key follows a published frame; activating All also
@@ -1010,6 +1010,7 @@ process.stdout.write(output.outputFiles[0].text);
         )))
         .unwrap();
     await_screen(&mut presenter, "No conversations need you");
+    await_screen(&mut presenter, "Needs You (0)");
     runtime
         .block_on(
             fixture
@@ -1020,8 +1021,8 @@ process.stdout.write(output.outputFiles[0].text);
                 )),
         )
         .unwrap();
-    click(&mut presenter, "[ Refresh ]");
     await_screen(&mut presenter, "◇ New");
+    await_screen(&mut presenter, "Needs You (1)");
     assert!(
         screen(&draw(&mut presenter))
             .lines()
@@ -1036,8 +1037,62 @@ process.stdout.write(output.outputFiles[0].text);
             },
         ))
         .unwrap();
-    click(&mut presenter, "[ Refresh ]");
     await_screen(&mut presenter, "No conversations need you");
+    await_screen(&mut presenter, "Needs You (0)");
+    // A different conversation enters and leaves the inbox without selecting
+    // it or replacing the original composer owner.
+    let background_id = format!("{}{}", fixture.owner.prefix, "f".repeat(32));
+    runtime.block_on(async {
+        let mut configuration = before.configuration.clone();
+        configuration.title = "Background inbox".into();
+        fixture
+            .store
+            .create_session(
+                &background_id,
+                "native-background-catalog",
+                &configuration,
+                1,
+            )
+            .await
+            .unwrap();
+        fixture
+            .store
+            .establish_interaction(&super::catalog_interaction(
+                &background_id,
+                "native-background-request",
+            ))
+            .await
+            .unwrap();
+    });
+    await_screen(&mut presenter, "◇ Background");
+    await_screen(&mut presenter, "Needs You (1)");
+    assert!(screen(&draw(&mut presenter)).contains("Hello product"));
+    runtime.block_on(async {
+        fixture
+            .store
+            .commit_interaction_outcome(
+                "native-background-request",
+                maka_runtime::interaction::InteractionOutcome::Closure {
+                    reason: maka_runtime::interaction::ClosureReason::ProducerCancelled,
+                    committed_at: 20,
+                },
+            )
+            .await
+            .unwrap();
+        let record = fixture
+            .store
+            .get_session::<SessionConfiguration>(&background_id)
+            .await
+            .unwrap()
+            .unwrap();
+        fixture
+            .store
+            .begin_session_removal(&background_id, record.revision)
+            .await
+            .unwrap();
+    });
+    await_screen(&mut presenter, "No conversations need you");
+    await_screen(&mut presenter, "Needs You (0)");
     click(&mut presenter, "All");
     wait_for_target(&mut presenter, "    New conversation", 0);
     click(&mut presenter, "[ Hide sidebar ]");

@@ -1301,6 +1301,10 @@ export type AgentSessionPosition =
       kind: 'start';
     }
   | {
+      cursor: string;
+      kind: 'at';
+    }
+  | {
       revision: string;
       cursor: string;
       kind: 'after';
@@ -3564,6 +3568,7 @@ export interface QuestionResponse {
 }
 export interface AgentSessionPage {
   revision: string;
+  needsYouCount: number;
   /**
    * @maxItems 32
    */

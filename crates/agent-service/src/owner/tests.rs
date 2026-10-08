@@ -23,6 +23,9 @@ mod service_tools;
 #[path = "tests/interactions.rs"]
 mod interactions;
 
+#[path = "tests/catalog.rs"]
+mod catalog;
+
 #[path = "tests/queue.rs"]
 mod queue;
 
@@ -1580,6 +1583,7 @@ async fn private_catalog_pages_reach_every_session_in_both_directions() {
         .await
         .unwrap();
     let revision = page["revision"].clone();
+    assert_eq!(page["needsYouCount"], 0);
     let first = page.clone();
     let mut actual = Vec::new();
     loop {
@@ -1631,13 +1635,15 @@ async fn private_catalog_pages_reach_every_session_in_both_directions() {
         );
     }
     assert_eq!(page, first);
-    for kind in ["after", "before"] {
+    for kind in ["at", "after", "before"] {
+        let position = if kind == "at" {
+            json!({"kind":kind,"cursor":"foreign_session"})
+        } else {
+            json!({"kind":kind,"revision":revision,"cursor":"foreign_session"})
+        };
         assert!(
             fixture
-                .query(
-                    "list",
-                    json!({"filter":"all","position":{"kind":kind,"revision":revision,"cursor":"foreign_session"}})
-                )
+                .query("list", json!({"filter":"all","position":position}))
                 .await
                 .unwrap_err()
                 .contains("agent_cursor_invalid")
@@ -1746,10 +1752,17 @@ async fn private_catalog_pages_reach_every_session_in_both_directions() {
         )
         .await
         .unwrap();
+    assert_eq!(pending["needsYouCount"], waiting.len());
+    let all_pending = fixture
+        .query("list", json!({"filter":"all","position":{"kind":"start"}}))
+        .await
+        .unwrap();
+    assert_eq!(all_pending["needsYouCount"], waiting.len());
     let pending_first = pending.clone();
     let pending_revision = pending["revision"].clone();
     let mut found = Vec::new();
     loop {
+        assert_eq!(pending["needsYouCount"], waiting.len());
         for row in pending["sessions"].as_array().unwrap() {
             assert_eq!(row["activity"], "waiting");
             found.push(row["id"].as_str().unwrap().to_owned());
@@ -1777,6 +1790,30 @@ async fn private_catalog_pages_reach_every_session_in_both_directions() {
         .await
         .unwrap();
     assert!(fixture.query("list", json!({"filter":"needs_you","position":{"kind":"after","revision":pending_revision,"cursor":pending_first["after"]}})).await.unwrap_err().contains("agent_catalog_unavailable"));
+    let anchored = fixture
+        .query(
+            "list",
+            json!({"filter":"needs_you","position":{"kind":"at","cursor":waiting[0]}}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(anchored["sessions"][0]["id"], waiting[1]);
+    assert_eq!(anchored["needsYouCount"], waiting.len() - 1);
+    assert!(anchored["before"].is_null());
+    let beyond = format!("{}{}", fixture.owner.prefix, "f".repeat(32));
+    let tail = fixture
+        .query(
+            "list",
+            json!({"filter":"needs_you","position":{"kind":"at","cursor":beyond}}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        tail["sessions"].as_array().unwrap().last().unwrap()["id"],
+        *waiting.last().unwrap()
+    );
+    assert!(tail["after"].is_null());
+    assert!(!tail["before"].is_null());
     let resolved = fixture
         .query("observe", json!({"sessionId":waiting[0]}))
         .await

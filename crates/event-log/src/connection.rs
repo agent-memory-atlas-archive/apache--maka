@@ -24,7 +24,7 @@ pub use authority::ConnectionAuthority;
 
 use futures_util::{FutureExt, future::Shared};
 use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
-use tokio::sync::{Semaphore, mpsc, oneshot};
+use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 
 use crate::StoreError;
 
@@ -50,9 +50,16 @@ pub struct OwnedConnection {
     jobs: mpsc::Sender<Command>,
     closed: Shared<BoxFuture<'static, Result<(), String>>>,
     readers: Arc<Semaphore>,
+    changes: watch::Receiver<()>,
 }
 
 impl OwnedConnection {
+    /// Disposable write hints. Re-read canonical state after each wakeup;
+    /// rolled-back work may also notify. Only the original worker owns ingress.
+    pub fn subscribe_changes(&self) -> watch::Receiver<()> {
+        self.changes.clone()
+    }
+
     /// Observe the original worker's actual terminal result without closing ingress.
     pub(crate) fn close_receipt(&self) -> Shared<BoxFuture<'static, Result<(), String>>> {
         self.closed.clone()
@@ -67,6 +74,7 @@ impl OwnedConnection {
         let authority = Arc::new(authority);
         let (ready, startup) = oneshot::channel();
         let (completion, closed) = oneshot::channel();
+        let (changed, changes) = watch::channel(());
         std::thread::Builder::new()
             .name("runtime-store-owner".into())
             .spawn(move || {
@@ -80,9 +88,13 @@ impl OwnedConnection {
                     let read_options = options.clone().create_if_missing(false).read_only(true);
                     let mut readers = tokio::task::JoinSet::new();
                     let mut reader_failure = None;
+                    let mut last_changes = 0_i64;
                     let initialized = std::panic::catch_unwind(AssertUnwindSafe(|| {
                         runtime.block_on(async {
                             initialize(&mut connection).await?;
+                            last_changes = sqlx::query_scalar("SELECT total_changes()")
+                                .fetch_one(&mut connection)
+                                .await?;
                             validate()
                         })
                     }))
@@ -148,6 +160,21 @@ impl OwnedConnection {
                                 // An unwound connection cannot accept further jobs.
                                 break;
                             }
+                            match runtime.block_on(
+                                sqlx::query_scalar::<_, i64>("SELECT total_changes()")
+                                    .fetch_one(&mut connection),
+                            ) {
+                                Ok(total) if total == last_changes => {}
+                                Ok(total) => {
+                                    last_changes = total;
+                                    changed.send_replace(());
+                                }
+                                // Preserve the job's result and real close path. A
+                                // subscriber's canonical read will report any failure.
+                                Err(_) => {
+                                    changed.send_replace(());
+                                }
+                            }
                         }
                     }
                     // Readers share this owner's authority, not the caller's lifetime.
@@ -210,6 +237,7 @@ impl OwnedConnection {
                 .boxed()
                 .shared(),
                 readers: Arc::new(Semaphore::new(2)),
+                changes,
             }),
             Ok(Err(error)) => {
                 drop(jobs);

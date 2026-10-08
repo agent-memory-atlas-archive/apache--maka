@@ -350,7 +350,9 @@ class Client {
     return this.output;
   }
   find(method) {
-    const action = [...this.actions.values()].reverse().find((action) => action.method === method);
+    const action =
+      this.output.subscriptions.find((subscription) => subscription.method === method) ??
+      [...this.actions.values()].reverse().find((action) => action.method === method);
     assert.ok(action, `expected ${method}`);
     return action;
   }
@@ -359,7 +361,10 @@ class Client {
     return this.input({ kind: 'action', key: action.key, event: value });
   }
   query(method, value) {
-    return this.complete(this.find(method), { status: 'succeeded', value });
+    return this.complete(this.find(method), {
+      status: method === 'catalog' ? 'updated' : 'succeeded',
+      value,
+    });
   }
   component(name, event = {}) {
     if (name === 'tailReady' && !Object.hasOwn(event, 'landing'))
@@ -406,7 +411,13 @@ class Client {
   }
   start({ through = 0, parts = [], run = null, chunks = [] } = {}) {
     this.query('page', []);
-    this.query('list', { revision: 'catalog', sessions: [session], before: null, after: null });
+    this.query('catalog', {
+      revision: 'catalog',
+      needsYouCount: 0,
+      sessions: [session],
+      before: null,
+      after: null,
+    });
     this.query('observe', { session, through, run, parts });
     this.query('history', { kind: 'ready', through, chunks, before: null, after: null });
     this.input({
@@ -3550,7 +3561,13 @@ for (const readyFirst of [false, true]) {
         textKind: 'text',
       };
       client.query('page', []);
-      client.query('list', { revision: 'catalog', sessions: [session], before: null, after: null });
+      client.query('catalog', {
+        revision: 'catalog',
+        needsYouCount: 0,
+        sessions: [session],
+        before: null,
+        after: null,
+      });
       client.query('observe', {
         session,
         through: 100,
@@ -5629,22 +5646,26 @@ for (const target of ['desktop', 'tui']) {
     }));
     const page = (offset) => ({
       revision: 'catalog-2',
+      needsYouCount: 0,
       sessions: all.slice(offset, offset + 32),
       before: offset ? all[offset].id : null,
       after: offset + 32 < all.length ? all[offset + 31].id : null,
     });
     client.raw('catalog-refresh');
-    assert.deepEqual(client.find('list').input, { filter: 'all', position: { kind: 'start' } });
-    client.query('list', page(0));
+    assert.deepEqual(client.find('catalog').input, {
+      filter: 'all',
+      position: { kind: 'at', cursor: session.id },
+    });
+    client.query('catalog', page(0));
     const visited = [...client.state.catalog.sessions];
     for (let offset = 32; offset < all.length; offset += 32) {
       const cursor = client.state.catalog.after;
       client.raw('catalog-more');
-      assert.deepEqual(client.find('list').input, {
+      assert.deepEqual(client.find('catalog').input, {
         filter: 'all',
         position: { kind: 'after', revision: 'catalog-2', cursor },
       });
-      client.query('list', page(offset));
+      client.query('catalog', page(offset));
       assert.ok(client.state.catalog.sessions.length <= 32);
       visited.push(...client.state.catalog.sessions);
     }
@@ -5655,7 +5676,7 @@ for (const target of ['desktop', 'tui']) {
     for (let offset = 96; offset >= 0; offset -= 32) {
       const cursor = client.state.catalog.before;
       client.raw('catalog-previous');
-      assert.deepEqual(client.find('list').input, {
+      assert.deepEqual(client.find('catalog').input, {
         filter: 'all',
         position: {
           kind: 'before',
@@ -5663,7 +5684,7 @@ for (const target of ['desktop', 'tui']) {
           cursor,
         },
       });
-      client.query('list', page(offset));
+      client.query('catalog', page(offset));
     }
     assert.deepEqual(
       {
@@ -5677,7 +5698,10 @@ for (const target of ['desktop', 'tui']) {
     );
     const oldPage = structuredClone(client.state.catalog);
     client.raw('catalog-more');
-    client.complete(client.find('list'), { status: 'failed', error: 'agent_catalog_unavailable' });
+    client.complete(client.find('catalog'), {
+      status: 'failed',
+      error: 'agent_catalog_unavailable',
+    });
     assert.deepEqual(client.state.catalog, oldPage);
     assert.equal(client.state.catalogFailed, true);
     assert.equal(client.state.notice, null);
@@ -5687,27 +5711,52 @@ for (const target of ['desktop', 'tui']) {
       true,
     );
     client.raw('catalog-refresh');
-    client.query('list', page(0));
+    client.query('catalog', page(0));
     assert.equal(client.state.catalogFailed, false);
-    // Creation leaves the revisioned page intact until the fresh catalog returns.
+    // Explicit creation leaves Needs You and reveals its new selected row.
+    client.raw('catalog-filter-needs_you');
+    client.query('catalog', {
+      revision: 'empty-inbox',
+      needsYouCount: 0,
+      sessions: [],
+      before: null,
+      after: null,
+    });
     client.raw('create');
     const created = { ...session, id: 'created', title: 'Newly created' };
     client.complete(client.find('create'), returned({ kind: 'created', session: created }));
-    client.query('list', { revision: 'catalog-3', sessions: [created], before: null, after: null });
+    assert.equal(client.state.catalogFilter, 'all');
+    assert.deepEqual(client.find('catalog').input, {
+      filter: 'all',
+      position: { kind: 'at', cursor: created.id },
+    });
+    client.query('catalog', {
+      revision: 'catalog-3',
+      needsYouCount: 0,
+      sessions: [created],
+      before: null,
+      after: null,
+    });
     assert.deepEqual(client.state.selected, created);
     const replay = new Client(component);
-    const stale = replay.find('list');
+    const stale = replay.find('catalog');
     replay.query('page', [{ cursor: 7, caller: reference.source, consumer: [uuid(9)], reference }]);
     replay.complete(replay.find('read'), { status: 'failed', reason: 'temporarily unavailable' });
     replay.raw('check');
     replay.query('read', returned(null).reply);
-    const fresh = replay.find('list');
+    const fresh = replay.find('catalog');
     assert.notEqual(stale.key, fresh.key);
     replay.complete(fresh, {
-      status: 'succeeded',
-      value: { revision: 'catalog-3', sessions: [created], before: null, after: null },
+      status: 'updated',
+      value: {
+        revision: 'catalog-3',
+        needsYouCount: 0,
+        sessions: [created],
+        before: null,
+        after: null,
+      },
     });
-    replay.complete(stale, { status: 'succeeded', value: page(0) });
+    replay.complete(stale, { status: 'updated', value: page(0) });
     assert.equal(replay.state.catalog.revision, 'catalog-3');
     assert.deepEqual(replay.state.selected, created);
   });
@@ -5720,12 +5769,13 @@ test('session catalog contracts require explicit boundaries and bound the page s
   const validate = ajv.compile(method.output);
   const page = {
     revision: 'catalog',
+    needsYouCount: 0,
     sessions: Array.from({ length: 32 }, () => session),
     before: null,
     after: null,
   };
   assert.equal(validate(page), true);
-  for (const boundary of ['before', 'after']) {
+  for (const boundary of ['before', 'after', 'needsYouCount']) {
     const incomplete = { ...page };
     delete incomplete[boundary];
     assert.equal(validate(incomplete), false);
@@ -5733,6 +5783,9 @@ test('session catalog contracts require explicit boundaries and bound the page s
   assert.equal(validate({ ...page, sessions: [...page.sessions, session] }), false);
   const position = ajv.compile(method.input);
   assert.equal(position({ filter: 'all', position: { kind: 'start' } }), true);
+  assert.equal(position({ filter: 'all', position: { kind: 'at', cursor: 'session' } }), true);
+  assert.equal(sdk.contracts.agent.interface.methods.catalog.mode, 'subscription');
+  assert.deepEqual(sdk.contracts.agent.interface.methods.catalog.output, method.output);
   assert.equal(
     position({
       filter: 'needs_you',
@@ -5748,7 +5801,13 @@ test('session catalog contracts require explicit boundaries and bound the page s
 test('first creation captures a published directory and guards the complete preparation', () => {
   const client = new Client();
   client.query('page', []);
-  client.query('list', { revision: 'empty', sessions: [], before: null, after: null });
+  client.query('catalog', {
+    revision: 'empty',
+    needsYouCount: 0,
+    sessions: [],
+    before: null,
+    after: null,
+  });
   client.raw('create');
   const query = client.find('directories');
   assert.deepEqual(query.input, { kind: 'roots' });
@@ -5773,8 +5832,21 @@ test('first creation captures a published directory and guards the complete prep
     labels: [],
     workspace: { kind: 'directory', selection },
   });
+  const live = { ...session, revision: 2, title: 'Observed before receipt' };
+  client.query('catalog', {
+    revision: 'live-create',
+    needsYouCount: 0,
+    sessions: [live],
+    before: null,
+    after: null,
+  });
+  const epoch = client.state.epoch;
+  const observation = client.find('observe');
   client.complete(client.find('create'), returned({ kind: 'created', session }));
-  assert.deepEqual(client.state.selected, session);
+  assert.deepEqual(client.state.selected, live);
+  assert.equal(client.state.epoch, epoch, 'creation receipt retains the already selected owner');
+  assert.equal(client.find('observe').key, observation.key);
+  assert.deepEqual(client.output.actions, []);
 });
 
 test('confirmed creation refusal keeps the original session and does not become Unknown', () => {
@@ -5911,6 +5983,7 @@ for (const target of ['tui', 'desktop']) {
   function sessions(at, titles, after = null, revision = 'catalog-A') {
     return {
       revision,
+      needsYouCount: 0,
       before: at ? `session-${at - 1}` : null,
       after,
       sessions: titles.map((title, index) => ({
@@ -6015,6 +6088,7 @@ for (const target of ['tui', 'desktop']) {
     };
     form.query('list', {
       revision: 'metadata',
+      needsYouCount: 0,
       sessions: [matching, other],
       before: null,
       after: null,
@@ -6328,6 +6402,7 @@ for (const target of ['desktop', 'tui']) {
     read(form, 'Check');
     form.query('list', {
       revision: 'directory',
+      needsYouCount: 0,
       sessions: [{ ...session, title: 'Check conversation' }],
       before: null,
       after: null,
@@ -6426,6 +6501,7 @@ for (const target of ['desktop', 'tui']) {
     read(form, 'candidate');
     form.query('list', {
       revision: 'independent-directory',
+      needsYouCount: 0,
       sessions: [candidate],
       before: null,
       after: null,
@@ -6791,13 +6867,19 @@ for (const target of ['desktop', 'tui']) {
     const client = new Client(rootModule.component).start();
     client.raw('create-workspace');
     client.raw('catalog-refresh');
-    const listing = client.find('list');
+    const listing = client.find('catalog');
     rootChoice(client, 'selected', child.selection);
     assert.equal(client.state.dialog, 'directories');
     assert.deepEqual(client.output.actions, []);
     client.complete(listing, {
-      status: 'succeeded',
-      value: { revision: 'new-catalog', sessions: [session], before: null, after: null },
+      status: 'updated',
+      value: {
+        revision: 'new-catalog',
+        needsYouCount: 0,
+        sessions: [session],
+        before: null,
+        after: null,
+      },
     });
     rootChoice(client, 'closed');
     rootChoice(client, 'selected', child.selection);
@@ -7896,8 +7978,9 @@ for (const target of ['desktop', 'tui']) {
     const composer = () => modelSlots(client.output.frame.view).find((n) => n.key === 'composer');
     const original = composer();
     client.raw('catalog-refresh');
-    client.query('list', {
+    client.query('catalog', {
       revision: 'archived-catalog',
+      needsYouCount: 0,
       sessions: [session, archived],
       before: null,
       after: null,
@@ -7939,7 +8022,13 @@ for (const target of ['desktop', 'tui']) {
     const window = structuredClone(client.state.window);
     const refresh = (sessions) => {
       client.raw('catalog-refresh');
-      client.query('list', { revision: 'changed', sessions, before: null, after: null });
+      client.query('catalog', {
+        revision: 'changed',
+        needsYouCount: 0,
+        sessions,
+        before: null,
+        after: null,
+      });
     };
     refresh([{ ...session, archived: true, revision: 3 }]);
     assert.equal(client.state.selected.archived, true);
@@ -7962,8 +8051,9 @@ for (const target of ['desktop', 'tui']) {
     client.raw('catalog-refresh');
     client.component('send', draft);
     const read = client.find('read');
-    client.query('list', {
+    client.query('catalog', {
       revision: 'changed',
+      needsYouCount: 0,
       sessions: [{ ...session, archived: true, revision: 2 }],
       before: null,
       after: null,
@@ -8059,12 +8149,18 @@ for (const target of ['desktop', 'tui']) {
       (node) => node.binding === 'composer',
     );
     client.raw('catalog-filter-needs_you');
-    const request = client.find('list');
+    const request = client.find('catalog');
     assert.deepEqual(request.input, { filter: 'needs_you', position: { kind: 'start' } });
     assert.equal(client.state.catalog, null);
     client.raw('catalog-filter-all');
     assert.equal(client.state.catalogFilter, 'needs_you', 'pending controls are disabled');
-    client.query('list', { revision: 'pending', sessions: [], before: null, after: null });
+    client.query('catalog', {
+      revision: 'pending',
+      needsYouCount: 0,
+      sessions: [],
+      before: null,
+      after: null,
+    });
     assert.deepEqual(
       {
         selected: client.state.selected,
@@ -8081,9 +8177,10 @@ for (const target of ['desktop', 'tui']) {
     assert.equal(retained.key, composer.key);
     assert.equal(retained.props.enabled, true);
     client.raw('catalog-refresh');
-    assert.equal(client.find('list').input.filter, 'needs_you');
-    client.query('list', {
+    assert.equal(client.find('catalog').input.filter, 'needs_you');
+    client.query('catalog', {
       revision: 'pending-2',
+      needsYouCount: 0,
       sessions: [{ ...session, id: 'waiting', activity: 'waiting' }],
       before: 'waiting',
       after: 'waiting',
@@ -8093,31 +8190,106 @@ for (const target of ['desktop', 'tui']) {
       ['catalog-previous', 'before'],
     ]) {
       client.raw(key);
-      assert.deepEqual(client.find('list').input, {
+      assert.deepEqual(client.find('catalog').input, {
         filter: 'needs_you',
         position: { kind, revision: 'pending-2', cursor: 'waiting' },
       });
-      client.query('list', {
+      client.query('catalog', {
         revision: 'pending-2',
+        needsYouCount: 0,
         sessions: [],
         before: 'waiting',
         after: 'waiting',
       });
     }
     client.raw('catalog-filter-all');
-    const current = client.find('list');
+    const current = client.find('catalog');
     assert.deepEqual(current.input, { filter: 'all', position: { kind: 'start' } });
     client.complete(request, {
-      status: 'succeeded',
-      value: { revision: 'stale', sessions: [], before: null, after: null },
+      status: 'updated',
+      value: { revision: 'stale', needsYouCount: 0, sessions: [], before: null, after: null },
     });
     assert.equal(client.state.catalog, null);
     client.complete(current, {
-      status: 'succeeded',
-      value: { revision: 'all', sessions: [session], before: null, after: null },
+      status: 'updated',
+      value: { revision: 'all', needsYouCount: 0, sessions: [session], before: null, after: null },
     });
     assert.equal(client.state.catalog.revision, 'all');
     assert.equal(client.state.selected.id, session.id);
+  });
+}
+
+for (const target of ['desktop', 'tui']) {
+  test(`${target} live catalog updates exact inbox counts and retains native conversation owners`, async () => {
+    const { component } = await import(
+      pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+    );
+    const client = new Client(component).start();
+    client.component('draft', draft);
+    const retained = () =>
+      structuredClone({
+        epoch: client.state.epoch,
+        watch: client.state.watch,
+        window: client.state.window,
+        command: client.state.command,
+        composer: modelSlots(client.output.frame.view).find((node) => node.binding === 'composer'),
+      });
+    const original = retained();
+    const subscription = client.find('catalog');
+    assert.equal(client.output.subscriptions.filter((item) => item.method === 'catalog').length, 1);
+    const page = {
+      revision: 'background-1',
+      needsYouCount: 49,
+      sessions: [{ ...session, revision: 2, title: 'Background rename' }],
+      before: session.id,
+      after: session.id,
+    };
+    client.query('catalog', page);
+    assert.equal(client.state.selected.title, 'Background rename');
+    assert.equal(client.state.catalogWatch.loading, false);
+    assert.deepEqual(client.find('catalog'), subscription);
+    assert.deepEqual(retained(), original);
+    assert.deepEqual(client.output.actions, [], 'background delivery does not query or restart');
+    const nodes = (node) => [
+      node,
+      ...[
+        ...(node.children ?? []),
+        node.content,
+        node.trigger,
+        typeof node.background === 'object' ? node.background : null,
+      ]
+        .filter(Boolean)
+        .flatMap(nodes),
+    ];
+    const label = () =>
+      nodes(client.output.frame.view).find(
+        (node) =>
+          node.key ===
+          (target === 'tui' ? 'catalog-filter-label-needs_you' : 'catalog-filter-needs_you'),
+      );
+    assert.equal(label().text ?? label().label, 'Needs You (49)');
+    client.query('catalog', { ...page, revision: 'background-2', needsYouCount: 48 });
+    assert.equal(label().text ?? label().label, 'Needs You (48)');
+    assert.deepEqual(retained(), original);
+    const beforeFailure = structuredClone(client.state.catalog);
+    client.complete(subscription, { status: 'failed', reason: 'offline' });
+    assert.equal(client.state.catalogWatch, null);
+    assert.equal(client.state.catalogFailed, true);
+    assert.deepEqual(client.state.catalog, beforeFailure);
+    assert.deepEqual(retained(), original);
+    client.raw('catalog-refresh');
+    const replacement = client.find('catalog');
+    assert.notEqual(replacement.key, subscription.key);
+    assert.deepEqual(replacement.input.position, { kind: 'at', cursor: session.id });
+    client.complete(subscription, { status: 'updated', value: { ...page, needsYouCount: 100 } });
+    assert.deepEqual(
+      client.state.catalog,
+      beforeFailure,
+      'late original cannot mutate replacement',
+    );
+    client.query('catalog', { ...page, revision: 'reconnected', needsYouCount: 0 });
+    assert.equal(label().text ?? label().label, 'Needs You (0)');
+    assert.deepEqual(retained(), original);
   });
 }
 

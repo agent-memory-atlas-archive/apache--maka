@@ -75,7 +75,6 @@ import { fill, output, pixels, type Presentation, type Node } from './view.js';
 
 type Notice = keyof Copy | null;
 type Request =
-  | { kind: 'list'; generation: number }
   | { kind: 'observe'; epoch: number }
   | {
       kind: 'history';
@@ -151,6 +150,7 @@ export interface State {
   epoch: number;
   catalog: AgentSessionPage | null;
   catalogGeneration: number;
+  catalogWatch: { key: string; input: AgentList; loading: boolean } | null;
   catalogFilter: AgentList['filter'];
   catalogFailed: boolean;
   selected: AgentSession | null;
@@ -333,20 +333,19 @@ function createSession(state: State, actions: Action[], locale: string) {
     });
 }
 function catalogPending(state: State): boolean {
-  return Object.values(state.pending).some(
-    (request) => request.kind === 'list' && request.generation === state.catalogGeneration,
-  );
+  return state.catalogWatch?.loading ?? false;
 }
-function catalog(
-  state: State,
-  actions: Action[],
-  position: AgentList['position'] = { kind: 'start' },
-) {
+function catalog(state: State, position?: AgentList['position']) {
   state.catalogFailed = false;
-  intent(state, actions, { kind: 'list', generation: ++state.catalogGeneration }, 'agent', 'list', {
-    filter: state.catalogFilter,
-    position,
-  });
+  const anchor = state.catalog?.sessions[0]?.id;
+  state.catalogWatch = {
+    key: `catalog-${++state.catalogGeneration}`,
+    input: {
+      filter: state.catalogFilter,
+      position: position ?? (anchor ? { kind: 'at', cursor: anchor } : { kind: 'start' }),
+    },
+    loading: true,
+  };
 }
 function observe(state: State, actions: Action[]) {
   if (state.selected)
@@ -616,7 +615,7 @@ function rootCommand(state: State, actions: Action[], locale: string, kind: Root
         after: state.restoreAfter,
         limit: 1,
       });
-    else if (!state.selected) catalog(state, actions);
+    else if (!state.selected) catalog(state);
     else {
       const window = state.window;
       select(state, actions, state.selected);
@@ -794,15 +793,26 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
       after: state.restoreAfter,
       limit: 1,
     });
-    catalog(state, actions);
+    catalog(state);
   } else if (request.kind === 'create') {
     const created = value as AgentCreated;
     if (created.kind === 'rejected') {
       if (state.notice !== 'unavailable') state.notice = 'createRejected';
       return;
     }
-    select(state, actions, created.session);
-    catalog(state, actions);
+    // The live catalog may have selected this first conversation before its
+    // original creation receipt arrived. Keep that observation and its owners.
+    if (state.selected?.id !== created.session.id) select(state, actions, created.session);
+    else if (created.session.revision >= state.selected.revision) state.selected = created.session;
+    // Explicit creation reveals its selected row; background catalog changes
+    // continue to retain the current directory location.
+    if (
+      state.catalogFilter !== 'all' ||
+      !state.catalog?.sessions.some((session) => session.id === created.session.id)
+    ) {
+      state.catalogFilter = 'all';
+      catalog(state, { kind: 'at', cursor: created.session.id });
+    }
   } else if (request.kind === 'queue') {
     const result = value as AgentQueueMutationResult;
     state.notice = result.kind === 'committed' ? null : 'queueChanged';
@@ -829,7 +839,6 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
       } else question.notice = 'questionChanged';
     }
     if (state.selected?.id === request.sessionId) observe(state, actions);
-    if (!catalogPending(state)) catalog(state, actions);
   } else if (request.kind === 'send') {
     const started = value as AgentSendResult;
     if (started.sessionId !== request.sessionId) {
@@ -885,10 +894,6 @@ function queryFailed(state: State, request: Request) {
     return;
   }
   // Optional presentation work does not disable input or change execution facts.
-  if (request.kind === 'list') {
-    if (request.generation === state.catalogGeneration) state.catalogFailed = true;
-    return;
-  }
   if (request.kind === 'history' && request.implicit) return;
   if (request.kind === 'source' || request.kind === 'toolSource') {
     if (request.epoch === state.epoch && request.navigation === state.source?.navigation) {
@@ -968,20 +973,6 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         labels: [],
         workspace: { kind: 'directory', selection: page.roots[0].selection },
       });
-      break;
-    }
-    case 'list': {
-      if (request.generation !== state.catalogGeneration) break;
-      state.catalog = value as AgentSessionPage;
-      state.catalogFailed = false;
-      if (!state.selected && state.catalog.sessions.length)
-        select(state, actions, state.catalog.sessions[0]);
-      else if (state.selected) {
-        const selected = state.catalog.sessions.find(
-          (session) => session.id === state.selected!.id,
-        );
-        if (selected && selected.revision >= state.selected.revision) state.selected = selected;
-      }
       break;
     }
     case 'observe': {
@@ -1431,7 +1422,12 @@ function frame<N extends Node>(
       ui.box(
         'catalog-filters',
         (['all', 'needs_you'] as const).map((filter) => {
-          const label = filter === 'all' ? text.allSessions : text.needsYou;
+          const label =
+            filter === 'all'
+              ? text.allSessions
+              : state.catalog
+                ? `${text.needsYou} (${state.catalog.needsYouCount})`
+                : text.needsYou;
           const selected = state.catalogFilter === filter;
           return ui.item
             ? ui.item(
@@ -2069,18 +2065,32 @@ function frame<N extends Node>(
       ? { kind: 'window', binding: 'surface', title: 'maka', width: 1100, height: 760 }
       : { kind: 'terminal', binding: 'surface' };
   out.actions = actions;
-  out.subscriptions = state.watch
-    ? [
-        {
-          key: state.watch.key,
-          binding: 'agent',
-          member: 0,
-          method: 'watch',
-          input: state.watch.input,
-          resources: {},
-        },
-      ]
-    : [];
+  out.subscriptions = [
+    ...(state.catalogWatch
+      ? [
+          {
+            key: state.catalogWatch.key,
+            binding: 'agent',
+            member: 0,
+            method: 'catalog',
+            input: state.catalogWatch.input,
+            resources: {},
+          },
+        ]
+      : []),
+    ...(state.watch
+      ? [
+          {
+            key: state.watch.key,
+            binding: 'agent',
+            member: 0,
+            method: 'watch',
+            input: state.watch.input,
+            resources: {},
+          },
+        ]
+      : []),
+  ];
   return out;
 }
 export function workspace<N extends Node>(
@@ -2096,6 +2106,7 @@ export function workspace<N extends Node>(
         epoch: 0,
         catalog: null,
         catalogGeneration: 0,
+        catalogWatch: null,
         catalogFilter: 'all',
         catalogFailed: false,
         selected: null,
@@ -2135,7 +2146,7 @@ export function workspace<N extends Node>(
         notice: null,
       };
       const actions: Action[] = [];
-      catalog(state, actions);
+      catalog(state);
       intent(state, actions, { kind: 'restorePage' }, 'history', 'page', { after: 0, limit: 1 });
       return frame(presentation, locale, state, values, actions);
     },
@@ -2150,7 +2161,25 @@ export function workspace<N extends Node>(
       const actions: Action[] = [];
       if (input.kind === 'action') {
         const outcome = input.event as ActionOutcome;
-        if (state.watch?.key === input.key) {
+        if (state.catalogWatch?.key === input.key) {
+          if (outcome.status === 'updated') {
+            state.catalogWatch.loading = false;
+            state.catalogFailed = false;
+            state.catalog = outcome.value as AgentSessionPage;
+            if (!state.selected && state.catalog.sessions.length)
+              select(state, actions, state.catalog.sessions[0]);
+            else if (state.selected) {
+              const selected = state.catalog.sessions.find(
+                (session) => session.id === state.selected!.id,
+              );
+              if (selected && selected.revision >= state.selected.revision)
+                state.selected = selected;
+            }
+          } else if (outcome.status === 'failed' || outcome.status === 'not_accepted') {
+            state.catalogWatch = null;
+            state.catalogFailed = true;
+          }
+        } else if (state.watch?.key === input.key) {
           if (outcome.status === 'updated')
             delivery(state, outcome.value as AgentDeliveryPage, actions);
           else if (outcome.status === 'failed' || outcome.status === 'not_accepted') {
@@ -2269,7 +2298,6 @@ export function workspace<N extends Node>(
         if (input.child === 'session-details') {
           if (input.name === 'closed' && state.dialog === 'details') state.dialog = null;
           else if (input.name === 'changed') {
-            catalog(state, actions);
             if (state.selected?.id === (input.event as { sessionId: string }).sessionId)
               observe(state, actions);
           }
@@ -2629,21 +2657,21 @@ export function workspace<N extends Node>(
           if (!mutationPending(state) && !catalogPending(state) && state.catalogFilter !== filter) {
             state.catalogFilter = filter;
             state.catalog = null;
-            catalog(state, actions);
+            catalog(state);
           }
         } else if (['catalog-refresh', 'catalog-more', 'catalog-previous'].includes(input.key)) {
           if (!mutationPending(state) && !catalogPending(state)) {
             const page = state.catalog;
-            if (input.key === 'catalog-refresh') catalog(state, actions);
+            if (input.key === 'catalog-refresh') catalog(state);
             else if (!state.catalogFailed && page) {
               if (input.key === 'catalog-more' && page.after)
-                catalog(state, actions, {
+                catalog(state, {
                   kind: 'after',
                   revision: page.revision,
                   cursor: page.after,
                 });
               else if (input.key === 'catalog-previous' && page.before)
-                catalog(state, actions, {
+                catalog(state, {
                   kind: 'before',
                   revision: page.revision,
                   cursor: page.before,

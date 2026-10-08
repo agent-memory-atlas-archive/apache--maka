@@ -43,59 +43,44 @@ impl Handler for Agent {
         let owner = self.0.clone();
         Box::pin(async move {
             match method.as_str() {
-                "list" => {
-                    let input: List = decode(input)?;
-                    use maka_event_log::sessions::SessionPosition;
-                    let (revision, position) = match &input.position {
-                        crate::contract::SessionPosition::Start => (None, SessionPosition::Start),
-                        crate::contract::SessionPosition::After { revision, cursor } => {
-                            (Some(revision.as_str()), SessionPosition::After(cursor))
+                "list" => encode(catalog_page(&owner, &decode(input)?).await?),
+                "catalog" => {
+                    let mut input: List = decode(input)?;
+                    let mut changes = owner.store.subscribe_catalog_changes();
+                    changes.borrow_and_update();
+                    let page = catalog_page(&owner, &input).await?;
+                    let mut revision = page.revision.clone();
+                    let mut anchor = page.sessions.first().map(|session| session.id.clone());
+                    context.emit(encode(page)?).await?;
+                    loop {
+                        tokio::select! {
+                            biased;
+                            _ = context.scope().cancellation.cancelled() => return Err("agent_observation_cancelled".into()),
+                            result = changes.changed() => result.map_err(|_| "agent_observation_closed")?,
                         }
-                        crate::contract::SessionPosition::Before { revision, cursor } => {
-                            (Some(revision.as_str()), SessionPosition::Before(cursor))
+                        changes.borrow_and_update();
+                        let current = owner
+                            .store
+                            .catalog_revision(
+                                CatalogScope::IdPrefix(owner.prefix.clone()),
+                                catalog_filter(&input),
+                            )
+                            .await
+                            .map_err(|_| "agent_catalog_unavailable")?;
+                        if current == revision {
+                            continue;
                         }
-                    };
-                    if matches!(position, SessionPosition::After(cursor) | SessionPosition::Before(cursor) if !owner.owns(cursor))
-                    {
-                        return Err("agent_cursor_invalid".into());
-                    }
-                    let page = owner
-                        .store
-                        .scoped_sessions::<SessionConfiguration>(
-                            CatalogScope::IdPrefix(owner.prefix.clone()),
-                            revision,
-                            position,
-                            maka_event_log::sessions::CatalogFilter {
-                                include_archived: true,
-                                pending_only: matches!(input.filter, SessionFilter::NeedsYou),
+                        input.position = anchor.as_ref().map_or(
+                            crate::contract::SessionPosition::Start,
+                            |cursor| crate::contract::SessionPosition::At {
+                                cursor: cursor.clone(),
                             },
-                        )
-                        .await
-                        .map_err(|_| "agent_catalog_unavailable")?;
-                    let reverse = matches!(
-                        input.position,
-                        crate::contract::SessionPosition::Before { .. }
-                    );
-                    let mut result = SessionPage {
-                        revision: page.revision,
-                        sessions: page.sessions.into_iter().map(summary).collect(),
-                        before: page.previous_cursor,
-                        after: page.next_cursor,
-                    };
-                    while !crate::workspace::fits(&result) {
-                        if result.sessions.len() <= 1 {
-                            return Err("agent_catalog_unavailable".into());
-                        }
-                        if reverse {
-                            result.sessions.remove(0);
-                            result.before =
-                                result.sessions.first().map(|session| session.id.clone());
-                        } else {
-                            result.sessions.pop();
-                            result.after = result.sessions.last().map(|session| session.id.clone());
-                        }
+                        );
+                        let page = catalog_page(&owner, &input).await?;
+                        revision = page.revision.clone();
+                        anchor = page.sessions.first().map(|session| session.id.clone());
+                        context.emit(encode(page)?).await?;
                     }
-                    encode(result)
                 }
                 "directories" => encode(
                     crate::workspace::query(owner.workspace_roots.clone(), decode(input)?).await?,
@@ -430,6 +415,60 @@ impl Handler for Agent {
             }
         })
     }
+}
+fn catalog_filter(input: &List) -> maka_event_log::sessions::CatalogFilter {
+    maka_event_log::sessions::CatalogFilter {
+        include_archived: true,
+        pending_only: matches!(input.filter, SessionFilter::NeedsYou),
+    }
+}
+async fn catalog_page(owner: &Owner, input: &List) -> Result<SessionPage, String> {
+    use maka_event_log::sessions::SessionPosition;
+    let (revision, position) = match &input.position {
+        crate::contract::SessionPosition::Start => (None, SessionPosition::Start),
+        crate::contract::SessionPosition::At { cursor } => (None, SessionPosition::At(cursor)),
+        crate::contract::SessionPosition::After { revision, cursor } => {
+            (Some(revision.as_str()), SessionPosition::After(cursor))
+        }
+        crate::contract::SessionPosition::Before { revision, cursor } => {
+            (Some(revision.as_str()), SessionPosition::Before(cursor))
+        }
+    };
+    if matches!(position, SessionPosition::At(cursor) | SessionPosition::After(cursor) | SessionPosition::Before(cursor) if !owner.owns(cursor))
+    {
+        return Err("agent_cursor_invalid".into());
+    }
+    let page = owner
+        .store
+        .scoped_sessions::<SessionConfiguration>(
+            CatalogScope::IdPrefix(owner.prefix.clone()),
+            revision,
+            position,
+            catalog_filter(input),
+        )
+        .await
+        .map_err(|_| "agent_catalog_unavailable")?;
+    let reverse = matches!(position, SessionPosition::Before(_));
+    let mut result = SessionPage {
+        revision: page.revision,
+        sessions: page.sessions.into_iter().map(summary).collect(),
+        needs_you_count: page.pending_session_count,
+        before: page.previous_cursor,
+        after: page.next_cursor,
+    };
+    while !crate::workspace::fits(&result) {
+        if result.sessions.len() <= 1 {
+            return Err("agent_catalog_unavailable".into());
+        }
+        if reverse {
+            result.sessions.remove(0);
+            result.before = result.sessions.first().map(|session| session.id.clone());
+        } else {
+            result.sessions.pop();
+            result.after = result.sessions.last().map(|session| session.id.clone());
+        }
+    }
+    Ok(result)
 }
 fn decode<T: DeserializeOwned>(input: Value) -> Result<T, String> {
     serde_json::from_value(input).map_err(|_| "agent_input_invalid".into())

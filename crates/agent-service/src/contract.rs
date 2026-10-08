@@ -80,6 +80,10 @@ pub enum SessionFilter {
 #[schemars(rename = "AgentSessionPosition")]
 pub enum SessionPosition {
     Start,
+    At {
+        #[schemars(length(min = 1, max = 128))]
+        cursor: String,
+    },
     After {
         revision: String,
         #[schemars(length(min = 1, max = 128))]
@@ -270,6 +274,7 @@ pub enum SessionActivity {
 #[schemars(rename = "AgentSessionPage")]
 pub struct SessionPage {
     pub revision: String,
+    pub needs_you_count: u64,
     #[schemars(length(max = 32))]
     pub sessions: Vec<Session>,
     #[schemars(with = "maka_runtime::schema::RequiredNullable<String>")]
@@ -675,6 +680,10 @@ pub fn contract() -> Contract {
                 (
                     "list".into(),
                     method::<List, SessionPage>(MethodMode::Query),
+                ),
+                (
+                    "catalog".into(),
+                    method::<List, SessionPage>(MethodMode::Subscription),
                 ),
                 (
                     "directories".into(),
