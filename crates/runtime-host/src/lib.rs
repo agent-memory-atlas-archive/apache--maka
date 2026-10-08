@@ -24,6 +24,7 @@ mod execution;
 pub mod ipc;
 pub mod oauth;
 pub mod plugins;
+pub mod recovery;
 pub mod sandbox;
 pub mod server;
 pub mod session;

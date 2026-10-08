@@ -344,6 +344,9 @@ pub async fn serve(native: NativeRegistry) -> Result<()> {
             }
             Err(error) => return Err(error.to_string()),
         };
+        maka_runtime_host::recovery::recover(&store)
+            .await
+            .map_err(|error| error.to_string())?;
         Ok::<_, String>((listener, store))
     }
     .await;
@@ -475,7 +478,7 @@ pub async fn serve(native: NativeRegistry) -> Result<()> {
             Err(reason)
         }
     };
-    crate::drain_store(&store).await;
+    store.drain().await;
     drop(store);
     // Root, SQL and all accepted scopes have actually closed before this frame.
     wire::write(

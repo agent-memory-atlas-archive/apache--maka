@@ -206,15 +206,7 @@ impl Host {
         let root = Arc::new(root);
         access::purge(&root).await?;
         let log = Arc::new(EventLog::for_root(root.clone()).await?);
-        maka_agent::recovery::recover(&log).await?;
-        let recovered_at = u64::try_from(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_millis(),
-        )?;
-        log.recover_shell_runs(recovered_at).await?;
-        log.recover_host_effects().await?;
-        log.recover_auxiliary_models().await?;
+        crate::recovery::recover(&log).await?;
         let configuration = Arc::new(ConfigurationStore::for_root(root.clone()).await?);
         let draining = CancellationToken::new();
         let startup_guard = draining.clone().drop_guard();

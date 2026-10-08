@@ -283,6 +283,24 @@ impl EventLog {
         self.connection.shutdown().await
     }
 
+    /// Wait for this SQL owner's real close acknowledgement. A failed close
+    /// retains its Root and reports the failure; it never confirms process exit.
+    pub async fn drain(&self) {
+        let mut reported = std::collections::BTreeSet::new();
+        loop {
+            match self.shutdown().await {
+                Ok(()) => return,
+                Err(error) => {
+                    let error = error.to_string();
+                    if reported.insert(error.clone()) {
+                        eprintln!("SQL cleanup unconfirmed: {error:?}");
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+            }
+        }
+    }
+
     /// A coalescible wakeup, not a replacement for committed facts. Register
     /// before reading a bootstrap snapshot, then catch up from its SQL cursor.
     pub fn subscribe_commits(&self) -> tokio::sync::watch::Receiver<u64> {

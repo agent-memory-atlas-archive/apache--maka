@@ -567,14 +567,14 @@ impl Launcher {
         )) {
             Ok(connections) => connections,
             Err(error) => {
-                timer.block_on(maka_application_bridge::drain_store(&store));
+                timer.block_on(store.drain());
                 return Err(error.into());
             }
         };
         if let Err(error) = timer.block_on(connections.start()) {
             timer.block_on(async {
                 connections.drain().await;
-                maka_application_bridge::drain_store(&store).await;
+                store.drain().await;
             });
             return Err(error.into());
         }
@@ -594,7 +594,7 @@ impl Launcher {
             Err(error) => {
                 timer.block_on(async {
                     connections.drain().await;
-                    maka_application_bridge::drain_store(&store).await;
+                    store.drain().await;
                 });
                 return Err(error.into());
             }
@@ -605,7 +605,7 @@ impl Launcher {
                 drain_ui(&mut application, &timer, true);
                 timer.block_on(async {
                     connections.drain().await;
-                    maka_application_bridge::drain_store(&store).await;
+                    store.drain().await;
                 });
                 return Err(error.into());
             }
@@ -632,7 +632,7 @@ impl Launcher {
                 drain_ui(&mut application, &timer, true);
                 timer.block_on(async {
                     connections.drain().await;
-                    maka_application_bridge::drain_store(&store).await;
+                    store.drain().await;
                 });
                 return Err(error.into());
             }
@@ -641,7 +641,7 @@ impl Launcher {
             drain_ui(&mut application, &timer, true);
             timer.block_on(async {
                 connections.drain().await;
-                maka_application_bridge::drain_store(&store).await;
+                store.drain().await;
             });
             return Err("desktop launch component must request a window".into());
         }
@@ -703,7 +703,7 @@ impl Launcher {
                 updates.drain().await;
             }
             connections.lock().await.drain().await;
-            maka_application_bridge::drain_store(&store).await;
+            store.drain().await;
         });
         if let Some(error) = execution_owner
             .borrow()

@@ -43,21 +43,3 @@ pub async fn open_store(
         result => result,
     }
 }
-
-/// Wait for a SQL owner's real close acknowledgement. On failure the
-/// launcher must retain this store and its Root, rather than imply clean exit.
-pub async fn drain_store(store: &maka_event_log::EventLog) {
-    let mut reported = std::collections::BTreeSet::new();
-    loop {
-        match store.shutdown().await {
-            Ok(()) => return,
-            Err(error) => {
-                let error = error.to_string();
-                if reported.insert(error.clone()) {
-                    eprintln!("SQL cleanup unconfirmed: {error:?}");
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            }
-        }
-    }
-}

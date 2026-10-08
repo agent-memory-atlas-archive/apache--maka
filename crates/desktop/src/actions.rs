@@ -444,7 +444,7 @@ pub(super) fn quit_when_drained(application: &Rc<RefCell<DesktopApplication>>, c
                 connections.lock().await.drain().await;
             }
             if let Some(caller) = caller {
-                maka_application_bridge::drain_store(&caller).await;
+                caller.drain().await;
             }
         });
         cx.spawn(async move |cx| {

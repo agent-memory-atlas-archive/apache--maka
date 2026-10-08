@@ -213,13 +213,13 @@ impl Command {
                 {
                     Ok(connections) => connections,
                     Err(error) => {
-                        maka_application_bridge::drain_store(&store).await;
+                        store.drain().await;
                         return Err(error.into());
                     }
                 };
                 if let Err(error) = connections.start().await {
                     connections.drain().await;
-                    maka_application_bridge::drain_store(&store).await;
+                    store.drain().await;
                     return Err(error.into());
                 }
                 let source = connections.source().clone();
@@ -251,7 +251,7 @@ impl Command {
                     std::future::pending::<()>().await;
                 }
                 connections.lock().await.drain().await;
-                maka_application_bridge::drain_store(&store).await;
+                store.drain().await;
                 result??;
             }
         }

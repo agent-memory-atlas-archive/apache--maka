@@ -693,3 +693,147 @@ fn failed_start_preserves_the_same_child_actual_closed_acknowledgement() {
     }
     f.cleanup();
 }
+
+fn seed_abandoned_model(f: &Fixture) -> maka_runtime::event::Invocation {
+    use maka_runtime::event::{EventWrite, Fact, Invocation, LogScope, RuntimeEvent};
+    let invocation = Invocation {
+        session_id: "abandoned-session".into(),
+        turn_id: "abandoned-turn".into(),
+        run_id: "abandoned-run".into(),
+        invocation_id: "abandoned-invocation".into(),
+    };
+    f.timer.block_on(async {
+        let owner = Arc::new(RootOwner::open(&f.host_path(), &f.namespaces).unwrap());
+        let store = EventLog::for_root(owner).await.unwrap();
+        let opening = RuntimeEvent::new(
+            invocation.clone(),
+            Fact::InvocationOpened {
+                configuration: None,
+                input: maka_runtime::input::InvocationInput::Message {
+                    source_messages: Vec::new(),
+                    content: "accepted before Host exit".into(),
+                    request_fingerprint: Some("original-request".into()),
+                },
+            },
+        );
+        store
+            .append(&EventWrite::plain(opening).unwrap())
+            .await
+            .unwrap();
+        let prefix = store
+            .scoped_prefix(
+                LogScope::Session {
+                    id: invocation.session_id.clone(),
+                },
+                10,
+                128 * 1024,
+            )
+            .await
+            .unwrap();
+        let requested = RuntimeEvent::new(
+            invocation.clone(),
+            Fact::ModelRequested {
+                item_acceptance: false,
+                step_id: "original-step".into(),
+                purpose: maka_runtime::context::ModelPurpose::Main,
+                model_id: "original-model".into(),
+                context: None,
+                source_scope: prefix.scope,
+                source_high_water: prefix.high_water,
+                source_digest: prefix.digest,
+                effective_source_digest: None,
+                input_digest: "original-input".into(),
+                route_identity: "original-route".into(),
+                checkpoint_event_id: None,
+            },
+        );
+        store
+            .append(&EventWrite::plain(requested).unwrap())
+            .await
+            .unwrap();
+        store.shutdown().await.unwrap();
+    });
+    invocation
+}
+
+#[test]
+fn private_host_reconciles_abandoned_execution_before_publishing_and_never_replays_it() {
+    use maka_runtime::event::{Fact, InvocationOutcome, ModelInterruption};
+    let f = Fixture::new();
+    let invocation = seed_abandoned_model(&f);
+    for _ in 0..2 {
+        let host = f.start_host();
+        // Ready must already imply reconciliation. Read the canonical SQLite
+        // facts while the original child still exclusively owns this Root.
+        f.timer.block_on(async {
+            use sqlx::Connection;
+            let options = sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(f.host_path().join(maka_event_log::root::ROOT_DATABASE))
+                .read_only(true);
+            let mut reader = sqlx::SqliteConnection::connect_with(&options).await.unwrap();
+            let rows: Vec<String> = sqlx::query_scalar("SELECT event_json FROM event_log WHERE invocation_id=? ORDER BY sequence")
+                .bind(&invocation.invocation_id).fetch_all(&mut reader).await.unwrap();
+            let events: Vec<maka_runtime::event::RuntimeEvent> = rows.iter().map(|row| serde_json::from_str(row).unwrap()).collect();
+            assert_eq!(events.len(), 4, "Ready cannot expose an abandoned model as running or replay its request");
+            assert!(events.iter().all(|event| event.invocation == invocation));
+            assert!(matches!(&events[2].fact, Fact::ModelInterrupted {step_id,status:ModelInterruption::Failed,..} if step_id=="original-step"));
+            assert!(matches!(&events[3].fact, Fact::InvocationEnded {outcome:InvocationOutcome::Failed {class,..}} if class=="host_interrupted"));
+            reader.close().await.unwrap();
+        });
+        f.wait(host);
+    }
+    f.cleanup();
+}
+
+#[test]
+fn private_host_recovery_failure_closes_original_sql_owner_without_publishing_ready() {
+    use sqlx::Connection;
+    let f = Fixture::new();
+    let invocation = seed_abandoned_model(&f);
+    f.timer.block_on(async {
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(f.host_path().join(maka_event_log::root::ROOT_DATABASE));
+        let mut raw = sqlx::SqliteConnection::connect_with(&options).await.unwrap();
+        // Valid SQLite and JSON, but unusable original execution identity.
+        sqlx::query("UPDATE event_log SET event_json=json_set(event_json,'$.invocation.session_id',NULL) WHERE invocation_id=? AND kind='invocation_opened'")
+            .bind(&invocation.invocation_id).execute(&mut raw).await.unwrap();
+        raw.close().await.unwrap();
+        let owner = Arc::new(RootOwner::open(&f.host_path(), &f.namespaces).unwrap());
+        let store = EventLog::for_root(owner).await.unwrap();
+        let pending = store.unfinished_invocations(10_000).await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert!(store.invocation_recovery(&pending[0], 10_000, 8 * 1024 * 1024).await.is_err(), "fixture fails execution recovery, not SQL startup");
+        store.shutdown().await.unwrap();
+    });
+    let (mut child, mut control, bootstrap) = f.launch();
+    f.timer.block_on(async {
+        assert!(
+            tokio::time::timeout(Duration::from_secs(15), control.start(&bootstrap))
+                .await
+                .unwrap()
+                .unwrap_err()
+                .contains("closed before publishing")
+        );
+        tokio::time::timeout(Duration::from_secs(2), control.close())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            !tokio::time::timeout(Duration::from_secs(15), child.wait())
+                .await
+                .unwrap()
+                .unwrap()
+                .success()
+        );
+    });
+    let root = RootOwner::open(&f.host_path(), &f.namespaces).unwrap();
+    assert!(
+        f.timer
+            .block_on(maka_runtime_host::server::Host::open(root))
+            .is_err()
+    );
+    // The shared recovery boundary also waits for legacy Host's original SQL
+    // owner; a returned startup error is not merely a request to drop it later.
+    drop(RootOwner::open(&f.host_path(), &f.namespaces).unwrap());
+    f.cleanup();
+}
