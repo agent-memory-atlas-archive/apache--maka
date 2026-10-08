@@ -31,6 +31,7 @@ export const packageNames = [
   'command-palette',
   'directory-picker',
   'session-details',
+  'help',
   'studio',
   'studio-gateway',
   'deployment',
@@ -302,6 +303,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         palette: [local('command-palette', 'CommandPalette')],
         directories: [local('directory-picker', 'DirectoryPicker')],
         details: [local('session-details', 'SessionDetails')],
+        help: [local('help', 'Help')],
         models: [local('models', 'Models')],
         connections: [local('connections', 'Connections')],
         deployment: [local('deployment', 'Deployment')],
@@ -345,6 +347,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         history: [local('history', 'History')],
       },
     ),
+    help: node('help', {}, { reading: [local('reading-area', 'ReadingArea')] }),
     composer: node('composer', {}, { editor: [local('editor', 'Textarea')] }),
     navigation: node('navigation'),
     'image-viewer': node(

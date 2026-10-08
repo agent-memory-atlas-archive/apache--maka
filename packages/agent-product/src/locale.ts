@@ -18,6 +18,17 @@
  */
 
 export const en = {
+  helpTitle: 'Keyboard shortcuts',
+  helpSend: 'Send message',
+  helpNewline: 'Insert a new line',
+  helpFocus: 'Move focus',
+  helpActivate: 'Activate a button',
+  helpCommands: 'Open commands',
+  helpNavigation: 'Show / hide conversations',
+  helpNew: 'New conversation',
+  helpBack: 'Close dialog / return to conversation',
+  helpClose: 'Close help',
+
   detailsTitle: 'Conversation details',
   detailsOpen: 'Details',
   detailsName: 'Title',
@@ -342,6 +353,17 @@ export const en = {
 } as const;
 export type Copy = { [K in keyof typeof en]: string };
 const zhCN: Copy = {
+  helpTitle: '键盘快捷键',
+  helpSend: '发送消息',
+  helpNewline: '插入换行',
+  helpFocus: '移动焦点',
+  helpActivate: '激活按钮',
+  helpCommands: '打开命令',
+  helpNavigation: '显示 / 隐藏对话列表',
+  helpNew: '新建对话',
+  helpBack: '关闭弹窗 / 返回对话',
+  helpClose: '关闭帮助',
+
   detailsTitle: '对话详情',
   detailsOpen: '详情',
   detailsName: '标题',
@@ -644,6 +666,17 @@ const zhCN: Copy = {
   connecting: '正在连接…',
 };
 const zhTW: Copy = {
+  helpTitle: '鍵盤快捷鍵',
+  helpSend: '傳送訊息',
+  helpNewline: '插入換行',
+  helpFocus: '移動焦點',
+  helpActivate: '啟動按鈕',
+  helpCommands: '開啟命令',
+  helpNavigation: '顯示 / 隱藏對話清單',
+  helpNew: '新增對話',
+  helpBack: '關閉彈窗 / 返回對話',
+  helpClose: '關閉說明',
+
   detailsTitle: '對話詳情',
   detailsOpen: '詳情',
   detailsName: '標題',

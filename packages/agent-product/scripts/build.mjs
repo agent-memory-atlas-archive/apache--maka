@@ -112,6 +112,7 @@ const specifications = {
       palette: one(own.paletteContract),
       directories: one(own.directoryPickerContract),
       details: one(own.sessionDetailsContract),
+      help: one(own.helpContract),
       navigation: one(own.navigationContract),
       timeline: one(own.timelineContract),
       imageViewer: one(own.imageViewerContract),
@@ -184,6 +185,12 @@ specifications['directory-picker'] = {
     input: one(sdk.contracts.textInput),
     reader: one(sdk.contracts.textReader),
   },
+};
+specifications.help = {
+  contract: own.helpContract,
+  export: 'Help',
+  module: 'help',
+  imports: { reading: one(sdk.contracts.readingArea) },
 };
 specifications['session-details'] = {
   contract: own.sessionDetailsContract,

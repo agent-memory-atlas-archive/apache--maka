@@ -55,8 +55,10 @@ impl maka_application_bridge::transport::native::Connector for Physical {
     }
 }
 fn draw(presenter: &mut maka_tui::application::Presenter) -> Buffer {
+    draw_at(presenter, Rect::new(0, 0, 80, 24))
+}
+fn draw_at(presenter: &mut maka_tui::application::Presenter, area: Rect) -> Buffer {
     presenter.pump().unwrap();
-    let area = Rect::new(0, 0, 80, 24);
     let mut buffer = Buffer::empty(area);
     let scene = presenter.paint(area, &mut buffer).unwrap();
     presenter.present(scene);
@@ -249,6 +251,7 @@ fn packaged_product(fail_labels_initialization: bool) {
         "command-palette",
         "directory-picker",
         "session-details",
+        "help",
         "deployment",
         "deployment-manager",
         "deployment-gateway",
@@ -641,6 +644,50 @@ process.stdout.write(output.outputFiles[0].text);
     // declared tab order. This command/draft path needs no mouse or forged input.
     presenter
         .input(Event::Paste("Hello product".into()))
+        .unwrap();
+    await_screen(&mut presenter, "Hello product");
+    // Help is an ordinary guest under the existing modal. Native dismissal
+    // restores the original composer owner and its draft without a new snapshot.
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE)))
+        .unwrap();
+    await_screen(&mut presenter, "Keyboard shortcuts");
+    await_screen(&mut presenter, "[ Close help ]");
+    let narrow = draw_at(&mut presenter, Rect::new(0, 0, 40, 16));
+    let (x, y) = (0..narrow.area.height)
+        .find_map(|y| {
+            let row = (0..narrow.area.width)
+                .map(|x| narrow[(x, y)].symbol())
+                .collect::<String>();
+            row.find("[ Close help ]").map(|x| (x as u16, y))
+        })
+        .expect("help footer stays reachable at the original narrow terminal size");
+    presenter
+        .input(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: x,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+    await_screen(&mut presenter, "Hello product");
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE)))
+        .unwrap();
+    await_screen(&mut presenter, "Keyboard shortcuts");
+    let narrow = draw_at(&mut presenter, Rect::new(0, 0, 40, 16));
+    assert!(screen(&narrow).contains("[ Close help ]"));
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+        .unwrap();
+    await_screen(&mut presenter, "Hello product");
+    presenter.input(Event::Paste("!".into())).unwrap();
+    await_screen(&mut presenter, "Hello product!");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Backspace,
+            KeyModifiers::NONE,
+        )))
         .unwrap();
     await_screen(&mut presenter, "Hello product");
     // Both fields retain their original native editor owners under the Dialog.

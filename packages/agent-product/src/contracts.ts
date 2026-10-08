@@ -96,6 +96,11 @@ export interface PaletteProps {
   selectionDisabled: boolean;
   commands: PaletteCommand[];
 }
+export interface HelpProps {
+  theme: Theme;
+  locale: string;
+  open: boolean;
+}
 export interface DirectoryPickerProps {
   theme: Theme;
   locale: string;
@@ -258,6 +263,11 @@ export const paletteContract = component(
     selected: withDefs({ $ref: '#/$defs/AgentSession' }),
     closed: object({}),
   },
+);
+export const helpContract = component(
+  'maka.agent.Help',
+  object({ theme: { $ref: '#/$defs/Theme' }, locale, open: { type: 'boolean' } }),
+  { closed: object({}) },
 );
 export const directoryPickerContract = component(
   'maka.agent.DirectoryPicker',

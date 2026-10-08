@@ -113,7 +113,7 @@ export interface State {
   settingsOpen: boolean;
   deploymentOpen: boolean;
   navigationOpen: boolean;
-  dialog: 'palette' | 'directories' | 'details' | null;
+  dialog: 'palette' | 'directories' | 'details' | 'help' | null;
   window: { page: Extract<AgentHistoryPage, { kind: 'ready' }>; latest: boolean } | null;
   navigation: number;
   image: { sessionId: string; through: number; sequence: number } | null;
@@ -409,6 +409,7 @@ function executionPending(state: State) {
 }
 
 type RootCommand =
+  | 'help-open'
   | 'create'
   | 'details-open'
   | 'create-workspace'
@@ -425,6 +426,13 @@ function rootCommands(state: State, locale: string): (PaletteCommand & { kind: R
   const text = copy(locale);
   const route = conversationRoute(state) && (state.dialog === null || state.dialog === 'palette');
   const commands: (PaletteCommand & { kind: RootCommand })[] = [
+    {
+      kind: 'help-open',
+      id: 'help-open',
+      label: text.helpTitle,
+      hint: 'F1',
+      disabled: state.dialog !== null && state.dialog !== 'palette',
+    },
     {
       kind: 'create',
       id: 'create',
@@ -497,7 +505,8 @@ function rootCommands(state: State, locale: string): (PaletteCommand & { kind: R
 function rootCommand(state: State, actions: Action[], locale: string, kind: RootCommand) {
   if (!rootCommands(state, locale).some((command) => command.kind === kind && !command.disabled))
     return false;
-  if (kind === 'create') createSession(state, actions, locale);
+  if (kind === 'help-open') state.dialog = 'help';
+  else if (kind === 'create') createSession(state, actions, locale);
   else if (kind === 'create-workspace') state.dialog = 'directories';
   else if (kind === 'details-open') state.dialog = 'details';
   else if (kind === 'navigation-toggle') state.navigationOpen = !state.navigationOpen;
@@ -1293,6 +1302,7 @@ function frame<N extends Node>(
       style: { width: fill, height: fill, align: 'center' },
       terminal: { grow: 1 },
       shortcuts: [
+        { key: 'f1', modifiers: [], input: 'help-open', enabled: true },
         {
           key: 'k',
           modifiers: ['primary'],
@@ -1336,11 +1346,19 @@ function frame<N extends Node>(
         ? text.directoryTitle
         : state.dialog === 'details'
           ? text.detailsTitle
-          : text.paletteTitle,
+          : state.dialog === 'help'
+            ? text.helpTitle
+            : text.paletteTitle,
       background,
       ui.box(
         'dialog-content',
         [
+          presentation.slot(
+            'help',
+            'help',
+            { theme, locale, open: state.dialog === 'help' },
+            { closed: 'closed' },
+          ),
           presentation.slot(
             'session-details',
             'details',
@@ -1488,6 +1506,10 @@ export function workspace<N extends Node>(
           }
         }
       } else if (input.kind === 'component') {
+        if (input.child === 'help') {
+          if (input.name === 'closed' && state.dialog === 'help') state.dialog = null;
+          return frame(presentation, locale, state, values, actions);
+        }
         if (input.child === 'session-details') {
           if (input.name === 'closed' && state.dialog === 'details') state.dialog = null;
           else if (input.name === 'changed') {
@@ -1783,7 +1805,9 @@ export function workspace<N extends Node>(
       } else if (input.kind === 'raw') {
         if (input.key === 'palette-open' && conversationRoute(state) && state.dialog === null)
           state.dialog = 'palette';
-        else if (input.key === 'workspace-dialog') state.dialog = null;
+        else if (input.key === 'help-open') {
+          if (state.dialog === null) rootCommand(state, actions, locale, 'help-open');
+        } else if (input.key === 'workspace-dialog') state.dialog = null;
         else if (input.key === 'navigation-back' && state.dialog === null)
           state.navigationOpen = false;
         else {

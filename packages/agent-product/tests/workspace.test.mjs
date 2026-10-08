@@ -6047,7 +6047,15 @@ for (const target of ['desktop', 'tui']) {
     client.raw('settings');
     client.raw('palette-open');
     assert.equal(client.state.dialog, null);
-    assert.ok(props(client).commands.every((command) => command.disabled));
+    assert.ok(
+      props(client)
+        .commands.filter((command) => command.id !== 'help-open')
+        .every((command) => command.disabled),
+    );
+    assert.equal(
+      props(client).commands.find((command) => command.id === 'help-open').disabled,
+      false,
+    );
     client.raw('deployment-open');
     assert.equal(
       client.state.settingsOpen,
@@ -6943,5 +6951,87 @@ for (const target of ['desktop', 'tui']) {
     });
     assert.ok(client.output.actions.every((a) => a.method === 'list'));
     assert.deepEqual(client.state.selected, before);
+  });
+}
+
+for (const target of ['tui', 'desktop']) {
+  test(`${target} help is a replaceable presentation with no business authority`, async () => {
+    const { component, activate } = await import(
+      pathToFileURL(resolve(root, `dist/packages/help/${target}.js`))
+    );
+    const props = { theme: values.appearance[0], locale: 'en', open: true };
+    let result = component.mount(props, {});
+    assert.equal(activate().Help.kind, 'component');
+    assert.deepEqual(result.actions, []);
+    assert.deepEqual(result.subscriptions, []);
+    assert.deepEqual(result.frame.view.shortcuts, []);
+    const rows = modelSlots(result.frame.view).find((node) => node.key === 'help-reading').props
+      .content;
+    assert.equal(rows.scroll, 'manual');
+    assert.match(rows.children[0].text, target === 'tui' ? /^Enter/ : /^Ctrl\/⌘ Enter/);
+    result = component.event(
+      result.frame.state,
+      { kind: 'raw', key: 'close', event: {} },
+      props,
+      {},
+    );
+    assert.deepEqual(result.events, [{ name: 'closed', value: {} }]);
+    result = component.event(
+      result.frame.state,
+      { kind: 'raw', key: 'close', event: {} },
+      { ...props, open: false },
+      {},
+    );
+    assert.deepEqual(result.events, []);
+    const manifest = JSON.parse(
+      readFileSync(resolve(root, 'dist/packages/help/maka.extension.json'), 'utf8'),
+    );
+    assert.deepEqual(Object.keys(manifest.application.entries[target].imports), ['reading']);
+  });
+  test(`${target} F1 keeps the underlying route and command owner across help dismissal`, async () => {
+    const { component } = await import(
+      pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+    );
+    const client = new Client(component).start();
+    for (const route of [null, 'settings', 'deployment-open']) {
+      if (route) client.raw(route);
+      const before = structuredClone(client.state);
+      client.raw('help-open');
+      assert.equal(client.state.dialog, 'help');
+      assert.equal(client.state.settingsOpen, before.settingsOpen);
+      assert.equal(client.state.deploymentOpen, before.deploymentOpen);
+      assert.equal(client.state.navigationOpen, before.navigationOpen);
+      assert.deepEqual(client.state.command, before.command);
+      assert.deepEqual(client.state.watch, before.watch);
+      assert.deepEqual(client.output.actions, []);
+      client.raw('create');
+      client.raw('palette-open');
+      assert.equal(client.state.dialog, 'help');
+      assert.deepEqual(client.output.actions, []);
+      client.input({ kind: 'component', child: 'help', name: 'closed', event: {} });
+      assert.equal(client.state.dialog, null);
+      assert.equal(client.state.settingsOpen, before.settingsOpen);
+      assert.equal(client.state.deploymentOpen, before.deploymentOpen);
+      if (route)
+        client.input({
+          kind: 'component',
+          child: route === 'settings' ? 'connections' : 'deployment',
+          name: 'closed',
+          event: {},
+        });
+    }
+    client.raw('palette-open');
+    client.input({ kind: 'component', child: 'help', name: 'closed', event: {} });
+    client.raw('help-open');
+    assert.equal(client.state.dialog, 'palette', 'F1 cannot replace another modal');
+    client.input({
+      kind: 'component',
+      child: 'command-palette',
+      name: 'invoked',
+      event: { id: 'help-open' },
+    });
+    assert.equal(client.state.dialog, 'help', 'palette can explicitly select help');
+    client.input({ kind: 'component', child: 'command-palette', name: 'closed', event: {} });
+    assert.equal(client.state.dialog, 'help', 'old modal dismissal cannot dismiss help');
   });
 }
