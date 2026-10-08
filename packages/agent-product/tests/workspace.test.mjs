@@ -32,48 +32,103 @@ const appearance = await import(
   pathToFileURL(resolve(root, 'dist/packages/appearance/desktop.js'))
 );
 const values = { appearance: [appearance.activate({ scheme: 'light' }).Appearance.value] };
-test('busy TUI navigation preserves native buttons and restores their original actions', async () => {
-  const { component: navigation } = await import(
-    pathToFileURL(resolve(root, 'dist/packages/navigation/tui.js'))
-  );
-  const props = {
-    theme: values.appearance[0],
-    locale: 'en',
-    sessions: [],
-    active: null,
-    busy: false,
-    more: false,
-    previous: false,
-    failed: false,
-  };
-  let result = navigation.mount(props, {});
-  const button = () => result.frame.view.children.find((node) => node.key === 'new');
-  const original = button();
-  assert.equal(original.kind, 'button');
-  assert.equal(original.disabled, false);
-  assert.equal(original.color, props.theme.accent >>> 8);
-  result = navigation.update(result.frame.state, { ...props, busy: true }, {});
-  assert.equal(button().kind, original.kind);
-  assert.equal(button().key, original.key);
-  assert.equal(button().label, original.label);
-  assert.equal(button().disabled, true);
-  assert.equal(button().color, props.theme.muted >>> 8);
-  result = navigation.event(
-    result.frame.state,
-    { kind: 'raw', key: 'new', event: null },
-    { ...props, busy: true },
-    {},
-  );
-  assert.deepEqual(result.events, []);
-  result = navigation.update(result.frame.state, props, {});
-  result = navigation.event(
-    result.frame.state,
-    { kind: 'raw', key: 'new', event: null },
-    props,
-    {},
-  );
-  assert.deepEqual(result.events, [{ name: 'create', value: {} }]);
-});
+for (const target of ['desktop', 'tui']) {
+  test(`${target} directory groups retain workspace identity, archive disclosure and explicit selection`, async () => {
+    const { component: navigation } = await import(
+      pathToFileURL(resolve(root, `dist/packages/navigation/${target}.js`))
+    );
+    const session = (id, workspace, archived = false) => ({
+      id,
+      title: `Long ${'界面'.repeat(40)} ${id}`,
+      archived,
+      labels: [],
+      revision: 1,
+      updatedAt: 1,
+      workspace: {
+        identity: workspace,
+        directoryIdentity: workspace,
+        path: `/parent/${workspace}/same-name`,
+      },
+    });
+    let props = {
+      theme: values.appearance[0],
+      locale: 'en',
+      sessions: [
+        session('a', 'one'),
+        session('b', 'two'),
+        session('c', 'one'),
+        session('d', 'two', true),
+      ],
+      selected: 'c',
+      busy: false,
+    };
+    let result = navigation.mount(props, {});
+    const rows = () =>
+      result.frame.view.children.filter((node) => ['item', 'button'].includes(node.kind));
+    const activate = (key) => {
+      result = navigation.event(
+        result.frame.state,
+        { kind: 'raw', key, event: { kind: 'activate' } },
+        props,
+        {},
+      );
+    };
+    assert.deepEqual(
+      rows().map((row) => row.key),
+      ['group-one', 'a', 'c', 'group-two', 'b', 'archived'],
+    );
+    if (target === 'tui') {
+      assert.equal(result.frame.view.focus_group, true);
+      for (const row of rows()) {
+        assert.equal(row.follow_focus, false);
+        assert.equal(row.submit, false);
+      }
+      assert.equal(rows().find((row) => row.key === 'c').current, true);
+      assert.equal(
+        rows().find((row) => row.key === 'a').content.text,
+        `    ${props.sessions[0].title}`,
+      );
+    }
+    activate('group-one');
+    assert.deepEqual(result.events, []);
+    assert.deepEqual(
+      rows().map((row) => row.key),
+      ['group-one', 'group-two', 'b', 'archived'],
+    );
+    activate('a');
+    assert.deepEqual(result.events, [], 'collapsed row cannot activate through stale input');
+    props = {
+      ...props,
+      sessions: [props.sessions[1], props.sessions[0], props.sessions[2], props.sessions[3]],
+    };
+    result = navigation.update(result.frame.state, props, {});
+    assert.deepEqual(
+      rows().map((row) => row.key),
+      ['group-two', 'b', 'group-one', 'archived'],
+    );
+    activate('archived');
+    assert.equal(rows().at(-1).key, 'd');
+    activate('d');
+    assert.deepEqual(result.events, [{ name: 'select', value: { sessionId: 'd' } }]);
+    props = { ...props, busy: true };
+    result = navigation.update(result.frame.state, props, {});
+    assert.ok(rows().every((row) => row.disabled));
+    activate('d');
+    assert.deepEqual(result.events, []);
+    activate('archived');
+    assert.equal(rows().at(-1).key, 'd', 'busy input cannot collapse the group');
+    props = { ...props, busy: false, sessions: props.sessions.filter((row) => row.id !== 'd') };
+    result = navigation.update(result.frame.state, props, {});
+    activate('d');
+    assert.deepEqual(result.events, [], 'removed session cannot activate');
+    props = {
+      ...props,
+      sessions: Array.from({ length: 32 }, (_, at) => session(`s${at}`, `w${at}`)),
+    };
+    result = navigation.update(result.frame.state, props, {});
+    assert.equal(rows().length, 64, 'full page fits one original scene without observer inputs');
+  });
+}
 const sdk = await import(pathToFileURL(resolve(root, 'dist/authoring/plugin-sdk/src/index.mjs')));
 test('typed scene constructors serialize directly into the actual Rust scene schemas', async () => {
   const desktopText = sdk.ui.desktop.text({ key: 'desktop-text', text: '界面', color: 0xffffff });
@@ -5519,13 +5574,13 @@ for (const target of ['desktop', 'tui']) {
       before: offset ? all[offset].id : null,
       after: offset + 32 < all.length ? all[offset + 31].id : null,
     });
-    client.component('refresh');
+    client.raw('catalog-refresh');
     assert.deepEqual(client.find('list').input, { kind: 'start' });
     client.query('list', page(0));
     const visited = [...client.state.catalog.sessions];
     for (let offset = 32; offset < all.length; offset += 32) {
       const cursor = client.state.catalog.after;
-      client.component('more');
+      client.raw('catalog-more');
       assert.deepEqual(client.find('list').input, { kind: 'after', revision: 'catalog-2', cursor });
       client.query('list', page(offset));
       assert.ok(client.state.catalog.sessions.length <= 32);
@@ -5537,7 +5592,7 @@ for (const target of ['desktop', 'tui']) {
     );
     for (let offset = 96; offset >= 0; offset -= 32) {
       const cursor = client.state.catalog.before;
-      client.component('previous');
+      client.raw('catalog-previous');
       assert.deepEqual(client.find('list').input, {
         kind: 'before',
         revision: 'catalog-2',
@@ -5556,7 +5611,7 @@ for (const target of ['desktop', 'tui']) {
       active,
     );
     const oldPage = structuredClone(client.state.catalog);
-    client.component('more');
+    client.raw('catalog-more');
     client.complete(client.find('list'), { status: 'failed', error: 'agent_catalog_unavailable' });
     assert.deepEqual(client.state.catalog, oldPage);
     assert.equal(client.state.catalogFailed, true);
@@ -5566,11 +5621,11 @@ for (const target of ['desktop', 'tui']) {
         .enabled,
       true,
     );
-    client.component('refresh');
+    client.raw('catalog-refresh');
     client.query('list', page(0));
     assert.equal(client.state.catalogFailed, false);
     // Creation leaves the revisioned page intact until the fresh catalog returns.
-    client.component('create');
+    client.raw('create');
     const created = { ...session, id: 'created', title: 'Newly created' };
     client.complete(client.find('create'), returned({ kind: 'created', session: created }));
     client.query('list', { revision: 'catalog-3', sessions: [created], before: null, after: null });
@@ -6652,7 +6707,7 @@ for (const target of ['desktop', 'tui']) {
   test(`${target} Root rechecks current creation guard before accepting an asynchronous picker choice`, () => {
     const client = new Client(rootModule.component).start();
     client.raw('create-workspace');
-    client.component('refresh');
+    client.raw('catalog-refresh');
     const listing = client.find('list');
     rootChoice(client, 'selected', child.selection);
     assert.equal(client.state.dialog, 'directories');

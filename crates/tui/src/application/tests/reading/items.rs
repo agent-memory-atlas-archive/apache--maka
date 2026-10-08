@@ -91,6 +91,41 @@ fn grouped_items_reuse_two_line_content_and_reveal_offscreen_keyboard_targets() 
     close(&mut p);
 }
 #[test]
+fn grouped_items_directory_arrows_reveal_without_activating_a_destination() {
+    let mut source = scene()["children"][1].clone();
+    source["children"] = json!((0..64).map(item).collect::<Vec<_>>());
+    for item in source["children"].as_array_mut().unwrap() {
+        item["follow_focus"] = json!(false);
+        item["submit"] = json!(false);
+    }
+    let (_runtime, mut p) = layout::native(
+        layout::View::InteractiveScene(Rc::new(RefCell::new(source))),
+        Rc::new(Cell::new(true)),
+    );
+    draw(&mut p, 24, 6);
+    let before = p.application.frame(&p.root).unwrap().revision;
+    assert_eq!(
+        p.scene
+            .iter()
+            .filter(|target| matches!(
+                target.kind,
+                super::super::super::paint::TargetKind::Item { .. }
+            ))
+            .count(),
+        64
+    );
+    p.input(key(KeyCode::End)).unwrap();
+    draw(&mut p, 24, 6);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-63");
+    assert_eq!(p.focus.as_ref().unwrap().area.visible().height, 2);
+    assert_eq!(p.application.frame(&p.root).unwrap().revision, before);
+    p.input(key(KeyCode::Enter)).unwrap();
+    draw(&mut p, 24, 6);
+    assert_eq!(observation(&p), json!({"kind":"activate"}));
+    close(&mut p);
+}
+
+#[test]
 fn grouped_items_pointer_hover_does_not_select_and_second_line_activates() {
     let (_runtime, mut p, _) = plain();
     draw(&mut p, 24, 6);

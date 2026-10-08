@@ -136,6 +136,10 @@ fn wait_for_target(
             .nth(nth);
         if let Some((x, y)) = position
             && enabled.is_none_or(|color| buffer[(x, y)].fg == color)
+            && (!label.starts_with("    ")
+                || !buffer[(x, y)]
+                    .modifier
+                    .contains(ratatui::style::Modifier::DIM))
         {
             break (x, y);
         }
@@ -838,7 +842,7 @@ process.stdout.write(output.outputFiles[0].text);
         // Session and a two-row CJK workspace path used to hide all actions.
         click(&mut presenter, "[ Show sidebar ]");
         click(&mut presenter, "[ New conversation ]");
-        wait_for_target(&mut presenter, "[ New conversation ]", 1);
+        wait_for_target(&mut presenter, "    New conversation", 0);
         click(&mut presenter, "[ Hide sidebar ]");
         click(&mut presenter, "[ Details ]");
         click(&mut presenter, "[ Review current details ]");
@@ -2051,11 +2055,9 @@ process.stdout.write(output.outputFiles[0].text);
     let mut reopened = start();
     await_screen(&mut reopened, "[ Show sidebar ]");
     click(&mut reopened, "[ Show sidebar ]");
-    // Wait for the enabled native action after catalog recovery, not just its
-    // title in the loading frame.
-    await_screen(&mut reopened, "[ Native tool inspection ]");
-    click(&mut reopened, "[ Native tool inspection ]");
-    click(&mut reopened, "[ Hide sidebar ]");
+    // Native directory rows use the original unboxed layout. Selecting a
+    // destination closes the terminal directory and restores the conversation.
+    click(&mut reopened, "    Native tool inspection");
     await_screen(&mut reopened, "Tool output · Count");
     await_screen(&mut reopened, "[ Show details ]");
     for (nth, heading, beginning, ending) in [
@@ -2095,10 +2097,7 @@ process.stdout.write(output.outputFiles[0].text);
     );
     click(&mut reopened, "[ Show sidebar ]");
     await_screen(&mut reopened, "[ New conversation ]");
-    // Both enabled creation action and original catalog row have this label;
-    // the plain header is not an action and must not affect the occurrence.
-    click_nth(&mut reopened, "[ New conversation ]", 1);
-    click(&mut reopened, "[ Hide sidebar ]");
+    click(&mut reopened, "    New conversation");
     assert!(screen(&draw(&mut reopened)).contains("What would you like to work on?"));
     click(&mut reopened, "[ Connections ]");
     await_screen(&mut reopened, "[ API key ]");

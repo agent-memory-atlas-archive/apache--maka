@@ -1139,20 +1139,60 @@ function frame<N extends Node>(
   const text = copy(locale),
     ui = presentation.paint(theme),
     busy = mutationPending(state);
-  const navigation = presentation.slot(
-    'navigation',
-    'navigation',
+  const catalogBusy = busy || catalogPending(state);
+  const navigation = ui.box(
+    'navigation-panel',
+    [
+      ui.text('navigation-brand', 'maka', 24, theme.text, 650),
+      ui.button(
+        'create',
+        text.new,
+        !rootCommands(state, locale).some(
+          (command) => command.kind === 'create' && !command.disabled,
+        ),
+      ),
+      ui.text('navigation-heading', text.conversations, 12, theme.muted, 550),
+      ...(state.catalogFailed
+        ? [ui.text('catalog-error', text.sessionsUnavailable, 12, theme.muted)]
+        : []),
+      ui.box(
+        'catalog-controls',
+        [
+          ...(state.catalog?.before
+            ? [
+                ui.button(
+                  'catalog-previous',
+                  text.previousSessions,
+                  catalogBusy || state.catalogFailed,
+                ),
+              ]
+            : []),
+          ...(state.catalog?.after
+            ? [ui.button('catalog-more', text.moreSessions, catalogBusy || state.catalogFailed)]
+            : []),
+          ui.button('catalog-refresh', text.refreshSessions, catalogBusy),
+        ],
+        { row: true, style: { wrap: true }, terminal: { wrap: true } },
+      ),
+      presentation.slot(
+        'navigation',
+        'navigation',
+        {
+          theme,
+          locale,
+          sessions: state.catalog?.sessions ?? [],
+          selected: state.selected?.id ?? null,
+          busy: catalogBusy,
+        },
+        { select: 'select' },
+      ),
+    ],
     {
-      theme,
-      locale,
-      sessions: state.catalog?.sessions ?? [],
-      selected: state.selected?.id ?? null,
-      busy: busy || catalogPending(state),
-      previous: !!state.catalog?.before,
-      more: !!state.catalog?.after,
-      failed: state.catalogFailed,
+      surface: true,
+      padding: target === 'desktop' ? 20 : 1,
+      style: { height: fill, width: fill },
+      terminal: { grow: 1 },
     },
-    { create: 'create', select: 'select', more: 'more', previous: 'previous', refresh: 'refresh' },
   );
   const timeline = presentation.slot(
     'timeline',
@@ -2024,8 +2064,7 @@ export function workspace<N extends Node>(
         ) {
           state.model = input.event as SelectedModel;
           state.modelRefreshing = false;
-        } else if (input.name === 'create') rootCommand(state, actions, locale, 'create');
-        else if (
+        } else if (
           input.child === 'navigation' &&
           input.name === 'select' &&
           state.dialog === null &&
@@ -2034,28 +2073,9 @@ export function workspace<N extends Node>(
         ) {
           const sessionId = (input.event as { sessionId: string }).sessionId;
           const session = state.catalog?.sessions.find((item) => item.id === sessionId);
-          if (session) select(state, actions, session);
-        } else if (
-          input.child === 'navigation' &&
-          ['refresh', 'more', 'previous'].includes(input.name) &&
-          !mutationPending(state) &&
-          !catalogPending(state)
-        ) {
-          const page = state.catalog;
-          if (input.name === 'refresh') catalog(state, actions);
-          else if (!state.catalogFailed && page) {
-            if (input.name === 'more' && page.after)
-              catalog(state, actions, {
-                kind: 'after',
-                revision: page.revision,
-                cursor: page.after,
-              });
-            else if (input.name === 'previous' && page.before)
-              catalog(state, actions, {
-                kind: 'before',
-                revision: page.revision,
-                cursor: page.before,
-              });
+          if (session) {
+            select(state, actions, session);
+            if (target === 'tui') state.navigationOpen = false;
           }
         } else if (input.child === 'image-viewer' && input.name === 'closed') {
           state.image = null;
@@ -2197,7 +2217,30 @@ export function workspace<N extends Node>(
             history(state, actions, { kind: 'tail' }, state.latestKnown, true);
         }
       } else if (input.kind === 'raw') {
-        if (input.key === 'palette-open' && conversationRoute(state) && state.dialog === null)
+        if (['catalog-refresh', 'catalog-more', 'catalog-previous'].includes(input.key)) {
+          if (!mutationPending(state) && !catalogPending(state)) {
+            const page = state.catalog;
+            if (input.key === 'catalog-refresh') catalog(state, actions);
+            else if (!state.catalogFailed && page) {
+              if (input.key === 'catalog-more' && page.after)
+                catalog(state, actions, {
+                  kind: 'after',
+                  revision: page.revision,
+                  cursor: page.after,
+                });
+              else if (input.key === 'catalog-previous' && page.before)
+                catalog(state, actions, {
+                  kind: 'before',
+                  revision: page.revision,
+                  cursor: page.before,
+                });
+            }
+          }
+        } else if (
+          input.key === 'palette-open' &&
+          conversationRoute(state) &&
+          state.dialog === null
+        )
           state.dialog = 'palette';
         else if (input.key === 'help-open') {
           if (state.dialog === null) rootCommand(state, actions, locale, 'help-open');

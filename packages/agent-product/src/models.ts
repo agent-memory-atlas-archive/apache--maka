@@ -271,6 +271,7 @@ function frame<N extends Node>(
         ),
         active,
         !editableChoices(state, props),
+        { followFocus: true, submit: true },
       );
     }
     const button = ui.button(

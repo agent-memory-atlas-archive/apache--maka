@@ -19,6 +19,7 @@
 
 import type {
   Component,
+  AgentSession,
   EditorObservation,
   TextareaProps,
   MarkdownProps,
@@ -40,6 +41,42 @@ import { output, fill, pixels, compactLabel, type Presentation, type Node } from
 interface Revision {
   revision: number;
 }
+interface Navigation extends Revision {
+  toggled: string[];
+}
+interface SessionGroup {
+  key: string;
+  label: string;
+  sessions: AgentSession[];
+}
+// Original sidebar order: first appearance in the catalog, archived last.
+function sessionGroups(props: NavigationProps): SessionGroup[] {
+  const groups: SessionGroup[] = [];
+  for (const session of props.sessions.filter((session) => !session.archived)) {
+    const key = `group-${session.workspace.identity}`;
+    const group = groups.find((group) => group.key === key);
+    if (group) group.sessions.push(session);
+    else {
+      const path = session.workspace.path;
+      groups.push({
+        key,
+        label: path.split(/[/\\]/u).filter(Boolean).at(-1) || path,
+        sessions: [session],
+      });
+    }
+  }
+  const archived = props.sessions.filter((session) => session.archived);
+  if (archived.length)
+    groups.push({
+      key: 'archived',
+      label: copy(props.locale).archivedSessions,
+      sessions: archived,
+    });
+  return groups;
+}
+function groupOpen(state: Navigation, key: string) {
+  return (key !== 'archived') !== state.toggled.includes(key);
+}
 interface Draft extends Revision {
   observation: EditorObservation | null;
 }
@@ -53,7 +90,7 @@ export function components<N extends Node>(
   presentation: Presentation<N>,
 ): {
   composer: Component<Draft, ComposerProps, N>;
-  navigation: Component<Revision, NavigationProps, N>;
+  navigation: Component<Navigation, NavigationProps, N>;
   timeline: Component<Reading, TimelineProps, N>;
 } {
   const target = presentation.target;
@@ -151,65 +188,61 @@ export function components<N extends Node>(
       events,
     );
   };
-  const navigationFrame = (state: Revision, props: NavigationProps) => {
-    const ui = presentation.paint(props.theme),
-      text = copy(props.locale);
+  const navigationFrame = (state: Navigation, props: NavigationProps) => {
+    const ui = presentation.paint(props.theme);
     return output(
       state,
       ui.box(
-        'navigation',
-        [
-          ui.text('brand', 'maka', 24, props.theme.text, 650),
-          ui.button('new', text.new, props.busy),
-          ui.text('heading', text.conversations, 12, props.theme.muted, 550),
-          ...(props.failed
-            ? [ui.text('catalog-error', text.sessionsUnavailable, 12, props.theme.muted)]
-            : []),
-          ui.box(
-            'catalog-controls',
-            [
-              ...(props.previous
-                ? [ui.button('previous', text.previousSessions, props.busy || props.failed)]
-                : []),
-              ...(props.more
-                ? [ui.button('more', text.moreSessions, props.busy || props.failed)]
-                : []),
-              ui.button('refresh', text.refreshSessions, props.busy),
-            ],
-            { row: true, style: { wrap: true }, terminal: { wrap: true } },
-          ),
-          ui.box(
-            'session-list',
-            props.sessions.map((session) => {
-              const button = ui.button(
-                session.id,
-                target === 'desktop' ? session.title : compactLabel(session.title, 48),
-                props.busy,
-                false,
-                {
+        'session-groups',
+        sessionGroups(props).flatMap((group, index) => {
+          const open = groupOpen(state, group.key);
+          const heading = `${open ? '▾' : '▸'} ${group.label}  ${group.sessions.length}`;
+          const label = ui.text(`${group.key}-label`, heading, 12, props.theme.muted, 500, {
+            truncate: true,
+          });
+          return [
+            ...(index ? [ui.box(`${group.key}-gap`, [], { terminal: { basis: 1 } })] : []),
+            ui.item
+              ? ui.item(group.key, label, false, props.busy)
+              : ui.button(group.key, heading, props.busy, false, {
                   width: fill,
                   minWidth: 0,
                   justify: 'start',
                   truncate: true,
-                },
-              );
-
-              return ui.box('session-' + session.id, [button], {
-                surface: session.id === props.selected,
-                style: { width: fill, minWidth: 0, radius: 8, shrink: 0 },
-              });
-            }),
-            {
-              scroll: 'anchor',
-              style: { width: fill, height: pixels(0), grow: 1, minHeight: 0 },
-              terminal: { grow: 1 },
-            },
-          ),
-        ],
+                }),
+            ...(open
+              ? group.sessions.map((session, at) => {
+                  const current = session.id === props.selected;
+                  return ui.item
+                    ? ui.item(
+                        session.id,
+                        ui.text(
+                          `session-label-${index}-${at}`,
+                          `    ${session.title}`,
+                          13,
+                          session.archived ? props.theme.muted : props.theme.text,
+                          400,
+                          { truncate: true },
+                        ),
+                        current,
+                        props.busy,
+                      )
+                    : ui.button(session.id, session.title, props.busy, false, {
+                        width: fill,
+                        minWidth: 0,
+                        justify: 'start',
+                        truncate: true,
+                        ...(current ? { background: props.theme.selected } : {}),
+                      });
+                })
+              : []),
+          ];
+        }),
         {
-          surface: true,
-          padding: target === 'desktop' ? 20 : 1,
-          style: { height: fill, width: fill },
+          scroll: 'anchor',
+          focusGroup: target === 'tui',
+          gap: target === 'tui' ? 0 : 2,
+          style: { width: fill, height: pixels(0), grow: 1, minHeight: 0 },
           terminal: { grow: 1 },
         },
       ),
@@ -616,22 +649,28 @@ export function components<N extends Node>(
       },
     },
     navigation: {
-      mount: (props) => navigationFrame({ revision: 0 }, props),
-      update: (state, props) => navigationFrame({ revision: state.revision + 1 }, props),
+      mount: (props) => navigationFrame({ revision: 0, toggled: [] }, props),
+      update: (state, props) => navigationFrame({ ...state, revision: state.revision + 1 }, props),
       event(state, input, props) {
-        const out = navigationFrame({ revision: state.revision + 1 }, props);
+        const next = { ...state, revision: state.revision + 1 };
+        const events: Parameters<typeof output>[2] = [];
         if (input.kind === 'raw' && !props.busy) {
-          if (input.key === 'new') out.events.push({ name: 'create', value: {} });
-          else if (input.key === 'refresh') out.events.push({ name: 'refresh', value: {} });
-          else if (input.key === 'more' && props.more && !props.failed)
-            out.events.push({ name: 'more', value: {} });
-          else if (input.key === 'previous' && props.previous && !props.failed)
-            out.events.push({ name: 'previous', value: {} });
+          const groups = sessionGroups(props);
+          const group = groups.find((group) => group.key === input.key);
+          if (group)
+            next.toggled = next.toggled.includes(group.key)
+              ? next.toggled.filter((key) => key !== group.key)
+              : [...next.toggled, group.key];
           else {
-            const session = props.sessions.find((session) => session.id === input.key);
-            if (session) out.events.push({ name: 'select', value: { sessionId: session.id } });
+            const session = groups
+              .filter((group) => groupOpen(next, group.key))
+              .flatMap((group) => group.sessions)
+              .find((session) => session.id === input.key);
+            if (session) events.push({ name: 'select', value: { sessionId: session.id } });
           }
         }
+        const out = navigationFrame(next, props);
+        out.events.push(...events);
         return out;
       },
     },

@@ -74,7 +74,13 @@ interface Painter<N extends Node> {
     current: string | null,
     disabled: boolean,
   ): N;
-  item?(key: string, content: N, current: boolean, disabled: boolean): N;
+  item?(
+    key: string,
+    content: N,
+    current: boolean,
+    disabled: boolean,
+    interaction?: { followFocus?: boolean; submit?: boolean },
+  ): N;
   focusButton?(key: string, label: string, child: string): N;
   dialog(key: string, label: string, background: N, content: N, open: boolean): N;
   box(key: string, children: N[], options?: BoxOptions): N;
@@ -162,15 +168,15 @@ function desktopPaint(theme: Theme): Painter<DesktopNode> {
 }
 function terminalPaint(theme: Theme): Painter<TerminalNode> {
   return {
-    item: (key, content, current, disabled) =>
+    item: (key, content, current, disabled, interaction = {}) =>
       ui.terminal.item({
         key,
         content,
         current,
         disabled,
         selected_color: rgba(theme.selected),
-        follow_focus: true,
-        submit: true,
+        follow_focus: interaction.followFocus ?? false,
+        submit: interaction.submit ?? false,
       }),
     choice: (key, label, options, current, disabled) =>
       ui.terminal.choice({

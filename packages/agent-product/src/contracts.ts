@@ -133,9 +133,6 @@ export interface NavigationProps {
   sessions: AgentSession[];
   selected: string | null;
   busy: boolean;
-  more: boolean;
-  previous: boolean;
-  failed: boolean;
 }
 export interface SourcePage {
   kind: 'message' | ToolSourceField;
@@ -315,17 +312,8 @@ export const navigationContract = component(
     sessions: { type: 'array', maxItems: 32, items: { $ref: '#/$defs/AgentSession' } },
     selected: { anyOf: [string, { type: 'null' }] },
     busy: { type: 'boolean' },
-    more: { type: 'boolean' },
-    previous: { type: 'boolean' },
-    failed: { type: 'boolean' },
   }),
-  {
-    create: object({}),
-    select: object({ sessionId: string }),
-    more: object({}),
-    previous: object({}),
-    refresh: object({}),
-  },
+  { select: object({ sessionId: string }) },
 );
 export const imageViewerContract = component(
   'maka.agent.ImageViewer',

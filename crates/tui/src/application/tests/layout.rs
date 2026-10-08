@@ -1042,12 +1042,35 @@ fn packaged_session_navigation_keeps_paging_controls_outside_the_scrolling_list(
         String::from_utf8_lossy(&build.stderr)
     );
     let output = std::process::Command::new("node").args(["--input-type=module", "-e", r#"
-      import {component} from './packages/agent-product/dist/packages/navigation/tui.js';
+      import {component as directory} from './packages/agent-product/dist/packages/navigation/tui.js';
+      import {component as workspace,activate as configure} from './packages/agent-product/dist/packages/workspace/tui.js';
       import {activate} from './packages/agent-product/dist/packages/appearance/tui.js';
       const frames=[];
+      function find(node,key) {
+        if(node?.key===key) return node;
+        for(const child of [...(node?.children??[]),node?.background,node?.content]) {
+          const found=child&&find(child,key); if(found) return found;
+        }
+      }
       for(const scheme of ['light','dark']) for(const locale of ['en','zh-CN','zh-TW']) {
-        const props={theme:activate({scheme}).Appearance.value,locale,sessions:Array.from({length:32},(_,i)=>({id:'conversation-'+i,title:'Conversation '+i,revision:1,updatedAt:1,archived:false})),selected:'conversation-0',busy:false,previous:true,more:true,failed:false};
-        frames.push(component.mount(props,{}).frame.view);
+        configure({locale});
+        const values={appearance:[activate({scheme}).Appearance.value]};
+        const sessions=Array.from({length:32},(_,i)=>({id:'conversation-'+i,title:'Conversation '+i,labels:[],revision:1,updatedAt:1,archived:false,
+          workspace:{identity:'workspace-'+(i<11?'A':i<22?'B':'C'),directoryIdentity:'directory',path:'/Workspace '+(i<11?'A':i<22?'B':'C')}}));
+        const pair=[];
+        for(const rows of [sessions,[...sessions.slice(22),...sessions.slice(0,22)]]) {
+          const initial=workspace.mount({},values).frame.state;
+          const state={...initial,restoring:false,pending:{},catalog:{revision:'fixture',sessions:rows,before:'before',after:'after'},navigationOpen:true};
+          const view=workspace.update(state,{},values).frame.view;
+          const route=find(view,'navigation-route');
+          const panel=find(route,'navigation-panel');
+          const slot=panel.children.findIndex(node=>node.key==='navigation');
+          // Project actual parent and child declarations for this layout-only fixture.
+          // The real Host/TUI workflow separately exercises the original slot boundary.
+          panel.children[slot]=directory.mount(panel.children[slot].props,{}).frame.view;
+          pair.push(route);
+        }
+        frames.push(pair);
       }
       console.log(JSON.stringify(frames));
     "#]).current_dir(repository).output().unwrap();
@@ -1056,20 +1079,19 @@ fn packaged_session_navigation_keeps_paging_controls_outside_the_scrolling_list(
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let frames: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
-    for source in frames {
+    let frames: Vec<[Value; 2]> = serde_json::from_slice(&output.stdout).unwrap();
+    for [source, reordered] in frames {
         for (width, height) in [(80, 24), (40, 16)] {
+            let declaration = Rc::new(std::cell::RefCell::new(source.clone()));
             let (_runtime, mut presenter) = native(
-                View::Scene(
-                    json!({"kind":"stack","key":"navigation-route","direction":"column","gap":0,"padding":0,"background":0,"layout":{"grow":1},"children":[{"kind":"button","key":"navigation-back","label":"Back to conversation"},source.clone()]}),
-                ),
+                View::InteractiveScene(declaration.clone()),
                 Rc::new(Cell::new(true)),
             );
             let area = Rect::new(0, 0, width, height);
             let mut buffer = Buffer::empty(area);
             let pending = presenter.paint(area, &mut buffer).unwrap();
             presenter.present(pending);
-            for key in ["previous", "more", "refresh"] {
+            for key in ["catalog-previous", "catalog-more", "catalog-refresh"] {
                 let target = presenter
                     .scene
                     .iter()
@@ -1085,7 +1107,7 @@ fn packaged_session_navigation_keeps_paging_controls_outside_the_scrolling_list(
                     .input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
                     .unwrap();
             }
-            assert_eq!(presenter.focus.as_ref().unwrap().key, "more");
+            assert_eq!(presenter.focus.as_ref().unwrap().key, "catalog-more");
             presenter
                 .input(Event::Key(KeyEvent::new(
                     KeyCode::Enter,
@@ -1107,7 +1129,7 @@ fn packaged_session_navigation_keeps_paging_controls_outside_the_scrolling_list(
                 if presenter
                     .scene
                     .iter()
-                    .any(|target| target.key == "conversation-31")
+                    .any(|target| target.key == "conversation-31" && !target.area.is_empty())
                 {
                     break;
                 }
@@ -1142,9 +1164,38 @@ fn packaged_session_navigation_keeps_paging_controls_outside_the_scrolling_list(
                 presenter.application.frame(&presenter.root).unwrap().state["count"],
                 2
             );
-            for key in ["previous", "more", "refresh"] {
+            for key in ["catalog-previous", "catalog-more", "catalog-refresh"] {
                 assert!(presenter.scene.iter().any(|target| target.key == key));
             }
+            // Anchor the viewport on the gap before Workspace B, then reorder
+            // the actual catalog groups. The same workspace gap stays at top.
+            for _ in 0..40 {
+                wheel(&mut presenter, false, first.x, first.y);
+                flushed(&mut presenter, width, height);
+            }
+            for _ in 0..4 {
+                wheel(&mut presenter, true, first.x, first.y);
+                flushed(&mut presenter, width, height);
+            }
+            assert_eq!(scroll_state(&presenter, "session-groups"), (12, 12));
+            *declaration.borrow_mut() = reordered.clone();
+            let revision = presenter
+                .application
+                .frame(&presenter.root)
+                .unwrap()
+                .revision;
+            presenter
+                .application
+                .dispatch(
+                    &presenter.root,
+                    revision,
+                    "catalog-refresh",
+                    json!({"kind":"click"}),
+                )
+                .unwrap();
+            presenter.sync_native().unwrap();
+            flushed(&mut presenter, width, height);
+            assert_eq!(scroll_state(&presenter, "session-groups"), (24, 24));
             presenter
                 .surface_closed(&presenter.surface(), Ok(()))
                 .unwrap();

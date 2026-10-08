@@ -297,6 +297,7 @@ export const en = {
 
   new: 'New conversation',
   conversations: 'Conversations',
+  archivedSessions: 'Archived',
   moreSessions: 'Next',
   previousSessions: 'Previous',
   refreshSessions: 'Refresh',
@@ -627,6 +628,7 @@ const zhCN: Copy = {
 
   new: '新建对话',
   conversations: '对话',
+  archivedSessions: '已归档',
   moreSessions: '下一页',
   previousSessions: '上一页',
   refreshSessions: '刷新',
@@ -956,6 +958,7 @@ const zhTW: Copy = {
 
   new: '新增對話',
   conversations: '對話',
+  archivedSessions: '已封存',
   moreSessions: '下一頁',
   previousSessions: '上一頁',
   refreshSessions: '重新整理',
