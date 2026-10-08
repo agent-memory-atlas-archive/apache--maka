@@ -1302,18 +1302,22 @@ fn asking_the_focused_text_field_is_not_a_change_unless_it_notifies() {
         "being asked every frame changes nothing the form read"
     );
 
-    field.read_with(&cx, |field, _| field.notify_when_asked.set(true));
-    draw(&mut cx);
-    let asked = (form_builds.get(), field_builds.get());
-    let notified = draw(&mut cx);
-    assert_eq!(
-        (form_builds.get(), field_builds.get()),
-        (asked.0 + 1, asked.1 + 1),
-        "a field that notified while asked is built again, with the form that read it"
-    );
-    cx.update_window(window.into(), |_, window, _| window.forget_retained_state())
-        .unwrap();
-    assert_eq!(notified, draw(&mut cx));
+    // This assertion separates the querying frame from its notified redraw.
+    // Production-mode publication may notify after drawing has finished.
+    cx.with_paused_automatic_drawing(|cx| {
+        field.read_with(cx, |field, _| field.notify_when_asked.set(true));
+        draw(cx);
+        let asked = (form_builds.get(), field_builds.get());
+        let notified = draw(cx);
+        assert_eq!(
+            (form_builds.get(), field_builds.get()),
+            (asked.0 + 1, asked.1 + 1),
+            "a field that notified while asked is built again, with the form that read it"
+        );
+        cx.update_window(window.into(), |_, window, _| window.forget_retained_state())
+            .unwrap();
+        assert_eq!(notified, draw(cx));
+    });
 }
 
 struct Ping;

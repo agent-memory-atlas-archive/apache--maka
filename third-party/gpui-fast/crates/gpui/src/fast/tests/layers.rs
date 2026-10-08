@@ -2849,6 +2849,7 @@ mod policies {
 
     #[crate::test]
     fn a_layer_whose_input_loses_focus_is_composited_again_soon(cx: &mut TestAppContext) {
+        use crate::PlatformWindow as _;
         if !crate::fast::layers::COMPILED {
             return;
         }
@@ -2887,6 +2888,117 @@ mod policies {
             "composited again within 12 frames: {decisions:?}"
         );
         assert_eq!(layers_demoted(cx, window), 0);
+        // A kept, unfocused handler remains its original owner: restoring focus
+        // must make the layer ineligible again and publish that native handler.
+        frame_after(cx, window, |cx| {
+            with_window(cx, window, |window, cx| window.focus(&focus, cx));
+        });
+        assert_eq!(scroll(cx, window, -10.), Some(Decision::Bypass));
+        let mut platform = cx.test_window(window);
+        let mut handler = platform
+            .take_input_handler()
+            .expect("restored native input");
+        assert!(handler.query_accepts_text_input());
+        assert_eq!(
+            handler.text_for_range(0..6, &mut None),
+            Some("inside".into())
+        );
+        platform.set_input_handler(handler);
+    }
+
+    #[crate::test]
+    fn an_unfocused_input_layer_reappears_after_its_record_frame_is_gone(cx: &mut TestAppContext) {
+        use super::decisions::new_page;
+        use crate::{AppContext as _, Context, Entity, PlatformWindow as _, Render, Window};
+
+        if !crate::fast::layers::COMPILED {
+            return;
+        }
+        struct TogglePage {
+            page: Entity<LayerPage>,
+            shown: bool,
+        }
+        impl Render for TogglePage {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .children(self.shown.then(|| self.page.clone()))
+            }
+        }
+        let (handle, focus) = cx.update(|cx| {
+            let focus = cx.focus_handle();
+            let input_focus = focus.clone();
+            let handle = cx.new(|cx| {
+                let mut page = new_page(false, cx);
+                page.extra = Some(Rc::new(move || {
+                    div()
+                        .h(px(10.))
+                        .track_focus(&input_focus)
+                        .child(super::super::retained::text_input(
+                            input_focus.clone(),
+                            "kept",
+                        ))
+                        .into_any_element()
+                }));
+                page
+            });
+            (handle, focus)
+        });
+        let root = cx.add_window(move |_, _| TogglePage {
+            page: handle,
+            shown: true,
+        });
+        let window = root.into();
+        draw(cx, window);
+        draw(cx, window);
+        promote(cx, window);
+        assert_eq!(scroll(cx, window, -10.), Some(Decision::Composite));
+        assert!(has_record(cx, window));
+        let id = scroller_id(cx, window);
+        frame_after(cx, window, |cx| {
+            root.update(cx, |root, _, cx| {
+                root.shown = false;
+                cx.notify();
+            })
+            .unwrap();
+        });
+        with_window(cx, window, |window, _| {
+            assert!(window.rendered_frame.input_handlers.is_empty());
+            let record = window.fast_layers.layers[&id]
+                .record
+                .as_ref()
+                .expect("kept original layer");
+            assert!(
+                record.paint_range.end.input_handlers_index
+                    > record.paint_range.start.input_handlers_index
+            );
+        });
+        frame_after(cx, window, |cx| {
+            root.update(cx, |root, _, cx| {
+                root.shown = true;
+                cx.notify();
+            })
+            .unwrap();
+        });
+        let original = with_window(cx, window, |window, _| {
+            crate::fast::layers::verify::drawn(&window.rendered_frame.scene)
+        });
+        with_window(cx, window, |window, cx| {
+            window.forget_retained_state();
+            window.draw(cx).clear(cx);
+            assert_eq!(
+                crate::fast::layers::verify::drawn(&window.rendered_frame.scene),
+                original
+            );
+            window.focus(&focus, cx);
+        });
+        draw(cx, window);
+        let mut platform = cx.test_window(window);
+        let mut handler = platform
+            .take_input_handler()
+            .expect("original input is published");
+        assert_eq!(handler.text_for_range(0..4, &mut None), Some("kept".into()));
+        platform.set_input_handler(handler);
     }
 
     /// Content painting a path, drawn over by `cover` when set.

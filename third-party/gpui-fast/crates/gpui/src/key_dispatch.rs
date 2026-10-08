@@ -2173,14 +2173,17 @@ mod tests {
         cx.update(|window, _| assert!(window.has_pending_keystrokes()));
         assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(false));
 
-        let prefers_ime_after_blur = {
-            let mut platform_window = cx.test_window(cx.window_handle());
+        let window_handle = cx.window_handle();
+        // A platform callback returns its held handler before the scheduled frame.
+        let prefers_ime_after_blur = cx.with_paused_automatic_drawing(|cx| {
+            let mut platform_window = cx.test_window(window_handle);
             let mut input_handler = platform_window.take_input_handler();
-            cx.update(|window, cx| {
+            cx.update_window(window_handle, |_, window, cx| {
                 window.blur(cx);
                 assert!(!window.has_pending_keystrokes());
                 assert!(window.pending_input_is_none());
-            });
+            })
+            .unwrap();
             let prefers_ime = input_handler
                 .as_mut()
                 .map(|input_handler| input_handler.query_prefers_ime_for_printable_keys());
@@ -2188,9 +2191,11 @@ mod tests {
                 platform_window.set_input_handler(input_handler);
             }
             prefers_ime
-        };
-        assert_eq!(prefers_ime_after_blur, Some(true));
+        });
+        // The original held handler is revoked by blur, even after the chord clears.
+        assert_eq!(prefers_ime_after_blur, Some(false));
         cx.update(|window, cx| window.focus(&focus_handle, cx));
+        assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(true));
 
         cx.simulate_keystrokes("ctrl-x");
         assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(false));

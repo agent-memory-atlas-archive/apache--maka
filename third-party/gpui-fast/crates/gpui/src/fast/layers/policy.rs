@@ -224,7 +224,7 @@ pub(crate) fn decide(
             demote = true;
             Decision::Bypass
         }
-        Some(record) if !eligible(window, id, policy, record) => {
+        Some(record) if !eligible(window, id, layer, record) => {
             ineligible = true;
             Decision::Bypass
         }
@@ -366,18 +366,26 @@ fn fits(window: &Window, record: &LayerRecord) -> bool {
 /// draws (anchored popovers), placed no anchored element, handles no text
 /// input (a focused input is inside), and no view in it asked for an
 /// animation frame.
-fn eligible(
-    window: &Window,
-    id: &GlobalElementId,
-    policy: &LayerPolicy,
-    record: &LayerRecord,
-) -> bool {
+fn eligible(window: &Window, id: &GlobalElementId, layer: &Layer, record: &LayerRecord) -> bool {
     let prepaint = &record.prepaint_range;
     let paint = &record.paint_range;
+    // Unfocused handlers do not inhibit compositing. With focus, only the
+    // original completed frame can identify its owner; stale ranges must not
+    // be read. The existing input decision rebuilds stale unfocused records.
+    let focused_input = window.focus.is_some_and(|focus| {
+        layer
+            .input
+            .ranges_frame
+            .is_none_or(|painted| painted + 1 != window.fast_layers.frame)
+            || window.rendered_frame.input_handlers
+                [paint.start.input_handlers_index..paint.end.input_handlers_index]
+                .iter()
+                .any(|(id, _)| *id == focus)
+    });
     prepaint.start.deferred_draws_index == prepaint.end.deferred_draws_index
         && paint.start.input_scopes_index == paint.end.input_scopes_index
-        && paint.start.input_handlers_index == paint.end.input_handlers_index
-        && !policy.content_anchored
+        && !focused_input
+        && !layer.policy.content_anchored
         && !invalidate::animation_frame_requested(window, id)
 }
 
