@@ -30,15 +30,16 @@ import type {
   EditorTextRef,
   TextChunk,
   ComponentInput,
+  ThinkingLevel,
   ReadingCommand,
 } from '../../plugin-sdk/src/index.js';
-import type { ModelsProps } from './contracts.js';
+import type { ModelsProps, SelectedModel } from './contracts.js';
 import { modelsContract } from './contracts.js';
 import { copy, type Copy } from './locale.js';
 import { fill, output, pixels, type Presentation, type Node } from './view.js';
 type Request =
   | { kind: 'page'; key: string; query: string }
-  | { kind: 'text'; key: string; basis: EditorTextRef; choice: SettingsModelChoice | null };
+  | { kind: 'text'; key: string; basis: EditorTextRef; choice: SelectedModel | null };
 interface State {
   catalogEpoch: number;
   defaultModel: SettingsDefaultModel | null;
@@ -55,27 +56,76 @@ interface State {
   active: number;
   reveal: ReadingCommand | null;
   open: boolean;
+  draft: SelectedModel | null;
+  thinkingOpen: boolean;
   choices: SettingsModelChoice[];
   pageQuery: string | null;
   catalogRevision: number | null;
   next: SettingsModelCursor | null;
   failed: boolean;
 }
-function candidate(state: State, props: ModelsProps) {
+function supports(selection: SelectedModel) {
+  return (
+    selection.thinkingLevel === null ||
+    selection.choice.thinkingLevels.some((level) => level === selection.thinkingLevel)
+  );
+}
+function candidate(state: State, props: ModelsProps): SelectedModel | null {
   if (props.busy || state.pending || state.failed || state.queryError || dirty(state)) return null;
-  if (state.staleSelection && props.selection)
-    return [
+  if (state.staleSelection && props.selection) {
+    const original = props.selection;
+    const choice = [
       ...state.choices,
       ...(state.defaultModel?.kind === 'ready' ? [state.defaultModel.choice] : []),
     ].find(
       (choice) =>
-        choice.selection.connectionId === props.selection!.selection.connectionId &&
-        choice.selection.modelId === props.selection!.selection.modelId,
+        choice.selection.connectionId === original.choice.selection.connectionId &&
+        choice.selection.modelId === original.choice.selection.modelId,
     );
+    const selection = choice ? { choice, thinkingLevel: original.thinkingLevel } : null;
+    return selection && supports(selection) ? selection : null;
+  }
   return !props.selection && state.suggestDefault && state.defaultModel?.kind === 'ready'
-    ? state.defaultModel.choice
+    ? { choice: state.defaultModel.choice, thinkingLevel: null }
     : null;
 }
+function sameModel(a: SettingsModelChoice, b: SettingsModelChoice) {
+  return (
+    a.selection.connectionId === b.selection.connectionId &&
+    a.selection.modelId === b.selection.modelId
+  );
+}
+function selectDraft(state: State, choice: SettingsModelChoice) {
+  const prior = state.draft;
+  const same =
+    prior?.choice.selection.connectionId === choice.selection.connectionId &&
+    prior.choice.selection.modelId === choice.selection.modelId;
+  const selection = { choice, thinkingLevel: same ? prior.thinkingLevel : null };
+  state.draft = selection;
+  state.active = state.choices.findIndex((row) => sameModel(row, choice));
+  state.thinkingOpen = false;
+}
+function open(state: State, props: ModelsProps) {
+  state.open = true;
+  state.thinkingOpen = false;
+  state.draft = state.staleSelection ? null : props.selection;
+  const choice = state.draft
+    ? state.choices.find((row) => sameModel(row, state.draft!.choice))
+    : state.choices[0];
+  if (choice) selectDraft(state, choice);
+  else state.active = state.draft ? -1 : 0;
+  if (state.active >= 0) reveal(state);
+}
+const thinkingCopy: Record<ThinkingLevel, keyof Copy> = {
+  off: 'thinkingOff',
+  minimal: 'thinkingMinimal',
+  low: 'thinkingLow',
+  medium: 'thinkingMedium',
+  high: 'thinkingHigh',
+  xhigh: 'thinkingXhigh',
+  max: 'thinkingMax',
+  ultra: 'thinkingUltra',
+};
 
 function sameText(a: EditorTextRef | null, b: EditorTextRef | null) {
   return a?.owner === b?.owner && a?.revision === b?.revision;
@@ -118,7 +168,7 @@ function editableChoices(state: State, props: ModelsProps) {
     !dirty(state)
   );
 }
-function capture(state: State, choice: SettingsModelChoice | null = null): Action[] {
+function capture(state: State, choice: SelectedModel | null = null): Action[] {
   const basis = state.observation?.snapshot.text;
   if (state.pending || !basis) return [];
   if (basis.bytes > 1024) {
@@ -171,6 +221,8 @@ function readPage(state: State, more = false): Action[] {
 }
 function close(state: State) {
   state.open = false;
+  state.thinkingOpen = false;
+  state.draft = null;
   if (state.pending?.kind === 'text') state.pending.choice = null;
 }
 function frame<N extends Node>(
@@ -183,7 +235,7 @@ function frame<N extends Node>(
   const target = presentation.target;
   const ui = presentation.paint(props.theme);
   const text = copy(props.locale);
-  const chosen = state.staleSelection ? null : props.selection;
+  const chosen = state.staleSelection ? null : props.selection?.choice;
   const compact = (label: string) =>
     [...label].length > 44 ? [...label].slice(0, 43).join('') + '…' : label;
   const trigger = ui.button(
@@ -236,6 +288,12 @@ function frame<N extends Node>(
       ...(state.next ? [ui.button('more', text.moreModels, !!state.pending || props.busy)] : []),
       ui.button('refresh', text.refreshModels, !!state.pending || props.busy),
       ui.button('defaults', text.defaultModel),
+      ui.button(
+        'apply',
+        text.modelApply,
+        !editableChoices(state, props) || !state.draft || !supports(state.draft),
+        true,
+      ),
       ui.button('close', text.closeModels, false),
     ],
     {
@@ -245,6 +303,59 @@ function frame<N extends Node>(
       style: { wrap: true },
     },
   );
+  const draft = state.draft;
+  const levels = draft?.choice.thinkingLevels ?? [];
+  const defaultLevel = draft?.choice.defaultThinkingLevel;
+  const options = [
+    {
+      key: 'default',
+      label: text.thinkingDefault + (defaultLevel ? ` (${text[thinkingCopy[defaultLevel]]})` : ''),
+    },
+    ...levels.map((level) => ({ key: level, label: text[thinkingCopy[level]] })),
+  ];
+  const available = !draft || supports(draft);
+  const current = available ? (draft?.thinkingLevel ?? 'default') : null;
+  const currentLabel = available
+    ? options.find((option) => option.key === current)!.label
+    : `${text[thinkingCopy[draft!.thinkingLevel!]]} · ${text.thinkingUnavailable}`;
+  const thinking =
+    draft && (levels.length || draft.thinkingLevel !== null)
+      ? (ui.choice?.(
+          'thinking',
+          available ? text.thinking : `${text.thinking}: ${currentLabel}`,
+          options,
+          current,
+          !editableChoices(state, props),
+        ) ??
+        presentation.popup!({
+          key: 'thinking-popup',
+          label: text.thinking,
+          trigger: ui.button(
+            'thinking-toggle',
+            `${text.thinking}: ${currentLabel} ▾`,
+            !editableChoices(state, props),
+          ),
+          content: ui.box(
+            'thinking-options',
+            options.map((option) =>
+              ui.button(
+                `thinking-${option.key}`,
+                `${option.key === current ? '✓ ' : ''}${option.label}`,
+                !editableChoices(state, props),
+              ),
+            ),
+            { gap: 0, surface: true },
+          ),
+          open: state.thinkingOpen,
+          style: {
+            width: pixels(220),
+            background: props.theme.surface,
+            border: props.theme.border,
+            borderWidth: 1,
+            radius: 8,
+          },
+        }))
+      : null;
   const content = ui.box(
     'model-list',
     [
@@ -311,7 +422,12 @@ function frame<N extends Node>(
                 ),
               ]
             : []),
-          ...(target === 'desktop' ? [controls, viewport] : [viewport, controls]),
+          ...(state.draft && state.active < 0
+            ? [ui.text('model-draft', state.draft.choice.label, 13)]
+            : []),
+          ...(target === 'desktop'
+            ? [controls, ...(thinking ? [thinking] : []), viewport]
+            : [viewport, ...(thinking ? [thinking] : []), controls]),
         ],
         {
           visible: !state.defaultsOpen,
@@ -341,7 +457,7 @@ function frame<N extends Node>(
                 {
                   theme: props.theme,
                   locale: props.locale,
-                  selection: chosen,
+                  selection: chosen ?? null,
                   defaultModel: state.defaultModel,
                   catalogRevision: state.catalogRevision,
                   busy: props.busy || !!state.pending || state.failed,
@@ -374,7 +490,7 @@ function frame<N extends Node>(
         offset: 8,
         style: {
           width: pixels(360),
-          maxHeight: 320,
+          maxHeight: 440,
           minWidth: 0,
           background: props.theme.menu.background,
           border: props.theme.menu.border,
@@ -408,6 +524,8 @@ export function models<N extends Node>(
         active: 0,
         reveal: null,
         open: false,
+        draft: null,
+        thinkingOpen: false,
         choices: [],
         pageQuery: null,
         catalogRevision: null,
@@ -423,6 +541,7 @@ export function models<N extends Node>(
           revision: previous.revision + 1,
           catalogEpoch: props.catalogEpoch,
           staleSelection: true,
+          thinkingOpen: false,
           suggestDefault: false,
           choices: [],
           pageQuery: null,
@@ -484,6 +603,8 @@ export function models<N extends Node>(
               if (changed) {
                 state.failed = false;
                 state.active = 0;
+                state.draft = null;
+                state.thinkingOpen = false;
                 state.choices = [];
                 state.next = null;
                 state.pageQuery = null;
@@ -508,14 +629,28 @@ export function models<N extends Node>(
           } else {
             state.catalogRevision = page.revision;
             state.defaultModel = page.defaultModel;
-            state.active = 0;
             // A page's choices and cursor always travel with its original
             // revision, even while the native search input has newer metadata.
             const current = request.query === state.query;
             state.choices = current ? page.choices : [];
             state.next = current ? (page.next ?? null) : null;
             state.pageQuery = current ? request.query : null;
-            if (state.choices.length) reveal(state);
+            if (state.draft || (state.open && !state.defaultsOpen)) {
+              const choice = state.draft
+                ? [
+                    ...state.choices,
+                    ...(page.defaultModel.kind === 'ready' ? [page.defaultModel.choice] : []),
+                  ].find((row) => sameModel(row, state.draft!.choice))
+                : state.active >= 0
+                  ? state.choices[0]
+                  : undefined;
+              if (choice) selectDraft(state, choice);
+              else if (state.draft) {
+                state.draft = null;
+                state.active = -1;
+              }
+              if (state.active >= 0) reveal(state);
+            }
             actions.push(...resume(state, props));
             const initial = candidate(state, props);
             if (initial) {
@@ -534,6 +669,8 @@ export function models<N extends Node>(
             state.queryBasis = state.observation.snapshot.text;
             if (changed) {
               state.failed = false;
+              state.draft = null;
+              state.thinkingOpen = false;
               state.choices = [];
               state.next = null;
               state.pageQuery = null;
@@ -542,8 +679,7 @@ export function models<N extends Node>(
             }
           } else if (interactive(state, props)) actions.push(...read(state));
         } else if (input.name === 'submitted' && editableChoices(state, props)) {
-          const choice = state.choices[state.active];
-          if (choice) actions.push(...capture(state, choice));
+          if (state.draft && supports(state.draft)) actions.push(...capture(state, state.draft));
         }
       } else if (
         input.kind === 'component' &&
@@ -558,6 +694,7 @@ export function models<N extends Node>(
       } else if (input.kind === 'raw') {
         if (input.key === 'model-popup' && (input.event as { kind?: string })?.kind === 'dismiss')
           close(state);
+        else if (input.key === 'thinking-popup') state.thinkingOpen = false;
         else if (input.key === 'close' || input.key === 'default-close') close(state);
         else if (input.key === 'defaults') state.defaultsOpen = true;
         else if (input.key === 'default-back') {
@@ -567,8 +704,40 @@ export function models<N extends Node>(
           if (input.key === 'toggle') {
             if (state.open) close(state);
             else {
-              state.open = true;
+              open(state, props);
               actions.push(...resume(state, props));
+            }
+          } else if (
+            input.key === 'apply' &&
+            editableChoices(state, props) &&
+            state.draft &&
+            supports(state.draft)
+          ) {
+            actions.push(...capture(state, state.draft));
+          } else if (
+            input.key === 'thinking-toggle' &&
+            editableChoices(state, props) &&
+            state.draft
+          )
+            state.thinkingOpen = !state.thinkingOpen;
+          else if (
+            (input.key === 'thinking' || input.key.startsWith('thinking-')) &&
+            editableChoices(state, props) &&
+            state.draft
+          ) {
+            const value =
+              input.key === 'thinking'
+                ? (input.event as { kind?: string; key?: string }).key
+                : input.key.slice('thinking-'.length);
+            if (
+              value === 'default' ||
+              state.draft.choice.thinkingLevels.some((level) => level === value)
+            ) {
+              state.draft = {
+                ...state.draft,
+                thinkingLevel: value === 'default' ? null : (value as ThinkingLevel),
+              };
+              state.thinkingOpen = false;
             }
           } else if (input.key === 'default-refresh') actions.push(...readPage(state));
           else if (input.key === 'refresh') actions.push(...read(state));
@@ -585,10 +754,15 @@ export function models<N extends Node>(
                 state.active + (input.key === 'next-choice' ? 1 : -1),
               ),
             );
+            const choice = state.choices[state.active];
+            if (choice) selectDraft(state, choice);
             reveal(state);
           } else if (editableChoices(state, props) && /^choose-(0|[1-9][0-9]*)$/.test(input.key)) {
             const choice = state.choices[Number(input.key.slice(7))];
-            if (choice) actions.push(...capture(state, choice));
+            if (choice) {
+              state.active = Number(input.key.slice(7));
+              selectDraft(state, choice);
+            }
           }
         }
       }
@@ -597,7 +771,7 @@ export function models<N extends Node>(
       const out = frame(presentation, state, props, actions, events);
       if (
         input.kind === 'raw' &&
-        input.key === 'model-popup' &&
+        (input.key === 'model-popup' || input.key === 'thinking-popup') &&
         (input.event as { reason?: string })?.reason === 'escape'
       ) {
         out.decision = { preventDefault: true, stopPropagation: true };

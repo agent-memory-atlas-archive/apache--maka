@@ -329,13 +329,13 @@ class Client {
       key: 'model',
       child: 'models',
       name: 'selected',
-      event: {
+      event: selectedModel({
         selection: { connectionId: 'fixture', revision: 2, modelId: 'fixture-model' },
         connectionName: 'Fixture',
         thinkingLevels: [],
         defaultThinkingLevel: null,
         label: 'Fixture model',
-      },
+      }),
     });
     this.component('tailReady');
     return this;
@@ -863,8 +863,8 @@ test('TUI native model viewport holds the complete bounded page and retains late
   });
   assert.deepEqual(out.events, []);
   out = modelGuest.component.update(out.frame.state, { ...modelProps, busy: false }, {});
-  assert.equal(out.events[0].value.selection.modelId, 'model-0');
-  const enabled = { ...modelProps, busy: false, selection: modelChoices[0] };
+  assert.equal(out.events[0].value.choice.selection.modelId, 'model-0');
+  const enabled = { ...modelProps, busy: false, selection: selectedModel(modelChoices[0]) };
   out = modelRaw(out, 'toggle', enabled);
   assert.equal(out.frame.view.kind, 'dialog');
   assert.equal(out.frame.view.open, true);
@@ -891,6 +891,8 @@ test('TUI native model viewport holds the complete bounded page and retains late
     {},
   );
   out = modelRaw(out, 'choose-15', enabled);
+  assert.deepEqual(out.events, []);
+  out = modelRaw(out, 'apply', enabled);
   const capture = out.actions[0];
   assert.equal(capture.method, 'read');
   assert.deepEqual(capture.resources.text.input, {
@@ -904,17 +906,17 @@ test('TUI native model viewport holds the complete bounded page and retains late
     { status: 'succeeded', value: { text: '', metadata: modelObservation('', 1).snapshot.text } },
     enabled,
   );
-  assert.equal(out.events[0].value.selection.modelId, 'model-15');
+  assert.equal(out.events[0].value.choice.selection.modelId, 'model-15');
   assert.equal(out.frame.state.open, false);
   out = modelGuest.component.update(
     out.frame.state,
-    { ...enabled, selection: modelChoices[15] },
+    { ...enabled, selection: selectedModel(modelChoices[15]) },
     {},
   );
   assert.equal(out.events.length, 0);
 });
 test('late query is ignored and catalog changes restart only the observation', () => {
-  const enabled = { ...modelProps, busy: false, selection: modelChoices[1] };
+  const enabled = { ...modelProps, busy: false, selection: selectedModel(modelChoices[1]) };
   let out = modelGuest.component.mount(enabled, {});
   const original = out.actions[0];
   out = modelAction(
@@ -1068,7 +1070,7 @@ for (const target of ['tui', 'desktop']) {
     const form = new FormClient(component, {
       ...modelProps,
       busy: false,
-      selection: modelChoices[0],
+      selection: selectedModel(modelChoices[0]),
     });
     form.query('models', modelPage());
     modelNative(form, '', 1);
@@ -1107,7 +1109,7 @@ for (const target of ['tui', 'desktop']) {
     });
     assert.deepEqual(form.output.events, []);
     modelRead(form, 'Account model-299', 3);
-    assert.deepEqual(form.output.events, [{ name: 'selected', value: choice }]);
+    assert.deepEqual(form.output.events, [{ name: 'selected', value: selectedModel(choice) }]);
     assert.equal(form.state.open, false);
   });
   test(`${target} moving the search caret acknowledges its original revision without resetting model navigation`, () => {
@@ -1160,8 +1162,11 @@ for (const target of ['tui', 'desktop']) {
       key: 'row-input',
       event: { kind: 'raw', key: 'choose-15', event: {} },
     });
+    form.raw('apply');
     modelRead(form, '', 1);
-    assert.deepEqual(form.output.events, [{ name: 'selected', value: modelChoices[15] }]);
+    assert.deepEqual(form.output.events, [
+      { name: 'selected', value: selectedModel(modelChoices[15]) },
+    ]);
     form.raw('toggle');
     for (let at = 0; at < 15; at++) form.raw('previous-choice');
     assert.equal(form.state.active, 0);
@@ -1186,6 +1191,7 @@ for (const target of ['tui', 'desktop']) {
   test(`${target} model selection requires the original snapshot and closing disarms pending confirmation`, () => {
     const form = ready();
     form.raw('choose-3');
+    form.raw('apply');
     const selection = form.find('read');
     form.raw('close');
     form.raw('toggle');
@@ -1195,6 +1201,7 @@ for (const target of ['tui', 'desktop']) {
     });
     assert.deepEqual(form.output.events, []);
     form.raw('choose-3');
+    form.raw('apply');
     form.complete(form.find('read'), { status: 'failed', reason: 'snapshot_revision_changed' });
     assert.deepEqual(form.output.events, []);
     modelNative(form, 'new', 2);
@@ -1634,7 +1641,7 @@ test('settings routing keeps original composer key and commands while invalidati
     event: {},
   });
   assert.equal(client.state.catalogEpoch, 1);
-  assert.equal(client.state.model.selection.modelId, 'fixture-model');
+  assert.equal(client.state.model.choice.selection.modelId, 'fixture-model');
   assert.equal(client.state.modelRefreshing, true);
   client.input({
     kind: 'component',
@@ -1677,13 +1684,13 @@ test('desktop model trigger retains its full label for native measurement and ac
   const output = module.component.mount({
     theme: values.appearance[0],
     locale: 'en',
-    selection: {
+    selection: selectedModel({
       selection: { connectionId: 'fixture', revision: 2, modelId: 'fixture-model' },
       connectionName: 'Fixture',
       thinkingLevels: [],
       defaultThinkingLevel: null,
       label,
-    },
+    }),
     busy: false,
     catalogEpoch: 0,
   });
@@ -1696,13 +1703,13 @@ test('changed settings discard late model query and old default before selecting
   const form = new FormClient(module.component, {
     theme: values.appearance[0],
     locale: 'en',
-    selection: {
+    selection: selectedModel({
       selection: { connectionId: 'fixture', revision: 2, modelId: 'fixture-model' },
       connectionName: 'Fixture',
       thinkingLevels: [],
       defaultThinkingLevel: null,
       label: 'Fixture model',
-    },
+    }),
     busy: false,
     catalogEpoch: 0,
   });
@@ -1742,7 +1749,7 @@ test('changed settings discard late model query and old default before selecting
       next: null,
     },
   });
-  assert.equal(form.output.events[0].value.selection.revision, 3);
+  assert.equal(form.output.events[0].value.choice.selection.revision, 3);
 });
 
 for (const [target, module] of credentialModules) {
@@ -1831,7 +1838,7 @@ test('a refreshed catalog never replaces a chosen nondefault model with an unrel
   const form = new FormClient(module.component, {
     theme: values.appearance[0],
     locale: 'en',
-    selection: chosen,
+    selection: selectedModel(chosen),
     busy: false,
     catalogEpoch: 0,
   });
@@ -1870,8 +1877,8 @@ test('a refreshed catalog never replaces a chosen nondefault model with an unrel
     defaultModel: { kind: 'ready', choice: other },
     next: null,
   });
-  assert.equal(form.output.events[0].value.selection.connectionId, 'chosen');
-  assert.equal(form.output.events[0].value.selection.revision, 9);
+  assert.equal(form.output.events[0].value.choice.selection.connectionId, 'chosen');
+  assert.equal(form.output.events[0].value.choice.selection.revision, 9);
 });
 
 for (const [target, module] of credentialModules) {
@@ -2862,7 +2869,7 @@ for (const target of ['desktop', 'tui']) {
       defaultModel: { kind: 'ready', choice: late },
       next: { query: '', connection: 0, model: 16 },
     });
-    assert.deepEqual(form.output.events, [{ name: 'selected', value: late }]);
+    assert.deepEqual(form.output.events, [{ name: 'selected', value: selectedModel(late) }]);
   });
   test(
     target +
@@ -2874,7 +2881,7 @@ for (const target of ['desktop', 'tui']) {
       const form = new FormClient(module.component, {
         ...modelProps,
         busy: false,
-        selection: defaultChoice,
+        selection: selectedModel(defaultChoice),
       });
       const old = form.find('models');
       const child = modelSlots(form.output.frame.view).find((n) => n.binding === 'defaults');
@@ -2911,7 +2918,7 @@ for (const target of ['desktop', 'tui']) {
       });
       assert.deepEqual(form.output.events, []);
       assert.equal(form.state.staleSelection, false);
-      assert.deepEqual(form.props.selection, defaultChoice);
+      assert.deepEqual(form.props.selection, selectedModel(defaultChoice));
       form.raw('toggle');
       form.raw('defaults');
       form.raw('default-close');
@@ -2929,7 +2936,7 @@ for (const target of ['desktop', 'tui'])
     const form = new FormClient(module.component, {
       ...modelProps,
       busy: false,
-      selection: defaultChoice,
+      selection: selectedModel(defaultChoice),
     });
     form.raw('toggle');
     form.raw('defaults');
@@ -7457,3 +7464,238 @@ test('queue-editor retains the native Textarea, forwards exact capture and keeps
     source: { child: 'draft', method: 'snapshot', input },
   });
 });
+
+function selectedModel(choice, thinkingLevel = null) {
+  return { choice, thinkingLevel };
+}
+
+for (const target of ['tui', 'desktop']) {
+  const { component } = await import(
+    pathToFileURL(resolve(root, `dist/packages/models/${target}.js`))
+  );
+  const choices = modelChoices.map((choice) => ({
+    ...choice,
+    thinkingLevels: ['off', 'low', 'high'],
+    defaultThinkingLevel: 'high',
+  }));
+  const make = () => {
+    const form = new FormClient(component, {
+      ...modelProps,
+      busy: false,
+      selection: selectedModel(choices[5], 'high'),
+    });
+    form.query('models', modelPage(choices));
+    modelNative(form, '', 1);
+    form.raw('toggle');
+    return form;
+  };
+  const thinking = (form, key) =>
+    form.input({
+      kind: 'raw',
+      key: target === 'tui' ? 'thinking' : `thinking-${key}`,
+      event: { kind: 'selected', key },
+    });
+  test(`${target} model Enter and Apply confirm the same retained model and explicit thinking`, () => {
+    for (const method of ['enter', 'apply']) {
+      const form = make();
+      assert.equal(form.state.active, 5);
+      assert.deepEqual(form.state.draft, selectedModel(choices[5], 'high'));
+      if (method === 'enter')
+        form.input({
+          kind: 'component',
+          child: 'model-query',
+          name: 'submitted',
+          key: 'choose-active',
+          event: {},
+        });
+      else form.raw('apply');
+      modelRead(form, '', 1);
+      assert.deepEqual(form.output.events, [
+        { name: 'selected', value: selectedModel(choices[5], 'high') },
+      ]);
+      assert.equal(form.state.open, false);
+    }
+  });
+  test(`${target} model draft cancellation retains the confirmed pair and Off is distinct from default`, () => {
+    const form = make();
+    thinking(form, 'off');
+    assert.deepEqual(form.output.events, []);
+    assert.equal(form.state.draft.thinkingLevel, 'off');
+    form.raw('close');
+    form.raw('toggle');
+    assert.equal(form.state.draft.thinkingLevel, 'high');
+    for (const level of ['off', 'default']) {
+      thinking(form, level);
+      form.raw('apply');
+      modelRead(form, '', 1);
+      assert.equal(form.output.events[0].value.thinkingLevel, level === 'default' ? null : 'off');
+      form.raw('toggle');
+    }
+  });
+  test(`${target} model catalog revalidation preserves explicit thinking or requires a new confirmation`, () => {
+    const form = make();
+    form.raw('close');
+    const renewed = choices.map((choice) => ({
+      ...choice,
+      selection: { ...choice.selection, revision: 6 },
+    }));
+    form.update({ catalogEpoch: 1 });
+    form.query('models', { ...modelPage(renewed), revision: 6 });
+    assert.deepEqual(form.output.events, [
+      { name: 'selected', value: selectedModel(renewed[5], 'high') },
+    ]);
+    form.update({ selection: selectedModel(renewed[5], 'high'), catalogEpoch: 2 });
+    form.query('models', {
+      ...modelPage(
+        renewed.map((choice) => ({
+          ...choice,
+          thinkingLevels: ['off'],
+          defaultThinkingLevel: 'off',
+        })),
+      ),
+      revision: 7,
+    });
+    assert.deepEqual(form.output.events, []);
+    assert.equal(form.state.staleSelection, true);
+    assert.equal(form.props.selection.thinkingLevel, 'high');
+  });
+  test(`${target} refreshing an open model draft preserves its supported explicit level for both confirmations`, () => {
+    for (const refresh of ['refresh', 'epoch'])
+      for (const confirm of ['enter', 'apply']) {
+        const form = make();
+        thinking(form, 'low');
+        if (refresh === 'epoch') form.update({ catalogEpoch: 1 });
+        else form.raw('refresh');
+        const renewed = choices.map((choice) => ({
+          ...choice,
+          selection: { ...choice.selection, revision: 6 },
+        }));
+        form.query('models', { ...modelPage(renewed), revision: 6 });
+        assert.deepEqual(form.state.draft, selectedModel(renewed[5], 'low'));
+        assert.equal(form.state.active, 5);
+        if (confirm === 'enter')
+          form.input({
+            kind: 'component',
+            child: 'model-query',
+            name: 'submitted',
+            key: 'choose-active',
+            event: {},
+          });
+        else form.raw('apply');
+        modelRead(form, '', 1);
+        assert.deepEqual(form.output.events, [
+          { name: 'selected', value: selectedModel(renewed[5], 'low') },
+        ]);
+      }
+  });
+  test(`${target} unsupported thinking remains explicit until the user changes it and missing models do not select another row`, () => {
+    const form = make();
+    thinking(form, 'low');
+    form.update({ catalogEpoch: 1 });
+    const renewed = choices.map((choice) => ({
+      ...choice,
+      thinkingLevels: ['high'],
+      selection: { ...choice.selection, revision: 6 },
+    }));
+    form.query('models', { ...modelPage(renewed), revision: 6 });
+    assert.equal(form.state.draft.thinkingLevel, 'low');
+    form.raw('apply');
+    assert.deepEqual(form.output.actions, []);
+    form.input({
+      kind: 'component',
+      child: 'model-query',
+      name: 'submitted',
+      key: 'choose-active',
+      event: {},
+    });
+    assert.deepEqual(form.output.actions, []);
+    assert.deepEqual(form.output.events, []);
+    assert.ok(JSON.stringify(form.output.frame.view).includes('Unavailable'));
+    thinking(form, 'default');
+    form.raw('apply');
+    modelRead(form, '', 1);
+    assert.deepEqual(form.output.events, [{ name: 'selected', value: selectedModel(renewed[5]) }]);
+    form.raw('toggle');
+    form.raw('refresh');
+    form.query('models', { ...modelPage(renewed.filter((_, at) => at !== 5)), revision: 7 });
+    assert.equal(form.state.draft, null);
+    assert.equal(form.state.active, -1);
+    form.raw('refresh');
+    form.query('models', { ...modelPage(renewed.filter((_, at) => at !== 5)), revision: 8 });
+    assert.equal(form.state.draft, null);
+    assert.equal(form.state.active, -1);
+    form.input({
+      kind: 'component',
+      child: 'model-query',
+      name: 'submitted',
+      key: 'choose-active',
+      event: {},
+    });
+    assert.deepEqual(form.output.actions, []);
+    assert.deepEqual(form.output.events, []);
+    form.raw('apply');
+    assert.deepEqual(form.output.actions, []);
+    assert.deepEqual(form.output.events, []);
+  });
+  if (target === 'desktop')
+    test('desktop thinking Escape closes only its own popup, including while busy', () => {
+      const form = make();
+      form.raw('thinking-toggle');
+      assert.equal(form.state.thinkingOpen, true);
+      form.update({ busy: true });
+      form.input({
+        kind: 'raw',
+        key: 'thinking-popup',
+        event: { kind: 'dismiss', reason: 'escape' },
+      });
+      assert.deepEqual(form.output.decision, { preventDefault: true, stopPropagation: true });
+      assert.equal(form.state.thinkingOpen, false);
+      assert.equal(form.state.open, true);
+      assert.equal(form.state.draft.thinkingLevel, 'high');
+      form.input({ kind: 'raw', key: 'model-popup', event: { kind: 'dismiss', reason: 'escape' } });
+      assert.equal(form.state.open, false);
+    });
+}
+for (const thinkingLevel of [null, 'off', 'high'])
+  test(`send captures ${thinkingLevel ?? 'default'} thinking before native text read and retains it in recovery input`, () => {
+    const client = new Client().start();
+    const selection = { ...client.state.model, thinkingLevel };
+    client.input({
+      kind: 'component',
+      child: 'models',
+      key: 'model',
+      name: 'selected',
+      event: selection,
+    });
+    client.component('send', draft);
+    const read = client.find('read');
+    assert.equal(client.state.pending[read.key].thinkingLevel, thinkingLevel);
+    client.input({
+      kind: 'component',
+      child: 'models',
+      key: 'model',
+      name: 'selected',
+      event: { ...selection, thinkingLevel: 'low' },
+    });
+    client.query('read', { text: 'Hello', metadata: draft.snapshot.text });
+    const send = client.find('send');
+    assert.equal(send.input.thinkingLevel, thinkingLevel);
+    assert.deepEqual(send.input.model, selection.choice.selection);
+    assert.equal(client.state.pending[send.key].thinkingLevel, thinkingLevel);
+    client.complete(send, {
+      status: 'operation',
+      reply: {
+        reference,
+        receipt: {
+          kind: 'recorded',
+          outcome: { kind: 'unknown', diagnostic: 'lost' },
+          cleanup: { kind: 'confirmed' },
+        },
+      },
+    });
+    assert.equal(
+      [...client.actions.values()].some((action) => action.method === 'send'),
+      false,
+    );
+    assert.equal(client.state.command, null);
+  });

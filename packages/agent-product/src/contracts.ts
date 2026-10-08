@@ -22,6 +22,7 @@ import {
   type Contract,
   type AgentSession,
   type SettingsModelChoice,
+  type ThinkingLevel,
   type SettingsDefaultModel,
   type TextareaAppearance,
   type MarkdownAppearance,
@@ -75,11 +76,15 @@ export interface ImageViewerProps {
   active: boolean;
   image: { sessionId: string; through: number; sequence: number } | null;
 }
+export interface SelectedModel {
+  choice: SettingsModelChoice;
+  thinkingLevel: ThinkingLevel | null;
+}
 export interface ModelsProps {
   catalogEpoch: number;
   theme: Theme;
   locale: string;
-  selection: SettingsModelChoice | null;
+  selection: SelectedModel | null;
   busy: boolean;
 }
 export interface PaletteCommand {
@@ -438,8 +443,11 @@ export const themeContract: Contract = {
 };
 export type ComposerObservation = EditorObservation;
 
-const modelChoice = native.settings.interface.methods.models.output.$defs.SettingsModelChoice;
 const modelDefs = native.settings.interface.methods.models.output.$defs;
+const selectedModel = object({
+  choice: { $ref: '#/$defs/SettingsModelChoice' },
+  thinkingLevel: { anyOf: [{ $ref: '#/$defs/ThinkingLevel' }, { type: 'null' }] },
+});
 export const modelsContract: Contract = {
   name: 'maka.agent.Models',
   version: 1,
@@ -452,13 +460,13 @@ export const modelsContract: Contract = {
           catalogEpoch: { type: 'integer', minimum: 0 },
           theme: { $ref: '#/$defs/Theme' },
           locale,
-          selection: { anyOf: [{ $ref: '#/$defs/SettingsModelChoice' }, { type: 'null' }] },
+          selection: { anyOf: [selectedModel, { type: 'null' }] },
           busy: { type: 'boolean' },
         }),
         modelDefs,
       ),
     },
-    events: { selected: { ...modelChoice, $defs: modelDefs } },
+    events: { selected: { ...selectedModel, $defs: modelDefs } },
     captures: {},
   },
 };

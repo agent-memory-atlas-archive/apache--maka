@@ -21,7 +21,7 @@ import type {
   Action,
   ActionOutcome,
   ModelSelection,
-  SettingsModelChoice,
+  ThinkingLevel,
   AgentDeliveryPage,
   AgentQueue,
   AgentQueueMessage,
@@ -56,7 +56,13 @@ import type {
   EditorObservation,
   TextChunk,
 } from '../../plugin-sdk/src/index.js';
-import type { PaletteCommand, Message, Theme, QueueEditorProps } from './contracts.js';
+import type {
+  PaletteCommand,
+  Message,
+  Theme,
+  QueueEditorProps,
+  SelectedModel,
+} from './contracts.js';
 import { sameValue } from './value.js';
 import { copy, type Copy } from './locale.js';
 import { fill, output, pixels, type Presentation, type Node } from './view.js';
@@ -81,7 +87,13 @@ type Request =
       through: number;
       position: HistoryPosition;
     }
-  | { kind: 'read'; draft: EditorObservation; sessionId: string; model: ModelSelection }
+  | {
+      kind: 'read';
+      draft: EditorObservation;
+      sessionId: string;
+      model: ModelSelection;
+      thinkingLevel: ThinkingLevel | null;
+    }
   | {
       kind: 'toolSource';
       epoch: number;
@@ -93,7 +105,13 @@ type Request =
     }
   | { kind: 'create' }
   | { kind: 'createDirectory'; title: string }
-  | { kind: 'send'; draft: EditorObservation; sessionId: string; model: ModelSelection }
+  | {
+      kind: 'send';
+      draft: EditorObservation;
+      sessionId: string;
+      model: ModelSelection;
+      thinkingLevel: ThinkingLevel | null;
+    }
   | { kind: 'stop'; sessionId: string }
   | { kind: 'queue'; sessionId: string; saved?: { attempt: number; draft: EditorObservation } }
   | { kind: 'queueBody'; attempt: number }
@@ -126,7 +144,7 @@ export interface State {
   catalogGeneration: number;
   catalogFailed: boolean;
   selected: AgentSession | null;
-  model: SettingsModelChoice | null;
+  model: SelectedModel | null;
   catalogEpoch: number;
   modelRefreshing: boolean;
   settingsOpen: boolean;
@@ -963,10 +981,21 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
       intent(
         state,
         actions,
-        { kind: 'send', draft: request.draft, sessionId: request.sessionId, model: request.model },
+        {
+          kind: 'send',
+          draft: request.draft,
+          sessionId: request.sessionId,
+          model: request.model,
+          thinkingLevel: request.thinkingLevel,
+        },
         'agent',
         'send',
-        { sessionId: request.sessionId, message: chunk.text, model: request.model },
+        {
+          sessionId: request.sessionId,
+          message: chunk.text,
+          model: request.model,
+          thinkingLevel: request.thinkingLevel,
+        },
       );
       break;
     }
@@ -1963,7 +1992,13 @@ export function workspace<N extends Node>(
             intent(
               state,
               actions,
-              { kind: 'read', draft, sessionId: state.selected.id, model: state.model.selection },
+              {
+                kind: 'read',
+                draft,
+                sessionId: state.selected.id,
+                model: state.model.choice.selection,
+                thinkingLevel: state.model.thinkingLevel,
+              },
               'reader',
               'read',
               { start: 0, end: draft.snapshot.text.bytes },
@@ -1987,7 +2022,7 @@ export function workspace<N extends Node>(
           !mutationPending(state) &&
           !executionPending(state)
         ) {
-          state.model = input.event as SettingsModelChoice;
+          state.model = input.event as SelectedModel;
           state.modelRefreshing = false;
         } else if (input.name === 'create') rootCommand(state, actions, locale, 'create');
         else if (

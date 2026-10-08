@@ -31,6 +31,7 @@ import type {
   FocusShortcut,
   TextAppearance,
   ReadingProps,
+  TerminalChoiceOption,
 } from '../../plugin-sdk/src/index.js';
 import type { Theme } from './contracts.js';
 export type Target = 'desktop' | 'tui';
@@ -64,6 +65,13 @@ interface Painter<N extends Node> {
     disabled?: boolean,
     primary?: boolean,
     style?: DesktopStyle,
+  ): N;
+  choice?(
+    key: string,
+    label: string,
+    options: TerminalChoiceOption[],
+    current: string | null,
+    disabled: boolean,
   ): N;
   focusButton?(key: string, label: string, child: string): N;
   dialog(key: string, label: string, background: N, content: N, open: boolean): N;
@@ -152,6 +160,19 @@ function desktopPaint(theme: Theme): Painter<DesktopNode> {
 }
 function terminalPaint(theme: Theme): Painter<TerminalNode> {
   return {
+    choice: (key, label, options, current, disabled) =>
+      ui.terminal.choice({
+        key,
+        label,
+        options,
+        current,
+        disabled,
+        foreground: rgba(theme.text),
+        background: rgba(theme.surface),
+        border: rgba(theme.border),
+        selected: rgba(theme.selected),
+        accent: rgba(theme.accent),
+      }),
     focusButton: (key, label, child) =>
       ui.terminal.button({ key, label, focus_child: child, color: rgba(theme.muted) }),
     text: (key, text, _size = 15, color = theme.text, _weight = 400, style = {}) =>

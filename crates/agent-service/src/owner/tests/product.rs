@@ -163,6 +163,21 @@ fn await_screen(presenter: &mut maka_tui::application::Presenter, expected: &str
         std::thread::yield_now();
     }
 }
+#[track_caller]
+fn await_models_closed(presenter: &mut maka_tui::application::Presenter) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let rendered = screen(&draw(presenter));
+        if !rendered.contains("[ Close ]") {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "model confirmation did not settle: {rendered}"
+        );
+        std::thread::yield_now();
+    }
+}
 // Requires the normal Node build dependencies; uses the real packaged guest,
 // original native editor, persisted caller intents and native authenticated run.
 #[test]
@@ -202,6 +217,10 @@ fn packaged_product(fail_labels_initialization: bool) {
         let (mut socket, _) = listener.accept().await.unwrap();
         let body = request_with_key(&mut socket, KEY).await;
         assert_eq!(body["model"], "fixture-model-19");
+        assert_eq!(
+            body["reasoning_effort"], "none",
+            "explicit UI Off must override configured High"
+        );
         assert!(body.to_string().contains("Hello product"));
         response_ready.await.unwrap();
         response(&mut socket).await;
@@ -1111,7 +1130,7 @@ process.stdout.write(output.outputFiles[0].text);
         .unwrap();
     presenter
         .input(Event::Paste(
-            r#"{"fixture-model-19":{"vision":null}}"#.into(),
+            r#"{"fixture-model-19":{"vision":null,"thinkingLevels":["off","low","high"],"defaultThinkingLevel":"high"}}"#.into(),
         ))
         .unwrap();
     assert!(screen(&draw(&mut presenter)).contains("vision"));
@@ -1127,7 +1146,7 @@ process.stdout.write(output.outputFiles[0].text);
         .unwrap();
     presenter
         .input(Event::Paste(
-            r#"{"fixture-model-19":{"vision":true}}"#.into(),
+            r#"{"fixture-model-19":{"vision":true,"thinkingLevels":["off","low","high"],"defaultThinkingLevel":"high"}}"#.into(),
         ))
         .unwrap();
     // A concurrent actor changes only the saved name. The retained local name
@@ -1321,7 +1340,7 @@ process.stdout.write(output.outputFiles[0].text);
     click(&mut presenter, "[ Choose model ]");
     await_screen(&mut presenter, "fixture-model-00");
     // Tab makes a row the native target. Down must not change the search
-    // candidate behind that target; Enter selects the row that still has focus.
+    // candidate behind that target; Enter drafts that row, then Apply confirms.
     presenter
         .input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
         .unwrap();
@@ -1339,6 +1358,7 @@ process.stdout.write(output.outputFiles[0].text);
             KeyModifiers::NONE,
         )))
         .unwrap();
+    click(&mut presenter, "[ Apply ]");
     await_screen(&mut presenter, "[ fixture-model-00 ]");
     assert!(!screen(&draw(&mut presenter)).contains("Search models"));
     click(&mut presenter, "[ fixture-model-00 ]");
@@ -1377,6 +1397,7 @@ process.stdout.write(output.outputFiles[0].text);
     await_screen(&mut presenter, "fixture-model-19");
     assert!(screen(&draw(&mut presenter)).contains("Close"));
     click(&mut presenter, "fixture-model-19");
+    click(&mut presenter, "[ Apply ]");
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     while screen(&draw(&mut presenter)).contains("[ Close ]") {
         assert!(
@@ -1415,6 +1436,37 @@ process.stdout.write(output.outputFiles[0].text);
         );
         std::thread::yield_now();
     }
+    // Reuse the original native choice nested inside the model dialog. Escape
+    // cancels only its menu; explicit Off survives Apply, reopen and query Enter.
+    click(&mut presenter, "[ fixture-model-19 ]");
+    await_screen(&mut presenter, "Thinking");
+    let narrow = screen(&draw_at(&mut presenter, Rect::new(0, 0, 40, 16)));
+    assert!(
+        narrow.contains("Thinking") && narrow.contains("[ Apply ]"),
+        "{narrow}"
+    );
+    draw(&mut presenter);
+    click(&mut presenter, "Thinking");
+    await_screen(&mut presenter, "○ Off");
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+        .unwrap();
+    assert!(screen(&draw(&mut presenter)).contains("[ Close ]"));
+    click(&mut presenter, "Thinking");
+    await_screen(&mut presenter, "○ Off");
+    click(&mut presenter, "○ Off");
+    click(&mut presenter, "[ Apply ]");
+    await_models_closed(&mut presenter);
+    click(&mut presenter, "[ fixture-model-19 ]");
+    await_screen(&mut presenter, "Thinking");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    await_models_closed(&mut presenter);
+    assert!(!screen(&draw(&mut presenter)).contains("[ Close ]"));
     // Defaults are a separate ordinary component. A catalog-only race must
     // reject its frozen confirmation, without replacing model 19 or the draft.
     click(&mut presenter, "fixture-model-19");
