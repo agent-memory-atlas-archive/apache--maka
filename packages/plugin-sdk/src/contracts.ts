@@ -1631,6 +1631,7 @@ export const contracts = {
             default: {
               min: 3,
               max: 8,
+              maxViewportFraction: null,
             },
           },
           submit: {
@@ -2096,6 +2097,15 @@ export const contracts = {
                 format: 'uint16',
                 minimum: 1,
                 maximum: 65535,
+              },
+              maxViewportFraction: {
+                description:
+                  "Optional cap relative to the surface viewport's height in this paint\npass, not the parent container. The minimum still applies.",
+                type: ['number', 'null'],
+                format: 'double',
+                minimum: 0,
+                maximum: 1,
+                default: null,
               },
             },
             additionalProperties: false,

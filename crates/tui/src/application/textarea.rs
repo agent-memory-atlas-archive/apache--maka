@@ -185,12 +185,16 @@ impl Widget for Recipe {
     }
     fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
         let owner = slots.native_state::<Owner>()?;
+        let rows = self.props.terminal_rows;
+        let maximum = rows.max_viewport_fraction.map_or(rows.max, |fraction| {
+            ((f64::from(slots.viewport().height) * fraction) as u16).clamp(rows.min, rows.max)
+        });
         Ok((
             width,
             owner
                 .editor
                 .rows(width.saturating_sub(2))
-                .clamp(self.props.terminal_rows.min, self.props.terminal_rows.max)
+                .clamp(rows.min, maximum)
                 .saturating_add(2)
                 .into(),
         ))

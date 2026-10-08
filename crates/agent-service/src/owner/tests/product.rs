@@ -1407,6 +1407,42 @@ process.stdout.write(output.outputFiles[0].text);
     assert!(screen(&draw(&mut presenter)).contains("Hello product"));
     await_screen(&mut presenter, "[ Send ]");
     click(&mut presenter, "Hello product");
+    // The same ordinary Composer now occupies the bottom of the conversation.
+    // Long drafts adapt locally to the viewport; shrinking and restoring the
+    // terminal keeps the tail editable without replacing the draft owner.
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    presenter
+        .input(Event::Paste(
+            (0..20)
+                .map(|n| format!("composer-row-{n:02}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ))
+        .unwrap();
+    await_screen(&mut presenter, "composer-row-19");
+    for (width, height) in [(80, 30), (40, 16), (80, 24)] {
+        let rendered = screen(&draw_at(&mut presenter, Rect::new(0, 0, width, height)));
+        assert!(rendered.contains("composer-row-19"), "{rendered}");
+        assert!(rendered.contains("[ Send ]"), "{rendered}");
+        presenter.input(Event::Paste("!".into())).unwrap();
+        let rendered = screen(&draw_at(&mut presenter, Rect::new(0, 0, width, height)));
+        assert!(rendered.contains("composer-row-19!"), "{rendered}");
+    }
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    presenter
+        .input(Event::Paste("Hello product".into()))
+        .unwrap();
+    await_screen(&mut presenter, "Hello product");
     presenter
         .input(Event::Key(KeyEvent::new(
             KeyCode::Enter,
@@ -1421,6 +1457,21 @@ process.stdout.write(output.outputFiles[0].text);
     // The same retained editor sends a followup while the first HTTP response
     // is held. Its ordinary Rows component observes the actual SQL queue.
     await_screen(&mut presenter, "What would you like to work on?");
+    let layout = screen(&draw(&mut presenter));
+    assert!(
+        layout
+            .lines()
+            .position(|line| line.contains("Hello product"))
+            .unwrap()
+            < layout
+                .lines()
+                .position(|line| line.contains("What would you like to work on?"))
+                .unwrap(),
+        "{layout}"
+    );
+    let narrow = screen(&draw_at(&mut presenter, Rect::new(0, 0, 40, 16)));
+    assert!(narrow.contains("[ Stop ]"), "{narrow}");
+    assert!(narrow.contains("[ Send ]"), "{narrow}");
     click(&mut presenter, "What would you like to work on?");
     presenter
         .input(Event::Paste("Queued product followup".into()))

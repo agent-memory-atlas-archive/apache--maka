@@ -375,6 +375,10 @@ export type TerminalScene =
       key: string;
       text: string;
       color: number;
+      /**
+       * Render a single line, eliding overflow at a complete grapheme.
+       */
+      truncate?: boolean;
       kind: 'text';
     }
   | {
@@ -2228,6 +2232,11 @@ export interface TextareaMenuLabels {
 export interface TerminalTextareaRows {
   min: number;
   max: number;
+  /**
+   * Optional cap relative to the surface viewport's height in this paint
+   * pass, not the parent container. The minimum still applies.
+   */
+  maxViewportFraction?: number | null;
 }
 export interface EditorCommand {
   /**

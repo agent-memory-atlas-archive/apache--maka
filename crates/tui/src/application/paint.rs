@@ -78,6 +78,28 @@ pub(super) fn text_size(text: &str, width: u16) -> (u16, u32) {
         lines.len().min(u32::MAX as usize) as u32,
     )
 }
+/// Original session::fit cell/grapheme elision, over one sanitized line.
+pub(super) fn truncated_line(text: &str, width: u16) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let text = sanitize(text).replace('\n', " ");
+    let width = usize::from(width);
+    if text.width() <= width {
+        return text;
+    }
+    let mut result = String::new();
+    let mut cells = 0;
+    for grapheme in text.graphemes(true) {
+        cells += grapheme.width();
+        if cells + 1 > width {
+            break;
+        }
+        result.push_str(grapheme);
+    }
+    result.push('…');
+    result
+}
 pub(super) fn text(text: &str, area: Placement, buffer: &mut Buffer, style: Style) {
     let area = area.clipped(buffer.area);
     let visible = area.visible();
@@ -193,6 +215,7 @@ type MeasurementCache = std::collections::BTreeMap<(uuid::Uuid, MeasurementKey, 
 /// or participates in input/continuation/geometry admission.
 #[derive(Default)]
 pub(super) struct Measurements {
+    viewport: Rect,
     cache: std::cell::RefCell<MeasurementCache>,
     #[cfg(test)]
     requests: std::cell::Cell<usize>,
@@ -258,6 +281,11 @@ pub(super) struct NativeGeometry {
     pub geometry: Box<dyn std::any::Any>,
 }
 impl Slots<'_> {
+    /// Immutable surface viewport for this measurement/paint pass. This is
+    /// independent of a child's eventual allocation or clipping rectangle.
+    pub fn viewport(&self) -> Rect {
+        self.measurements.viewport
+    }
     pub fn native_state<T: std::any::Any>(&self) -> maka_ui::Result<&T> {
         self.presenter
             .resources
@@ -446,7 +474,10 @@ impl Presenter {
         if !self.resources.ready(&self.application, &self.root)? {
             return Ok(scene);
         }
-        let measurements = Measurements::default();
+        let measurements = Measurements {
+            viewport: area,
+            ..Default::default()
+        };
         self.paint_mount(&self.root, area.into(), buffer, &mut scene, &measurements)?;
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.paint_dialogs(buffer, &mut scene, &measurements)
@@ -668,7 +699,16 @@ impl Presenter {
                     Node::Dialog { background, .. } => {
                         self.measure(mount, background, width, measurements)?
                     }
-                    Node::Text { text, .. } => text_size(text, width),
+                    Node::Text { text, truncate, .. } => {
+                        if *truncate {
+                            (
+                                truncated_line(text, width).width() as u16,
+                                u32::from(width > 0),
+                            )
+                        } else {
+                            text_size(text, width)
+                        }
+                    }
                     Node::Button { label, .. } => (
                         sanitize(label)
                             .replace('\n', " ")
@@ -813,8 +853,16 @@ impl Presenter {
             Node::Text {
                 text: content,
                 color: rgb,
+                truncate,
                 ..
-            } => text(content, area, buffer, Style::default().fg(color(*rgb))),
+            } => {
+                let style = Style::default().fg(color(*rgb));
+                if *truncate {
+                    text(&truncated_line(content, area.width), area, buffer, style);
+                } else {
+                    text(content, area, buffer, style);
+                }
+            }
             Node::Button {
                 key,
                 label,

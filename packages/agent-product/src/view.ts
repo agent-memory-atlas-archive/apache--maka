@@ -149,8 +149,8 @@ function desktopPaint(theme: Theme): Painter<DesktopNode> {
 }
 function terminalPaint(theme: Theme): Painter<TerminalNode> {
   return {
-    text: (key, text, _size = 15, color = theme.text) =>
-      ui.terminal.text({ key, text, color: rgba(color) }),
+    text: (key, text, _size = 15, color = theme.text, _weight = 400, style = {}) =>
+      ui.terminal.text({ key, text, color: rgba(color), truncate: style.truncate ?? false }),
     button: (key, label, disabled = false) =>
       ui.terminal.button({
         key,

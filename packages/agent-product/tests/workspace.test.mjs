@@ -3694,8 +3694,19 @@ test('TUI reader declares a flexible body and wrapped controls while keeping dra
   assert.equal(frame.children.at(-1).gap, 1);
   const main = routes().find((node) => node.key === 'main-route').children[0];
   const composer = main.children.find((node) => node.key === 'retained-composer');
+  assert.deepEqual(
+    main.children.map((node) => node.key),
+    ['header', 'conversation', 'retained-composer'],
+  );
+  assert.deepEqual(
+    modelSlots(composer).map((node) => node.binding),
+    ['rows', 'composer'],
+  );
   assert.equal(composer.visible, false);
-  assert.deepEqual(modelSlots(composer)[0], originalDraft);
+  assert.deepEqual(
+    modelSlots(composer).find((node) => node.binding === 'composer'),
+    originalDraft,
+  );
   const originalSource = structuredClone(client.state.source);
   client.raw('navigation-toggle');
   assert.equal(routes().find((node) => node.key === 'main-route').visible, false);
@@ -4678,6 +4689,16 @@ test('editor-local submission uses latest observation and the original send gate
       command: null,
     };
     let result = composer.mount(props, {});
+    assert.deepEqual(
+      modelSlots(result.frame.view).find((node) => node.key === 'draft').props.terminalRows,
+      { min: 1, max: 8, maxViewportFraction: 1 / 3 },
+    );
+    if (target === 'tui') {
+      const controls = result.frame.view.children.find((node) => node.key === 'composer-controls');
+      assert.equal(controls.layout.wrap, true);
+      assert.deepEqual(controls.children[0].layout, { basis: 0, grow: 1 });
+      assert.equal(controls.children[0].children[0].truncate, true);
+    }
     assert.equal(
       modelSlots(result.frame.view).find((n) => n.key === 'draft').props.submit,
       target === 'desktop' ? 'primary_enter' : 'enter',

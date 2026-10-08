@@ -487,6 +487,37 @@ fn scene(wrap: bool) -> Value {
     ]})
 }
 #[test]
+fn single_line_elision_preserves_graphemes_and_the_adjacent_control_row() {
+    use super::super::paint::truncated_line;
+    assert_eq!(truncated_line("界界abc", 0), "");
+    assert_eq!(truncated_line("界界abc", 1), "…");
+    assert_eq!(truncated_line("界界abc", 4), "界…");
+    assert_eq!(truncated_line("界界abc", 5), "界界…");
+    assert_eq!(truncated_line("e\u{301}xyz", 2), "e\u{301}…");
+    assert_eq!(truncated_line("a\n\u{1b}b", 4), "a b");
+    let source = json!({"kind":"stack","key":"root","direction":"column","gap":0,"padding":0,"background":0,"children":[
+        {"kind":"text","key":"title","text":"界界abc\nlong title","truncate":true,"color":0xffffff},
+        {"kind":"button","key":"back","label":"Send"}
+    ]});
+    let (_runtime, mut tui) = native(View::Scene(source), Rc::new(Cell::new(true)));
+    for width in [1, 4, 5, 8, 30] {
+        let buffer = draw(&mut tui, width, 8);
+        assert_eq!(
+            tui.scene
+                .iter()
+                .find(|target| target.key == "back")
+                .unwrap()
+                .area
+                .y,
+            1
+        );
+        assert_eq!(buffer[(0, 1)].symbol(), "[");
+    }
+    tui.surface_closed(&tui.surface(), Ok(())).unwrap();
+    tui.shutdown().unwrap();
+}
+
+#[test]
 fn actual_long_scene_keeps_footer_painted_and_native_click_bound_to_flush() {
     let (_runtime, mut presenter) = native(View::Scene(scene(false)), Rc::new(Cell::new(true)));
     let area = Rect::new(0, 0, 30, 10);

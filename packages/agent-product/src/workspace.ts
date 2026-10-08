@@ -1340,7 +1340,7 @@ function frame<N extends Node>(
                     ui.button('deployment-open', text.deploymentTitle),
                     ui.button('navigation-toggle', text.showSidebar),
                   ],
-                  { row: true, gap: 1, terminal: { wrap: true } },
+                  { row: true, gap: 0, terminal: { wrap: true } },
                 ),
               ]),
           ...(status ? [ui.text('status', status, 13, theme.muted)] : []),
@@ -1358,7 +1358,7 @@ function frame<N extends Node>(
             : []),
         ],
         {
-          gap: target === 'desktop' ? 8 : 1,
+          gap: target === 'desktop' ? 8 : 0,
           style: {
             width: fill,
             shrink: 0,
@@ -1390,23 +1390,6 @@ function frame<N extends Node>(
           ]
         : [
             ui.box(
-              'retained-composer',
-              [
-                ui.box('composer-navigation', [composer], {
-                  focusShortcuts: [
-                    {
-                      key: 'up',
-                      modifiers: [],
-                      child: 'queue',
-                      enabled: queueProps.rows.length > 0,
-                    },
-                  ],
-                }),
-                presentation.slot('queue', 'rows', queueProps, { activated: 'queue-action' }),
-              ],
-              { visible: !state.source && !state.image },
-            ),
-            ui.box(
               'conversation',
               [
                 ui.box('retained-timeline', [timeline], {
@@ -1416,7 +1399,25 @@ function frame<N extends Node>(
                 }),
                 imageViewer,
               ],
-              { terminal: { grow: 1 } },
+              { terminal: { basis: 1, grow: 1 } },
+            ),
+            ui.box(
+              'retained-composer',
+              [
+                presentation.slot('queue', 'rows', queueProps, { activated: 'queue-action' }),
+                ui.box('composer-navigation', [composer], {
+                  terminal: { shrink: true },
+                  focusShortcuts: [
+                    {
+                      key: 'up',
+                      modifiers: [],
+                      child: 'queue',
+                      enabled: queueProps.rows.length > 0,
+                    },
+                  ],
+                }),
+              ],
+              { gap: 0, visible: !state.source && !state.image, terminal: { shrink: true } },
             ),
           ]),
     ],

@@ -93,6 +93,7 @@ export function components<N extends Node>(
       readOnly: false,
       disabled: false,
       softWrap: true,
+      terminalRows: { min: 1, max: 8, maxViewportFraction: 1 / 3 },
       submit:
         target === 'tui'
           ? 'enter'
@@ -120,17 +121,25 @@ export function components<N extends Node>(
             ],
             {
               style: { width: fill, height: pixels(112), shrink: 0 },
+              terminal: { shrink: true },
             },
           ),
           ui.box(
             'composer-controls',
             [
-              ui.text(
-                'hint',
-                target === 'desktop' ? text.enterHint : text.terminalEnterHint,
-                12,
-                props.theme.muted,
-              ),
+              ...(target === 'tui'
+                ? [
+                    ui.box(
+                      'composer-hint',
+                      [
+                        ui.text('hint', text.terminalEnterHint, 12, props.theme.muted, 400, {
+                          truncate: true,
+                        }),
+                      ],
+                      { terminal: { basis: 0, grow: 1 } },
+                    ),
+                  ]
+                : [ui.text('hint', text.enterHint, 12, props.theme.muted)]),
               ...(props.running
                 ? [
                     ui.button('stop', text.stop, props.busy),
@@ -140,10 +149,14 @@ export function components<N extends Node>(
                   ]
                 : [ui.button('send', text.send, !available || !state.observation, true)]),
             ],
-            { row: true, style: { justify: 'between', align: 'center', width: fill } },
+            {
+              row: true,
+              terminal: { wrap: true },
+              style: { justify: 'between', align: 'center', width: fill },
+            },
           ),
         ],
-        { style: { width: fill } },
+        { gap: target === 'tui' ? 0 : 12, terminal: { shrink: true }, style: { width: fill } },
       ),
       events,
     );

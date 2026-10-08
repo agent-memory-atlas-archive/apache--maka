@@ -71,16 +71,25 @@ pub struct TextareaProps {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TerminalTextareaRows {
     #[schemars(range(min = 1))]
     pub min: u16,
     #[schemars(range(min = 1))]
     pub max: u16,
+    /// Optional cap relative to the surface viewport's height in this paint
+    /// pass, not the parent container. The minimum still applies.
+    #[serde(default)]
+    #[schemars(range(min = 0, max = 1))]
+    pub max_viewport_fraction: Option<f64>,
 }
 impl Default for TerminalTextareaRows {
     fn default() -> Self {
-        Self { min: 3, max: 8 }
+        Self {
+            min: 3,
+            max: 8,
+            max_viewport_fraction: None,
+        }
     }
 }
 
@@ -129,7 +138,12 @@ pub fn reduce(
     let submitted = matches!(&call, crate::ComponentCall::Event { key, .. } if *key == "submit");
     let mut output = crate::editor::reduce::<TextareaProps>(call)?;
     let rows = output.frame.view.terminal_rows;
-    if rows.min == 0 || rows.min > rows.max {
+    if rows.min == 0
+        || rows.min > rows.max
+        || rows
+            .max_viewport_fraction
+            .is_some_and(|fraction| !fraction.is_finite() || fraction <= 0.0 || fraction > 1.0)
+    {
         return Err(crate::Error::Invalid(
             "invalid terminal textarea row range".into(),
         ));

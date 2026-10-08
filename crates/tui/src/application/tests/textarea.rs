@@ -212,6 +212,101 @@ fn intrinsic_dialog_editor_grows_shrinks_and_keeps_the_real_caret_and_controls_v
 }
 
 #[test]
+fn viewport_row_cap_uses_each_paint_without_replacing_the_native_draft_or_focus() {
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
+    let source = Rc::new(RefCell::new(
+        json!({"kind":"stack","key":"root","direction":"column","gap":0,"padding":0,"background":0,"children":[
+            {"kind":"component","key":"editor","binding":"editor","member":0,"on":{},"props":{
+                "appearance":support::brand_appearance()["textarea"],"accessibilityLabel":"Composer","readOnly":false,
+                "disabled":false,"softWrap":true,"tabIndex":0,"autoFocus":true,"initialText":"",
+                "terminalRows":{"min":1,"max":8,"maxViewportFraction":1.0/3.0}}},
+            {"kind":"button","key":"back","label":"Send"}
+        ]}),
+    ));
+    let (_runtime, mut tui) = layout::native(
+        layout::View::InteractiveScene(source),
+        Rc::new(Cell::new(true)),
+    );
+    draw(&mut tui, 80, 30);
+    let focus = tui.focus.clone().unwrap();
+    let mount = focus.mount.clone();
+    let height = |tui: &Presenter| {
+        tui.scene
+            .iter()
+            .find(|target| target.mount == mount)
+            .unwrap()
+            .area
+            .height
+    };
+    assert_eq!(height(&tui), 3);
+    tui.input(Event::Paste(
+        (0..20)
+            .map(|n| format!("line-{n:02}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    ))
+    .unwrap();
+    for (width, viewport, expected) in [(80, 30, 10), (25, 18, 8), (40, 12, 6), (80, 30, 10)] {
+        let revision = tui.application.frame(&mount).unwrap().revision;
+        let buffer = draw(&mut tui, width, viewport);
+        assert_eq!(height(&tui), expected);
+        assert_eq!(tui.application.frame(&mount).unwrap().revision, revision);
+        assert!(tui.focus.as_ref().unwrap().same(&focus));
+        assert!(
+            buffer
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+                .contains("line-19")
+        );
+        let caret = tui.resources.owners[&mount.id()]
+            .state
+            .downcast_ref::<super::super::editor::Owner>()
+            .unwrap()
+            .editor
+            .cursor_position()
+            .unwrap();
+        tui.input(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: caret.x,
+            row: caret.y,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+        tui.input(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: caret.x,
+            row: caret.y,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+        tui.input(Event::Paste("!".into())).unwrap();
+        assert!(
+            tui.resources.owners[&mount.id()]
+                .state
+                .downcast_ref::<super::super::editor::Owner>()
+                .unwrap()
+                .editor
+                .text()
+                .ends_with('!')
+        );
+    }
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    tui.input(Event::Paste("short".into())).unwrap();
+    draw(&mut tui, 40, 12);
+    assert_eq!(height(&tui), 3);
+    close(&mut tui);
+}
+
+#[test]
 fn terminal_row_limits_resize_the_original_editor_and_reject_inverted_ranges() {
     let (_runtime, mut tui) = presenter();
     draw(&mut tui, 50, 40);
@@ -236,6 +331,19 @@ fn terminal_row_limits_resize_the_original_editor_and_reject_inverted_ranges() {
     draw(&mut tui, 50, 40);
     assert_eq!(height(&tui), 4);
     assert_eq!(observation(&tui), original);
+    for fraction in [0.0, -0.5, 1.1] {
+        let revision = tui.application.frame(&tui.root).unwrap().revision;
+        assert!(
+            tui.application
+                .dispatch(
+                    &tui.root.clone(),
+                    revision,
+                    "configure",
+                    json!({"terminalRows":{"min":1,"max":8,"maxViewportFraction":fraction}})
+                )
+                .is_err()
+        );
+    }
     let revision = tui.application.frame(&tui.root).unwrap().revision;
     assert!(
         tui.application

@@ -104,6 +104,9 @@ pub enum Node {
         key: String,
         text: String,
         color: u32,
+        /// Render a single line, eliding overflow at a complete grapheme.
+        #[serde(default)]
+        truncate: bool,
     },
     Button {
         key: String,
