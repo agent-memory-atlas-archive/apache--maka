@@ -37,7 +37,9 @@ pub enum Direction {
 }
 /// Native terminal cell constraints on a child in its parent's main axis.
 /// `grow` distributes remaining cells after fixed/intrinsic siblings; `basis`
-/// supplies an explicit base instead of intrinsic length. Row wrap preserves
+/// supplies an explicit base instead of intrinsic length. `shrink` allows that
+/// base to shrink proportionally when siblings exceed the available cells.
+/// Row wrap preserves
 /// source order and measures its rows before allocating the parent viewport.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
@@ -46,6 +48,7 @@ pub struct Layout {
     #[schemars(range(max = 1024))]
     pub grow: u16,
     pub basis: Option<u16>,
+    pub shrink: bool,
     pub wrap: bool,
 }
 /// Native scroll policy; offsets and accepted viewport geometry remain native.

@@ -1987,12 +1987,15 @@ export interface FocusShortcut {
 /**
  * Native terminal cell constraints on a child in its parent's main axis.
  * `grow` distributes remaining cells after fixed/intrinsic siblings; `basis`
- * supplies an explicit base instead of intrinsic length. Row wrap preserves
+ * supplies an explicit base instead of intrinsic length. `shrink` allows that
+ * base to shrink proportionally when siblings exceed the available cells.
+ * Row wrap preserves
  * source order and measures its rows before allocating the parent viewport.
  */
 export interface TerminalLayout {
   grow?: number;
   basis?: number | null;
+  shrink?: boolean;
   wrap?: boolean;
 }
 /**
@@ -2134,6 +2137,11 @@ export interface TextareaProps {
   disabled: boolean;
   softWrap: boolean;
   /**
+   * Preferred terminal text rows, excluding native padding. A constrained
+   * viewport may shrink further. Desktop does not use terminal row sizing.
+   */
+  terminalRows?: TerminalTextareaRows;
+  /**
    * None preserves native multiline editing without a submit shortcut.
    */
   submit?: SubmitKey | null;
@@ -2216,6 +2224,10 @@ export interface TextareaMenuLabels {
   copy: string;
   paste: string;
   selectAll: string;
+}
+export interface TerminalTextareaRows {
+  min: number;
+  max: number;
 }
 export interface EditorCommand {
   /**

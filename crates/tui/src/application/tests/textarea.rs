@@ -83,6 +83,177 @@ fn presenter() -> (tokio::runtime::Runtime, Presenter) {
 }
 
 #[test]
+fn intrinsic_dialog_editor_grows_shrinks_and_keeps_the_real_caret_and_controls_visible() {
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
+    let field = json!({"kind":"component","key":"editor","binding":"editor","member":0,"on":{},"props":{
+        "appearance":support::brand_appearance()["textarea"],"accessibilityLabel":"Message",
+        "readOnly":false,"disabled":false,"softWrap":true,"terminalRows":{"min":3,"max":10},
+        "tabIndex":0,"autoFocus":true,"initialText":""}});
+    let source = Rc::new(RefCell::new(json!({
+        "kind":"dialog","key":"dialog","label":"Edit queued message","open":true,
+        "width":72,"height":20,"padding":1,"background_color":0,"border_color":0xffffff,
+        "background":{"kind":"button","key":"outside","label":"Outside"},
+        "content":{"kind":"stack","key":"content","direction":"column","gap":0,"padding":0,"background":0,
+          "children":[{"kind":"stack","key":"form","direction":"column","gap":1,"padding":0,"background":0,"layout":{"grow":1},
+            "children":[
+              {"kind":"stack","key":"field","direction":"column","gap":0,"padding":0,"background":0,"layout":{"shrink":true},
+                "children":[field]},
+              {"kind":"text","key":"hint","text":"Ctrl+S to save","color":0xffffff},
+              {"kind":"button","key":"back","label":"Save"}
+            ]}]
+        }
+    })));
+    let (_runtime, mut tui) = layout::native(
+        layout::View::InteractiveScene(source),
+        Rc::new(Cell::new(true)),
+    );
+    draw(&mut tui, 80, 30);
+    let mount = tui
+        .application
+        .child_mount(&tui.root, "editor")
+        .unwrap()
+        .clone();
+    let geometry = |tui: &Presenter| {
+        tui.scene
+            .iter()
+            .find(|target| target.mount == mount)
+            .unwrap()
+            .area
+    };
+    let editor = |tui: &Presenter| {
+        let owner = tui.resources.owners[&mount.id()]
+            .state
+            .downcast_ref::<super::super::editor::Owner>()
+            .unwrap();
+        (
+            owner.editor.text().to_owned(),
+            owner.editor.cursor_position(),
+        )
+    };
+    assert_eq!(geometry(&tui).height, 5); // Original minimum three rows plus inset.
+    let focus = tui.focus.clone().unwrap();
+    assert_eq!(focus.mount, mount);
+    tui.input(Event::Paste(
+        (0..20)
+            .map(|n| format!("line-{n:02}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    ))
+    .unwrap();
+    draw(&mut tui, 80, 30);
+    assert_eq!(geometry(&tui).height, 12); // Original maximum ten rows plus inset.
+    for (width, height) in [(80, 18), (30, 18), (80, 30)] {
+        let buffer = draw(&mut tui, width, height);
+        let area = geometry(&tui);
+        assert_eq!(area.height, u32::from(area.visible().height));
+        let (_, caret) = editor(&tui);
+        let caret = caret.expect("last line remains visible inside the resized editor");
+        assert!(area.visible().contains(caret));
+        assert!(
+            buffer
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+                .contains("line-19")
+        );
+        assert!(
+            tui.scene
+                .iter()
+                .any(|target| target.key == "back" && !target.area.is_empty())
+        );
+        assert!(tui.focus.as_ref().unwrap().same(&focus));
+        tui.input(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: caret.x,
+            row: caret.y,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+        tui.input(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: caret.x,
+            row: caret.y,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+        tui.input(Event::Paste("!".into())).unwrap();
+        assert!(editor(&tui).0.ends_with('!'));
+    }
+    // Width changes use the original soft-wrap algorithm, including wide glyphs.
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    tui.input(Event::Paste("中".repeat(100))).unwrap();
+    draw(&mut tui, 80, 30);
+    assert_eq!(geometry(&tui).height, 6);
+    draw(&mut tui, 30, 30);
+    assert_eq!(geometry(&tui).height, 12);
+    assert!(editor(&tui).1.is_some());
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    tui.input(Event::Paste("short".into())).unwrap();
+    draw(&mut tui, 80, 30);
+    assert_eq!(geometry(&tui).height, 5);
+    assert_eq!(editor(&tui).0, "short");
+    tui.input(key(KeyCode::Tab)).unwrap();
+    assert_eq!(tui.focus.as_ref().unwrap().key, "back");
+    tui.input(key(KeyCode::Enter)).unwrap();
+    assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 1);
+    close(&mut tui);
+}
+
+#[test]
+fn terminal_row_limits_resize_the_original_editor_and_reject_inverted_ranges() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 40);
+    tui.input(Event::Paste("\nline".repeat(20))).unwrap();
+    draw(&mut tui, 50, 40);
+    let mount = draft(&tui);
+    let height = |tui: &Presenter| {
+        tui.scene
+            .iter()
+            .find(|target| target.mount == mount)
+            .unwrap()
+            .area
+            .height
+    };
+    assert_eq!(height(&tui), 10); // Other products retain the default eight text rows.
+    let original = observation(&tui);
+    dispatch(
+        &mut tui,
+        "configure",
+        json!({"terminalRows":{"min":1,"max":2}}),
+    );
+    draw(&mut tui, 50, 40);
+    assert_eq!(height(&tui), 4);
+    assert_eq!(observation(&tui), original);
+    let revision = tui.application.frame(&tui.root).unwrap().revision;
+    assert!(
+        tui.application
+            .dispatch(
+                &tui.root.clone(),
+                revision,
+                "configure",
+                json!({"terminalRows":{"min":4,"max":3}})
+            )
+            .is_err()
+    );
+    draw(&mut tui, 50, 40);
+    assert_eq!(height(&tui), 4);
+    assert_eq!(observation(&tui), original);
+    close(&mut tui);
+}
+
+#[test]
 fn full_capacity_reset_captures_every_byte_and_oversize_reset_preserves_original_draft() {
     let (_runtime, mut tui) = presenter();
     draw(&mut tui, 50, 20);

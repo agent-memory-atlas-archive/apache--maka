@@ -175,6 +175,14 @@ impl Widget for Recipe {
             .capture(target)
     }
 
+    fn layout(&self, _: &Slots<'_>) -> maka_ui::Result<super::TerminalLayout> {
+        // The original editor scrolls within its allocated viewport. Shrinking
+        // must resize that viewport, not merely clip its last visible rows.
+        Ok(super::TerminalLayout {
+            shrink: true,
+            ..Default::default()
+        })
+    }
     fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
         let owner = slots.native_state::<Owner>()?;
         Ok((
@@ -182,7 +190,7 @@ impl Widget for Recipe {
             owner
                 .editor
                 .rows(width.saturating_sub(2))
-                .clamp(3, 8)
+                .clamp(self.props.terminal_rows.min, self.props.terminal_rows.max)
                 .saturating_add(2)
                 .into(),
         ))

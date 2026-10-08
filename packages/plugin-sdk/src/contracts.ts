@@ -1624,6 +1624,15 @@ export const contracts = {
           softWrap: {
             type: 'boolean',
           },
+          terminalRows: {
+            description:
+              'Preferred terminal text rows, excluding native padding. A constrained\nviewport may shrink further. Desktop does not use terminal row sizing.',
+            $ref: '#/$defs/TerminalTextareaRows',
+            default: {
+              min: 3,
+              max: 8,
+            },
+          },
           submit: {
             description: 'None preserves native multiline editing without a submit shortcut.',
             anyOf: [
@@ -2072,6 +2081,25 @@ export const contracts = {
             },
             additionalProperties: false,
             required: ['title', 'undo', 'redo', 'cut', 'copy', 'paste', 'selectAll'],
+          },
+          TerminalTextareaRows: {
+            type: 'object',
+            properties: {
+              min: {
+                type: 'integer',
+                format: 'uint16',
+                minimum: 1,
+                maximum: 65535,
+              },
+              max: {
+                type: 'integer',
+                format: 'uint16',
+                minimum: 1,
+                maximum: 65535,
+              },
+            },
+            additionalProperties: false,
+            required: ['min', 'max'],
           },
           SubmitKey: {
             description:

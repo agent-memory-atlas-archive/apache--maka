@@ -45,6 +45,10 @@ pub struct TextareaProps {
     pub read_only: bool,
     pub disabled: bool,
     pub soft_wrap: bool,
+    /// Preferred terminal text rows, excluding native padding. A constrained
+    /// viewport may shrink further. Desktop does not use terminal row sizing.
+    #[serde(default)]
+    pub terminal_rows: TerminalTextareaRows,
     /// None preserves native multiline editing without a submit shortcut.
     #[serde(default)]
     pub submit: Option<SubmitKey>,
@@ -64,6 +68,20 @@ pub struct TextareaProps {
     /// None issues no new command; an accepted command remains pending until
     /// its matching receipt commits. Clearing props is not cancellation.
     pub command: Option<EditorCommand>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalTextareaRows {
+    #[schemars(range(min = 1))]
+    pub min: u16,
+    #[schemars(range(min = 1))]
+    pub max: u16,
+}
+impl Default for TerminalTextareaRows {
+    fn default() -> Self {
+        Self { min: 3, max: 8 }
+    }
 }
 
 /// Local presentation for user-initiated native editing actions. This is not
@@ -110,6 +128,12 @@ pub fn reduce(
 ) -> crate::Result<crate::ComponentOutput<TextareaProps>> {
     let submitted = matches!(&call, crate::ComponentCall::Event { key, .. } if *key == "submit");
     let mut output = crate::editor::reduce::<TextareaProps>(call)?;
+    let rows = output.frame.view.terminal_rows;
+    if rows.min == 0 || rows.min > rows.max {
+        return Err(crate::Error::Invalid(
+            "invalid terminal textarea row range".into(),
+        ));
+    }
     if submitted {
         for event in &mut output.events {
             event.name = "submitted".into();

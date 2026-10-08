@@ -489,8 +489,10 @@ fn focus_scene() -> Value {
 #[test]
 fn native_focus_shortcut_is_local_and_selects_original_child_entry() {
     let source = Rc::new(RefCell::new(focus_scene()));
-    let (_runtime, mut tui) =
-        layout::native(layout::View::FocusRows(source), Rc::new(Cell::new(true)));
+    let (_runtime, mut tui) = layout::native(
+        layout::View::InteractiveScene(source),
+        Rc::new(Cell::new(true)),
+    );
     draw(&mut tui, 40, 10);
     let outside = tui.focus.clone().unwrap();
     assert_eq!(outside.key, "back");
@@ -532,7 +534,7 @@ fn native_focus_shortcut_never_retargets_an_unflushed_replacement_or_hidden_chil
     for replace in [true, false] {
         let source = Rc::new(RefCell::new(focus_scene()));
         let (_runtime, mut tui) = layout::native(
-            layout::View::FocusRows(source.clone()),
+            layout::View::InteractiveScene(source.clone()),
             Rc::new(Cell::new(true)),
         );
         draw(&mut tui, 40, 10);
@@ -573,7 +575,7 @@ fn native_focus_shortcut_respects_disabled_scope_and_modal_boundary() {
     scene["children"][1]["focus_shortcuts"][0]["enabled"] = json!(false);
     let source = Rc::new(RefCell::new(scene));
     let (_runtime, mut tui) = layout::native(
-        layout::View::FocusRows(source.clone()),
+        layout::View::InteractiveScene(source.clone()),
         Rc::new(Cell::new(true)),
     );
     draw(&mut tui, 40, 20);

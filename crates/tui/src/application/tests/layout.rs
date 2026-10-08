@@ -29,7 +29,7 @@ use std::{any::Any, cell::Cell, collections::BTreeMap, rc::Rc};
 pub(super) enum View {
     Scene(Value),
     ChangingScene(Rc<std::cell::RefCell<Value>>),
-    FocusRows(Rc<std::cell::RefCell<Value>>),
+    InteractiveScene(Rc<std::cell::RefCell<Value>>),
     MetadataVisibility {
         scene: Rc<super::super::scene::Node>,
         visible: Rc<Cell<bool>>,
@@ -94,10 +94,12 @@ impl NativeComponent<dyn Widget> for Root {
                 source,
                 std::time::Instant::now() + std::time::Duration::from_secs(1),
             )?,
-            View::ChangingScene(source) | View::FocusRows(source) => super::super::scene::compile(
-                &source.borrow(),
-                std::time::Instant::now() + std::time::Duration::from_secs(1),
-            )?,
+            View::ChangingScene(source) | View::InteractiveScene(source) => {
+                super::super::scene::compile(
+                    &source.borrow(),
+                    std::time::Instant::now() + std::time::Duration::from_secs(1),
+                )?
+            }
             View::MetadataVisibility { scene, visible } => NativeView::<dyn Widget>::new(
                 scene.clone(),
                 BTreeMap::from([("back".into(), json!(true))]),
@@ -357,7 +359,7 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
     }
     if matches!(
         view,
-        View::Rows(..) | View::NestedRows(..) | View::FocusRows(..)
+        View::Rows(..) | View::NestedRows(..) | View::InteractiveScene(..)
     ) {
         use maka_plugin_core::{
             composition::Target,
@@ -371,7 +373,7 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
             maka_ui::rows::rows_contract(),
             152,
         )];
-        if matches!(view, View::FocusRows(..)) {
+        if matches!(view, View::InteractiveScene(..)) {
             components.push((
                 "editor",
                 "Textarea",

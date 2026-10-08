@@ -131,11 +131,21 @@ pub(super) fn flow(
         .fold(0u32, u32::saturating_add)
         .saturating_add(spacing);
     let free = available.map_or(0, |n| n.saturating_sub(occupied));
+    let shrinkable: u64 = children
+        .iter()
+        .zip(&bases)
+        .filter(|((_, layout), _)| layout.shrink)
+        .map(|(_, base)| u64::from(*base))
+        .sum();
+    let deficit = u64::from(available.map_or(0, |n| occupied.saturating_sub(n))).min(shrinkable);
+    // With no shrinkable basis both cumulative numerators remain zero.
+    let shrinkable = shrinkable.max(1);
     let weight = children
         .iter()
         .map(|(_, layout)| u32::from(layout.grow))
         .sum::<u32>();
     let (mut offset, mut cross, mut used_weight) = (0u32, 0u32, 0u32);
+    let mut used_shrink = 0u64;
     let mut placed = Vec::with_capacity(children.len());
     for (&(size, layout), base) in children.iter().zip(bases) {
         let before = used_weight;
@@ -146,7 +156,13 @@ pub(super) fn flow(
             (u64::from(free) * u64::from(used_weight) / u64::from(weight)
                 - u64::from(free) * u64::from(before) / u64::from(weight)) as u32
         };
-        let length = base.saturating_add(extra);
+        let before_shrink = used_shrink;
+        if layout.shrink {
+            used_shrink += u64::from(base);
+        }
+        let reduction =
+            (deficit * used_shrink / shrinkable - deficit * before_shrink / shrinkable) as u32;
+        let length = base.saturating_sub(reduction).saturating_add(extra);
         let length = if horizontal {
             length.min(u32::from(width).saturating_sub(offset))
         } else {
@@ -186,6 +202,45 @@ pub(super) fn flow(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shrinking_keeps_fixed_controls_and_distributes_every_cell() {
+        let shrink = Layout {
+            shrink: true,
+            ..Default::default()
+        };
+        let children = [
+            ((8, 8), shrink),
+            ((4, 4), shrink),
+            ((3, 3), Layout::default()),
+        ];
+        for available in 0..20 {
+            let column = flow(Direction::Column, 20, Some(available), 1, false, &children);
+            let row = flow(Direction::Row, available as u16, None, 1, false, &children);
+            assert_eq!(column.children[2].height, 3);
+            assert_eq!(column.size.1, available.clamp(5, 17));
+            if available >= 5 {
+                assert_eq!(row.size.0, column.size.1 as u16);
+                for (a, b) in row.children.iter().zip(&column.children) {
+                    assert_eq!(u32::from(a.width), b.height);
+                }
+            }
+        }
+        // Measuring unbounded content and undeclared children keeps the
+        // original intrinsic sizes, including overflow in scroll containers.
+        assert_eq!(
+            flow(Direction::Column, 20, None, 1, false, &children)
+                .size
+                .1,
+            17
+        );
+        let fixed = [((8, 8), Layout::default()), ((3, 3), Layout::default())];
+        assert_eq!(
+            flow(Direction::Column, 20, Some(5), 1, false, &fixed)
+                .size
+                .1,
+            12
+        );
+    }
     #[test]
     fn fixed_siblings_reserve_cells_before_long_flexible_content() {
         let children = [

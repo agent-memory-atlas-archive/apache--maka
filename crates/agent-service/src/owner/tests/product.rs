@@ -1476,6 +1476,51 @@ process.stdout.write(output.outputFiles[0].text);
         .unwrap();
     await_screen(&mut presenter, "[ Save message ]");
     await_screen(&mut presenter, "Extra queued three");
+    // The ordinary product uses the original editor's intrinsic row count.
+    // Resize a long unsaved draft; both its tail and actual controls remain
+    // visible, then reducing the content shrinks the same dialog again.
+    let dialog_height = |buffer: &Buffer| {
+        let corner = |symbol: &str| {
+            (0..buffer.area.height)
+                .find(|&y| (0..buffer.area.width).any(|x| buffer[(x, y)].symbol() == symbol))
+                .expect("dialog corner")
+        };
+        corner("└") - corner("┌") + 1
+    };
+    await_screen(&mut presenter, "[ Save message ]");
+    let compact_height = dialog_height(&draw(&mut presenter));
+    assert!(compact_height < 20);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    presenter
+        .input(Event::Paste(
+            (0..20)
+                .map(|n| format!("resize-row-{n:02}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ))
+        .unwrap();
+    await_screen(&mut presenter, "resize-row-19");
+    assert!(dialog_height(&draw(&mut presenter)) > compact_height);
+    let small = screen(&draw_at(&mut presenter, Rect::new(0, 0, 40, 18)));
+    assert!(small.contains("resize-row-19"), "{small}");
+    assert!(small.contains("[ Save message ]"), "{small}");
+    assert!(small.contains("[ Cancel ]"), "{small}");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    presenter
+        .input(Event::Paste("short unsaved draft".into()))
+        .unwrap();
+    await_screen(&mut presenter, "short unsaved draft");
+    assert_eq!(dialog_height(&draw(&mut presenter)), compact_height);
     presenter
         .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
         .unwrap();

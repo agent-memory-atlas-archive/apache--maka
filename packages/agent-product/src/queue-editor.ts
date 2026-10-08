@@ -61,6 +61,7 @@ export function queueEditor<N extends Node>(
       readOnly: !props.ready || props.busy,
       disabled: false,
       softWrap: true,
+      terminalRows: { min: 3, max: 10 },
       submit: 'primary_enter',
       tabIndex: 0,
       autoFocus: true,
@@ -82,7 +83,7 @@ export function queueEditor<N extends Node>(
               }),
             ],
             {
-              terminal: { basis: 5, grow: 1 },
+              terminal: { shrink: true },
               style: { width: fill, height: pixels(200), minHeight: 0 },
             },
           ),

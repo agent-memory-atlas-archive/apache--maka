@@ -7369,6 +7369,9 @@ test('queue-editor retains the native Textarea, forwards exact capture and keeps
   const field = modelSlots(result.frame.view).find((node) => node.binding === 'editor');
   assert.equal(field.props.submit, 'primary_enter');
   assert.equal(field.props.softWrap, true);
+  assert.deepEqual(field.props.terminalRows, { min: 3, max: 10 });
+  const fieldContainer = result.frame.view.children.find((node) => node.key === 'field');
+  assert.deepEqual(fieldContainer.layout, { shrink: true });
   const changed = { kind: 'component', child: 'draft', name: 'changed', event: draft };
   result = component.event(result.frame.state, changed, props, {});
   result = component.event(result.frame.state, { ...changed, name: 'submitted' }, props, {});

@@ -1609,7 +1609,11 @@ function frame<N extends Node>(
             { invoked: 'invoked', selected: 'selected', closed: 'closed' },
           ),
         ],
-        { gap: 0, terminal: { grow: 1 }, style: { width: fill, minWidth: 0 } },
+        {
+          gap: 0,
+          terminal: { grow: state.dialog === 'queue' ? 0 : 1 },
+          style: { width: fill, minWidth: 0 },
+        },
       ),
       state.dialog !== null,
     ),
