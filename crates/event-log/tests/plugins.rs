@@ -221,6 +221,10 @@ fn pending(
     use maka_runtime::{event::Invocation, input::DeliveredMessage, message::*};
     let mode = request.orchestration_mode.clone();
     maka_event_log::message_admissions::PendingMessageAdmission {
+        execution: maka_event_log::message_admissions::PendingExecution {
+            owner: "maka-runtime-host".into(),
+            basis: serde_json::Value::Null,
+        },
         invocation: Invocation {
             session_id: request.session_id.clone(),
             turn_id: uuid::Uuid::new_v4().to_string(),

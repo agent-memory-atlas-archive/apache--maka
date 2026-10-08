@@ -125,7 +125,11 @@ impl Executions {
                 return Ok(None);
             }
             let queue = self.log.pending_messages(session).await.map_err(internal)?;
-            if queue.is_empty() {
+            if queue.is_empty()
+                || queue
+                    .iter()
+                    .any(|entry| entry.execution.owner != "maka-runtime-host")
+            {
                 return Ok(None);
             }
             if self
@@ -326,6 +330,10 @@ mod tests {
     #[test]
     fn successor_capacity_preserves_steering_order_and_explicit_followup_boundaries() {
         let entry = |id: &str, disposition, bytes| PendingMessageAdmission {
+            execution: maka_event_log::message_admissions::PendingExecution {
+                owner: "maka-runtime-host".into(),
+                basis: serde_json::Value::Null,
+            },
             invocation: Invocation {
                 session_id: "session".into(),
                 turn_id: "turn".into(),

@@ -31,8 +31,17 @@ mod receipts;
 pub use receipts::MessageSubmitReceipt;
 
 const MAX_PENDING_BYTES: i64 = 8 * 1024 * 1024;
+/// Dispatcher-owned, non-secret prerequisites for accepted work. The store
+/// preserves this value; only the named dispatcher interprets its typed basis.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingExecution {
+    pub owner: String,
+    pub basis: serde_json::Value,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingMessageAdmission {
+    pub execution: PendingExecution,
     pub invocation: Invocation,
     /// Promotion may target a later Run without rewriting original admission ownership.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -51,6 +60,7 @@ impl PendingMessageAdmission {
             .unwrap_or(&self.invocation)
     }
     fn validate(&self) -> Result<(), StoreError> {
+        crate::sessions::validate_id(&self.execution.owner)?;
         for id in [
             &self.invocation.session_id,
             &self.invocation.turn_id,
@@ -98,21 +108,27 @@ impl EventLog {
     /// Startup keyset scan; never materialize every Session's pending content.
     pub async fn pending_message_sessions(
         &self,
+        owner: &str,
         after: Option<&str>,
     ) -> Result<Vec<String>, StoreError> {
         self.validate_root()?;
         if let Some(after) = after {
             crate::sessions::validate_id(after)?;
         }
+        crate::sessions::validate_id(owner)?;
+        let owner = owner.to_owned();
         let after = after.map(str::to_owned);
         self.connection
             .run(move |connection| {
                 Box::pin(async move {
                     Ok(sqlx::query_scalar(
                         "SELECT DISTINCT session_id FROM message_admissions
-                 WHERE (?1 IS NULL OR session_id > ?1) ORDER BY session_id LIMIT 64",
+                 WHERE (?1 IS NULL OR session_id > ?1)
+                   AND json_extract(record_json, '$.execution.owner') = ?2
+                 ORDER BY session_id LIMIT 64",
                     )
                     .bind(after)
+                    .bind(owner)
                     .fetch_all(connection)
                     .await?)
                 })

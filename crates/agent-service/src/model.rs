@@ -28,12 +28,14 @@ use maka_runtime::{
     execution::ModelBinding,
     scope::Scope,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 
 /// Only parameters actually supplied to execution. Catalog labels, tests and
 /// other models are observations, not a mutable authority over an accepted run.
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ExecutionBasis {
     adapter: String,
     protocol: maka_runtime::model::request::ProviderKind,
@@ -56,13 +58,19 @@ impl ExecutionBasis {
         }
     }
 }
-pub(crate) struct Source {
-    configuration: Arc<ConfigurationStore>,
+/// Accepted route facts, without credentials or live activation handles.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AcceptedModel {
     pub binding: ModelBinding,
-    definition: Arc<Definition>,
     provider: maka_runtime::provider::Identity,
     provider_configuration: Value,
     basis: ExecutionBasis,
+}
+pub(crate) struct Source {
+    configuration: Arc<ConfigurationStore>,
+    pub accepted: AcceptedModel,
+    definition: Arc<Definition>,
     session: String,
     revision: SourceRevision,
 }
@@ -93,15 +101,17 @@ impl Source {
         revision.name = row.provider.name.clone();
         let source = Self {
             configuration,
-            binding: ModelBinding {
-                connection_id: row.connection_id.clone(),
-                connection_slug: row.slug.clone(),
-                model: selection.model_id,
+            accepted: AcceptedModel {
+                binding: ModelBinding {
+                    connection_id: row.connection_id.clone(),
+                    connection_slug: row.slug.clone(),
+                    model: selection.model_id,
+                },
+                provider: row.provider.clone(),
+                provider_configuration: row.configuration.clone(),
+                basis: ExecutionBasis::new(&model, row),
             },
             definition,
-            provider: row.provider.clone(),
-            provider_configuration: row.configuration.clone(),
-            basis: ExecutionBasis::new(&model, row),
             session,
             revision,
         };
@@ -142,12 +152,12 @@ impl Source {
         )
         .map_err(|_| unavailable())?;
         Ok(PreparedModel {
-            provider_id: self.provider.name.clone(),
+            provider_id: self.accepted.provider.name.clone(),
             provider: ProviderConfig {
                 adapter: Some(model.adapter),
                 capabilities,
                 kind: model.protocol,
-                model: self.binding.model.clone(),
+                model: self.accepted.binding.model.clone(),
                 base_url: model.base_url,
                 auth,
                 headers: material.request_headers,
@@ -170,16 +180,18 @@ impl ModelSource for Source {
         Box::pin(async move {
             let material = self
                 .configuration
-                .observe_model(self.binding.clone())
+                .observe_model(self.accepted.binding.clone())
                 .await
                 .map_err(|_| unavailable())?
                 .ok_or_else(unavailable)?;
             let row = &material.connection;
-            if row.provider != self.provider || row.configuration != self.provider_configuration {
+            if row.provider != self.accepted.provider
+                || row.configuration != self.accepted.provider_configuration
+            {
                 return Err(unavailable());
             }
-            let model = resolve(&self.definition, row, &self.binding.model).await?;
-            if ExecutionBasis::new(&model, row) != self.basis {
+            let model = resolve(&self.definition, row, &self.accepted.binding.model).await?;
+            if ExecutionBasis::new(&model, row) != self.accepted.basis {
                 return Err(unavailable());
             }
             self.prepare(material, model).await

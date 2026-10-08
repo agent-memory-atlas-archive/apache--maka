@@ -65,6 +65,10 @@ pub fn admission(
     disposition: Disposition,
 ) -> PendingMessageAdmission {
     PendingMessageAdmission {
+        execution: maka_event_log::message_admissions::PendingExecution {
+            owner: "maka-runtime-host".into(),
+            basis: serde_json::Value::Null,
+        },
         invocation: invocation.clone(),
         steering_invocation: None,
         required_tools: Default::default(),

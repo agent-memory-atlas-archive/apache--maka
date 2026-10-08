@@ -155,7 +155,7 @@ async fn captured_execution_ignores_catalog_labels_and_other_models_but_rejects_
 {
     let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
     let session = fixture.create("Original execution basis").await;
-    let (source, _) = crate::model::Source::select(
+    let (mut source, _) = crate::model::Source::select(
         fixture.config.clone(),
         fixture.selection().await,
         session,
@@ -163,6 +163,9 @@ async fn captured_execution_ignores_catalog_labels_and_other_models_but_rejects_
     )
     .await
     .unwrap();
+    let persisted = serde_json::to_string(&source.accepted).unwrap();
+    assert!(!persisted.contains("private-fixture-key"));
+    source.accepted = serde_json::from_str(&persisted).unwrap();
     edit(&fixture, |changes| {
         changes.name = Some("A different label".into());
         changes
@@ -195,7 +198,7 @@ async fn captured_execution_ignores_catalog_labels_and_other_models_but_rejects_
     assert_eq!(next.provider.base_url, "http://127.0.0.1:1/v1");
     let credential = fixture
         .config
-        .observe_model(source.binding.clone())
+        .observe_model(source.accepted.binding.clone())
         .await
         .unwrap()
         .unwrap()
@@ -480,6 +483,58 @@ async fn model_search_continues_its_query_across_bounded_scan_windows_and_catalo
     .await;
     let changed = models(&fixture, continuation).await.unwrap();
     assert_eq!(changed["kind"], "changed");
+    fixture.app.shutdown().await.unwrap();
+    fixture.config.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn admitted_message_keeps_original_model_workspace_and_dispatcher_when_opening_fails() {
+    let fixture = Fixture::new("http://127.0.0.1:1/v1", 1, None).await;
+    let session = fixture.create("Pending original basis").await;
+    let raw =
+        rusqlite::Connection::open(fixture.root.join(maka_event_log::root::ROOT_DATABASE)).unwrap();
+    raw.execute_batch("CREATE TRIGGER hold_opening BEFORE INSERT ON event_log WHEN NEW.kind='invocation_opened' BEGIN SELECT RAISE(ABORT, 'fixture opening failure'); END;").unwrap();
+    let operation = Uuid::new_v4();
+    assert!(fixture.mutation(2, "send", json!({
+        "sessionId":session,"message":"durable original", "model":fixture.selection().await
+    }), operation).await.is_err());
+    fixture.drained().await;
+    let queued = fixture.store.pending_messages(&session).await.unwrap();
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].execution.owner, fixture.owner.prefix);
+    let encoded = serde_json::to_string(&queued[0].execution.basis).unwrap();
+    assert!(!encoded.contains("private-fixture-key"));
+    let basis: MessageBasis = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(basis.model.binding.model, "fixture-model");
+    assert_eq!(
+        basis.workspace,
+        fixture
+            .owner
+            .session(&session)
+            .await
+            .unwrap()
+            .configuration
+            .workspace
+    );
+    assert!(!basis.fingerprint.is_empty());
+    assert_eq!(
+        fixture
+            .store
+            .pending_message_sessions(&fixture.owner.prefix, None)
+            .await
+            .unwrap(),
+        [session]
+    );
+    assert!(
+        fixture
+            .store
+            .pending_message_sessions("maka-runtime-host", None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    raw.execute_batch("DROP TRIGGER hold_opening").unwrap();
+    drop(raw);
     fixture.app.shutdown().await.unwrap();
     fixture.config.shutdown().await.unwrap();
 }

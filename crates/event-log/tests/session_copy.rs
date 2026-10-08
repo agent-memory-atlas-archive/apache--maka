@@ -1101,6 +1101,10 @@ async fn draft_abandonment_serializes_with_acceptance_and_preserves_identity_aft
         },
     };
     let admission = |session: &str| PendingMessageAdmission {
+        execution: maka_event_log::message_admissions::PendingExecution {
+            owner: "maka-runtime-host".into(),
+            basis: serde_json::Value::Null,
+        },
         invocation: Invocation {
             session_id: session.into(),
             turn_id: format!("turn-{session}"),

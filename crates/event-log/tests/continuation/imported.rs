@@ -143,6 +143,10 @@ async fn foreign_openings_and_pauses_remain_evidence_without_local_recovery_or_r
         submitted_intent: None,
     };
     let admission = PendingMessageAdmission {
+        execution: maka_event_log::message_admissions::PendingExecution {
+            owner: "maka-runtime-host".into(),
+            basis: serde_json::Value::Null,
+        },
         invocation: fresh.invocation.clone(),
         steering_invocation: None,
         source: message.clone(),

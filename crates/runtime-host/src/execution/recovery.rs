@@ -29,7 +29,7 @@ impl Executions {
         loop {
             let sessions = self
                 .log
-                .pending_message_sessions(after.as_deref())
+                .pending_message_sessions("maka-runtime-host", after.as_deref())
                 .await
                 .map_err(internal)?;
             if self.shutdown.is_cancelled() {

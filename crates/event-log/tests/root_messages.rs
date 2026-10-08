@@ -115,6 +115,10 @@ async fn root_sources_are_atomic_exclusive_delivery_proofs_and_rebuild_exact_vis
     );
     let write = EventWrite::plain(event.clone()).unwrap();
     let pending = maka_event_log::message_admissions::PendingMessageAdmission {
+        execution: maka_event_log::message_admissions::PendingExecution {
+            owner: "maka-runtime-host".into(),
+            basis: serde_json::Value::Null,
+        },
         steering_invocation: None,
         required_tools: Default::default(),
         invocation: event.invocation.clone(),
@@ -149,6 +153,10 @@ async fn root_sources_are_atomic_exclusive_delivery_proofs_and_rebuild_exact_vis
     let sequence = log.append(&write).await.unwrap();
     assert!(log.pending_messages("a").await.unwrap().is_empty());
     let mut queued_exact = maka_event_log::message_admissions::PendingMessageAdmission {
+        execution: maka_event_log::message_admissions::PendingExecution {
+            owner: "maka-runtime-host".into(),
+            basis: serde_json::Value::Null,
+        },
         steering_invocation: None,
         required_tools: Default::default(),
         invocation: event.invocation.clone(),

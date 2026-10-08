@@ -476,6 +476,10 @@ async fn stop_sealed_turn_uses_public_identity_without_provider_and_survives_res
                 let content: maka_runtime::input::MessageInput = "followup work".into();
                 log.admit_message(
                     maka_event_log::message_admissions::PendingMessageAdmission {
+                        execution: maka_event_log::message_admissions::PendingExecution {
+                            owner: "maka-runtime-host".into(),
+                            basis: serde_json::Value::Null,
+                        },
                         invocation: invocation.clone(),
                         steering_invocation: None,
                         required_tools: Default::default(),

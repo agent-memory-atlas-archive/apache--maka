@@ -29,6 +29,7 @@ use sqlx::{Connection, SqliteConnection};
 /// Original submit evidence survives later editing, promotion and cancellation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageSubmitReceipt {
+    pub execution_digest: String,
     pub content_digest: String,
     pub submitted_placement: Placement,
     pub submitted_intent: Option<SubmittedTurnIntent>,
@@ -77,6 +78,10 @@ impl EventLog {
             return Err(invalid("queue submit cannot create initial root work"));
         }
         let epoch = epoch.to_owned();
+        let mut execution = serde_json::to_value(&admission.execution)?;
+        execution.sort_all_objects();
+        let execution_digest =
+            maka_runtime::artifact::content_digest(&serde_json::to_vec(&execution)?);
         let commits = self.commits.clone();
         self.connection
             .run(move |connection| {
@@ -85,7 +90,9 @@ impl EventLog {
                     let session = &admission.invocation.session_id;
                     let message = &admission.source.message.message_id;
                     if let Some(receipt) = read(&mut tx, &epoch, session, message).await? {
-                        if !receipt.matches(&admission.source) {
+                        if !receipt.matches(&admission.source)
+                            || receipt.execution_digest != execution_digest
+                        {
                             return Err(invalid("message identity belongs to another input"));
                         }
                         return Ok(receipt);
@@ -105,6 +112,7 @@ impl EventLog {
                             })?;
                     let source = &admission.source;
                     let receipt = MessageSubmitReceipt {
+                        execution_digest,
                         content_digest: source.message.submitted_content_digest.clone(),
                         submitted_placement: source.submitted_placement,
                         submitted_intent: source.submitted_intent.clone(),

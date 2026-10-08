@@ -164,6 +164,10 @@ mod tests {
         let content: maka_runtime::input::MessageInput = "queued input".into();
         host.log
             .admit_message(PendingMessageAdmission {
+                execution: maka_event_log::message_admissions::PendingExecution {
+                    owner: "maka-runtime-host".into(),
+                    basis: serde_json::Value::Null,
+                },
                 invocation: Invocation {
                     session_id: "session".into(),
                     turn_id: "turn".into(),
@@ -198,6 +202,73 @@ mod tests {
                     message_id: "absent".into()
                 },
             ]
+        );
+        host.draining.cancel();
+        host.plugin_tasks.close();
+        host.plugin_tasks.wait().await;
+        host.executions.shutdown().await;
+        host.shells.shutdown().await;
+        host.log.shutdown().await.unwrap();
+        host.configuration.shutdown().await.unwrap();
+    }
+    #[tokio::test]
+    async fn host_recovery_and_handoff_leave_native_pending_messages_with_their_dispatcher() {
+        let directory = tempfile::tempdir().unwrap();
+        let namespaces = RootNamespaces {
+            ownership: directory.path().join("owners"),
+            control: directory.path().join("control"),
+        };
+        let host =
+            Host::open(RootOwner::create(&directory.path().join("root"), &namespaces).unwrap())
+                .await
+                .unwrap();
+        host.log
+            .create_session(
+                "native-session",
+                "create",
+                &serde_json::json!({"native":true}),
+                1,
+            )
+            .await
+            .unwrap();
+        let content: maka_runtime::input::MessageInput = "original native work".into();
+        let pending = PendingMessageAdmission {
+            execution: maka_event_log::message_admissions::PendingExecution {
+                owner: "native-owner".into(),
+                basis: serde_json::json!({"model":"accepted"}),
+            },
+            invocation: Invocation {
+                session_id: "native-session".into(),
+                turn_id: "native-turn".into(),
+                run_id: "native-run".into(),
+                invocation_id: "native-invocation".into(),
+            },
+            steering_invocation: None,
+            source: RootSourceMessage {
+                unprepared_content: content.clone(),
+                message: DeliveredMessage {
+                    message_id: "native-message".into(),
+                    submitted_content_digest: content.content_digest().unwrap(),
+                    content,
+                },
+                submitted_placement: Placement::CurrentTurn,
+                disposition: MessageDisposition::TurnStarted,
+                submitted_intent: None,
+            },
+            required_tools: Default::default(),
+            admitted_at: 1,
+        };
+        host.log.admit_message(pending.clone()).await.unwrap();
+        host.executions.recover_messages().await.unwrap();
+        let mut admission = Some(host.executions.lock_admission().await);
+        host.executions
+            .dispatch_pending("native-session", &mut admission)
+            .await
+            .unwrap();
+        drop(admission);
+        assert_eq!(
+            host.log.pending_messages("native-session").await.unwrap(),
+            vec![pending]
         );
         host.draining.cancel();
         host.plugin_tasks.close();

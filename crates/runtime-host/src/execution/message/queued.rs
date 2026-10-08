@@ -80,6 +80,10 @@ impl Executions {
             Placement::NextTurn => MessageDisposition::Followup,
         };
         let admission = PendingMessageAdmission {
+            execution: maka_event_log::message_admissions::PendingExecution {
+                owner: "maka-runtime-host".into(),
+                basis: serde_json::Value::Null,
+            },
             required_tools,
             invocation,
             steering_invocation: None,

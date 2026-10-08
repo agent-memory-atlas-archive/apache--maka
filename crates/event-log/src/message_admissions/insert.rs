@@ -98,6 +98,17 @@ pub(crate) async fn insert(
             ));
         }
     }
+    let other_owner: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM message_admissions WHERE session_id = ?
+         AND json_extract(record_json, '$.execution.owner') IS NOT ?)",
+    )
+    .bind(session)
+    .bind(&admission.execution.owner)
+    .fetch_one(&mut *tx)
+    .await?;
+    if other_owner {
+        return Err(invalid("pending Session belongs to another dispatcher"));
+    }
     let (count, bytes, position): (i64, i64, i64) = sqlx::query_as(
         "SELECT COUNT(*), COALESCE(SUM(length(CAST(record_json AS BLOB))),0), COALESCE(MAX(position),0)
          FROM message_admissions WHERE session_id = ?"

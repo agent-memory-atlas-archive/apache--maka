@@ -107,6 +107,10 @@ impl BoundCommands {
             .await
             .map_err(protocol)?;
             let pending = PendingMessageAdmission {
+                execution: maka_event_log::message_admissions::PendingExecution {
+                    owner: "maka-runtime-host".into(),
+                    basis: serde_json::Value::Null,
+                },
                 invocation: Invocation {
                     session_id: request.session_id.clone(),
                     turn_id: Uuid::new_v4().to_string(),

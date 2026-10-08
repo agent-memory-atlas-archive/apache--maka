@@ -244,6 +244,10 @@ mod tests {
         .await
         .unwrap();
         log.admit_message(PendingMessageAdmission {
+            execution: maka_event_log::message_admissions::PendingExecution {
+                owner: "maka-runtime-host".into(),
+                basis: serde_json::Value::Null,
+            },
             invocation,
             steering_invocation: None,
             required_tools: Default::default(),

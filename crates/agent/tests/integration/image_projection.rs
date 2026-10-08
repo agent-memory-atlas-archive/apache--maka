@@ -118,9 +118,9 @@ async fn reopened_images_do_not_starve_current_images_and_each_artifact_read_is_
         let canonical = serde_json::to_string(&prefix).unwrap();
         assert!(!canonical.contains("data:image"), "projection must not persist image bytes");
         assert!(canonical.len() < 32 * 1024);
-        for id in ["historical", "tool"] {
-            assert_eq!(log.delete_user_artifact("session", id).await.unwrap(),
-                maka_event_log::artifacts::ArtifactDeletion::Deleted);
+        use maka_event_log::artifacts::ArtifactDeletion;
+        for (id, expected) in [("historical", ArtifactDeletion::Deleted), ("tool", ArtifactDeletion::Protected)] {
+            assert_eq!(log.delete_user_artifact("session", id).await.unwrap(), expected, "{id}");
         }
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -137,7 +137,7 @@ async fn reopened_images_do_not_starve_current_images_and_each_artifact_read_is_
         let copied_request = copied_request.await.unwrap();
         let mut inherited_images = Vec::new();
         collect_images(&copied_request["messages"], &mut inherited_images);
-        assert_eq!(inherited_images.len(), 2, "copy retains both user and typed tool images after source deletion");
+        assert_eq!(inherited_images.len(), 2, "copy retains the deleted user upload and protected tool image through destination-owned references");
         let reference = log.resolve_history_artifact("branch", "session", "historical").await.unwrap().unwrap();
         assert!(copied_request["messages"].to_string().contains(&reference.resource_ref().unwrap()),
             "Read must receive the destination-owned resource URI");

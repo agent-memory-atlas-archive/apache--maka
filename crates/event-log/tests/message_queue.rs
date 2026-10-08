@@ -123,7 +123,12 @@ async fn removal_atomically_cancels_pending_work_and_keeps_accepted_settlement_a
                 .unwrap()
                 .is_some()
         );
-        assert!(log.pending_message_sessions(None).await.unwrap().is_empty());
+        assert!(
+            log.pending_message_sessions("maka-runtime-host", None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         assert!(log.admit_message(pending).await.is_err());
         assert!(matches!(
             log.retain_session("session").await,
@@ -493,4 +498,113 @@ async fn queue_edits_cancel_or_deliver_once_with_atomic_revision_and_original_ow
         prefix
     );
     log.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn pending_dispatchers_remain_disjoint_across_reopen_and_receipts_bind_execution() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("dispatch.sqlite");
+    let log = EventLog::open(&path).await.unwrap();
+    for (session, dispatcher) in [
+        ("a", "native-a"),
+        ("b", "host"),
+        ("c", "native-a"),
+        ("d", "native-b"),
+    ] {
+        log.create_session(session, "create", &json!({}), 1)
+            .await
+            .unwrap();
+        let mut owner = invocation(session);
+        owner.session_id = session.into();
+        append(&log, &owner, opening()).await;
+        let mut pending = admission(&owner, "message", Disposition::Followup);
+        pending.execution.owner = dispatcher.into();
+        // Accepted execution may exceed the receipt's 64KiB budget. Only its
+        // digest belongs in the receipt, while the original basis stays pending.
+        pending.execution.basis = json!({"model":"accepted","parameters":"x".repeat(70 * 1024)});
+        let receipt = log
+            .admit_queued_message("epoch", 0, pending.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            log.admit_queued_message("epoch", 0, pending.clone())
+                .await
+                .unwrap(),
+            receipt
+        );
+        let mut reordered = pending.clone();
+        reordered.execution.basis = json!({"parameters":"x".repeat(70 * 1024),"model":"accepted"});
+        assert_eq!(
+            log.admit_queued_message("epoch", 0, reordered)
+                .await
+                .unwrap(),
+            receipt
+        );
+        let mut changed = pending.clone();
+        changed.execution.basis = json!({"model":"replacement"});
+        assert!(log.admit_queued_message("epoch", 0, changed).await.is_err());
+        let mut changed = pending.clone();
+        changed.execution.owner = "another-owner".into();
+        assert!(
+            log.admit_queued_message("epoch", 0, changed.clone())
+                .await
+                .is_err()
+        );
+        changed.source.message.message_id = "another-message".into();
+        assert!(
+            log.admit_queued_message("epoch", receipt.queue_revision, changed)
+                .await
+                .is_err()
+        );
+        assert_eq!(log.pending_messages(session).await.unwrap(), vec![pending]);
+    }
+    log.shutdown().await.unwrap();
+    let log = EventLog::open(&path).await.unwrap();
+    assert_eq!(
+        log.pending_message_sessions("native-a", None)
+            .await
+            .unwrap(),
+        ["a", "c"]
+    );
+    assert_eq!(
+        log.pending_message_sessions("native-a", Some("a"))
+            .await
+            .unwrap(),
+        ["c"]
+    );
+    assert_eq!(
+        log.pending_message_sessions("host", None).await.unwrap(),
+        ["b"]
+    );
+    assert_eq!(
+        log.pending_message_sessions("native-b", None)
+            .await
+            .unwrap(),
+        ["d"]
+    );
+    assert!(
+        log.pending_message_sessions("absent", None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    // A receipt remains original evidence even after the pending row is gone.
+    let entry = log.pending_messages("a").await.unwrap().remove(0);
+    let revision = log.message_queue("a").await.unwrap().revision;
+    log.edit_message_queue(
+        "a",
+        revision,
+        QueueEdit::Retract {
+            message_id: "message".into(),
+            cancellation_id: "cancel".into(),
+        },
+        command("cancel", Kind::Retract),
+    )
+    .await
+    .unwrap();
+    let mut changed = entry.clone();
+    changed.execution.basis = json!({"model":"replacement"});
+    assert!(log.admit_queued_message("epoch", 0, changed).await.is_err());
+    assert!(log.admit_queued_message("epoch", 0, entry).await.is_ok());
+    log.shutdown().await.unwrap();
 }

@@ -172,6 +172,10 @@ pub(crate) async fn admit_root(log: &EventLog, input: &mut RunInput) {
     source_messages.push(source.clone());
     log.admit_message(
         maka_event_log::message_admissions::PendingMessageAdmission {
+            execution: maka_event_log::message_admissions::PendingExecution {
+                owner: "maka-runtime-host".into(),
+                basis: serde_json::Value::Null,
+            },
             steering_invocation: None,
             required_tools: Default::default(),
             invocation: input.invocation.clone(),
@@ -185,6 +189,10 @@ pub(crate) async fn admit_root(log: &EventLog, input: &mut RunInput) {
 pub(crate) async fn enqueue(log: &EventLog, invocation: Invocation) {
     log.admit_message(
         maka_event_log::message_admissions::PendingMessageAdmission {
+            execution: maka_event_log::message_admissions::PendingExecution {
+                owner: "maka-runtime-host".into(),
+                basis: serde_json::Value::Null,
+            },
             steering_invocation: None,
             required_tools: Default::default(),
             invocation,

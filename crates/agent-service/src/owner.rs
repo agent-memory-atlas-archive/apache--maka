@@ -51,6 +51,14 @@ pub(crate) struct SessionConfiguration {
     pub labels: Vec<String>,
     pub workspace: Workspace,
 }
+/// Frozen accepted message prerequisites, interpreted only by this Agent.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MessageBasis {
+    model: crate::model::AcceptedModel,
+    workspace: Workspace,
+    fingerprint: String,
+}
 struct Control {
     invocation: String,
     cancellation: CancellationToken,
@@ -339,7 +347,12 @@ impl Owner {
             &self.managed_worktrees,
         )
         .await?;
-        let binding = source.binding.clone();
+        let binding = source.accepted.binding.clone();
+        let basis = MessageBasis {
+            model: source.accepted.clone(),
+            workspace: session.configuration.workspace.clone(),
+            fingerprint: operation.fingerprint.clone(),
+        };
         let source = Arc::new(source);
         let identity = self.operation_id(operation);
         let invocation = Invocation {
@@ -365,6 +378,10 @@ impl Owner {
         self.store
             .admit_message(
                 maka_event_log::message_admissions::PendingMessageAdmission {
+                    execution: maka_event_log::message_admissions::PendingExecution {
+                        owner: self.prefix.clone(),
+                        basis: serde_json::to_value(basis).expect("accepted message basis"),
+                    },
                     invocation: invocation.clone(),
                     steering_invocation: None,
                     source: delivered.clone(),
