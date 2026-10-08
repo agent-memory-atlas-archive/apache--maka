@@ -38,6 +38,7 @@ pub(super) enum View {
     ReadingSlot(Rc<std::cell::RefCell<Value>>),
     OmittedReadingSlot(Rc<std::cell::RefCell<Value>>, Rc<Cell<bool>>),
     WrappedReadingSlot(Rc<std::cell::RefCell<Value>>, Rc<Cell<bool>>),
+    Rows(Rc<std::cell::RefCell<Value>>, Rc<Cell<bool>>),
     Flush,
     PanicLayout(Rc<Cell<usize>>),
 }
@@ -53,7 +54,10 @@ impl NativeComponent<dyn Widget> for Root {
     ) -> maka_ui::Result<ComponentOutput<NativeView<dyn Widget>>> {
         let observation = match &call {
             ComponentCall::Event { key, input, .. }
-                if matches!(*key, "__reading_observation" | "reading-observed") =>
+                if matches!(
+                    *key,
+                    "__reading_observation" | "reading-observed" | "row-activated"
+                ) =>
             {
                 (*input).clone()
             }
@@ -140,6 +144,15 @@ impl NativeComponent<dyn Widget> for Root {
                 "content":{"kind":"stack","key":"foreground","direction":"column","gap":0,"padding":0,"background":0,"children":[
                     {"kind":"component","key":"reader","binding":"reading","member":0,"on":{},"props":{"content":{"kind":"stack","key":"reading","direction":"column","gap":0,"padding":0,"background":0,"scroll":"manual","children":[]},"command":null}}
                 ]}}),
+                std::time::Instant::now() + std::time::Duration::from_secs(1),
+            )?,
+            View::Rows(props, modal) => super::super::scene::compile(
+                &json!({"kind":"dialog","key":"modal","label":"Commands","open":modal.get(),"width":20,"height":4,"background_color":0,"border_color":0xffffff,
+                    "background":{"kind":"stack","key":"content","direction":"column","gap":0,"padding":0,"background":0,"children":[
+                        {"kind":"button","key":"back","label":"Composer"},
+                        {"kind":"component","key":"rows","binding":"rows","member":0,"props":props.borrow().clone(),"on":{"activated":"row-activated"}}
+                    ]},
+                    "content":{"kind":"button","key":"close","label":"Close"}}),
                 std::time::Instant::now() + std::time::Duration::from_secs(1),
             )?,
             View::Flush => NativeView::<dyn Widget>::new(
@@ -328,6 +341,57 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
             );
             packages.push(reading);
         }
+    }
+    if matches!(view, View::Rows(..)) {
+        use maka_plugin_core::{
+            composition::Target,
+            contract::{Availability, Cardinality, Export, Import},
+            package::{Declaration, EntryDeclaration},
+        };
+        let contract = maka_ui::rows::rows_contract();
+        entry.imports.insert(
+            "rows".into(),
+            Import {
+                contract: contract.clone(),
+                cardinality: Cardinality::One,
+            },
+        );
+        let rows = support::package(
+            "test.rows",
+            Declaration {
+                entries: BTreeMap::from([(
+                    EntryTarget::Tui,
+                    EntryDeclaration {
+                        scene: None,
+                        implementation: Implementation::Native {
+                            implementation: "maka.ui.rows".into(),
+                        },
+                        configuration: json!({"type":"object"}),
+                        imports: BTreeMap::new(),
+                        exports: BTreeMap::from([(
+                            "Rows".into(),
+                            Export {
+                                contract,
+                                availability: Availability::Required,
+                            },
+                        )]),
+                    },
+                )]),
+                composition: None,
+            },
+            None,
+        );
+        input
+            .instances
+            .insert("rows".into(), support::node(&rows, 152));
+        input.instances.get_mut("app").unwrap().bindings.insert(
+            "rows".into(),
+            vec![Target::Instance {
+                path: vec!["rows".into()],
+                export: "Rows".into(),
+            }],
+        );
+        packages.push(rows);
     }
     let contract = entry.exports["App"].contract.clone();
     let package = support::package(

@@ -292,6 +292,35 @@ impl Resources {
             }
         }
     }
+    pub(super) fn returns_focus(
+        &mut self,
+        target: &paint::TargetIdentity,
+    ) -> maka_ui::Result<bool> {
+        Ok(self
+            .read_native(target, |recipe, _| recipe.returns_focus())?
+            .unwrap_or(false))
+    }
+    pub(super) fn take_focus_exits(&mut self) -> maka_ui::Result<Vec<Uuid>> {
+        let mut exits = Vec::new();
+        for (id, owner) in &mut self.owners {
+            if !owner.live {
+                continue;
+            }
+            match catch_unwind(AssertUnwindSafe(|| {
+                owner.recipe.take_focus_exit(owner.state.as_mut())
+            })) {
+                Ok(true) => exits.push(*id),
+                Ok(false) => {}
+                Err(_) => {
+                    owner.live = false;
+                    let error = "terminal native focus cleanup unconfirmed".to_owned();
+                    self.failed.insert(*id, error.clone());
+                    return Err(Error::Invalid(error));
+                }
+            }
+        }
+        Ok(exits)
+    }
     fn read_native<T>(
         &mut self,
         target: &paint::TargetIdentity,
@@ -464,6 +493,7 @@ impl Presenter {
             return Ok(());
         }
         if !self.resources.prepare(&self.application, &self.root)? {
+            self.clear_hover()?;
             self.scene.clear();
             self.focus = None;
             self.drag = None;
@@ -486,16 +516,51 @@ impl Presenter {
             }
         }
         if !self.resources.prepare(&self.application, &self.root)? {
+            self.clear_hover()?;
             self.scene.clear();
             self.focus = None;
             self.drag = None;
             return Ok(());
         }
+        self.apply_focus_exits()?;
         self.sync_modal_focus()?;
         if let Some(target) = &self.drag
             && !self.resources.pointer_capture(target)?
         {
             self.drag = None;
+        }
+        Ok(())
+    }
+}
+
+impl Resources {
+    pub(super) fn hover(
+        &mut self,
+        target: &paint::Target,
+        position: Option<ratatui::layout::Position>,
+    ) -> maka_ui::Result<()> {
+        let Some(owner) = self
+            .owners
+            .get_mut(&target.mount.id())
+            .filter(|owner| owner.live && std::rc::Rc::ptr_eq(&owner.identity, &target.owner))
+        else {
+            return Ok(());
+        };
+        if catch_unwind(AssertUnwindSafe(|| {
+            owner
+                .recipe
+                .hover(owner.state.as_mut(), &target.key, position);
+        }))
+        .is_err()
+        {
+            owner.live = false;
+            self.failed.insert(
+                target.mount.id(),
+                "terminal native hover cleanup unconfirmed".into(),
+            );
+            return Err(maka_ui::Error::Invalid(
+                "terminal native hover cleanup unconfirmed".into(),
+            ));
         }
         Ok(())
     }

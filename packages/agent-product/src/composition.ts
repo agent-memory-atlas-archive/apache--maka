@@ -45,6 +45,7 @@ export const packageNames = [
   'markdown',
   'source-text',
   'reading-area',
+  'rows',
   'appearance',
   'surface',
   'editor',
@@ -300,6 +301,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         reader: [local('reader', 'Reader')],
         history: [local('history', 'History')],
         composer: [local('composer', 'Composer')],
+        ...(configuration.presentation === 'tui' ? { rows: [local('rows', 'Rows')] } : {}),
         palette: [local('command-palette', 'CommandPalette')],
         directories: [local('directory-picker', 'DirectoryPicker')],
         details: [local('session-details', 'SessionDetails')],
@@ -349,6 +351,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
     ),
     help: node('help', {}, { reading: [local('reading-area', 'ReadingArea')] }),
     composer: node('composer', {}, { editor: [local('editor', 'Textarea')] }),
+    ...(configuration.presentation === 'tui' ? { rows: node('rows') } : {}),
     navigation: node('navigation'),
     'image-viewer': node(
       'image-viewer',

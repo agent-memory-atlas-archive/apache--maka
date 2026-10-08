@@ -22,13 +22,16 @@
 mod dialog;
 mod editor;
 mod file;
+mod focus;
 mod geometry;
 mod input;
 mod layout;
 mod native;
 mod paint;
+mod pointer;
 mod reading;
 mod resources;
+mod rows;
 mod run;
 mod scene;
 mod scroll;
@@ -73,6 +76,9 @@ pub trait Widget: std::any::Any {
     }
     /// Interrupt an original pointer gesture without changing text or selection.
     fn cancel_pointer(&self, _: &mut dyn std::any::Any) {}
+    /// Local pointer feedback against the last presented target. Leaving clears
+    /// feedback; hovering never selects, focuses, or invokes guest code.
+    fn hover(&self, _: &mut dyn std::any::Any, _: &str, _: Option<ratatui::layout::Position>) {}
     fn same_presentation(&self, _: &dyn std::any::Any) -> bool {
         false
     }
@@ -91,6 +97,13 @@ pub trait Widget: std::any::Any {
     fn prepare_focus(&self, _: &mut dyn std::any::Any, _: bool) {}
     /// Consume this exact eligible target after a successful flush and current
     /// original frame/owner admission. Geometry alone cannot consume an offer.
+    /// Compact selectors may return to the original outer typing target.
+    fn returns_focus(&self) -> bool {
+        false
+    }
+    fn take_focus_exit(&self, _: &mut dyn std::any::Any) -> bool {
+        false
+    }
     fn present_focus(&self, _: &mut dyn std::any::Any) -> bool {
         false
     }
@@ -166,6 +179,7 @@ pub struct NativeInput {
     pub value: Value,
 }
 pub enum WidgetInput {
+    ExitFocus,
     Unhandled,
     Consumed(Option<NativeInput>),
     /// An immediate business event; never replaces retryable native observations.
@@ -212,6 +226,8 @@ pub struct Presenter {
     resources: resources::Resources,
     focus: Option<paint::Target>,
     drag: Option<paint::Target>,
+    hover: Option<paint::Target>,
+    native_return: Option<focus::Return>,
     modal_focus: Vec<dialog::FocusReturn>,
     restore_focus: Option<dialog::WeakTarget>,
     physical_path: Vec<dialog::Scope>,
@@ -365,6 +381,8 @@ impl Presenter {
             resources: Default::default(),
             focus: None,
             drag: None,
+            hover: None,
+            native_return: None,
             modal_focus: Vec::new(),
             restore_focus: None,
             physical_path: Vec::new(),
@@ -410,15 +428,51 @@ impl Presenter {
     /// scene. Crossterm supplies no screen epoch; never re-resolve a captured key.
     /// 输入立即绑定到最后成功输出的场景和真实 mount/revision。
     pub fn input(&mut self, event: Event) -> maka_ui::Result<()> {
+        if matches!(
+            event,
+            Event::Key(_) | Event::Paste(_) | Event::FocusLost | Event::Resize(..)
+        ) {
+            self.clear_hover()?;
+        }
         if !self.surface.is_live() || !self.resources.ready(&self.application, &self.root)? {
             return Ok(());
         }
         if !self.physical_admitted() {
+            self.clear_hover()?;
             return Ok(());
         }
+        if let Event::Mouse(mouse) = &event
+            && mouse.kind == MouseEventKind::Moved
+        {
+            return self.move_pointer((mouse.column, mouse.row).into());
+        }
+        if matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Drag(_)))
+        {
+            self.clear_hover()?;
+        }
+        if matches!(self.native_return, Some(focus::Return::Exited)) {
+            if matches!(event, Event::Key(key) if key.kind != KeyEventKind::Press) {
+                return Ok(());
+            }
+            if matches!(
+                event,
+                Event::Key(_)
+                    | Event::Mouse(crossterm::event::MouseEvent {
+                        kind: MouseEventKind::Down(_),
+                        ..
+                    })
+            ) {
+                self.native_return = None;
+            }
+        }
+        self.track_focus_return()?;
+        let returnable = match self.focus.as_ref() {
+            Some(target) => self.resources.returns_focus(target)?,
+            None => false,
+        };
         let target = match &event {
             Event::Key(key) if key.kind != KeyEventKind::Release => match key.code {
-                KeyCode::Tab | KeyCode::BackTab => {
+                KeyCode::Tab | KeyCode::BackTab if !returnable => {
                     let reverse =
                         key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
                     let mut stops: Vec<_> = self
@@ -441,6 +495,7 @@ impl Presenter {
                         };
                         self.focus = Some(stops[next].clone());
                     }
+                    self.track_focus_return()?;
                     None
                 }
                 KeyCode::Enter | KeyCode::Char(' ') if key.modifiers.is_empty() => {
@@ -490,6 +545,10 @@ impl Presenter {
                 return Ok(());
             };
             let native = match native {
+                WidgetInput::ExitFocus => {
+                    self.exit_native_focus()?;
+                    return Ok(());
+                }
                 WidgetInput::Emitted(emitted) => {
                     let revision = self.application.frame(&target.mount)?.revision;
                     self.application.dispatch(
@@ -499,6 +558,7 @@ impl Presenter {
                         emitted.value,
                     )?;
                     self.focus = Some(target);
+                    self.track_focus_return()?;
                     self.sync_native()?;
                     return Ok(());
                 }
@@ -518,6 +578,7 @@ impl Presenter {
                 {
                     self.focus = Some(target);
                 }
+                self.track_focus_return()?;
                 self.sync_native()?;
                 return Ok(());
             }
@@ -668,6 +729,13 @@ impl Presenter {
         // Discard native hit references before
         // acknowledging retired children; root additionally requires Guard.
         let retired = self.application.retiring_mounts();
+        if self
+            .hover
+            .as_ref()
+            .is_some_and(|target| retired.contains(&target.mount))
+        {
+            self.clear_hover()?;
+        }
         self.scene.retain(|target| !retired.contains(&target.mount));
         if self
             .drag
@@ -748,6 +816,8 @@ impl Presenter {
                 return Ok(());
             }
         }
+        self.clear_hover()?;
+        self.native_return = None;
         self.scene.clear();
         self.focus = None;
         self.drag = None;
@@ -851,6 +921,7 @@ fn shortcut_chord(
         KeyCode::Char(c) => c.to_ascii_lowercase().to_string(),
         KeyCode::Esc => "escape".into(),
         KeyCode::Enter => "enter".into(),
+        KeyCode::Delete => "delete".into(),
         KeyCode::Up => "up".into(),
         KeyCode::Down => "down".into(),
         KeyCode::Left => "left".into(),

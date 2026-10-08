@@ -1043,6 +1043,180 @@ export const contracts = {
       captures: {},
     },
   },
+  rows: {
+    name: 'maka.ui.Rows',
+    version: 1,
+    transport: 'local',
+    interface: {
+      kind: 'component',
+      props: {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        title: 'RowsProps',
+        type: 'object',
+        properties: {
+          revision: {
+            type: 'integer',
+            format: 'uint64',
+            minimum: 0,
+          },
+          rows: {
+            type: 'array',
+            items: {
+              $ref: '#/$defs/Row',
+            },
+            maxItems: 64,
+          },
+          shortcuts: {
+            type: 'array',
+            items: {
+              $ref: '#/$defs/Shortcut',
+            },
+            maxItems: 32,
+          },
+          maxRows: {
+            type: 'integer',
+            format: 'uint16',
+            minimum: 1,
+            maximum: 64,
+          },
+          tabIndex: {
+            type: 'integer',
+            format: 'int16',
+            minimum: -1,
+            maximum: 32767,
+          },
+          foreground: {
+            $ref: '#/$defs/Color',
+          },
+          muted: {
+            $ref: '#/$defs/Color',
+          },
+          selected: {
+            $ref: '#/$defs/Color',
+          },
+          hovered: {
+            $ref: '#/$defs/Color',
+          },
+        },
+        additionalProperties: false,
+        required: [
+          'revision',
+          'rows',
+          'shortcuts',
+          'maxRows',
+          'tabIndex',
+          'foreground',
+          'muted',
+          'selected',
+          'hovered',
+        ],
+        $defs: {
+          Row: {
+            type: 'object',
+            properties: {
+              key: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              text: {
+                type: 'string',
+                maxLength: 1024,
+              },
+              actions: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/RowAction',
+                },
+                maxItems: 8,
+              },
+            },
+            additionalProperties: false,
+            required: ['key', 'text', 'actions'],
+          },
+          RowAction: {
+            type: 'object',
+            properties: {
+              key: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              label: {
+                type: 'string',
+                maxLength: 64,
+              },
+              enabled: {
+                type: 'boolean',
+              },
+            },
+            additionalProperties: false,
+            required: ['key', 'label', 'enabled'],
+          },
+          Shortcut: {
+            type: 'object',
+            properties: {
+              key: {
+                type: 'string',
+                pattern:
+                  '^([a-z0-9]|escape|enter|delete|space|up|down|left|right|home|end|pageup|pagedown|f([1-9]|1[0-2]))$',
+              },
+              modifiers: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/Modifier',
+                },
+                maxItems: 4,
+              },
+              input: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              enabled: {
+                type: 'boolean',
+              },
+            },
+            additionalProperties: false,
+            required: ['key', 'modifiers', 'input', 'enabled'],
+          },
+          Modifier: {
+            type: 'string',
+            enum: ['control', 'primary', 'alt', 'shift', 'super'],
+          },
+          Color: {
+            description: 'Packed RGBA, including explicit alpha zero.',
+            type: 'integer',
+            format: 'uint32',
+            minimum: 0,
+          },
+        },
+      },
+      events: {
+        activated: {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          title: 'RowActivated',
+          type: 'object',
+          properties: {
+            revision: {
+              type: 'integer',
+              format: 'uint64',
+              minimum: 0,
+            },
+            row: {
+              type: 'string',
+            },
+            action: {
+              type: 'string',
+            },
+          },
+          additionalProperties: false,
+          required: ['revision', 'row', 'action'],
+        },
+      },
+      captures: {},
+    },
+  },
   readingArea: {
     name: 'maka.ui.ReadingArea',
     version: 1,

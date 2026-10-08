@@ -65,6 +65,8 @@ export type RuntimeProtocol =
   | SelectionMenuProps
   | ReadingProps
   | ReadingObservation
+  | RowsProps
+  | RowActivated
   | InputProps
   | EditorObservation
   | EditorCapture
@@ -2384,6 +2386,50 @@ export interface ReadingViewport {
 export interface ReadingReceipt {
   sequence: number;
   status: ReadingStatus;
+}
+export interface RowsProps {
+  revision: number;
+  /**
+   * @maxItems 64
+   */
+  rows: Row[];
+  /**
+   * @maxItems 32
+   */
+  shortcuts: Shortcut[];
+  maxRows: number;
+  tabIndex: number;
+  foreground: Color;
+  muted: Color;
+  selected: Color;
+  hovered: Color;
+}
+export interface Row {
+  key: string;
+  text: string;
+  /**
+   * @maxItems 8
+   */
+  actions:
+    | []
+    | [RowAction]
+    | [RowAction, RowAction]
+    | [RowAction, RowAction, RowAction]
+    | [RowAction, RowAction, RowAction, RowAction]
+    | [RowAction, RowAction, RowAction, RowAction, RowAction]
+    | [RowAction, RowAction, RowAction, RowAction, RowAction, RowAction]
+    | [RowAction, RowAction, RowAction, RowAction, RowAction, RowAction, RowAction]
+    | [RowAction, RowAction, RowAction, RowAction, RowAction, RowAction, RowAction, RowAction];
+}
+export interface RowAction {
+  key: string;
+  label: string;
+  enabled: boolean;
+}
+export interface RowActivated {
+  revision: number;
+  row: string;
+  action: string;
 }
 export interface InputProps {
   appearance: InputAppearance;

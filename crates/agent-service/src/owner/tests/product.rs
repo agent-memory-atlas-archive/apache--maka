@@ -267,6 +267,7 @@ fn packaged_product(fail_labels_initialization: bool) {
         "navigation",
         "timeline",
         "reading-area",
+        "rows",
         "source-text",
         "appearance",
         "surface",
@@ -1406,6 +1407,59 @@ process.stdout.write(output.outputFiles[0].text);
     // is injected to expose it.
     await_screen(&mut presenter, "[ Read message source ]");
     assert!(screen(&draw(&mut presenter)).contains("Hello product"));
+    // The same retained editor sends a followup while the first HTTP response
+    // is held. Its ordinary Rows component observes the actual SQL queue.
+    await_screen(&mut presenter, "What would you like to work on?");
+    click(&mut presenter, "What would you like to work on?");
+    presenter
+        .input(Event::Paste("Queued product followup".into()))
+        .unwrap();
+    await_screen(&mut presenter, "[ Send ]");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    await_screen(&mut presenter, "Queued product followup");
+    await_screen(&mut presenter, "What would you like to work on?");
+    await_screen(&mut presenter, "[ Send ]");
+    let pending = runtime
+        .block_on(fixture.store.message_queue(&session_id))
+        .unwrap();
+    assert_eq!(pending.entries.len(), 1);
+    assert_eq!(
+        pending.entries[0].source.unprepared_content.text,
+        "Queued product followup"
+    );
+    click(&mut presenter, "Queued product followup");
+    draw(&mut presenter);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Delete,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while screen(&draw(&mut presenter)).contains("Queued product followup") {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "native queue retraction did not settle"
+        );
+        std::thread::yield_now();
+    }
+    assert!(
+        runtime
+            .block_on(fixture.store.message_queue(&session_id))
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+    // Removal returns to the original Composer; the held Enter cannot send a
+    // new message or replay the row action into the adjacent control.
+    let mut held = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+    held.kind = crossterm::event::KeyEventKind::Repeat;
+    presenter.input(Event::Key(held)).unwrap();
     respond.send(()).unwrap();
     await_screen(&mut presenter, "Elegant response");
     await_screen(&mut presenter, "[ Read message source ]");

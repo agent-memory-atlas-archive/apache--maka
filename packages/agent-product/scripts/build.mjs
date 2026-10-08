@@ -299,6 +299,7 @@ for (const [name, spec] of Object.entries(specifications)) {
       ...(name === 'appearance' ? {} : { scene: { name: `maka.${target}.scene`, version: 1 } }),
     };
   }
+  if (name === 'workspace') entries.tui.imports.rows = one(sdk.contracts.rows);
   if (name === 'image-viewer') entries.desktop.imports.image = one(sdk.contracts.image);
   if (name === 'timeline')
     for (const target of ['desktop', 'tui'])
@@ -321,6 +322,7 @@ for (const [name, spec] of Object.entries(specifications)) {
   packages.push(name);
 }
 const mechanical = {
+  rows: { entries: { tui: native('maka.ui.rows', { Rows: required(sdk.contracts.rows) }) } },
   'studio-gateway': {
     id: 'maka.studio.gateway',
     entries: {

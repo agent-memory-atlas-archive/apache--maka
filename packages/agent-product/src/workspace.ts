@@ -41,6 +41,10 @@ import type {
   AgentDirectorySelection,
   AgentList,
   AgentSendResult,
+  AgentQueueMutationResult,
+  AgentQueueAction,
+  RowsProps,
+  RowActivated,
   CallerIntent,
   Component,
   ComponentValues,
@@ -89,10 +93,13 @@ type Request =
   | { kind: 'createDirectory'; title: string }
   | { kind: 'send'; draft: EditorObservation; sessionId: string; model: ModelSelection }
   | { kind: 'stop'; sessionId: string }
+  | { kind: 'queue'; sessionId: string }
   | { kind: 'receipt' }
   | { kind: 'restorePage' }
   | { kind: 'restoreReceipt'; reference: RecoveryRef; cursor: number };
-type Mutation = Extract<Request, { kind: 'create' | 'send' | 'stop' }> | { kind: 'restored' };
+type Mutation =
+  | Extract<Request, { kind: 'create' | 'send' | 'stop' | 'queue' }>
+  | { kind: 'restored' };
 interface DisplayPart extends AgentPart {
   invocationId: string | null;
 }
@@ -401,7 +408,9 @@ function mutationPending(state: State) {
     state.restoring ||
     state.uncertain !== null ||
     Object.values(state.pending).some((request) =>
-      ['read', 'create', 'createDirectory', 'send', 'stop', 'receipt'].includes(request.kind),
+      ['read', 'create', 'createDirectory', 'send', 'stop', 'queue', 'receipt'].includes(
+        request.kind,
+      ),
     )
   );
 }
@@ -559,6 +568,9 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
     }
     select(state, actions, created.session);
     catalog(state, actions);
+  } else if (request.kind === 'queue') {
+    const result = value as AgentQueueMutationResult;
+    state.notice = result.kind === 'committed' ? null : 'queueChanged';
   } else if (request.kind === 'send') {
     const started = value as AgentSendResult;
     if (started.sessionId !== request.sessionId) {
@@ -1084,7 +1096,7 @@ function frame<N extends Node>(
     {
       theme,
       locale,
-      busy: busy || executionPending(state),
+      busy: busy || executionPending(state) || (target === 'tui' && !!state.run && !state.queue),
       running: !!state.run,
       enabled:
         !!state.selected &&
@@ -1096,6 +1108,40 @@ function frame<N extends Node>(
     },
     { send: 'send', stop: 'stop', changed: 'draft' },
   );
+  const queueProps: RowsProps = {
+    revision: state.queue?.revision ?? 0,
+    rows: (state.queue?.entries ?? []).map((entry): RowsProps['rows'][number] => {
+      const lane = state.queue!.entries.filter((row) => row.kind === entry.kind);
+      const index = lane.findIndex((row) => row.messageId === entry.messageId);
+      const enabled = !busy && !executionPending(state);
+      const up = { key: 'up', label: '↑', enabled: enabled && index > 0 };
+      const down = { key: 'down', label: '↓', enabled: enabled && index + 1 < lane.length };
+      const retract = { key: 'retract', label: '×', enabled };
+      return {
+        key: entry.messageId,
+        text: ` ${entry.kind === 'steering' ? '↗' : entry.kind === 'in_flight' ? '…' : '↳'} ${entry.preview}`,
+        actions:
+          entry.kind === 'in_flight'
+            ? []
+            : entry.kind === 'followup'
+              ? [{ key: 'promote', label: '↗', enabled: enabled && !!state.run }, up, down, retract]
+              : [up, down, retract],
+      };
+    }),
+    shortcuts: [
+      { key: 's', modifiers: [], input: 'promote', enabled: true },
+      { key: 'delete', modifiers: [], input: 'retract', enabled: true },
+      { key: 'x', modifiers: [], input: 'retract', enabled: true },
+      { key: 'up', modifiers: ['alt'], input: 'up', enabled: true },
+      { key: 'down', modifiers: ['alt'], input: 'down', enabled: true },
+    ],
+    maxRows: 3,
+    tabIndex: 2,
+    foreground: theme.text,
+    muted: theme.muted,
+    selected: theme.selected,
+    hovered: theme.surface,
+  };
   const status = state.notice
     ? text[state.notice]
     : state.run
@@ -1117,7 +1163,7 @@ function frame<N extends Node>(
       locale,
       selection: state.model,
       catalogEpoch: state.catalogEpoch,
-      busy: busy || executionPending(state),
+      busy: busy || executionPending(state) || (target === 'tui' && !!state.run && !state.queue),
     },
     { selected: 'model' },
   );
@@ -1228,7 +1274,14 @@ function frame<N extends Node>(
             }),
           ]
         : [
-            ui.box('retained-composer', [composer], { visible: !state.source && !state.image }),
+            ui.box(
+              'retained-composer',
+              [
+                composer,
+                presentation.slot('queue', 'rows', queueProps, { activated: 'queue-action' }),
+              ],
+              { visible: !state.source && !state.image },
+            ),
             ui.box(
               'conversation',
               [
@@ -1502,7 +1555,10 @@ export function workspace<N extends Node>(
             delete state.pending[input.key];
             if (
               outcome.status === 'operation' &&
-              (request.kind === 'create' || request.kind === 'send' || request.kind === 'stop')
+              (request.kind === 'create' ||
+                request.kind === 'send' ||
+                request.kind === 'stop' ||
+                request.kind === 'queue')
             )
               receipt(state, actions, request, outcome.reply);
             else if (outcome.status === 'succeeded')
@@ -1570,7 +1626,47 @@ export function workspace<N extends Node>(
           return frame(presentation, locale, state, values, actions);
         }
 
-        if (input.child === 'timeline' && input.name === 'tailReady') {
+        if (target === 'tui' && input.child === 'queue' && input.name === 'activated') {
+          const event = input.event as RowActivated;
+          const queue = state.queue;
+          const row = queue?.entries.find((row) => row.messageId === event.row);
+          if (
+            conversationRoute(state) &&
+            !state.dialog &&
+            !mutationPending(state) &&
+            !executionPending(state) &&
+            state.selected &&
+            queue &&
+            event.revision === queue.revision &&
+            row &&
+            row.kind !== 'in_flight'
+          ) {
+            let edit: AgentQueueAction | null = null;
+            if (event.action === 'retract') edit = { kind: 'retract', messageId: row.messageId };
+            else if (event.action === 'promote' && row.kind === 'followup' && state.run)
+              edit = { kind: 'promote', messageId: row.messageId };
+            else if (event.action === 'up' || event.action === 'down') {
+              const ids = queue.entries
+                .filter((entry) => entry.kind === row.kind)
+                .map((entry) => entry.messageId);
+              const index = ids.indexOf(row.messageId),
+                next = index + (event.action === 'up' ? -1 : 1);
+              if (next >= 0 && next < ids.length) {
+                [ids[index], ids[next]] = [ids[next], ids[index]];
+                edit = { kind: 'reorder', messageIds: [ids[0], ...ids.slice(1)] };
+              }
+            }
+            if (edit)
+              intent(
+                state,
+                actions,
+                { kind: 'queue', sessionId: state.selected.id },
+                'agent',
+                'editQueue',
+                { sessionId: state.selected.id, expectedRevision: event.revision, edit },
+              );
+          }
+        } else if (input.child === 'timeline' && input.name === 'tailReady') {
           const receipt = input.event as NonNullable<State['tailReceipt']>;
           if (receipt.landing === state.landing.sequence) {
             state.tailReceipt = receipt;
@@ -1602,7 +1698,7 @@ export function workspace<N extends Node>(
           state.model &&
           !state.modelRefreshing &&
           !state.loading &&
-          !state.run &&
+          (!state.run || (target === 'tui' && state.queue !== null)) &&
           !state.command
         ) {
           const draft = input.event as EditorObservation;

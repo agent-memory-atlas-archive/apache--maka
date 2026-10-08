@@ -4700,9 +4700,13 @@ test('editor-local submission uses latest observation and the original send gate
       snapshot: { ...draft.snapshot, text: { ...draft.snapshot.text, revision: 5, bytes: 8 } },
     };
     assert.deepEqual(submit(latest).events, [{ name: 'send', value: latest }]);
+    if (target === 'tui')
+      assert.deepEqual(submit(latest, { ...props, running: true }).events, [
+        { name: 'send', value: latest },
+      ]);
     for (const override of [
       { busy: true },
-      { running: true },
+      ...(target === 'desktop' ? [{ running: true }] : []),
       { enabled: false },
       {
         command: {
@@ -7070,4 +7074,76 @@ test('queue revisions advance independently of transcript delivery and reject st
   queue(3, 'late');
   assert.equal(client.state.queue.entries[0].preview, 'edited');
   assert.equal(client.state.watch.last, 8);
+});
+
+test('TUI queue controls retain original revision and lane and working-send keeps draft receipts', async () => {
+  const terminal = await import(pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js')));
+  terminal.activate({ locale: 'en' });
+  const client = new Client(terminal.component).start({
+    run: { invocationId: 'run', state: 'running' },
+  });
+  client.component('send', draft);
+  assert.equal(
+    client.output.actions.length,
+    0,
+    'working-send waits for original queue observation',
+  );
+  const queue = {
+    revision: 7,
+    entries: [
+      { messageId: 'first', kind: 'followup', preview: 'first' },
+      { messageId: 'steering', kind: 'steering', preview: 'steering' },
+      { messageId: 'second', kind: 'followup', preview: 'second' },
+    ],
+  };
+  client.input({
+    kind: 'action',
+    key: client.state.watch.key,
+    event: { status: 'updated', value: { kind: 'queue', queue } },
+  });
+  const rows = modelSlots(client.output.frame.view).find((node) => node.binding === 'rows');
+  assert.deepEqual(
+    rows.props.rows.map((row) => row.key),
+    ['first', 'steering', 'second'],
+  );
+  const activate = (revision, row, action) =>
+    client.input({
+      kind: 'component',
+      key: 'queue-action',
+      child: 'queue',
+      name: 'activated',
+      event: { revision, row, action },
+    });
+  activate(6, 'first', 'retract');
+  assert.equal(client.output.actions.length, 0, 'old row never mutates a newer queue');
+  activate(7, 'second', 'up');
+  const reorder = client.find('editQueue');
+  assert.deepEqual(reorder.input, {
+    sessionId: session.id,
+    expectedRevision: 7,
+    edit: { kind: 'reorder', messageIds: ['second', 'first'] },
+  });
+  client.complete(reorder, returned({ kind: 'committed', revision: 8 }));
+  assert.equal(client.state.queue.revision, 7, 'only canonical watch changes queue state');
+  activate(7, 'first', 'promote');
+  const promote = client.find('editQueue');
+  assert.deepEqual(promote.input.edit, { kind: 'promote', messageId: 'first' });
+  client.complete(promote, returned({ kind: 'revision_conflict', expected: 7, actual: 8 }));
+  assert.equal(client.state.notice, 'queueChanged');
+  client.component('send', draft);
+  const read = client.find('read');
+  assert.equal(read.resources.text.method, 'snapshot');
+  client.query('read', {
+    text: 'Hello',
+    metadata: { owner: 'original-editor', revision: 4, bytes: 5 },
+  });
+  const send = client.find('send');
+  assert.equal(client.state.command, null);
+  client.complete(
+    send,
+    returned({ kind: 'queued', sessionId: session.id, messageId: 'queued', revision: 9 }),
+  );
+  assert.equal(client.state.command.owner, 'original-editor');
+  assert.equal(client.state.command.basedOn, 4);
+  assert.equal(client.state.run.invocationId, 'run');
 });

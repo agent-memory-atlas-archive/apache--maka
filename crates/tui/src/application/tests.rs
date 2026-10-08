@@ -25,6 +25,8 @@ mod layout;
 mod reading;
 #[path = "tests/reconciliation.rs"]
 mod reconciliation;
+#[path = "tests/rows.rs"]
+mod rows;
 
 use super::*;
 use crossterm::event::{KeyEvent, MouseEvent};

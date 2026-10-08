@@ -71,7 +71,7 @@ export function components<N extends Node>(
     const available =
       props.enabled &&
       !props.busy &&
-      !props.running &&
+      (target === 'tui' || !props.running) &&
       !pending &&
       !state.observation?.snapshot.marked &&
       !!state.observation?.snapshot.text.bytes;
@@ -132,7 +132,12 @@ export function components<N extends Node>(
                 props.theme.muted,
               ),
               ...(props.running
-                ? [ui.button('stop', text.stop, props.busy)]
+                ? [
+                    ui.button('stop', text.stop, props.busy),
+                    ...(target === 'tui'
+                      ? [ui.button('send', text.send, !available || !state.observation, true)]
+                      : []),
+                  ]
                 : [ui.button('send', text.send, !available || !state.observation, true)]),
             ],
             { row: true, style: { justify: 'between', align: 'center', width: fill } },
@@ -589,7 +594,7 @@ export function components<N extends Node>(
             (input.kind === 'component' && input.name === 'submitted')) &&
           props.enabled &&
           !props.busy &&
-          !props.running &&
+          (target === 'tui' || !props.running) &&
           next.observation &&
           next.observation.snapshot.text.bytes > 0 &&
           !next.observation.snapshot.marked &&

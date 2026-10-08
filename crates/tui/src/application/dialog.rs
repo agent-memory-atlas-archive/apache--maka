@@ -65,15 +65,13 @@ impl WeakTarget {
             owner: Rc::downgrade(&target.owner),
         }
     }
+    pub(super) fn matches(&self, target: &Target) -> bool {
+        target.mount == self.mount
+            && target.key == self.key
+            && self.owner.ptr_eq(&Rc::downgrade(&target.owner))
+    }
     pub fn resolve(&self, targets: &[Target]) -> Option<Target> {
-        targets
-            .iter()
-            .find(|target| {
-                target.mount == self.mount
-                    && target.key == self.key
-                    && self.owner.ptr_eq(&Rc::downgrade(&target.owner))
-            })
-            .cloned()
+        targets.iter().find(|target| self.matches(target)).cloned()
     }
 }
 pub(super) struct FocusReturn {

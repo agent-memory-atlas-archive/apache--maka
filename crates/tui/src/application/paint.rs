@@ -505,11 +505,19 @@ impl Presenter {
                 self.report(&error);
                 return;
             }
+            if let Err(error) = self.clear_hover() {
+                self.report(&error);
+                return;
+            }
             self.drag = None;
             if self.focus_before_flush.is_none() {
                 self.focus_before_flush = self.focus.as_ref().map(super::dialog::WeakTarget::new);
             }
             self.focus = None;
+        }
+        if let Err(error) = self.reconcile_hover(&scene.targets) {
+            self.report(&error);
+            return;
         }
         for opening in &scene.openings {
             if let Some(opening) = opening.upgrade() {
@@ -553,12 +561,18 @@ impl Presenter {
                 scene
                     .targets
                     .iter()
-                    .filter(|target| target.tab_index >= 0)
+                    .filter(|target| {
+                        target.tab_index >= 0
+                            && !matches!(self.native_return, Some(super::focus::Return::Exited))
+                    })
                     .min_by_key(|target| (target.tab_index == 0, target.tab_index))
                     .cloned()
             });
         self.keyboard = scene.keyboard;
         self.scene = scene.targets;
+        if let Err(error) = self.track_focus_return() {
+            self.report(&error);
+        }
     }
     pub(super) fn measure_mount(
         &self,

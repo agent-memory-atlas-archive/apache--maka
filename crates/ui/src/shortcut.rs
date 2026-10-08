@@ -28,7 +28,7 @@ use std::collections::{BTreeMap, BTreeSet};
 #[serde(deny_unknown_fields)]
 pub struct Shortcut {
     #[schemars(regex(
-        pattern = "^([a-z0-9]|escape|enter|space|up|down|left|right|home|end|pageup|pagedown|f([1-9]|1[0-2]))$"
+        pattern = "^([a-z0-9]|escape|enter|delete|space|up|down|left|right|home|end|pageup|pagedown|f([1-9]|1[0-2]))$"
     ))]
     pub key: String,
     #[schemars(length(max = 4))]
@@ -89,6 +89,7 @@ pub fn validate(shortcuts: &[Shortcut], primary_is_super: bool) -> Result<(), St
             key,
             "escape"
                 | "enter"
+                | "delete"
                 | "space"
                 | "up"
                 | "down"
