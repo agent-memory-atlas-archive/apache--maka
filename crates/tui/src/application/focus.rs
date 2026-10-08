@@ -22,6 +22,11 @@ use super::{
     dialog::{self, WeakTarget},
 };
 
+pub(super) struct Exit {
+    pub mount: uuid::Uuid,
+    pub owner: std::rc::Weak<()>,
+}
+#[derive(Clone)]
 pub(super) enum Return {
     Active {
         source: WeakTarget,
@@ -92,10 +97,11 @@ impl Presenter {
     pub(super) fn apply_focus_exits(&mut self) -> maka_ui::Result<()> {
         // Drain every owner, so a loss while unfocused cannot exit a later entry.
         let exits = self.resources.take_focus_exits()?;
+        self.apply_modal_focus_exits(&exits);
         if self
             .focus
             .as_ref()
-            .is_some_and(|focus| exits.contains(&focus.mount.id()))
+            .is_some_and(|focus| WeakTarget::new(focus).exited(&exits))
         {
             self.exit_native_focus()?;
         }

@@ -39,6 +39,7 @@ pub(super) enum View {
     OmittedReadingSlot(Rc<std::cell::RefCell<Value>>, Rc<Cell<bool>>),
     WrappedReadingSlot(Rc<std::cell::RefCell<Value>>, Rc<Cell<bool>>),
     Rows(Rc<std::cell::RefCell<Value>>, Rc<Cell<bool>>),
+    NestedRows(Rc<std::cell::RefCell<Value>>, Rc<Cell<u8>>),
     Flush,
     PanicLayout(Rc<Cell<usize>>),
 }
@@ -144,6 +145,17 @@ impl NativeComponent<dyn Widget> for Root {
                 "content":{"kind":"stack","key":"foreground","direction":"column","gap":0,"padding":0,"background":0,"children":[
                     {"kind":"component","key":"reader","binding":"reading","member":0,"on":{},"props":{"content":{"kind":"stack","key":"reading","direction":"column","gap":0,"padding":0,"background":0,"scroll":"manual","children":[]},"command":null}}
                 ]}}),
+                std::time::Instant::now() + std::time::Duration::from_secs(1),
+            )?,
+            View::NestedRows(props, phase) => super::super::scene::compile(
+                &json!({"kind":"dialog","key":"outer","label":"Outer","open":phase.get() > 0,"width":36,"height":10,"background_color":0,"border_color":0xffffff,
+                    "background":{"kind":"button","key":"root-composer","label":"Root Composer"},
+                    "content":{"kind":"dialog","key":"inner","label":"Inner","open":phase.get() > 1,"width":20,"height":4,"background_color":0,"border_color":0xffffff,
+                        "background":{"kind":"stack","key":"content","direction":"column","gap":0,"padding":0,"background":0,"children":[
+                            {"kind":"button","key":"back","label":"Composer"},
+                            {"kind":"component","key":"rows","binding":"rows","member":0,"props":props.borrow().clone(),"on":{"activated":"row-activated"}}
+                        ]},
+                        "content":{"kind":"button","key":"close","label":"Close"}}}),
                 std::time::Instant::now() + std::time::Duration::from_secs(1),
             )?,
             View::Rows(props, modal) => super::super::scene::compile(
@@ -342,7 +354,7 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
             packages.push(reading);
         }
     }
-    if matches!(view, View::Rows(..)) {
+    if matches!(view, View::Rows(..) | View::NestedRows(..)) {
         use maka_plugin_core::{
             composition::Target,
             contract::{Availability, Cardinality, Export, Import},

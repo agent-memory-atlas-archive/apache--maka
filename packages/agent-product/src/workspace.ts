@@ -24,6 +24,8 @@ import type {
   SettingsModelChoice,
   AgentDeliveryPage,
   AgentQueue,
+  AgentQueueMessage,
+  AgentQueueMessageResult,
   AgentHistoryPage,
   AgentHistoryChunk,
   AgentToolSourcePage,
@@ -54,7 +56,7 @@ import type {
   EditorObservation,
   TextChunk,
 } from '../../plugin-sdk/src/index.js';
-import type { PaletteCommand, Message, Theme } from './contracts.js';
+import type { PaletteCommand, Message, Theme, QueueEditorProps } from './contracts.js';
 import { sameValue } from './value.js';
 import { copy, type Copy } from './locale.js';
 import { fill, output, pixels, type Presentation, type Node } from './view.js';
@@ -93,7 +95,9 @@ type Request =
   | { kind: 'createDirectory'; title: string }
   | { kind: 'send'; draft: EditorObservation; sessionId: string; model: ModelSelection }
   | { kind: 'stop'; sessionId: string }
-  | { kind: 'queue'; sessionId: string }
+  | { kind: 'queue'; sessionId: string; saved?: { attempt: number; draft: EditorObservation } }
+  | { kind: 'queueBody'; attempt: number }
+  | { kind: 'queueRead'; attempt: number; draft: EditorObservation }
   | { kind: 'receipt' }
   | { kind: 'restorePage' }
   | { kind: 'restoreReceipt'; reference: RecoveryRef; cursor: number };
@@ -106,6 +110,13 @@ interface DisplayPart extends AgentPart {
 interface Uncertain {
   reference: RecoveryRef;
   request: Mutation;
+}
+interface QueueEdit {
+  attempt: number;
+  target: AgentQueueMessage;
+  phase: 'loading' | 'initializing' | 'ready' | 'failed';
+  body: string | null;
+  command: EditorCommand | null;
 }
 export interface State {
   revision: number;
@@ -121,7 +132,7 @@ export interface State {
   settingsOpen: boolean;
   deploymentOpen: boolean;
   navigationOpen: boolean;
-  dialog: 'palette' | 'directories' | 'details' | 'help' | null;
+  dialog: 'palette' | 'directories' | 'details' | 'help' | 'queue' | null;
   window: { page: Extract<AgentHistoryPage, { kind: 'ready' }>; latest: boolean } | null;
   navigation: number;
   image: { sessionId: string; through: number; sequence: number } | null;
@@ -146,6 +157,8 @@ export interface State {
   parts: DisplayPart[];
   run: AgentRun | null;
   queue: AgentQueue | null;
+  queueEdit: QueueEdit | null;
+  queueDraft: EditorObservation | null;
   runThrough: number;
   loading: boolean;
   live: {
@@ -408,9 +421,16 @@ function mutationPending(state: State) {
     state.restoring ||
     state.uncertain !== null ||
     Object.values(state.pending).some((request) =>
-      ['read', 'create', 'createDirectory', 'send', 'stop', 'queue', 'receipt'].includes(
-        request.kind,
-      ),
+      [
+        'read',
+        'queueRead',
+        'create',
+        'createDirectory',
+        'send',
+        'stop',
+        'queue',
+        'receipt',
+      ].includes(request.kind),
     )
   );
 }
@@ -551,6 +571,30 @@ function rootCommand(state: State, actions: Action[], locale: string, kind: Root
   return true;
 }
 
+function loadQueueEdit(state: State, actions: Action[], target: AgentQueueMessage) {
+  const attempt = ++state.serial;
+  state.queueEdit = { attempt, target, phase: 'loading', body: null, command: null };
+  state.dialog = 'queue';
+  state.notice = null;
+  intent(state, actions, { kind: 'queueBody', attempt }, 'agent', 'queueMessage', target);
+}
+function initializeQueueEdit(state: State) {
+  const edit = state.queueEdit,
+    draft = state.queueDraft;
+  if (!edit || edit.body === null || !draft || edit.command) return;
+  edit.command = {
+    owner: draft.snapshot.text.owner,
+    sequence: ++state.serial,
+    basedOn: draft.revision,
+    edit: { kind: 'reset', text: edit.body },
+  };
+  edit.body = null;
+}
+function closeDialog(state: State) {
+  // Cancel follows the original queue sheet: discard this edit, not an accepted operation.
+  if (state.dialog === 'queue') state.queueEdit = null;
+  state.dialog = null;
+}
 function settled(state: State, actions: Action[], request: Mutation, value: unknown) {
   state.uncertain = null;
   if (request.kind === 'restored') {
@@ -571,6 +615,14 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
   } else if (request.kind === 'queue') {
     const result = value as AgentQueueMutationResult;
     state.notice = result.kind === 'committed' ? null : 'queueChanged';
+    if (
+      result.kind === 'committed' &&
+      request.saved &&
+      state.queueEdit?.attempt === request.saved.attempt &&
+      state.queueDraft?.snapshot.text.owner === request.saved.draft.snapshot.text.owner &&
+      state.queueDraft.revision === request.saved.draft.revision
+    )
+      closeDialog(state);
   } else if (request.kind === 'send') {
     const started = value as AgentSendResult;
     if (started.sessionId !== request.sessionId) {
@@ -603,6 +655,13 @@ function receipt(state: State, actions: Action[], request: Mutation, reply: Oper
   }
 }
 function queryFailed(state: State, request: Request) {
+  if (request.kind === 'queueBody' || request.kind === 'queueRead') {
+    if (state.queueEdit?.attempt === request.attempt) {
+      if (request.kind === 'queueBody') state.queueEdit.phase = 'failed';
+      state.notice = 'draftKept';
+    }
+    return;
+  }
   // Optional presentation work does not disable input or change execution facts.
   if (request.kind === 'list') {
     if (request.generation === state.catalogGeneration) state.catalogFailed = true;
@@ -836,6 +895,51 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
           fragment.sequence > page.through ||
           ((fragment.closedAt === null || fragment.closedAt > page.through) &&
             !page.chunks.some((chunk) => chunk.messageId === fragment.messageId)),
+      );
+      break;
+    }
+    case 'queueBody': {
+      const edit = state.queueEdit;
+      if (!edit || edit.attempt !== request.attempt) break;
+      const body = value as AgentQueueMessageResult;
+      if (body.kind !== 'ready' || body.revision !== edit.target.expectedRevision) {
+        edit.phase = 'failed';
+        state.notice = 'queueChanged';
+        break;
+      }
+      edit.body = body.message;
+      edit.phase = 'initializing';
+      initializeQueueEdit(state);
+      break;
+    }
+    case 'queueRead': {
+      const edit = state.queueEdit;
+      if (!edit || edit.attempt !== request.attempt || state.dialog !== 'queue') break;
+      const chunk = value as TextChunk,
+        captured = request.draft.snapshot.text;
+      if (!sameValue(chunk.metadata, captured) || utf8Bytes(chunk.text) !== captured.bytes) {
+        state.notice = 'draftKept';
+        break;
+      }
+      if (!chunk.text.trim()) {
+        state.notice = 'empty';
+        break;
+      }
+      intent(
+        state,
+        actions,
+        {
+          kind: 'queue',
+          sessionId: edit.target.sessionId,
+          saved: { attempt: edit.attempt, draft: request.draft },
+        },
+        'agent',
+        'editQueue',
+        {
+          sessionId: edit.target.sessionId,
+          expectedRevision: edit.target.expectedRevision,
+          edit: { kind: 'update', messageId: edit.target.messageId, message: chunk.text },
+        },
       );
       break;
     }
@@ -1116,6 +1220,7 @@ function frame<N extends Node>(
       const enabled = !busy && !executionPending(state);
       const up = { key: 'up', label: '↑', enabled: enabled && index > 0 };
       const down = { key: 'down', label: '↓', enabled: enabled && index + 1 < lane.length };
+      const edit = { key: 'edit', label: '✎', enabled };
       const retract = { key: 'retract', label: '×', enabled };
       return {
         key: entry.messageId,
@@ -1124,11 +1229,19 @@ function frame<N extends Node>(
           entry.kind === 'in_flight'
             ? []
             : entry.kind === 'followup'
-              ? [{ key: 'promote', label: '↗', enabled: enabled && !!state.run }, up, down, retract]
-              : [up, down, retract],
+              ? [
+                  { key: 'promote', label: '↗', enabled: enabled && !!state.run },
+                  up,
+                  down,
+                  edit,
+                  retract,
+                ]
+              : [up, down, edit, retract],
       };
     }),
     shortcuts: [
+      { key: 'enter', modifiers: [], input: 'edit', enabled: true },
+      { key: 'e', modifiers: [], input: 'edit', enabled: true },
       { key: 's', modifiers: [], input: 'promote', enabled: true },
       { key: 'delete', modifiers: [], input: 'retract', enabled: true },
       { key: 'x', modifiers: [], input: 'retract', enabled: true },
@@ -1406,13 +1519,41 @@ function frame<N extends Node>(
         ? text.directoryTitle
         : state.dialog === 'details'
           ? text.detailsTitle
-          : state.dialog === 'help'
-            ? text.helpTitle
-            : text.paletteTitle,
+          : state.dialog === 'queue'
+            ? text.queueEdit
+            : state.dialog === 'help'
+              ? text.helpTitle
+              : text.paletteTitle,
       background,
       ui.box(
         'dialog-content',
         [
+          presentation.slot(
+            'queue-editor',
+            'queueEditor',
+            {
+              theme,
+              locale,
+              open: state.dialog === 'queue',
+              ready: state.queueEdit?.phase === 'ready',
+              busy: mutationPending(state),
+              uncertain: !!state.uncertain,
+              checking: Object.values(state.pending).some((request) => request.kind === 'receipt'),
+              command: state.queueEdit?.command ?? null,
+              status: state.notice
+                ? text[state.notice]
+                : state.queueEdit?.phase === 'loading'
+                  ? text.queueLoading
+                  : '',
+            } satisfies QueueEditorProps,
+            {
+              changed: 'changed',
+              save: 'save',
+              closed: 'closed',
+              reload: 'reload',
+              check: 'check',
+            },
+          ),
           presentation.slot(
             'help',
             'help',
@@ -1513,6 +1654,8 @@ export function workspace<N extends Node>(
         parts: [],
         run: null,
         queue: null,
+        queueEdit: null,
+        queueDraft: null,
         runThrough: 0,
         loading: false,
         live: [],
@@ -1570,6 +1713,76 @@ export function workspace<N extends Node>(
           }
         }
       } else if (input.kind === 'component') {
+        if (input.child === 'queue-editor') {
+          const edit = state.queueEdit;
+          if (input.name === 'changed') {
+            const draft = input.event as EditorObservation;
+            state.queueDraft = draft;
+            if (
+              edit?.command &&
+              draft.receipt?.owner === edit.command.owner &&
+              draft.receipt.sequence === edit.command.sequence
+            ) {
+              edit.phase = draft.receipt.outcome.status === 'applied' ? 'ready' : 'failed';
+              edit.command = null;
+              if (edit.phase === 'failed') state.notice = 'draftKept';
+            }
+            initializeQueueEdit(state);
+          } else if (state.dialog === 'queue' && edit) {
+            if (input.name === 'closed') closeDialog(state);
+            else if (
+              input.name === 'check' &&
+              state.uncertain &&
+              !Object.values(state.pending).some((request) => request.kind === 'receipt')
+            )
+              intent(
+                state,
+                actions,
+                { kind: 'receipt' },
+                'receipts',
+                'read',
+                state.uncertain.reference,
+              );
+            else if (!mutationPending(state)) {
+              if (
+                input.name === 'reload' &&
+                state.selected?.id === edit.target.sessionId &&
+                state.queue
+              ) {
+                loadQueueEdit(state, actions, {
+                  ...edit.target,
+                  expectedRevision: state.queue.revision,
+                });
+              } else if (input.name === 'save' && edit.phase === 'ready' && !edit.command) {
+                const draft = input.event as EditorObservation;
+                if (!sameValue(draft, state.queueDraft) || draft.snapshot.marked)
+                  state.notice = 'draftKept';
+                else if (draft.snapshot.text.bytes > 65536) state.notice = 'tooLarge';
+                else
+                  intent(
+                    state,
+                    actions,
+                    { kind: 'queueRead', attempt: edit.attempt, draft },
+                    'reader',
+                    'read',
+                    { start: 0, end: draft.snapshot.text.bytes },
+                    {
+                      text: {
+                        child: 'queue-editor',
+                        method: 'snapshot',
+                        input: {
+                          kind: 'at_revision',
+                          owner: draft.snapshot.text.owner,
+                          revision: draft.snapshot.text.revision,
+                        },
+                      },
+                    },
+                  );
+              }
+            }
+          }
+          return frame(presentation, locale, state, values, actions);
+        }
         if (input.child === 'help') {
           if (input.name === 'closed' && state.dialog === 'help') state.dialog = null;
           return frame(presentation, locale, state, values, actions);
@@ -1642,7 +1855,14 @@ export function workspace<N extends Node>(
             row.kind !== 'in_flight'
           ) {
             let edit: AgentQueueAction | null = null;
-            if (event.action === 'retract') edit = { kind: 'retract', messageId: row.messageId };
+            if (event.action === 'edit')
+              loadQueueEdit(state, actions, {
+                sessionId: state.selected.id,
+                messageId: row.messageId,
+                expectedRevision: event.revision,
+              });
+            else if (event.action === 'retract')
+              edit = { kind: 'retract', messageId: row.messageId };
             else if (event.action === 'promote' && row.kind === 'followup' && state.run)
               edit = { kind: 'promote', messageId: row.messageId };
             else if (event.action === 'up' || event.action === 'down') {
@@ -1911,7 +2131,7 @@ export function workspace<N extends Node>(
           state.dialog = 'palette';
         else if (input.key === 'help-open') {
           if (state.dialog === null) rootCommand(state, actions, locale, 'help-open');
-        } else if (input.key === 'workspace-dialog') state.dialog = null;
+        } else if (input.key === 'workspace-dialog') closeDialog(state);
         else if (input.key === 'navigation-back' && state.dialog === null)
           state.navigationOpen = false;
         else {

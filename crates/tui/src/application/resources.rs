@@ -300,7 +300,7 @@ impl Resources {
             .read_native(target, |recipe, _| recipe.returns_focus())?
             .unwrap_or(false))
     }
-    pub(super) fn take_focus_exits(&mut self) -> maka_ui::Result<Vec<Uuid>> {
+    pub(super) fn take_focus_exits(&mut self) -> maka_ui::Result<Vec<super::focus::Exit>> {
         let mut exits = Vec::new();
         for (id, owner) in &mut self.owners {
             if !owner.live {
@@ -309,7 +309,10 @@ impl Resources {
             match catch_unwind(AssertUnwindSafe(|| {
                 owner.recipe.take_focus_exit(owner.state.as_mut())
             })) {
-                Ok(true) => exits.push(*id),
+                Ok(true) => exits.push(super::focus::Exit {
+                    mount: *id,
+                    owner: Rc::downgrade(&owner.identity),
+                }),
                 Ok(false) => {}
                 Err(_) => {
                     owner.live = false;
@@ -522,8 +525,8 @@ impl Presenter {
             self.drag = None;
             return Ok(());
         }
-        self.apply_focus_exits()?;
         self.sync_modal_focus()?;
+        self.apply_focus_exits()?;
         if let Some(target) = &self.drag
             && !self.resources.pointer_capture(target)?
         {

@@ -251,6 +251,7 @@ fn packaged_product(fail_labels_initialization: bool) {
         "command-palette",
         "directory-picker",
         "session-details",
+        "queue-editor",
         "help",
         "deployment",
         "deployment-manager",
@@ -1431,6 +1432,107 @@ process.stdout.write(output.outputFiles[0].text);
     assert_eq!(
         pending.entries[0].source.unprepared_content.text,
         "Queued product followup"
+    );
+    click(&mut presenter, "What would you like to work on?");
+    presenter
+        .input(Event::Paste("Unsent composer draft".into()))
+        .unwrap();
+    await_screen(&mut presenter, "Unsent composer draft");
+    click(&mut presenter, "Queued product followup");
+    draw(&mut presenter);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    await_screen(&mut presenter, "[ Save message ]");
+    // The original multiline Editor is initialized through its actual reset receipt.
+    // Enter inserts a newline; Ctrl+S captures that native revision and submits Update.
+    click(&mut presenter, "Queued product followup");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::End,
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    presenter
+        .input(Event::Paste("Edited in native queue editor".into()))
+        .unwrap();
+    await_screen(&mut presenter, "Edited in native queue editor");
+    draw(&mut presenter);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('s'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while screen(&draw(&mut presenter)).contains("Edit queued message") {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "native queue edit did not settle"
+        );
+        std::thread::yield_now();
+    }
+    let edited = runtime
+        .block_on(fixture.store.message_queue(&session_id))
+        .unwrap();
+    assert_eq!(
+        edited.entries[0].source.message.message_id,
+        pending.entries[0].source.message.message_id
+    );
+    assert_eq!(
+        edited.entries[0].source.unprepared_content.text,
+        "Queued product followup\nEdited in native queue editor"
+    );
+    await_screen(&mut presenter, "Unsent composer draft");
+    await_screen(&mut presenter, "Queued product followup");
+    click(&mut presenter, "Queued product followup");
+    draw(&mut presenter);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('e'),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    await_screen(&mut presenter, "[ Save message ]");
+    click(&mut presenter, "Edited in native queue editor");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::End,
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    presenter.input(Event::Paste(" again".into())).unwrap();
+    await_screen(&mut presenter, "Edited in native queue editor again");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while screen(&draw(&mut presenter)).contains("Edit queued message") {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "native Ctrl+Enter save did not settle"
+        );
+        std::thread::yield_now();
+    }
+    await_screen(&mut presenter, "Unsent composer draft");
+    let edited = runtime
+        .block_on(fixture.store.message_queue(&session_id))
+        .unwrap();
+    assert_eq!(
+        edited.entries[0].source.unprepared_content.text,
+        "Queued product followup\nEdited in native queue editor again"
     );
     click(&mut presenter, "Queued product followup");
     draw(&mut presenter);

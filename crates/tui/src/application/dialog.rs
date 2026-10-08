@@ -20,6 +20,7 @@
 //! Controlled terminal dialogs retain only original opening and weak focus custody.
 use super::{
     Presenter,
+    focus::{Exit, Return},
     paint::{Ancestor, Target, TargetIdentity, TargetKind},
     scene::Node,
 };
@@ -70,6 +71,14 @@ impl WeakTarget {
             && target.key == self.key
             && self.owner.ptr_eq(&Rc::downgrade(&target.owner))
     }
+    pub(super) fn same(&self, other: &Self) -> bool {
+        self.mount == other.mount && self.key == other.key && self.owner.ptr_eq(&other.owner)
+    }
+    pub(super) fn exited(&self, exits: &[Exit]) -> bool {
+        exits
+            .iter()
+            .any(|exit| exit.mount == self.mount.id() && exit.owner.ptr_eq(&self.owner))
+    }
     pub fn resolve(&self, targets: &[Target]) -> Option<Target> {
         targets.iter().find(|target| self.matches(target)).cloned()
     }
@@ -77,6 +86,7 @@ impl WeakTarget {
 pub(super) struct FocusReturn {
     opening: Scope,
     target: Option<WeakTarget>,
+    native_return: Option<Return>,
 }
 
 impl super::scroll::SceneState {
@@ -179,13 +189,57 @@ impl Presenter {
         }
         Ok(())
     }
+    /// Consume invalidation against the captured native owner, including a
+    /// background selector covered by a modal. Its foreground keeps focus.
+    pub(super) fn apply_modal_focus_exits(&mut self, exits: &[Exit]) {
+        for memory in &mut self.modal_focus {
+            if memory
+                .target
+                .as_ref()
+                .is_some_and(|target| target.exited(exits))
+            {
+                memory.target = match memory.native_return.take() {
+                    Some(Return::Active { source, target, .. }) if source.exited(exits) => target,
+                    _ => None,
+                };
+                memory.native_return = Some(Return::Exited);
+            }
+        }
+        // The opening may not have flushed yet: the original target still
+        // resides in pre-flush custody rather than in a modal memory.
+        if self
+            .focus_before_flush
+            .as_ref()
+            .is_some_and(|target| target.exited(exits))
+        {
+            self.focus_before_flush = match self.native_return.take() {
+                Some(Return::Active { source, target, .. }) if source.exited(exits) => target,
+                _ => None,
+            };
+            self.native_return = Some(Return::Exited);
+        }
+    }
     /// Mechanical focus memory follows actual published ancestry, not mount order.
     pub(super) fn publish_modal_focus(&mut self, path: &[Scope], targets: &[Target]) {
         let prior = self
             .focus_before_flush
             .take()
             .or_else(|| self.focus.as_ref().map(WeakTarget::new));
-        let retained = prior.as_ref().and_then(|target| target.resolve(targets));
+        let retained = prior
+            .as_ref()
+            .and_then(|target| target.resolve(targets))
+            .map(|target| (Some(target), self.native_return.clone()));
+        let restore = |memory: &FocusReturn| {
+            memory
+                .target
+                .as_ref()
+                .and_then(|target| target.resolve(targets))
+                .map(|target| (Some(target), memory.native_return.clone()))
+        };
+        let exited = self.modal_focus.iter().any(|memory| {
+            memory.opening.strong_count() == 0
+                && matches!(memory.native_return, Some(Return::Exited))
+        });
         let departing = self
             .physical_path
             .last()
@@ -194,17 +248,16 @@ impl Presenter {
                     .iter()
                     .find(|memory| memory.opening.ptr_eq(scope))
             })
-            .and_then(|memory| memory.target.as_ref())
-            .and_then(|target| target.resolve(targets));
+            .and_then(restore);
         let closed = self
             .modal_focus
             .iter()
             .rev()
             .filter(|memory| memory.opening.strong_count() == 0)
-            .filter_map(|memory| memory.target.as_ref())
-            .find_map(|target| target.resolve(targets));
+            .find_map(restore);
         self.modal_focus
             .retain(|memory| memory.opening.strong_count() != 0);
+        let mut opened = false;
         for (index, opening) in path.iter().enumerate() {
             if self
                 .modal_focus
@@ -213,25 +266,52 @@ impl Presenter {
             {
                 continue;
             }
-            // A new outer wrapping an existing foreground inherits that original
-            // return target. A new covering sibling remembers the actual focus.
+            opened = true;
+            // A wrapper inherits the original target and its exact native return
+            // together. A covering sibling captures the actual foreground.
             let inherited = path[index + 1..].iter().find_map(|descendant| {
                 self.modal_focus
                     .iter()
                     .find(|memory| memory.opening.ptr_eq(descendant))
-                    .and_then(|memory| memory.target.clone())
+                    .map(|memory| (memory.target.clone(), memory.native_return.clone()))
+            });
+            let (target, native_return) = inherited.unwrap_or_else(|| {
+                let native_return = match &self.native_return {
+                    Some(Return::Active { source, .. })
+                        if prior.as_ref().is_some_and(|prior| source.same(prior)) =>
+                    {
+                        self.native_return.clone()
+                    }
+                    Some(Return::Exited) => Some(Return::Exited),
+                    _ => None,
+                };
+                (prior.clone(), native_return)
             });
             self.modal_focus.push(FocusReturn {
                 opening: opening.clone(),
-                target: inherited.or_else(|| prior.clone()),
+                target,
+                native_return,
             });
         }
-        if self.focus.is_none() {
-            self.restore_focus = retained
-                .or(departing)
+        // A newly opened foreground must receive its own focus. Any background
+        // exit marker now belongs to that opening's captured return, not its input.
+        if opened {
+            self.native_return = None;
+        }
+        // Resolve every surviving original ancestor before suppressing fallback
+        // for an invalidated inner return. Simultaneous closes cannot hide it.
+        let restore = retained.or(if opened {
+            None
+        } else {
+            departing
                 .or(closed)
-                .as_ref()
-                .map(WeakTarget::new);
+                .or(exited.then_some((None, Some(Return::Exited))))
+        });
+        if self.focus.is_none()
+            && let Some((target, native_return)) = restore
+        {
+            self.restore_focus = target.as_ref().map(WeakTarget::new);
+            self.native_return = native_return.or((!opened && exited).then_some(Return::Exited));
         }
     }
     pub(super) fn dismiss(

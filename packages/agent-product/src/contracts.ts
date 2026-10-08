@@ -157,6 +157,17 @@ export interface TimelineProps {
   landing: { sequence: number; edge: 'start' | 'end' };
   live: boolean;
 }
+export interface QueueEditorProps {
+  theme: Theme;
+  locale: string;
+  open: boolean;
+  ready: boolean;
+  busy: boolean;
+  uncertain: boolean;
+  checking: boolean;
+  status: string;
+  command: EditorCommand | null;
+}
 export interface ComposerProps {
   theme: Theme;
   locale: string;
@@ -383,6 +394,28 @@ export const timelineContract = component(
     }),
   },
   native.readingArea.interface.captures,
+);
+export const queueEditorContract = component(
+  'maka.agent.QueueEditor',
+  object({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    ready: { type: 'boolean' },
+    busy: { type: 'boolean' },
+    uncertain: { type: 'boolean' },
+    checking: { type: 'boolean' },
+    status: string,
+    command: editor.props.properties.command,
+  }),
+  {
+    save: editor.events.changed,
+    changed: editor.events.changed,
+    closed: object({}),
+    reload: object({}),
+    check: object({}),
+  },
+  editor.captures,
 );
 export const composerContract = component(
   'maka.agent.Composer',

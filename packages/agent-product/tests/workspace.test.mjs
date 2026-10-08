@@ -7147,3 +7147,248 @@ test('TUI queue controls retain original revision and lane and working-send keep
   assert.equal(client.state.command.basedOn, 4);
   assert.equal(client.state.run.invocationId, 'run');
 });
+
+async function queueEditorClient() {
+  const terminal = await import(pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js')));
+  terminal.activate({ locale: 'en' });
+  const client = new Client(terminal.component).start({
+    run: { invocationId: 'run', state: 'running' },
+  });
+  client.queue = (revision = 7) =>
+    client.input({
+      kind: 'action',
+      key: client.state.watch.key,
+      event: {
+        status: 'updated',
+        value: {
+          kind: 'queue',
+          queue: {
+            revision,
+            entries: [{ messageId: 'queued', kind: 'followup', preview: 'Hello' }],
+          },
+        },
+      },
+    });
+  client.edit = () =>
+    client.input({
+      kind: 'component',
+      child: 'queue',
+      name: 'activated',
+      event: { revision: client.state.queue.revision, row: 'queued', action: 'edit' },
+    });
+  client.editor = (name, event = {}) =>
+    client.input({ kind: 'component', child: 'queue-editor', name, event });
+  client.ready = () => {
+    client.query('queueMessage', {
+      kind: 'ready',
+      revision: client.state.queueEdit.target.expectedRevision,
+      message: 'Hello',
+    });
+    const command = client.state.queueEdit.command;
+    const observation = structuredClone(draft);
+    observation.receipt = {
+      owner: command.owner,
+      sequence: command.sequence,
+      outcome: { status: 'applied' },
+    };
+    client.editor('changed', observation);
+    return observation;
+  };
+  client.queue();
+  client.editor('changed', draft); // Native owner announced while its retained slot was hidden.
+  client.edit();
+  return client;
+}
+
+test('queue body initialization and save retain the original target and CAS revision', async () => {
+  const client = await queueEditorClient();
+  assert.deepEqual(client.find('queueMessage').input, {
+    sessionId: session.id,
+    messageId: 'queued',
+    expectedRevision: 7,
+  });
+  client.editor('save', draft);
+  assert.equal(client.output.actions.length, 0, 'body load does not enable save');
+  const observation = client.ready();
+  assert.equal(client.state.queueEdit.phase, 'ready');
+  client.queue(8);
+  client.editor('save', observation);
+  const read = client.find('read');
+  assert.deepEqual(read.resources.text, {
+    child: 'queue-editor',
+    method: 'snapshot',
+    input: { kind: 'at_revision', owner: draft.snapshot.text.owner, revision: 4 },
+  });
+  client.query('read', { text: 'Hello', metadata: draft.snapshot.text });
+  assert.deepEqual(client.find('editQueue').input, {
+    sessionId: session.id,
+    expectedRevision: 7,
+    edit: { kind: 'update', messageId: 'queued', message: 'Hello' },
+  });
+  client.complete(
+    client.find('editQueue'),
+    returned({ kind: 'revision_conflict', expected: 7, actual: 8 }),
+  );
+  assert.equal(client.state.dialog, 'queue');
+  assert.equal(client.state.queueEdit.target.expectedRevision, 7);
+  assert.equal(client.state.queueEdit.command, null, 'conflict never resets the draft');
+  assert.deepEqual(client.state.queueDraft, observation);
+  client.editor('reload');
+  assert.equal(
+    client.find('queueMessage').input.expectedRevision,
+    8,
+    'only explicit discard/reload adopts watch version',
+  );
+});
+
+test('queue initialization requires Applied and a body delivered before the native announcement is retained', async () => {
+  const client = await queueEditorClient();
+  client.output.frame.state.queueDraft = null;
+  client.query('queueMessage', { kind: 'ready', revision: 7, message: 'Hello' });
+  assert.equal(client.state.queueEdit.command, null);
+  client.editor('changed', draft);
+  const command = client.state.queueEdit.command;
+  assert.equal(command.edit.text, 'Hello');
+  client.editor('save', draft);
+  assert.equal(client.output.actions.length, 0);
+  client.editor('changed', {
+    ...draft,
+    receipt: {
+      owner: command.owner,
+      sequence: command.sequence,
+      outcome: { status: 'conflict', reason: 'revision' },
+    },
+  });
+  assert.equal(client.state.queueEdit.phase, 'failed');
+  client.editor('save', draft);
+  assert.equal(
+    client.output.actions.length,
+    0,
+    'a rejected reset never saves stale retained editor text',
+  );
+});
+
+for (const stage of ['body', 'capture'])
+  test(`cancelled queue ${stage} completion cannot mutate or initialize a later editor`, async () => {
+    const client = await queueEditorClient();
+    let action;
+    if (stage === 'body') action = client.find('queueMessage');
+    else {
+      const observation = client.ready();
+      client.editor('save', observation);
+      action = client.find('read');
+    }
+    client.raw('workspace-dialog');
+    assert.equal(client.state.queueEdit, null);
+    client.complete(action, {
+      status: 'succeeded',
+      value:
+        stage === 'body'
+          ? { kind: 'ready', revision: 7, message: 'late' }
+          : { text: 'Hello', metadata: draft.snapshot.text },
+    });
+    assert.equal(client.output.actions.length, 0);
+    assert.equal(client.state.queueEdit, null);
+  });
+
+for (const chunk of [
+  { text: 'Hello', metadata: { ...draft.snapshot.text, owner: 'other' } },
+  { text: '界界界界界', metadata: draft.snapshot.text },
+])
+  test('queue snapshot rejects mismatched owner or actual UTF-8 length', async () => {
+    const client = await queueEditorClient();
+    const observation = client.ready();
+    client.editor('save', observation);
+    client.query('read', chunk);
+    assert.equal(client.output.actions.length, 0);
+    assert.equal(client.state.notice, 'draftKept');
+    assert.equal(client.state.queueEdit.phase, 'ready');
+  });
+
+test('unknown queue update checks the original receipt without replay and success closes only the captured draft', async () => {
+  const client = await queueEditorClient();
+  const observation = client.ready();
+  client.editor('save', observation);
+  client.query('read', { text: 'Hello', metadata: draft.snapshot.text });
+  const update = client.find('editQueue');
+  const ref = { ...reference, method: 'editQueue' };
+  client.complete(update, {
+    status: 'operation',
+    reply: { reference: ref, receipt: { kind: 'unknown' } },
+  });
+  client.editor('save', observation);
+  assert.equal(client.output.actions.length, 0);
+  client.editor('reload');
+  assert.equal(client.output.actions.length, 0);
+  client.editor('check');
+  const check = client.find('read');
+  assert.equal(check.binding, 'receipts');
+  assert.deepEqual(check.input, ref);
+  client.complete(check, {
+    status: 'succeeded',
+    value: { ...returned({ kind: 'committed', revision: 8 }).reply, reference: ref },
+  });
+  assert.equal(client.state.dialog, null);
+  assert.equal(client.state.queueEdit, null);
+  assert.equal(client.state.command, null, 'queue editing never touches Composer');
+});
+
+test('queue committed receipt preserves a newer native draft and cancelled operation cannot close another modal', async () => {
+  for (const change of ['newer', 'cancel']) {
+    const client = await queueEditorClient();
+    const observation = client.ready();
+    client.editor('save', observation);
+    client.query('read', { text: 'Hello', metadata: draft.snapshot.text });
+    const update = client.find('editQueue');
+    if (change === 'newer') client.editor('changed', { ...observation, revision: 5 });
+    else {
+      client.editor('closed');
+      client.raw('help-open');
+    }
+    client.complete(update, returned({ kind: 'committed', revision: 8 }));
+    assert.equal(client.state.dialog, change === 'newer' ? 'queue' : 'help');
+  }
+});
+
+test('queue-editor retains the native Textarea, forwards exact capture and keeps Enter as newline', async () => {
+  const { component } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/queue-editor/tui.js'))
+  );
+  const props = {
+    theme: values.appearance[0],
+    locale: 'en',
+    open: true,
+    ready: true,
+    busy: false,
+    uncertain: false,
+    checking: false,
+    status: '',
+    command: null,
+  };
+  let result = component.mount(props, {});
+  const field = modelSlots(result.frame.view).find((node) => node.binding === 'editor');
+  assert.equal(field.props.submit, 'primary_enter');
+  assert.equal(field.props.softWrap, true);
+  const changed = { kind: 'component', child: 'draft', name: 'changed', event: draft };
+  result = component.event(result.frame.state, changed, props, {});
+  result = component.event(result.frame.state, { ...changed, name: 'submitted' }, props, {});
+  assert.deepEqual(
+    result.events.map((e) => e.name),
+    ['changed', 'save'],
+  );
+  result = component.event(
+    result.frame.state,
+    { ...changed, name: 'submitted' },
+    { ...props, busy: true },
+    {},
+  );
+  assert.deepEqual(
+    result.events.map((e) => e.name),
+    ['changed'],
+  );
+  const input = { kind: 'at_revision', owner: 'original-editor', revision: 4 };
+  assert.deepEqual(component.capture(result.frame.state, props, 'snapshot', input), {
+    kind: 'forward',
+    source: { child: 'draft', method: 'snapshot', input },
+  });
+});

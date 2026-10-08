@@ -40,9 +40,12 @@ fn text(buffer: &Buffer) -> String {
     buffer.content.iter().map(|cell| cell.symbol()).collect()
 }
 fn refresh(tui: &mut Presenter) {
+    refresh_key(tui, "back");
+}
+fn refresh_key(tui: &mut Presenter, key: &str) {
     let rev = tui.application.frame(&tui.root).unwrap().revision;
     tui.application
-        .dispatch(&tui.root.clone(), rev, "back", json!({"kind":"click"}))
+        .dispatch(&tui.root.clone(), rev, key, json!({"kind":"click"}))
         .unwrap();
     tui.sync_native().unwrap();
 }
@@ -209,6 +212,100 @@ fn native_rows_held_navigation_moves_but_held_actions_do_not_repeat() {
     assert_eq!(
         tui.application.frame(&tui.root).unwrap().state["observation"]["row"],
         "row-1"
+    );
+    close(tui);
+}
+
+#[test]
+fn native_rows_consumed_under_modal_returns_to_original_composer() {
+    for phase in [0, 1, 2] {
+        let props = Rc::new(RefCell::new(props()));
+        let modal = Rc::new(Cell::new(false));
+        let (_runtime, mut tui) = layout::native(
+            layout::View::Rows(props.clone(), modal.clone()),
+            Rc::new(Cell::new(true)),
+        );
+        draw(&mut tui, 40, 10);
+        let composer = tui.focus.clone().unwrap();
+        tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 2, 2))
+            .unwrap();
+        assert_eq!(tui.focus.as_ref().unwrap().key, "rows");
+        modal.set(true);
+        if phase != 2 {
+            refresh(&mut tui);
+        }
+        if phase == 0 {
+            draw(&mut tui, 40, 10);
+            assert_eq!(tui.focus.as_ref().unwrap().key, "close");
+        }
+        props.borrow_mut()["rows"].as_array_mut().unwrap().remove(1);
+        props.borrow_mut()["revision"] = json!(2);
+        refresh(&mut tui);
+        draw(&mut tui, 40, 10);
+        assert_eq!(tui.focus.as_ref().unwrap().key, "close");
+        modal.set(false);
+        refresh(&mut tui);
+        draw(&mut tui, 40, 10);
+        assert!(
+            tui.focus
+                .as_ref()
+                .is_some_and(|focus| focus.same(&composer))
+        );
+        let count = tui.application.frame(&tui.root).unwrap().state["count"].clone();
+        for code in [KeyCode::Delete, KeyCode::Enter] {
+            let mut held = KeyEvent::new(code, KeyModifiers::NONE);
+            held.kind = KeyEventKind::Repeat;
+            tui.input(Event::Key(held)).unwrap();
+        }
+        assert_eq!(
+            tui.application.frame(&tui.root).unwrap().state["count"],
+            count
+        );
+        // A fresh explicit selection can enter a remaining row; no stale exit follows it.
+        tui.input(mouse(MouseEventKind::Down(MouseButton::Left), 2, 2))
+            .unwrap();
+        draw(&mut tui, 40, 10);
+        tui.input(key(KeyCode::Delete)).unwrap();
+        assert_eq!(
+            tui.application.frame(&tui.root).unwrap().state["observation"]["row"],
+            "row-2"
+        );
+        close(tui);
+    }
+}
+
+#[test]
+fn native_rows_consumed_under_nested_modals_keep_the_surviving_ancestor_return() {
+    let props = Rc::new(RefCell::new(props()));
+    let phase = Rc::new(Cell::new(0));
+    let (_runtime, mut tui) = layout::native(
+        layout::View::NestedRows(props.clone(), phase.clone()),
+        Rc::new(Cell::new(true)),
+    );
+    draw(&mut tui, 40, 12);
+    let original = tui.focus.clone().unwrap();
+    assert_eq!(original.key, "root-composer");
+    phase.set(1);
+    refresh_key(&mut tui, "root-composer");
+    draw(&mut tui, 40, 12);
+    assert_eq!(tui.focus.as_ref().unwrap().key, "back");
+    tui.input(key(KeyCode::Tab)).unwrap();
+    assert_eq!(tui.focus.as_ref().unwrap().key, "rows");
+    phase.set(2);
+    refresh_key(&mut tui, "root-composer");
+    draw(&mut tui, 40, 12);
+    assert_eq!(tui.focus.as_ref().unwrap().key, "close");
+    props.borrow_mut()["rows"].as_array_mut().unwrap().remove(0);
+    props.borrow_mut()["revision"] = json!(2);
+    refresh_key(&mut tui, "root-composer");
+    draw(&mut tui, 40, 12);
+    phase.set(0);
+    refresh_key(&mut tui, "root-composer");
+    draw(&mut tui, 40, 12);
+    assert!(
+        tui.focus
+            .as_ref()
+            .is_some_and(|focus| focus.same(&original))
     );
     close(tui);
 }

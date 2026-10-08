@@ -112,6 +112,7 @@ const specifications = {
       palette: one(own.paletteContract),
       directories: one(own.directoryPickerContract),
       details: one(own.sessionDetailsContract),
+      queueEditor: one(own.queueEditorContract),
       help: one(own.helpContract),
       navigation: one(own.navigationContract),
       timeline: one(own.timelineContract),
@@ -191,6 +192,12 @@ specifications.help = {
   export: 'Help',
   module: 'help',
   imports: { reading: one(sdk.contracts.readingArea) },
+};
+specifications['queue-editor'] = {
+  contract: own.queueEditorContract,
+  export: 'QueueEditor',
+  module: 'queue-editor',
+  imports: { editor: one(sdk.contracts.textarea) },
 };
 specifications['session-details'] = {
   contract: own.sessionDetailsContract,
