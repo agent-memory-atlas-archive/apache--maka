@@ -1301,10 +1301,80 @@ process.stdout.write(output.outputFiles[0].text);
     await_screen(&mut presenter, "[ Choose model ]");
     click(&mut presenter, "[ Choose model ]");
     await_screen(&mut presenter, "fixture-model-00");
-    for expected in ["03", "06", "09", "12", "15", "16", "19"] {
-        click(&mut presenter, "More models");
-        await_screen(&mut presenter, &format!("fixture-model-{expected}"));
+    // The picker is a native modal: its fixed controls remain visible in a
+    // short terminal, and Escape preserves the covered Composer draft.
+    let narrow = screen(&draw_at(&mut presenter, Rect::new(0, 0, 40, 16)));
+    for label in [
+        "Search models",
+        "[ Close ]",
+        "[ Refresh models ]",
+        "[ Default model ]",
+        "[ More models ]",
+    ] {
+        assert!(narrow.contains(label), "{narrow}");
     }
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+        .unwrap();
+    await_screen(&mut presenter, "Hello product");
+    assert!(!screen(&draw(&mut presenter)).contains("Search models"));
+    click(&mut presenter, "[ Choose model ]");
+    await_screen(&mut presenter, "fixture-model-00");
+    // Tab makes a row the native target. Down must not change the search
+    // candidate behind that target; Enter selects the row that still has focus.
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
+        .unwrap();
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))
+        .unwrap();
+    let focused_row = screen(&draw(&mut presenter));
+    assert!(
+        focused_row.contains("› fixture-model-00") && !focused_row.contains("› fixture-model-01"),
+        "{focused_row}"
+    );
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    await_screen(&mut presenter, "[ fixture-model-00 ]");
+    assert!(!screen(&draw(&mut presenter)).contains("Search models"));
+    click(&mut presenter, "[ fixture-model-00 ]");
+    await_screen(&mut presenter, "fixture-model-00");
+    // Wheel scrolling uses the original native Reading viewport, not guest
+    // three-row pages; query arrows subsequently reveal their semantic choice.
+    let (x, y) = wait_for_target(&mut presenter, "› fixture-model-00", 0);
+    for _ in 0..3 {
+        presenter
+            .input(Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: x,
+                row: y,
+                modifiers: KeyModifiers::NONE,
+            }))
+            .unwrap();
+        draw(&mut presenter);
+    }
+    let scrolled = screen(&draw(&mut presenter));
+    assert!(!scrolled.contains("fixture-model-00 ·"), "{scrolled}");
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))
+        .unwrap();
+    await_screen(&mut presenter, "› fixture-model-01");
+    for at in 2..16 {
+        presenter
+            .input(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))
+            .unwrap();
+        await_screen(&mut presenter, &format!("› fixture-model-{at:02}"));
+    }
+    let scrolled = screen(&draw(&mut presenter));
+    assert!(!scrolled.contains("fixture-model-00 ·"), "{scrolled}");
+    // More now advances only the original bounded catalog cursor (16..19).
+    click(&mut presenter, "More models");
+    await_screen(&mut presenter, "fixture-model-16");
+    await_screen(&mut presenter, "fixture-model-19");
     assert!(screen(&draw(&mut presenter)).contains("Close"));
     click(&mut presenter, "fixture-model-19");
     let deadline = std::time::Instant::now() + Duration::from_secs(20);

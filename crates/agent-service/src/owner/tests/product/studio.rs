@@ -353,6 +353,12 @@ pub(super) fn switch(
     click(presenter, "[ Models ]");
     click(presenter, "[ Choose model ]");
     await_screen(presenter, "Add a connection to choose a model.");
+    // Models now owns a real native modal, including in this independent root.
+    // Close it before navigating the covered Studio pages.
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+        .unwrap();
+    await_screen(presenter, "[ Plugins ]");
     click(presenter, "[ Plugins ]");
     click(presenter, "[ Edit product composition ]");
     wait_for_target(presenter, "[ Save composition ]", 0);

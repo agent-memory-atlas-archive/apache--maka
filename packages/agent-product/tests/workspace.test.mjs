@@ -834,10 +834,16 @@ const modelRaw = (out, key, p = modelProps) =>
   );
 function modelButtons(view, result = []) {
   if (view.kind === 'button') result.push(view.key);
-  for (const child of view.children ?? []) modelButtons(child, result);
+  for (const child of [
+    ...(view.children ?? []),
+    view.content,
+    view.props?.content,
+    typeof view.background === 'object' ? view.background : null,
+  ].filter(Boolean))
+    modelButtons(child, result);
   return result;
 }
-test('TUI pages expose every original choice, keep controls visible and retain late default until enabled', () => {
+test('TUI native model viewport holds the complete bounded page and retains late default until enabled', () => {
   let out = modelGuest.component.mount(modelProps, {});
   const request = out.actions[0];
   assert.equal(request.method, 'models');
@@ -856,14 +862,16 @@ test('TUI pages expose every original choice, keep controls visible and retain l
   assert.equal(out.events[0].value.selection.modelId, 'model-0');
   const enabled = { ...modelProps, busy: false, selection: modelChoices[0] };
   out = modelRaw(out, 'toggle', enabled);
+  assert.equal(out.frame.view.kind, 'dialog');
+  assert.equal(out.frame.view.open, true);
   assert.deepEqual(
     modelButtons(out.frame.view).filter((key) => key.startsWith('choose-')),
-    ['choose-0', 'choose-1', 'choose-2'],
+    modelChoices.map((_, at) => `choose-${at}`),
   );
-  for (let i = 0; i < 5; i++) out = modelRaw(out, 'more', enabled);
-  assert.deepEqual(
-    modelButtons(out.frame.view).filter((key) => key.startsWith('choose-')),
-    ['choose-15'],
+  assert.equal(
+    modelButtons(out.frame.view).includes('more'),
+    false,
+    'More belongs only to the catalog continuation',
   );
   assert.ok(modelButtons(out.frame.view).includes('close'));
   out = modelGuest.component.event(
@@ -1128,35 +1136,26 @@ for (const target of ['tui', 'desktop']) {
     assert.equal(form.state.active, 15);
     assert.deepEqual(form.state.observation, modelObservation('', 1));
     assert.equal(form.output.actions.length, 0);
-    if (target === 'desktop') {
-      const reading = modelSlots(form.output.frame.view).find((n) => n.key === 'model-rows');
-      assert.equal(reading.props.content.scroll, 'manual');
-      assert.equal(reading.props.content.children.length, 16);
-      assert.deepEqual(reading.props.command.target, { kind: 'reveal_child', key: 'choose-15' });
-      const sequence = reading.props.command.sequence;
-      form.input({
-        kind: 'component',
-        child: 'model-rows',
-        name: 'observed',
-        key: 'row-viewport',
-        event: {},
-      });
-      assert.equal(form.state.reveal.sequence, sequence);
-      form.input({
-        kind: 'component',
-        child: 'model-rows',
-        name: 'input',
-        key: 'row-input',
-        event: { kind: 'raw', key: 'choose-15', event: {} },
-      });
-    } else {
-      assert.equal(form.state.offset, 15);
-      assert.deepEqual(
-        modelButtons(form.output.frame.view).filter((n) => n.startsWith('choose-')),
-        ['choose-15'],
-      );
-      form.raw('choose-15');
-    }
+    const reading = modelSlots(form.output.frame.view).find((n) => n.key === 'model-rows');
+    assert.equal(reading.props.content.scroll, 'manual');
+    assert.equal(reading.props.content.children.length, 16);
+    assert.deepEqual(reading.props.command.target, { kind: 'reveal_child', key: 'choose-15' });
+    const sequence = reading.props.command.sequence;
+    form.input({
+      kind: 'component',
+      child: 'model-rows',
+      name: 'observed',
+      key: 'row-viewport',
+      event: {},
+    });
+    assert.equal(form.state.reveal.sequence, sequence);
+    form.input({
+      kind: 'component',
+      child: 'model-rows',
+      name: 'input',
+      key: 'row-input',
+      event: { kind: 'raw', key: 'choose-15', event: {} },
+    });
     modelRead(form, '', 1);
     assert.deepEqual(form.output.events, [{ name: 'selected', value: modelChoices[15] }]);
     form.raw('toggle');
@@ -2908,34 +2907,35 @@ for (const target of ['desktop', 'tui']) {
   );
 }
 
-test('desktop model popup dismissal preserves the retained default workflow and only Escape consumes its native input', async () => {
-  const module = await import(pathToFileURL(resolve(root, 'dist/packages/models/desktop.js')));
-  const form = new FormClient(module.component, {
-    ...modelProps,
-    busy: false,
-    selection: defaultChoice,
+for (const target of ['desktop', 'tui'])
+  test(`${target} model dismissal preserves the retained default workflow and only Escape consumes its native input`, async () => {
+    const module = await import(pathToFileURL(resolve(root, `dist/packages/models/${target}.js`)));
+    const form = new FormClient(module.component, {
+      ...modelProps,
+      busy: false,
+      selection: defaultChoice,
+    });
+    form.raw('toggle');
+    form.raw('defaults');
+    const popup = form.output.frame.view;
+    assert.equal(popup.kind, target === 'desktop' ? 'popup' : 'dialog');
+    assert.equal(popup.open, true);
+    const child = modelSlots(popup).find((node) => node.binding === 'defaults');
+    form.input({ kind: 'raw', key: 'model-popup', event: { kind: 'dismiss', reason: 'escape' } });
+    assert.equal(form.state.open, false);
+    assert.equal(form.state.defaultsOpen, true);
+    assert.deepEqual(form.output.decision, { preventDefault: true, stopPropagation: true });
+    assert.deepEqual(
+      modelSlots(form.output.frame.view).find((node) => node.binding === 'defaults'),
+      child,
+    );
+    form.raw('toggle');
+    form.input({ kind: 'raw', key: 'model-popup', event: { kind: 'dismiss', reason: 'outside' } });
+    assert.equal(form.state.open, false);
+    assert.equal(form.output.decision, undefined);
+    assert.equal(form.state.defaultsOpen, true);
+    assert.equal(form.output.actions.length, 0);
   });
-  form.raw('toggle');
-  form.raw('defaults');
-  const popup = form.output.frame.view;
-  assert.equal(popup.kind, 'popup');
-  assert.equal(popup.open, true);
-  const child = modelSlots(popup).find((node) => node.binding === 'defaults');
-  form.input({ kind: 'raw', key: 'model-popup', event: { kind: 'dismiss', reason: 'escape' } });
-  assert.equal(form.state.open, false);
-  assert.equal(form.state.defaultsOpen, true);
-  assert.deepEqual(form.output.decision, { preventDefault: true, stopPropagation: true });
-  assert.deepEqual(
-    modelSlots(form.output.frame.view).find((node) => node.binding === 'defaults'),
-    child,
-  );
-  form.raw('toggle');
-  form.input({ kind: 'raw', key: 'model-popup', event: { kind: 'dismiss', reason: 'outside' } });
-  assert.equal(form.state.open, false);
-  assert.equal(form.output.decision, undefined);
-  assert.equal(form.state.defaultsOpen, true);
-  assert.equal(form.output.actions.length, 0);
-});
 
 test('prepending history preserves the streamed message presentation identity', async () => {
   const { component: timeline } = await import(

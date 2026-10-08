@@ -60,7 +60,6 @@ interface State {
   catalogRevision: number | null;
   next: SettingsModelCursor | null;
   failed: boolean;
-  offset: number;
 }
 function candidate(state: State, props: ModelsProps) {
   if (props.busy || state.pending || state.failed || state.queryError || dirty(state)) return null;
@@ -200,10 +199,7 @@ function frame<N extends Node>(
     },
   );
 
-  const modelRows = (
-    target === 'desktop' ? state.choices : state.choices.slice(state.offset, state.offset + 3)
-  ).map((choice, index) => {
-    const at = index + (target === 'tui' ? state.offset : 0);
+  const modelRows = state.choices.map((choice, at) => {
     const active = at === state.active;
     const button = ui.button(
       `choose-${at}`,
@@ -221,6 +217,34 @@ function frame<N extends Node>(
 
     return button;
   });
+  const viewport = presentation.reading(
+    'model-rows',
+    {
+      content: ui.box('model-viewport', modelRows, {
+        scroll: 'manual',
+        gap: target === 'desktop' ? 2 : 0,
+        terminal: { grow: 1, basis: 0 },
+        style: { width: fill, height: pixels(160), minWidth: 0, minHeight: 0 },
+      }),
+      command: state.reveal,
+    },
+    { input: 'row-input', observed: 'row-viewport' },
+  );
+  const controls = ui.box(
+    'model-actions',
+    [
+      ...(state.next ? [ui.button('more', text.moreModels, !!state.pending || props.busy)] : []),
+      ui.button('refresh', text.refreshModels, !!state.pending || props.busy),
+      ui.button('defaults', text.defaultModel),
+      ui.button('close', text.closeModels, false),
+    ],
+    {
+      row: true,
+      gap: target === 'desktop' ? 8 : 1,
+      terminal: { wrap: true },
+      style: { wrap: true },
+    },
+  );
   const content = ui.box(
     'model-list',
     [
@@ -228,19 +252,41 @@ function frame<N extends Node>(
         'model-choices',
         [
           ui.text('model-heading', text.models, 13, props.theme.muted),
-          presentation.slot(
-            'model-query',
-            'input',
+          ui.box(
+            'model-query-scope',
+            [
+              presentation.slot(
+                'model-query',
+                'input',
+                {
+                  appearance: props.theme.input,
+                  accessibilityLabel: text.searchModels,
+                  placeholder: text.searchModels,
+                  autoFocus: true,
+                  tabIndex: 1,
+                  readOnly: false,
+                  disabled: props.busy || !state.open || state.defaultsOpen,
+                },
+                { changed: 'query', submitted: 'choose-active' },
+              ),
+            ],
             {
-              appearance: props.theme.input,
-              accessibilityLabel: text.searchModels,
-              placeholder: text.searchModels,
-              autoFocus: true,
-              tabIndex: 1,
-              readOnly: false,
-              disabled: props.busy || !state.open || state.defaultsOpen,
+              gap: 0,
+              shortcuts: [
+                {
+                  key: 'down',
+                  modifiers: [],
+                  input: 'next-choice',
+                  enabled: editableChoices(state, props),
+                },
+                {
+                  key: 'up',
+                  modifiers: [],
+                  input: 'previous-choice',
+                  enabled: editableChoices(state, props),
+                },
+              ],
             },
-            { changed: 'query', submitted: 'choose-active' },
           ),
           ...(state.queryError
             ? [ui.text('query-error', text[state.queryError], 13, props.theme.muted)]
@@ -265,56 +311,13 @@ function frame<N extends Node>(
                 ),
               ]
             : []),
-          ui.box(
-            'model-actions',
-            [
-              ...(target === 'tui' && state.offset > 0
-                ? [ui.button('previous', text.previousModels, props.busy || !!state.pending)]
-                : []),
-              ...((target === 'tui' && state.offset + 3 < state.choices.length) || state.next
-                ? [ui.button('more', text.moreModels, !!state.pending || props.busy)]
-                : []),
-              ui.button('refresh', text.refreshModels, !!state.pending || props.busy),
-              ui.button('defaults', text.defaultModel),
-              ui.button('close', text.closeModels, false),
-            ],
-            { row: true, gap: target === 'desktop' ? 8 : 1, style: { wrap: true } },
-          ),
-          ...(target === 'desktop'
-            ? [
-                presentation.reading(
-                  'model-rows',
-                  {
-                    content: ui.box('model-viewport', modelRows, {
-                      scroll: 'manual',
-                      gap: 2,
-                      style: { width: fill, height: pixels(160), minWidth: 0, minHeight: 0 },
-                    }),
-                    command: state.reveal,
-                  },
-                  { input: 'row-input', observed: 'row-viewport' },
-                ),
-              ]
-            : modelRows),
+          ...(target === 'desktop' ? [controls, viewport] : [viewport, controls]),
         ],
         {
           visible: !state.defaultsOpen,
+          terminal: { grow: 1 },
           gap: target === 'desktop' ? 8 : 0,
-          shortcuts: [
-            {
-              key: 'down',
-              modifiers: [],
-              input: 'next-choice',
-              enabled: editableChoices(state, props),
-            },
-            {
-              key: 'up',
-              modifiers: [],
-              input: 'previous-choice',
-              enabled: editableChoices(state, props),
-            },
-            { key: 'escape', modifiers: [], input: 'close', enabled: true },
-          ],
+          shortcuts: [{ key: 'escape', modifiers: [], input: 'close', enabled: true }],
         },
       ),
       ui.box(
@@ -327,27 +330,34 @@ function frame<N extends Node>(
               ui.button('default-refresh', text.refreshModels, !!state.pending),
               ui.button('default-close', text.closeModels),
             ],
-            { row: target === 'desktop', gap: 0, style: { wrap: true } },
+            { row: true, gap: 0, terminal: { wrap: true }, style: { wrap: true } },
           ),
-          presentation.slot(
-            'default-settings',
-            'defaults',
-            {
-              theme: props.theme,
-              locale: props.locale,
-              selection: chosen,
-              defaultModel: state.defaultModel,
-              catalogRevision: state.catalogRevision,
-              busy: props.busy || !!state.pending || state.failed,
-            },
-            { changed: 'default-changed' },
+          ui.box(
+            'default-body',
+            [
+              presentation.slot(
+                'default-settings',
+                'defaults',
+                {
+                  theme: props.theme,
+                  locale: props.locale,
+                  selection: chosen,
+                  defaultModel: state.defaultModel,
+                  catalogRevision: state.catalogRevision,
+                  busy: props.busy || !!state.pending || state.failed,
+                },
+                { changed: 'default-changed' },
+              ),
+            ],
+            { scroll: target === 'tui' ? 'manual' : 'none', terminal: { grow: 1, basis: 0 } },
           ),
         ],
-        { visible: state.defaultsOpen, gap: target === 'desktop' ? 8 : 0 },
+        { visible: state.defaultsOpen, gap: target === 'desktop' ? 8 : 0, terminal: { grow: 1 } },
       ),
     ],
     {
       visible: target === 'desktop' || state.open,
+      terminal: { grow: 1 },
       surface: true,
       padding: target === 'desktop' ? 12 : 0,
       style: { width: fill, minWidth: 0, background: 0 },
@@ -372,7 +382,7 @@ function frame<N extends Node>(
           radius: props.theme.menu.radius,
         },
       })
-    : ui.box('models', [trigger, content], { gap: 0 });
+    : ui.dialog('model-popup', text.models, trigger, content, state.open);
   const out = output(state, view, events);
   out.actions = actions;
   return out;
@@ -380,7 +390,6 @@ function frame<N extends Node>(
 export function models<N extends Node>(
   presentation: Presentation<N>,
 ): Component<State, ModelsProps, N> {
-  const target = presentation.target;
   return {
     mount(props) {
       const state: State = {
@@ -404,7 +413,6 @@ export function models<N extends Node>(
         catalogRevision: null,
         next: null,
         failed: false,
-        offset: 0,
       };
       return frame(presentation, state, props, read(state));
     },
@@ -422,7 +430,6 @@ export function models<N extends Node>(
           catalogRevision: null,
           defaultModel: null,
           next: null,
-          offset: 0,
         };
         return frame(
           presentation,
@@ -476,7 +483,7 @@ export function models<N extends Node>(
               state.queryError = null;
               if (changed) {
                 state.failed = false;
-                state.offset = state.active = 0;
+                state.active = 0;
                 state.choices = [];
                 state.next = null;
                 state.pageQuery = null;
@@ -501,7 +508,7 @@ export function models<N extends Node>(
           } else {
             state.catalogRevision = page.revision;
             state.defaultModel = page.defaultModel;
-            state.offset = state.active = 0;
+            state.active = 0;
             // A page's choices and cursor always travel with its original
             // revision, even while the native search input has newer metadata.
             const current = request.query === state.query;
@@ -530,7 +537,7 @@ export function models<N extends Node>(
               state.choices = [];
               state.next = null;
               state.pageQuery = null;
-              state.offset = state.active = 0;
+              state.active = 0;
               if (interactive(state, props)) actions.push(...read(state));
             }
           } else if (interactive(state, props)) actions.push(...read(state));
@@ -549,11 +556,7 @@ export function models<N extends Node>(
         state.defaultModel = null;
         actions.push(...readPage(state));
       } else if (input.kind === 'raw') {
-        if (
-          input.key === 'model-popup' &&
-          target === 'desktop' &&
-          (input.event as { kind?: string })?.kind === 'dismiss'
-        )
+        if (input.key === 'model-popup' && (input.event as { kind?: string })?.kind === 'dismiss')
           close(state);
         else if (input.key === 'close' || input.key === 'default-close') close(state);
         else if (input.key === 'defaults') state.defaultsOpen = true;
@@ -569,14 +572,8 @@ export function models<N extends Node>(
             }
           } else if (input.key === 'default-refresh') actions.push(...readPage(state));
           else if (input.key === 'refresh') actions.push(...read(state));
-          else if (input.key === 'previous' && target === 'tui' && !state.pending) {
-            state.offset = Math.max(0, state.offset - 3);
-            state.active = state.offset;
-          } else if (input.key === 'more' && !state.pending) {
-            if (target === 'tui' && state.offset + 3 < state.choices.length) {
-              state.offset += 3;
-              state.active = state.offset;
-            } else if (state.next) actions.push(...read(state, true));
+          else if (input.key === 'more' && !state.pending) {
+            if (state.next) actions.push(...read(state, true));
           } else if (
             (input.key === 'next-choice' || input.key === 'previous-choice') &&
             editableChoices(state, props)
@@ -588,7 +585,6 @@ export function models<N extends Node>(
                 state.active + (input.key === 'next-choice' ? 1 : -1),
               ),
             );
-            if (target === 'tui') state.offset = Math.floor(state.active / 3) * 3;
             reveal(state);
           } else if (editableChoices(state, props) && /^choose-(0|[1-9][0-9]*)$/.test(input.key)) {
             const choice = state.choices[Number(input.key.slice(7))];
