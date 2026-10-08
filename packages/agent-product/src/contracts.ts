@@ -21,6 +21,7 @@ import {
   contracts as native,
   type Contract,
   type AgentSession,
+  type InteractionRecord,
   type SettingsModelChoice,
   type ThinkingLevel,
   type SettingsDefaultModel,
@@ -119,6 +120,19 @@ export interface SessionDetailsProps {
   busy: boolean;
   session: AgentSession | null;
 }
+export type QuestionDraft =
+  | { kind: 'option'; index: number }
+  | { kind: 'skip' }
+  | { kind: 'text'; observation: EditorObservation };
+export interface QuestionEditorProps {
+  theme: Theme;
+  locale: string;
+  open: boolean;
+  busy: boolean;
+  checking: boolean;
+  status: string;
+  record: InteractionRecord;
+}
 export interface ModelDefaultProps {
   theme: Theme;
   locale: string;
@@ -184,11 +198,13 @@ const session = native.agent.interface.methods.list.output;
 const defs = {
   ...native.agent.interface.methods.directories.output.$defs,
   ...editor.props.$defs,
+  ...editor.events.changed.$defs,
   ...native.markdown.interface.props.$defs,
   ...native.secretInput.interface.props.$defs,
   ...session.$defs,
   ...native.agent.interface.methods.history.output.$defs,
   ...native.agent.interface.methods.toolSource.output.$defs,
+  ...native.agent.interface.methods.respond.output.$defs,
 };
 const themeSchema = object({
   background: { type: 'integer', minimum: 0, maximum: 4294967295 },
@@ -409,6 +425,54 @@ export const queueEditorContract = component(
     check: object({}),
   },
   editor.captures,
+);
+export const questionEditorContract = component(
+  'maka.agent.QuestionEditor',
+  object({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    busy: { type: 'boolean' },
+    checking: { type: 'boolean' },
+    status: string,
+    record: { $ref: '#/$defs/InteractionRecord' },
+  }),
+  {
+    closed: object({}),
+    check: object({}),
+    submit: withDefs(
+      object({
+        requestId: string,
+        answers: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 3,
+          items: {
+            oneOf: [
+              object({
+                kind: { const: 'option' },
+                index: { type: 'integer', minimum: 0, maximum: 2 },
+              }),
+              object({ kind: { const: 'skip' } }),
+              object({ kind: { const: 'text' }, observation: editor.events.changed }),
+            ],
+          },
+        },
+      }),
+    ),
+  },
+  {
+    snapshot: {
+      ...editor.captures.snapshot,
+      input: withDefs(
+        object({
+          requestId: string,
+          index: { type: 'integer', minimum: 0, maximum: 2 },
+          snapshot: editor.captures.snapshot.input,
+        }),
+      ),
+    },
+  },
 );
 export const composerContract = component(
   'maka.agent.Composer',

@@ -23,6 +23,7 @@
 pub mod contract;
 mod model;
 mod owner;
+pub mod questions;
 mod service;
 mod tools;
 mod workspace;
@@ -37,6 +38,7 @@ pub const IMPLEMENTATION: &str = "maka.agent.api";
 pub const EXPORT: &str = "agent";
 
 pub fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
+    questions::provide(registry)?;
     registry.insert(
         IMPLEMENTATION.into(),
         Arc::new(|context, configuration| {

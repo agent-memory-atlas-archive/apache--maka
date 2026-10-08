@@ -697,6 +697,7 @@ test('both product compositions use actual immutable package refs and check in t
     assert.deepEqual(readFileSync(bundle), originalBytes);
     for (const productName of ['agent', 'studio'])
       for (const presentation of ['desktop', 'tui']) {
+        const questionsEnabled = productName === 'agent' && presentation === 'desktop';
         const configuration = {
           presentation,
           locale: 'zh-Hant-HK',
@@ -706,7 +707,16 @@ test('both product compositions use actual immutable package refs and check in t
             workspaceRoots: [{ label: 'Projects', path: '/private/product-workspace' }],
             maxActiveRuns: 1,
             maxSteps: 1,
-            tools: [],
+            tools: questionsEnabled
+              ? [
+                  {
+                    name: 'AskUserQuestion',
+                    description: 'Ask required questions.',
+                    import: 'questions',
+                    method: 'ask',
+                  },
+                ]
+              : [],
           },
           hostRoot: '/private/product-fixture',
           hostDeployment: uuid(80),
@@ -764,6 +774,24 @@ test('both product compositions use actual immutable package refs and check in t
           keys[productName === 'agent' ? 'gateway' : 'studio-gateway'],
         ]);
         assert.equal('agent' in business.imports, productName === 'agent');
+        assert.equal('questions' in host.instances, questionsEnabled);
+        if (questionsEnabled) {
+          assert.equal(host.instances.questions.key, keys.questions);
+          assert.deepEqual(host.instances.agent.bindings.questions, [
+            { kind: 'instance', path: ['questions'], export: 'questions' },
+          ]);
+          assert.deepEqual(business.native, [
+            {
+              origin: [keys.agent],
+              consumer: [keys.agent],
+              provider: [keys.questions],
+              export: 'questions',
+              methods: ['ask'],
+              recovery: true,
+            },
+          ]);
+        } else assert.equal(business.native, undefined);
+
         assert.equal(business.deployment, configuration.hostDeployment);
         assert.deepEqual(
           business.imports.settings.methods,
@@ -2882,6 +2910,7 @@ function modelSlots(node, result = []) {
     ...(node.children ?? []),
     node.trigger,
     node.content,
+    node.props?.content,
     typeof node.background === 'object' ? node.background : null,
   ].filter(Boolean))
     modelSlots(child, result);
@@ -8089,5 +8118,207 @@ for (const target of ['desktop', 'tui']) {
     });
     assert.equal(client.state.catalog.revision, 'all');
     assert.equal(client.state.selected.id, session.id);
+  });
+}
+
+const questionRecord = {
+  sessionId: 'session',
+  turnId: 'turn',
+  runId: 'run',
+  requestId: 'question_original',
+  createdAt: 1,
+  request: {
+    kind: 'question',
+    toolUseId: 'tool',
+    questions: [
+      { question: 'Choose a format', options: [{ label: 'Brief' }, { label: 'Detailed' }] },
+      { question: 'Any details?', options: [{ label: 'Yes' }, { label: 'No' }] },
+      { question: 'Optional?', options: [{ label: 'Yes' }, { label: 'No' }] },
+    ],
+  },
+  outcome: null,
+};
+for (const target of ['tui', 'desktop']) {
+  async function questionClient() {
+    const definition = await import(
+      pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+    );
+    definition.activate({ locale: 'en' });
+    const client = new Client(definition.component).start({
+      run: { invocationId: 'run', state: 'running' },
+    });
+    const watch = structuredClone(client.state.watch),
+      epoch = client.state.epoch;
+    client.input({
+      kind: 'action',
+      key: watch.key,
+      event: {
+        status: 'updated',
+        value: {
+          kind: 'interactions',
+          pending: {
+            revision: 3,
+            entries: [{ requestId: questionRecord.requestId, kind: 'question' }],
+          },
+        },
+      },
+    });
+    assert.deepEqual(client.state.watch, watch);
+    assert.equal(client.state.epoch, epoch);
+    client.raw('question-open-' + questionRecord.requestId);
+    client.query('interaction', structuredClone(questionRecord));
+    client.question = (name, event = {}) =>
+      client.input({
+        kind: 'component',
+        child: `question-form-${client.state.question.attempt}`,
+        name,
+        event,
+      });
+    return client;
+  }
+  test(`${target} question answers capture original fields and recover without resubmission`, async () => {
+    const client = await questionClient();
+    const child = modelSlots(client.output.frame.view).find(
+      (node) => node.binding === 'questionEditor',
+    );
+    client.question('submit', {
+      requestId: questionRecord.requestId,
+      answers: [
+        { kind: 'option', index: 0 },
+        { kind: 'text', observation: draft },
+        { kind: 'skip' },
+      ],
+    });
+    const read = client.find('read');
+    assert.equal(read.resources.text.child, child.key);
+    assert.deepEqual(read.resources.text.input, {
+      requestId: questionRecord.requestId,
+      index: 1,
+      snapshot: { kind: 'at_revision', owner: draft.snapshot.text.owner, revision: 4 },
+    });
+    client.query('read', { text: 'Hello', metadata: draft.snapshot.text });
+    const respond = client.find('respond');
+    assert.deepEqual(respond.input, {
+      sessionId: 'session',
+      requestId: questionRecord.requestId,
+      answer: { kind: 'question', answers: ['Brief', 'Hello', null] },
+    });
+    const original = { ...reference, method: 'respond' };
+    client.complete(respond, {
+      status: 'operation',
+      reply: { reference: original, receipt: { kind: 'unavailable', diagnostic: 'disconnected' } },
+    });
+    assert.deepEqual(client.state.uncertain.reference, original);
+    client.question('check');
+    assert.ok(client.output.actions.every((action) => action.method !== 'respond'));
+    assert.deepEqual(client.find('read').input, original);
+    const resolved = {
+      ...questionRecord,
+      outcome: {
+        kind: 'question_answer',
+        answers: ['Detailed', 'Other answer', null],
+        committedAt: 5,
+      },
+    };
+    client.query('interaction', resolved);
+    assert.deepEqual(client.state.question.record, resolved);
+    assert.ok(client.state.uncertain, 'a canonical read does not invent an operation receipt');
+    client.question('submit', {
+      requestId: questionRecord.requestId,
+      answers: [{ kind: 'skip' }, { kind: 'skip' }, { kind: 'skip' }],
+    });
+    assert.equal(client.output.actions.length, 0);
+    client.query('read', {
+      reference: original,
+      receipt: {
+        kind: 'recorded',
+        outcome: { kind: 'returned', value: { kind: 'recorded', record: resolved } },
+        cleanup: { kind: 'confirmed' },
+      },
+    });
+    assert.equal(client.state.uncertain, null);
+    assert.equal(client.state.command, null, 'answer never resets the Composer');
+  });
+  test(`${target} closing during native answer capture never admits a late response`, async () => {
+    const client = await questionClient();
+    client.question('submit', {
+      requestId: questionRecord.requestId,
+      answers: [
+        { kind: 'option', index: 0 },
+        { kind: 'text', observation: draft },
+        { kind: 'skip' },
+      ],
+    });
+    const read = client.find('read');
+    client.question('closed');
+    client.complete(read, {
+      status: 'succeeded',
+      value: { text: 'Hello', metadata: draft.snapshot.text },
+    });
+    assert.equal(client.state.dialog, null);
+    assert.equal(client.output.actions.length, 0);
+    assert.ok(![...client.actions.values()].some((action) => action.method === 'respond'));
+    client.raw('question-open-' + questionRecord.requestId);
+    assert.equal(client.state.question.record.requestId, questionRecord.requestId);
+  });
+  test(`${target} question form preserves three native drafts and requires an explicit submit`, async () => {
+    const { component } = await import(
+      pathToFileURL(resolve(root, `dist/packages/question-editor/${target}.js`))
+    );
+    const props = {
+      theme: values.appearance[0],
+      locale: 'en',
+      open: true,
+      busy: false,
+      checking: false,
+      status: '',
+      record: questionRecord,
+    };
+    let result = component.mount(props, {});
+    const input = (value) => {
+      result = component.event(structuredClone(result.frame.state), value, props, {});
+    };
+    const raw = (key) => input({ kind: 'raw', key, event: {} });
+    const fields = () => modelSlots(result.frame.view).filter((node) => node.binding === 'editor');
+    assert.equal(fields().length, 3);
+    assert.ok(fields().every((field) => field.props.autoFocus === false));
+    assert.equal(result.frame.view.children[0].children[0].key, 'close');
+    raw('submit');
+    assert.equal(result.events.length, 0);
+    raw('option-0-0');
+    raw('question-1');
+    input({ kind: 'component', child: 'answer-1', name: 'changed', event: draft });
+    raw('text-1');
+    raw('question-2');
+    raw('skip-2');
+    assert.equal(result.events.length, 0);
+    const identities = fields().map((field) => field.key);
+    result = component.update(result.frame.state, { ...props, open: false }, {});
+    result = component.update(result.frame.state, props, {});
+    assert.deepEqual(
+      fields().map((field) => field.key),
+      identities,
+    );
+    raw('submit');
+    assert.deepEqual(result.events[0].value.answers, [
+      { kind: 'option', index: 0 },
+      { kind: 'text', observation: draft },
+      { kind: 'skip' },
+    ]);
+    const capture = {
+      requestId: questionRecord.requestId,
+      index: 1,
+      snapshot: { kind: 'at_revision', owner: 'original-editor', revision: 4 },
+    };
+    assert.equal(
+      component.capture(result.frame.state, props, 'snapshot', capture).source.child,
+      'answer-1',
+    );
+    assert.throws(() =>
+      component.capture(result.frame.state, props, 'snapshot', {
+        ...capture,
+        requestId: 'changed',
+      }),
+    );
   });
 }

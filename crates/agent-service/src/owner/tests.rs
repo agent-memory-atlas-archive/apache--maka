@@ -20,6 +20,9 @@
 #[path = "tests/service_tools.rs"]
 mod service_tools;
 
+#[path = "tests/interactions.rs"]
+mod interactions;
+
 #[path = "tests/queue.rs"]
 mod queue;
 
@@ -449,12 +452,7 @@ impl Fixture {
         };
         if let Some(tooling) = &tooling {
             settings.max_steps = 2;
-            settings.tools = vec![contract::ServiceTool {
-                name: "Counter".into(),
-                description: "Increment the explicitly selected counter.".into(),
-                import: "counter".into(),
-                method: tooling.method().into(),
-            }];
+            settings.tools = vec![tooling.selection()];
         }
         let (mut input, mut packages) = input(&settings);
         if let Some(tooling) = &tooling {

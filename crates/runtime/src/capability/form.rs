@@ -20,26 +20,26 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct FormInput {
     pub message: String,
     pub requester: FormRequester,
     pub fields: Vec<FormField>,
 }
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FormRequester {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
 }
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FormOption {
     pub value: String,
     pub label: String,
 }
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct FormField {
     pub name: String,
     pub label: String,
@@ -49,7 +49,7 @@ pub struct FormField {
     #[serde(flatten)]
     pub spec: FormFieldSpec,
 }
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(
     tag = "kind",
     rename_all = "snake_case",
@@ -101,7 +101,7 @@ pub enum FormFieldSpec {
         max_items: Option<usize>,
     },
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum FormFormat {
     Email,
@@ -110,7 +110,7 @@ pub enum FormFormat {
     DateTime,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum FormValue {
     String(String),
@@ -119,7 +119,7 @@ pub enum FormValue {
     Strings(Vec<String>),
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum FormResult {
     Accept { values: BTreeMap<String, FormValue> },

@@ -8182,6 +8182,7 @@ dependencies = [
  "maka-plugin-core",
  "maka-plugins",
  "maka-presentation",
+ "maka-protocol",
  "maka-providers",
  "maka-runtime",
  "maka-runtime-host",

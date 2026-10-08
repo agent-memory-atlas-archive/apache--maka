@@ -132,6 +132,7 @@ pub(super) struct Setup {
     counter: Option<Arc<Counter>>,
     granted: bool,
     query: bool,
+    questions: bool,
 }
 impl Setup {
     fn javascript() -> Self {
@@ -139,6 +140,7 @@ impl Setup {
             counter: None,
             granted: true,
             query: false,
+            questions: false,
         }
     }
     fn native(counter: Arc<Counter>, granted: bool) -> Self {
@@ -146,10 +148,57 @@ impl Setup {
             counter: Some(counter),
             granted,
             query: false,
+            questions: false,
+        }
+    }
+    pub(super) fn questions() -> Self {
+        Self {
+            counter: None,
+            granted: true,
+            query: false,
+            questions: true,
+        }
+    }
+    fn contract(&self) -> Contract {
+        if self.questions {
+            crate::questions::contract()
+        } else {
+            counter_contract()
+        }
+    }
+    fn export(&self) -> &str {
+        if self.questions {
+            crate::questions::EXPORT
+        } else {
+            "Counter"
         }
     }
     pub(super) fn method(&self) -> &str {
-        if self.query { "read" } else { "write" }
+        if self.questions {
+            "ask"
+        } else if self.query {
+            "read"
+        } else {
+            "write"
+        }
+    }
+    pub(super) fn selection(&self) -> contract::ServiceTool {
+        contract::ServiceTool {
+            name: if self.questions {
+                "AskUserQuestion"
+            } else {
+                "Counter"
+            }
+            .into(),
+            description: if self.questions {
+                "Ask required bounded questions."
+            } else {
+                "Increment the explicitly selected counter."
+            }
+            .into(),
+            import: "service".into(),
+            method: self.method().into(),
+        }
     }
     pub(super) fn install(&self, input: &mut Input, packages: &mut Vec<Package>) {
         let mut manifest = packages[0].manifest().clone();
@@ -162,9 +211,9 @@ impl Setup {
             .unwrap()
             .imports
             .insert(
-                "counter".into(),
+                "service".into(),
                 Import {
-                    contract: counter_contract(),
+                    contract: self.contract(),
                     cardinality: Cardinality::One,
                 },
             );
@@ -180,28 +229,30 @@ impl Setup {
             .unwrap()
             .bindings
             .insert(
-                "counter".into(),
+                "service".into(),
                 vec![Target::Instance {
-                    path: vec!["counter".into()],
-                    export: "Counter".into(),
+                    path: vec!["service".into()],
+                    export: self.export().into(),
                 }],
             );
         packages[0] = provider;
-        let implementation = if self.counter.is_some() {
+        let implementation = if self.questions {
+            json!({"kind":"native","implementation":crate::questions::IMPLEMENTATION})
+        } else if self.counter.is_some() {
             json!({"kind":"native","implementation":"fixture.counter"})
         } else {
             json!({"kind":"javascript","module":"counter.mjs","realm":"shared"})
         };
         let mut files = BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({"schemaVersion":2,"id":"fixture.counter","application":{"entries":{"host":{
             "implementation":implementation,"configuration":{"type":"object","additionalProperties":false},"imports":{},
-            "exports":{"Counter":{"contract":counter_contract(),"availability":"required"}}
+            "exports":{(self.export()):{"contract":self.contract(),"availability":"required"}}
         }}}})).unwrap())]);
-        if self.counter.is_none() {
+        if self.counter.is_none() && !self.questions {
             files.insert("counter.mjs".into(), format!(r#"let effects=0; export function activate(){{return {{Counter:{{contract:{},service:['counter']}}}};}} export const counter={{write({{amount}}){{return {{effects:effects+=amount}};}},read(){{return {{effects}};}}}};"#, serde_json::to_string(&counter_contract()).unwrap()).into_bytes());
         }
         let package = Package::new(files).unwrap();
         input.instances.insert(
-            "counter".into(),
+            "service".into(),
             Node {
                 key: Uuid::from_u128(21),
                 package: package.application_ref().into(),
@@ -216,6 +267,9 @@ impl Setup {
         packages.push(package);
     }
     pub(super) fn provide(&self, registry: &mut NativeRegistry) {
+        if self.questions {
+            crate::questions::provide(registry).unwrap();
+        }
         if let Some(counter) = &self.counter {
             let counter = counter.clone();
             registry
@@ -248,7 +302,7 @@ impl Setup {
                     origin: id(1),
                     consumer: id(1),
                     provider: id(21),
-                    export: "Counter".into(),
+                    export: self.export().into(),
                     methods: [self.method().into()].into(),
                     recovery: true,
                 }]

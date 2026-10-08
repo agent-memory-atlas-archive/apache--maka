@@ -38,9 +38,34 @@ pub struct InteractionCommit {
 }
 
 impl EventLog {
+    /// Publish for the exact live execution, checking capacity in the same
+    /// transaction as insertion. Independent native producers share this gate.
+    pub async fn establish_run_interaction(
+        &self,
+        invocation: &maka_runtime::event::Invocation,
+        request: &InteractionRecord,
+    ) -> Result<InteractionCommit, StoreError> {
+        if request.session_id != invocation.session_id
+            || request.turn_id != invocation.turn_id
+            || request.run_id != invocation.run_id
+        {
+            return Err(invalid("interaction does not belong to invocation"));
+        }
+        entity_id(&invocation.invocation_id).map_err(invalid)?;
+        self.establish(request, Some(invocation.clone())).await
+    }
+
     pub async fn establish_interaction(
         &self,
         request: &InteractionRecord,
+    ) -> Result<InteractionCommit, StoreError> {
+        self.establish(request, None).await
+    }
+
+    async fn establish(
+        &self,
+        request: &InteractionRecord,
+        invocation: Option<maka_runtime::event::Invocation>,
     ) -> Result<InteractionCommit, StoreError> {
         self.validate_root()?;
         request.validate().map_err(invalid)?;
@@ -62,6 +87,19 @@ impl EventLog {
                     }
                     crate::sessions::removal::require_accepting(&mut tx, &request.session_id)
                         .await?;
+                    if let Some(invocation) = invocation {
+                        let turn = crate::turns::read(&mut tx, &request.session_id, None)
+                            .await?
+                            .ok_or_else(|| invalid("interaction invocation is unavailable"))?;
+                        if turn.invocation != invocation
+                            || matches!(turn.state, crate::turns::InvocationState::Ended { .. })
+                        {
+                            return Err(invalid("interaction invocation is no longer active"));
+                        }
+                        if pending(&mut tx, &request.session_id).await?.len() >= 16 {
+                            return Err(invalid("pending interaction capacity exhausted"));
+                        }
+                    }
                     permissions::require_revision(&mut tx, &request).await?;
                     sqlx::query("INSERT INTO interaction_requests VALUES (?, ?, ?, ?)")
                         .bind(&request.request_id)

@@ -349,12 +349,29 @@ impl Handler for Agent {
                     let operation = context.operation().ok_or("agent_mutation_required")?;
                     encode(owner.edit_queue(decode(input)?, operation).await?)
                 }
+                "pendingInteractions" => {
+                    let input: SessionRead = decode(input)?;
+                    encode(owner.pending_interactions(&input.session_id).await?)
+                }
+                "interaction" => {
+                    let input: InteractionRead = decode(input)?;
+                    encode(
+                        owner
+                            .interaction(&input.session_id, &input.request_id)
+                            .await?,
+                    )
+                }
+                "respond" => {
+                    context.operation().ok_or("agent_mutation_required")?;
+                    encode(owner.respond(decode(input)?).await?)
+                }
                 "watch" => {
                     let input: Watch = decode(input)?;
                     owner.session(&input.session_id).await?;
                     let mut commits = owner.store.subscribe_commits();
                     let mut after = input.after;
                     let mut queue_revision = None;
+                    let mut interactions_revision = None;
                     loop {
                         if context.scope().cancellation.is_cancelled() {
                             return Err("agent_observation_cancelled".into());
@@ -373,6 +390,13 @@ impl Handler for Agent {
                             maka_js_runtime::plugin::check_json_delivery(&update, 48 * 1024)
                                 .map_err(|_| "agent_queue_unavailable")?;
                             context.emit(update).await?;
+                        }
+                        let pending = owner.pending_interactions(&input.session_id).await?;
+                        if interactions_revision != Some(pending.revision) {
+                            interactions_revision = Some(pending.revision);
+                            context
+                                .emit(encode(DeliveryPage::Interactions { pending })?)
+                                .await?;
                         }
                         owner.session(&input.session_id).await?;
                         let through = *commits.borrow();

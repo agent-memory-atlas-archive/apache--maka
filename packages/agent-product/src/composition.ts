@@ -32,6 +32,8 @@ export const packageNames = [
   'directory-picker',
   'session-details',
   'queue-editor',
+  'question-editor',
+  'questions',
   'help',
   'studio',
   'studio-gateway',
@@ -290,7 +292,13 @@ export function composition(configuration: CompositionConfiguration): Applicatio
   const { keys } = configuration;
   const { host, managementHost, ui, remoteExports, connections, local, remote, node } =
     settingsComposition(configuration, 'gateway');
-  host.instances.agent = node('agent', { ...configuration.agent });
+  const asksQuestions = configuration.agent.tools.some((tool) => tool.import === 'questions');
+  host.instances.agent = node(
+    'agent',
+    { ...configuration.agent },
+    asksQuestions ? { questions: [local('questions', 'questions')] } : {},
+  );
+  if (asksQuestions) host.instances.questions = node('questions');
   host.instances.gateway!.bindings!.agent = [local('agent', 'agent')];
   Object.assign(ui.instances, {
     workspace: node(
@@ -307,6 +315,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         directories: [local('directory-picker', 'DirectoryPicker')],
         details: [local('session-details', 'SessionDetails')],
         queueEditor: [local('queue-editor', 'QueueEditor')],
+        questionEditor: [local('question-editor', 'QuestionEditor')],
         help: [local('help', 'Help')],
         models: [local('models', 'Models')],
         connections: [local('connections', 'Connections')],
@@ -353,6 +362,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
     ),
     help: node('help', {}, { reading: [local('reading-area', 'ReadingArea')] }),
     'queue-editor': node('queue-editor', {}, { editor: [local('editor', 'Textarea')] }),
+    'question-editor': node('question-editor', {}, { editor: [local('editor', 'Textarea')] }),
     composer: node('composer', {}, { editor: [local('editor', 'Textarea')] }),
     ...(configuration.presentation === 'tui' ? { rows: node('rows') } : {}),
     navigation: node('navigation'),
@@ -387,6 +397,19 @@ export function composition(configuration: CompositionConfiguration): Applicatio
   Object.assign(connections.hosts.find((host) => host.name === 'local')!.imports, {
     agent: { methods: Object.keys(contracts.agent.interface.methods), recovery: true },
   });
+  if (asksQuestions)
+    Object.assign(connections.hosts.find((host) => host.name === 'local')!, {
+      native: [
+        {
+          origin: [keys.agent],
+          consumer: [keys.agent],
+          provider: [keys.questions],
+          export: 'questions',
+          methods: ['ask'],
+          recovery: true,
+        },
+      ],
+    });
   return { host, managementHost, ui, remoteExports, connections };
 }
 /** Independent configuration workbench: no Agent capability or conversation UI. */

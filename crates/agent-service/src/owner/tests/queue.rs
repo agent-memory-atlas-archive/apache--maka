@@ -235,6 +235,9 @@ async fn queue_controls_are_bounded_revisioned_and_observed_without_transcript_p
         let first = watch.recv().await.unwrap();
         assert_eq!(first["kind"], "queue");
         assert_eq!(first["queue"], queue);
+        let interactions = watch.recv().await.unwrap();
+        assert_eq!(interactions["kind"], "interactions");
+        assert_eq!(interactions["pending"]["entries"], json!([]));
         let events = watch.recv().await.unwrap();
         assert_eq!(events["kind"], "events");
         assert_eq!(events["events"], json!([]));
@@ -248,6 +251,7 @@ async fn queue_controls_are_bounded_revisioned_and_observed_without_transcript_p
         let notice = loop {
             let update = watch.recv().await.unwrap();
             if update["kind"] == "queue" { break update; }
+            if update["kind"] == "interactions" { continue; }
             assert_eq!(update["through"], through);
             assert_eq!(update["events"], json!([]));
         };

@@ -24,6 +24,9 @@ import type {
   ThinkingLevel,
   AgentDeliveryPage,
   AgentQueue,
+  AgentPendingInteractions,
+  InteractionRecord,
+  AgentInteractionResult,
   AgentQueueMessage,
   AgentQueueMessageResult,
   AgentHistoryPage,
@@ -62,6 +65,8 @@ import type {
   Message,
   Theme,
   QueueEditorProps,
+  QuestionDraft,
+  QuestionEditorProps,
   SelectedModel,
 } from './contracts.js';
 import { sameValue } from './value.js';
@@ -104,6 +109,9 @@ type Request =
       field: ToolSourceField;
       position: SourcePosition;
     }
+  | { kind: 'question'; attempt: number; sessionId: string; requestId: string }
+  | { kind: 'questionRead'; attempt: number; index: number; draft: EditorObservation }
+  | { kind: 'respond'; attempt: number; sessionId: string; requestId: string }
   | { kind: 'create' }
   | { kind: 'createDirectory'; title: string }
   | {
@@ -121,7 +129,7 @@ type Request =
   | { kind: 'restorePage' }
   | { kind: 'restoreReceipt'; reference: RecoveryRef; cursor: number };
 type Mutation =
-  | Extract<Request, { kind: 'create' | 'send' | 'stop' | 'queue' }>
+  | Extract<Request, { kind: 'create' | 'send' | 'stop' | 'queue' | 'respond' }>
   | { kind: 'restored' };
 interface DisplayPart extends AgentPart {
   invocationId: string | null;
@@ -152,7 +160,7 @@ export interface State {
   settingsOpen: boolean;
   deploymentOpen: boolean;
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
-  dialog: 'palette' | 'directories' | 'details' | 'help' | 'queue' | null;
+  dialog: 'palette' | 'directories' | 'details' | 'help' | 'queue' | 'question' | null;
   window: { page: Extract<AgentHistoryPage, { kind: 'ready' }>; latest: boolean } | null;
   navigation: number;
   image: { sessionId: string; through: number; sequence: number } | null;
@@ -179,6 +187,15 @@ export interface State {
   queue: AgentQueue | null;
   queueEdit: QueueEdit | null;
   queueDraft: EditorObservation | null;
+  interactions: AgentPendingInteractions | null;
+  question: {
+    attempt: number;
+    sessionId: string;
+    requestId: string;
+    record: InteractionRecord | null;
+    notice: Notice;
+  } | null;
+  questionSubmission: { attempt: number; answers: (string | null)[]; waiting: number[] } | null;
   runThrough: number;
   loading: boolean;
   live: {
@@ -399,6 +416,7 @@ function select(state: State, actions: Action[], session: AgentSession) {
   state.parts = [];
   state.run = null;
   state.queue = null;
+  state.interactions = null;
   state.watch = null;
   state.runThrough = 0;
   state.live = [];
@@ -445,6 +463,8 @@ function mutationPending(state: State) {
       [
         'read',
         'queueRead',
+        'questionRead',
+        'respond',
         'create',
         'createDirectory',
         'send',
@@ -625,9 +645,145 @@ function initializeQueueEdit(state: State) {
   };
   edit.body = null;
 }
+function questionChild(state: State) {
+  return `question-form-${state.question?.attempt ?? 0}`;
+}
+function readQuestion(state: State, actions: Action[]) {
+  const question = state.question;
+  if (
+    !question ||
+    Object.values(state.pending).some(
+      (r) => r.kind === 'question' && r.attempt === question.attempt,
+    )
+  )
+    return;
+  intent(
+    state,
+    actions,
+    {
+      kind: 'question',
+      attempt: question.attempt,
+      sessionId: question.sessionId,
+      requestId: question.requestId,
+    },
+    'agent',
+    'interaction',
+    { sessionId: question.sessionId, requestId: question.requestId },
+  );
+}
+function respondQuestion(state: State, actions: Action[]) {
+  const submission = state.questionSubmission,
+    question = state.question;
+  if (!submission || submission.waiting.length) return;
+  state.questionSubmission = null;
+  if (
+    !question ||
+    submission.attempt !== question.attempt ||
+    state.dialog !== 'question' ||
+    state.selected?.id !== question.sessionId ||
+    state.selected.archived ||
+    !question.record ||
+    question.record.outcome
+  )
+    return;
+  intent(
+    state,
+    actions,
+    {
+      kind: 'respond',
+      attempt: question.attempt,
+      sessionId: question.sessionId,
+      requestId: question.requestId,
+    },
+    'agent',
+    'respond',
+    {
+      sessionId: question.sessionId,
+      requestId: question.requestId,
+      answer: { kind: 'question', answers: submission.answers },
+    },
+  );
+}
+function submitQuestion(
+  state: State,
+  actions: Action[],
+  event: { requestId: string; answers: QuestionDraft[] },
+) {
+  const question = state.question;
+  if (
+    !question ||
+    !question.record ||
+    question.record.request.kind !== 'question' ||
+    question.record.outcome ||
+    state.dialog !== 'question' ||
+    state.selected?.id !== question.sessionId ||
+    state.selected.archived ||
+    event.requestId !== question.requestId ||
+    mutationPending(state)
+  )
+    return;
+  const questions = question.record.request.questions;
+  if (event.answers.length !== questions.length) return;
+  const answers: (string | null)[] = [],
+    waiting: number[] = [];
+  for (const [index, answer] of event.answers.entries()) {
+    if (answer.kind === 'skip') answers.push(null);
+    else if (answer.kind === 'option' && questions[index].options[answer.index])
+      answers.push(questions[index].options[answer.index].label);
+    else if (
+      answer.kind === 'text' &&
+      !answer.observation.snapshot.marked &&
+      answer.observation.snapshot.text.bytes > 0 &&
+      answer.observation.snapshot.text.bytes <= 2048
+    ) {
+      answers.push(null);
+      waiting.push(index);
+    } else {
+      question.notice = 'questionInvalid';
+      return;
+    }
+  }
+  question.notice = null;
+  state.questionSubmission = { attempt: question.attempt, answers, waiting };
+  for (const index of waiting) {
+    const answer = event.answers[index];
+    if (answer.kind !== 'text') continue;
+    const draft = answer.observation;
+    intent(
+      state,
+      actions,
+      { kind: 'questionRead', attempt: question.attempt, index, draft },
+      'reader',
+      'read',
+      { start: 0, end: draft.snapshot.text.bytes },
+      {
+        text: {
+          child: questionChild(state),
+          method: 'snapshot',
+          input: {
+            requestId: question.requestId,
+            index,
+            snapshot: {
+              kind: 'at_revision',
+              owner: draft.snapshot.text.owner,
+              revision: draft.snapshot.text.revision,
+            },
+          },
+        },
+      },
+    );
+  }
+  respondQuestion(state, actions);
+}
+function checkQuestion(state: State, actions: Action[]) {
+  if (state.uncertain && !Object.values(state.pending).some((r) => r.kind === 'receipt'))
+    intent(state, actions, { kind: 'receipt' }, 'receipts', 'read', state.uncertain.reference);
+  readQuestion(state, actions);
+}
 function closeDialog(state: State) {
   // Cancel follows the original queue sheet: discard this edit, not an accepted operation.
   if (state.dialog === 'queue') state.queueEdit = null;
+  if (state.dialog === 'question') state.questionSubmission = null;
   state.dialog = null;
 }
 function settled(state: State, actions: Action[], request: Mutation, value: unknown) {
@@ -658,6 +814,22 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
       state.queueDraft.revision === request.saved.draft.revision
     )
       closeDialog(state);
+  } else if (request.kind === 'respond') {
+    const result = value as AgentInteractionResult;
+    const question = state.question;
+    if (question?.attempt === request.attempt) {
+      if (
+        result.kind === 'recorded' &&
+        result.record.sessionId === request.sessionId &&
+        result.record.requestId === request.requestId &&
+        sameValue(result.record.request, question.record?.request)
+      ) {
+        question.record = result.record;
+        question.notice = null;
+      } else question.notice = 'questionChanged';
+    }
+    if (state.selected?.id === request.sessionId) observe(state, actions);
+    if (!catalogPending(state)) catalog(state, actions);
   } else if (request.kind === 'send') {
     const started = value as AgentSendResult;
     if (started.sessionId !== request.sessionId) {
@@ -690,6 +862,21 @@ function receipt(state: State, actions: Action[], request: Mutation, reply: Oper
   }
 }
 function queryFailed(state: State, request: Request) {
+  if (
+    request.kind === 'question' ||
+    request.kind === 'questionRead' ||
+    request.kind === 'respond'
+  ) {
+    if (state.question?.attempt === request.attempt)
+      state.question.notice =
+        request.kind === 'questionRead'
+          ? 'questionInvalid'
+          : request.kind === 'respond'
+            ? 'questionUnknown'
+            : 'questionUnavailable';
+    if (state.questionSubmission?.attempt === request.attempt) state.questionSubmission = null;
+    return;
+  }
   if (request.kind === 'queueBody' || request.kind === 'queueRead') {
     if (state.queueEdit?.attempt === request.attempt) {
       if (request.kind === 'queueBody') state.queueEdit.phase = 'failed';
@@ -728,6 +915,48 @@ function queryFailed(state: State, request: Request) {
 }
 function querySucceeded(state: State, actions: Action[], request: Request, value: unknown) {
   switch (request.kind) {
+    case 'question': {
+      const question = state.question,
+        record = value as InteractionRecord;
+      if (!question || question.attempt !== request.attempt) break;
+      if (
+        record.sessionId !== request.sessionId ||
+        record.requestId !== request.requestId ||
+        record.request.kind !== 'question' ||
+        (question.record && !sameValue(question.record.request, record.request))
+      ) {
+        question.notice = 'questionUnavailable';
+        break;
+      }
+      if (!question.record?.outcome) question.record = record;
+      question.notice = null;
+      break;
+    }
+    case 'questionRead': {
+      const submission = state.questionSubmission,
+        question = state.question;
+      if (
+        !submission ||
+        !question ||
+        submission.attempt !== request.attempt ||
+        question.attempt !== request.attempt
+      )
+        break;
+      const chunk = value as TextChunk;
+      if (
+        !sameValue(chunk.metadata, request.draft.snapshot.text) ||
+        utf8Bytes(chunk.text) !== request.draft.snapshot.text.bytes ||
+        !chunk.text.trim()
+      ) {
+        state.questionSubmission = null;
+        question.notice = 'questionInvalid';
+        break;
+      }
+      submission.answers[request.index] = chunk.text;
+      submission.waiting = submission.waiting.filter((index) => index !== request.index);
+      respondQuestion(state, actions);
+      break;
+    }
     case 'createDirectory': {
       const page = value as AgentDirectoryPage;
       if (page.kind !== 'roots' || !page.roots.length) {
@@ -765,7 +994,10 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
       }
       if (observation.session.revision >= state.selected!.revision)
         state.selected = observation.session;
-      if (observation.through >= state.runThrough) {
+      if (
+        observation.through >= state.runThrough &&
+        observation.session.revision >= state.selected!.revision
+      ) {
         state.run = observation.run ?? null;
         state.runThrough = observation.through;
       }
@@ -1079,6 +1311,23 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
   }
 }
 function delivery(state: State, page: AgentDeliveryPage, actions: Action[]) {
+  if (page.kind === 'interactions') {
+    if (!state.interactions || page.pending.revision > state.interactions.revision) {
+      const changed =
+        !state.interactions || !sameValue(state.interactions.entries, page.pending.entries);
+      state.interactions = page.pending;
+      if (changed) observe(state, actions);
+      const question = state.question;
+      if (
+        question?.record &&
+        !question.record.outcome &&
+        question.sessionId === state.selected?.id &&
+        !page.pending.entries.some((entry) => entry.requestId === question.requestId)
+      )
+        readQuestion(state, actions);
+    }
+    return;
+  }
   if (page.kind === 'queue') {
     if (!state.queue || page.queue.revision > state.queue.revision) state.queue = page.queue;
     return;
@@ -1461,6 +1710,15 @@ function frame<N extends Node>(
                   { row: true, gap: 0, terminal: { wrap: true } },
                 ),
               ]),
+          ...(state.interactions?.entries
+            .filter((entry) => entry.kind === 'question')
+            .map((entry, index) =>
+              ui.button(
+                `question-open-${entry.requestId}`,
+                `${text.questionsTitle} ${index + 1}`,
+                !state.selected || state.selected.archived || mutationPending(state),
+              ),
+            ) ?? []),
           ...(status ? [ui.text('status', status, 13, theme.muted)] : []),
           ...(state.uncertain
             ? [
@@ -1666,19 +1924,67 @@ function frame<N extends Node>(
     state,
     ui.dialog(
       'workspace-dialog',
-      state.dialog === 'directories'
-        ? text.directoryTitle
-        : state.dialog === 'details'
-          ? text.detailsTitle
-          : state.dialog === 'queue'
-            ? text.queueEdit
-            : state.dialog === 'help'
-              ? text.helpTitle
-              : text.paletteTitle,
+      state.dialog === 'question'
+        ? text.questionsTitle
+        : state.dialog === 'directories'
+          ? text.directoryTitle
+          : state.dialog === 'details'
+            ? text.detailsTitle
+            : state.dialog === 'queue'
+              ? text.queueEdit
+              : state.dialog === 'help'
+                ? text.helpTitle
+                : text.paletteTitle,
       background,
       ui.box(
         'dialog-content',
         [
+          ...(state.question?.record
+            ? [
+                presentation.slot(
+                  questionChild(state),
+                  'questionEditor',
+                  {
+                    theme,
+                    locale,
+                    open: state.dialog === 'question',
+                    record: state.question.record,
+                    busy:
+                      mutationPending(state) ||
+                      state.selected?.id !== state.question.sessionId ||
+                      !!state.selected?.archived,
+                    checking: Object.values(state.pending).some(
+                      (r) => r.kind === 'question' || r.kind === 'receipt' || r.kind === 'respond',
+                    ),
+                    status: state.uncertain
+                      ? text.questionUnknown
+                      : state.question.notice
+                        ? text[state.question.notice]
+                        : state.selected?.id !== state.question.sessionId
+                          ? text.questionChanged
+                          : '',
+                  } satisfies QuestionEditorProps,
+                  { closed: 'closed', submit: 'submit', check: 'check' },
+                ),
+              ]
+            : [
+                ui.box(
+                  'question-loading',
+                  [
+                    ui.button('question-close', text.closeModels),
+                    ui.text(
+                      'question-loading-text',
+                      state.question?.notice ? text[state.question.notice] : text.questionLoading,
+                    ),
+                    ui.button(
+                      'question-check',
+                      text.check,
+                      Object.values(state.pending).some((r) => r.kind === 'question'),
+                    ),
+                  ],
+                  { visible: state.dialog === 'question', terminal: { grow: 1 } },
+                ),
+              ]),
           presentation.slot(
             'queue-editor',
             'queueEditor',
@@ -1812,6 +2118,9 @@ export function workspace<N extends Node>(
         queue: null,
         queueEdit: null,
         queueDraft: null,
+        interactions: null,
+        question: null,
+        questionSubmission: null,
         runThrough: 0,
         loading: false,
         live: [],
@@ -1857,7 +2166,8 @@ export function workspace<N extends Node>(
               (request.kind === 'create' ||
                 request.kind === 'send' ||
                 request.kind === 'stop' ||
-                request.kind === 'queue')
+                request.kind === 'queue' ||
+                request.kind === 'respond')
             )
               receipt(state, actions, request, outcome.reply);
             else if (outcome.status === 'succeeded')
@@ -1869,6 +2179,19 @@ export function workspace<N extends Node>(
           }
         }
       } else if (input.kind === 'component') {
+        if (input.child === questionChild(state)) {
+          if (state.dialog === 'question') {
+            if (input.name === 'closed') closeDialog(state);
+            else if (input.name === 'check') checkQuestion(state, actions);
+            else if (input.name === 'submit')
+              submitQuestion(
+                state,
+                actions,
+                input.event as { requestId: string; answers: QuestionDraft[] },
+              );
+          }
+          return frame(presentation, locale, state, values, actions);
+        }
         if (input.child === 'queue-editor') {
           const edit = state.queueEdit;
           if (input.name === 'changed') {
@@ -2270,7 +2593,38 @@ export function workspace<N extends Node>(
             history(state, actions, { kind: 'tail' }, state.latestKnown, true);
         }
       } else if (input.kind === 'raw') {
-        if (input.key === 'catalog-filter-all' || input.key === 'catalog-filter-needs_you') {
+        if (
+          input.key.startsWith('question-open-') &&
+          !state.dialog &&
+          !mutationPending(state) &&
+          state.selected &&
+          !state.selected.archived
+        ) {
+          const requestId = input.key.slice(14);
+          if (
+            state.interactions?.entries.some(
+              (entry) => entry.requestId === requestId && entry.kind === 'question',
+            )
+          ) {
+            if (
+              state.question?.requestId !== requestId ||
+              state.question.sessionId !== state.selected.id
+            )
+              state.question = {
+                attempt: ++state.serial,
+                sessionId: state.selected.id,
+                requestId,
+                record: null,
+                notice: null,
+              };
+            state.dialog = 'question';
+            readQuestion(state, actions);
+          }
+        } else if (input.key === 'question-close' && state.dialog === 'question')
+          closeDialog(state);
+        else if (input.key === 'question-check' && state.dialog === 'question')
+          checkQuestion(state, actions);
+        else if (input.key === 'catalog-filter-all' || input.key === 'catalog-filter-needs_you') {
           const filter = input.key === 'catalog-filter-all' ? 'all' : 'needs_you';
           if (!mutationPending(state) && !catalogPending(state) && state.catalogFilter !== filter) {
             state.catalogFilter = filter;

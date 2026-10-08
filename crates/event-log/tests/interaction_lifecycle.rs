@@ -205,3 +205,112 @@ async fn run_closure_guards_every_terminal_and_restart_closes_even_sealed_runs()
     assert!(log.close_abandoned_interactions(u64::MAX).await.is_err());
     log.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn native_publication_checks_current_run_and_capacity_atomically() {
+    use maka_runtime::event::{Fact, Invocation, InvocationOutcome, RuntimeEvent};
+    let temp = tempfile::tempdir().unwrap();
+    let log = EventLog::open(&temp.path().join("native.sqlite"))
+        .await
+        .unwrap();
+    log.create_session("session", "create", &serde_json::json!({}), 1)
+        .await
+        .unwrap();
+    let invocation = Invocation {
+        session_id: "session".into(),
+        turn_id: "turn".into(),
+        run_id: "run".into(),
+        invocation_id: "invocation".into(),
+    };
+    assert!(
+        log.establish_run_interaction(&invocation, &request("absent"))
+            .await
+            .is_err()
+    );
+    log.append(
+        &EventWrite::plain(RuntimeEvent::new(
+            invocation.clone(),
+            Fact::InvocationOpened {
+                configuration: None,
+                input: maka_runtime::input::InvocationInput::Code {
+                    source: "test".into(),
+                },
+            },
+        ))
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+    for changed in [
+        Invocation {
+            invocation_id: "foreign".into(),
+            ..invocation.clone()
+        },
+        Invocation {
+            session_id: "foreign".into(),
+            ..invocation.clone()
+        },
+        Invocation {
+            turn_id: "foreign".into(),
+            ..invocation.clone()
+        },
+        Invocation {
+            run_id: "foreign".into(),
+            ..invocation.clone()
+        },
+    ] {
+        assert!(
+            log.establish_run_interaction(&changed, &request("foreign"))
+                .await
+                .is_err()
+        );
+    }
+    for index in 0..15 {
+        log.establish_run_interaction(&invocation, &request(&format!("native_{index}")))
+            .await
+            .unwrap();
+    }
+    let last = request("last");
+    let overflow = request("overflow");
+    let (a, b) = tokio::join!(
+        log.establish_run_interaction(&invocation, &last),
+        log.establish_run_interaction(&invocation, &overflow),
+    );
+    assert_ne!(a.is_ok(), b.is_ok());
+    assert_eq!(log.pending_interactions("session").await.unwrap().len(), 16);
+    let accepted = if a.is_ok() { &last } else { &overflow };
+    assert!(
+        log.establish_run_interaction(&invocation, accepted)
+            .await
+            .unwrap()
+            .matches
+    );
+    log.close_run_interactions(&invocation, ClosureReason::TurnTerminal, 30)
+        .await
+        .unwrap();
+    log.append(
+        &EventWrite::plain(RuntimeEvent::new(
+            invocation.clone(),
+            Fact::InvocationEnded {
+                outcome: InvocationOutcome::Completed,
+            },
+        ))
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        log.establish_run_interaction(&invocation, &request("late"))
+            .await
+            .is_err()
+    );
+    assert!(log.interaction("late").await.unwrap().is_none());
+    assert!(
+        log.establish_run_interaction(&invocation, accepted)
+            .await
+            .unwrap()
+            .matches,
+        "an exact retry reads its original fact after closure"
+    );
+    log.close().await.unwrap();
+}

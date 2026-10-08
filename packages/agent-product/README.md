@@ -79,6 +79,8 @@ selected Host using its original explicit configuration and grants.
 
 Sending requires an authenticated, enabled connection and an explicitly selected model from the selected Host Root. The existing [trusted local connection](../../crates/application-bridge/README.md) owns Host startup and cleanup. Product code neither chooses a fallback model nor imports private execution objects.
 
+The optional Questions service uses the existing canonical interaction records. To enable model questions, include `{ "name": "AskUserQuestion", "description": "Ask 1–3 bounded questions required to continue.", "import": "questions", "method": "ask" }` in `agent.tools`. Authoring explicitly selects the native provider and its trusted call grant; `tools: []` keeps a text-only composition. Pending questions appear in the conversation. The ordinary QuestionEditor supports choices, native text drafts and per-question skip; submission uses the original Workspace receipt/history recovery. Closing the sheet retains its draft. Permission, form and client-capability approval flows remain separate unfinished work.
+
 ## State and verification
 
 The native editor owns the draft, selection and IME. JavaScript retains only observations, command receipts and workflow state. Sending captures an immutable resource at the original editor owner/revision; only a durable admission permits clearing that draft. Unknown results keep the original recovery reference and are queried, never resent automatically. New mounts read their persisted caller history and recover original receipts without clearing a new editor.

@@ -27,7 +27,7 @@ use crate::capability::{FormField, FormRequester, FormResult};
 pub use question::{InteractionQuestion, QuestionOption};
 pub use validation::{MAX_SAFE_INTEGER, entity_id};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GrantCapability {
     Browser,
@@ -36,7 +36,7 @@ pub enum GrantCapability {
     Mcp,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "kind",
     rename_all = "snake_case",
@@ -54,7 +54,7 @@ pub enum GrantScope {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GrantTarget {
     pub provider_id: String,
@@ -65,14 +65,14 @@ pub struct GrantTarget {
     pub scope: GrantScope,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Decision {
     Allow,
     Deny,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ClosureReason {
     TurnStopped,
@@ -83,7 +83,7 @@ pub enum ClosureReason {
     ProviderDisconnected,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(
     tag = "kind",
     rename_all = "snake_case",
@@ -92,6 +92,7 @@ pub enum ClosureReason {
 )]
 pub enum InteractionRequest {
     Permissions {
+        #[schemars(with = "crate::schema::RequiredNullable<String>")]
         tool_use_id: Option<String>,
         base_revision: u64,
         request: PermissionRequest,
@@ -112,7 +113,7 @@ pub enum InteractionRequest {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum InteractionAnswer {
     Permissions {
@@ -130,7 +131,7 @@ pub enum InteractionAnswer {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(
     tag = "kind",
     rename_all = "snake_case",
@@ -221,7 +222,7 @@ impl InteractionAnswer {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InteractionRecord {
     pub session_id: String,
@@ -230,10 +231,11 @@ pub struct InteractionRecord {
     pub request_id: String,
     pub created_at: u64,
     pub request: InteractionRequest,
+    #[schemars(with = "crate::schema::RequiredNullable<InteractionOutcome>")]
     pub outcome: Option<InteractionOutcome>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionGrant {
     pub session_id: String,

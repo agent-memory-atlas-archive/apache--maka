@@ -113,6 +113,7 @@ const specifications = {
       directories: one(own.directoryPickerContract),
       details: one(own.sessionDetailsContract),
       queueEditor: one(own.queueEditorContract),
+      questionEditor: one(own.questionEditorContract),
       help: one(own.helpContract),
       navigation: one(own.navigationContract),
       timeline: one(own.timelineContract),
@@ -197,6 +198,12 @@ specifications['queue-editor'] = {
   contract: own.queueEditorContract,
   export: 'QueueEditor',
   module: 'queue-editor',
+  imports: { editor: one(sdk.contracts.textarea) },
+};
+specifications['question-editor'] = {
+  contract: own.questionEditorContract,
+  export: 'QuestionEditor',
+  module: 'question-editor',
   imports: { editor: one(sdk.contracts.textarea) },
 };
 specifications['session-details'] = {
@@ -451,11 +458,21 @@ const mechanical = {
   },
   agent: {
     entries: {
-      host: native(
-        'maka.agent.api',
-        { agent: required(sdk.contracts.agent) },
-        sdk.configurations.agent,
-      ),
+      host: {
+        ...native(
+          'maka.agent.api',
+          { agent: required(sdk.contracts.agent) },
+          sdk.configurations.agent,
+        ),
+        imports: {
+          questions: { contract: sdk.contracts.questions, cardinality: { kind: 'optional' } },
+        },
+      },
+    },
+  },
+  questions: {
+    entries: {
+      host: native('maka.interactions.questions', { questions: required(sdk.contracts.questions) }),
     },
   },
   receipts: {

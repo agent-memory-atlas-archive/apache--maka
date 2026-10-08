@@ -102,3 +102,5 @@ owner/revision 对应的不可变字节，以观察到的来源版本交给 Host
 原生 Agent 只读捕获发布的工作区目录。新会话复用已选会话的不可变工作区；首次创建先查询发布目录选择，再提交创建操作。会话投影包含真实路径、目录／工作区身份与标签。`metadata` 使用原 Session revision CAS 修改标题／标签；确定的业务拒绝返回普通结果，持久化不确定性仍保留原操作日志。命令面板同时搜索标题、ID、路径和标签。“在其他目录新建对话”在两种呈现中打开可替换的普通 DirectoryPicker 插件。它浏览已发布根与一页有界子目录，使用原生 Input／Reader 筛选本页，将原始观察到的选择交给 Root 的记录式创建路径。筛选框中上下方向键与 Enter 浏览目录，鼠标或 Tab 可前往“在此新建”。同一受控 Dialog 保留命令面板和目录选择器的挂载，切换或取消时保留各自原生输入。可替换的普通 SessionDetails 插件使用原生 Input／Textarea／Reader 编辑标题和标签，以原 Session revision 保存。冲突保留草稿，显式复核后才能采用新的保存依据；关闭弹窗保留草稿与未决操作引用，成功保存不会替换对话 epoch、run、watch 或 Composer。
 
 普通 `help` 插件提供两端的键盘帮助。F1 在当前页面上打开帮助，Esc 或关闭按钮返回原页面和原生草稿；命令面板也提供帮助入口。它只导入 ReadingArea，主题和翻译由产品维护。正文独立滚动，页脚在窄终端中仍可关闭。
+
+可选 Questions 服务沿用原有 canonical 交互记录。要启用模型提问，在 `agent.tools` 中加入 `{ "name": "AskUserQuestion", "description": "询问继续任务所需的 1–3 个有界问题。", "import": "questions", "method": "ask" }`。组合生成器显式选择原生提供者及其调用授权；`tools: []` 仍为纯文字组合。待回答问题显示在会话中，普通 QuestionEditor 支持选项、原生文字草稿和逐题跳过，提交复用 Workspace 的原操作回执与历史恢复。关闭弹窗保留草稿。权限、表单与客户端能力授权流程仍待单独接入。

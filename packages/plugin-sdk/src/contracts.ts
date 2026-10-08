@@ -4428,6 +4428,817 @@ export const contracts = {
           },
           resources: {},
         },
+        interaction: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentInteractionRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              requestId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'requestId'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'InteractionRecord',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              turnId: {
+                type: 'string',
+              },
+              runId: {
+                type: 'string',
+              },
+              requestId: {
+                type: 'string',
+              },
+              createdAt: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              request: {
+                $ref: '#/$defs/InteractionRequest',
+              },
+              outcome: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/InteractionOutcome',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'sessionId',
+              'turnId',
+              'runId',
+              'requestId',
+              'createdAt',
+              'request',
+              'outcome',
+            ],
+            $defs: {
+              InteractionRequest: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      toolUseId: {
+                        type: ['string', 'null'],
+                      },
+                      baseRevision: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      request: {
+                        $ref: '#/$defs/PermissionRequest',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'permissions',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'toolUseId', 'baseRevision', 'request'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      toolUseId: {
+                        type: 'string',
+                      },
+                      questions: {
+                        type: 'array',
+                        items: {
+                          $ref: '#/$defs/InteractionQuestion',
+                        },
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'question',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'toolUseId', 'questions'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      toolUseId: {
+                        type: 'string',
+                      },
+                      message: {
+                        type: 'string',
+                      },
+                      requester: {
+                        $ref: '#/$defs/FormRequester',
+                      },
+                      fields: {
+                        type: 'array',
+                        items: {
+                          $ref: '#/$defs/FormField',
+                        },
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'form',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'toolUseId', 'message', 'requester', 'fields'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      toolUseId: {
+                        type: 'string',
+                      },
+                      target: {
+                        $ref: '#/$defs/GrantTarget',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'client_capability',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'toolUseId', 'target'],
+                  },
+                ],
+              },
+              PermissionRequest: {
+                description:
+                  'The Host supplies the real operation description; it is display information,\nnot authority inferred from a command string or a plugin-supplied Session ID.',
+                type: 'object',
+                properties: {
+                  reason: {
+                    type: 'string',
+                  },
+                  command: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/PermissionCommand',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  permissions: {
+                    $ref: '#/$defs/Permissions',
+                  },
+                },
+                additionalProperties: false,
+                required: ['reason', 'permissions'],
+              },
+              PermissionCommand: {
+                type: 'object',
+                properties: {
+                  command: {
+                    type: 'string',
+                  },
+                  cwd: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['command', 'cwd'],
+              },
+              Permissions: {
+                type: 'object',
+                properties: {
+                  filesystem: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/Rule',
+                    },
+                    maxItems: 32,
+                  },
+                  network: {
+                    $ref: '#/$defs/Network',
+                  },
+                },
+                additionalProperties: false,
+                required: ['filesystem', 'network'],
+              },
+              Rule: {
+                description:
+                  'Paths have executor-native meaning. Validate and materialize them on the\nexecution host, never on a remote Desktop. This document alone grants nothing.',
+                type: 'object',
+                properties: {
+                  path: {
+                    type: 'string',
+                  },
+                  scope: {
+                    $ref: '#/$defs/Scope',
+                  },
+                  access: {
+                    $ref: '#/$defs/Access',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'scope', 'access'],
+              },
+              Scope: {
+                type: 'string',
+                enum: ['subtree', 'exact'],
+              },
+              Access: {
+                description:
+                  'Equal-path conflict priority is different from authority breadth: deny wins.',
+                type: 'string',
+                enum: ['read', 'write', 'deny'],
+              },
+              Network: {
+                oneOf: [
+                  {
+                    type: 'string',
+                    enum: ['denied', 'allowed'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      restricted: {
+                        type: 'object',
+                        properties: {
+                          destinations: {
+                            type: 'array',
+                            uniqueItems: true,
+                            items: {
+                              $ref: '#/$defs/Destination',
+                            },
+                            maxItems: 128,
+                          },
+                        },
+                        additionalProperties: false,
+                        required: ['destinations'],
+                      },
+                    },
+                    required: ['restricted'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+              Destination: {
+                description:
+                  'Destination authority, independent of the upstream proxy used to reach it.\nA domain grant does not authorize its subdomains or other ports.',
+                type: 'object',
+                properties: {
+                  host: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 253,
+                  },
+                  port: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 1,
+                    maximum: 65535,
+                  },
+                },
+                additionalProperties: false,
+                required: ['host', 'port'],
+              },
+              InteractionQuestion: {
+                type: 'object',
+                properties: {
+                  question: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 1024,
+                  },
+                  options: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/QuestionOption',
+                    },
+                    minItems: 2,
+                    maxItems: 3,
+                  },
+                },
+                additionalProperties: false,
+                required: ['question', 'options'],
+              },
+              QuestionOption: {
+                type: 'object',
+                properties: {
+                  label: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 256,
+                  },
+                  description: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                },
+                additionalProperties: false,
+                required: ['label'],
+              },
+              FormRequester: {
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: ['string', 'null'],
+                  },
+                },
+                additionalProperties: false,
+                required: ['name'],
+              },
+              FormField: {
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  label: {
+                    type: 'string',
+                  },
+                  required: {
+                    type: 'boolean',
+                  },
+                  description: {
+                    type: ['string', 'null'],
+                  },
+                },
+                required: ['name', 'label', 'required'],
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      default: {
+                        type: ['string', 'null'],
+                      },
+                      minLength: {
+                        type: ['integer', 'null'],
+                        format: 'uint',
+                        minimum: 0,
+                      },
+                      maxLength: {
+                        type: ['integer', 'null'],
+                        format: 'uint',
+                        minimum: 0,
+                      },
+                      format: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/FormFormat',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'string',
+                      },
+                    },
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      default: {
+                        type: ['number', 'null'],
+                        format: 'double',
+                      },
+                      minimum: {
+                        type: ['number', 'null'],
+                        format: 'double',
+                      },
+                      maximum: {
+                        type: ['number', 'null'],
+                        format: 'double',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'number',
+                      },
+                    },
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      default: {
+                        type: ['number', 'null'],
+                        format: 'double',
+                      },
+                      minimum: {
+                        type: ['number', 'null'],
+                        format: 'double',
+                      },
+                      maximum: {
+                        type: ['number', 'null'],
+                        format: 'double',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'integer',
+                      },
+                    },
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      default: {
+                        type: ['boolean', 'null'],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'boolean',
+                      },
+                    },
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      options: {
+                        type: 'array',
+                        items: {
+                          $ref: '#/$defs/FormOption',
+                        },
+                      },
+                      default: {
+                        type: ['string', 'null'],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'single_select',
+                      },
+                    },
+                    required: ['kind', 'options'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      options: {
+                        type: 'array',
+                        items: {
+                          $ref: '#/$defs/FormOption',
+                        },
+                      },
+                      default: {
+                        type: ['array', 'null'],
+                        items: {
+                          type: 'string',
+                        },
+                      },
+                      minItems: {
+                        type: ['integer', 'null'],
+                        format: 'uint',
+                        minimum: 0,
+                      },
+                      maxItems: {
+                        type: ['integer', 'null'],
+                        format: 'uint',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'multi_select',
+                      },
+                    },
+                    required: ['kind', 'options'],
+                  },
+                ],
+              },
+              FormFormat: {
+                type: 'string',
+                enum: ['email', 'uri', 'date', 'date-time'],
+              },
+              FormOption: {
+                type: 'object',
+                properties: {
+                  value: {
+                    type: 'string',
+                  },
+                  label: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['value', 'label'],
+              },
+              GrantTarget: {
+                type: 'object',
+                properties: {
+                  providerId: {
+                    type: 'string',
+                  },
+                  contractId: {
+                    type: 'string',
+                  },
+                  serverId: {
+                    type: 'string',
+                  },
+                  toolName: {
+                    type: 'string',
+                  },
+                  capability: {
+                    $ref: '#/$defs/GrantCapability',
+                  },
+                  scope: {
+                    $ref: '#/$defs/GrantScope',
+                  },
+                },
+                required: [
+                  'providerId',
+                  'contractId',
+                  'serverId',
+                  'toolName',
+                  'capability',
+                  'scope',
+                ],
+              },
+              GrantCapability: {
+                type: 'string',
+                enum: ['browser', 'computer_use', 'desktop_mcp', 'mcp'],
+              },
+              GrantScope: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      origin: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'browser_origin',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'origin'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'capability',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      serverId: {
+                        type: 'string',
+                      },
+                      toolName: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'mcp_tool',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'serverId', 'toolName'],
+                  },
+                ],
+              },
+              InteractionOutcome: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      decision: {
+                        $ref: '#/$defs/Decision',
+                      },
+                      committedAt: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'permissions_decision',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'decision', 'committedAt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      answers: {
+                        type: 'array',
+                        items: {
+                          type: ['string', 'null'],
+                        },
+                      },
+                      committedAt: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'question_answer',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'answers', 'committedAt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      committedAt: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'form_answer',
+                      },
+                    },
+                    unevaluatedProperties: false,
+                    oneOf: [
+                      {
+                        type: 'object',
+                        properties: {
+                          values: {
+                            type: 'object',
+                            additionalProperties: {
+                              $ref: '#/$defs/FormValue',
+                            },
+                          },
+                          action: {
+                            type: 'string',
+                            const: 'accept',
+                          },
+                        },
+                        required: ['action', 'values'],
+                      },
+                      {
+                        type: 'object',
+                        properties: {
+                          action: {
+                            type: 'string',
+                            const: 'decline',
+                          },
+                        },
+                        required: ['action'],
+                      },
+                      {
+                        type: 'object',
+                        properties: {
+                          action: {
+                            type: 'string',
+                            const: 'cancel',
+                          },
+                        },
+                        required: ['action'],
+                      },
+                    ],
+                    required: ['kind', 'committedAt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      decision: {
+                        $ref: '#/$defs/Decision2',
+                      },
+                      committedAt: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'client_capability_decision',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'decision', 'committedAt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      reason: {
+                        $ref: '#/$defs/ClosureReason',
+                      },
+                      committedAt: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'closure',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'reason', 'committedAt'],
+                  },
+                ],
+              },
+              Decision: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      decision: {
+                        type: 'string',
+                        const: 'deny',
+                      },
+                    },
+                    required: ['decision'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      permissions: {
+                        $ref: '#/$defs/Permissions',
+                      },
+                      scope: {
+                        $ref: '#/$defs/Scope2',
+                      },
+                      decision: {
+                        type: 'string',
+                        const: 'allow',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['decision', 'permissions', 'scope'],
+                  },
+                ],
+              },
+              Scope2: {
+                type: 'string',
+                enum: ['once', 'turn', 'session'],
+              },
+              FormValue: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'number',
+                    format: 'double',
+                  },
+                  {
+                    type: 'boolean',
+                  },
+                  {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                ],
+              },
+              Decision2: {
+                type: 'string',
+                enum: ['allow', 'deny'],
+              },
+              ClosureReason: {
+                type: 'string',
+                enum: [
+                  'turn_stopped',
+                  'turn_terminal',
+                  'producer_cancelled',
+                  'timed_out',
+                  'host_restarted',
+                  'provider_disconnected',
+                ],
+              },
+            },
+          },
+          resources: {},
+        },
         list: {
           mode: 'query',
           input: {
@@ -4947,6 +5758,64 @@ export const contracts = {
           },
           resources: {},
         },
+        pendingInteractions: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentSessionRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentPendingInteractions',
+            type: 'object',
+            properties: {
+              revision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              entries: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/AgentInteractionSummary',
+                },
+                maxItems: 16,
+              },
+            },
+            additionalProperties: false,
+            required: ['revision', 'entries'],
+            $defs: {
+              AgentInteractionSummary: {
+                type: 'object',
+                properties: {
+                  requestId: {
+                    type: 'string',
+                  },
+                  kind: {
+                    $ref: '#/$defs/AgentInteractionKind',
+                  },
+                },
+                additionalProperties: false,
+                required: ['requestId', 'kind'],
+              },
+              AgentInteractionKind: {
+                type: 'string',
+                enum: ['question', 'permissions', 'form', 'client_capability'],
+              },
+            },
+          },
+          resources: {},
+        },
         queue: {
           mode: 'query',
           input: {
@@ -5093,6 +5962,1113 @@ export const contracts = {
                 additionalProperties: false,
               },
             ],
+          },
+          resources: {},
+        },
+        respond: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentInteractionRespond',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              requestId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              answer: {
+                $ref: '#/$defs/InteractionAnswer',
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'requestId', 'answer'],
+            $defs: {
+              InteractionAnswer: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      decision: {
+                        $ref: '#/$defs/Decision',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'permissions',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'decision'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      answers: {
+                        type: 'array',
+                        items: {
+                          type: ['string', 'null'],
+                        },
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'question',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'answers'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'form',
+                      },
+                    },
+                    unevaluatedProperties: false,
+                    oneOf: [
+                      {
+                        type: 'object',
+                        properties: {
+                          values: {
+                            type: 'object',
+                            additionalProperties: {
+                              $ref: '#/$defs/FormValue',
+                            },
+                          },
+                          action: {
+                            type: 'string',
+                            const: 'accept',
+                          },
+                        },
+                        required: ['action', 'values'],
+                      },
+                      {
+                        type: 'object',
+                        properties: {
+                          action: {
+                            type: 'string',
+                            const: 'decline',
+                          },
+                        },
+                        required: ['action'],
+                      },
+                      {
+                        type: 'object',
+                        properties: {
+                          action: {
+                            type: 'string',
+                            const: 'cancel',
+                          },
+                        },
+                        required: ['action'],
+                      },
+                    ],
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      decision: {
+                        $ref: '#/$defs/Decision2',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'client_capability',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'decision'],
+                  },
+                ],
+              },
+              Decision: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      decision: {
+                        type: 'string',
+                        const: 'deny',
+                      },
+                    },
+                    required: ['decision'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      permissions: {
+                        $ref: '#/$defs/Permissions',
+                      },
+                      scope: {
+                        $ref: '#/$defs/Scope2',
+                      },
+                      decision: {
+                        type: 'string',
+                        const: 'allow',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['decision', 'permissions', 'scope'],
+                  },
+                ],
+              },
+              Permissions: {
+                type: 'object',
+                properties: {
+                  filesystem: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/Rule',
+                    },
+                    maxItems: 32,
+                  },
+                  network: {
+                    $ref: '#/$defs/Network',
+                  },
+                },
+                additionalProperties: false,
+                required: ['filesystem', 'network'],
+              },
+              Rule: {
+                description:
+                  'Paths have executor-native meaning. Validate and materialize them on the\nexecution host, never on a remote Desktop. This document alone grants nothing.',
+                type: 'object',
+                properties: {
+                  path: {
+                    type: 'string',
+                  },
+                  scope: {
+                    $ref: '#/$defs/Scope',
+                  },
+                  access: {
+                    $ref: '#/$defs/Access',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'scope', 'access'],
+              },
+              Scope: {
+                type: 'string',
+                enum: ['subtree', 'exact'],
+              },
+              Access: {
+                description:
+                  'Equal-path conflict priority is different from authority breadth: deny wins.',
+                type: 'string',
+                enum: ['read', 'write', 'deny'],
+              },
+              Network: {
+                oneOf: [
+                  {
+                    type: 'string',
+                    enum: ['denied', 'allowed'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      restricted: {
+                        type: 'object',
+                        properties: {
+                          destinations: {
+                            type: 'array',
+                            uniqueItems: true,
+                            items: {
+                              $ref: '#/$defs/Destination',
+                            },
+                            maxItems: 128,
+                          },
+                        },
+                        additionalProperties: false,
+                        required: ['destinations'],
+                      },
+                    },
+                    required: ['restricted'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+              Destination: {
+                description:
+                  'Destination authority, independent of the upstream proxy used to reach it.\nA domain grant does not authorize its subdomains or other ports.',
+                type: 'object',
+                properties: {
+                  host: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 253,
+                  },
+                  port: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 1,
+                    maximum: 65535,
+                  },
+                },
+                additionalProperties: false,
+                required: ['host', 'port'],
+              },
+              Scope2: {
+                type: 'string',
+                enum: ['once', 'turn', 'session'],
+              },
+              FormValue: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'number',
+                    format: 'double',
+                  },
+                  {
+                    type: 'boolean',
+                  },
+                  {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                ],
+              },
+              Decision2: {
+                type: 'string',
+                enum: ['allow', 'deny'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentInteractionResult',
+            oneOf: [
+              {
+                description:
+                  'Includes a concurrent winner. Consumers inspect the canonical outcome.',
+                type: 'object',
+                properties: {
+                  record: {
+                    $ref: '#/$defs/InteractionRecord',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'recorded',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'record'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/AgentInteractionRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+            ],
+            $defs: {
+              InteractionRecord: {
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  turnId: {
+                    type: 'string',
+                  },
+                  runId: {
+                    type: 'string',
+                  },
+                  requestId: {
+                    type: 'string',
+                  },
+                  createdAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  request: {
+                    $ref: '#/$defs/InteractionRequest',
+                  },
+                  outcome: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/InteractionOutcome',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'sessionId',
+                  'turnId',
+                  'runId',
+                  'requestId',
+                  'createdAt',
+                  'request',
+                  'outcome',
+                ],
+              },
+              InteractionRequest: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      toolUseId: {
+                        type: ['string', 'null'],
+                      },
+                      baseRevision: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      request: {
+                        $ref: '#/$defs/PermissionRequest',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'permissions',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'toolUseId', 'baseRevision', 'request'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      toolUseId: {
+                        type: 'string',
+                      },
+                      questions: {
+                        type: 'array',
+                        items: {
+                          $ref: '#/$defs/InteractionQuestion',
+                        },
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'question',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'toolUseId', 'questions'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      toolUseId: {
+                        type: 'string',
+                      },
+                      message: {
+                        type: 'string',
+                      },
+                      requester: {
+                        $ref: '#/$defs/FormRequester',
+                      },
+                      fields: {
+                        type: 'array',
+                        items: {
+                          $ref: '#/$defs/FormField',
+                        },
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'form',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'toolUseId', 'message', 'requester', 'fields'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      toolUseId: {
+                        type: 'string',
+                      },
+                      target: {
+                        $ref: '#/$defs/GrantTarget',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'client_capability',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'toolUseId', 'target'],
+                  },
+                ],
+              },
+              PermissionRequest: {
+                description:
+                  'The Host supplies the real operation description; it is display information,\nnot authority inferred from a command string or a plugin-supplied Session ID.',
+                type: 'object',
+                properties: {
+                  reason: {
+                    type: 'string',
+                  },
+                  command: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/PermissionCommand',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  permissions: {
+                    $ref: '#/$defs/Permissions',
+                  },
+                },
+                additionalProperties: false,
+                required: ['reason', 'permissions'],
+              },
+              PermissionCommand: {
+                type: 'object',
+                properties: {
+                  command: {
+                    type: 'string',
+                  },
+                  cwd: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['command', 'cwd'],
+              },
+              Permissions: {
+                type: 'object',
+                properties: {
+                  filesystem: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/Rule',
+                    },
+                    maxItems: 32,
+                  },
+                  network: {
+                    $ref: '#/$defs/Network',
+                  },
+                },
+                additionalProperties: false,
+                required: ['filesystem', 'network'],
+              },
+              Rule: {
+                description:
+                  'Paths have executor-native meaning. Validate and materialize them on the\nexecution host, never on a remote Desktop. This document alone grants nothing.',
+                type: 'object',
+                properties: {
+                  path: {
+                    type: 'string',
+                  },
+                  scope: {
+                    $ref: '#/$defs/Scope',
+                  },
+                  access: {
+                    $ref: '#/$defs/Access',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'scope', 'access'],
+              },
+              Scope: {
+                type: 'string',
+                enum: ['subtree', 'exact'],
+              },
+              Access: {
+                description:
+                  'Equal-path conflict priority is different from authority breadth: deny wins.',
+                type: 'string',
+                enum: ['read', 'write', 'deny'],
+              },
+              Network: {
+                oneOf: [
+                  {
+                    type: 'string',
+                    enum: ['denied', 'allowed'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      restricted: {
+                        type: 'object',
+                        properties: {
+                          destinations: {
+                            type: 'array',
+                            uniqueItems: true,
+                            items: {
+                              $ref: '#/$defs/Destination',
+                            },
+                            maxItems: 128,
+                          },
+                        },
+                        additionalProperties: false,
+                        required: ['destinations'],
+                      },
+                    },
+                    required: ['restricted'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+              Destination: {
+                description:
+                  'Destination authority, independent of the upstream proxy used to reach it.\nA domain grant does not authorize its subdomains or other ports.',
+                type: 'object',
+                properties: {
+                  host: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 253,
+                  },
+                  port: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 1,
+                    maximum: 65535,
+                  },
+                },
+                additionalProperties: false,
+                required: ['host', 'port'],
+              },
+              InteractionQuestion: {
+                type: 'object',
+                properties: {
+                  question: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 1024,
+                  },
+                  options: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/QuestionOption',
+                    },
+                    minItems: 2,
+                    maxItems: 3,
+                  },
+                },
+                additionalProperties: false,
+                required: ['question', 'options'],
+              },
+              QuestionOption: {
+                type: 'object',
+                properties: {
+                  label: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 256,
+                  },
+                  description: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                },
+                additionalProperties: false,
+                required: ['label'],
+              },
+              FormRequester: {
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: ['string', 'null'],
+                  },
+                },
+                additionalProperties: false,
+                required: ['name'],
+              },
+              FormField: {
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  label: {
+                    type: 'string',
+                  },
+                  required: {
+                    type: 'boolean',
+                  },
+                  description: {
+                    type: ['string', 'null'],
+                  },
+                },
+                required: ['name', 'label', 'required'],
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      default: {
+                        type: ['string', 'null'],
+                      },
+                      minLength: {
+                        type: ['integer', 'null'],
+                        format: 'uint',
+                        minimum: 0,
+                      },
+                      maxLength: {
+                        type: ['integer', 'null'],
+                        format: 'uint',
+                        minimum: 0,
+                      },
+                      format: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/FormFormat',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'string',
+                      },
+                    },
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      default: {
+                        type: ['number', 'null'],
+                        format: 'double',
+                      },
+                      minimum: {
+                        type: ['number', 'null'],
+                        format: 'double',
+                      },
+                      maximum: {
+                        type: ['number', 'null'],
+                        format: 'double',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'number',
+                      },
+                    },
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      default: {
+                        type: ['number', 'null'],
+                        format: 'double',
+                      },
+                      minimum: {
+                        type: ['number', 'null'],
+                        format: 'double',
+                      },
+                      maximum: {
+                        type: ['number', 'null'],
+                        format: 'double',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'integer',
+                      },
+                    },
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      default: {
+                        type: ['boolean', 'null'],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'boolean',
+                      },
+                    },
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      options: {
+                        type: 'array',
+                        items: {
+                          $ref: '#/$defs/FormOption',
+                        },
+                      },
+                      default: {
+                        type: ['string', 'null'],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'single_select',
+                      },
+                    },
+                    required: ['kind', 'options'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      options: {
+                        type: 'array',
+                        items: {
+                          $ref: '#/$defs/FormOption',
+                        },
+                      },
+                      default: {
+                        type: ['array', 'null'],
+                        items: {
+                          type: 'string',
+                        },
+                      },
+                      minItems: {
+                        type: ['integer', 'null'],
+                        format: 'uint',
+                        minimum: 0,
+                      },
+                      maxItems: {
+                        type: ['integer', 'null'],
+                        format: 'uint',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'multi_select',
+                      },
+                    },
+                    required: ['kind', 'options'],
+                  },
+                ],
+              },
+              FormFormat: {
+                type: 'string',
+                enum: ['email', 'uri', 'date', 'date-time'],
+              },
+              FormOption: {
+                type: 'object',
+                properties: {
+                  value: {
+                    type: 'string',
+                  },
+                  label: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['value', 'label'],
+              },
+              GrantTarget: {
+                type: 'object',
+                properties: {
+                  providerId: {
+                    type: 'string',
+                  },
+                  contractId: {
+                    type: 'string',
+                  },
+                  serverId: {
+                    type: 'string',
+                  },
+                  toolName: {
+                    type: 'string',
+                  },
+                  capability: {
+                    $ref: '#/$defs/GrantCapability',
+                  },
+                  scope: {
+                    $ref: '#/$defs/GrantScope',
+                  },
+                },
+                required: [
+                  'providerId',
+                  'contractId',
+                  'serverId',
+                  'toolName',
+                  'capability',
+                  'scope',
+                ],
+              },
+              GrantCapability: {
+                type: 'string',
+                enum: ['browser', 'computer_use', 'desktop_mcp', 'mcp'],
+              },
+              GrantScope: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      origin: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'browser_origin',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'origin'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'capability',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      serverId: {
+                        type: 'string',
+                      },
+                      toolName: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'mcp_tool',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'serverId', 'toolName'],
+                  },
+                ],
+              },
+              InteractionOutcome: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      decision: {
+                        $ref: '#/$defs/Decision',
+                      },
+                      committedAt: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'permissions_decision',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'decision', 'committedAt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      answers: {
+                        type: 'array',
+                        items: {
+                          type: ['string', 'null'],
+                        },
+                      },
+                      committedAt: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'question_answer',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'answers', 'committedAt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      committedAt: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'form_answer',
+                      },
+                    },
+                    unevaluatedProperties: false,
+                    oneOf: [
+                      {
+                        type: 'object',
+                        properties: {
+                          values: {
+                            type: 'object',
+                            additionalProperties: {
+                              $ref: '#/$defs/FormValue',
+                            },
+                          },
+                          action: {
+                            type: 'string',
+                            const: 'accept',
+                          },
+                        },
+                        required: ['action', 'values'],
+                      },
+                      {
+                        type: 'object',
+                        properties: {
+                          action: {
+                            type: 'string',
+                            const: 'decline',
+                          },
+                        },
+                        required: ['action'],
+                      },
+                      {
+                        type: 'object',
+                        properties: {
+                          action: {
+                            type: 'string',
+                            const: 'cancel',
+                          },
+                        },
+                        required: ['action'],
+                      },
+                    ],
+                    required: ['kind', 'committedAt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      decision: {
+                        $ref: '#/$defs/Decision2',
+                      },
+                      committedAt: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'client_capability_decision',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'decision', 'committedAt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      reason: {
+                        $ref: '#/$defs/ClosureReason',
+                      },
+                      committedAt: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'closure',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'reason', 'committedAt'],
+                  },
+                ],
+              },
+              Decision: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      decision: {
+                        type: 'string',
+                        const: 'deny',
+                      },
+                    },
+                    required: ['decision'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      permissions: {
+                        $ref: '#/$defs/Permissions',
+                      },
+                      scope: {
+                        $ref: '#/$defs/Scope2',
+                      },
+                      decision: {
+                        type: 'string',
+                        const: 'allow',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['decision', 'permissions', 'scope'],
+                  },
+                ],
+              },
+              Scope2: {
+                type: 'string',
+                enum: ['once', 'turn', 'session'],
+              },
+              FormValue: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'number',
+                    format: 'double',
+                  },
+                  {
+                    type: 'boolean',
+                  },
+                  {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                ],
+              },
+              Decision2: {
+                type: 'string',
+                enum: ['allow', 'deny'],
+              },
+              ClosureReason: {
+                type: 'string',
+                enum: [
+                  'turn_stopped',
+                  'turn_terminal',
+                  'producer_cancelled',
+                  'timed_out',
+                  'host_restarted',
+                  'provider_disconnected',
+                ],
+              },
+              AgentInteractionRejection: {
+                type: 'string',
+                enum: ['closed', 'unavailable', 'invalid_answer', 'unsupported'],
+              },
+            },
           },
           resources: {},
         },
@@ -5670,6 +7646,20 @@ export const contracts = {
                 additionalProperties: false,
                 required: ['kind', 'queue'],
               },
+              {
+                type: 'object',
+                properties: {
+                  pending: {
+                    $ref: '#/$defs/AgentPendingInteractions',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'interactions',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'pending'],
+              },
             ],
             $defs: {
               AgentDelivery: {
@@ -5849,6 +7839,193 @@ export const contracts = {
               AgentQueueKind: {
                 type: 'string',
                 enum: ['in_flight', 'steering', 'followup'],
+              },
+              AgentPendingInteractions: {
+                type: 'object',
+                properties: {
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  entries: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/AgentInteractionSummary',
+                    },
+                    maxItems: 16,
+                  },
+                },
+                additionalProperties: false,
+                required: ['revision', 'entries'],
+              },
+              AgentInteractionSummary: {
+                type: 'object',
+                properties: {
+                  requestId: {
+                    type: 'string',
+                  },
+                  kind: {
+                    $ref: '#/$defs/AgentInteractionKind',
+                  },
+                },
+                additionalProperties: false,
+                required: ['requestId', 'kind'],
+              },
+              AgentInteractionKind: {
+                type: 'string',
+                enum: ['question', 'permissions', 'form', 'client_capability'],
+              },
+            },
+          },
+          resources: {},
+        },
+      },
+    },
+  },
+  questions: {
+    name: 'maka.interactions.Questions',
+    version: 1,
+    transport: 'remote',
+    interface: {
+      kind: 'service',
+      methods: {
+        ask: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              questions: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/InteractionQuestion',
+                },
+                minItems: 1,
+                maxItems: 3,
+              },
+            },
+            required: ['questions'],
+            title: 'QuestionAsk',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              InteractionQuestion: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  question: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 1024,
+                  },
+                  options: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/QuestionOption',
+                    },
+                    minItems: 2,
+                    maxItems: 3,
+                  },
+                },
+                required: ['question', 'options'],
+              },
+              QuestionOption: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  label: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 256,
+                  },
+                  description: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                },
+                required: ['label'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  answers: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/QuestionResponse',
+                    },
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'answered',
+                  },
+                },
+                required: ['kind', 'answers'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/ClosureReason',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'closed',
+                  },
+                },
+                required: ['kind', 'reason'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/QuestionRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                required: ['kind', 'reason'],
+              },
+            ],
+            title: 'QuestionResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              QuestionResponse: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  question: {
+                    type: 'string',
+                  },
+                  answer: {
+                    type: ['string', 'null'],
+                  },
+                },
+                required: ['question', 'answer'],
+              },
+              ClosureReason: {
+                type: 'string',
+                enum: [
+                  'turn_stopped',
+                  'turn_terminal',
+                  'producer_cancelled',
+                  'timed_out',
+                  'host_restarted',
+                  'provider_disconnected',
+                ],
+              },
+              QuestionRejection: {
+                type: 'string',
+                enum: ['invalid_input', 'unavailable'],
               },
             },
           },

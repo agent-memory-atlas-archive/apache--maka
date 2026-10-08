@@ -102,6 +102,13 @@ export type RuntimeProtocol =
   | AgentSend
   | AgentStop
   | AgentWatch
+  | AgentPendingInteractions
+  | AgentInteractionRead
+  | AgentInteractionRespond
+  | AgentInteractionResult
+  | QuestionAsk
+  | QuestionResult
+  | InteractionRecord
   | AgentSession
   | AgentSessionPage
   | AgentSendResult
@@ -1401,6 +1408,228 @@ export type AgentMetadataResult =
       reason: AgentRejection;
       kind: 'rejected';
     };
+export type AgentInteractionKind = 'question' | 'permissions' | 'form' | 'client_capability';
+export type InteractionAnswer =
+  | {
+      decision: Decision;
+      kind: 'permissions';
+    }
+  | {
+      answers: (string | null)[];
+      kind: 'question';
+    }
+  | ((
+      | {
+          values: {
+            [k: string]: FormValue | undefined;
+          };
+          action: 'accept';
+          [k: string]: unknown | undefined;
+        }
+      | {
+          action: 'decline';
+          [k: string]: unknown | undefined;
+        }
+      | {
+          action: 'cancel';
+          [k: string]: unknown | undefined;
+        }
+    ) & {
+      kind: 'form';
+      [k: string]: unknown | undefined;
+    })
+  | {
+      decision: Decision2;
+      kind: 'client_capability';
+    };
+export type Decision =
+  | {
+      decision: 'deny';
+    }
+  | {
+      permissions: Permissions;
+      scope: Scope2;
+      decision: 'allow';
+    };
+export type Scope = 'subtree' | 'exact';
+/**
+ * Equal-path conflict priority is different from authority breadth: deny wins.
+ */
+export type Access = 'read' | 'write' | 'deny';
+export type Network =
+  | ('denied' | 'allowed')
+  | {
+      restricted: {
+        /**
+         * @maxItems 128
+         */
+        destinations: Destination[];
+      };
+    };
+export type Scope2 = 'once' | 'turn' | 'session';
+export type FormValue = string | number | boolean | string[];
+export type Decision2 = 'allow' | 'deny';
+export type AgentInteractionResult =
+  | {
+      record: InteractionRecord;
+      kind: 'recorded';
+    }
+  | {
+      reason: AgentInteractionRejection;
+      kind: 'rejected';
+    };
+export type InteractionRequest =
+  | {
+      toolUseId: string | null;
+      baseRevision: number;
+      request: PermissionRequest;
+      kind: 'permissions';
+    }
+  | {
+      toolUseId: string;
+      questions: InteractionQuestion[];
+      kind: 'question';
+    }
+  | {
+      toolUseId: string;
+      message: string;
+      requester: FormRequester;
+      fields: FormField[];
+      kind: 'form';
+    }
+  | {
+      toolUseId: string;
+      target: GrantTarget;
+      kind: 'client_capability';
+    };
+export type FormField = {
+  name: string;
+  label: string;
+  required: boolean;
+  description?: string | null;
+  [k: string]: unknown | undefined;
+} & FormField1;
+export type FormField1 =
+  | {
+      default?: string | null;
+      minLength?: number | null;
+      maxLength?: number | null;
+      format?: FormFormat | null;
+      kind: 'string';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      default?: number | null;
+      minimum?: number | null;
+      maximum?: number | null;
+      kind: 'number';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      default?: number | null;
+      minimum?: number | null;
+      maximum?: number | null;
+      kind: 'integer';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      default?: boolean | null;
+      kind: 'boolean';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      options: FormOption[];
+      default?: string | null;
+      kind: 'single_select';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      options: FormOption[];
+      default?: string[] | null;
+      minItems?: number | null;
+      maxItems?: number | null;
+      kind: 'multi_select';
+      [k: string]: unknown | undefined;
+    };
+export type FormFormat = 'email' | 'uri' | 'date' | 'date-time';
+export type GrantCapability = 'browser' | 'computer_use' | 'desktop_mcp' | 'mcp';
+export type GrantScope =
+  | {
+      origin: string;
+      kind: 'browser_origin';
+    }
+  | {
+      kind: 'capability';
+    }
+  | {
+      serverId: string;
+      toolName: string;
+      kind: 'mcp_tool';
+    };
+export type InteractionOutcome =
+  | {
+      decision: Decision;
+      committedAt: number;
+      kind: 'permissions_decision';
+    }
+  | {
+      answers: (string | null)[];
+      committedAt: number;
+      kind: 'question_answer';
+    }
+  | ((
+      | {
+          values: {
+            [k: string]: FormValue | undefined;
+          };
+          action: 'accept';
+          [k: string]: unknown | undefined;
+        }
+      | {
+          action: 'decline';
+          [k: string]: unknown | undefined;
+        }
+      | {
+          action: 'cancel';
+          [k: string]: unknown | undefined;
+        }
+    ) & {
+      committedAt: number;
+      kind: 'form_answer';
+      [k: string]: unknown | undefined;
+    })
+  | {
+      decision: Decision2;
+      committedAt: number;
+      kind: 'client_capability_decision';
+    }
+  | {
+      reason: ClosureReason;
+      committedAt: number;
+      kind: 'closure';
+    };
+export type ClosureReason =
+  | 'turn_stopped'
+  | 'turn_terminal'
+  | 'producer_cancelled'
+  | 'timed_out'
+  | 'host_restarted'
+  | 'provider_disconnected';
+export type AgentInteractionRejection = 'closed' | 'unavailable' | 'invalid_answer' | 'unsupported';
+export type QuestionResult =
+  | {
+      answers: QuestionResponse[];
+      kind: 'answered';
+    }
+  | {
+      reason: ClosureReason;
+      kind: 'closed';
+    }
+  | {
+      reason: QuestionRejection;
+      kind: 'rejected';
+    };
+export type QuestionRejection = 'invalid_input' | 'unavailable';
 export type AgentSendResult =
   | {
       sessionId: string;
@@ -1482,6 +1711,10 @@ export type AgentDeliveryPage =
   | {
       queue: AgentQueue;
       kind: 'queue';
+    }
+  | {
+      pending: AgentPendingInteractions;
+      kind: 'interactions';
     };
 export type AgentQueueKind = 'in_flight' | 'steering' | 'followup';
 export type AgentQueueMessageResult =
@@ -3059,6 +3292,275 @@ export interface AgentStop {
 export interface AgentWatch {
   sessionId: string;
   after: number;
+}
+export interface AgentPendingInteractions {
+  revision: number;
+  /**
+   * @maxItems 16
+   */
+  entries:
+    | []
+    | [AgentInteractionSummary]
+    | [AgentInteractionSummary, AgentInteractionSummary]
+    | [AgentInteractionSummary, AgentInteractionSummary, AgentInteractionSummary]
+    | [
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+      ]
+    | [
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+      ]
+    | [
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+      ]
+    | [
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+      ]
+    | [
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+      ]
+    | [
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+      ]
+    | [
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+      ]
+    | [
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+      ]
+    | [
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+      ]
+    | [
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+      ]
+    | [
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+      ]
+    | [
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+      ]
+    | [
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+        AgentInteractionSummary,
+      ];
+}
+export interface AgentInteractionSummary {
+  requestId: string;
+  kind: AgentInteractionKind;
+}
+export interface AgentInteractionRead {
+  sessionId: string;
+  requestId: string;
+}
+export interface AgentInteractionRespond {
+  sessionId: string;
+  requestId: string;
+  answer: InteractionAnswer;
+}
+export interface Permissions {
+  /**
+   * @maxItems 32
+   */
+  filesystem: Rule[];
+  network: Network;
+}
+/**
+ * Paths have executor-native meaning. Validate and materialize them on the
+ * execution host, never on a remote Desktop. This document alone grants nothing.
+ */
+export interface Rule {
+  path: string;
+  scope: Scope;
+  access: Access;
+}
+/**
+ * Destination authority, independent of the upstream proxy used to reach it.
+ * A domain grant does not authorize its subdomains or other ports.
+ */
+export interface Destination {
+  host: string;
+  port: number;
+}
+export interface InteractionRecord {
+  sessionId: string;
+  turnId: string;
+  runId: string;
+  requestId: string;
+  createdAt: number;
+  request: InteractionRequest;
+  outcome: InteractionOutcome | null;
+}
+/**
+ * The Host supplies the real operation description; it is display information,
+ * not authority inferred from a command string or a plugin-supplied Session ID.
+ */
+export interface PermissionRequest {
+  reason: string;
+  command?: PermissionCommand | null;
+  permissions: Permissions;
+}
+export interface PermissionCommand {
+  command: string;
+  cwd: string;
+}
+export interface InteractionQuestion {
+  question: string;
+  /**
+   * @minItems 2
+   * @maxItems 3
+   */
+  options: [QuestionOption, QuestionOption] | [QuestionOption, QuestionOption, QuestionOption];
+}
+export interface QuestionOption {
+  label: string;
+  description?: string;
+}
+export interface FormRequester {
+  name: string;
+  source?: string | null;
+}
+export interface FormOption {
+  value: string;
+  label: string;
+}
+export interface GrantTarget {
+  providerId: string;
+  contractId: string;
+  serverId: string;
+  toolName: string;
+  capability: GrantCapability;
+  scope: GrantScope;
+  [k: string]: unknown | undefined;
+}
+export interface QuestionAsk {
+  /**
+   * @minItems 1
+   * @maxItems 3
+   */
+  questions:
+    | [InteractionQuestion]
+    | [InteractionQuestion, InteractionQuestion]
+    | [InteractionQuestion, InteractionQuestion, InteractionQuestion];
+}
+export interface QuestionResponse {
+  question: string;
+  answer: string | null;
 }
 export interface AgentSessionPage {
   revision: string;

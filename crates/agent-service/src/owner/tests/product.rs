@@ -266,10 +266,27 @@ fn packaged_product(fail_labels_initialization: bool) {
         );
         assert!(body.to_string().contains("Hello product"));
         response_ready.await.unwrap();
-        response(&mut socket).await;
+        super::interactions::question_response(&mut socket).await;
+        let (mut next, _) = listener.accept().await.unwrap();
+        let resumed = request_with_key(&mut next, KEY).await;
+        let result = resumed["messages"].as_array().unwrap().iter().find(|message| message["role"] == "tool").unwrap();
+        assert_eq!(serde_json::from_str::<Value>(result["content"].as_str().unwrap()).unwrap(), json!({"kind":"answered","answers":[
+            {"question":"Choose\nformat","answer":"Brief"}, {"question":"Any detail?","answer":"native answer"}, {"question":"Optional?","answer":null}
+        ]}));
+        response(&mut next).await;
     });
-    let peer = Arc::new(maka_application_bridge::transport::PeerPolicy::default());
-    let mut fixture = runtime.block_on(Fixture::with_peer(&base, 1, None, Some(peer.clone())));
+    let tooling = (!fail_labels_initialization).then(super::service_tools::Setup::questions);
+    let peer = tooling.as_ref().map_or_else(
+        || Arc::new(maka_application_bridge::transport::PeerPolicy::default()),
+        super::service_tools::Setup::policy,
+    );
+    let mut fixture = runtime.block_on(Fixture::with_services(
+        &base,
+        1,
+        None,
+        Some(peer.clone()),
+        tooling,
+    ));
     // A short temporary prefix lets the original compact path actually retain
     // enough wide cells to require two terminal rows (macOS TMPDIR is longer).
     let wide_root = fail_labels_initialization.then(|| tempfile::tempdir_in("/tmp").unwrap());
@@ -324,6 +341,7 @@ fn packaged_product(fail_labels_initialization: bool) {
         "directory-picker",
         "session-details",
         "queue-editor",
+        "question-editor",
         "help",
         "deployment",
         "deployment-manager",
@@ -2093,13 +2111,86 @@ process.stdout.write(output.outputFiles[0].text);
     let mut held = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
     held.kind = crossterm::event::KeyEventKind::Repeat;
     presenter.input(Event::Key(held)).unwrap();
+    presenter
+        .input(Event::Paste("Question background draft".into()))
+        .unwrap();
+    await_screen(&mut presenter, "Question background draft");
     respond.send(()).unwrap();
+    await_screen(&mut presenter, "[ Questions 1 ]");
+    click(&mut presenter, "[ Questions 1 ]");
+    await_screen(&mut presenter, "Choose\\u{A}format");
+    let (x, y) = wait_for_target(&mut presenter, "[ Close ]", 0);
+    assert!(
+        draw(&mut presenter)[(x, y)]
+            .modifier
+            .contains(ratatui::style::Modifier::REVERSED),
+        "opening a question must focus Close, never a decision"
+    );
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+        .unwrap();
+    await_screen(&mut presenter, "Question background draft");
+    click(&mut presenter, "[ Questions 1 ]");
+    await_screen(&mut presenter, "Choose\\u{A}format");
+    click(&mut presenter, "○ Brief");
+    click(&mut presenter, "1 ✓");
+    let (x, y) = wait_for_target(&mut presenter, "1 ✓", 0);
+    assert!(
+        draw(&mut presenter)[(x, y)]
+            .modifier
+            .contains(ratatui::style::Modifier::UNDERLINED)
+    );
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Right,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    let (x, y) = wait_for_target(&mut presenter, "2 ○", 0);
+    assert!(
+        draw(&mut presenter)[(x, y)]
+            .modifier
+            .contains(ratatui::style::Modifier::UNDERLINED)
+    );
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    await_screen(&mut presenter, "Any detail?");
+    click(&mut presenter, "[ Write an answer ]");
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
+        .unwrap();
+    draw(&mut presenter);
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
+        .unwrap();
+    draw(&mut presenter);
+    presenter
+        .input(Event::Paste("native answer".into()))
+        .unwrap();
+    await_screen(&mut presenter, "native answer");
+    click(&mut presenter, "3 ○");
+    click(&mut presenter, "[ Skip this question ]");
+    click(&mut presenter, "[ Submit answers ]");
+    await_screen(&mut presenter, "Answers recorded");
+    click(&mut presenter, "[ Close ]");
+    await_screen(&mut presenter, "Question background draft");
     await_screen(&mut presenter, "Elegant response");
     await_screen(&mut presenter, "[ Read message source ]");
     // The bounded tail may contain only the assistant beside empty canonical
     // boundaries; Earlier retrieves the user through the real sparse-row cursor.
     await_screen(&mut presenter, "[ Earlier messages ]");
-    click(&mut presenter, "[ Earlier messages ]");
+    for _ in 0..16 {
+        if screen(&draw(&mut presenter)).contains("Hello product") {
+            break;
+        }
+        click(&mut presenter, "[ Earlier messages ]");
+        // The first page no longer has Earlier; Latest remains a load-gated control.
+        wait_for_target(&mut presenter, "[ Latest messages ]", 0);
+    }
     await_screen(&mut presenter, "Hello product");
     runtime.block_on(server).unwrap();
     runtime.block_on(fixture.drained());

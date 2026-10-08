@@ -23,6 +23,7 @@ use crate::{
 use futures_util::future::BoxFuture;
 use maka_agent::{Engine, RunError, RunInput, RunWork};
 
+mod interactions;
 mod queue;
 use maka_config::ConfigurationStore;
 use maka_event_log::{EventLog, sessions::SessionRecord};

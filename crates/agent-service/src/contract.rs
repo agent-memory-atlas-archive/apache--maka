@@ -25,6 +25,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+#[path = "contract_interactions.rs"]
+mod interaction;
+pub use interaction::*;
 pub use maka_runtime::configuration::ModelSelection;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -414,6 +417,9 @@ pub enum DeliveryPage {
     Queue {
         queue: Queue,
     },
+    Interactions {
+        pending: PendingInteractions,
+    },
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -716,6 +722,20 @@ pub fn contract() -> Contract {
                 (
                     "editQueue".into(),
                     method::<QueueMutation, QueueMutationResult>(MethodMode::Mutation),
+                ),
+                (
+                    "pendingInteractions".into(),
+                    method::<SessionRead, PendingInteractions>(MethodMode::Query),
+                ),
+                (
+                    "interaction".into(),
+                    method::<InteractionRead, maka_runtime::interaction::InteractionRecord>(
+                        MethodMode::Query,
+                    ),
+                ),
+                (
+                    "respond".into(),
+                    method::<InteractionRespond, InteractionResult>(MethodMode::Mutation),
                 ),
                 (
                     "watch".into(),

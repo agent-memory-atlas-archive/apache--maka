@@ -35,6 +35,7 @@ maka-plugin-core.workspace = true
 maka-presentation.workspace = true
 maka-plugins.workspace = true
 maka-providers.workspace = true
+maka-protocol.workspace = true
 maka-runtime.workspace = true
 maka-runtime-host.workspace = true
 maka-tools.workspace = true
