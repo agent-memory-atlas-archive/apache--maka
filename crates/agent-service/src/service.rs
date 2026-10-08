@@ -65,7 +65,7 @@ impl Handler for Agent {
                             CatalogScope::IdPrefix(owner.prefix.clone()),
                             revision,
                             position,
-                            false,
+                            true,
                         )
                         .await
                         .map_err(|_| "agent_catalog_unavailable")?;

@@ -301,7 +301,8 @@ function intent(
 function createSession(state: State, actions: Action[], locale: string) {
   if (mutationPending(state) || catalogPending(state)) return;
   const title = copy(locale).new;
-  if (state.selected)
+  if (state.selected?.archived) state.dialog = 'directories';
+  else if (state.selected)
     intent(state, actions, { kind: 'create' }, 'agent', 'create', {
       title,
       labels: [],
@@ -730,6 +731,12 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
       state.catalogFailed = false;
       if (!state.selected && state.catalog.sessions.length)
         select(state, actions, state.catalog.sessions[0]);
+      else if (state.selected) {
+        const selected = state.catalog.sessions.find(
+          (session) => session.id === state.selected!.id,
+        );
+        if (selected && selected.revision >= state.selected.revision) state.selected = selected;
+      }
       break;
     }
     case 'observe': {
@@ -962,6 +969,10 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
       break;
     }
     case 'read': {
+      if (state.selected?.id === request.sessionId && state.selected.archived) {
+        state.notice = 'draftKept';
+        break;
+      }
       const chunk = value as TextChunk;
       const metadata = chunk.metadata as { owner?: string; revision?: number; bytes?: number };
       const captured = request.draft.snapshot.text;
@@ -1273,6 +1284,7 @@ function frame<N extends Node>(
       running: !!state.run,
       enabled:
         !!state.selected &&
+        !state.selected.archived &&
         !!state.model &&
         !state.modelRefreshing &&
         !state.loading &&
@@ -1333,7 +1345,9 @@ function frame<N extends Node>(
       ? state.run.state === 'waiting_for_user'
         ? text.waiting
         : text.working
-      : '';
+      : state.selected?.archived
+        ? text.archivedConversation
+        : '';
   const title = ui.text('title', state.selected?.title ?? 'maka', 17, theme.text, 550, {
     width: pixels(0),
     grow: 1,
@@ -1453,7 +1467,7 @@ function frame<N extends Node>(
               },
             ),
             ui.box('input-area', [composer], {
-              visible: !state.image,
+              visible: !state.image && !state.selected?.archived,
               padding: 24,
               style: { width: fill, maxWidth: 808, shrink: 0 },
             }),
@@ -1502,7 +1516,11 @@ function frame<N extends Node>(
                       ],
                     }),
                   ],
-                  { gap: 0, visible: !state.source && !state.image, terminal: { shrink: true } },
+                  {
+                    gap: 0,
+                    visible: !state.source && !state.image && !state.selected?.archived,
+                    terminal: { shrink: true },
+                  },
                 ),
               ],
               { gap: 0, viewport: true, terminal: { grow: 1 } },
@@ -2019,6 +2037,7 @@ export function workspace<N extends Node>(
           state.notice !== 'unavailable' &&
           !mutationPending(state) &&
           state.selected &&
+          !state.selected.archived &&
           state.model &&
           !state.modelRefreshing &&
           !state.loading &&

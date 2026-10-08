@@ -1526,6 +1526,14 @@ async fn private_catalog_pages_reach_every_session_in_both_directions() {
         expected.push(fixture.create(&format!("Conversation {index}")).await);
     }
     expected.sort();
+    let archived: Vec<_> = expected.iter().step_by(10).cloned().collect();
+    for id in &archived {
+        fixture
+            .store
+            .set_session_archived::<SessionConfiguration>(id, true, 2)
+            .await
+            .unwrap();
+    }
     fixture
         .store
         .create_session("foreign_session", "foreign", &json!({"foreign":true}), 1)
@@ -1541,6 +1549,13 @@ async fn private_catalog_pages_reach_every_session_in_both_directions() {
     loop {
         let entries = page["sessions"].as_array().unwrap();
         assert!(entries.len() <= 32);
+        for entry in entries {
+            let id = entry["id"].as_str().unwrap();
+            assert_eq!(
+                entry["archived"],
+                archived.iter().any(|archived| archived == id)
+            );
+        }
         actual.extend(
             entries
                 .iter()
@@ -1591,7 +1606,64 @@ async fn private_catalog_pages_reach_every_session_in_both_directions() {
                 .contains("agent_cursor_invalid")
         );
     }
-    fixture.create("New conversation").await;
+    // Catalog visibility grants reading, never execution or metadata mutation.
+    let id = &archived[0];
+    let observed = fixture
+        .query("observe", json!({"sessionId":id}))
+        .await
+        .unwrap();
+    assert_eq!(observed["session"]["archived"], true);
+    assert!(
+        fixture
+            .send(id)
+            .await
+            .unwrap_err()
+            .contains("agent_session_configuration_changed")
+    );
+    let metadata = fixture
+        .mutation(
+            2,
+            "metadata",
+            json!({
+                "sessionId":id,"expectedRevision":observed["session"]["revision"],
+                "title":"Cannot rename archive","labels":[]
+            }),
+            Uuid::new_v4(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        metadata,
+        json!({"kind":"rejected","reason":"session_unavailable"})
+    );
+    let create = fixture
+        .mutation(
+            2,
+            "create",
+            json!({
+                "title":"Cannot reuse archive","labels":[],
+                "workspace":{"kind":"session","sessionId":id}
+            }),
+            Uuid::new_v4(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        create,
+        json!({"kind":"rejected","reason":"session_unavailable"})
+    );
+    assert_eq!(
+        fixture
+            .query("observe", json!({"sessionId":id}))
+            .await
+            .unwrap(),
+        observed
+    );
+    fixture
+        .store
+        .set_session_archived::<SessionConfiguration>(id, false, 3)
+        .await
+        .unwrap();
     for kind in ["after", "before"] {
         assert!(
             fixture

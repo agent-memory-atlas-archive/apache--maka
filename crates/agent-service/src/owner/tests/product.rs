@@ -136,7 +136,7 @@ fn wait_for_target(
             .nth(nth);
         if let Some((x, y)) = position
             && enabled.is_none_or(|color| buffer[(x, y)].fg == color)
-            && (!label.starts_with("    ")
+            && (!(label.starts_with("    ") || label.starts_with(['▸', '▾']))
                 || !buffer[(x, y)]
                     .modifier
                     .contains(ratatui::style::Modifier::DIM))
@@ -2050,14 +2050,22 @@ process.stdout.write(output.outputFiles[0].text);
             .publish_session_import(&session, 3)
             .await
             .unwrap();
+        fixture
+            .store
+            .set_session_archived::<SessionConfiguration>(&session, true, 4)
+            .await
+            .unwrap();
         session
     });
     let mut reopened = start();
     await_screen(&mut reopened, "[ Show sidebar ]");
     click(&mut reopened, "[ Show sidebar ]");
+    click(&mut reopened, "▸ Archived");
     // Native directory rows use the original unboxed layout. Selecting a
     // destination closes the terminal directory and restores the conversation.
     click(&mut reopened, "    Native tool inspection");
+    await_screen(&mut reopened, "This conversation is archived.");
+    assert!(!screen(&draw(&mut reopened)).contains("[ Send ]"));
     await_screen(&mut reopened, "Tool output · Count");
     await_screen(&mut reopened, "[ Show details ]");
     for (nth, heading, beginning, ending) in [

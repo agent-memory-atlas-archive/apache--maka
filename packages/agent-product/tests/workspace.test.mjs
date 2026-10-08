@@ -7789,3 +7789,151 @@ for (const thinkingLevel of [null, 'off', 'high'])
     );
     assert.equal(client.state.command, null);
   });
+
+for (const target of ['desktop', 'tui']) {
+  const { component: workspace } = await import(
+    pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+  );
+  const { component: details } = await import(
+    pathToFileURL(resolve(root, `dist/packages/session-details/${target}.js`))
+  );
+  const archived = { ...session, id: 'archived-session', archived: true, revision: 2 };
+  const findNode = (node, key) =>
+    node.key === key
+      ? node
+      : [
+          ...(node.children ?? []),
+          node.content,
+          node.trigger,
+          typeof node.background === 'object' ? node.background : null,
+        ]
+          .filter(Boolean)
+          .map((child) => findNode(child, key))
+          .find(Boolean);
+  test(`${target} archived conversations retain readers and composer while preventing writes`, () => {
+    const client = new Client(workspace).start();
+    const composer = () => modelSlots(client.output.frame.view).find((n) => n.key === 'composer');
+    const original = composer();
+    client.raw('catalog-refresh');
+    client.query('list', {
+      revision: 'archived-catalog',
+      sessions: [session, archived],
+      before: null,
+      after: null,
+    });
+    client.component('select', { sessionId: archived.id });
+    client.query('observe', { session: archived, through: 0, run: null, parts: [] });
+    client.query('history', { kind: 'ready', through: 0, chunks: [], before: null, after: null });
+    client.component('tailReady');
+    assert.equal(client.state.selected.archived, true);
+    assert.equal(composer().binding, original.binding);
+    assert.equal(composer().props.enabled, false);
+    assert.equal(
+      findNode(client.output.frame.view, target === 'tui' ? 'retained-composer' : 'input-area')
+        .visible,
+      false,
+    );
+    assert.ok(modelSlots(client.output.frame.view).some((n) => n.binding === 'timeline'));
+    client.component('send', draft);
+    assert.deepEqual(client.output.actions, []);
+    client.raw('create');
+    assert.equal(client.state.dialog, 'directories');
+    assert.deepEqual(client.output.actions, []);
+    client.input({ kind: 'component', child: 'directory-picker', name: 'closed', event: {} });
+    client.component('select', { sessionId: session.id });
+    client.query('observe', { session, through: 0, run: null, parts: [] });
+    client.query('history', { kind: 'ready', through: 0, chunks: [], before: null, after: null });
+    client.component('tailReady');
+    assert.equal(composer().props.enabled, true);
+    assert.equal(
+      findNode(client.output.frame.view, target === 'tui' ? 'retained-composer' : 'input-area')
+        .visible,
+      true,
+    );
+    assert.equal(composer().key, original.key);
+  });
+  test(`${target} catalog refresh adopts archive facts without remounting the conversation`, () => {
+    const client = new Client(workspace).start();
+    const epoch = client.state.epoch;
+    const window = structuredClone(client.state.window);
+    const refresh = (sessions) => {
+      client.raw('catalog-refresh');
+      client.query('list', { revision: 'changed', sessions, before: null, after: null });
+    };
+    refresh([{ ...session, archived: true, revision: 3 }]);
+    assert.equal(client.state.selected.archived, true);
+    assert.equal(client.state.epoch, epoch);
+    assert.deepEqual(client.state.window, window);
+    client.component('send', draft);
+    assert.deepEqual(client.output.actions, []);
+    refresh([session]);
+    assert.equal(client.state.selected.revision, 3, 'older catalog cannot undo observed metadata');
+    refresh([]);
+    assert.equal(client.state.selected.id, session.id, 'another page cannot clear the selection');
+    refresh([{ ...session, revision: 4 }]);
+    assert.equal(client.state.selected.archived, false);
+    assert.equal(client.state.epoch, epoch);
+    client.component('send', draft);
+    assert.equal(client.find('read').resources.text.child, 'composer');
+  });
+  test(`${target} archive facts arriving during native capture retain the draft without mutation`, () => {
+    const client = new Client(workspace).start();
+    client.raw('catalog-refresh');
+    client.component('send', draft);
+    const read = client.find('read');
+    client.query('list', {
+      revision: 'changed',
+      sessions: [{ ...session, archived: true, revision: 2 }],
+      before: null,
+      after: null,
+    });
+    client.complete(read, {
+      status: 'succeeded',
+      value: { text: 'Hello', metadata: draft.snapshot.text },
+    });
+    assert.deepEqual(client.output.actions, []);
+    assert.equal(client.state.command, null);
+    const form = new DetailsClient(details).commands();
+    form.observe('title', 'Keep this draft');
+    const captures = form.capture();
+    assert.equal(captures.length, 2);
+    form.update({ session: { ...session, archived: true, revision: 2 } });
+    for (const { action, text } of captures)
+      form.complete(action, {
+        status: 'succeeded',
+        value: {
+          text,
+          metadata: {
+            owner: action.resources.text.input.owner,
+            revision: action.resources.text.input.revision,
+            bytes: action.input.end,
+          },
+        },
+      });
+    assert.deepEqual(form.output.actions, []);
+    assert.equal(form.state.current, null);
+    assert.equal(form.texts.get('title'), 'Keep this draft');
+  });
+  test(`${target} archived details preserve native drafts and refuse stale save`, () => {
+    const form = new DetailsClient(details).commands();
+    form.observe('title', 'Unsaved title');
+    const fields = structuredClone(form.state.fields);
+    form.update({ session: { ...session, archived: true, revision: 2 } });
+    assert.deepEqual(form.state.fields, fields);
+    for (const name of ['title', 'labels'])
+      assert.equal(
+        modelSlots(form.output.frame.view).find((n) => n.key === 'details-' + name).props.readOnly,
+        true,
+      );
+    assert.equal(findNode(form.output.frame.view, 'save').disabled, true);
+    form.raw('save');
+    assert.deepEqual(form.output.actions, []);
+    form.raw('review');
+    assert.equal(form.find('observe').input.sessionId, session.id);
+    form.query('observe', { session: form.props.session, through: 0, run: null, parts: [] });
+    form.raw('use-version');
+    assert.equal(form.state.target.archived, true);
+    form.raw('save');
+    assert.deepEqual(form.output.actions, []);
+  });
+}

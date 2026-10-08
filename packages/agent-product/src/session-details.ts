@@ -124,6 +124,8 @@ function canSave(state: State, props: SessionDetailsProps) {
     !state.reviewed &&
     !state.historyOpen &&
     !!state.target &&
+    !state.target.archived &&
+    !props.session?.archived &&
     state.target.id === props.session?.id &&
     names.every((name) => {
       const f = state.fields[name];
@@ -172,7 +174,12 @@ function save(state: State, props: SessionDetailsProps, actions: Action[]) {
 function mutate(state: State, props: SessionDetailsProps, actions: Action[]) {
   const current = state.current;
   if (!current || current.values.title === undefined || current.values.labels === undefined) return;
-  if (!active(state, props) || props.session?.id !== current.target.id) {
+  if (
+    !active(state, props) ||
+    props.session?.id !== current.target.id ||
+    props.session.archived ||
+    current.target.archived
+  ) {
     state.current = null;
     state.notice = 'detailsDraftKept';
     return;
@@ -261,7 +268,11 @@ function frame<N extends Node>(
               accessibilityLabel: name === 'title' ? text.detailsName : text.detailsLabels,
               placeholder: name === 'title' ? text.detailsName : text.detailsLabelsHelp,
               autoFocus: name === 'title',
-              readOnly: locked || field.phase !== 'ready',
+              readOnly:
+                locked ||
+                !!state.target?.archived ||
+                !!props.session?.archived ||
+                field.phase !== 'ready',
               disabled: !props.open,
               tabIndex: name === 'title' ? 1 : 2,
               command: field.command,
@@ -317,6 +328,9 @@ function frame<N extends Node>(
           style: { width: fill, maxHeight: 420 },
         },
       ),
+      ...(state.target?.archived || props.session?.archived
+        ? [ui.text('details-archived', text.archivedConversation, 13, props.theme.muted)]
+        : []),
       ...(state.target?.id !== props.session?.id
         ? [ui.text('details-target-changed', text.detailsTargetChanged, 13, props.theme.muted)]
         : []),
