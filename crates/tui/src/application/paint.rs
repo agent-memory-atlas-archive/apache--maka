@@ -22,7 +22,7 @@ use super::{CellRect, Placement, Presenter};
 use maka_plugin_core::runtime::Mount;
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Rect, Size},
     style::{Color, Modifier, Style},
 };
 use unicode_segmentation::UnicodeSegmentation;
@@ -215,12 +215,12 @@ enum MeasurementKey {
     Mount,
     Node(usize),
 }
-type MeasurementCache = std::collections::BTreeMap<(uuid::Uuid, MeasurementKey, u16), (u16, u32)>;
+type MeasurementCache =
+    std::collections::BTreeMap<(uuid::Uuid, MeasurementKey, u16, (u16, u16)), (u16, u32)>;
 /// Derived, paint-local memoization. No entry survives the immutable render pass
 /// or participates in input/continuation/geometry admission.
 #[derive(Default)]
 pub(super) struct Measurements {
-    viewport: Rect,
     cache: std::cell::RefCell<MeasurementCache>,
     #[cfg(test)]
     requests: std::cell::Cell<usize>,
@@ -228,29 +228,11 @@ pub(super) struct Measurements {
     limit: std::cell::Cell<usize>,
 }
 impl Measurements {
-    fn get_or(
-        &self,
-        mount: uuid::Uuid,
-        key: MeasurementKey,
-        width: u16,
-        measure: impl FnOnce() -> maka_ui::Result<(u16, u32)>,
-    ) -> maka_ui::Result<(u16, u32)> {
-        #[cfg(test)]
-        {
-            let requests = self.requests.get() + 1;
-            self.requests.set(requests);
-            assert!(
-                self.limit.get() == 0 || requests <= self.limit.get(),
-                "measurement work exceeded fixture bound"
-            );
+    pub(super) fn context(&self, viewport: Size) -> MeasureContext<'_> {
+        MeasureContext {
+            cache: self,
+            viewport,
         }
-        let key = (mount, key, width);
-        if let Some(size) = self.cache.borrow().get(&key).copied() {
-            return Ok(size);
-        }
-        let size = measure()?;
-        self.cache.borrow_mut().insert(key, size);
-        Ok(size)
     }
     #[cfg(test)]
     pub(super) fn guarded(limit: usize) -> Self {
@@ -263,10 +245,50 @@ impl Measurements {
         self.requests.get()
     }
 }
+/// Immutable layout context borrowing the current paint's only measurement cache.
+#[derive(Clone, Copy)]
+pub(super) struct MeasureContext<'a> {
+    cache: &'a Measurements,
+    viewport: Size,
+}
+impl MeasureContext<'_> {
+    fn within(self, viewport: Size) -> Self {
+        Self { viewport, ..self }
+    }
+    fn get_or(
+        &self,
+        mount: uuid::Uuid,
+        key: MeasurementKey,
+        width: u16,
+        measure: impl FnOnce() -> maka_ui::Result<(u16, u32)>,
+    ) -> maka_ui::Result<(u16, u32)> {
+        #[cfg(test)]
+        {
+            let requests = self.cache.requests.get() + 1;
+            self.cache.requests.set(requests);
+            assert!(
+                self.cache.limit.get() == 0 || requests <= self.cache.limit.get(),
+                "measurement work exceeded fixture bound"
+            );
+        }
+        let key = (
+            mount,
+            key,
+            width,
+            (self.viewport.width, self.viewport.height),
+        );
+        if let Some(size) = self.cache.cache.borrow().get(&key).copied() {
+            return Ok(size);
+        }
+        let size = measure()?;
+        self.cache.cache.borrow_mut().insert(key, size);
+        Ok(size)
+    }
+}
 
 /// Derived data for one immutable scene recipe's paint pass.
 pub(super) struct NodePaint<'a> {
-    pub measurements: &'a Measurements,
+    pub measurements: MeasureContext<'a>,
     pub viewports: &'a mut Vec<(String, super::scroll::Viewport)>,
 }
 
@@ -277,7 +299,7 @@ pub struct Slots<'a> {
     pub(super) parent: &'a Mount,
     declarations: &'a [maka_ui::ComponentSlot],
     pub(super) scene: Option<&'a mut PaintedScene>,
-    pub(super) measurements: &'a Measurements,
+    pub(super) measurements: MeasureContext<'a>,
     placement: Option<Placement>,
 }
 pub(super) struct NativeGeometry {
@@ -286,9 +308,9 @@ pub(super) struct NativeGeometry {
     pub geometry: Box<dyn std::any::Any>,
 }
 impl Slots<'_> {
-    /// Immutable surface viewport for this measurement/paint pass. This is
-    /// independent of a child's eventual allocation or clipping rectangle.
-    pub fn viewport(&self) -> Rect {
+    /// Nearest declared layout viewport, or the surface by default. Ordinary
+    /// wrappers and component slots preserve it; clipping does not resize it.
+    pub fn viewport(&self) -> Size {
         self.measurements.viewport
     }
     pub fn native_state<T: std::any::Any>(&self) -> maka_ui::Result<&T> {
@@ -479,13 +501,14 @@ impl Presenter {
         if !self.resources.ready(&self.application, &self.root)? {
             return Ok(scene);
         }
-        let measurements = Measurements {
-            viewport: area,
-            ..Default::default()
-        };
-        self.paint_mount(&self.root, area.into(), buffer, &mut scene, &measurements)?;
+        let cache = Measurements::default();
+        let measurements = cache.context(Size {
+            width: area.width,
+            height: area.height,
+        });
+        self.paint_mount(&self.root, area.into(), buffer, &mut scene, measurements)?;
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.paint_dialogs(buffer, &mut scene, &measurements)
+            self.paint_dialogs(buffer, &mut scene, measurements)
         }))
         .map_err(|_| maka_ui::Error::Invalid("terminal native painting panicked".into()))??;
         Ok(scene)
@@ -621,7 +644,7 @@ impl Presenter {
         &self,
         mount: &Mount,
         width: u16,
-        measurements: &Measurements,
+        measurements: MeasureContext<'_>,
     ) -> maka_ui::Result<(u16, u32)> {
         measurements.get_or(mount.id(), MeasurementKey::Mount, width, || {
             let native = &self.application.frame(mount)?.view;
@@ -666,7 +689,7 @@ impl Presenter {
         &self,
         mount: &Mount,
         node: &Node,
-        measurements: &Measurements,
+        measurements: MeasureContext<'_>,
     ) -> maka_ui::Result<super::scene::Layout> {
         match node {
             Node::Dialog { background, .. } => self.node_layout(mount, background, measurements),
@@ -690,7 +713,7 @@ impl Presenter {
         mount: &Mount,
         node: &Node,
         width: u16,
-        measurements: &Measurements,
+        measurements: MeasureContext<'_>,
     ) -> maka_ui::Result<(u16, u32)> {
         measurements.get_or(
             mount.id(),
@@ -735,9 +758,13 @@ impl Presenter {
                         padding,
                         children,
                         layout,
+                        viewport,
                         ..
                     } => {
                         let inset = padding.saturating_mul(2);
+                        if *viewport {
+                            return Ok((inset.min(width), u32::from(inset)));
+                        }
                         let available = width.saturating_sub(inset);
                         let children = self.visible_children(mount, children)?;
                         let layouts: Vec<_> = children
@@ -770,7 +797,7 @@ impl Presenter {
         area: Placement,
         buffer: &mut Buffer,
         scene: &mut PaintedScene,
-        measurements: &Measurements,
+        measurements: MeasureContext<'_>,
     ) -> maka_ui::Result<()> {
         let native_frame = self.application.frame(mount)?;
         let owner = &self
@@ -941,10 +968,23 @@ impl Presenter {
                 children,
                 shortcuts,
                 focus_shortcuts,
+                viewport,
                 ..
             } => {
                 buffer.set_style(area.visible(), Style::default().bg(color(*background)));
                 let inner = area.inner(ratatui::layout::Margin::new(*padding, *padding));
+                let measurements = if *viewport {
+                    measurements.within(Size {
+                        width: inner.width,
+                        height: inner.height.min(u32::from(u16::MAX)) as u16,
+                    })
+                } else {
+                    measurements
+                };
+                let mut pass = NodePaint {
+                    measurements,
+                    viewports: pass.viewports,
+                };
                 let children = self.visible_children(mount, children)?;
                 let layouts: Vec<_> = children
                     .iter()
@@ -1032,7 +1072,7 @@ impl Presenter {
                         relative.translated(inner.x, inner.y - i64::from(offset)),
                         inner.visible(),
                     );
-                    self.paint_node(mount, child, area, buffer, scene, pass)?;
+                    self.paint_node(mount, child, area, buffer, scene, &mut pass)?;
                 }
                 if scrolling || scoped {
                     scene.ancestry.pop();

@@ -366,7 +366,7 @@ impl Presenter {
         &self,
         buffer: &mut ratatui::buffer::Buffer,
         scene: &mut super::PaintedScene,
-        measurements: &super::paint::Measurements,
+        measurements: super::paint::MeasureContext<'_>,
     ) -> maka_ui::Result<()> {
         use ratatui::{
             style::Style,

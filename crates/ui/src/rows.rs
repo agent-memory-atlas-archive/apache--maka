@@ -38,7 +38,8 @@ pub struct RowsProps {
     pub shortcuts: Vec<Shortcut>,
     #[schemars(range(min = 1, max = 64))]
     pub max_rows: u16,
-    /// Optional smaller row cap below a surface viewport height, in cells.
+    /// Optional smaller row cap below the nearest declared layout viewport's
+    /// height, in cells; defaults to the surface when no viewport is declared.
     #[serde(default)]
     pub compact_below: Option<CompactRows>,
     #[schemars(range(min = -1, max = 32767))]

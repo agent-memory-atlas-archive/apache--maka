@@ -359,6 +359,12 @@ export type TerminalScene =
       background: number;
       children: TerminalScene[];
       /**
+       * Establish the allocated inner size as the descendants' layout viewport.
+       * Children do not contribute intrinsic size; use grow/basis or an
+       * externally allocated root area to supply this container's size.
+       */
+      viewport?: boolean;
+      /**
        * @maxItems 32
        */
       shortcuts?: Shortcut[];
@@ -2237,8 +2243,8 @@ export interface TerminalTextareaRows {
   min: number;
   max: number;
   /**
-   * Optional cap relative to the surface viewport's height in this paint
-   * pass, not the parent container. The minimum still applies.
+   * Optional cap relative to the nearest declared layout viewport's height,
+   * or the surface when none is declared. The minimum still applies.
    */
   maxViewportFraction?: number | null;
 }
@@ -2443,7 +2449,8 @@ export interface RowsProps {
   shortcuts: Shortcut[];
   maxRows: number;
   /**
-   * Optional smaller row cap below a surface viewport height, in cells.
+   * Optional smaller row cap below the nearest declared layout viewport's
+   * height, in cells; defaults to the surface when no viewport is declared.
    */
   compactBelow?: CompactRows | null;
   tabIndex: number;

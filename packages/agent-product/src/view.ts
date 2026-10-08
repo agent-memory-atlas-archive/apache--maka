@@ -44,6 +44,7 @@ interface BoxOptions {
   scroll?: 'none' | 'manual' | 'anchor' | 'follow_end';
   visible?: boolean;
   terminal?: TerminalLayout;
+  viewport?: boolean;
   shortcuts?: Shortcut[];
   focusShortcuts?: FocusShortcut[];
 }
@@ -185,6 +186,7 @@ function terminalPaint(theme: Theme): Painter<TerminalNode> {
         visible: options.visible ?? true,
         shortcuts: options.shortcuts ?? [],
         focus_shortcuts: options.focusShortcuts ?? [],
+        viewport: options.viewport ?? false,
         layout: options.terminal ?? {},
         scroll: options.scroll ?? 'none',
       }),

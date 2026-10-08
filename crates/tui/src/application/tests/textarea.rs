@@ -307,6 +307,131 @@ fn viewport_row_cap_uses_each_paint_without_replacing_the_native_draft_or_focus(
 }
 
 #[test]
+fn session_viewport_uses_remaining_body_without_leaking_to_siblings_or_cached_measurements() {
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
+    let long = (0..20)
+        .map(|n| format!("line-{n:02}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let field = |key: &str, autofocus: bool| {
+        json!({"kind":"component","key":key,"binding":"editor","member":0,"on":{},"props":{
+        "appearance":support::brand_appearance()["textarea"],"accessibilityLabel":key,"readOnly":false,
+        "disabled":false,"softWrap":true,"tabIndex":if autofocus {1} else {-1},"autoFocus":autofocus,"initialText":long,
+        "terminalRows":{"min":1,"max":8,"maxViewportFraction":1.0/3.0}}})
+    };
+    let rows = json!({"kind":"component","key":"rows","binding":"rows","member":0,"on":{},"props":{
+        "revision":1,"entry":"row-5","rows":(0..6).map(|n|json!({"key":format!("row-{n}"),"text":format!("pending {n}"),"actions":[]})).collect::<Vec<_>>(),
+        "shortcuts":[],"maxRows":3,"compactBelow":{"height":12,"maxRows":1},"tabIndex":2,
+        "foreground":0xffffffffu32,"muted":0x888888ffu32,"selected":0x222222ffu32,"hovered":0x333333ffu32,
+        "scrollbar":{"thumb":"┃","track":"│","thumbColor":0xffffffffu32,"trackColor":0x888888ffu32}}});
+    let body = json!({"kind":"stack","key":"body","direction":"column","gap":0,"padding":1,"background":0,"viewport":true,"layout":{"grow":1},"children":[
+        {"kind":"stack","key":"reading","direction":"column","gap":0,"padding":0,"background":0,"layout":{"grow":1,"basis":1},"children":[]},
+        rows,
+        {"kind":"stack","key":"wrapper","direction":"column","gap":0,"padding":0,"background":0,"children":[field("editor",true)]},
+        {"kind":"button","key":"back","label":"Send"}
+    ]});
+    let source = Rc::new(RefCell::new(
+        json!({"kind":"stack","key":"root","direction":"column","gap":0,"padding":0,"background":0,"children":[
+            {"kind":"text","key":"header","text":"Header\nHeader\nHeader","color":0xffffff}, body, field("outside",false)
+        ]}),
+    ));
+    let (_runtime, mut tui) = layout::native(
+        layout::View::InteractiveScene(source.clone()),
+        Rc::new(Cell::new(true)),
+    );
+    draw(&mut tui, 40, 30);
+    let focus = tui.focus.clone().unwrap();
+    let height = |tui: &Presenter, child: &str| {
+        let mount = tui.application.child_mount(&tui.root, child).unwrap();
+        tui.scene
+            .iter()
+            .find(|target| target.mount == *mount)
+            .unwrap()
+            .area
+            .height
+    };
+    for (header, editor_rows, queue_rows) in [(3, 7, 3), (6, 6, 3), (7, 5, 1), (3, 7, 3)] {
+        source.borrow_mut()["children"][0]["text"] = json!(vec!["Header"; header].join("\n"));
+        let root = tui.root.clone();
+        let revision = tui.application.frame(&root).unwrap().revision;
+        tui.application
+            .dispatch(&root, revision, "back", json!({"kind":"click"}))
+            .unwrap();
+        tui.sync_native().unwrap();
+        let buffer = draw(&mut tui, 40, 30);
+        assert_eq!(height(&tui, "editor"), editor_rows);
+        assert_eq!(height(&tui, "rows"), queue_rows);
+        assert_eq!(
+            height(&tui, "outside"),
+            10,
+            "sibling keeps the surface viewport"
+        );
+        assert!(tui.focus.as_ref().unwrap().same(&focus));
+        assert!(
+            buffer
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+                .contains("line-19")
+        );
+    }
+    let cache = super::super::paint::Measurements::guarded(32);
+    let mount = tui.application.child_mount(&tui.root, "editor").unwrap();
+    for (height, expected) in [(12, 6), (30, 10), (12, 6)] {
+        assert_eq!(
+            tui.measure_mount(
+                mount,
+                38,
+                cache.context(ratatui::layout::Size { width: 38, height })
+            )
+            .unwrap()
+            .1,
+            expected
+        );
+    }
+    let node = tui
+        .application
+        .frame(&tui.root)
+        .unwrap()
+        .view
+        .view
+        .scene()
+        .unwrap();
+    let super::super::scene::Node::Stack { children, .. } = node else {
+        panic!("root stack")
+    };
+    assert_eq!(
+        tui.measure(
+            &tui.root,
+            &children[1],
+            40,
+            cache.context(ratatui::layout::Size {
+                width: 40,
+                height: 30
+            })
+        )
+        .unwrap(),
+        (2, 2),
+        "contained descendants cannot inflate the body's intrinsic size"
+    );
+    tui.input(Event::Paste("!".into())).unwrap();
+    assert!(
+        tui.resources.owners[&focus.mount.id()]
+            .state
+            .downcast_ref::<super::super::editor::Owner>()
+            .unwrap()
+            .editor
+            .text()
+            .ends_with("line-19!")
+    );
+    close(&mut tui);
+}
+
+#[test]
 fn terminal_row_limits_resize_the_original_editor_and_reject_inverted_ranges() {
     let (_runtime, mut tui) = presenter();
     draw(&mut tui, 50, 40);

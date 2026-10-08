@@ -3693,10 +3693,17 @@ test('TUI reader declares a flexible body and wrapped controls while keeping dra
   assert.equal(frame.children.at(-1).layout.wrap, true);
   assert.equal(frame.children.at(-1).gap, 1);
   const main = routes().find((node) => node.key === 'main-route').children[0];
-  const composer = main.children.find((node) => node.key === 'retained-composer');
+  const body = main.children.find((node) => node.key === 'session-body');
+  assert.equal(body.viewport, true);
+  assert.equal(body.layout.grow, 1);
+  const composer = body.children.find((node) => node.key === 'retained-composer');
   assert.deepEqual(
     main.children.map((node) => node.key),
-    ['header', 'conversation', 'retained-composer'],
+    ['header', 'session-body'],
+  );
+  assert.deepEqual(
+    body.children.map((node) => node.key),
+    ['conversation', 'retained-composer'],
   );
   assert.deepEqual(
     modelSlots(composer).map((node) => node.binding),
@@ -3718,7 +3725,8 @@ test('TUI reader declares a flexible body and wrapped controls while keeping dra
   assert.equal(
     routes()
       .find((node) => node.key === 'main-route')
-      .children[0].children.find((node) => node.key === 'retained-composer').visible,
+      .children[0].children.find((node) => node.key === 'session-body')
+      .children.find((node) => node.key === 'retained-composer').visible,
     true,
   );
   assert.deepEqual(
@@ -7129,7 +7137,8 @@ test('TUI queue controls retain original revision and lane and working-send keep
     (node) => node.key === 'main-route',
   ).children[0];
   const badge = main.children
-    .find((node) => node.key === 'retained-composer')
+    .find((node) => node.key === 'session-body')
+    .children.find((node) => node.key === 'retained-composer')
     .children.find((node) => node.key === 'queue-status')
     .children.at(-1);
   assert.equal(badge.label, '≡ 3');

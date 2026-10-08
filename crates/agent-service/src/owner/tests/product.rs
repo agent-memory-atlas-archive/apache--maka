@@ -1515,6 +1515,23 @@ process.stdout.write(output.outputFiles[0].text);
     );
     // The original queue count enters the last row without a product focus mirror.
     click(&mut presenter, "≡ 4");
+    let wide = screen(&draw(&mut presenter));
+    assert!(
+        extra_messages.iter().all(|message| wide.contains(message)),
+        "{wide}"
+    );
+    // Wrapped product chrome leaves a smaller session body at the same surface
+    // size used by the original narrow reference. Keep the focused last row.
+    let narrow = screen(&draw_at(&mut presenter, Rect::new(0, 0, 40, 16)));
+    assert!(narrow.contains("Extra queued three"), "{narrow}");
+    assert!(
+        !narrow.contains("Extra queued one") && !narrow.contains("Extra queued two"),
+        "{narrow}"
+    );
+    assert!(
+        narrow.contains("≡ 4") && narrow.contains("[ Send ]") && narrow.contains("[ Stop ]"),
+        "{narrow}"
+    );
     draw(&mut presenter);
     presenter
         .input(Event::Key(KeyEvent::new(

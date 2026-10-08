@@ -1391,46 +1391,52 @@ function frame<N extends Node>(
           ]
         : [
             ui.box(
-              'conversation',
+              'session-body',
               [
-                ui.box('retained-timeline', [timeline], {
-                  visible: !state.image,
-                  style: { width: fill, height: fill },
-                  terminal: { grow: 1 },
-                }),
-                imageViewer,
-              ],
-              { terminal: { basis: 1, grow: 1 } },
-            ),
-            ui.box(
-              'retained-composer',
-              [
-                presentation.slot('queue', 'rows', queueProps, { activated: 'queue-action' }),
-                ...(queueProps.rows.length && ui.focusButton
-                  ? [
-                      ui.box(
-                        'queue-status',
-                        [
-                          ui.box('queue-status-space', [], { terminal: { basis: 0, grow: 1 } }),
-                          ui.focusButton('queue-focus', `≡ ${queueProps.rows.length}`, 'queue'),
-                        ],
-                        { row: true, gap: 0 },
-                      ),
-                    ]
-                  : []),
-                ui.box('composer-navigation', [composer], {
-                  terminal: { shrink: true },
-                  focusShortcuts: [
-                    {
-                      key: 'up',
-                      modifiers: [],
-                      child: 'queue',
-                      enabled: queueProps.rows.length > 0,
-                    },
+                ui.box(
+                  'conversation',
+                  [
+                    ui.box('retained-timeline', [timeline], {
+                      visible: !state.image,
+                      style: { width: fill, height: fill },
+                      terminal: { grow: 1 },
+                    }),
+                    imageViewer,
                   ],
-                }),
+                  { terminal: { basis: 1, grow: 1 } },
+                ),
+                ui.box(
+                  'retained-composer',
+                  [
+                    presentation.slot('queue', 'rows', queueProps, { activated: 'queue-action' }),
+                    ...(queueProps.rows.length && ui.focusButton
+                      ? [
+                          ui.box(
+                            'queue-status',
+                            [
+                              ui.box('queue-status-space', [], { terminal: { basis: 0, grow: 1 } }),
+                              ui.focusButton('queue-focus', `≡ ${queueProps.rows.length}`, 'queue'),
+                            ],
+                            { row: true, gap: 0 },
+                          ),
+                        ]
+                      : []),
+                    ui.box('composer-navigation', [composer], {
+                      terminal: { shrink: true },
+                      focusShortcuts: [
+                        {
+                          key: 'up',
+                          modifiers: [],
+                          child: 'queue',
+                          enabled: queueProps.rows.length > 0,
+                        },
+                      ],
+                    }),
+                  ],
+                  { gap: 0, visible: !state.source && !state.image, terminal: { shrink: true } },
+                ),
               ],
-              { gap: 0, visible: !state.source && !state.image, terminal: { shrink: true } },
+              { gap: 0, viewport: true, terminal: { grow: 1 } },
             ),
           ]),
     ],

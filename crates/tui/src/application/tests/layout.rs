@@ -663,7 +663,12 @@ fn deep_legal_rows_share_one_measurement_pass_instead_of_expanding_recursively()
         .unwrap();
     let measurements = super::super::paint::Measurements::guarded(4096);
     presenter
-        .measure(&presenter.root, node, 80, &measurements)
+        .measure(
+            &presenter.root,
+            node,
+            80,
+            measurements.context(Default::default()),
+        )
         .unwrap();
     assert!(measurements.requests() <= 32 * 32 * 3);
     // Real painting also uses one ephemeral pass; no cache enters accepted resources.

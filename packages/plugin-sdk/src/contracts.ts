@@ -1085,7 +1085,8 @@ export const contracts = {
             maximum: 64,
           },
           compactBelow: {
-            description: 'Optional smaller row cap below a surface viewport height, in cells.',
+            description:
+              "Optional smaller row cap below the nearest declared layout viewport's\nheight, in cells; defaults to the surface when no viewport is declared.",
             anyOf: [
               {
                 $ref: '#/$defs/CompactRows',
@@ -2131,7 +2132,7 @@ export const contracts = {
               },
               maxViewportFraction: {
                 description:
-                  "Optional cap relative to the surface viewport's height in this paint\npass, not the parent container. The minimum still applies.",
+                  "Optional cap relative to the nearest declared layout viewport's height,\nor the surface when none is declared. The minimum still applies.",
                 type: ['number', 'null'],
                 format: 'double',
                 minimum: 0,

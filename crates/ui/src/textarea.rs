@@ -77,8 +77,8 @@ pub struct TerminalTextareaRows {
     pub min: u16,
     #[schemars(range(min = 1))]
     pub max: u16,
-    /// Optional cap relative to the surface viewport's height in this paint
-    /// pass, not the parent container. The minimum still applies.
+    /// Optional cap relative to the nearest declared layout viewport's height,
+    /// or the surface when none is declared. The minimum still applies.
     #[serde(default)]
     #[schemars(range(min = 0, max = 1))]
     pub max_viewport_fraction: Option<f64>,

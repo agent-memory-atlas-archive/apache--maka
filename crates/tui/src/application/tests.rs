@@ -857,10 +857,18 @@ fn native_terminal_hidden_slots_override_custom_parent_measurement_and_paint() {
     );
     let right = tui.application.child_mount(&root, "right").unwrap();
     assert_eq!(
-        tui.measure_mount(&root, 80, &paint::Measurements::default())
-            .unwrap(),
-        tui.measure_mount(right, 40, &paint::Measurements::default())
-            .unwrap(),
+        tui.measure_mount(
+            &root,
+            80,
+            paint::Measurements::default().context(Default::default())
+        )
+        .unwrap(),
+        tui.measure_mount(
+            right,
+            40,
+            paint::Measurements::default().context(Default::default())
+        )
+        .unwrap(),
         "custom parent measurement excludes hidden left slot"
     );
     let mut pending_buffer = Buffer::empty(Rect::new(0, 0, 80, 40));
@@ -1022,8 +1030,12 @@ fn pure_native_paint_panics_drain_original_state_and_failed_drop_keeps_root() {
         )
         .unwrap();
         assert!(
-            tui.measure_mount(&tui.root, 30, &paint::Measurements::default())
-                .is_err()
+            tui.measure_mount(
+                &tui.root,
+                30,
+                paint::Measurements::default().context(Default::default())
+            )
+            .is_err()
         );
         let area = Rect::new(0, 0, 30, 12);
         assert!(tui.paint(area, &mut Buffer::empty(area)).is_err());

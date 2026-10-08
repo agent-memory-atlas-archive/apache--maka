@@ -87,6 +87,11 @@ pub enum Node {
         padding: u16,
         background: u32,
         children: Vec<Node>,
+        /// Establish the allocated inner size as the descendants' layout viewport.
+        /// Children do not contribute intrinsic size; use grow/basis or an
+        /// externally allocated root area to supply this container's size.
+        #[serde(default)]
+        viewport: bool,
         #[serde(default)]
         #[schemars(length(max = 32))]
         shortcuts: Vec<crate::shortcut::Shortcut>,
