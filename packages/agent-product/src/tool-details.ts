@@ -29,7 +29,7 @@ import type {
 import { toolDetailsContract, type ToolDetailsProps } from './contracts.js';
 import { copy } from './locale.js';
 import { sameValue } from './value.js';
-import { fill, output, type Node, type Presentation } from './view.js';
+import { compactLabel, fill, output, type Node, type Presentation } from './view.js';
 
 /** These keys explicitly name display contracts. Names and JSON shapes do not. */
 export function toolPresentation(key: string | null | undefined) {
@@ -46,6 +46,9 @@ export function toolPresentation(key: string | null | undefined) {
       return null;
   }
 }
+function compactPart(id: string) {
+  return id === 'path' || id === 'status' || id === 'resolvedPath';
+}
 type Part = {
   field: 'arguments' | 'result';
   path: string[];
@@ -53,6 +56,7 @@ type Part = {
   page: HistorySource | null;
   filePath: string | null;
   failed: boolean;
+  preparing: boolean;
   pending: { key: string; position: SourcePosition } | null;
   position: SourcePosition;
 };
@@ -100,6 +104,7 @@ function add(
     page: null,
     filePath: null,
     failed: false,
+    preparing: false,
     pending: null,
     position: { kind: 'start' },
   };
@@ -112,6 +117,7 @@ function request(state: State, part: Part, position: SourcePosition, actions: Ac
   part.pending = { key, position };
   part.position = position;
   part.failed = false;
+  part.preparing = false;
   actions.push({
     key,
     binding: 'agent',
@@ -147,7 +153,10 @@ function accept(state: State, part: Part, value: AgentHistorySourcePage, positio
     part.failed = true;
     return;
   }
-  if (value.kind === 'preparing') return;
+  if (value.kind === 'preparing') {
+    part.preparing = true;
+    return;
+  }
   const page = value.source,
     end = page.offset + bytes(page.text);
   const sequence =
@@ -190,30 +199,38 @@ export function toolDetails<N extends Node>(
       state.parts = {};
     }
     const kind = toolPresentation(state.tool.call?.presentation);
-    if (kind && props.expanded && state.tool.call) {
+    if (kind && state.tool.call) {
       add(state, 'path', 'arguments', kind === 'patch' ? ['operation', 'path'] : ['path']);
       if (state.tool.result) add(state, 'status', 'result', ['kind']);
-      if (kind === 'edit') {
-        add(state, 'before', 'arguments', ['old_string']);
-        add(state, 'after', 'arguments', ['new_string']);
-      } else if (kind === 'write') add(state, 'after', 'arguments', ['content']);
-      else if (kind === 'patch') {
-        add(state, 'operation', 'arguments', ['operation', 'type']);
-        const operation = scalar(state, 'operation');
-        if (operation === 'create_file' || operation === 'update_file')
-          add(state, 'patch', 'arguments', ['operation', 'diff']);
+      if (scalar(state, 'status') === 'completed' && (kind === 'write' || kind === 'edit'))
+        add(state, 'resolvedPath', 'result', ['value', 'path']);
+      if (props.expanded) {
+        if (kind === 'edit') {
+          add(state, 'before', 'arguments', ['old_string']);
+          add(state, 'after', 'arguments', ['new_string']);
+        } else if (kind === 'write') add(state, 'after', 'arguments', ['content']);
+        else if (kind === 'patch') {
+          add(state, 'operation', 'arguments', ['operation', 'type']);
+          const operation = scalar(state, 'operation');
+          if (operation === 'create_file' || operation === 'update_file')
+            add(state, 'patch', 'arguments', ['operation', 'diff']);
+        }
+        if (scalar(state, 'status') === 'completed') {
+          if (kind === 'read') {
+            add(state, 'content', 'result', ['value', 'content']);
+            for (const name of ['offset', 'returnedLines', 'totalLines'])
+              add(state, name, 'result', ['value', name], 'json');
+          } else if (kind === 'write') add(state, 'before', 'result', ['value', 'previousContent']);
+        } else if (scalar(state, 'status') === 'failed')
+          add(state, 'failure', 'result', ['message']);
       }
-      if (scalar(state, 'status') === 'completed') {
-        if (kind === 'write' || kind === 'edit')
-          add(state, 'resolvedPath', 'result', ['value', 'path']);
-        if (kind === 'read') {
-          add(state, 'content', 'result', ['value', 'content']);
-          for (const name of ['offset', 'returnedLines', 'totalLines'])
-            add(state, name, 'result', ['value', name], 'json');
-        } else if (kind === 'write') add(state, 'before', 'result', ['value', 'previousContent']);
-      } else if (scalar(state, 'status') === 'failed') add(state, 'failure', 'result', ['message']);
-      for (const part of Object.values(state.parts))
-        if (!part.page && !part.pending && !part.failed)
+      for (const [id, part] of Object.entries(state.parts))
+        if (
+          (props.expanded || compactPart(id)) &&
+          (!part.page || part.preparing) &&
+          !part.pending &&
+          !part.failed
+        )
           request(state, part, part.position, actions);
     }
     const ui = presentation.paint(props.theme),
@@ -390,7 +407,55 @@ export function toolDetails<N extends Node>(
       );
     if (state.parts.status?.failed)
       sections.push(ui.button('status-retry', text.sourceRetry, !!state.parts.status.pending));
-    const out = output(state, ui.box('tool-details', sections, { gap: 1, style: { width: fill } }));
+    const summary: N[] = [];
+    if (kind) {
+      const label =
+        typeof path === 'string' && path.trim()
+          ? compactLabel(path, presentation.target === 'tui' ? 28 : 64)
+          : state.parts.path?.failed
+            ? text.sourceFailed
+            : state.parts.path?.page
+              ? text.partial
+              : text.loading;
+      summary.push(
+        filePath && typeof path === 'string' && !state.parts.path?.failed
+          ? ui.button('copy-file-summary', `${text.copy} · ${label}`, false, false, {}, filePath)
+          : ui.text('file-summary', `${text.toolFilePath} · ${label}`, 14, props.theme.muted),
+      );
+      if (scalar(state, 'status') === 'failed')
+        summary.push(
+          ui.text('file-summary-failed', text.toolBusinessFailure, 13, props.theme.muted),
+        );
+      for (const id of ['path', 'status']) {
+        const part = state.parts[id];
+        if (part?.failed)
+          summary.push(
+            ...(id === 'status'
+              ? [ui.text(`summary-${id}-failed`, text.sourceFailed, 13, props.theme.muted)]
+              : []),
+            ui.button(`summary-${id}-retry`, text.sourceRetry, !!part.pending),
+          );
+      }
+    }
+    const out = output(
+      state,
+      ui.box(
+        'tool-details',
+        [
+          ui.box('tool-summary', summary, {
+            visible: !props.expanded,
+            gap: 0,
+            style: { width: fill },
+          }),
+          ui.box('tool-expanded', sections, {
+            visible: props.expanded,
+            gap: 1,
+            style: { width: fill },
+          }),
+        ],
+        { gap: 0, style: { width: fill } },
+      ),
+    );
     out.actions = actions;
     return out;
   }
@@ -410,7 +475,10 @@ export function toolDetails<N extends Node>(
       if (!sameIdentity(state, props)) return frame(state, props);
       const actions: Action[] = [];
       if (input.kind === 'action') {
-        const part = Object.values(state.parts).find((part) => part.pending?.key === input.key);
+        const entry = Object.entries(state.parts).find(
+          ([, part]) => part.pending?.key === input.key,
+        );
+        const part = entry?.[1];
         if (part?.pending) {
           const position = part.pending.position;
           part.pending = null;
@@ -419,16 +487,21 @@ export function toolDetails<N extends Node>(
           else {
             const value = result.value as AgentHistorySourcePage;
             accept(state, part, value, position);
-            if (value.kind === 'preparing' && !part.failed && props.expanded)
+            if (
+              value.kind === 'preparing' &&
+              !part.failed &&
+              (props.expanded || compactPart(entry![0]))
+            )
               request(state, part, position, actions);
           }
         }
-      } else if (props.expanded && input.kind === 'raw') {
-        const split = input.key.lastIndexOf('-'),
-          id = input.key.slice(0, split),
-          event = input.key.slice(split + 1),
+      } else if (input.kind === 'raw') {
+        const key = input.key.startsWith('summary-') ? input.key.slice(8) : input.key;
+        const split = key.lastIndexOf('-'),
+          id = key.slice(0, split),
+          event = key.slice(split + 1),
           part = state.parts[id];
-        if (part && !part.pending) {
+        if (part && !part.pending && (props.expanded || (compactPart(id) && event === 'retry'))) {
           const page = part.page,
             end = page ? page.offset + bytes(page.text) : 0;
           if (event === 'retry' && part.failed) request(state, part, part.position, actions);

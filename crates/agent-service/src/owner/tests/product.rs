@@ -96,6 +96,26 @@ fn click(presenter: &mut maka_tui::application::Presenter, label: &str) {
     click_nth(presenter, label, 0);
 }
 #[track_caller]
+fn assert_file_copy(
+    presenter: &mut maka_tui::application::Presenter,
+    label: &str,
+    path: &std::path::Path,
+) {
+    use base64::Engine as _;
+    click(presenter, label);
+    let mut copied = Vec::new();
+    assert!(presenter.flush_clipboard(&mut copied).unwrap());
+    assert_eq!(
+        copied,
+        format!(
+            "\x1b]52;c;{}\x07",
+            base64::engine::general_purpose::STANDARD.encode(path.to_str().unwrap())
+        )
+        .as_bytes()
+    );
+    assert!(!presenter.flush_clipboard(&mut Vec::new()).unwrap());
+}
+#[track_caller]
 fn click_nth(presenter: &mut maka_tui::application::Presenter, label: &str, nth: usize) {
     let (x, y) = wait_for_target(presenter, label, nth);
     presenter
@@ -1305,6 +1325,35 @@ process.stdout.write(output.outputFiles[0].text);
             std::thread::yield_now();
         };
         assert!(!screen(&formatted_thinking).contains("**Reasoned decision**"));
+        // The compact card exposes its original file path without hydrating
+        // requested content, and retains its details component across disclosure.
+        if !process_permissions {
+            await_screen(&mut presenter, "Save workspace file");
+            assert_file_copy(
+                &mut presenter,
+                "[ Copy · native-approved.txt ]",
+                &fixture.workspace.join("native-approved.txt"),
+            );
+            assert!(!screen(&draw(&mut presenter)).contains("Requested content"));
+            assert!(!screen(&draw(&mut presenter)).contains("native file contents"));
+            presenter
+                .input(Event::Key(KeyEvent::new(
+                    KeyCode::Char('f'),
+                    KeyModifiers::CONTROL,
+                )))
+                .unwrap();
+            await_screen(&mut presenter, "Find…");
+            presenter
+                .input(Event::Paste("native-approved.txt".into()))
+                .unwrap();
+            await_screen(&mut presenter, "1/1");
+            await_screen(&mut presenter, "Requested content");
+            presenter
+                .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+                .unwrap();
+            click(&mut presenter, "[ Hide details ]");
+            await_screen(&mut presenter, "[ Copy · native-approved.txt ]");
+        }
         // The preceding service result exposes business JSON and the exact
         // original receipt through one retained, fenced source reader.
         click(&mut presenter, "[ Show details ]");
@@ -1312,22 +1361,11 @@ process.stdout.write(output.outputFiles[0].text);
             await_screen(&mut presenter, "Requested content");
             await_screen(&mut presenter, "native file contents");
             await_screen(&mut presenter, "Recorded original content");
-            await_screen(&mut presenter, "[ Copy file path ]");
-            click(&mut presenter, "[ Copy file path ]");
-            let mut copied = Vec::new();
-            assert!(presenter.flush_clipboard(&mut copied).unwrap());
-            use base64::Engine as _;
-            let expected_path = fixture.workspace.join("native-approved.txt");
-            assert_eq!(
-                copied,
-                format!(
-                    "\x1b]52;c;{}\x07",
-                    base64::engine::general_purpose::STANDARD
-                        .encode(expected_path.to_str().unwrap())
-                )
-                .as_bytes()
+            assert_file_copy(
+                &mut presenter,
+                "[ Copy file path ]",
+                &fixture.workspace.join("native-approved.txt"),
             );
-            assert!(!presenter.flush_clipboard(&mut Vec::new()).unwrap());
         }
         click(&mut presenter, "[ Tool arguments ]");
         await_screen(&mut presenter, "native-approved.txt");

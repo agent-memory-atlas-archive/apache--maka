@@ -331,6 +331,11 @@ export function components<N extends Node>(
     const messages: N[] = rows.map(({ message, result }) => {
       const tool = message.role === 'tool_call' || message.role === 'tool_result';
       const expanded = state.expanded.includes(message.id);
+      const structured =
+        !!tool &&
+        !!props.toolContext &&
+        !!message.tool &&
+        !!toolPresentation(message.tool.call?.presentation);
       const sourceAction = ui.button(
         'source-' + message.source + (message.role === 'thinking' ? '-thinking' : ''),
         text.readSource,
@@ -381,52 +386,49 @@ export function components<N extends Node>(
         ...message,
         waiting: !!message.tool && props.waitingTools.includes(message.tool.toolUseId),
         expanded,
+        structured,
         toggle: tool && (message.source !== null || message.text) ? 'toggle-' + message.id : null,
         text: result ? [message.text, result.text].filter(Boolean).join(' · ') : message.text,
         continued: message.continued || !!result?.continued,
-        body:
-          tool &&
-          props.toolContext &&
-          message.tool &&
-          toolPresentation(message.tool.call?.presentation)
-            ? presentation.slot(
-                'tool-details-' + message.id,
-                'tools',
-                {
-                  theme: props.theme,
-                  locale: props.locale,
-                  context: props.toolContext,
-                  tool: message.tool,
-                  expanded,
-                  focusOnPointer: !search,
-                },
-                {},
+        body: structured
+          ? presentation.slot(
+              'tool-details-' + message.id,
+              'tools',
+              {
+                theme: props.theme,
+                locale: props.locale,
+                context: props.toolContext,
+                tool: message.tool,
+                expanded,
+                focusOnPointer: !search,
+              },
+              {},
+            )
+          : tool
+            ? ui.box(
+                'tool-body-' + message.id,
+                [
+                  body,
+                  ...(result
+                    ? [
+                        presentation.slot(
+                          'text-' + result.contentKey,
+                          'source',
+                          {
+                            source: result.text,
+                            focusOnPointer: !search,
+                            appearance: props.theme.markdown.body,
+                            selection: props.theme.markdown.selection,
+                            disabled: false,
+                          },
+                          {},
+                        ),
+                      ]
+                    : []),
+                ],
+                { surface: true, style: { width: fill } },
               )
-            : tool
-              ? ui.box(
-                  'tool-body-' + message.id,
-                  [
-                    body,
-                    ...(result
-                      ? [
-                          presentation.slot(
-                            'text-' + result.contentKey,
-                            'source',
-                            {
-                              source: result.text,
-                              focusOnPointer: !search,
-                              appearance: props.theme.markdown.body,
-                              selection: props.theme.markdown.selection,
-                              disabled: false,
-                            },
-                            {},
-                          ),
-                        ]
-                      : []),
-                  ],
-                  { surface: true, style: { width: fill } },
-                )
-              : body,
+            : body,
         actions: [
           ...(message.source !== null && message.tool?.call
             ? [

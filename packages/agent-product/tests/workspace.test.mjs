@@ -10713,7 +10713,10 @@ async function detailClient(target, method, expanded = true) {
 for (const target of ['tui', 'desktop']) {
   test(`${target} explicit read presentation pages immutable literal content and keeps its original fence`, async () => {
     const client = await detailClient(target, 'readText', false);
-    assert.equal(client.requests.size, 0);
+    assert.deepEqual(
+      [...client.requests.values()].map((action) => action.input.path),
+      [['path'], ['kind']],
+    );
     client.update({ expanded: true });
     assert.equal(client.requests.size, 2);
     client.answer(['path'], 'original.rs');
@@ -11049,3 +11052,211 @@ for (const target of ['tui', 'desktop']) {
     assert.deepEqual(client.out.actions, []);
   });
 }
+
+for (const target of ['tui', 'desktop']) {
+  test(`${target} compact file cards read only summary evidence and preserve full copied paths`, async () => {
+    const client = await detailClient(target, 'write', false);
+    assert.deepEqual(
+      [...client.requests.values()].map((action) => action.input.path),
+      [['path'], ['kind']],
+    );
+    const path = '目录/' + 'long '.repeat(20) + 'file.rs';
+    const full = '/remote/' + path;
+    answerFilePath(client, ['path'], path, full);
+    const summary = () =>
+      client.out.frame.view.children.find((node) => node.key === 'tool-summary');
+    let button = summary().children.find((node) => node.key === 'copy-file-summary');
+    assert.equal(button.copy_text, full);
+    assert.ok(button.label.endsWith('…'));
+    assert.equal(summary().visible, true);
+    assert.equal(
+      client.out.frame.view.children.find((node) => node.key === 'tool-expanded').visible,
+      false,
+    );
+    client.answer(['kind'], 'completed');
+    assert.deepEqual(
+      [...client.requests.values()].map((action) => action.input.path),
+      [['value', 'path']],
+    );
+    answerFilePath(client, ['value', 'path'], '/actual/file.rs', '/actual/file.rs');
+    button = summary().children.find((node) => node.key === 'copy-file-summary');
+    assert.equal(button.copy_text, '/actual/file.rs');
+    assert.equal(client.requests.size, 0);
+    assert.equal(client.out.frame.state.parts.after, undefined);
+    assert.equal(client.out.frame.state.parts.before, undefined);
+    client.raw('copy-file-summary');
+    assert.deepEqual(client.out.actions, []);
+    client.update({ expanded: true });
+    assert.deepEqual(
+      [...client.requests.values()].map((action) => action.input.path),
+      [['content'], ['value', 'previousContent']],
+    );
+    client.answer(['content'], 'after');
+    client.answer(['value', 'previousContent'], 'before');
+    const original = structuredClone(client.slots());
+    client.update({ expanded: false });
+    assert.deepEqual(client.slots(), original);
+    client.update({ expanded: true });
+    assert.deepEqual(client.slots(), original);
+    assert.equal(client.out.actions.length, 0);
+  });
+  test(`${target} compact failure and retry stay explicit without reading large diagnostics`, async () => {
+    const client = await detailClient(target, 'readText', false);
+    const path = client.find(['path']);
+    client.complete(path, { status: 'failed', error: 'unavailable' });
+    assert.ok(JSON.stringify(client.out.frame.view).includes('summary-path-retry'));
+    client.raw('summary-path-retry');
+    const retry = client.find(['path']);
+    assert.deepEqual(retry.input, path.input);
+    client.complete(retry, { status: 'succeeded', value: { kind: 'preparing', through: 100 } });
+    assert.deepEqual(client.find(['path']).input, path.input);
+    answerFilePath(client, ['path'], 'file.rs', '/remote/file.rs');
+    client.answer(['kind'], 'failed');
+    const summary = client.out.frame.view.children.find((node) => node.key === 'tool-summary');
+    assert.ok(summary.children.some((node) => node.text === 'File operation failed'));
+    assert.equal(client.find(['message']), undefined);
+    assert.equal(client.find(['value', 'content']), undefined);
+    client.raw('content-next');
+    assert.deepEqual(client.out.actions, []);
+    client.update({ expanded: true });
+    assert.deepEqual(client.find(['message']).input.path, ['message']);
+  });
+  test(`${target} folded pending pages resume their exact position without changing the saved excerpt`, async () => {
+    const client = await detailClient(target, 'readText');
+    client.answer(['path'], 'file');
+    client.answer(['kind'], 'completed');
+    client.answer(['value', 'content'], 'first', { totalBytes: 9 });
+    client.raw('content-next');
+    const pending = client.find(['value', 'content']);
+    client.update({ expanded: false });
+    client.complete(pending, { status: 'succeeded', value: { kind: 'preparing', through: 100 } });
+    assert.equal(client.find(['value', 'content']), undefined);
+    assert.equal(client.out.frame.state.parts.content.page.text, 'first');
+    assert.equal(client.out.frame.state.parts.content.preparing, true);
+    client.update({ expanded: true });
+    assert.deepEqual(client.find(['value', 'content']).input, pending.input);
+    client.answer(['value', 'content'], 'tail', { offset: 5, totalBytes: 9 });
+    assert.equal(client.out.frame.state.parts.content.page.text, 'tail');
+    assert.equal(client.out.frame.state.parts.content.preparing, false);
+  });
+  test(`${target} structured cards retain one component through disclosure while generic cards keep source summaries`, async () => {
+    const { component: timeline } = await import(
+      pathToFileURL(resolve(root, `dist/packages/timeline/${target}.js`))
+    );
+    const tool = {
+      toolUseId: uuid(901),
+      call: {
+        sequence: 40,
+        name: 'Arbitrary',
+        title: null,
+        pending: false,
+        presentation: 'maka.workspace.Files@1/readText',
+      },
+      result: null,
+    };
+    const client = new Client().start({
+      through: 100,
+      chunks: [
+        historyChunk('{"path":"file.rs"}', {
+          sequence: 40,
+          messageId: uuid(901),
+          role: 'tool_call',
+          tool,
+        }),
+      ],
+    });
+    const props = client.timeline;
+    let out = timeline.mount(props, {});
+    const row = () => out.frame.view.children[0].children[0].props.content.children[0];
+    const details = () => row().children.find((node) => node.key.startsWith('details-'));
+    const body = () => modelSlots(row()).find((node) => node.binding === 'tools');
+    assert.equal(details().visible, true);
+    assert.equal(
+      row().children.some((node) => node.key.startsWith('summary-')),
+      false,
+    );
+    assert.ok(JSON.stringify(row()).includes('Read file'));
+    assert.equal(body().props.expanded, false);
+    const original = structuredClone(body());
+    const toggle = () => {
+      out = timeline.event(
+        out.frame.state,
+        { kind: 'raw', key: 'toggle-' + uuid(901), event: {} },
+        props,
+        {},
+      );
+    };
+    toggle();
+    assert.equal(body().key, original.key);
+    assert.equal(body().props.expanded, true);
+    assert.equal(
+      details().children.find((node) => node.key.startsWith('tool-actions-')).visible,
+      true,
+    );
+    toggle();
+    assert.deepEqual(body(), original);
+    assert.equal(details().visible, true);
+    assert.equal(
+      details().children.find((node) => node.key.startsWith('tool-actions-')).visible,
+      false,
+    );
+    const unknown = structuredClone(props);
+    unknown.messages[0].tool.call.presentation = null;
+    out = timeline.update(out.frame.state, unknown, {});
+    assert.equal(body(), undefined);
+    assert.equal(details().visible, false);
+    assert.ok(row().children.some((node) => node.key.startsWith('summary-')));
+  });
+}
+
+test('conversation find unfolds the owning structured card for an exact nested native source', async () => {
+  const find = await conversationFinder();
+  const message = {
+    ...find.props.messages[0],
+    id: 'fragment-id',
+    contentKey: 'call-body',
+    role: 'tool_call',
+    source: 40,
+    tool: {
+      toolUseId: 'file-call',
+      call: {
+        sequence: 40,
+        presentation: 'maka.workspace.Files@1/write',
+        name: 'Alias',
+        title: null,
+        pending: false,
+      },
+      result: { sequence: 41, isError: false, image: false },
+    },
+  };
+  find.update({ messages: [message], toolContext: { sessionId: uuid(1), through: 100 } });
+  const observe = (sequence, path) =>
+    find.input({
+      kind: 'component',
+      child: 'reading',
+      name: 'observed',
+      event: {
+        readingRevision: 1,
+        viewport: null,
+        pendingCommand: null,
+        receipt: { sequence, status: 'applied' },
+        find: { sequence, count: 1, limited: false, index: 1, active: { path, offset: 7 } },
+      },
+    });
+  find.query('file.rs');
+  observe(find.state.command.sequence, ['tool-details-foreign', 'path-body']);
+  assert.deepEqual(find.state.expanded, []);
+  find.query('native-file.rs', 2);
+  const sequence = find.state.command.sequence;
+  assert.equal(find.state.search.waiting, sequence);
+  observe(sequence - 1, ['tool-details-file-call', 'path-body']);
+  assert.deepEqual(find.state.expanded, []);
+  observe(sequence, ['tool-details-file-call', 'path-body']);
+  assert.deepEqual(find.state.expanded, ['file-call']);
+  assert.deepEqual(find.state.command.target, {
+    kind: 'reveal_source',
+    path: ['tool-details-file-call', 'path-body'],
+    offset: 7,
+    find_sequence: sequence,
+  });
+});

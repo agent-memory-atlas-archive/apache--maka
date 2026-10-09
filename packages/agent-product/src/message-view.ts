@@ -20,6 +20,7 @@
 import type { HistorySource } from '../../plugin-sdk/src/index.js';
 import type { Theme } from './contracts.js';
 import { copy } from './locale.js';
+import { toolPresentation } from './tool-details.js';
 import { fill, compactLabel, type Node, type Presentation } from './view.js';
 
 export function sourceFieldLabel(locale: string, field: HistorySource['field']): string {
@@ -65,6 +66,7 @@ export function messageView<N extends Node>(
     tool: HistorySource['tool'];
     continued: boolean;
     expanded: boolean;
+    structured?: boolean;
     waiting?: boolean;
     toggle: string | null;
     body: N;
@@ -90,11 +92,19 @@ export function messageView<N extends Node>(
               ? text.findFieldFailure
               : text.toolOutput;
   const title = tool && message.tool?.call?.title;
+  const kind = toolPresentation(message.tool?.call?.presentation);
   const name = title
     ? (title.translations?.[locale] ??
       title.translations?.[locale.split('-')[0]!] ??
       title.fallback)
-    : tool && message.tool?.call?.name;
+    : kind
+      ? {
+          read: text.toolReadAction,
+          write: text.toolWriteAction,
+          edit: text.toolEditAction,
+          patch: text.toolPatchAction,
+        }[kind]
+      : tool && message.tool?.call?.name;
   const status =
     tool && !message.tool?.result
       ? message.tool?.call?.pending
@@ -145,7 +155,7 @@ export function messageView<N extends Node>(
         : []),
       ...(tool
         ? [
-            ...(!expanded
+            ...(!expanded && !message.structured
               ? [
                   ui.text(
                     'summary-' + message.id,
@@ -162,6 +172,7 @@ export function messageView<N extends Node>(
               [
                 body,
                 ui.box('tool-actions-' + message.id, message.actions, {
+                  visible: expanded,
                   row: true,
                   gap: target === 'desktop' ? 8 : 1,
                   surface: true,
@@ -170,7 +181,7 @@ export function messageView<N extends Node>(
                 }),
               ],
               {
-                visible: expanded,
+                visible: expanded || !!message.structured,
                 gap: target === 'desktop' ? 8 : 1,
                 surface: true,
                 style: { width: fill },

@@ -35,6 +35,7 @@ import type {
 import type { TimelineProps } from './contracts.js';
 import { copy } from './locale.js';
 import { toolCards } from './tool-cards.js';
+import { toolPresentation } from './tool-details.js';
 import { messageView, sourceFieldLabel } from './message-view.js';
 import { fill, compactLabel, type Node, type Presentation } from './view.js';
 
@@ -188,16 +189,20 @@ export function searchEvent(
     ) {
       search.waiting = null;
       if (hit.active) {
-        const message = props.messages.find(
-          (message) =>
-            hit.active!.path.length === 1 && hit.active!.path[0] === 'text-' + message.contentKey,
+        const path = hit.active.path;
+        const card = toolCards(props.messages).find(
+          (card) =>
+            (path.length === 1 &&
+              [card.message, card.result].some(
+                (message) => message && path[0] === 'text-' + message.contentKey,
+              )) ||
+            (path.length > 1 &&
+              props.toolContext &&
+              toolPresentation(card.message.tool?.call?.presentation) &&
+              path[0] === 'tool-details-' + card.message.id),
         );
-        if (message) {
-          const id = toolCards(props.messages).find(
-            (card) =>
-              card.message.contentKey === message.contentKey ||
-              card.result?.contentKey === message.contentKey,
-          )!.message.id;
+        if (card) {
+          const id = card.message.id;
           if (!state.expanded.includes(id)) state.expanded.push(id);
           command(state, { kind: 'reveal_source', ...hit.active, find_sequence: hit.sequence });
         }
