@@ -90,6 +90,10 @@ impl Handler for Agent {
                     let operation = context.operation().ok_or("agent_mutation_required")?;
                     encode(owner.create(input, operation).await?)
                 }
+                "markRead" => {
+                    context.operation().ok_or("agent_mutation_required")?;
+                    encode(owner.mark_read(decode(input)?).await?)
+                }
                 "metadata" => {
                     context.operation().ok_or("agent_mutation_required")?;
                     encode(owner.metadata(decode(input)?).await?)
@@ -591,6 +595,7 @@ pub(crate) fn summary(session: SessionRecord<SessionConfiguration>) -> Session {
         workspace: session.configuration.workspace,
         updated_at: session.updated_at,
         archived: session.archived,
+        has_unread: session.read_state.has_unread,
     }
 }
 fn delivery(event: StoreStreamEvent) -> Option<Delivery> {

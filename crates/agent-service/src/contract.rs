@@ -289,6 +289,22 @@ pub struct Send {
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentMarkRead")]
+pub struct MarkRead {
+    #[schemars(length(min = 1, max = 128))]
+    pub session_id: String,
+    #[schemars(length(min = 1, max = 128))]
+    pub message_id: String,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "AgentMarkReadResult")]
+pub enum MarkReadResult {
+    Observed { session: Session },
+    Rejected { reason: Rejection },
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentStop")]
 pub struct Stop {
     #[schemars(length(min = 1, max = 128))]
@@ -318,6 +334,7 @@ pub struct Session {
     pub revision: u64,
     pub updated_at: u64,
     pub archived: bool,
+    pub has_unread: bool,
     pub activity: SessionActivity,
 }
 #[derive(Serialize, JsonSchema)]
@@ -864,6 +881,10 @@ pub fn contract() -> Contract {
                     method::<Send, SendResult>(MethodMode::Mutation),
                 ),
                 ("stop".into(), method::<Stop, Stopped>(MethodMode::Mutation)),
+                (
+                    "markRead".into(),
+                    method::<MarkRead, MarkReadResult>(MethodMode::Mutation),
+                ),
                 (
                     "queue".into(),
                     method::<SessionRead, Queue>(MethodMode::Query),

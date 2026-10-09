@@ -242,9 +242,11 @@ export function components<N extends Node>(
                                     ? '  ⢁ '
                                     : session.activity === 'waiting'
                                       ? '  ◇ '
-                                      : '    ',
+                                      : session.hasUnread
+                                        ? '  ● '
+                                        : '    ',
                                   13,
-                                  session.activity === 'idle'
+                                  session.activity === 'idle' && !session.hasUnread
                                     ? props.theme.muted
                                     : props.theme.accent,
                                 ),
@@ -259,7 +261,7 @@ export function components<N extends Node>(
                                   session.title,
                                   13,
                                   session.archived ? props.theme.muted : props.theme.text,
-                                  400,
+                                  session.hasUnread ? 650 : 400,
                                   { truncate: true },
                                 ),
                               ],
@@ -290,7 +292,9 @@ export function components<N extends Node>(
                             ? ' · ' + copy(props.locale).needsYou
                             : session.activity === 'working'
                               ? ' · ' + copy(props.locale).working
-                              : ''),
+                              : session.hasUnread
+                                ? ' · ' + copy(props.locale).unread
+                                : ''),
                         props.busy,
                         false,
                         {
@@ -464,12 +468,35 @@ export function components<N extends Node>(
         sourceActions:
           message.source !== null
             ? [
-                ui.box('source-actions-' + message.id, [sourceAction], {
-                  row: true,
-                  gap: 0,
-                  style: { width: fill },
-                  surface: message.role === 'user',
-                }),
+                ui.box(
+                  'source-actions-' + message.id,
+                  [
+                    sourceAction,
+                    ...(props.markReadEnabled &&
+                    props.toolContext &&
+                    !search &&
+                    (message.role === 'user' ||
+                      message.role === 'assistant' ||
+                      message.role === 'thinking')
+                      ? [
+                          ui.button(
+                            'mark-read-' +
+                              message.source +
+                              (message.role === 'thinking' ? '-thinking' : ''),
+                            text.markRead,
+                            props.loading,
+                          ),
+                        ]
+                      : []),
+                  ],
+                  {
+                    row: true,
+                    gap: target === 'desktop' ? 12 : 1,
+                    terminal: { wrap: true },
+                    style: { width: fill, wrap: true },
+                    surface: message.role === 'user',
+                  },
+                ),
               ]
             : [],
       });
@@ -954,6 +981,27 @@ export function components<N extends Node>(
           )
             out.events.push({ name: 'sourceField', value: { field } });
         } else if (input.kind === 'raw' && !props.loading) {
+          if (props.markReadEnabled && props.toolContext && !next.search) {
+            const message = props.messages.find(
+              (message) =>
+                message.source !== null &&
+                (message.role === 'user' ||
+                  message.role === 'assistant' ||
+                  message.role === 'thinking') &&
+                input.key ===
+                  'mark-read-' + message.source + (message.role === 'thinking' ? '-thinking' : ''),
+            );
+            if (message)
+              out.events.push({
+                name: 'markRead',
+                value: {
+                  sessionId: props.toolContext.sessionId,
+                  sequence: message.source,
+                  field: message.role === 'thinking' ? 'thinking' : 'body',
+                },
+              });
+          }
+
           const tool = toolCards(props.messages)
             .map(({ message }) => message)
             .find(

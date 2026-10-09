@@ -309,6 +309,7 @@ const session = {
   revision: 1,
   updatedAt: 1,
   archived: false,
+  hasUnread: false,
   activity: 'idle',
   permissions: { access: 'workspace_write', requestPermissions: true },
   boundaryRevision: 0,
@@ -384,6 +385,7 @@ class Client {
               'older',
               'newer',
               'latest',
+              'markRead',
               'source',
               'sourceFirst',
               'sourcePrevious',
@@ -11573,5 +11575,200 @@ for (const target of ['tui', 'desktop']) {
     client.update({ busy: true });
     client.raw('decline');
     assert.deepEqual(client.output.events, []);
+  });
+}
+
+for (const target of ['tui', 'desktop']) {
+  test(`${target} explicit read marker binds exposed messages and recovers only its original receipt`, async () => {
+    const { component: workspace } = await import(
+      pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+    );
+    const { component: timeline } = await import(
+      pathToFileURL(resolve(root, `dist/packages/timeline/${target}.js`))
+    );
+    const chunk = {
+      messageId: 'answer',
+      sequence: 2,
+      offset: 0,
+      totalBytes: 5,
+      text: 'Hello',
+      role: 'assistant',
+      field: 'body',
+      turnId: 'turn',
+      timestamp: 1,
+      tool: null,
+    };
+    const client = new Client(workspace).start({ through: 2, chunks: [chunk] });
+    const update = (hasUnread, revision) =>
+      client.query('catalog', {
+        revision: String(revision),
+        needsYouCount: 0,
+        sessions: [{ ...session, hasUnread, revision }],
+        before: null,
+        after: null,
+      });
+    update(true, 2);
+    assert.equal(client.timeline.markReadEnabled, true);
+    assert.ok(
+      client.output.actions.every((a) => a.method !== 'markRead'),
+      'catalog observation never acknowledges',
+    );
+    const frame = timeline.mount(client.timeline, {});
+    const click = (key, props = client.timeline) =>
+      timeline.event(
+        frame.frame.state,
+        { kind: 'raw', key, event: { kind: 'activate' } },
+        props,
+        {},
+      );
+    assert.ok(JSON.stringify(frame.frame.view).includes('Mark read through here'));
+    const event = click('mark-read-2').events.find((e) => e.name === 'markRead');
+    assert.deepEqual(event.value, { sessionId: session.id, sequence: 2, field: 'body' });
+    assert.equal(click('mark-read-999').events.length, 0);
+    client.component('markRead', { ...event.value, sessionId: 'other-session' });
+    assert.equal(client.output.actions.length, 0);
+    client.component('markRead', { ...event.value, sequence: 999 });
+    assert.equal(client.output.actions.length, 0);
+    client.raw('help-open');
+    assert.equal(client.timeline.markReadEnabled, false);
+    client.component('markRead', event.value);
+    assert.equal(
+      client.output.actions.length,
+      0,
+      'a retained background reader cannot acknowledge through a modal',
+    );
+    client.input({ kind: 'component', child: 'help', name: 'closed', event: {} });
+    client.component('markRead', event.value);
+    const action = client.find('markRead');
+    assert.deepEqual(action.input, { sessionId: session.id, messageId: 'answer' });
+    assert.equal(client.timeline.markReadEnabled, false);
+    const original = { ...reference, method: 'markRead' };
+    client.complete(action, {
+      status: 'operation',
+      reply: { reference: original, receipt: { kind: 'unavailable', diagnostic: 'lost' } },
+    });
+    update(false, 3);
+    assert.deepEqual(
+      client.state.uncertain.reference,
+      original,
+      'canonical read cannot invent an operation receipt',
+    );
+    client.component('markRead', event.value);
+    assert.ok(client.output.actions.every((a) => a.method !== 'markRead'));
+    update(true, 4);
+    client.raw('check');
+    assert.deepEqual(client.find('read').input, original);
+    client.query('read', {
+      reference: original,
+      receipt: {
+        kind: 'recorded',
+        outcome: {
+          kind: 'returned',
+          value: { kind: 'observed', session: { ...session, hasUnread: false, revision: 3 } },
+        },
+        cleanup: { kind: 'confirmed' },
+      },
+    });
+    assert.equal(client.state.uncertain, null);
+    assert.equal(
+      client.state.selected.hasUnread,
+      true,
+      'older receipt cannot replace newer unread',
+    );
+    assert.equal(client.state.catalog.sessions[0].hasUnread, true);
+    client.component('markRead', event.value);
+    client.complete(client.find('markRead'), {
+      status: 'operation',
+      reply: {
+        reference: { ...original, operation: uuid(90) },
+        receipt: {
+          kind: 'recorded',
+          outcome: {
+            kind: 'returned',
+            value: { kind: 'observed', session: { ...session, hasUnread: false, revision: 5 } },
+          },
+          cleanup: { kind: 'confirmed' },
+        },
+      },
+    });
+    assert.equal(client.state.selected.hasUnread, false);
+    assert.equal(client.timeline.markReadEnabled, false);
+    assert.equal(click('mark-read-2').events.length, 0);
+    assert.equal(client.state.epoch, 1);
+  });
+}
+
+for (const target of ['tui', 'desktop']) {
+  test(`${target} unread display follows original activity precedence and excludes unexposed read markers`, async () => {
+    const { component: navigation } = await import(
+      pathToFileURL(resolve(root, `dist/packages/navigation/${target}.js`))
+    );
+    const props = {
+      theme: values.appearance[0],
+      locale: 'en',
+      sessions: [{ ...session, hasUnread: true }],
+      selected: session.id,
+      busy: false,
+    };
+    let frame = navigation.mount(props, {});
+    assert.ok(JSON.stringify(frame.frame.view).includes(target === 'tui' ? '●' : 'Unread'));
+    props.sessions[0].activity = 'working';
+    frame = navigation.update(frame.frame.state, props, {});
+    assert.ok(JSON.stringify(frame.frame.view).includes(target === 'tui' ? '⢁' : 'Working'));
+    props.sessions[0].activity = 'waiting';
+    frame = navigation.update(frame.frame.state, props, {});
+    assert.ok(JSON.stringify(frame.frame.view).includes(target === 'tui' ? '◇' : 'Needs You'));
+    const { component: workspace } = await import(
+      pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+    );
+    const client = new Client(workspace).start({
+      through: 2,
+      chunks: [
+        {
+          messageId: 'thinking',
+          sequence: 2,
+          offset: 0,
+          totalBytes: 4,
+          text: 'Plan',
+          role: 'assistant',
+          field: 'thinking',
+          turnId: 'turn',
+          timestamp: 1,
+          tool: null,
+        },
+      ],
+    });
+    client.query('catalog', {
+      revision: '2',
+      needsYouCount: 0,
+      sessions: [{ ...session, hasUnread: true, revision: 2 }],
+      before: null,
+      after: null,
+    });
+    const { component: timeline } = await import(
+      pathToFileURL(resolve(root, `dist/packages/timeline/${target}.js`))
+    );
+    const view = timeline.mount(client.timeline, {});
+    const event = timeline
+      .event(
+        view.frame.state,
+        { kind: 'raw', key: 'mark-read-2-thinking', event: { kind: 'activate' } },
+        client.timeline,
+        {},
+      )
+      .events.find((e) => e.name === 'markRead');
+    client.component('markRead', event.value);
+    assert.deepEqual(
+      client.find('markRead').input,
+      { sessionId: session.id, messageId: 'thinking' },
+      'thinking-only tails retain original durable identity',
+    );
+    const hidden = timeline.event(
+      view.frame.state,
+      { kind: 'raw', key: 'mark-read-2-thinking', event: { kind: 'activate' } },
+      { ...client.timeline, markReadEnabled: false },
+      {},
+    );
+    assert.ok(hidden.events.every((e) => e.name !== 'markRead'));
   });
 }

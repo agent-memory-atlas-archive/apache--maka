@@ -127,6 +127,8 @@ pub(super) fn catalog() -> Value {
         root::<maka_agent_service::contract::MetadataResult>(&mut g),
         root::<maka_agent_service::contract::Send>(&mut g),
         root::<maka_agent_service::contract::Stop>(&mut g),
+        root::<maka_agent_service::contract::MarkRead>(&mut g),
+        root::<maka_agent_service::contract::MarkReadResult>(&mut g),
         root::<maka_agent_service::contract::Watch>(&mut g),
         root::<maka_agent_service::contract::PendingInteractions>(&mut g),
         root::<maka_agent_service::contract::InteractionRead>(&mut g),

@@ -195,3 +195,154 @@ async fn catalog_observes_metadata_pending_and_removal_at_its_original_location(
     fixture.app.shutdown().await.unwrap();
     fixture.config.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn explicit_read_marker_keeps_original_tail_authority_and_receipt() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            for text in ["First answer", "New answer"] {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                request(&mut socket).await;
+                response_with_text(&mut socket, text).await;
+            }
+        });
+        let fixture = Fixture::new(&base, 1, None).await;
+        let session = fixture.create("Read marker").await;
+        let read = |message: &str| json!({"sessionId":session,"messageId":message});
+        assert_eq!(
+            fixture
+                .query("observe", json!({"sessionId":session}))
+                .await
+                .unwrap()["session"]["hasUnread"],
+            false
+        );
+        fixture.send(&session).await.unwrap();
+        fixture.drained().await;
+        let first = fixture
+            .query("observe", json!({"sessionId":session}))
+            .await
+            .unwrap();
+        assert_eq!(first["session"]["hasUnread"], true);
+        let page = fixture
+            .query(
+                "history",
+                json!({"sessionId":session,"position":{"kind":"tail"}}),
+            )
+            .await
+            .unwrap();
+        let message = page["chunks"].as_array().unwrap().last().unwrap()["messageId"]
+            .as_str()
+            .unwrap();
+        let stale = fixture
+            .mutation(2, "markRead", read("unknown-message"), Uuid::new_v4())
+            .await
+            .unwrap();
+        assert_eq!(stale["session"], first["session"]);
+        let operation = Uuid::new_v4();
+        let marked = fixture
+            .mutation(2, "markRead", read(message), operation)
+            .await
+            .unwrap();
+        assert_eq!(marked["kind"], "observed");
+        assert_eq!(marked["session"]["hasUnread"], false);
+        assert_eq!(
+            marked["session"]["updatedAt"],
+            first["session"]["updatedAt"]
+        );
+        let revision = marked["session"]["revision"].as_u64().unwrap();
+        assert_eq!(revision, first["session"]["revision"].as_u64().unwrap() + 1);
+        let duplicate = fixture
+            .mutation(2, "markRead", read(message), Uuid::new_v4())
+            .await
+            .unwrap();
+        assert_eq!(duplicate, marked);
+        fixture.send(&session).await.unwrap();
+        fixture.drained().await;
+        let second = fixture
+            .query("observe", json!({"sessionId":session}))
+            .await
+            .unwrap();
+        assert_eq!(second["session"]["hasUnread"], true);
+        assert_eq!(
+            fixture
+                .mutation(2, "markRead", read(message), operation)
+                .await
+                .unwrap(),
+            marked,
+            "original receipt replay cannot clear later unread"
+        );
+        assert_eq!(
+            fixture
+                .mutation(2, "markRead", read(message), Uuid::new_v4())
+                .await
+                .unwrap()["session"],
+            second["session"],
+            "older message cannot clear the new tail"
+        );
+        fixture
+            .store
+            .create_session("foreign_session", "foreign", &json!({"foreign":true}), 1)
+            .await
+            .unwrap();
+        assert_eq!(
+            fixture
+                .mutation(
+                    2,
+                    "markRead",
+                    json!({"sessionId":"foreign_session","messageId":message}),
+                    Uuid::new_v4()
+                )
+                .await
+                .unwrap()["kind"],
+            "rejected",
+            "Agent cannot mark a foreign session"
+        );
+        let page = fixture
+            .query(
+                "history",
+                json!({"sessionId":session,"position":{"kind":"tail"}}),
+            )
+            .await
+            .unwrap();
+        let latest = page["chunks"].as_array().unwrap().last().unwrap()["messageId"]
+            .as_str()
+            .unwrap();
+        assert_eq!(
+            fixture
+                .mutation(2, "markRead", read(latest), Uuid::new_v4())
+                .await
+                .unwrap()["session"]["hasUnread"],
+            false
+        );
+        let stored = fixture
+            .store
+            .get_session::<SessionConfiguration>(&session)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            stored.read_state.last_read_message_id.as_deref(),
+            Some(latest)
+        );
+        fixture
+            .store
+            .set_session_archived::<SessionConfiguration>(&session, true, now())
+            .await
+            .unwrap();
+        assert_eq!(
+            fixture
+                .mutation(2, "markRead", read(latest), Uuid::new_v4())
+                .await
+                .unwrap()["kind"],
+            "rejected",
+            "archived sessions retain their original state"
+        );
+        server.await.unwrap();
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}

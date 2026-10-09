@@ -271,6 +271,39 @@ impl Owner {
             session: crate::service::summary(record),
         })
     }
+    pub async fn mark_read(&self, input: MarkRead) -> Result<MarkReadResult, String> {
+        let runs = self.runs.lock().await;
+        if runs.closing {
+            return Ok(MarkReadResult::Rejected {
+                reason: Rejection::Closed,
+            });
+        }
+        if !self.owns(&input.session_id) {
+            return Ok(MarkReadResult::Rejected {
+                reason: Rejection::SessionUnavailable,
+            });
+        }
+        let session = self
+            .store
+            .get_session::<SessionConfiguration>(&input.session_id)
+            .await
+            .map_err(|_| "agent_store_unavailable")?;
+        if session.is_none_or(|session| session.archived) {
+            return Ok(MarkReadResult::Rejected {
+                reason: Rejection::SessionUnavailable,
+            });
+        }
+        // The original store compares the exposed message with the durable tail
+        // inside its transaction. A stale reader cannot clear a newer message.
+        let record = self
+            .store
+            .set_session_read_marker::<SessionConfiguration>(&input.session_id, &input.message_id)
+            .await
+            .map_err(|_| "agent_read_marker_failed")?;
+        Ok(MarkReadResult::Observed {
+            session: crate::service::summary(record),
+        })
+    }
     pub async fn metadata(&self, input: Metadata) -> Result<MetadataResult, String> {
         if let Some(reason) = metadata_rejection(&input.title, &input.labels) {
             return Ok(MetadataResult::Rejected { reason });

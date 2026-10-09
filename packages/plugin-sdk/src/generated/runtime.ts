@@ -106,6 +106,8 @@ export type RuntimeProtocol =
   | AgentMetadataResult
   | AgentSend
   | AgentStop
+  | AgentMarkRead
+  | AgentMarkReadResult
   | AgentWatch
   | AgentPendingInteractions
   | AgentInteractionRead
@@ -1564,6 +1566,15 @@ export type AgentMetadataResult =
       expected: number;
       actual: number;
       kind: 'revision_conflict';
+    }
+  | {
+      reason: AgentRejection;
+      kind: 'rejected';
+    };
+export type AgentMarkReadResult =
+  | {
+      session: AgentSession;
+      kind: 'observed';
     }
   | {
       reason: AgentRejection;
@@ -3921,6 +3932,7 @@ export interface AgentSession {
   revision: number;
   updatedAt: number;
   archived: boolean;
+  hasUnread: boolean;
   activity: AgentSessionActivity;
 }
 export interface AgentWorkspace {
@@ -3965,6 +3977,10 @@ export interface AgentSend {
 export interface AgentStop {
   sessionId: string;
   invocationId: string;
+}
+export interface AgentMarkRead {
+  sessionId: string;
+  messageId: string;
 }
 export interface AgentWatch {
   sessionId: string;

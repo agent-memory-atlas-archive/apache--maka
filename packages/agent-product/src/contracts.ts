@@ -175,6 +175,7 @@ export interface ToolDetailsProps {
   focusOnPointer: boolean;
 }
 export interface TimelineProps {
+  markReadEnabled: boolean;
   toolContext: ToolDetailsProps['context'] | null;
   waitingTools: string[];
   theme: Theme;
@@ -408,6 +409,7 @@ export const toolDetailsContract = component(
 export const timelineContract = component(
   'maka.agent.Timeline',
   object({
+    markReadEnabled: { type: 'boolean' },
     toolContext: {
       anyOf: [
         object({ sessionId: string, through: { type: 'integer', minimum: 1 } }),
@@ -467,6 +469,11 @@ export const timelineContract = component(
     newer: object({}),
     latest: object({}),
     source: object({
+      sequence: { type: 'integer', minimum: 1 },
+      field: { enum: ['body', 'thinking'] },
+    }),
+    markRead: object({
+      sessionId: string,
       sequence: { type: 'integer', minimum: 1 },
       field: { enum: ['body', 'thinking'] },
     }),

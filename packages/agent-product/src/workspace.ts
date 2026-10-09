@@ -43,6 +43,7 @@ import type {
   AgentSession,
   AgentSessionPage,
   AgentCreated,
+  AgentMarkReadResult,
   AgentDirectoryPage,
   AgentDirectorySelection,
   AgentList,
@@ -115,6 +116,7 @@ type Request =
       model: ModelSelection;
       thinkingLevel: ThinkingLevel | null;
     }
+  | { kind: 'markRead'; sessionId: string }
   | { kind: 'stop'; sessionId: string }
   | { kind: 'queue'; sessionId: string; saved?: { attempt: number; draft: EditorObservation } }
   | { kind: 'queueBody'; attempt: number }
@@ -123,7 +125,7 @@ type Request =
   | { kind: 'restorePage' }
   | { kind: 'restoreReceipt'; reference: RecoveryRef; cursor: number };
 type Mutation =
-  | Extract<Request, { kind: 'create' | 'send' | 'stop' | 'queue' | 'respond' }>
+  | Extract<Request, { kind: 'create' | 'send' | 'stop' | 'queue' | 'respond' | 'markRead' }>
   | { kind: 'restored' };
 interface DisplayPart extends AgentPart {
   invocationId: string | null;
@@ -492,6 +494,7 @@ function mutationPending(state: State) {
         'queueRead',
         'questionRead',
         'respond',
+        'markRead',
         'create',
         'createDirectory',
         'send',
@@ -953,6 +956,22 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
       state.catalogFilter = 'all';
       catalog(state, { kind: 'at', cursor: created.session.id });
     }
+  } else if (request.kind === 'markRead') {
+    const result = value as AgentMarkReadResult;
+    if (result.kind === 'observed' && result.session.id === request.sessionId) {
+      if (
+        state.selected?.id === request.sessionId &&
+        result.session.revision >= state.selected.revision
+      )
+        state.selected = result.session;
+      if (state.catalog)
+        state.catalog.sessions = state.catalog.sessions.map((session) =>
+          session.id === request.sessionId && result.session.revision >= session.revision
+            ? result.session
+            : session,
+        );
+      state.notice = null;
+    } else state.notice = 'unavailable';
   } else if (request.kind === 'queue') {
     const result = value as AgentQueueMutationResult;
     state.notice = result.kind === 'committed' ? null : 'queueChanged';
@@ -1622,6 +1641,14 @@ function frame<N extends Node>(
       theme,
       locale,
       messages: messages(state),
+      markReadEnabled:
+        !!state.selected?.hasUnread &&
+        !state.selected.archived &&
+        !busy &&
+        conversationRoute(state) &&
+        state.dialog === null &&
+        !state.source &&
+        !state.image,
       search:
         target === 'tui' && state.searchOpen && state.selected
           ? { sessionId: state.selected.id, epoch: state.epoch, through: state.latestKnown }
@@ -1677,6 +1704,7 @@ function frame<N extends Node>(
       older: 'older',
       newer: 'newer',
       latest: 'latest',
+      markRead: 'mark-read',
       source: 'source',
       toolSource: 'tool-source',
       viewImage: 'view-image',
@@ -2446,7 +2474,8 @@ export function workspace<N extends Node>(
                 request.kind === 'send' ||
                 request.kind === 'stop' ||
                 request.kind === 'queue' ||
-                request.kind === 'respond')
+                request.kind === 'respond' ||
+                request.kind === 'markRead')
             )
               receipt(state, actions, request, outcome.reply);
             else if (outcome.status === 'succeeded')
@@ -2841,7 +2870,42 @@ export function workspace<N extends Node>(
           }
         } else if (input.child === 'timeline' && !state.loading && state.window) {
           const page = state.window.page;
-          if (input.name === 'source') {
+          if (
+            input.name === 'markRead' &&
+            state.selected?.hasUnread &&
+            !state.selected.archived &&
+            !mutationPending(state) &&
+            conversationRoute(state) &&
+            state.dialog === null &&
+            !state.image &&
+            !state.searchOpen
+          ) {
+            const event = input.event as {
+              sessionId: string;
+              sequence: number;
+              field: 'body' | 'thinking';
+            };
+            const chunk =
+              event.sessionId === state.selected.id &&
+              page.chunks.find(
+                (chunk) =>
+                  chunk.sequence === event.sequence &&
+                  (chunk.field ?? 'body') === event.field &&
+                  (chunk.role === 'user' || chunk.role === 'assistant'),
+              );
+            if (chunk)
+              intent(
+                state,
+                actions,
+                { kind: 'markRead', sessionId: state.selected.id },
+                'agent',
+                'markRead',
+                {
+                  sessionId: state.selected.id,
+                  messageId: chunk.messageId,
+                },
+              );
+          } else if (input.name === 'source') {
             const chunk = page.chunks.find(
               (chunk) =>
                 chunk.sequence === (input.event as { sequence: number }).sequence &&

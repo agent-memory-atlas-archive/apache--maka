@@ -4683,6 +4683,9 @@ export const contracts = {
                   archived: {
                     type: 'boolean',
                   },
+                  hasUnread: {
+                    type: 'boolean',
+                  },
                   activity: {
                     $ref: '#/$defs/AgentSessionActivity',
                   },
@@ -4698,6 +4701,7 @@ export const contracts = {
                   'revision',
                   'updatedAt',
                   'archived',
+                  'hasUnread',
                   'activity',
                 ],
               },
@@ -4906,6 +4910,9 @@ export const contracts = {
                   archived: {
                     type: 'boolean',
                   },
+                  hasUnread: {
+                    type: 'boolean',
+                  },
                   activity: {
                     $ref: '#/$defs/AgentSessionActivity',
                   },
@@ -4921,6 +4928,7 @@ export const contracts = {
                   'revision',
                   'updatedAt',
                   'archived',
+                  'hasUnread',
                   'activity',
                 ],
               },
@@ -6753,6 +6761,9 @@ export const contracts = {
                   archived: {
                     type: 'boolean',
                   },
+                  hasUnread: {
+                    type: 'boolean',
+                  },
                   activity: {
                     $ref: '#/$defs/AgentSessionActivity',
                   },
@@ -6768,6 +6779,7 @@ export const contracts = {
                   'revision',
                   'updatedAt',
                   'archived',
+                  'hasUnread',
                   'activity',
                 ],
               },
@@ -6813,6 +6825,179 @@ export const contracts = {
               AgentSessionActivity: {
                 type: 'string',
                 enum: ['idle', 'working', 'waiting'],
+              },
+            },
+          },
+          resources: {},
+        },
+        markRead: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentMarkRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              messageId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'messageId'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentMarkReadResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  session: {
+                    $ref: '#/$defs/AgentSession',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'observed',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'session'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/AgentRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+            ],
+            $defs: {
+              AgentSession: {
+                type: 'object',
+                properties: {
+                  permissions: {
+                    $ref: '#/$defs/AgentWorkspacePermissions',
+                  },
+                  boundaryRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  id: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  labels: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  workspace: {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  archived: {
+                    type: 'boolean',
+                  },
+                  hasUnread: {
+                    type: 'boolean',
+                  },
+                  activity: {
+                    $ref: '#/$defs/AgentSessionActivity',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'permissions',
+                  'boundaryRevision',
+                  'id',
+                  'title',
+                  'labels',
+                  'workspace',
+                  'revision',
+                  'updatedAt',
+                  'archived',
+                  'hasUnread',
+                  'activity',
+                ],
+              },
+              AgentWorkspacePermissions: {
+                type: 'object',
+                properties: {
+                  access: {
+                    $ref: '#/$defs/AgentWorkspaceAccess',
+                  },
+                  requestPermissions: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['access', 'requestPermissions'],
+              },
+              AgentWorkspaceAccess: {
+                description:
+                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                type: 'string',
+                enum: ['read_only', 'workspace_write'],
+              },
+              AgentWorkspace: {
+                type: 'object',
+                properties: {
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
+              AgentSessionActivity: {
+                type: 'string',
+                enum: ['idle', 'working', 'waiting'],
+              },
+              AgentRejection: {
+                type: 'string',
+                enum: [
+                  'title_invalid',
+                  'labels_invalid',
+                  'workspace_unavailable',
+                  'session_unavailable',
+                  'closed',
+                ],
               },
             },
           },
@@ -6993,6 +7178,9 @@ export const contracts = {
                   archived: {
                     type: 'boolean',
                   },
+                  hasUnread: {
+                    type: 'boolean',
+                  },
                   activity: {
                     $ref: '#/$defs/AgentSessionActivity',
                   },
@@ -7008,6 +7196,7 @@ export const contracts = {
                   'revision',
                   'updatedAt',
                   'archived',
+                  'hasUnread',
                   'activity',
                 ],
               },
@@ -7156,6 +7345,9 @@ export const contracts = {
                   archived: {
                     type: 'boolean',
                   },
+                  hasUnread: {
+                    type: 'boolean',
+                  },
                   activity: {
                     $ref: '#/$defs/AgentSessionActivity',
                   },
@@ -7171,6 +7363,7 @@ export const contracts = {
                   'revision',
                   'updatedAt',
                   'archived',
+                  'hasUnread',
                   'activity',
                 ],
               },

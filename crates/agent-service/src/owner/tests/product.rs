@@ -1757,6 +1757,48 @@ process.stdout.write(output.outputFiles[0].text);
     if process_permissions {
         terminal::run(&mut presenter, &runtime, &fixture, &session_id);
     }
+    if form {
+        assert!(
+            runtime
+                .block_on(fixture.owner.session(&session_id))
+                .unwrap()
+                .read_state
+                .has_unread
+        );
+        // The visible live excerpt cannot acknowledge. Navigate to its durable
+        // canonical window through the same ordinary Latest action first.
+        if screen(&draw(&mut presenter)).contains("[ Latest messages ]") {
+            click(&mut presenter, "[ Latest messages ]");
+        }
+        click(&mut presenter, "Elegant response");
+        presenter
+            .input(Event::Key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE)))
+            .unwrap();
+        await_screen(&mut presenter, "[ Mark read through here ]");
+        // The answer is the final durable text row; earlier visible user rows
+        // must not accidentally stand in for it.
+        let painted = screen(&draw(&mut presenter));
+        let count = painted.matches("[ Mark read through here ]").count();
+        click_nth(&mut presenter, "[ Mark read through here ]", count - 1);
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            draw(&mut presenter);
+            if !runtime
+                .block_on(fixture.owner.session(&session_id))
+                .unwrap()
+                .read_state
+                .has_unread
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "original read marker did not settle"
+            );
+            std::thread::yield_now();
+        }
+        await_screen(&mut presenter, "Form background draft");
+    }
     if fail_labels_initialization || file_permissions || image || form {
         if matches!(case, ProductCase::FilePermissions) {
             message_details::run(&mut presenter, &runtime, &fixture, &session_id);
