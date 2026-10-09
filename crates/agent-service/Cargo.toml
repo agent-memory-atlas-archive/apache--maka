@@ -34,6 +34,7 @@ maka-model.workspace = true
 maka-network.workspace = true
 maka-plugin-core.workspace = true
 maka-presentation.workspace = true
+maka-process.workspace = true
 maka-plugins.workspace = true
 maka-providers.workspace = true
 maka-protocol.workspace = true

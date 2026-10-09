@@ -22,6 +22,7 @@
 //! These handles do not create a second resource owner or perform recovery.
 
 use super::{PtyCommand, stream};
+use crate::group::Group;
 use maka_runtime::terminal::TerminalSize;
 use rustix::{
     fd::OwnedFd,
@@ -30,33 +31,35 @@ use rustix::{
 };
 use std::{
     io,
+    os::fd::AsRawFd,
     process::{ExitStatus, Stdio},
     sync::Arc,
 };
-use tokio::{io::unix::AsyncFd, process::Child};
+use tokio::{
+    io::unix::AsyncFd,
+    signal::unix::{SignalKind, signal as observe_signal},
+};
 
 pub use stream::PtyIo;
 
-/// The unreaped root pins the root process/group identity.
-/// Normal exit preserves descendants. Explicit termination also signals the
-/// current foreground job; escaped/background process-tree policy belongs to
-/// the resource lifecycle, not this OS handle.
+/// The unreaped root pins its group through descendant termination and reaping.
+/// The current foreground group is also signalled while this terminal still
+/// belongs to that Session. Arbitrarily escaped groups are not an OS sandbox.
 pub struct PtyChild {
-    child: Child,
-    pid: Pid,
+    group: Group,
     master: Arc<AsyncFd<OwnedFd>>,
-    status: Option<ExitStatus>,
     proxy: Option<maka_network::proxy::Proxy>,
     #[cfg(target_os = "linux")]
     mount_cleanup: crate::command::Cleanup,
 }
 
-pub async fn spawn(plan: PtyCommand, size: TerminalSize) -> io::Result<(PtyChild, PtyIo)> {
+pub async fn spawn(
+    plan: PtyCommand,
+    size: TerminalSize,
+) -> Result<(PtyChild, PtyIo), maka_runtime::tools::ToolError> {
     let mut plan = plan.prepare().await?;
-    let mut proxy = plan.take_proxy();
-    #[cfg(target_os = "linux")]
-    let mount_lease = plan.take_mount_lease();
     let spawned = (|| -> io::Result<_> {
+        let changed = observe_signal(SignalKind::child())?;
         let mut command = plan.unix();
         // Open the multiplexor with CLOEXEC atomically: openpty + a later fcntl
         // leaves a descriptor-inheritance window when other sessions spawn.
@@ -124,31 +127,23 @@ pub async fn spawn(plan: PtyCommand, size: TerminalSize) -> io::Result<(PtyChild
             });
         }
         let child = command.spawn()?;
-        Ok((child, master))
+        Ok((child, master, changed))
     })();
-    let (child, master) = match spawned {
+    let (child, master, changed) = match spawned {
         Ok(spawned) => spawned,
         Err(error) => {
-            if let Some(proxy) = &mut proxy {
-                proxy.close().await?;
-            }
-            #[cfg(target_os = "linux")]
-            crate::command::Cleanup::from(mount_lease).finish().await?;
-            return Err(error);
+            plan.abort().await?;
+            return Err(crate::failed(error));
         }
     };
     // Drop the Command's parent copies of the slave before returning the master.
-    let pid = Pid::from_raw(child.id().expect("spawned child has a pid") as i32)
-        .expect("child pid is positive");
     Ok((
         PtyChild {
-            child,
-            pid,
+            group: Group::new(child, changed),
             master: master.clone(),
-            status: None,
-            proxy,
+            proxy: plan.take_proxy(),
             #[cfg(target_os = "linux")]
-            mount_cleanup: mount_lease.into(),
+            mount_cleanup: plan.take_mount_lease().into(),
         },
         PtyIo { master },
     ))
@@ -161,8 +156,8 @@ impl PtyChild {
 
     /// Unix has no separate console server. EOF/drain remains the caller's job.
     pub async fn close(&mut self) -> io::Result<()> {
-        if self.status.is_none() {
-            return Err(io::Error::other("wait for the PTY root before closing"));
+        if !self.group.cleaned() {
+            return Err(io::Error::other("wait for the PTY group before closing"));
         }
         #[cfg(target_os = "linux")]
         self.mount_cleanup.finish().await?;
@@ -173,30 +168,38 @@ impl PtyChild {
     }
 
     pub fn id(&self) -> u32 {
-        self.pid.as_raw_nonzero().get() as u32
+        self.group.pid().as_raw_nonzero().get() as u32
     }
 
-    /// Cancellation-safe root wait; output may still remain in the master.
+    /// Keep the root unreaped while terminating its owned group and the
+    /// terminal's current foreground job. Output drain is still a separate fence.
     pub async fn wait(&mut self) -> io::Result<ExitStatus> {
-        if self.status.is_none() {
-            self.status = Some(self.child.wait().await?);
+        if !self.group.reaped() {
+            self.group.root_exited().await?;
+            self.terminate()?;
         }
+        let status = self.group.wait().await?;
         #[cfg(target_os = "linux")]
         self.mount_cleanup.finish().await?;
-        Ok(self.status.expect("root was reaped"))
+        Ok(status)
     }
 
     /// Signal while the root remains unreaped. Foreground group signalling is
     /// best-effort: a numeric tcgetpgrp snapshot is not a stable process handle.
     /// Caller must still wait and drain before treating termination as complete.
     pub fn terminate(&mut self) -> io::Result<bool> {
-        if self.status.is_some() {
+        if self.group.reaped() {
             return Ok(false);
         }
         let mut foreground_result = Ok(false);
-        if let Ok(group) = rustix::termios::tcgetpgrp(self.master.get_ref())
-            && group != self.pid
-            && rustix::termios::tcgetsid(self.master.get_ref()) == Ok(self.pid)
+        // macOS returns 0 after terminal session exit. Do not feed that
+        // sentinel into a wrapper requiring a positive process-group identity.
+        let fd = self.master.get_ref().as_raw_fd();
+        let foreground = unsafe { libc::tcgetpgrp(fd) };
+        if foreground > 0
+            && let Some(group) = Pid::from_raw(foreground)
+            && group != self.group.pid()
+            && unsafe { libc::tcgetsid(fd) } == self.group.pid().as_raw_nonzero().get()
         {
             // Only use the foreground snapshot while the terminal still belongs
             // to our session. This is not an atomic group-identity guarantee.
@@ -204,7 +207,7 @@ impl PtyChild {
         }
         // A privileged foreground job may reject our signal; that must not
         // prevent cleanup of the root that we can still terminate.
-        let root_result = signal(self.pid);
+        let root_result = self.group.terminate();
         Ok(foreground_result? | root_result?)
     }
 }

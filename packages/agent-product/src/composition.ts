@@ -20,6 +20,7 @@
 import {
   contracts,
   type AgentConfiguration,
+  type WorkspaceProcessConfiguration,
   type CompositionInput,
   type CompositionNode,
   type PackageRef,
@@ -37,6 +38,7 @@ export const packageNames = [
   'permission-approval',
   'questions',
   'workspace-files',
+  'workspace-processes',
   'help',
   'studio',
   'studio-gateway',
@@ -77,6 +79,7 @@ export interface CompositionConfiguration {
   packages: Record<PackageName, PackageRef>;
   keys: Record<PackageName, string>;
   agent: AgentConfiguration;
+  processes?: WorkspaceProcessConfiguration;
   hostRoot: string;
   hostDeployment: string;
   managementDeployment: string;
@@ -303,16 +306,32 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         .map((tool) => tool.method),
     ),
   ];
+  const processMethods = [
+    ...new Set(
+      configuration.agent.tools
+        .filter((tool) => tool.import === 'processes')
+        .map((tool) => tool.method),
+    ),
+  ];
+  if (processMethods.length && !configuration.processes)
+    throw new Error(
+      'Process tools require an explicit installation filesystem and network ceiling',
+    );
   host.instances.agent = node(
     'agent',
     { ...configuration.agent },
     {
       ...(asksQuestions ? { questions: [local('questions', 'questions')] } : {}),
       ...(fileMethods.length ? { files: [local('workspace-files', 'files')] } : {}),
+      ...(processMethods.length ? { processes: [local('workspace-processes', 'processes')] } : {}),
     },
   );
   if (asksQuestions) host.instances.questions = node('questions');
   if (fileMethods.length) host.instances['workspace-files'] = node('workspace-files');
+  if (processMethods.length)
+    host.instances['workspace-processes'] = node('workspace-processes', {
+      ...configuration.processes,
+    });
   host.instances.gateway!.bindings!.agent = [local('agent', 'agent')];
   Object.assign(ui.instances, {
     workspace: node(
@@ -427,7 +446,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
   Object.assign(connections.hosts.find((host) => host.name === 'local')!.imports, {
     agent: { methods: Object.keys(contracts.agent.interface.methods), recovery: true },
   });
-  if (asksQuestions || fileMethods.length)
+  if (asksQuestions || fileMethods.length || processMethods.length)
     Object.assign(connections.hosts.find((host) => host.name === 'local')!, {
       native: [
         ...(asksQuestions
@@ -450,6 +469,18 @@ export function composition(configuration: CompositionConfiguration): Applicatio
                 provider: [keys['workspace-files']],
                 export: 'files',
                 methods: fileMethods,
+                recovery: true,
+              },
+            ]
+          : []),
+        ...(processMethods.length
+          ? [
+              {
+                origin: [keys.agent],
+                consumer: [keys.agent],
+                provider: [keys['workspace-processes']],
+                export: 'processes',
+                methods: processMethods,
                 recovery: true,
               },
             ]

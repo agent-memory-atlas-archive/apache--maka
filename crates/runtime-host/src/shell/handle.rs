@@ -69,6 +69,12 @@ pub struct ShellHandle {
     pub(super) pty: Option<PtyControl>,
 }
 impl ShellHandle {
+    /// Original shared arbitration gate for trusted native adapters. Hold it
+    /// through permission revalidation, enqueue and the native receipt.
+    pub fn control_gate(&self) -> Arc<tokio::sync::Mutex<()>> {
+        self.control_gate.clone()
+    }
+
     pub fn replay(&self) -> Option<PtyReplay> {
         self.pty.as_ref().map(|pty| pty.output.replay())
     }
@@ -119,7 +125,7 @@ impl ShellHandle {
 
     /// The last sender belongs to the worker, after native resources and its
     /// residency have been released. A terminal record alone is not this fence.
-    pub(crate) async fn drained(&mut self) -> Result<Arc<ShellRun>, Arc<ShellError>> {
+    pub async fn drained(&mut self) -> Result<Arc<ShellRun>, Arc<ShellError>> {
         while self.snapshot.changed().await.is_ok() {}
         self.finished().await
     }
@@ -217,7 +223,7 @@ impl ShellHandle {
 
     /// Queue admission is synchronous; callers may release their authorization
     /// gate before awaiting native I/O. A full queue accepts no input.
-    pub(crate) fn enqueue_control(
+    pub fn enqueue_control(
         &self,
         input: Input,
         size: Option<TerminalSize>,

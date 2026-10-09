@@ -45,42 +45,60 @@ impl Runner {
     /// The caller owns authorization and ACL lifetime. Capability UUIDs must
     /// match this execution's grants. This transport grants no filesystem access.
     pub async fn spawn_pipes(
-        self,
+        mut self,
         endpoint: Endpoint,
         command: Command,
         capabilities: Vec<uuid::Uuid>,
     ) -> io::Result<pipe::Spawned> {
-        let plan = command.prepare().await?;
+        let plan = match command.prepare().await {
+            Ok(plan) => plan,
+            Err(error) => {
+                self.finish().await.map_err(cleanup_error)?;
+                return Err(io::Error::other(error));
+            }
+        };
         self.pipes(endpoint, plan, capabilities).await
     }
 
     pub(crate) async fn pipes(
-        self,
+        mut self,
         endpoint: Endpoint,
         command: crate::command::Prepared,
         capabilities: Vec<uuid::Uuid>,
     ) -> io::Result<pipe::Spawned> {
+        let _directory = command.directory();
         let plan = command.runner_plan();
-        let (stdin, input_peer) = crate::windows::pipe::input().await?;
-        let (stdout, output_peer) = crate::windows::pipe::output().await?;
-        let (stderr, error_peer) = crate::windows::pipe::output().await?;
-        let mut channel = endpoint.accept(self.as_handle()).await?;
-        let stdio = [
-            self.copy_file(&input_peer)?,
-            self.copy_file(&output_peer)?,
-            self.copy_file(&error_peer)?,
-        ];
-        let (process, pid) = self
-            .admit(
-                &mut channel,
-                &Start {
-                    plan,
-                    capabilities,
-                    io: Transport::Pipe { stdio },
-                },
-            )
-            .await?;
-        let job = Job(self.job.0.try_clone()?);
+        let result: io::Result<_> = async {
+            let (stdin, input_peer) = crate::windows::pipe::input().await?;
+            let (stdout, output_peer) = crate::windows::pipe::output().await?;
+            let (stderr, error_peer) = crate::windows::pipe::output().await?;
+            let mut channel = endpoint.accept(self.as_handle()).await?;
+            let stdio = [
+                self.copy_file(&input_peer)?,
+                self.copy_file(&output_peer)?,
+                self.copy_file(&error_peer)?,
+            ];
+            let (process, pid) = self
+                .admit(
+                    &mut channel,
+                    &Start {
+                        plan,
+                        capabilities,
+                        io: Transport::Pipe { stdio },
+                    },
+                )
+                .await?;
+            let job = Job(self.job.0.try_clone()?);
+            Ok((process, pid, job, stdin, stdout, stderr))
+        }
+        .await;
+        let (process, pid, job, stdin, stdout, stderr) = match result {
+            Ok(value) => value,
+            Err(error) => {
+                self.finish().await.map_err(cleanup_error)?;
+                return Err(error);
+            }
+        };
         Ok(pipe::Spawned {
             child: pipe::Child::from_runner(process, pid, job, self),
             stdin,
@@ -90,7 +108,7 @@ impl Runner {
     }
 
     pub async fn spawn_pty(
-        self,
+        mut self,
         endpoint: Endpoint,
         mut command: Command,
         capabilities: Vec<uuid::Uuid>,
@@ -99,37 +117,55 @@ impl Runner {
         command
             .env("TERM", "xterm-256color")
             .env("COLORTERM", "truecolor");
-        let plan = command.prepare().await?;
+        let plan = match command.prepare().await {
+            Ok(plan) => plan,
+            Err(error) => {
+                self.finish().await.map_err(cleanup_error)?;
+                return Err(io::Error::other(error));
+            }
+        };
         self.terminal(endpoint, plan, capabilities, size).await
     }
 
     pub(crate) async fn terminal(
-        self,
+        mut self,
         endpoint: Endpoint,
         command: crate::command::Prepared,
         capabilities: Vec<uuid::Uuid>,
         size: TerminalSize,
     ) -> io::Result<(pty::PtyChild, pty::PtyIo)> {
+        let _directory = command.directory();
         let plan = command.runner_plan();
-        let (output, output_peer) = crate::windows::pipe::pty_output().await?;
-        let (input, input_peer) = crate::windows::pipe::pty_input().await?;
-        let mut channel = endpoint.accept(self.as_handle()).await?;
-        let io = Transport::Terminal {
-            input: self.copy_file(&input_peer)?,
-            output: self.copy_file(&output_peer)?,
-            size,
+        let result: io::Result<_> = async {
+            let (output, output_peer) = crate::windows::pipe::pty_output().await?;
+            let (input, input_peer) = crate::windows::pipe::pty_input().await?;
+            let mut channel = endpoint.accept(self.as_handle()).await?;
+            let io = Transport::Terminal {
+                input: self.copy_file(&input_peer)?,
+                output: self.copy_file(&output_peer)?,
+                size,
+            };
+            let (process, pid) = self
+                .admit(
+                    &mut channel,
+                    &Start {
+                        plan,
+                        capabilities,
+                        io,
+                    },
+                )
+                .await?;
+            let job = Job(self.job.0.try_clone()?);
+            Ok((process, pid, job, input, output, channel))
+        }
+        .await;
+        let (process, pid, job, input, output, channel) = match result {
+            Ok(value) => value,
+            Err(error) => {
+                self.finish().await.map_err(cleanup_error)?;
+                return Err(error);
+            }
         };
-        let (process, pid) = self
-            .admit(
-                &mut channel,
-                &Start {
-                    plan,
-                    capabilities,
-                    io,
-                },
-            )
-            .await?;
-        let job = Job(self.job.0.try_clone()?);
         let console = super::terminal::Remote::new(self, channel);
         Ok(pty::windows::from_runner(
             process, pid, job, input, output, console,
@@ -308,7 +344,8 @@ async fn launch(start: Start) -> io::Result<Running> {
         .command()
         .with_write_token(token)
         .prepare()
-        .await?;
+        .await
+        .map_err(io::Error::other)?;
     let job = Job::new()?;
     let (process, pid, console) = match start.io {
         Transport::Pipe { stdio } => {
@@ -370,4 +407,10 @@ fn files<const N: usize>(handles: [usize; N]) -> io::Result<[File; N]> {
     // The authenticated Host duplicates these handles into this exact process.
     // The initial request transfers each handle's ownership exactly once.
     Ok(handles.map(|handle| unsafe { File::from_raw_handle(handle as _) }))
+}
+
+fn cleanup_error(error: io::Error) -> io::Error {
+    io::Error::other(maka_runtime::tools::ToolError::CleanupUnconfirmed(
+        error.to_string(),
+    ))
 }

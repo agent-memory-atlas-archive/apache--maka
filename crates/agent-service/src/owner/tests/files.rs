@@ -33,7 +33,13 @@ async fn fixture(method: &'static str) -> (TcpListener, Fixture, String) {
     let session = fixture.create("Native workspace files").await;
     (listener, fixture, session)
 }
-async fn change(f: &Fixture, session: &str, access: &str, ask: bool, revoke: bool) -> Value {
+pub(super) async fn change(
+    f: &Fixture,
+    session: &str,
+    access: &str,
+    ask: bool,
+    revoke: bool,
+) -> Value {
     let current = f
         .query("observe", json!({"sessionId":session}))
         .await
@@ -83,7 +89,7 @@ async fn finish(listener: &TcpListener, f: &Fixture) -> Value {
     f.drained().await;
     result
 }
-async fn pending(f: &Fixture, session: &str) -> InteractionRecord {
+pub(super) async fn pending(f: &Fixture, session: &str) -> InteractionRecord {
     let mut commits = f.store.subscribe_commits();
     loop {
         if let Some(record) = f
@@ -113,7 +119,7 @@ async fn pending(f: &Fixture, session: &str) -> InteractionRecord {
         }
     }
 }
-async fn answer(f: &Fixture, record: &InteractionRecord, scope: Option<&str>) -> Value {
+pub(super) async fn answer(f: &Fixture, record: &InteractionRecord, scope: Option<&str>) -> Value {
     let InteractionRequest::Permissions { request, .. } = &record.request else {
         unreachable!()
     };

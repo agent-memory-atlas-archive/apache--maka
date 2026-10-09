@@ -24,6 +24,7 @@
 pub mod bootstrap;
 mod command;
 pub mod detached;
+mod directory;
 mod environment;
 pub mod pipe;
 pub use command::Command;
@@ -33,6 +34,7 @@ mod output;
 pub mod system;
 pub use output::{Captured as PipeResult, Outcome as ProcessOutcome, Termination};
 #[cfg(unix)]
+mod group;
 mod process;
 pub mod pty;
 mod shell;
@@ -40,8 +42,6 @@ mod tail;
 pub mod terminal;
 #[cfg(windows)]
 mod windows;
-#[cfg(windows)]
-use windows as process;
 
 use maka_runtime::tools::{ToolError, ToolExecutor, ToolFuture};
 use serde::Deserialize;
@@ -102,6 +102,7 @@ fn default_login() -> bool {
 #[derive(Clone)]
 pub struct ShellExecutor {
     cwd: PathBuf,
+    directory: Option<std::sync::Arc<directory::Directory>>,
     shell: shell::ShellPlan,
     login: bool,
     sandbox: maka_sandbox::Sandbox,
@@ -151,6 +152,32 @@ impl ShellExecutor {
         }
         Ok(Self {
             cwd,
+            directory: None,
+            shell: shell::ShellPlan::detect(),
+            login: true,
+            sandbox,
+            network_route: maka_network::Policy::default(),
+            #[cfg(target_os = "linux")]
+            network_helper: None,
+            #[cfg(windows)]
+            backend: None,
+        })
+    }
+
+    /// Use the very directory already admitted by the embedding. A pathname
+    /// replacement cannot redirect the command between admission and spawn.
+    pub fn from_directory(
+        cwd: PathBuf,
+        directory: std::fs::File,
+        sandbox: maka_sandbox::Sandbox,
+    ) -> Result<Self, ToolError> {
+        if !cwd.is_absolute() || cwd.to_str().is_none() {
+            return Err(failed("Shell cwd must be an absolute UTF-8 directory"));
+        }
+        let directory = directory::Directory::capture(&cwd, directory).map_err(failed)?;
+        Ok(Self {
+            cwd,
+            directory: Some(std::sync::Arc::new(directory)),
             shell: shell::ShellPlan::detect(),
             login: true,
             sandbox,
@@ -200,7 +227,8 @@ impl ShellExecutor {
         self.capture(self.shell.command(&self.cwd, source, terminal, self.login))
     }
 
-    fn capture(&self, command: Command) -> Result<Command, ToolError> {
+    fn capture(&self, mut command: Command) -> Result<Command, ToolError> {
+        command.directory = self.directory.clone();
         #[cfg(target_os = "linux")]
         let command = match &self.network_helper {
             Some(helper) => command.with_network_helper(helper.clone()),
@@ -290,8 +318,19 @@ impl ToolExecutor for ShellExecutor {
     }
 }
 
-fn failed(message: impl Into<String>) -> ToolError {
-    ToolError::Failed(message.into())
+fn failed(message: impl std::fmt::Display) -> ToolError {
+    ToolError::Failed(message.to_string())
+}
+
+/// Native I/O APIs may carry an already classified cleanup failure. Preserve
+/// that fact when crossing back into the tool lifecycle; never inspect text.
+#[cfg(windows)]
+fn launch_error(error: std::io::Error) -> ToolError {
+    error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<ToolError>())
+        .cloned()
+        .unwrap_or_else(|| failed(error))
 }
 
 pub fn validate_command(command: &str) -> Result<(), ToolError> {

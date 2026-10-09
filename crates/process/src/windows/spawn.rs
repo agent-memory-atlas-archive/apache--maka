@@ -17,14 +17,13 @@
  * under the License.
  */
 
-use super::{attributes::Attributes, checked, job::Job, owned, pipe};
+use super::{attributes::Attributes, checked, job::Job, owned};
 use std::{
-    fs::{File, OpenOptions},
+    fs::File,
     io,
     mem::size_of,
     os::windows::io::{AsRawHandle, OwnedHandle},
 };
-use tokio::net::windows::named_pipe::NamedPipeServer;
 use windows_sys::Win32::{
     Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation},
     System::Threading::*,
@@ -70,45 +69,4 @@ pub(crate) fn launch(
     let handle = owned(process.hProcess)?;
     let _thread = owned(process.hThread)?;
     Ok((handle, process.dwProcessId))
-}
-
-pub(super) struct Child {
-    pub process: OwnedHandle,
-    pub job: Job,
-}
-pub(super) struct Spawned {
-    pub child: Child,
-    pub stdout: NamedPipeServer,
-    pub stderr: NamedPipeServer,
-}
-
-pub(super) async fn spawn(
-    plan: &crate::command::Prepared,
-    cancellation: &tokio_util::sync::CancellationToken,
-) -> io::Result<Spawned> {
-    let (stdout, stdout_writer) = pipe::output().await?;
-    let (stderr, stderr_writer) = pipe::output().await?;
-    let stdin: File = OpenOptions::new().read(true).open("NUL")?;
-    let job = Job::new()?;
-    if cancellation.is_cancelled() {
-        return Err(io::Error::new(
-            io::ErrorKind::Interrupted,
-            "Shell cancelled before spawn",
-        ));
-    }
-    let (process_handle, _) = launch(
-        plan,
-        &job,
-        [&stdin, &stdout_writer, &stderr_writer],
-        Console::None,
-    )?;
-    // Parent copies of write ends close here; EOF belongs to the child tree.
-    Ok(Spawned {
-        child: Child {
-            process: process_handle,
-            job,
-        },
-        stdout,
-        stderr,
-    })
 }

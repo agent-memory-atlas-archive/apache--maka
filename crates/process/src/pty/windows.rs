@@ -64,7 +64,10 @@ pub struct PtyIo {
     input: NamedPipeServer,
 }
 
-pub async fn spawn(mut plan: PtyCommand, size: TerminalSize) -> io::Result<(PtyChild, PtyIo)> {
+pub async fn spawn(
+    mut plan: PtyCommand,
+    size: TerminalSize,
+) -> Result<(PtyChild, PtyIo), maka_runtime::tools::ToolError> {
     plan.env("TERM", "xterm-256color")
         .env("COLORTERM", "truecolor");
     let mut plan = plan.prepare().await?;
@@ -72,38 +75,43 @@ pub async fn spawn(mut plan: PtyCommand, size: TerminalSize) -> io::Result<(PtyC
         return launch
             .runner
             .terminal(launch.endpoint, plan, launch.capabilities, size)
-            .await;
+            .await
+            .map_err(crate::launch_error);
     }
-    let (output, output_peer) = pipe::pty_output().await?;
-    let (input, input_peer) = pipe::pty_input().await?;
-    let output = Arc::new(output);
-    let job = Job::new()?;
-    let console = Console::new(size, &input_peer, &output_peer)?;
-    let spawned = spawn::launch(&plan, &console, &job);
-    let (process, pid) = match spawned {
-        Ok(value) => value,
-        Err(error) => {
-            // Startup has no consumer to drain; break output before closing.
-            let _ = output.disconnect();
-            drop(console);
-            return Err(error);
-        }
-    };
-    // ConPTY owns its peer references after creation. Parent copies close now.
-    drop(input_peer);
-    drop(output_peer);
-    Ok((
-        PtyChild {
-            process,
-            job,
-            pid,
-            output: output.clone(),
-            console: ConsoleState::Open(ConsoleOwner::Native(console)),
-            status: None,
-            terminated: false,
-        },
-        PtyIo { output, input },
-    ))
+    let result: io::Result<_> = async {
+        let (output, output_peer) = pipe::pty_output().await?;
+        let (input, input_peer) = pipe::pty_input().await?;
+        let output = Arc::new(output);
+        let job = Job::new()?;
+        let console = Console::new(size, &input_peer, &output_peer)?;
+        let spawned = spawn::launch(&plan, &console, &job);
+        let (process, pid) = match spawned {
+            Ok(value) => value,
+            Err(error) => {
+                // Startup has no consumer to drain; break output before closing.
+                let _ = output.disconnect();
+                drop(console);
+                return Err(error);
+            }
+        };
+        // ConPTY owns its peer references after creation. Parent copies close now.
+        drop(input_peer);
+        drop(output_peer);
+        Ok((
+            PtyChild {
+                process,
+                job,
+                pid,
+                output: output.clone(),
+                console: ConsoleState::Open(ConsoleOwner::Native(console)),
+                status: None,
+                terminated: false,
+            },
+            PtyIo { output, input },
+        ))
+    }
+    .await;
+    result.map_err(crate::failed)
 }
 
 pub(crate) fn from_runner(
@@ -160,14 +168,16 @@ impl PtyChild {
             return Ok(status);
         }
         let status = wait_process(&self.process).await?;
-        if self.terminated {
-            while !self.job.is_empty()? {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        } else if matches!(self.console, ConsoleState::Open(ConsoleOwner::Native(_))) {
-            // A managed runner owns the complete sandbox tree. Only explicit
-            // Host background admission may extend that resource lifetime.
-            self.job.preserve_descendants()?;
+        if matches!(self.console, ConsoleState::Open(ConsoleOwner::Native(_))) {
+            self.job.terminate(130)?;
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while !self.job.is_empty()? {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Ok::<_, io::Error>(())
+            })
+            .await
+            .map_err(|_| io::Error::other("PTY Job exit is unconfirmed"))??;
         }
         self.status = Some(status);
         Ok(status)

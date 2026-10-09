@@ -110,9 +110,9 @@ impl Guards {
             drop(lease);
             return match collect(&root) {
                 Ok(()) => Err(error),
-                Err(cleanup) => Err(io::Error::other(format!(
-                    "{error}; protection cleanup pending: {cleanup}"
-                ))),
+                Err(cleanup) => Err(io::Error::other(
+                    maka_runtime::tools::ToolError::CleanupUnconfirmed(cleanup.to_string()),
+                )),
             };
         }
         Ok(Self {

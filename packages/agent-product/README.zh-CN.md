@@ -106,3 +106,5 @@ owner/revision 对应的不可变字节，以观察到的来源版本交给 Host
 可选 Questions 服务沿用原有 canonical 交互记录。要启用模型提问，在 `agent.tools` 中加入 `{ "confirmation": "preapproved", "name": "AskUserQuestion", "description": "询问继续任务所需的 1–3 个有界问题。", "import": "questions", "method": "ask" }`。组合生成器显式选择原生提供者及其调用授权；`tools: []` 仍为纯文字组合。待回答问题显示在会话中，普通 QuestionEditor 支持选项、原生文字草稿和逐题跳过，提交复用 Workspace 的原操作回执与历史恢复。关闭弹窗保留草稿。权限、表单与客户端能力授权流程仍待单独接入。
 
 每个已选工具须显式声明 `confirmation: "required"` 或 `"preapproved"`。需要确认时，界面展示原绑定服务，并复用分页源码查看器读取完整原参数。默认选择拒绝；允许仅放行本次调用，仍须通过原服务授权与存活绑定检查。关闭弹窗保留待处理请求，停止会关闭请求且不调用服务；未知响应沿原操作回执恢复。这不替代文件／进程的沙箱权限策略。
+
+可选原生进程工具使用 `import: "processes"`，提供 `execute`、`read`、`writeStdin`、`stop`。启用时须在安装配置顶层显式提供 `processes`，包含 `filesystem`、`network` 及可选 `helper`；例如 `{ "filesystem": { "default": "read", "rules": [], "denyGlobs": [] }, "network": "denied", "helper": null }` 只允许读取。写入路径须由安装上限显式允许，会话策略与原权限审批不能突破该上限或私有 Root/元数据保护。Windows 要求可信 Maka CLI helper，Linux 的受限网络模式也需要它。后台 pipe/PTY 由原生提供者持有；撤权后拒绝旧终端输入和尺寸修改，仍可读取与停止。提供者关闭须等待真实进程清理，无法确认时保留失败。完整交互终端 UI 仍待后续接入。

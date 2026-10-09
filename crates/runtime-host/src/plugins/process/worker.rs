@@ -70,7 +70,12 @@ pub(super) async fn run(
     let mut process = match spawned {
         Ok(process) => process,
         Err(error) => {
-            state.send_replace(State::Ended(Err(message(error))));
+            let cleanup = matches!(error, maka_runtime::tools::ToolError::CleanupUnconfirmed(_));
+            let error = message(error);
+            state.send_replace(State::Ended(Err(error.clone())));
+            if cleanup {
+                return Err(error);
+            }
             return Ok(());
         }
     };

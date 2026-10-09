@@ -88,22 +88,21 @@ impl bootstrap::Backend for Backend {
                     Ok(execution) => Ok((execution, guards)),
                     Err(error) => match guards.finish() {
                         Ok(()) => Err(error),
-                        Err(cleanup) => Err(io::Error::other(format!(
-                            "{error}; protection cleanup pending: {cleanup}"
-                        ))),
+                        Err(cleanup) => Err(cleanup_error(cleanup)),
                     },
                 }
             })
             .await
-            .map_err(io::Error::other)??;
+            .map_err(cleanup_error)??;
             let id = execution.id;
             let capability = execution.capability;
             let mut guards = Some(guards);
+            let mut proxy = None;
             let result = async {
                 let proxy_address = execution.proxy_port.map(|port| {
                     std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port.get()))
                 });
-                let proxy = match execution.proxy_port {
+                proxy = match execution.proxy_port {
                     Some(port) => Some(super::network::acquire(port, network, route).await?),
                     None => None,
                 };
@@ -136,7 +135,7 @@ impl bootstrap::Backend for Backend {
                 let read_helper = backend.helper.clone();
                 let guards = guards.take().expect("one execution owner");
                 Ok::<_, io::Error>(bootstrap::Launch {
-                    runner: runner.with_proxy(proxy).with_cleanup(move || {
+                    runner: runner.with_proxy(proxy.take()).with_cleanup(move || {
                         Installation::new(&root).settle(id)?;
                         guards.finish()?;
                         super::reads::start(&root, &read_helper);
@@ -154,6 +153,12 @@ impl bootstrap::Backend for Backend {
                     Ok(launch)
                 }
                 Err(error) => {
+                    // Shared gateways remain owned by peers. If this is the
+                    // last owner, await its actual close before settling startup.
+                    let proxy_cleanup = match proxy.and_then(Arc::into_inner) {
+                        Some(mut proxy) => proxy.close().await,
+                        None => Ok(()),
+                    };
                     let root = backend.state_root;
                     let cleanup = tokio::task::spawn_blocking(move || {
                         let settled = Installation::new(&root).settle(id);
@@ -163,12 +168,10 @@ impl bootstrap::Backend for Backend {
                         settled.and(guards)
                     })
                     .await
-                    .map_err(io::Error::other)?;
-                    match cleanup {
+                    .map_err(cleanup_error)?;
+                    match cleanup.and(proxy_cleanup) {
                         Ok(()) => Err(error),
-                        Err(cleanup) => Err(io::Error::other(format!(
-                            "{error}; sandbox cleanup pending: {cleanup}"
-                        ))),
+                        Err(cleanup) => Err(cleanup_error(cleanup)),
                     }
                 }
             }
@@ -176,7 +179,19 @@ impl bootstrap::Backend for Backend {
     }
 }
 
+fn cleanup_error(error: impl std::fmt::Display) -> io::Error {
+    io::Error::other(maka_runtime::tools::ToolError::CleanupUnconfirmed(
+        error.to_string(),
+    ))
+}
+
 fn context(action: &str, error: io::Error) -> io::Error {
+    if error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<maka_runtime::tools::ToolError>())
+    {
+        return error;
+    }
     io::Error::new(
         error.kind(),
         format!("Windows sandbox could not {action}: {error}"),

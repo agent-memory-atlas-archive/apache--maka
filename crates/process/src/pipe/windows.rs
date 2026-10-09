@@ -32,37 +32,46 @@ pub struct Child {
     cleaned: bool,
     runner: Option<crate::bootstrap::Runner>,
 }
-pub async fn spawn(plan: Command) -> io::Result<Spawned> {
-    let mut plan = plan.prepare().await?;
+pub async fn spawn(plan: Command) -> Result<Spawned, maka_runtime::tools::ToolError> {
+    spawn_prepared(plan.prepare().await?).await
+}
+pub(crate) async fn spawn_prepared(
+    mut plan: crate::command::Prepared,
+) -> Result<Spawned, maka_runtime::tools::ToolError> {
     if let Some(launch) = plan.take_launch() {
         return launch
             .runner
             .pipes(launch.endpoint, plan, launch.capabilities)
-            .await;
+            .await
+            .map_err(crate::launch_error);
     }
-    let (stdin, stdin_peer) = pipe::input().await?;
-    let (stdout, stdout_peer) = pipe::output().await?;
-    let (stderr, stderr_peer) = pipe::output().await?;
-    let job = Job::new()?;
-    let (process, pid) = crate::windows::spawn::launch(
-        &plan,
-        &job,
-        [&stdin_peer, &stdout_peer, &stderr_peer],
-        crate::windows::spawn::Console::None,
-    )?;
-    Ok(Spawned {
-        stdin,
-        stdout,
-        stderr,
-        child: Child {
-            process,
-            job,
-            pid,
-            status: None,
-            cleaned: false,
-            runner: None,
-        },
-    })
+    let result: io::Result<_> = async {
+        let (stdin, stdin_peer) = pipe::input().await?;
+        let (stdout, stdout_peer) = pipe::output().await?;
+        let (stderr, stderr_peer) = pipe::output().await?;
+        let job = Job::new()?;
+        let (process, pid) = crate::windows::spawn::launch(
+            &plan,
+            &job,
+            [&stdin_peer, &stdout_peer, &stderr_peer],
+            crate::windows::spawn::Console::None,
+        )?;
+        Ok(Spawned {
+            stdin,
+            stdout,
+            stderr,
+            child: Child {
+                process,
+                job,
+                pid,
+                status: None,
+                cleaned: false,
+                runner: None,
+            },
+        })
+    }
+    .await;
+    result.map_err(crate::failed)
 }
 impl Child {
     pub(crate) fn from_runner(

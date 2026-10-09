@@ -134,6 +134,7 @@ pub(super) struct Setup {
     query: bool,
     questions: bool,
     files: Option<&'static str>,
+    processes: bool,
     confirmation: contract::ToolConfirmation,
 }
 impl Setup {
@@ -148,6 +149,7 @@ impl Setup {
             query: false,
             questions: false,
             files: None,
+            processes: false,
             confirmation: contract::ToolConfirmation::Preapproved,
         }
     }
@@ -158,6 +160,7 @@ impl Setup {
             query: false,
             questions: false,
             files: None,
+            processes: false,
             confirmation: contract::ToolConfirmation::Preapproved,
         }
     }
@@ -168,6 +171,7 @@ impl Setup {
             query: false,
             questions: true,
             files: None,
+            processes: false,
             confirmation: contract::ToolConfirmation::Preapproved,
         }
     }
@@ -177,8 +181,35 @@ impl Setup {
             ..Self::javascript()
         }
     }
+    pub(super) fn processes() -> Self {
+        Self {
+            processes: true,
+            ..Self::javascript()
+        }
+    }
+    pub(super) fn selections(&self) -> Vec<contract::ServiceTool> {
+        if self.processes {
+            [
+                ("execute", "Execute"),
+                ("read", "ReadProcess"),
+                ("writeStdin", "WriteStdin"),
+                ("stop", "StopProcess"),
+            ]
+            .into_iter()
+            .map(|(method, name)| contract::ServiceTool {
+                name: name.into(),
+                method: method.into(),
+                ..self.selection()
+            })
+            .collect()
+        } else {
+            vec![self.selection()]
+        }
+    }
     fn contract(&self) -> Contract {
-        if self.files.is_some() {
+        if self.processes {
+            crate::processes::contract()
+        } else if self.files.is_some() {
             crate::files::contract()
         } else if self.questions {
             crate::questions::contract()
@@ -187,7 +218,9 @@ impl Setup {
         }
     }
     fn export(&self) -> &str {
-        if self.files.is_some() {
+        if self.processes {
+            crate::processes::EXPORT
+        } else if self.files.is_some() {
             crate::files::EXPORT
         } else if self.questions {
             crate::questions::EXPORT
@@ -196,7 +229,9 @@ impl Setup {
         }
     }
     pub(super) fn method(&self) -> &str {
-        if let Some(method) = self.files {
+        if self.processes {
+            "execute"
+        } else if let Some(method) = self.files {
             method
         } else if self.questions {
             "ask"
@@ -265,7 +300,9 @@ impl Setup {
                 }],
             );
         packages[0] = provider;
-        let implementation = if self.files.is_some() {
+        let implementation = if self.processes {
+            json!({"kind":"native","implementation":crate::processes::IMPLEMENTATION})
+        } else if self.files.is_some() {
             json!({"kind":"native","implementation":crate::files::IMPLEMENTATION})
         } else if self.questions {
             json!({"kind":"native","implementation":crate::questions::IMPLEMENTATION})
@@ -275,10 +312,10 @@ impl Setup {
             json!({"kind":"javascript","module":"counter.mjs","realm":"shared"})
         };
         let mut files = BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({"schemaVersion":2,"id":"fixture.counter","application":{"entries":{"host":{
-            "implementation":implementation,"configuration":{"type":"object","additionalProperties":false},"imports":{},
+            "implementation":implementation,"configuration":if self.processes { crate::processes::configuration_schema() } else { json!({"type":"object","additionalProperties":false}) },"imports":{},
             "exports":{(self.export()):{"contract":self.contract(),"availability":"required"}}
         }}}})).unwrap())]);
-        if self.counter.is_none() && !self.questions && self.files.is_none() {
+        if self.counter.is_none() && !self.questions && self.files.is_none() && !self.processes {
             files.insert("counter.mjs".into(), format!(r#"let effects=0; export function activate(){{return {{Counter:{{contract:{},service:['counter']}}}};}} export const counter={{write({{amount}}){{return {{effects:effects+=amount}};}},read(){{return {{effects}};}}}};"#, serde_json::to_string(&counter_contract()).unwrap()).into_bytes());
         }
         let package = Package::new(files).unwrap();
@@ -288,7 +325,11 @@ impl Setup {
                 key: Uuid::from_u128(21),
                 package: package.application_ref().into(),
                 use_package: PackageUse::Entry,
-                configuration: Default::default(),
+                configuration: if self.processes {
+                    NodeConfiguration { values: serde_json::from_value(json!({
+                        "filesystem":{"default":"write","rules":[],"denyGlobs":[]}, "network":"allowed", "helper":null
+                    })).unwrap(), parameters: BTreeMap::new() }
+                } else { Default::default() },
                 parameters: Default::default(),
                 disabled: false,
                 overrides: vec![],
@@ -298,6 +339,9 @@ impl Setup {
         packages.push(package);
     }
     pub(super) fn provide(&self, registry: &mut NativeRegistry) {
+        if self.processes {
+            crate::processes::provide(registry).unwrap();
+        }
         if self.files.is_some() {
             crate::files::provide(registry).unwrap();
         }
@@ -337,7 +381,11 @@ impl Setup {
                     consumer: id(1),
                     provider: id(21),
                     export: self.export().into(),
-                    methods: [self.method().into()].into(),
+                    methods: self
+                        .selections()
+                        .into_iter()
+                        .map(|tool| tool.method)
+                        .collect(),
                     recovery: true,
                 }]
             } else {

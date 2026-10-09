@@ -24,7 +24,11 @@ mod unix;
 #[cfg(windows)]
 mod windows;
 #[cfg(unix)]
+pub(crate) use unix::spawn_prepared;
+#[cfg(unix)]
 pub use unix::{Child, spawn};
+#[cfg(windows)]
+pub(crate) use windows::spawn_prepared;
 #[cfg(windows)]
 pub use windows::{Child, spawn};
 

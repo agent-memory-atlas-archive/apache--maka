@@ -485,8 +485,21 @@ const mechanical = {
         imports: {
           questions: { contract: sdk.contracts.questions, cardinality: { kind: 'optional' } },
           files: { contract: sdk.contracts.workspaceFiles, cardinality: { kind: 'optional' } },
+          processes: {
+            contract: sdk.contracts.workspaceProcesses,
+            cardinality: { kind: 'optional' },
+          },
         },
       },
+    },
+  },
+  'workspace-processes': {
+    entries: {
+      host: native(
+        'maka.workspace.processes',
+        { processes: required(sdk.contracts.workspaceProcesses) },
+        sdk.configurations.workspaceProcesses,
+      ),
     },
   },
   'workspace-files': {

@@ -229,22 +229,34 @@ fn await_models_closed(presenter: &mut maka_tui::application::Presenter) {
 #[test]
 #[ignore = "opt-in product authoring build and actual HTTP provider"]
 fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owners() {
-    packaged_product(false, false);
+    packaged_product(false, false, false);
 }
 
 #[test]
 #[ignore = "opt-in product authoring build and actual HTTP provider"]
 fn packaged_metadata_recovers_a_real_native_initialization_conflict() {
-    packaged_product(true, false);
+    packaged_product(true, false, false);
 }
 
 #[test]
 #[ignore = "opt-in product authoring build and actual HTTP provider"]
 fn packaged_file_permission_uses_native_policy_controls_and_explicit_response() {
-    packaged_product(false, true);
+    packaged_product(false, true, false);
 }
 
-fn packaged_product(fail_labels_initialization: bool, file_permissions: bool) {
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "opt-in product authoring build and actual native sandbox"]
+fn packaged_process_permission_uses_original_native_approval_before_shell_effect() {
+    packaged_product(false, false, true);
+}
+
+fn packaged_product(
+    fail_labels_initialization: bool,
+    file_permissions: bool,
+    process_permissions: bool,
+) {
+    let file_permissions = file_permissions || process_permissions;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -264,14 +276,23 @@ fn packaged_product(fail_labels_initialization: bool, file_permissions: bool) {
     const KEY: &str = "native-product-key-378f4a";
     let listener = runtime.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
-    let (respond, response_ready) = tokio::sync::oneshot::channel();
+    let (respond, response_ready) = tokio::sync::oneshot::channel::<PathBuf>();
     let mut respond = Some(respond);
     let mut server = runtime.spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
         if file_permissions {
             request_with_key(&mut socket, "private-fixture-key").await;
-            response_ready.await.unwrap();
-            super::files::tool_response(&mut socket, json!({"path":"native-approved.txt","content":"native file contents"})).await;
+            let workspace = response_ready.await.unwrap();
+            if process_permissions {
+                let input = json!({"command":"printf 'native file contents' > native-approved.txt","login":false,"timeout_ms":5000,
+                    "additional_permissions":{"filesystem":[{"path":workspace.join("native-approved.txt"),"scope":"exact","access":"write"}],"network":"denied"},
+                    "justification":"Save the command output in the selected workspace."});
+                let delta = json!({"id":"process-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"process-call","type":"function","function":{"name":"Execute","arguments":input.to_string()}}]},"finish_reason":null}]});
+                let body = format!("data: {delta}\n\ndata: {{\"id\":\"process-model\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"tool_calls\"}}]}}\n\ndata: [DONE]\n\n");
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            } else {
+                super::files::tool_response(&mut socket, json!({"path":"native-approved.txt","content":"native file contents"})).await;
+            }
             let (mut next, _) = listener.accept().await.unwrap();
             let resumed = request_with_key(&mut next, "private-fixture-key").await;
             let tool = resumed["messages"].as_array().unwrap().iter().rev().find(|m| m["role"] == "tool").unwrap();
@@ -296,7 +317,9 @@ fn packaged_product(fail_labels_initialization: bool, file_permissions: bool) {
         ]}));
         response(&mut next).await;
     });
-    let tooling = if file_permissions {
+    let tooling = if process_permissions {
+        Some(super::service_tools::Setup::processes())
+    } else if file_permissions {
         Some(super::service_tools::Setup::files("write"))
     } else {
         (!fail_labels_initialization)
@@ -1011,7 +1034,11 @@ process.stdout.write(output.outputFiles[0].text);
             .input(Event::Paste("File background draft".into()))
             .unwrap();
         await_screen(&mut presenter, "File background draft");
-        respond.take().unwrap().send(()).unwrap();
+        respond
+            .take()
+            .unwrap()
+            .send(fixture.workspace.clone())
+            .unwrap();
         await_screen(&mut presenter, "[ Approve permissions 1 ]");
         click(&mut presenter, "[ Approve permissions 1 ]");
         await_screen(&mut presenter, "native-approved.txt");
@@ -2355,7 +2382,11 @@ process.stdout.write(output.outputFiles[0].text);
         .input(Event::Paste("Question background draft".into()))
         .unwrap();
     await_screen(&mut presenter, "Question background draft");
-    respond.take().unwrap().send(()).unwrap();
+    respond
+        .take()
+        .unwrap()
+        .send(fixture.workspace.clone())
+        .unwrap();
     await_screen(&mut presenter, "[ Confirm service call 1 ]");
     click(&mut presenter, "[ Confirm service call 1 ]");
     await_screen(&mut presenter, "Tool arguments");

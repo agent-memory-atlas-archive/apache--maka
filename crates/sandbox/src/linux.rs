@@ -37,7 +37,12 @@ use std::{
 mod filter;
 pub(crate) mod mounts;
 
-pub(crate) fn prepare(policy: &Compiled, network: &Network, cwd: &Path) -> Result<Launch, Error> {
+pub(crate) fn prepare(
+    policy: &Compiled,
+    network: &Network,
+    cwd: &Path,
+    directory: Option<&File>,
+) -> Result<Launch, Error> {
     if !Path::new("/usr/bin/bwrap").is_file() {
         return Err(Error::Unsupported(
             "install bubblewrap 0.11 or newer at /usr/bin/bwrap".into(),
@@ -45,10 +50,12 @@ pub(crate) fn prepare(policy: &Compiled, network: &Network, cwd: &Path) -> Resul
     }
     let policy = policy.process_snapshot()?.compile()?;
     let mut registry = mounts::Registry::open(cwd)?;
-    let (mut args, mut files) = match arguments(&policy, network, &mut registry) {
+    let (mut args, mut files) = match arguments(&policy, network, &mut registry, cwd, directory) {
         Ok(prepared) => prepared,
         Err(error) => {
-            registry.abort()?;
+            registry
+                .abort()
+                .map_err(|error| Error::CleanupUnconfirmed(error.to_string()))?;
             return Err(error);
         }
     };
@@ -68,6 +75,8 @@ fn arguments(
     policy: &Compiled,
     network: &Network,
     registry: &mut mounts::Registry,
+    cwd: &Path,
+    directory: Option<&File>,
 ) -> Result<(Vec<OsString>, Vec<File>), Error> {
     let registry_roots = registry.roots().to_owned();
     let mut points = BTreeSet::from([PathBuf::from("/")]);
@@ -78,6 +87,9 @@ fn arguments(
             ));
         }
         points.extend(rule.path.ancestors().map(Path::to_owned));
+    }
+    if directory.is_some() {
+        points.extend(cwd.ancestors().map(Path::to_owned));
     }
     for root in &registry_roots {
         points.extend(root.ancestors().map(Path::to_owned));
@@ -129,6 +141,19 @@ fn arguments(
                 pin(&path)?
             }
             Err(error) => return Err(error),
+        };
+        let file = if path == cwd
+            && let Some(captured) = directory
+        {
+            use std::os::unix::fs::MetadataExt;
+            let expected = captured.metadata()?;
+            let visible = file.metadata()?;
+            if (expected.dev(), expected.ino()) != (visible.dev(), visible.ino()) {
+                return Err(Error::Invalid("captured cwd identity changed".into()));
+            }
+            above_stdio(captured.try_clone()?)?
+        } else {
+            file
         };
         let metadata = file.metadata()?;
         if !(metadata.is_dir() || metadata.is_file()) {

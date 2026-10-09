@@ -132,4 +132,129 @@ export const configurations = {
       },
     },
   },
+  workspaceProcesses: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      filesystem: {
+        $ref: '#/$defs/Policy',
+      },
+      network: {
+        $ref: '#/$defs/Network',
+      },
+      helper: {
+        type: ['string', 'null'],
+        description: 'Trusted CLI supporting the original platform sandbox bootstrap.',
+      },
+    },
+    required: ['filesystem', 'network'],
+    description: 'Immutable installation ceiling selected by trusted native composition.',
+    title: 'WorkspaceProcessConfiguration',
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    $defs: {
+      Policy: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          default: {
+            $ref: '#/$defs/Access',
+          },
+          rules: {
+            type: 'array',
+            items: {
+              $ref: '#/$defs/Rule',
+            },
+            maxItems: 512,
+          },
+          denyGlobs: {
+            type: 'array',
+            items: {
+              type: 'string',
+            },
+            maxItems: 128,
+          },
+        },
+        required: ['default', 'rules', 'denyGlobs'],
+        description:
+          'Longest path wins; at the same path exact wins over subtree, then deny wins\nover write over read. Deny globs are absolute and cannot be reopened by paths.\nMatching directories deny their descendants.\nHost file operations match at access time. Linux and Windows subprocesses\nsnapshot existing glob matches during preparation; macOS enforces them live.\nEmpty restricted policy denies all access, rather than falling back to defaults.',
+      },
+      Access: {
+        type: 'string',
+        enum: ['read', 'write', 'deny'],
+        description: 'Equal-path conflict priority is different from authority breadth: deny wins.',
+      },
+      Rule: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          path: {
+            type: 'string',
+          },
+          scope: {
+            $ref: '#/$defs/Scope',
+          },
+          access: {
+            $ref: '#/$defs/Access',
+          },
+        },
+        required: ['path', 'scope', 'access'],
+        description:
+          'Paths have executor-native meaning. Validate and materialize them on the\nexecution host, never on a remote Desktop. This document alone grants nothing.',
+      },
+      Scope: {
+        type: 'string',
+        enum: ['subtree', 'exact'],
+      },
+      Network: {
+        oneOf: [
+          {
+            type: 'string',
+            enum: ['denied', 'allowed'],
+          },
+          {
+            type: 'object',
+            properties: {
+              restricted: {
+                type: 'object',
+                properties: {
+                  destinations: {
+                    type: 'array',
+                    uniqueItems: true,
+                    items: {
+                      $ref: '#/$defs/Destination',
+                    },
+                    maxItems: 128,
+                  },
+                },
+                additionalProperties: false,
+                required: ['destinations'],
+              },
+            },
+            required: ['restricted'],
+            additionalProperties: false,
+          },
+        ],
+      },
+      Destination: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          host: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 253,
+          },
+          port: {
+            type: 'integer',
+            format: 'uint16',
+            minimum: 1,
+            maximum: 65535,
+          },
+        },
+        required: ['host', 'port'],
+        description:
+          'Destination authority, independent of the upstream proxy used to reach it.\nA domain grant does not authorize its subdomains or other ports.',
+      },
+    },
+  },
 } as const;

@@ -284,11 +284,21 @@ impl Registry {
     }
 
     pub fn finish(self) -> Result<(MountLease, File), Error> {
-        self.persist()?;
+        let prepared = (|| {
+            self.persist()?;
+            self.lock.try_clone().map_err(Error::from)
+        })();
+        let inherited = match prepared {
+            Ok(inherited) => inherited,
+            Err(error) => {
+                self.abort()
+                    .map_err(|cleanup| Error::CleanupUnconfirmed(cleanup.to_string()))?;
+                return Err(error);
+            }
+        };
         // This duplicate shares the kernel lock. bubblewrap retains it in its
         // reaper (--sync-fd), closes it before exec of the model's command, and
         // releases it only when that sandbox has ended. Do not call unlock().
-        let inherited = self.lock.try_clone()?;
         Ok((
             MountLease {
                 roots: self.roots,

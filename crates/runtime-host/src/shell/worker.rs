@@ -87,12 +87,18 @@ impl Worker {
             }
         };
         let spawned = if self.cancellation.is_cancelled() {
-            Err(std::io::Error::other("PTY launch cancelled before spawn"))
+            Err(maka_runtime::tools::ToolError::Failed(
+                "PTY launch cancelled before spawn".into(),
+            ))
         } else {
             pty::spawn(command, size).await
         };
         let (mut child, io) = match spawned {
             Ok(handles) => handles,
+            Err(error @ maka_runtime::tools::ToolError::CleanupUnconfirmed(_)) => {
+                self.host_drain.cancel();
+                return Err(error.into());
+            }
             Err(error) => {
                 return self
                     .persist(terminal, Some(finished(failed(&error))?))
@@ -112,6 +118,7 @@ impl Worker {
                 .send(Err(ControlError::new("PTY is closing", 0)));
         }
         let mut outcome = result.unwrap_or_else(|error| failed(&error));
+        let mut cleanup_failure = None;
         if !matches!(
             outcome,
             ShellOutcome::Completed | ShellOutcome::Exited { .. }
@@ -125,6 +132,7 @@ impl Worker {
                     self.stop.lock().unwrap().signal_applied = None;
                     outcome = failed(&error);
                     self.host_drain.cancel();
+                    cleanup_failure = Some(error);
                 }
             }
         }
@@ -141,7 +149,7 @@ impl Worker {
         let (closed, drained) = tokio::join!(closing, draining);
         if let Err(error) = closed {
             self.host_drain.cancel();
-            outcome = failed(&error);
+            cleanup_failure.get_or_insert(error);
         }
         if let Err(error) = drained {
             outcome = failed(&error);
@@ -149,6 +157,24 @@ impl Worker {
         drop(io);
         drop(child);
         terminal.fail_writes("PTY closed");
+        self.settle(terminal, outcome, cleanup_failure).await
+    }
+
+    async fn settle(
+        &mut self,
+        terminal: &mut Terminal,
+        outcome: ShellOutcome,
+        cleanup_failure: Option<std::io::Error>,
+    ) -> Result<()> {
+        if let Some(error) = cleanup_failure {
+            self.host_drain.cancel();
+            // Neither a terminal process state nor released Rust handles prove
+            // native cleanup. Keep T1 recoverable and propagate the exact class
+            // through the original worker update and request resource ticket.
+            return Err(
+                maka_runtime::tools::ToolError::CleanupUnconfirmed(error.to_string()).into(),
+            );
+        }
         if self.persistence_failed {
             // A commit-unknown is not repaired by writing a guessed next state.
             return Err(ShellError::Rejected(
@@ -291,5 +317,91 @@ pub(super) fn exit_outcome(status: ExitStatus) -> ShellOutcome {
             message: None,
         },
         None => failed(&"PTY exited without an exit code"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use maka_runtime::shell_run::{ShellPermissions, ShellVisibility};
+
+    #[tokio::test]
+    async fn native_cleanup_failure_preserves_unsettled_row_and_typed_worker_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let log = Arc::new(
+            EventLog::open(&directory.path().join("events.sqlite"))
+                .await
+                .unwrap(),
+        );
+        log.create_session("session", "create", &serde_json::json!({}), 1)
+            .await
+            .unwrap();
+        let size = TerminalSize::new(80, 24).unwrap();
+        let output = Output::new(size, watch::channel(()).0);
+        let mut terminal = Terminal::new(size, output.clone());
+        let record = log
+            .create_shell_run(ShellRun {
+                id: "cleanup-failure".into(),
+                session_id: "session".into(),
+                source_run_id: None,
+                source_turn_id: "turn".into(),
+                source_tool_call_id: "tool".into(),
+                visibility: ShellVisibility::Model,
+                permissions: ShellPermissions {
+                    boundary_revision: 0,
+                    sandbox: maka_sandbox::Sandbox::Disabled,
+                },
+                cwd: directory.path().to_str().unwrap().into(),
+                command: "fixture".into(),
+                started_at: 1,
+                updated_at: 1,
+                timeout_ms: None,
+                revision: 1,
+                state: ShellState::Starting,
+                output: ShellOutput::Pty {
+                    screen: terminal.snapshot.clone(),
+                },
+            })
+            .await
+            .unwrap();
+        let (_, commands) = mpsc::channel(1);
+        let (updates, _) = watch::channel(None);
+        let drain = CancellationToken::new();
+        let mut worker = Worker {
+            log: log.clone(),
+            record,
+            commands,
+            updates,
+            cancellation: CancellationToken::new(),
+            stop: Arc::default(),
+            host_drain: drain.clone(),
+            persistence_failed: false,
+            output,
+        };
+        let error = worker
+            .settle(
+                &mut terminal,
+                ShellOutcome::Completed,
+                Some(std::io::Error::other("native PTY close failed")),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            ShellError::Process(maka_runtime::tools::ToolError::CleanupUnconfirmed(_))
+        ));
+        assert!(drain.is_cancelled());
+        let durable = log
+            .read_shell_run("session", "cleanup-failure")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            durable.state.active(),
+            "failed cleanup must not manufacture a clean T2"
+        );
+        assert_eq!(durable.revision, 1);
+        drop(worker);
+        log.shutdown().await.unwrap();
     }
 }

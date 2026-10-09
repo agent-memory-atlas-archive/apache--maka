@@ -8183,6 +8183,7 @@ dependencies = [
  "maka-plugin-core",
  "maka-plugins",
  "maka-presentation",
+ "maka-process",
  "maka-protocol",
  "maka-providers",
  "maka-runtime",

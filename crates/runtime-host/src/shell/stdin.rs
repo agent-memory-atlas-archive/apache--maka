@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use super::{failed, parse_ref};
+use super::request::parse_ref;
 use crate::shell::ControlInput;
 use maka_runtime::{
     terminal::{
@@ -55,7 +55,7 @@ pub fn schema() -> Value {
     }})
 }
 
-pub(super) struct Input {
+pub struct Input {
     pub reference: String,
     pub data: ControlInput,
     pub size: Option<TerminalSize>,
@@ -214,6 +214,10 @@ fn remove_defaults(fields: &mut Map<String, Value>, names: &[&str]) {
             fields.remove(*name);
         }
     }
+}
+
+fn failed(error: impl std::fmt::Display) -> ToolError {
+    ToolError::Failed(error.to_string())
 }
 
 #[cfg(test)]

@@ -128,6 +128,7 @@ pub(super) fn catalog() -> Value {
         root::<maka_agent_service::contract::InteractionRespond>(&mut g),
         root::<maka_agent_service::contract::InteractionResult>(&mut g),
         root::<maka_agent_service::questions::Ask>(&mut g),
+        root::<maka_agent_service::processes::Configuration>(&mut g),
         root::<maka_agent_service::questions::Answer>(&mut g),
         root::<maka_runtime::interaction::InteractionRecord>(&mut g),
         root::<maka_agent_service::contract::Session>(&mut g),
@@ -167,7 +168,10 @@ pub(super) fn catalog() -> Value {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "title": "RuntimeProtocol", "$defs": g.definitions(), "anyOf": roots,
         },
-        "configurations": { "agent": maka_agent_service::configuration_schema() },
+        "configurations": {
+            "agent": maka_agent_service::configuration_schema(),
+            "workspaceProcesses": maka_agent_service::processes::configuration_schema(),
+        },
         "contracts": {
             "markdown": markdown::markdown_contract(),
             "image": maka_ui::image::image_contract(),
@@ -182,6 +186,7 @@ pub(super) fn catalog() -> Value {
             "agent": maka_agent_service::contract(),
             "questions": maka_agent_service::questions::contract(),
             "workspaceFiles": maka_agent_service::files::contract(),
+            "workspaceProcesses": maka_agent_service::processes::contract(),
             "settings": maka_settings_service::contract::contract(),
             "textReader": text::reader_contract(),
             "callerHistory": maka_ui::operations::caller_history_contract(),

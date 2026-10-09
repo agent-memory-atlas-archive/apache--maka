@@ -18,12 +18,7 @@
  */
 
 use super::*;
-use crate::interaction_wait::{wait, withdraw};
-use maka_runtime::interaction::{
-    InteractionOutcome, InteractionRecord, InteractionRequest, PermissionRequest,
-};
-use maka_sandbox::grant::Decision;
-use sha2::{Digest, Sha256};
+use maka_runtime::interaction::PermissionRequest;
 use std::path::Component;
 
 pub(super) async fn authorize(
@@ -125,82 +120,18 @@ pub(super) async fn authorize(
     if required.filesystem.is_empty() {
         return Ok(captured);
     }
-    if !configuration.permissions.request_permissions {
-        return Err(failed(
-            "Workspace policy does not allow requesting additional permissions",
-        ));
-    }
-    let record = InteractionRecord {
-        session_id: context.invocation.session_id.clone(),
-        turn_id: context.invocation.turn_id.clone(),
-        run_id: context.invocation.run_id.clone(),
-        request_id: format!(
-            "files_{:x}",
-            Sha256::digest(
-                serde_json::to_vec(&(
-                    &context.invocation,
-                    &context.operation_id,
-                    configuration.boundary_revision
-                ))
-                .expect("tool identity")
-            )
-        ),
-        created_at: crate::owner::now(),
-        request: InteractionRequest::Permissions {
-            tool_use_id: Some(context.tool_use_id()),
-            base_revision: configuration.boundary_revision,
-            request: PermissionRequest {
-                reason: format!(
-                    "{tool} needs write access to these files in the selected workspace."
-                ),
-                command: None,
-                permissions: required.clone(),
-            },
+    let grant = crate::permissions::request(
+        store,
+        configuration,
+        PermissionRequest {
+            reason: format!("{tool} needs write access to these files in the selected workspace."),
+            command: None,
+            permissions: required.clone(),
         },
-        outcome: None,
-    };
-    let observed = async {
-        let committed = store
-            .establish_run_interaction(&context.invocation, &record)
-            .await
-            .map_err(|_| "workspace permission publication unavailable")?;
-        if !committed.matches {
-            return Err("workspace permission identity conflict");
-        }
-        wait(store, &record.request_id, cancellation).await
-    }
-    .await;
-    let outcome = match observed {
-        Ok(outcome) => outcome,
-        Err(error) => match withdraw(store, &record).await {
-            Ok(Some(outcome)) => outcome,
-            Ok(None) => return Err(failed(error)),
-            Err(cleanup) => return Err(ToolError::CleanupUnconfirmed(cleanup.into())),
-        },
-    };
-    cancelled(cancellation)?;
-    if !matches!(
-        outcome,
-        InteractionOutcome::PermissionsDecision {
-            decision: Decision::Allow { .. },
-            ..
-        }
-    ) {
-        return Err(failed(
-            "Additional workspace write permission was not granted",
-        ));
-    }
-    let grant = store
-        .permission_grants(
-            &context.invocation,
-            Some(&context.tool_use_id()),
-            configuration.boundary_revision,
-        )
-        .await
-        .map_err(|_| failed("Workspace permission observation unavailable"))?
-        .into_iter()
-        .find(|grant| grant.request_id == record.request_id)
-        .ok_or_else(|| failed("Approved workspace permissions are no longer current"))?;
+        context,
+        cancellation,
+    )
+    .await?;
     captured.sandbox = captured
         .sandbox
         .with_grant(&grant.permissions, &captured.ceiling)

@@ -107,6 +107,7 @@ export type RuntimeProtocol =
   | AgentInteractionRespond
   | AgentInteractionResult
   | QuestionAsk
+  | WorkspaceProcessConfiguration
   | QuestionResult
   | InteractionRecord
   | AgentSession
@@ -3623,6 +3624,36 @@ export interface QuestionAsk {
     | [InteractionQuestion]
     | [InteractionQuestion, InteractionQuestion]
     | [InteractionQuestion, InteractionQuestion, InteractionQuestion];
+}
+/**
+ * Immutable installation ceiling selected by trusted native composition.
+ */
+export interface WorkspaceProcessConfiguration {
+  filesystem: Policy;
+  network: Network;
+  /**
+   * Trusted CLI supporting the original platform sandbox bootstrap.
+   */
+  helper?: string | null;
+}
+/**
+ * Longest path wins; at the same path exact wins over subtree, then deny wins
+ * over write over read. Deny globs are absolute and cannot be reopened by paths.
+ * Matching directories deny their descendants.
+ * Host file operations match at access time. Linux and Windows subprocesses
+ * snapshot existing glob matches during preparation; macOS enforces them live.
+ * Empty restricted policy denies all access, rather than falling back to defaults.
+ */
+export interface Policy {
+  default: Access;
+  /**
+   * @maxItems 512
+   */
+  rules: Rule[];
+  /**
+   * @maxItems 128
+   */
+  denyGlobs: string[];
 }
 export interface QuestionResponse {
   question: string;

@@ -26,10 +26,7 @@ use futures_util::future::BoxFuture;
 use maka_event_log::EventLog;
 use maka_fs_tools::{MutationExecutor, ReadExecutor, ReadLimits, ReadOutput, WriteCoordinator};
 use maka_plugin_core::contract::{Contract, Interface, Method, MethodMode, Transport};
-use maka_runtime::{
-    event::Invocation,
-    tools::{ToolCallContext, ToolError, ToolExecutor},
-};
+use maka_runtime::tools::{ToolCallContext, ToolError, ToolExecutor};
 use maka_runtime_host::application::{
     Context, Handler, NativeActivation, NativeOwner, NativeRegistry,
 };
@@ -231,27 +228,6 @@ impl NativeOwner for Files {
         Box::pin(async { Ok(()) })
     }
 }
-async fn live(
-    store: &EventLog,
-    invocation: &Invocation,
-) -> Result<SessionConfiguration, ToolError> {
-    let projection = store
-        .session_projection::<SessionConfiguration>(&invocation.session_id)
-        .await
-        .map_err(|_| failed("Workspace session is unavailable"))?
-        .filter(|p| {
-            !p.session.archived
-                && p.root_turn.as_ref().is_some_and(|turn| {
-                    turn.invocation == *invocation
-                        && !matches!(
-                            turn.state,
-                            maka_event_log::turns::InvocationState::Ended { .. }
-                        )
-                })
-        })
-        .ok_or_else(|| failed("Workspace invocation is no longer active"))?;
-    Ok(projection.session.configuration)
-}
 struct Captured {
     path: PathBuf,
     directory: cap_std::fs::Dir,
@@ -325,7 +301,7 @@ async fn execute(
 ) -> Result<Value, ToolError> {
     let cancellation = &context.scope().cancellation;
     cancelled(cancellation)?;
-    let configuration = live(store, &tool_context.invocation).await?;
+    let configuration = crate::permissions::live(store, &tool_context.invocation).await?;
     let workspace = configuration.workspace.clone();
     let access = configuration.permissions.access;
     let mut captured =
@@ -353,7 +329,7 @@ async fn execute(
     let policy = Arc::new(filesystem.compile().map_err(failed)?);
     // This original SQL snapshot is the filesystem admission point, ordered
     // against permission CAS and invocation closure in the same Root worker.
-    let current = live(store, &tool_context.invocation).await?;
+    let current = crate::permissions::live(store, &tool_context.invocation).await?;
     if current.boundary_revision != configuration.boundary_revision
         || current.workspace != configuration.workspace
     {

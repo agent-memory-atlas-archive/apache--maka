@@ -23,6 +23,9 @@ mod service_tools;
 #[path = "tests/files.rs"]
 mod files;
 
+#[path = "tests/processes.rs"]
+mod processes;
+
 #[path = "tests/interactions.rs"]
 mod interactions;
 
@@ -462,7 +465,7 @@ impl Fixture {
         };
         if let Some(tooling) = &tooling {
             settings.max_steps = 2;
-            settings.tools = vec![tooling.selection()];
+            settings.tools = tooling.selections();
         }
         let (mut input, mut packages) = input(&settings);
         if let Some(tooling) = &tooling {

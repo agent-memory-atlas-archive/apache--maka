@@ -752,6 +752,20 @@ test('both product compositions use actual immutable package refs and check in t
           hostDeployment: uuid(80),
           managementDeployment: uuid(81),
         };
+        if (filesEnabled) {
+          configuration.processes = {
+            filesystem: { default: 'read', rules: [], denyGlobs: [] },
+            network: 'denied',
+            helper: null,
+          };
+          configuration.agent.tools.push({
+            name: 'Shell',
+            confirmation: 'required',
+            description: 'Run an authorized command.',
+            import: 'processes',
+            method: 'execute',
+          });
+        }
         const configurationFile = resolve(directory, 'installation.json');
         const output = resolve(directory, productName + '-' + presentation);
         writeFileSync(configurationFile, JSON.stringify(configuration));
@@ -833,9 +847,25 @@ test('both product compositions use actual immutable package refs and check in t
               methods: ['write'],
               recovery: true,
             },
+            {
+              origin: [keys.agent],
+              consumer: [keys.agent],
+              provider: [keys['workspace-processes']],
+              export: 'processes',
+              methods: ['execute'],
+              recovery: true,
+            },
+          ]);
+          assert.deepEqual(
+            host.instances['workspace-processes'].configuration.values,
+            configuration.processes,
+          );
+          assert.deepEqual(host.instances.agent.bindings.processes, [
+            { kind: 'instance', path: ['workspace-processes'], export: 'processes' },
           ]);
         } else assert.equal(business.native, undefined);
         assert.equal('workspace-files' in host.instances, filesEnabled);
+        assert.equal('workspace-processes' in host.instances, filesEnabled);
 
         assert.equal(business.deployment, configuration.hostDeployment);
         assert.deepEqual(

@@ -18,11 +18,14 @@
  */
 
 mod control;
-mod stdin;
 use crate::shell::{ShellError, ShellResources};
+use crate::shell::{
+    request::{Execute as Input, parse_ref},
+    stdin,
+};
 pub(super) use control::{STOP_NAME, stop_schema};
 use maka_event_log::EventLog;
-use maka_presentation::shell::{RESOURCE_REF_PREFIX, local_update};
+use maka_presentation::shell::local_update;
 use maka_process::{PipeEvent, SHELL_NAME, ShellExecutor};
 use maka_runtime::{
     shell_run::{ShellOutput, ShellPatch, ShellRun, ShellState, ShellVisibility},
@@ -31,7 +34,6 @@ use maka_runtime::{
     tools::ToolError,
 };
 use maka_tools::{PreparationFuture, PreparedEffect, ToolCallContext, ToolPreparer};
-use serde::Deserialize;
 use serde_json::Value;
 use std::{
     sync::Arc,
@@ -42,32 +44,6 @@ use tokio_util::sync::CancellationToken;
 
 pub(super) fn schema() -> Value {
     schemars::schema_for!(Input).into()
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct Input {
-    #[schemars(length(min = 1, max = 65536))]
-    command: String,
-    /// Load the shell's login profile. Set false to skip it.
-    #[serde(default = "default_login")]
-    login: bool,
-    #[schemars(range(min = 1, max = 86_400_000))]
-    timeout_ms: Option<u64>,
-    #[serde(default)]
-    run_in_background: bool,
-    /// Allocate a terminal; requires run_in_background=true.
-    #[serde(default)]
-    pty: bool,
-    /// Request additional filesystem or network access before this command.
-    /// On Linux/Windows, request an existing parent directory when creating a new path.
-    additional_permissions: Option<maka_sandbox::grant::Permissions>,
-    /// Explain why the additional access is necessary. Required with additional_permissions.
-    justification: Option<String>,
-}
-
-fn default_login() -> bool {
-    true
 }
 
 #[derive(Clone)]
@@ -283,31 +259,7 @@ impl SessionShell {
         };
         let invalid = |error: String| ToolRejection::InvalidInput { message: error };
         let failed = |error: String| ToolRejection::PreparationFailed { message: error };
-        let mut input: Input =
-            serde_json::from_value(input.clone()).map_err(|error| invalid(error.to_string()))?;
-        maka_process::validate_command(&input.command)
-            .map_err(|error| invalid(error.to_string()))?;
-        if input.pty && !input.run_in_background {
-            return Err(invalid("PTY mode requires run_in_background=true".into()));
-        }
-        if input.timeout_ms.is_some_and(|value| {
-            value == 0
-                || value
-                    > if input.run_in_background {
-                        86_400_000
-                    } else {
-                        600_000
-                    }
-        }) {
-            return Err(invalid(
-                "Shell timeout must be 1..=600000 ms for foreground or 1..=86400000 ms for background".into(),
-            ));
-        }
-        if input.additional_permissions.is_some() != input.justification.is_some() {
-            return Err(invalid(
-                "additional_permissions and justification must be supplied together".into(),
-            ));
-        }
+        let mut input = Input::parse(input.clone()).map_err(|error| invalid(error.to_string()))?;
         if cancellation.is_cancelled() {
             return Err(ToolRejection::Cancelled);
         }
@@ -385,12 +337,6 @@ impl SessionShell {
         self.executor = self.executor.with_sandbox(sandbox);
         Ok(revision)
     }
-}
-
-pub(super) fn parse_ref(reference: &str) -> Option<&str> {
-    reference
-        .strip_prefix(RESOURCE_REF_PREFIX)
-        .filter(|id| maka_runtime::interaction::entity_id(id).is_ok())
 }
 
 pub(super) async fn read(

@@ -44,4 +44,6 @@ pub enum Error {
     Unsupported(String),
     #[error("sandbox preparation failed: {0}")]
     Io(#[from] std::io::Error),
+    #[error("sandbox preparation cleanup is unconfirmed: {0}")]
+    CleanupUnconfirmed(String),
 }

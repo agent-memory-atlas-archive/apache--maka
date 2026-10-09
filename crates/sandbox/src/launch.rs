@@ -43,7 +43,11 @@ pub enum Launch {
 
 impl Sandbox {
     #[cfg(target_os = "linux")]
-    pub fn prepare_with_private_network(&self, cwd: &Path) -> Result<Launch, Error> {
+    pub fn prepare_with_private_network(
+        &self,
+        cwd: &Path,
+        directory: Option<&std::fs::File>,
+    ) -> Result<Launch, Error> {
         crate::path::validate(cwd)?;
         let Self::Managed {
             filesystem,
@@ -55,13 +59,24 @@ impl Sandbox {
             ));
         };
         network.validate()?;
-        crate::linux::prepare(&filesystem.compile()?, network, cwd)
+        crate::linux::prepare(&filesystem.compile()?, network, cwd, directory)
     }
     /// Compile only after Host authorization. No process starts here. The caller
     /// appends its original executable and arguments after a wrapper's arguments.
     /// Failure must never fall back to Direct or retry the original effect.
     pub fn prepare(&self, cwd: &Path) -> Result<Launch, Error> {
-        self.prepare_network(cwd, None)
+        self.prepare_network(cwd, None, None)
+    }
+
+    /// Linux must mount the admitted cwd inode because bubblewrap resolves
+    /// --chdir inside its new namespace after the outer process's fchdir.
+    #[cfg(target_os = "linux")]
+    pub fn prepare_captured(
+        &self,
+        cwd: &Path,
+        directory: Option<&std::fs::File>,
+    ) -> Result<Launch, Error> {
+        self.prepare_network(cwd, None, directory)
     }
 
     /// The execution owner binds and retains the gateway before compiling this
@@ -76,13 +91,14 @@ impl Sandbox {
                 "sandbox proxy must be a loopback listener".into(),
             ));
         }
-        self.prepare_network(cwd, Some(proxy))
+        self.prepare_network(cwd, Some(proxy), None)
     }
 
     fn prepare_network(
         &self,
         cwd: &Path,
         proxy: Option<std::net::SocketAddr>,
+        _directory: Option<&std::fs::File>,
     ) -> Result<Launch, Error> {
         crate::path::validate(cwd)?;
         match self {
@@ -109,7 +125,7 @@ impl Sandbox {
                 }
                 #[cfg(target_os = "linux")]
                 {
-                    crate::linux::prepare(&filesystem, network, cwd)
+                    crate::linux::prepare(&filesystem, network, cwd, _directory)
                 }
                 #[cfg(windows)]
                 {

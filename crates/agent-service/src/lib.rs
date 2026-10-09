@@ -25,6 +25,8 @@ pub mod files;
 mod interaction_wait;
 mod model;
 mod owner;
+mod permissions;
+pub mod processes;
 pub mod questions;
 mod service;
 mod tools;
@@ -41,6 +43,7 @@ pub const EXPORT: &str = "agent";
 
 pub fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
     files::provide(registry)?;
+    processes::provide(registry)?;
     questions::provide(registry)?;
     registry.insert(
         IMPLEMENTATION.into(),

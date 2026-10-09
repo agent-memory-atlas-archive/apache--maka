@@ -9034,6 +9034,399 @@ export const contracts = {
       },
     },
   },
+  workspaceProcesses: {
+    name: 'maka.workspace.Processes',
+    version: 1,
+    transport: 'remote',
+    interface: {
+      kind: 'service',
+      methods: {
+        execute: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              command: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 65536,
+              },
+              login: {
+                type: 'boolean',
+                description: "Load the shell's login profile. Set false to skip it.",
+                default: true,
+              },
+              timeout_ms: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 1,
+                maximum: 86400000,
+              },
+              run_in_background: {
+                type: 'boolean',
+                default: false,
+              },
+              pty: {
+                type: 'boolean',
+                description: 'Allocate a terminal; requires run_in_background=true.',
+                default: false,
+              },
+              additional_permissions: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/Permissions',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+                description:
+                  'Request additional filesystem or network access before this command.\nOn Linux/Windows, request an existing parent directory when creating a new path.',
+              },
+              justification: {
+                type: ['string', 'null'],
+                description:
+                  'Explain why the additional access is necessary. Required with additional_permissions.',
+              },
+            },
+            required: ['command'],
+            title: 'Execute',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              Permissions: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  filesystem: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/Rule',
+                    },
+                    maxItems: 32,
+                  },
+                  network: {
+                    $ref: '#/$defs/Network',
+                  },
+                },
+                required: ['filesystem', 'network'],
+              },
+              Rule: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  path: {
+                    type: 'string',
+                  },
+                  scope: {
+                    $ref: '#/$defs/Scope',
+                  },
+                  access: {
+                    $ref: '#/$defs/Access',
+                  },
+                },
+                required: ['path', 'scope', 'access'],
+                description:
+                  'Paths have executor-native meaning. Validate and materialize them on the\nexecution host, never on a remote Desktop. This document alone grants nothing.',
+              },
+              Scope: {
+                type: 'string',
+                enum: ['subtree', 'exact'],
+              },
+              Access: {
+                type: 'string',
+                enum: ['read', 'write', 'deny'],
+                description:
+                  'Equal-path conflict priority is different from authority breadth: deny wins.',
+              },
+              Network: {
+                oneOf: [
+                  {
+                    type: 'string',
+                    enum: ['denied', 'allowed'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      restricted: {
+                        type: 'object',
+                        properties: {
+                          destinations: {
+                            type: 'array',
+                            uniqueItems: true,
+                            items: {
+                              $ref: '#/$defs/Destination',
+                            },
+                            maxItems: 128,
+                          },
+                        },
+                        additionalProperties: false,
+                        required: ['destinations'],
+                      },
+                    },
+                    required: ['restricted'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+              Destination: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  host: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 253,
+                  },
+                  port: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 1,
+                    maximum: 65535,
+                  },
+                },
+                required: ['host', 'port'],
+                description:
+                  'Destination authority, independent of the upstream proxy used to reach it.\nA domain grant does not authorize its subdomains or other ports.',
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: true,
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'WorkspaceProcessResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
+        read: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              ref: {
+                type: 'string',
+              },
+            },
+            required: ['ref'],
+            title: 'Reference',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: true,
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'WorkspaceProcessResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
+        stop: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              ref: {
+                type: 'string',
+              },
+            },
+            required: ['ref'],
+            title: 'Reference',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: true,
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'WorkspaceProcessResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
+        writeStdin: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['ref'],
+            properties: {
+              ref: {
+                type: 'string',
+              },
+              input: {
+                type: 'string',
+                description: 'Raw terminal input, exclusive with actions.',
+              },
+              actions: {
+                type: ['array', 'null'],
+                maxItems: 64,
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['type'],
+                  properties: {
+                    type: {
+                      enum: ['text', 'key', 'mouse'],
+                    },
+                    text: {
+                      type: ['string', 'number', 'null'],
+                    },
+                    key: {
+                      type: ['string', 'number', 'null'],
+                    },
+                    event: {
+                      type: ['string', 'number', 'null'],
+                    },
+                    x: {
+                      type: ['number', 'string', 'null'],
+                    },
+                    y: {
+                      type: ['number', 'string', 'null'],
+                    },
+                    button: {
+                      type: ['string', 'number', 'null'],
+                    },
+                    direction: {
+                      type: ['string', 'number', 'null'],
+                    },
+                    modifiers: {
+                      type: ['array', 'null'],
+                      items: {
+                        enum: ['ctrl', 'alt', 'shift'],
+                      },
+                    },
+                  },
+                },
+              },
+              size: {
+                type: ['object', 'null'],
+                additionalProperties: false,
+                properties: {
+                  cols: {
+                    type: ['number', 'null'],
+                  },
+                  rows: {
+                    type: ['number', 'null'],
+                  },
+                },
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: true,
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'WorkspaceProcessResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
+      },
+    },
+  },
   settings: {
     name: 'maka.settings.Settings',
     version: 1,

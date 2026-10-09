@@ -22,14 +22,9 @@ use crate::{
     output::{Captured, Outcome, Termination},
     tail,
 };
-use maka_runtime::shell_run::PipeStream;
-use maka_runtime::tools::ToolError;
+use maka_runtime::{shell_run::PipeStream, tools::ToolError};
 use std::{io, time::Duration};
-use tokio::process::Child;
 use tokio_util::sync::CancellationToken;
-
-const GRACE: Duration = Duration::from_secs(2);
-const REAP: Duration = Duration::from_secs(2);
 
 pub(crate) async fn run(
     plan: crate::Command,
@@ -40,63 +35,24 @@ pub(crate) async fn run(
     if cancellation.is_cancelled() {
         return Err(failed("Shell cancelled before spawn"));
     }
-    let mut plan = plan
-        .prepare()
-        .await
-        .map_err(|error| failed(error.to_string()))?;
-    let mut proxy = plan.take_proxy();
-    #[cfg(target_os = "linux")]
-    let mut cleanup = crate::command::Cleanup::from(plan.take_mount_lease());
+    let plan = plan.prepare().await?;
     if cancellation.is_cancelled() {
-        drop(plan);
-        if let Some(proxy) = &mut proxy {
-            proxy
-                .close()
-                .await
-                .map_err(|error| ToolError::CleanupUnconfirmed(error.to_string()))?;
-        }
-        #[cfg(target_os = "linux")]
-        cleanup
-            .finish()
-            .await
-            .map_err(|error| ToolError::CleanupUnconfirmed(error.to_string()))?;
+        plan.abort().await?;
         return Err(failed("Shell cancelled before spawn"));
     }
-    let child = plan
-        .unix()
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .process_group(0)
-        .kill_on_drop(true)
-        .spawn();
-    let mut child = match child {
-        Ok(child) => child,
-        Err(error) => {
-            if let Some(proxy) = &mut proxy {
-                proxy
-                    .close()
-                    .await
-                    .map_err(|error| ToolError::CleanupUnconfirmed(error.to_string()))?;
-            }
-            #[cfg(target_os = "linux")]
-            cleanup
-                .finish()
-                .await
-                .map_err(|error| ToolError::CleanupUnconfirmed(error.to_string()))?;
-            return Err(failed(format!("Shell spawn failed: {error}")));
-        }
-    };
-    let pid = child.id().expect("spawned child has a pid");
-    let stdout = child.stdout.take().expect("piped stdout");
-    let stderr = child.stderr.take().expect("piped stderr");
+    let crate::pipe::Spawned {
+        mut child,
+        stdin,
+        stdout,
+        stderr,
+    } = crate::pipe::spawn_prepared(plan).await?;
+    drop(stdin);
     if let Some(observer) = &observer {
-        // This is always the first event in a newly bounded channel.
         let _ = observer.try_send(PipeEvent::Started);
     }
     let exited = CancellationToken::new();
     let lifecycle = async {
-        let outcome = settle(&mut child, pid, timeout_ms, cancellation).await;
+        let outcome = settle(&mut child, timeout_ms, cancellation).await;
         exited.cancel();
         outcome
     };
@@ -111,25 +67,13 @@ pub(crate) async fn run(
             stderr,
             exited.clone(),
             observer.map(|o| (o, PipeStream::Stderr))
-        )
+        ),
     );
-    #[cfg(target_os = "linux")]
-    cleanup
-        .finish()
-        .await
-        .map_err(|error| ToolError::CleanupUnconfirmed(error.to_string()))?;
-    if let Some(proxy) = &mut proxy {
-        proxy
-            .close()
-            .await
-            .map_err(|error| ToolError::CleanupUnconfirmed(error.to_string()))?;
-    }
     Ok(Captured::new(outcome?, stdout, stderr))
 }
 
 async fn settle(
-    child: &mut Child,
-    pid: u32,
+    child: &mut crate::pipe::Child,
     timeout_ms: Option<u64>,
     cancellation: CancellationToken,
 ) -> Result<Outcome, ToolError> {
@@ -139,18 +83,20 @@ async fn settle(
         _ = cancellation.cancelled() => Termination::Cancelled,
         _ = crate::timeout(timeout_ms) => Termination::Timeout,
     };
-    let signal_applied = signal_group(pid, libc::SIGTERM);
-    // Do not reap the root during grace: its unreaped PID pins the group
-    // identity until our final signal, even if it exits before descendants.
-    // Captured pipes continue draining concurrently in run().
-    tokio::time::sleep(GRACE).await;
-    signal_group(pid, libc::SIGKILL);
-    // A failed signal attempt is not exit evidence; still wait/reap.
-    let _ = child.start_kill();
-    tokio::time::timeout(REAP, child.wait())
+    #[cfg(unix)]
+    let signal_applied = {
+        let applied = child.interrupt().unwrap_or(false);
+        // The original unreaped root pins its group until the final signal.
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        applied
+    };
+    child.terminate().map_err(unknown)?;
+    #[cfg(windows)]
+    let signal_applied = true;
+    tokio::time::timeout(Duration::from_secs(4), child.wait())
         .await
         .map_err(|_| {
-            ToolError::CleanupUnconfirmed("Shell root exit not confirmed after KILL".into())
+            ToolError::CleanupUnconfirmed("Shell process group/tree exit not confirmed".into())
         })?
         .map_err(unknown)?;
     Ok(Outcome::Interrupted {
@@ -158,12 +104,8 @@ async fn settle(
         signal_applied,
     })
 }
-
-fn signal_group(pid: u32, signal: libc::c_int) -> bool {
-    // The child creates its own process group before exec. No shell arguments
-    // influence this target. This does not reach escaped sessions/groups.
-    unsafe { libc::kill(-(pid as libc::pid_t), signal) == 0 }
-}
 fn unknown(error: io::Error) -> ToolError {
-    ToolError::CleanupUnconfirmed(format!("Shell root exit not confirmed: {error}"))
+    ToolError::CleanupUnconfirmed(format!(
+        "Shell process group/tree cleanup not confirmed: {error}"
+    ))
 }

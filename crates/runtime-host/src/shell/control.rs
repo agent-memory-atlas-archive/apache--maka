@@ -91,7 +91,8 @@ impl ControlError {
     }
 }
 
-pub(crate) enum Input {
+/// Bounded native terminal payload; the caller supplies authorization before enqueue.
+pub enum Input {
     Actions(Vec<InputAction>),
     Interactive(Vec<InputAction>),
     Raw(String),

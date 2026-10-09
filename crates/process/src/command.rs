@@ -36,6 +36,7 @@ pub struct Command {
     pub(crate) executable: PathBuf,
     pub(crate) args: Vec<Argument>,
     pub(crate) cwd: PathBuf,
+    pub(crate) directory: Option<std::sync::Arc<crate::directory::Directory>>,
     pub(crate) environment: BTreeMap<OsString, OsString>,
     sandbox: maka_sandbox::Sandbox,
     network_route: maka_network::Policy,
@@ -98,6 +99,7 @@ impl Command {
             executable: executable.into(),
             args: Vec::new(),
             cwd: cwd.into(),
+            directory: None,
             environment: crate::environment::inherit(std::env::vars_os()),
             sandbox: maka_sandbox::Sandbox::Disabled,
             network_route: maka_network::Policy::default(),
@@ -181,7 +183,7 @@ impl Command {
     /// Only the accepted process owner calls this, and must await startup rather
     /// than race it against cancellation. Filesystem preparation runs off the
     /// async scheduler; the owner's admission fence covers preparation and spawn.
-    pub(crate) async fn prepare(self) -> std::io::Result<Prepared> {
+    pub(crate) async fn prepare(self) -> Result<Prepared, maka_runtime::tools::ToolError> {
         if matches!(self.sandbox, maka_sandbox::Sandbox::Disabled) {
             return Ok(Prepared(self));
         }
@@ -198,7 +200,8 @@ impl Command {
             };
             let (address, proxy) =
                 maka_network::proxy::Proxy::start(network.clone(), command.network_route.clone())
-                    .await?;
+                    .await
+                    .map_err(crate::failed)?;
             let url = format!("http://{address}");
             for key in [
                 "HTTP_PROXY",
@@ -231,9 +234,11 @@ impl Command {
                     std::io::Error::other(
                         "restricted network requires the trusted CLI namespace helper",
                     )
-                })?;
+                })
+                .map_err(crate::failed)?;
             let (control, proxy) =
-                crate::network_namespace::prepare(network.clone(), command.network_route.clone())?;
+                crate::network_namespace::prepare(network.clone(), command.network_route.clone())
+                    .map_err(crate::failed)?;
             let mut args = vec![
                 Argument::Quoted(crate::network_namespace::HELPER.into()),
                 Argument::Quoted(control.as_raw_fd().to_string().into()),
@@ -253,12 +258,16 @@ impl Command {
             network,
         } = &command.sandbox
         {
-            let backend = command.backend.as_ref().ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Unsupported,
-                    "Windows sandbox execution requires an explicit installation",
-                )
-            })?;
+            let backend = command
+                .backend
+                .as_ref()
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::Unsupported,
+                        "Windows sandbox execution requires an explicit installation",
+                    )
+                })
+                .map_err(crate::failed)?;
             let launch = backend
                 .prepare(
                     filesystem.clone(),
@@ -267,7 +276,8 @@ impl Command {
                     command.executable.clone(),
                     command.cwd.clone(),
                 )
-                .await?;
+                .await
+                .map_err(crate::launch_error)?;
             let mut command = command;
             if let Some(address) = launch.proxy_address {
                 let url = format!("http://{address}");
@@ -286,13 +296,42 @@ impl Command {
             command.launch = Some(launch);
             return Ok(Prepared(command));
         }
-        tokio::task::spawn_blocking(move || command.prepare_native())
-            .await
-            .map_err(std::io::Error::other)?
-            .map_err(std::io::Error::other)
+        // The asynchronous owner retains the live gateway while the native
+        // compiler runs. A failed compiler or lost worker cannot detach it.
+        #[cfg(unix)]
+        let mut proxy = command.proxy.take();
+        #[cfg(unix)]
+        let private_network = proxy.is_some();
+        #[cfg(windows)]
+        let private_network = false;
+        let prepared =
+            tokio::task::spawn_blocking(move || command.prepare_native(private_network)).await;
+        let error = match prepared {
+            Ok(Ok(prepared)) => {
+                #[cfg(unix)]
+                let mut prepared = prepared;
+                #[cfg(unix)]
+                {
+                    prepared.0.proxy = proxy;
+                }
+                return Ok(prepared);
+            }
+            Ok(Err(maka_sandbox::Error::CleanupUnconfirmed(message))) => {
+                maka_runtime::tools::ToolError::CleanupUnconfirmed(message)
+            }
+            Ok(Err(error)) => crate::failed(error),
+            Err(error) => maka_runtime::tools::ToolError::CleanupUnconfirmed(error.to_string()),
+        };
+        #[cfg(unix)]
+        if let Some(proxy) = &mut proxy {
+            proxy.close().await.map_err(|error| {
+                maka_runtime::tools::ToolError::CleanupUnconfirmed(error.to_string())
+            })?;
+        }
+        Err(error)
     }
 
-    fn prepare_native(mut self) -> Result<Prepared, maka_sandbox::Error> {
+    fn prepare_native(mut self, _private_network: bool) -> Result<Prepared, maka_sandbox::Error> {
         if let Some(name) = self
             .environment
             .keys()
@@ -304,10 +343,14 @@ impl Command {
             )));
         }
         #[cfg(target_os = "linux")]
-        let launch = if self.proxy.is_some() {
-            self.sandbox.prepare_with_private_network(&self.cwd)?
+        let launch = if _private_network {
+            self.sandbox.prepare_with_private_network(
+                &self.cwd,
+                self.directory.as_ref().map(|dir| &dir.file),
+            )?
         } else {
-            self.sandbox.prepare(&self.cwd)?
+            self.sandbox
+                .prepare_captured(&self.cwd, self.directory.as_ref().map(|dir| &dir.file))?
         };
         #[cfg(windows)]
         let launch = self.sandbox.prepare(&self.cwd)?;
@@ -376,6 +419,31 @@ impl Command {
 }
 
 impl Prepared {
+    /// A failed/cancelled startup still owns every acquired preparation guard.
+    /// Attempt every cleanup before reporting a sticky unconfirmed result.
+    pub(crate) async fn abort(mut self) -> Result<(), maka_runtime::tools::ToolError> {
+        let mut failure = None;
+        #[cfg(unix)]
+        if let Some(proxy) = &mut self.0.proxy
+            && let Err(error) = proxy.close().await
+        {
+            failure = Some(error.to_string());
+        }
+        #[cfg(target_os = "linux")]
+        if let Err(error) = Cleanup::from(self.0.mount_lease.take()).finish().await {
+            failure.get_or_insert_with(|| error.to_string());
+        }
+        #[cfg(windows)]
+        if let Some(launch) = &mut self.0.launch {
+            if let Err(error) = launch.runner.finish().await {
+                failure = Some(error.to_string());
+            }
+        }
+        match failure {
+            Some(message) => Err(maka_runtime::tools::ToolError::CleanupUnconfirmed(message)),
+            None => Ok(()),
+        }
+    }
     #[cfg(unix)]
     pub(crate) fn take_proxy(&mut self) -> Option<maka_network::proxy::Proxy> {
         self.0.proxy.take()
@@ -383,6 +451,11 @@ impl Prepared {
     #[cfg(windows)]
     pub(crate) fn take_launch(&mut self) -> Option<crate::bootstrap::Launch> {
         self.0.launch.take()
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn directory(&self) -> Option<std::sync::Arc<crate::directory::Directory>> {
+        self.0.directory.clone()
     }
 
     #[cfg(windows)]
@@ -401,22 +474,36 @@ impl Prepared {
     }
 
     #[cfg(unix)]
-    pub(crate) fn unix(self) -> tokio::process::Command {
-        let plan = self.0;
-        let mut command = tokio::process::Command::new(plan.executable);
+    pub(crate) fn unix(&mut self) -> tokio::process::Command {
+        let plan = &mut self.0;
+        let mut command = tokio::process::Command::new(&plan.executable);
         command
-            .args(plan.args)
-            .current_dir(plan.cwd)
+            .args(&plan.args)
+            .current_dir(&plan.cwd)
             .env_clear()
-            .envs(plan.environment);
+            .envs(&plan.environment);
+        if let Some(directory) = plan.directory.clone() {
+            use std::os::fd::AsRawFd;
+            // Only async-signal-safe fchdir runs in the child. The captured
+            // descriptor remains live in this closure through exec.
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::fchdir(directory.file.as_raw_fd()) == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        }
         #[cfg(target_os = "linux")]
         if !plan.files.is_empty() {
             use std::os::fd::AsRawFd;
+            let files = std::mem::take(&mut plan.files);
             // Keep the pinned descriptors alive with Command. Clear CLOEXEC
             // only after fork, never in the multithreaded Host.
             unsafe {
                 command.pre_exec(move || {
-                    for file in &plan.files {
+                    for file in &files {
                         if libc::fcntl(file.as_raw_fd(), libc::F_SETFD, 0) == -1 {
                             return Err(std::io::Error::last_os_error());
                         }

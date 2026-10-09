@@ -190,20 +190,55 @@ async fn timeout_cancel_and_dropped_caller_clean_process_group() {
 }
 
 #[tokio::test]
-async fn inherited_pipe_cannot_hold_result_open_indefinitely() {
-    let dir = tempfile::tempdir().unwrap();
-    let result = tokio::time::timeout(
-        Duration::from_millis(3500),
-        invoke(
-            dir.path(),
-            json!({"command":"sleep 4 & printf done"}),
-            CancellationToken::new(),
-        ),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    assert_eq!(result["status"], "completed");
-    assert_eq!(result["output"]["stdout"], "done");
-    assert_eq!(result["output"]["stdoutTruncated"], true);
+async fn normal_root_exit_drains_descendants_and_their_inherited_output() {
+    for terminal in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let command = "sh -c 'trap \"\" HUP; echo $$ > child; exec sleep 30' & while ! test -s child; do sleep 0.01; done; printf done";
+        let command = format!("exec /bin/sh -c '{}'", command.replace('\'', "'\\''"));
+        tokio::time::timeout(Duration::from_millis(3500), async {
+            if terminal {
+                let plan = executor(dir.path())
+                    .unwrap()
+                    .with_login_shell(false)
+                    .command_pty(&command)
+                    .unwrap();
+                let (mut child, io) = maka_process::pty::spawn(
+                    plan,
+                    maka_runtime::terminal::TerminalSize::new(80, 24).unwrap(),
+                )
+                .await
+                .unwrap();
+                let drain = async {
+                    let mut output = Vec::new();
+                    let mut bytes = [0; 4096];
+                    loop {
+                        let count = io.read(&mut bytes).await.unwrap();
+                        if count == 0 {
+                            break;
+                        }
+                        output.extend_from_slice(&bytes[..count]);
+                    }
+                    output
+                };
+                let (status, output) = tokio::join!(child.wait(), drain);
+                assert!(status.unwrap().success());
+                child.close().await.unwrap();
+                assert_eq!(String::from_utf8(output).unwrap(), "done");
+            } else {
+                let result = invoke(
+                    dir.path(),
+                    json!({"command":command, "login": false}),
+                    CancellationToken::new(),
+                )
+                .await
+                .unwrap();
+                assert_eq!(result["status"], "completed");
+                assert_eq!(result["output"]["stdout"], "done");
+                assert_eq!(result["output"]["stdoutTruncated"], false);
+            }
+        })
+        .await
+        .unwrap();
+        assert_stopped(read_pid(&dir.path().join("child")).await).await;
+    }
 }
