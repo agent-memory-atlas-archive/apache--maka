@@ -230,10 +230,19 @@ impl Tools {
                     ));
                 }
                 if let Fact::ToolDispatched {
-                    title: Some(title), ..
+                    title,
+                    presentation,
+                    ..
                 } = &event.fact
+                    && (title.is_some() || presentation.is_some())
                 {
-                    title.validate().map_err(ProjectionError::Invalid)?;
+                    if let Some(title) = title {
+                        title.validate().map_err(ProjectionError::Invalid)?;
+                    }
+                    if let Some(key) = presentation {
+                        maka_runtime::display::validate_presentation(key)
+                            .map_err(ProjectionError::Invalid)?;
+                    }
                     rows.push(message(
                         event,
                         ts,
@@ -245,6 +254,7 @@ impl Tools {
                             ),
                             tool_name: name.clone(),
                             title: title.clone(),
+                            presentation: presentation.clone(),
                         },
                     ));
                 }

@@ -42,13 +42,16 @@ const METADATA_SQL: &str = "WITH owner AS (
                 AND json_type(row.payload, '$.args') IS NOT NULL
         ), activity AS MATERIALIZED (
             SELECT row.sequence, json_extract(row.payload, '$.toolName') AS name,
-                json_extract(row.payload, '$.title') AS title
+                json_extract(row.payload, '$.title') AS title,
+                json_extract(row.payload, '$.presentation') AS presentation
             FROM transcript_rows row JOIN owner ON row.session_id = owner.session_id
                 AND row.turn_id = owner.turn_id AND json_extract(row.payload, '$.toolUseId') = owner.tool_id
             WHERE row.sequence <= ?3 AND json_extract(row.payload, '$.type') = 'tool_activity'
             ORDER BY row.sequence LIMIT 2
         ), call AS (
             SELECT call_row.*, json_object('sequence', call_row.sequence, 'name', call_row.name,
+                'presentation', (SELECT presentation FROM activity WHERE (SELECT count(*) FROM activity) = 1
+                    AND activity.sequence > call_row.sequence AND activity.name = call_row.name),
                 'title', json((SELECT title FROM activity WHERE (SELECT count(*) FROM activity) = 1
                     AND activity.sequence > call_row.sequence AND activity.name = call_row.name)),
                 'pending', json(CASE WHEN call_row.origin IN ('provider', 'host_sdk', 'code_mode')
@@ -83,7 +86,7 @@ const METADATA_SQL: &str = "WITH owner AS (
         ), metadata AS (
             SELECT json_object('toolUseId', tool_id,
                 'call', json(CASE kind WHEN 'tool_call' THEN COALESCE((SELECT reference FROM call),
-                    json_object('sequence', sequence, 'name', name, 'title', NULL, 'pending', json('false')))
+                    json_object('sequence', sequence, 'name', name, 'title', NULL, 'presentation', NULL, 'pending', json('false')))
                     ELSE (SELECT call_ref FROM pair) END),
                 'result', json(CASE kind WHEN 'tool_result' THEN json_object('sequence', sequence,
                     'isError', json(CASE error WHEN 1 THEN 'true' ELSE 'false' END),
@@ -127,6 +130,14 @@ pub(super) async fn read(
             .is_some_and(|title| title.validate().is_err())
     {
         call.title = None;
+    }
+    if let Some(call) = &mut tool.call
+        && call
+            .presentation
+            .as_ref()
+            .is_some_and(|key| maka_runtime::display::validate_presentation(key).is_err())
+    {
+        call.presentation = None;
     }
     Ok(Some(tool))
 }
@@ -305,8 +316,7 @@ mod tests {
         .await;
         insert(&mut db, "a", "turn", 2, "call", call()).await;
         let title = json!({"fallback":"Inspect file", "translations":{"zh-CN":"查看文件"}});
-        let activity =
-            json!({"type":"tool_activity","toolUseId":"call","toolName":"Read","title":title});
+        let activity = json!({"type":"tool_activity","toolUseId":"call","toolName":"Read","title":title,"presentation":"maka.workspace.Files@1/readText"});
         insert(&mut db, "a", "turn", 3, "activity", activity.clone()).await;
         insert(&mut db, "a", "turn", 4, "result", result()).await;
         insert(
@@ -338,9 +348,14 @@ mod tests {
         .await;
         let before = read(&mut db, "a", 2, 2, 65536).await.unwrap().unwrap();
         assert!(before.call.as_ref().unwrap().pending);
+        assert!(before.call.as_ref().unwrap().presentation.is_none());
         assert!(before.call.unwrap().title.is_none());
         let open = read(&mut db, "a", 2, 3, 65536).await.unwrap().unwrap();
         assert!(open.call.as_ref().unwrap().pending && open.result.is_none());
+        assert_eq!(
+            open.call.as_ref().unwrap().presentation.as_deref(),
+            Some("maka.workspace.Files@1/readText")
+        );
         assert_eq!(
             open.call
                 .as_ref()
@@ -376,6 +391,16 @@ mod tests {
             read(&mut db, "a", 4, 6, 65536).await.unwrap().unwrap()
         );
         insert(&mut db, "a", "turn", 7, "duplicate", activity).await;
+        assert!(
+            read(&mut db, "a", 2, 7, 65536)
+                .await
+                .unwrap()
+                .unwrap()
+                .call
+                .unwrap()
+                .presentation
+                .is_none()
+        );
         assert!(
             read(&mut db, "a", 2, 7, 65536)
                 .await

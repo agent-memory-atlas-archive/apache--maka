@@ -53,6 +53,10 @@ pub struct Configuration {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentServiceTool")]
 pub struct ServiceTool {
+    /// Explicit versioned renderer key, frozen with the call; never inferred from its name.
+    #[serde(default)]
+    #[schemars(length(min = 1, max = 128))]
+    pub presentation: Option<String>,
     /// Display only; the selected name, contract and binding still identify execution.
     #[serde(default)]
     pub title: Option<maka_runtime::display::Text>,
@@ -745,7 +749,7 @@ pub enum HistorySourcePage {
     },
     Ready {
         through: u64,
-        source: maka_plugins::session::history::HistorySource,
+        source: Box<maka_plugins::session::history::HistorySource>,
     },
 }
 

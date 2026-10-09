@@ -272,6 +272,10 @@ impl Setup {
     }
     pub(super) fn selection(&self) -> contract::ServiceTool {
         contract::ServiceTool {
+            presentation: self
+                .files
+                .filter(|method| matches!(*method, "readText" | "write" | "edit" | "applyPatch"))
+                .map(|method| format!("maka.workspace.Files@1/{method}")),
             title: self.title.clone(),
             confirmation: self.confirmation,
             result: if self.files == Some("readImage")

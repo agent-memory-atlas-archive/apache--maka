@@ -64,10 +64,20 @@ impl EventWrite {
     pub fn plain(event: RuntimeEvent) -> Result<Self, CommitError> {
         match &event.fact {
             Fact::ToolDispatched {
-                title: Some(title), ..
-            } => title
-                .validate()
-                .map_err(|reason| CommitError::Rejected(reason.into()))?,
+                title,
+                presentation,
+                ..
+            } => {
+                if let Some(title) = title {
+                    title
+                        .validate()
+                        .map_err(|reason| CommitError::Rejected(reason.into()))?;
+                }
+                if let Some(key) = presentation {
+                    crate::display::validate_presentation(key)
+                        .map_err(|reason| CommitError::Rejected(reason.into()))?;
+                }
+            }
             Fact::ToolNotified {
                 operation_id,
                 text,

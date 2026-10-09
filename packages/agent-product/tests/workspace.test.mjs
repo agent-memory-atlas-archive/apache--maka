@@ -849,6 +849,11 @@ test('both product compositions use actual immutable package refs and check in t
             },
           ]);
         } else if (filesEnabled) {
+          assert.equal(
+            host.instances.agent.configuration.values.tools[0].presentation,
+            'maka.workspace.Files@1/write',
+          );
+          assert.equal(host.instances.agent.configuration.values.tools[1].presentation, undefined);
           assert.deepEqual(host.instances.agent.bindings.files, [
             { kind: 'instance', path: ['workspace-files'], export: 'files' },
           ]);
@@ -3226,6 +3231,7 @@ test('prepending history preserves the streamed message presentation identity', 
     newer: false,
     latest: false,
     landing: { sequence: 0, edge: 'end' },
+    toolContext: null,
     waitingTools: [],
     live: true,
   };
@@ -3276,6 +3282,7 @@ test('desktop scroll-to-end uses native painted facts and preserves its accepted
     newer: false,
     latest: false,
     landing: { sequence: 0, edge: 'end' },
+    toolContext: null,
     waitingTools: [],
     live: true,
   };
@@ -9301,6 +9308,7 @@ async function conversationFinder() {
     newer: false,
     latest: false,
     landing: { sequence: 0, edge: 'end' },
+    toolContext: null,
     waitingTools: [],
     live: true,
   };
@@ -10618,3 +10626,253 @@ test('history preview does not accept selected JSON as the matching original fie
   assert.equal(find.state.search.history.preview.sections[0].failed, true);
   assert.equal(find.state.search.history.preview.sections[0].source, null);
 });
+
+async function detailClient(target, method, expanded = true) {
+  const { component } = await import(
+    pathToFileURL(resolve(root, `dist/packages/tool-details/${target}.js`))
+  );
+  const props = {
+    theme: values.appearance[0],
+    locale: 'en',
+    expanded,
+    focusOnPointer: true,
+    context: { sessionId: uuid(1), through: 100 },
+    tool: {
+      toolUseId: uuid(901),
+      call: {
+        sequence: 40,
+        name: 'Arbitrary alias',
+        title: null,
+        pending: false,
+        presentation: `maka.workspace.Files@1/${method}`,
+      },
+      result: { sequence: 50, isError: false, image: false },
+    },
+  };
+  const client = {
+    component,
+    props,
+    out: null,
+    requests: new Map(),
+    adopt(out) {
+      this.out = out;
+      for (const action of out.actions) this.requests.set(action.key, action);
+      return out;
+    },
+    update(patch) {
+      Object.assign(props, patch);
+      return this.adopt(component.update(structuredClone(this.out.frame.state), props, {}));
+    },
+    event(input) {
+      return this.adopt(component.event(structuredClone(this.out.frame.state), input, props, {}));
+    },
+    raw(key) {
+      return this.event({ kind: 'raw', key, event: {} });
+    },
+    find(path) {
+      return [...this.requests.values()].find(
+        (action) => JSON.stringify(action.input.path) === JSON.stringify(path),
+      );
+    },
+    complete(action, result) {
+      assert.ok(action);
+      this.requests.delete(action.key);
+      return this.event({ kind: 'action', key: action.key, event: result });
+    },
+    page(action, text, patch = {}) {
+      return {
+        kind: 'ready',
+        through: action.input.through,
+        source: {
+          timestamp: 1,
+          sequence: action.input.source.sequence,
+          role: action.input.field === 'arguments' ? 'tool_call' : 'tool_result',
+          fields: [action.input.field],
+          field: action.input.field,
+          path: action.input.path,
+          format: 'text',
+          offset: 0,
+          totalBytes: Buffer.byteLength(text),
+          text,
+          tool: structuredClone(props.tool),
+          ...patch,
+        },
+      };
+    },
+    answer(path, text, patch = {}) {
+      const action = this.find(path);
+      return this.complete(action, { status: 'succeeded', value: this.page(action, text, patch) });
+    },
+    slots() {
+      return modelSlots(this.out.frame.view);
+    },
+  };
+  client.adopt(component.mount(props, {}));
+  return client;
+}
+for (const target of ['tui', 'desktop']) {
+  test(`${target} explicit read presentation pages immutable literal content and keeps its original fence`, async () => {
+    const client = await detailClient(target, 'readText', false);
+    assert.equal(client.requests.size, 0);
+    client.update({ expanded: true });
+    assert.equal(client.requests.size, 2);
+    client.answer(['path'], 'original.rs');
+    client.answer(['kind'], 'completed');
+    const first = '中😀\0\r\n',
+      second = 'tail';
+    const total = Buffer.byteLength(first + second),
+      offset = Buffer.byteLength(first);
+    client.answer(['value', 'content'], first, { totalBytes: total });
+    for (const [key, value] of [
+      ['offset', 4],
+      ['returnedLines', 2],
+      ['totalLines', 20],
+    ])
+      client.answer(['value', key], String(value), { format: 'json' });
+    assert.ok(JSON.stringify(client.out.frame.view).includes('Recorded lines: 5–6 / 20'));
+    assert.equal(client.slots().find((slot) => slot.key === 'content-body').props.source, first);
+    client.update({ context: { sessionId: uuid(1), through: 150 }, focusOnPointer: false });
+    assert.equal(client.requests.size, 0);
+    client.raw('content-next');
+    let next = client.find(['value', 'content']);
+    assert.equal(next.input.through, 100);
+    assert.deepEqual(next.input.position, { kind: 'after', offset });
+    client.answer(['value', 'content'], second, { offset, totalBytes: total });
+    client.raw('content-previous');
+    next = client.find(['value', 'content']);
+    assert.deepEqual(next.input.position, { kind: 'before', offset });
+    client.answer(['value', 'content'], first, { totalBytes: total });
+    client.raw('content-last');
+    assert.deepEqual(client.find(['value', 'content']).input.position, { kind: 'tail' });
+    client.answer(['value', 'content'], second, { offset, totalBytes: total });
+    assert.equal(
+      client.slots().find((slot) => slot.key === 'content-body').props.focusOnPointer,
+      false,
+    );
+    assert.ok([...client.requests.values()].every((action) => action.method === 'source'));
+  });
+  test(`${target} explicit edit evidence retains both requested sides without executing file actions`, async () => {
+    const client = await detailClient(target, 'edit');
+    client.answer(['path'], 'source.rs');
+    client.answer(['old_string'], 'let old = 1;\n');
+    client.answer(['new_string'], 'let new = 2;\n');
+    client.answer(['kind'], 'failed');
+    client.answer(['message'], 'No matching text');
+    const slots = client.slots();
+    for (const [id, text, kind] of [
+      ['before', 'let old = 1;\n', 'removed'],
+      ['after', 'let new = 2;\n', 'added'],
+    ]) {
+      const body = slots.find((slot) => slot.key === id + '-body');
+      assert.equal(body.props.source, text);
+      assert.equal(body.binding, target === 'tui' ? 'diff' : 'source');
+      if (target === 'tui')
+        assert.deepEqual(body.props.rows, [
+          { start: 0, end: Buffer.byteLength(text), kind, language: 'rs' },
+        ]);
+    }
+    assert.ok(JSON.stringify(client.out.frame.view).includes('File operation failed'));
+    assert.ok(JSON.stringify(client.out.frame.view).includes('No matching text'));
+    assert.equal(client.requests.size, 0);
+    client.raw('after-next');
+    assert.equal(client.out.actions.length, 0);
+    client.update({ expanded: false });
+    const before = client.slots().map((slot) => slot.key);
+    client.update({ expanded: true });
+    assert.deepEqual(
+      client.slots().map((slot) => slot.key),
+      before,
+    );
+    assert.equal(client.out.actions.length, 0);
+  });
+  test(`${target} source validation rejects substituted selectors and late identities and retries exact reads`, async () => {
+    const client = await detailClient(target, 'write');
+    client.answer(['path'], 'out.txt');
+    client.answer(['kind'], 'completed');
+    client.answer(['value', 'previousContent'], 'original');
+    const request = client.find(['content']);
+    for (const patch of [
+      { path: [] },
+      { path: null },
+      { sequence: 999 },
+      { format: 'json' },
+      { offset: 1 },
+      { totalBytes: 0 },
+      { tool: { ...client.props.tool, toolUseId: 'other' } },
+    ]) {
+      const action = client.find(['content']);
+      client.complete(action, {
+        status: 'succeeded',
+        value: client.page(action, 'changed', patch),
+      });
+      assert.equal(client.out.frame.state.parts.after.failed, true);
+      assert.equal(client.out.frame.state.parts.after.page, null);
+      client.raw('after-retry');
+      assert.deepEqual(client.find(['content']).input, request.input);
+    }
+    const old = client.find(['content']);
+    client.update({ context: { sessionId: uuid(2), through: 200 } });
+    client.complete(old, { status: 'succeeded', value: client.page(old, 'late old session') });
+    assert.equal(client.out.frame.state.parts.after.page, null);
+    const current = client.find(['content']);
+    assert.equal(current.input.sessionId, uuid(2));
+    client.answer(['content'], 'fresh');
+    assert.equal(client.out.frame.state.parts.after.page.text, 'fresh');
+  });
+  test(`${target} no semantic display is inferred from names and a failed read does not load file content`, async () => {
+    const client = await detailClient(target, 'readText');
+    client.answer(['path'], 'file');
+    client.answer(['kind'], 'failed');
+    client.answer(['message'], 'permission denied');
+    assert.equal(client.find(['value', 'content']), undefined);
+    assert.equal(client.out.frame.state.parts.content, undefined);
+    const tool = structuredClone(client.props.tool);
+    tool.call.name = 'Read';
+    tool.call.presentation = null;
+    client.update({ tool });
+    assert.deepEqual(client.out.actions, []);
+    assert.deepEqual(client.out.frame.state.parts, {});
+    client.raw('content-next');
+    assert.equal(client.out.actions.length, 0);
+  });
+}
+
+for (const target of ['tui', 'desktop']) {
+  test(`${target} patch display follows the frozen operation shape and never opens a current file`, async () => {
+    const client = await detailClient(target, 'applyPatch');
+    client.answer(['operation', 'path'], 'new.txt');
+    client.answer(['operation', 'type'], 'create_file');
+    client.answer(['operation', 'diff'], '+recorded\n');
+    client.answer(['kind'], 'completed');
+    assert.equal(
+      client.slots().find((slot) => slot.key === 'patch-body').props.source,
+      '+recorded\n',
+    );
+    assert.equal(client.requests.size, 0);
+    assert.equal(client.out.frame.state.parts.before, undefined);
+    assert.equal(client.out.frame.state.parts.after, undefined);
+  });
+  test(`${target} long file labels cannot break native Diff language bounds and collapsed replies do not launch reads`, async () => {
+    const client = await detailClient(target, 'edit');
+    client.answer(['path'], '/directory/' + '界'.repeat(60));
+    client.answer(['old_string'], 'old');
+    client.answer(['new_string'], '');
+    if (target === 'tui') {
+      assert.equal(
+        client.slots().find((slot) => slot.key === 'before-body').props.rows[0].language,
+        null,
+      );
+      assert.deepEqual(client.slots().find((slot) => slot.key === 'after-body').props.rows[0], {
+        start: 0,
+        end: 0,
+        kind: 'added',
+        language: null,
+      });
+    }
+    client.update({ expanded: false });
+    client.answer(['kind'], 'failed');
+    assert.equal(client.requests.size, 0);
+    client.update({ expanded: true });
+    assert.deepEqual(client.find(['message']).input.path, ['message']);
+  });
+}

@@ -102,6 +102,7 @@ async fn accepted(log: &EventLog, step: &str) {
 
 fn dispatched(step: &str) -> RuntimeEvent {
     event(Fact::ToolDispatched {
+        presentation: None,
         title: None,
         operation_id: format!("{step}:call-1"),
         call: ToolCallIdentity::provider(step.into(), "call-1".into()),

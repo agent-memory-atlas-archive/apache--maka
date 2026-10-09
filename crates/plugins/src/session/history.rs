@@ -219,6 +219,10 @@ pub struct Tool {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "HistoryToolCall")]
 pub struct ToolCall {
+    /// Opaque display contract captured at dispatch; no execution authority.
+    #[serde(default)]
+    #[schemars(with = "maka_runtime::schema::RequiredNullable<String>")]
+    pub presentation: Option<Box<str>>,
     #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
     pub sequence: u64,
     pub name: String,

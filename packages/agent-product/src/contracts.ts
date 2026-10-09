@@ -166,7 +166,16 @@ export interface SourcePage {
   navigation: number;
   landing: 'start' | 'end';
 }
+export interface ToolDetailsProps {
+  theme: Theme;
+  locale: string;
+  context: { sessionId: string; through: number };
+  tool: NonNullable<Message['tool']>;
+  expanded: boolean;
+  focusOnPointer: boolean;
+}
 export interface TimelineProps {
+  toolContext: ToolDetailsProps['context'] | null;
   waitingTools: string[];
   theme: Theme;
   locale: string;
@@ -383,9 +392,27 @@ export const imageViewerContract = component(
   }),
   { closed: object({}) },
 );
+export const toolDetailsContract = component(
+  'maka.agent.ToolDetails',
+  object({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    context: object({ sessionId: string, through: { type: 'integer', minimum: 1 } }),
+    tool: { $ref: '#/$defs/HistoryTool' },
+    expanded: { type: 'boolean' },
+    focusOnPointer: { type: 'boolean' },
+  }),
+  {},
+);
 export const timelineContract = component(
   'maka.agent.Timeline',
   object({
+    toolContext: {
+      anyOf: [
+        object({ sessionId: string, through: { type: 'integer', minimum: 1 } }),
+        { type: 'null' },
+      ],
+    },
     waitingTools: { type: 'array', maxItems: 16, items: string },
     theme: { $ref: '#/$defs/Theme' },
     locale,

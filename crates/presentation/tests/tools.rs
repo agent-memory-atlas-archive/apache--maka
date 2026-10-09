@@ -31,6 +31,7 @@ fn accepted_tools_replay_with_distinct_ids_parentage_rejections() {
     let mut facts = vec![opening()];
     step(&mut facts, "first", true, false);
     facts.push(Fact::ToolDispatched {
+        presentation: None,
         title: Some(maka_runtime::display::Text::plain("Inspect application")),
         operation_id: "first:raw".into(),
         call: ToolCallIdentity::provider("first".into(), "raw".into()),
@@ -38,6 +39,7 @@ fn accepted_tools_replay_with_distinct_ids_parentage_rejections() {
         input: json!({"code":"Read()"}),
     });
     facts.push(Fact::ToolDispatched {
+        presentation: None,
         title: None,
         operation_id: "child".into(),
         call: ToolCallIdentity {
@@ -69,6 +71,7 @@ fn accepted_tools_replay_with_distinct_ids_parentage_rejections() {
     step(&mut facts, "native", false, true);
     step(&mut facts, "unknown", false, false);
     facts.push(Fact::ToolDispatched {
+        presentation: None,
         title: None,
         operation_id: "unknown:raw".into(),
         call: ToolCallIdentity::provider("unknown".into(), "raw".into()),

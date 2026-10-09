@@ -51,6 +51,8 @@ export const packageNames = [
   'composer',
   'navigation',
   'timeline',
+  'tool-details',
+  'diff',
   'markdown',
   'source-text',
   'terminal-view',
@@ -347,7 +349,18 @@ export function composition(configuration: CompositionConfiguration): Applicatio
     );
   host.instances.agent = node(
     'agent',
-    { ...configuration.agent },
+    {
+      ...configuration.agent,
+      // This composition binds `files` to the known native v1 contract. Freeze
+      // its display key in Agent configuration, before any call is admitted.
+      tools: configuration.agent.tools.map((tool) =>
+        tool.presentation === undefined &&
+        tool.import === 'files' &&
+        ['readText', 'write', 'edit', 'applyPatch'].includes(tool.method)
+          ? { ...tool, presentation: `maka.workspace.Files@1/${tool.method}` }
+          : tool,
+      ),
+    },
     {
       ...(asksQuestions ? { questions: [local('questions', 'questions')] } : {}),
       ...(fileMethods.length ? { files: [local('workspace-files', 'files')] } : {}),
@@ -492,9 +505,20 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       {
         source: [local('source-text', 'SourceText')],
         markdown: [local('markdown', 'Markdown')],
+        tools: [local('tool-details', 'ToolDetails')],
       },
     ),
     markdown: node('markdown'),
+    'tool-details': node(
+      'tool-details',
+      {},
+      {
+        agent: [remote('agent', 'agent')],
+        source: [local('source-text', 'SourceText')],
+        ...(configuration.presentation === 'tui' ? { diff: [local('diff', 'Diff')] } : {}),
+      },
+    ),
+    ...(configuration.presentation === 'tui' ? { diff: node('diff') } : {}),
   });
   ui.launch = local('workspace', 'Workspace');
   remoteExports.unshift({

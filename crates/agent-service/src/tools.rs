@@ -86,6 +86,10 @@ pub(crate) fn catalog(
             if selection.description.trim().is_empty() {
                 return Err("agent_tool_description_invalid".to_owned());
             }
+            if let Some(key) = &selection.presentation {
+                maka_runtime::display::validate_presentation(key)
+                    .map_err(|_| "agent_tool_presentation_invalid".to_owned())?;
+            }
             if let Some(title) = &selection.title {
                 title
                     .validate()
@@ -173,6 +177,7 @@ impl ToolPreparer for Service {
             }
             // No request or effect is admitted until the existing ToolJournal T1.
             let title = selection.title.clone();
+            let presentation = selection.presentation.clone();
             let prepared = PreparedEffect::new(move |cancellation| {
                 Box::pin(async move {
                     if selection.confirmation == ToolConfirmation::Required {
@@ -303,6 +308,10 @@ impl ToolPreparer for Service {
                     }
                 })
             });
+            let prepared = match presentation {
+                Some(key) => prepared.presented(key),
+                None => prepared,
+            };
             Ok(match title {
                 Some(title) => prepared.titled(title),
                 None => prepared,

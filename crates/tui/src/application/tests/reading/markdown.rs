@@ -268,3 +268,86 @@ fn standalone_markdown_uses_the_same_native_document_without_a_reading_wrapper()
     assert_eq!(copied(&mut presenter).unwrap(), b"Standalone");
     close(&mut presenter);
 }
+
+fn diff(source: &str, rows: Value) -> Value {
+    json!({"kind":"component","key":"diff","binding":"diff","member":0,"on":{},"props":{
+        "source":source,"rows":rows,"ascii":false,"disabled":false,"focusOnPointer":true,
+        "appearance":{"text":{"font":{"family":"monospace","fallbacks":[],"size":16,"lineHeight":1.5,"weight":400},"foreground":0xddddddffu32},
+        "background":0x111111ffu32,"added":0x33cc55ffu32,"removed":0xdd3344ffu32,"selection":0x335577ffu32,"dark":true}
+    }})
+}
+#[test]
+fn native_diff_reuses_original_gutters_copy_find_resize_and_owner() {
+    let text = "let old = 1;\nlet new = 2;\n中😀 final\n";
+    let split = text.find("let new").unwrap();
+    let context = text.find("中").unwrap();
+    let rows = json!([
+        {"start":0,"end":split,"kind":"removed","language":"rust"},
+        {"start":split,"end":context,"kind":"added","language":"rust"},
+        {"start":context,"end":text.len(),"kind":"context","language":"rust"}
+    ]);
+    let (_runtime, mut presenter, props) =
+        native(vec![source("literal", "Original"), diff(text, rows)]);
+    let buffer = settle(&mut presenter, 36, 10);
+    point(&buffer, "− let old = 1;");
+    point(&buffer, "+ let new = 2;");
+    all(&mut presenter);
+    assert_eq!(
+        copied(&mut presenter).unwrap(),
+        format!("Original\n{}", text.trim_end()).as_bytes()
+    );
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+        .unwrap();
+    command(
+        &mut presenter,
+        &props,
+        1,
+        json!({"kind":"find","query":"let new","step":"first"}),
+    );
+    settle(&mut presenter, 10, 4);
+    assert_eq!(observation(&presenter)["find"]["count"], 1);
+    let active = observation(&presenter)["find"]["active"].clone();
+    assert_eq!(active, json!({"path":["diff"],"offset":split}));
+    command(
+        &mut presenter,
+        &props,
+        2,
+        json!({"kind":"reveal_source","path":active["path"],"offset":split,"find_sequence":1}),
+    );
+    settle(&mut presenter, 10, 4);
+    settle(&mut presenter, 10, 4);
+    assert_eq!(observation(&presenter)["receipt"]["status"], "applied");
+    settle(&mut presenter, 36, 10);
+    all(&mut presenter);
+    assert_eq!(
+        copied(&mut presenter).unwrap(),
+        format!("Original\n{}", text.trim_end()).as_bytes()
+    );
+    close(&mut presenter);
+}
+#[test]
+fn native_diff_rejects_invalid_untrusted_byte_ranges_before_layout() {
+    let text = "中😀\n";
+    for rows in [
+        json!([{"start":1,"end":3,"kind":"added"}]),
+        json!([{"start":0,"end":4,"kind":"added"}]),
+        json!([{"start":0,"end":9,"kind":"added"}]),
+        json!([{"start":3,"end":0,"kind":"added"}]),
+        json!([{"start":0,"end":3,"kind":"removed"},{"start":0,"end":7,"kind":"added"}]),
+        json!([{"start":0,"end":3,"kind":"added","language":"x".repeat(129)}]),
+    ] {
+        let declaration = diff(text, rows);
+        assert!(crate::application::source::compile_diff(&declaration["props"]).is_err());
+    }
+    for source in ["x".repeat(65537), "界".repeat(21846)] {
+        assert!(
+            crate::application::source::compile_diff(&diff(&source, json!([]))["props"]).is_err()
+        );
+    }
+    let declaration = diff(
+        text,
+        json!([{"start":0,"end":3,"kind":"added","language":"unrecognized-language"}]),
+    );
+    assert!(crate::application::source::compile_diff(&declaration["props"]).is_ok());
+}

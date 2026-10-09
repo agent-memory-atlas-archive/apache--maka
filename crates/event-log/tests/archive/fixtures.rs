@@ -108,6 +108,7 @@ pub(super) async fn tool(log: &EventLog, id: &str, step: &str, text: String) -> 
     log.append(&event(
         id,
         Fact::ToolDispatched {
+            presentation: None,
             title: None,
             operation_id: operation.clone(),
             call: ToolCallIdentity::provider(step.into(), step.into()),

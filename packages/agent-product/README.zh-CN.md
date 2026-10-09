@@ -110,3 +110,6 @@ owner/revision 对应的不可变字节，以观察到的来源版本交给 Host
 可选原生进程工具使用 `import: "processes"`，提供 `execute`、`read`、`writeStdin`、`stop`。启用时须在安装配置顶层显式提供 `processes`，包含 `filesystem`、`network` 及可选 `helper`；例如 `{ "filesystem": { "default": "read", "rules": [], "denyGlobs": [] }, "network": "denied", "helper": null }` 只允许读取。写入路径须由安装上限显式允许，会话策略与原权限审批不能突破该上限或私有 Root/元数据保护。Windows 要求可信 Maka CLI helper，Linux 的受限网络模式也需要它。后台 pipe/PTY 由原生提供者持有；撤权后拒绝旧终端输入和尺寸修改，仍可读取与停止。提供者关闭须等待真实进程清理，无法确认时保留失败。完整交互终端 UI 仍待后续接入。
 
 每个已选工具还须声明结果类型：查询／变更使用 `result: "json"`，图片订阅使用 `result: "image"`。工作区图片可配置为 `{ "result": "image", "confirmation": "preapproved", "name": "ReadImage", "description": "读取所选工作区中的图片。", "import": "files", "method": "readImage" }`。支持 PNG、JPEG、GIF、WebP，最多 5 MiB、每边最多 2000 像素。成功读取的字节进入不可变 canonical 图片记录；视觉模型接收实际图片，Desktop 复用图片查看器，TUI 保留查看入口并提示在桌面预览。读取沿用原工作区权限：元数据只读，私有 Host Root 与所选目录外路径不可读取。
+
+
+普通组合为选中的 `files.readText/write/edit/applyPatch` 提供显式 Files v1 展示标识；已有标识保持不变，`presentation: null` 保留普通原文。标识随原调用冻结，不依赖模型可见别名。展开后通过原会话权限和历史边界读取文件路径、当时记录的内容、请求替换内容及补丁；长字段分别提供有界双向翻页。TUI 替换文本块复用原生 Diff 排版与原选择／查找 owner，Desktop 当前使用字面原文块。Write 只显示当时已记录的原内容，业务失败与原参数／结果／回执入口仍保留。统一行差异、文件链接及完整工具卡片体验仍待后续对齐。

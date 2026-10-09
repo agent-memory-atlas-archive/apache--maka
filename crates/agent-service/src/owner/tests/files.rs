@@ -164,6 +164,14 @@ async fn native_files_reuse_actual_read_search_write_edit_and_patch_executors() 
                 _ => assert!(result.to_string().contains(expected.trim()), "{method}: {result}"),
             }
             assert!(f.store.pending_interactions(&session).await.unwrap().is_empty());
+            if matches!(method, "readText" | "write" | "edit" | "applyPatch") {
+                let facts = service_tools::facts(&f, &session).await;
+                assert!(facts.iter().any(|fact| matches!(fact, maka_runtime::event::Fact::ToolDispatched {presentation: Some(key), name, ..} if key == &format!("maka.workspace.Files@1/{method}") && name == "WorkspaceFile")));
+                let through = *f.store.subscribe_commits().borrow();
+                while !f.store.prepare_transcript(&session, through, 32).await.unwrap() {}
+                let page = f.query("history", json!({"sessionId":session,"through":through,"position":{"kind":"start"}})).await.unwrap();
+                assert!(page["chunks"].as_array().unwrap().iter().any(|chunk| chunk["tool"]["call"]["presentation"] == format!("maka.workspace.Files@1/{method}")), "{page}");
+            }
             close(&f).await;
         }
     }).await.unwrap();

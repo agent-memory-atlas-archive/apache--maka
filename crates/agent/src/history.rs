@@ -216,6 +216,7 @@ mod tests {
                 event: RuntimeEvent::new(
                     invocation,
                     Fact::ToolDispatched {
+                        presentation: None,
                         title: None,
                         operation_id: "step:call".into(),
                         call: provider("step", "call"),

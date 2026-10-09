@@ -24,6 +24,7 @@ pub mod actions;
 pub mod appearance;
 pub mod budget;
 mod deployment;
+pub mod diff;
 pub mod dismiss;
 pub mod editor;
 pub mod file;

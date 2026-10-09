@@ -305,20 +305,22 @@ impl Handler for Agent {
                         };
                         HistorySourcePage::Ready {
                             through: input.through,
-                            source: owner
-                                .store
-                                .history_source(
-                                    &input.session_id,
-                                    input.through,
-                                    sequence,
-                                    input.field,
-                                    input.path,
-                                    input.position,
-                                    8192,
-                                    64 * 1024,
-                                )
-                                .await
-                                .map_err(|_| "agent_history_unavailable")?,
+                            source: Box::new(
+                                owner
+                                    .store
+                                    .history_source(
+                                        &input.session_id,
+                                        input.through,
+                                        sequence,
+                                        input.field,
+                                        input.path,
+                                        input.position,
+                                        8192,
+                                        64 * 1024,
+                                    )
+                                    .await
+                                    .map_err(|_| "agent_history_unavailable")?,
+                            ),
                         }
                     } else {
                         HistorySourcePage::Preparing {

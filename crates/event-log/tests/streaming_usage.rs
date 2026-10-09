@@ -145,6 +145,7 @@ async fn early_tool_results_and_retained_interrupted_items_invalidate_stale_usag
             )
             .await;
             log.append(&event(Fact::ToolDispatched {
+                presentation: None,
                 title: None,
                 operation_id: "first:call".into(),
                 call: ToolCallIdentity::provider("first".into(), "call".into()),

@@ -148,6 +148,7 @@ impl ToolJournal {
                 invocation.clone(),
                 Fact::ToolDispatched {
                     title: effect.title.clone(),
+                    presentation: effect.presentation.clone(),
                     operation_id: operation_id.clone(),
                     call,
                     name,

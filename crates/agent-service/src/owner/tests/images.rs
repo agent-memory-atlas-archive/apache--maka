@@ -102,6 +102,7 @@ async fn canonical_images_use_original_agent_grants_and_bounded_base64() {
     let old = fixture
         .store
         .append(&write(Fact::ToolDispatched {
+            presentation: None,
             title: None,
             operation_id: "image-step:image".into(),
             call: ToolCallIdentity::provider("image-step".into(), "image".into()),

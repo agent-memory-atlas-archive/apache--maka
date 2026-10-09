@@ -158,7 +158,10 @@ pub enum Content {
     ToolActivity {
         tool_use_id: String,
         tool_name: String,
-        title: maka_runtime::display::Text,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<maka_runtime::display::Text>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        presentation: Option<String>,
     },
     ToolResult {
         tool_use_id: String,

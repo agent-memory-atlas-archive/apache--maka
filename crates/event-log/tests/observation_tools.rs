@@ -58,6 +58,7 @@ async fn tool_delivery_excludes_payloads_and_preserves_factual_order_time_and_fe
             },
         },
         Fact::ToolDispatched {
+            presentation: None,
             title: Some(maka_runtime::display::Text::localized(
                 "Inspect application",
                 "查看应用",
@@ -79,6 +80,7 @@ async fn tool_delivery_excludes_payloads_and_preserves_factual_order_time_and_fe
             },
         },
         Fact::ToolDispatched {
+            presentation: None,
             title: None,
             operation_id: "failure".into(),
             call: ToolCallIdentity::standalone("call-failure".into()),

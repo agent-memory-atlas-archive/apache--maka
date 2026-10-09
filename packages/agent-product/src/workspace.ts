@@ -1650,6 +1650,10 @@ function frame<N extends Node>(
               fragment.closedAt !== null && fragment.closedAt <= state.window!.page.through,
           )),
       landing: state.landing,
+      toolContext:
+        state.selected && state.window && state.window.page.through > 0
+          ? { sessionId: state.selected.id, through: state.window.page.through }
+          : null,
       waitingTools: state.window?.latest
         ? (state.interactions?.entries ?? [])
             .filter(

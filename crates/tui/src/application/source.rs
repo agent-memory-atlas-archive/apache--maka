@@ -17,7 +17,7 @@
  * under the License.
  */
 
-//! Literal source and prepared Markdown share the original native reading owner.
+//! Literal source, prepared Markdown and Diff share the original native reading owner.
 use super::{NativeInput, Placement, Slots, Widget, WidgetInput};
 use crate::editor::layout::Layout;
 use crossterm::event::Event;
@@ -592,7 +592,84 @@ pub(super) fn compile_markdown(
     .with_declaration(declaration)
 }
 
-struct Component(bool);
+pub(super) fn compile_diff(props: &serde_json::Value) -> maka_ui::Result<NativeView<dyn Widget>> {
+    use maka_ui::diff::{DiffKind, DiffProps};
+    let declaration = props.clone();
+    let props: DiffProps = serde_json::from_value(props.clone())
+        .map_err(|e| maka_ui::Error::Invalid(e.to_string()))?;
+    if props.source.len() > 65536 || props.rows.len() > 8192 {
+        return Err(maka_ui::Error::Invalid("Diff source or row budget".into()));
+    }
+    let mut end = 0;
+    let mut rows = Vec::with_capacity(props.rows.len());
+    for row in &props.rows {
+        let range = row.start as usize..row.end as usize;
+        if range.start < end
+            || range.end < range.start
+            || props.source.get(range.clone()).is_none()
+            || row
+                .language
+                .as_ref()
+                .is_some_and(|language| language.len() > 128)
+        {
+            return Err(maka_ui::Error::Invalid(
+                "invalid Diff source range or language".into(),
+            ));
+        }
+        end = range.end;
+        rows.push(crate::markdown::diff::Row {
+            source: range,
+            kind: match row.kind {
+                DiffKind::Removed => crate::markdown::diff::Kind::Removed,
+                DiffKind::Added => crate::markdown::diff::Kind::Added,
+                DiffKind::Context => crate::markdown::diff::Kind::Context,
+                DiffKind::Content => crate::markdown::diff::Kind::Content,
+            },
+            language: row
+                .language
+                .as_deref()
+                .and_then(crate::markdown::syntax::language),
+        });
+    }
+    let a = &props.appearance;
+    let mut colors = crate::markdown::Palette::default();
+    if !a.dark {
+        colors.syntax = [
+            0x804caf, 0x246c48, 0x5e6c82, 0x985812, 0x205fc1, 0x147078, 0x4c5c72,
+        ]
+        .map(|rgb| color((rgb << 8) | 255));
+    }
+    colors.foreground = color(a.text.foreground.0);
+    colors.background = color(a.background.0);
+    colors.surface = colors.background;
+    colors.success = color(a.added.0);
+    colors.error = color(a.removed.0);
+    let document = Arc::new(
+        crate::markdown::prepared::Document::diff(&props.source, &rows, props.ascii, colors)
+            .map_err(|e| maka_ui::Error::Invalid(e.into()))?,
+    );
+    if document.text().len() > 65536 {
+        return Err(maka_ui::Error::Invalid(
+            "Diff readable text byte budget".into(),
+        ));
+    }
+    let source = SourceTextProps {
+        source: document.text().to_owned(),
+        appearance: props.appearance.text,
+        selection: props.appearance.selection,
+        disabled: props.disabled,
+        focus_on_pointer: props.focus_on_pointer,
+    };
+    NativeView::<dyn Widget>::new(
+        Rc::new(Recipe(source, Some(document), true)),
+        BTreeMap::new(),
+        vec![],
+    )?
+    .with_declaration(declaration)
+}
+
+type Compile = fn(&serde_json::Value) -> maka_ui::Result<NativeView<dyn Widget>>;
+struct Component(Compile);
 impl NativeComponent<dyn Widget> for Component {
     fn call(
         &self,
@@ -614,11 +691,7 @@ impl NativeComponent<dyn Widget> for Component {
             revision,
             state: json!({"revision":revision}),
             surface: None,
-            view: if self.0 {
-                compile_markdown(props)?
-            } else {
-                compile(props)?
-            },
+            view: (self.0)(props)?,
         }
         .output(vec![]))
     }
@@ -635,12 +708,23 @@ pub(super) fn compile(props: &serde_json::Value) -> maka_ui::Result<NativeView<d
 }
 pub(super) fn register(registry: &mut NativeRegistry<dyn Widget>) {
     registry
+        .register("maka.ui.diff", |_, _| {
+            Ok(BTreeMap::from([(
+                "Diff".into(),
+                NativeExport {
+                    contract: maka_ui::diff::diff_contract(),
+                    value: NativeCapability::Component(Rc::new(Component(compile_diff))),
+                },
+            )]))
+        })
+        .expect("unique Diff factory");
+    registry
         .register("maka.ui.markdown", |_, _| {
             Ok(BTreeMap::from([(
                 "Markdown".into(),
                 NativeExport {
                     contract: maka_ui::markdown::markdown_contract(),
-                    value: NativeCapability::Component(Rc::new(Component(true))),
+                    value: NativeCapability::Component(Rc::new(Component(compile_markdown))),
                 },
             )]))
         })
@@ -651,7 +735,7 @@ pub(super) fn register(registry: &mut NativeRegistry<dyn Widget>) {
                 "SourceText".into(),
                 NativeExport {
                     contract: source_contract(),
-                    value: NativeCapability::Component(Rc::new(Component(false))),
+                    value: NativeCapability::Component(Rc::new(Component(compile))),
                 },
             )]))
         })

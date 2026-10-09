@@ -196,6 +196,166 @@ export const contracts = {
       captures: {},
     },
   },
+  diff: {
+    name: 'maka.ui.Diff',
+    version: 1,
+    transport: 'local',
+    interface: {
+      kind: 'component',
+      props: {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        title: 'DiffProps',
+        type: 'object',
+        properties: {
+          source: {
+            type: 'string',
+            maxLength: 65536,
+          },
+          rows: {
+            type: 'array',
+            items: {
+              $ref: '#/$defs/DiffRow',
+            },
+            maxItems: 8192,
+          },
+          appearance: {
+            $ref: '#/$defs/DiffAppearance',
+          },
+          ascii: {
+            type: 'boolean',
+          },
+          disabled: {
+            type: 'boolean',
+          },
+          focusOnPointer: {
+            type: 'boolean',
+          },
+        },
+        additionalProperties: false,
+        required: ['source', 'rows', 'appearance', 'ascii', 'disabled', 'focusOnPointer'],
+        $defs: {
+          DiffRow: {
+            type: 'object',
+            properties: {
+              start: {
+                description: 'Half-open UTF-8 byte range in source. Rows are ordered and disjoint.',
+                type: 'integer',
+                format: 'uint32',
+                minimum: 0,
+                maximum: 65536,
+              },
+              end: {
+                type: 'integer',
+                format: 'uint32',
+                minimum: 0,
+                maximum: 65536,
+              },
+              kind: {
+                $ref: '#/$defs/DiffKind',
+              },
+              language: {
+                type: ['string', 'null'],
+                maxLength: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['start', 'end', 'kind'],
+          },
+          DiffKind: {
+            type: 'string',
+            enum: ['removed', 'added', 'context', 'content'],
+          },
+          DiffAppearance: {
+            type: 'object',
+            properties: {
+              text: {
+                $ref: '#/$defs/TextAppearance',
+              },
+              background: {
+                $ref: '#/$defs/Color',
+              },
+              added: {
+                $ref: '#/$defs/Color',
+              },
+              removed: {
+                $ref: '#/$defs/Color',
+              },
+              selection: {
+                $ref: '#/$defs/Color',
+              },
+              dark: {
+                type: 'boolean',
+              },
+            },
+            additionalProperties: false,
+            required: ['text', 'background', 'added', 'removed', 'selection', 'dark'],
+          },
+          TextAppearance: {
+            type: 'object',
+            properties: {
+              font: {
+                $ref: '#/$defs/FontAppearance',
+              },
+              foreground: {
+                $ref: '#/$defs/Color',
+              },
+            },
+            additionalProperties: false,
+            required: ['font', 'foreground'],
+          },
+          FontAppearance: {
+            type: 'object',
+            properties: {
+              family: {
+                $ref: '#/$defs/FontFamily',
+              },
+              fallbacks: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/FontFamily',
+                },
+                maxItems: 8,
+              },
+              size: {
+                type: 'number',
+                format: 'float',
+                minimum: 6,
+                maximum: 96,
+              },
+              lineHeight: {
+                description: 'Line height relative to this font size.',
+                type: 'number',
+                format: 'float',
+                minimum: 1,
+                maximum: 3,
+              },
+              weight: {
+                type: 'integer',
+                format: 'uint16',
+                minimum: 1,
+                maximum: 1000,
+              },
+            },
+            additionalProperties: false,
+            required: ['family', 'fallbacks', 'size', 'lineHeight', 'weight'],
+          },
+          FontFamily: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+          },
+          Color: {
+            description: 'Packed RGBA, including explicit alpha zero.',
+            type: 'integer',
+            format: 'uint32',
+            minimum: 0,
+          },
+        },
+      },
+      events: {},
+      captures: {},
+    },
+  },
   image: {
     name: 'maka.ui.Image',
     version: 1,
@@ -5384,6 +5544,12 @@ export const contracts = {
               HistoryToolCall: {
                 type: 'object',
                 properties: {
+                  presentation: {
+                    description:
+                      'Opaque display contract captured at dispatch; no execution authority.',
+                    type: ['string', 'null'],
+                    default: null,
+                  },
                   sequence: {
                     type: 'integer',
                     format: 'uint64',
@@ -9094,6 +9260,12 @@ export const contracts = {
               HistoryToolCall: {
                 type: 'object',
                 properties: {
+                  presentation: {
+                    description:
+                      'Opaque display contract captured at dispatch; no execution authority.',
+                    type: ['string', 'null'],
+                    default: null,
+                  },
                   sequence: {
                     type: 'integer',
                     format: 'uint64',

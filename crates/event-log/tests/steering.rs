@@ -120,6 +120,7 @@ async fn steering_is_exact_once_session_scoped_and_atomic_with_rebuildable_user_
     log.append(&write(
         "a",
         Fact::ToolDispatched {
+            presentation: None,
             title: None,
             operation_id: "step:call".into(),
             call: ToolCallIdentity {

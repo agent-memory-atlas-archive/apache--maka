@@ -55,6 +55,7 @@ export type RuntimeProtocol =
   | LabelProps
   | TextareaProps
   | MarkdownProps
+  | DiffProps
   | MarkdownLink
   | FilePickerProps
   | FileObservation
@@ -781,6 +782,7 @@ export type EditorEdit =
       text: string;
       kind: 'append';
     };
+export type DiffKind = 'removed' | 'added' | 'context' | 'content';
 export type FilePhase = 'empty' | 'choosing' | 'ready' | 'failed';
 export type FileError =
   | 'invalid_file'
@@ -3077,6 +3079,34 @@ export interface MarkdownAppearance {
    */
   paragraphGap: number;
 }
+export interface DiffProps {
+  source: string;
+  /**
+   * @maxItems 8192
+   */
+  rows: DiffRow[];
+  appearance: DiffAppearance;
+  ascii: boolean;
+  disabled: boolean;
+  focusOnPointer: boolean;
+}
+export interface DiffRow {
+  /**
+   * Half-open UTF-8 byte range in source. Rows are ordered and disjoint.
+   */
+  start: number;
+  end: number;
+  kind: DiffKind;
+  language?: string | null;
+}
+export interface DiffAppearance {
+  text: TextAppearance;
+  background: Color;
+  added: Color;
+  removed: Color;
+  selection: Color;
+  dark: boolean;
+}
 export interface MarkdownLink {
   url: string;
 }
@@ -3486,6 +3516,10 @@ export interface DirectoryRootSpec {
   path: string;
 }
 export interface AgentServiceTool {
+  /**
+   * Explicit versioned renderer key, frozen with the call; never inferred from its name.
+   */
+  presentation?: string | null;
   /**
    * Display only; the selected name, contract and binding still identify execution.
    */
@@ -4360,6 +4394,10 @@ export interface HistoryTool {
   result: HistoryToolResult | null;
 }
 export interface HistoryToolCall {
+  /**
+   * Opaque display contract captured at dispatch; no execution authority.
+   */
+  presentation?: string | null;
   sequence: number;
   name: string;
   title: DisplayText | null;

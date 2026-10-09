@@ -173,6 +173,9 @@ pub enum Fact {
         output: crate::model::ModelStep,
     },
     ToolDispatched {
+        /// Opaque renderer key captured by the tool before admission, never a grant.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        presentation: Option<String>,
         /// Plugin-owned display text captured before dispatch, with no execution authority.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         title: Option<crate::display::Text>,

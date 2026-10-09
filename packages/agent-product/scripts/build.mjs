@@ -243,6 +243,12 @@ specifications['permission-approval'] = {
   module: 'permission-approval',
   imports: { reading: one(sdk.contracts.readingArea) },
 };
+specifications['tool-details'] = {
+  contract: own.toolDetailsContract,
+  export: 'ToolDetails',
+  module: 'tool-details',
+  imports: { agent: one(sdk.contracts.agent), source: one(sdk.contracts.sourceText) },
+};
 specifications['service-approval'] = {
   contract: own.serviceApprovalContract,
   export: 'ServiceApproval',
@@ -361,6 +367,7 @@ for (const [name, spec] of Object.entries(specifications)) {
     };
   }
   if (name === 'workspace') entries.tui.imports.rows = one(sdk.contracts.rows);
+  if (name === 'tool-details') entries.tui.imports.diff = one(sdk.contracts.diff);
   if (name === 'image-viewer') entries.desktop.imports.image = one(sdk.contracts.image);
   if (name === 'timeline') {
     for (const target of ['desktop', 'tui'])
@@ -444,6 +451,7 @@ const mechanical = {
       desktop: {
         ...native('maka.ui.reading', { ReadingArea: required(sdk.contracts.readingArea) }),
         imports: {
+          tools: { contract: own.toolDetailsContract, cardinality: { kind: 'optional' } },
           markdown: { contract: sdk.contracts.markdown, cardinality: { kind: 'optional' } },
           source: { contract: sdk.contracts.sourceText, cardinality: { kind: 'optional' } },
         },
@@ -451,12 +459,14 @@ const mechanical = {
       tui: {
         ...native('maka.ui.reading', { ReadingArea: required(sdk.contracts.readingArea) }),
         imports: {
+          tools: { contract: own.toolDetailsContract, cardinality: { kind: 'optional' } },
           markdown: { contract: sdk.contracts.markdown, cardinality: { kind: 'optional' } },
           source: { contract: sdk.contracts.sourceText, cardinality: { kind: 'optional' } },
         },
       },
     },
   },
+  diff: { entries: { tui: native('maka.ui.diff', { Diff: required(sdk.contracts.diff) }) } },
   'source-text': {
     entries: {
       desktop: native('maka.ui.source', { SourceText: required(sdk.contracts.sourceText) }),

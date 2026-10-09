@@ -138,6 +138,7 @@ async fn external_output_is_durable_observation_not_native_dispatch_and_rebuilds
     assert_eq!(overlay["thinking"]["text"], "external reasoning");
     assert!(
         log.append(&event(Fact::ToolDispatched {
+            presentation: None,
             title: None,
             operation_id: "dispatch".into(),
             call: ToolCallIdentity::standalone("call".into()),

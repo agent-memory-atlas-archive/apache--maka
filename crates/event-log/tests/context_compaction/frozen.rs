@@ -240,6 +240,7 @@ async fn a_closed_frozen_boundary_does_not_prove_that_tool_effects_are_settled()
     log.append(&fixtures::event(
         "live",
         Fact::ToolDispatched {
+            presentation: None,
             title: None,
             operation_id: "write".into(),
             call: ToolCallIdentity::standalone("write-call".into()),

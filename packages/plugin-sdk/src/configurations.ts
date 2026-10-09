@@ -97,6 +97,14 @@ export const configurations = {
       AgentServiceTool: {
         type: 'object',
         properties: {
+          presentation: {
+            description:
+              'Explicit versioned renderer key, frozen with the call; never inferred from its name.',
+            type: ['string', 'null'],
+            minLength: 1,
+            maxLength: 128,
+            default: null,
+          },
           title: {
             description:
               'Display only; the selected name, contract and binding still identify execution.',

@@ -35,6 +35,7 @@ type Admission = Box<dyn FnOnce() -> Result<Box<dyn Send>, ToolError> + Send>;
 pub struct PreparedEffect {
     execute: Option<Execute>,
     pub(super) title: Option<crate::display::Text>,
+    pub(super) presentation: Option<String>,
     admissions: Vec<Admission>,
     leases: Vec<Box<dyn Send>>,
 }
@@ -46,6 +47,7 @@ impl PreparedEffect {
         Self {
             execute: Some(Box::new(execute)),
             title: None,
+            presentation: None,
             admissions: Vec::new(),
             leases: Vec::new(),
         }
@@ -54,6 +56,12 @@ impl PreparedEffect {
     /// The owning tool supplies its presentation before journal admission.
     pub fn titled(mut self, title: crate::display::Text) -> Self {
         self.title = Some(title);
+        self
+    }
+
+    /// An opaque display contract; does not change admission or tool behavior.
+    pub fn presented(mut self, key: String) -> Self {
+        self.presentation = Some(key);
         self
     }
 

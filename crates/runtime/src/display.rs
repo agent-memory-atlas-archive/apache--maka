@@ -80,3 +80,16 @@ impl Text {
         Ok(())
     }
 }
+
+/// Renderer keys are opaque to the runtime and confer no resource authority.
+pub fn validate_presentation(key: &str) -> Result<(), &'static str> {
+    if key.is_empty()
+        || key.len() > 128
+        || !key
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"._-:/@".contains(&c))
+    {
+        return Err("Invalid tool presentation key");
+    }
+    Ok(())
+}

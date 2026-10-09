@@ -48,6 +48,7 @@ import {
 } from './conversation-search.js';
 import { copy } from './locale.js';
 import { toolCards } from './tool-cards.js';
+import { toolPresentation } from './tool-details.js';
 import { messageView, sourceFieldLabel } from './message-view.js';
 import { output, fill, pixels, compactLabel, type Presentation, type Node } from './view.js';
 interface Revision {
@@ -383,31 +384,49 @@ export function components<N extends Node>(
         toggle: tool && (message.source !== null || message.text) ? 'toggle-' + message.id : null,
         text: result ? [message.text, result.text].filter(Boolean).join(' · ') : message.text,
         continued: message.continued || !!result?.continued,
-        body: tool
-          ? ui.box(
-              'tool-body-' + message.id,
-              [
-                body,
-                ...(result
-                  ? [
-                      presentation.slot(
-                        'text-' + result.contentKey,
-                        'source',
-                        {
-                          source: result.text,
-                          focusOnPointer: !search,
-                          appearance: props.theme.markdown.body,
-                          selection: props.theme.markdown.selection,
-                          disabled: false,
-                        },
-                        {},
-                      ),
-                    ]
-                  : []),
-              ],
-              { surface: true, style: { width: fill } },
-            )
-          : body,
+        body:
+          tool &&
+          props.toolContext &&
+          message.tool &&
+          toolPresentation(message.tool.call?.presentation)
+            ? presentation.slot(
+                'tool-details-' + message.id,
+                'tools',
+                {
+                  theme: props.theme,
+                  locale: props.locale,
+                  context: props.toolContext,
+                  tool: message.tool,
+                  expanded,
+                  focusOnPointer: !search,
+                },
+                {},
+              )
+            : tool
+              ? ui.box(
+                  'tool-body-' + message.id,
+                  [
+                    body,
+                    ...(result
+                      ? [
+                          presentation.slot(
+                            'text-' + result.contentKey,
+                            'source',
+                            {
+                              source: result.text,
+                              focusOnPointer: !search,
+                              appearance: props.theme.markdown.body,
+                              selection: props.theme.markdown.selection,
+                              disabled: false,
+                            },
+                            {},
+                          ),
+                        ]
+                      : []),
+                  ],
+                  { surface: true, style: { width: fill } },
+                )
+              : body,
         actions: [
           ...(message.source !== null && message.tool?.call
             ? [

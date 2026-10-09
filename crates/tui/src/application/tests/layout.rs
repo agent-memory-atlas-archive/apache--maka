@@ -278,6 +278,13 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
                 maka_ui::markdown::markdown_contract(),
                 156,
             ),
+            (
+                "diff",
+                "Diff",
+                "maka.ui.diff",
+                maka_ui::diff::diff_contract(),
+                157,
+            ),
         ] {
             entry.imports.insert(
                 binding.into(),
@@ -370,6 +377,13 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
                                         cardinality: Cardinality::One,
                                     },
                                 ),
+                                (
+                                    "diff".into(),
+                                    Import {
+                                        contract: maka_ui::diff::diff_contract(),
+                                        cardinality: Cardinality::One,
+                                    },
+                                ),
                             ]),
                             exports: BTreeMap::from([(
                                 "ReadingArea".into(),
@@ -397,6 +411,13 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
                 vec![Target::Instance {
                     path: vec!["markdown".into()],
                     export: "Markdown".into(),
+                }],
+            );
+            node.bindings.insert(
+                "diff".into(),
+                vec![Target::Instance {
+                    path: vec!["diff".into()],
+                    export: "Diff".into(),
                 }],
             );
             input.instances.insert("reading".into(), node);

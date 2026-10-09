@@ -493,6 +493,8 @@ fn packaged_product(case: ProductCase) {
         "input",
         "navigation",
         "timeline",
+        "tool-details",
+        "diff",
         "reading-area",
         "rows",
         "source-text",
@@ -1306,6 +1308,11 @@ process.stdout.write(output.outputFiles[0].text);
         // The preceding service result exposes business JSON and the exact
         // original receipt through one retained, fenced source reader.
         click(&mut presenter, "[ Show details ]");
+        if !process_permissions {
+            await_screen(&mut presenter, "Requested content");
+            await_screen(&mut presenter, "native file contents");
+            await_screen(&mut presenter, "Recorded original content");
+        }
         click(&mut presenter, "[ Tool arguments ]");
         await_screen(&mut presenter, "native-approved.txt");
         click(&mut presenter, "[ Back to conversation ]");

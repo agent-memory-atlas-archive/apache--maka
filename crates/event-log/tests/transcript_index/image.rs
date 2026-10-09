@@ -72,6 +72,7 @@ async fn actual_tool_images_are_immutable_scoped_and_reconstructed_without_paths
         .append(&event(
             "images",
             Fact::ToolDispatched {
+                presentation: None,
                 title: None,
                 operation_id: "step-images:image-call".into(),
                 call: ToolCallIdentity::provider("step-images".into(), "image-call".into()),
@@ -450,6 +451,7 @@ async fn borrowed_upload_is_frozen_at_settlement_before_any_history_copy() {
     log.append(&event(
         "borrowed",
         Fact::ToolDispatched {
+            presentation: None,
             title: None,
             operation_id: "step-borrowed:image".into(),
             call: ToolCallIdentity::provider("step-borrowed".into(), "image".into()),

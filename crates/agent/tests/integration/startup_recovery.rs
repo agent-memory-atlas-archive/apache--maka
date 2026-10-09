@@ -299,6 +299,7 @@ async fn unknown_dispatch_stays_unknown_and_blocks_next_admission_after_reopen()
         append(
             &log,
             Fact::ToolDispatched {
+                presentation: None,
                 title: None,
                 operation_id: "step:call".into(),
                 call: maka_runtime::tool_call::ToolCallIdentity::provider(
@@ -411,7 +412,8 @@ async fn explicit_new_message_after_unknown_dispatch_informs_model_without_repla
                     timestamp: None,
                 },
             }).await;
-            append(&log, Fact::ToolDispatched { title: None,
+            append(&log, Fact::ToolDispatched { presentation: None,
+        title: None,
                 operation_id: "step:call".into(),
                 call: maka_runtime::tool_call::ToolCallIdentity::provider("step".into(), "call".into()),
                 name: "write_file".into(),
@@ -483,6 +485,7 @@ async fn item_acceptance_survives_crashes_before_dispatch_before_settlement_and_
             provider_executed: false,
         };
         let dispatch = |input| Fact::ToolDispatched {
+            presentation: None,
             title: None,
             operation_id: "step:call".into(),
             call: ToolCallIdentity::provider("step".into(), "call".into()),

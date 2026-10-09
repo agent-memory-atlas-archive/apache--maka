@@ -38,6 +38,13 @@ Unicode editors retain their text, selections and undo history across compatible
 component updates and hidden routes. Product-supplied appearance controls their
 styles. Terminal scenes support flexible viewports and native scroll policies;
 SourceText/ReadingArea provide bounded literal selection and Copy.
+The native `maka.ui.diff` implementation exports `Diff` (`maka.ui.Diff` v1).
+Its typed source ranges reuse the original Diff layout and the same reading,
+selection and find owner as SourceText/Markdown. Added/removed gutters are
+presentation only and never enter copied or searched content. UTF-8 boundaries,
+ordered disjoint ranges, language hints and source/row budgets are validated
+before layout. This is a TUI capability; it has no filesystem access.
+
 
 Ctrl+C retires the surface. The original guard checks every restoration operation
 even after an earlier failure. Native workers, resource snapshots and accepted

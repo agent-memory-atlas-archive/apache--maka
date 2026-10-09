@@ -83,6 +83,7 @@ async fn retirement_fences_new_effects_without_rejecting_accepted_results_or_exa
         log.append(&event(
             "run",
             Fact::ToolDispatched {
+                presentation: None,
                 title: None,
                 operation_id: "step:call".into(),
                 call: ToolCallIdentity::provider("step".into(), "call".into()),
@@ -966,6 +967,7 @@ async fn read_prefixes_keep_literal_archive_ids_and_session_scope() {
     let hidden = event(
         "run",
         Fact::ToolDispatched {
+            presentation: None,
             title: None,
             operation_id: "hidden".into(),
             call: ToolCallIdentity::standalone("hidden-call".into()),
