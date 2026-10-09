@@ -103,6 +103,7 @@ impl NativeServices {
             .map_err(|error| error.to_string())?;
         Ok(NativeRequest(Context {
             stream: None,
+            caller: None,
             scope,
             consumer: self.activation.clone(),
             operation: None,

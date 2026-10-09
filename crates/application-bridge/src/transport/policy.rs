@@ -27,7 +27,7 @@ use maka_plugin_core::{
     deployment::DeploymentRef,
 };
 use maka_plugins::call::{Identity, Issuer, Scope};
-use maka_runtime_host::application::{Binding, Invocation, Policy, RecoveryInvocation};
+use maka_runtime_host::application::{Binding, Caller, Invocation, Policy, RecoveryInvocation};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -72,6 +72,7 @@ struct Approvals {
 }
 pub(super) struct PeerApproval {
     peer: Peer,
+    incarnation: Arc<()>,
     active: AtomicBool,
 }
 impl PeerApproval {
@@ -101,6 +102,7 @@ impl Peers {
                     peer.source.revision,
                     Arc::new(PeerApproval {
                         peer,
+                        incarnation: Arc::new(()),
                         active: AtomicBool::new(true),
                     }),
                 )]),
@@ -141,6 +143,7 @@ impl Peers {
                 }
                 None => Arc::new(PeerApproval {
                     peer,
+                    incarnation: Arc::new(()),
                     active: AtomicBool::new(true),
                 }),
             };
@@ -295,7 +298,7 @@ impl PeerPolicy {
         endpoint: Endpoint,
         cancel: CancellationToken,
     ) -> Result<Scope> {
-        if source.request.is_nil() {
+        if source.request.is_nil() || source.mount.is_nil() {
             return Err("invalid peer request identity".into());
         }
         let approval = peer.resolve(&source.deployment, &source.consumer)?;
@@ -330,6 +333,15 @@ impl PeerPolicy {
     }
 }
 impl Policy for PeerPolicy {
+    fn caller(&self, scope: &Scope) -> Option<Caller> {
+        let evidence = self.evidence(scope).ok()?;
+        Some(Caller::new(
+            evidence.approval.incarnation.clone(),
+            evidence.source.deployment.clone(),
+            evidence.source.consumer.clone(),
+            evidence.source.mount,
+        ))
+    }
     fn admit(&self, invocation: Invocation<'_>) -> Result<()> {
         if let Some(e) = self.issuer.evidence::<Evidence>(invocation.scope) {
             e.approval.live()?;

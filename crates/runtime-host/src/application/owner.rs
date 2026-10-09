@@ -930,53 +930,56 @@ impl Owner {
                             return Err("prepared original reference no longer matches".into());
                         }
                     }
-                    match std::panic::catch_unwind(AssertUnwindSafe(|| {
-                        let Interface::Service { methods } = &service.contract.interface else {
-                            unreachable!()
-                        };
-                        let declared = &methods[&method].resources;
-                        if declared.len() != attachments.len()
-                            || declared.iter().any(|(slot, resource_type)| {
-                                attachments.get(slot).is_none_or(|resource| {
-                                    resource.resource_type() != *resource_type
+                    let authenticated_caller =
+                        match std::panic::catch_unwind(AssertUnwindSafe(|| {
+                            let Interface::Service { methods } = &service.contract.interface else {
+                                unreachable!()
+                            };
+                            let declared = &methods[&method].resources;
+                            if declared.len() != attachments.len()
+                                || declared.iter().any(|(slot, resource_type)| {
+                                    attachments.get(slot).is_none_or(|resource| {
+                                        resource.resource_type() != *resource_type
+                                    })
                                 })
-                            })
-                        {
-                            return Err("Host attachment slots or types mismatch".into());
-                        }
-                        let size = resource_ingress::attachment_size(&attachments)?;
-                        if size.payload != resources.num_permits()
-                            || size.descriptors + check_json(&input)?.max(1) > bytes.num_permits()
-                        {
-                            return Err(
-                                "Host attachment descriptor changed before admission".into()
-                            );
-                        }
-                        let invocation = Invocation {
-                            scope: &scope,
-                            native_origin: self.native_origin(&scope),
-                            consumer: binding.0.consumer(),
-                            provider: binding.provider(),
-                            export: binding.export(),
-                            contract: &service.contract,
-                            method: &method,
-                            input: &input,
-                            attachments: &attachments,
+                            {
+                                return Err("Host attachment slots or types mismatch".into());
+                            }
+                            let size = resource_ingress::attachment_size(&attachments)?;
+                            if size.payload != resources.num_permits()
+                                || size.descriptors + check_json(&input)?.max(1)
+                                    > bytes.num_permits()
+                            {
+                                return Err(
+                                    "Host attachment descriptor changed before admission".into()
+                                );
+                            }
+                            let invocation = Invocation {
+                                scope: &scope,
+                                native_origin: self.native_origin(&scope),
+                                consumer: binding.0.consumer(),
+                                provider: binding.provider(),
+                                export: binding.export(),
+                                contract: &service.contract,
+                                method: &method,
+                                input: &input,
+                                attachments: &attachments,
+                            };
+                            self.policy.admit(invocation)?;
+                            if let Some(intent) = kind.peer_intent() {
+                                self.policy.confirm_peer_mutation(invocation, intent)?;
+                            }
+                            Ok::<_, String>(self.policy.caller(&scope))
+                        })) {
+                            Ok(result) => result?,
+                            Err(_) => {
+                                let error =
+                                    "Host admission policy or attachment descriptor panicked"
+                                        .to_string();
+                                descriptor_failed = true;
+                                return Err(error);
+                            }
                         };
-                        self.policy.admit(invocation)?;
-                        if let Some(intent) = kind.peer_intent() {
-                            self.policy.confirm_peer_mutation(invocation, intent)?;
-                        }
-                        Ok::<(), String>(())
-                    })) {
-                        Ok(result) => result?,
-                        Err(_) => {
-                            let error = "Host admission policy or attachment descriptor panicked"
-                                .to_string();
-                            descriptor_failed = true;
-                            return Err(error);
-                        }
-                    };
                     if scope.cancellation.is_cancelled() {
                         return Err("Host invocation was revoked".into());
                     }
@@ -988,11 +991,17 @@ impl Owner {
                                 ..
                             }
                     ) {
-                        return Ok((None, None, request, reference));
+                        return Ok((None, None, request, reference, authenticated_caller));
                     }
                     let child = scope.child().map_err(|e| e.to_string())?;
                     let execution = self.runtime.admit(&binding.0).map_err(|e| e.to_string())?;
-                    Ok((Some(execution), Some(child), request, reference))
+                    Ok((
+                        Some(execution),
+                        Some(child),
+                        request,
+                        reference,
+                        authenticated_caller,
+                    ))
                 })();
                 match admission {
                     Err(error) => {
@@ -1007,7 +1016,7 @@ impl Owner {
                         }
                         kind.reject(error);
                     }
-                    Ok((execution, child, request, reference)) => {
+                    Ok((execution, child, request, reference, authenticated_caller)) => {
                         if let CallKind::PrepareMutation { reply, .. } = kind {
                             let _ = reply.send(Ok(PreparedMutation {
                                 reference: reference.expect("mutation reference"),
@@ -1090,6 +1099,7 @@ impl Owner {
                         );
                         let context = Context {
                             stream: stream.clone(),
+                            caller: authenticated_caller,
                             scope: scope.clone(),
                             consumer: execution.provider().clone(),
                             operation: reference.clone(),

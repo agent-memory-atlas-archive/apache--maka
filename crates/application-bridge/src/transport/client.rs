@@ -455,6 +455,7 @@ mod tests {
                 revision: 1,
             },
             consumer: maka_plugin_core::composition::InstanceId(vec![uuid::Uuid::new_v4()]),
+            mount: uuid::Uuid::new_v4(),
             request: uuid::Uuid::new_v4(),
         }
     }

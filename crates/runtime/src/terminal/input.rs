@@ -25,6 +25,7 @@ pub use key::{Key, Modifier, Modifiers};
 pub use mouse::{MouseAction, MouseButton, MouseEvent, ScrollDirection};
 
 use super::{TerminalInputModes, TerminalSize};
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -35,7 +36,8 @@ pub const MAX_INPUT_ACTIONS: usize = 64;
 #[error("terminal input rejected: {0}")]
 pub struct InputError(pub &'static str);
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, JsonSchema)]
+#[schemars(with = "RawAction", rename = "TerminalInputAction")]
 pub enum InputAction {
     Text(String),
     Paste(String),
@@ -173,16 +175,24 @@ pub fn encoded_actions_byte_len(actions: &[InputAction]) -> Result<usize, InputE
     Ok(length)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum RawAction {
     Text {
+        #[schemars(length(min = 1), regex(pattern = "^[^\\x00-\\x1f\\x7f-\\x9f]+$"))]
         text: String,
     },
     Paste {
+        #[schemars(
+            length(min = 1),
+            regex(pattern = "^[^\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f-\\x9f]+$")
+        )]
         text: String,
     },
     Key {
+        #[schemars(regex(
+            pattern = "^(?:[ -~]|enter|escape|tab|backspace|arrow_(?:up|down|left|right)|home|end|insert|delete|page_(?:up|down)|f(?:[1-9]|1[0-2]))$"
+        ))]
         key: String,
         #[serde(default)]
         modifiers: Modifiers,
@@ -190,12 +200,16 @@ enum RawAction {
     Mouse {
         event: mouse::RawEvent,
         #[serde(deserialize_with = "coordinate")]
+        #[schemars(range(max = 9007199254740991u64))]
         x: u64,
         #[serde(deserialize_with = "coordinate")]
+        #[schemars(range(max = 9007199254740991u64))]
         y: u64,
         #[serde(default, deserialize_with = "present")]
+        #[schemars(with = "MouseButton")]
         button: Option<MouseButton>,
         #[serde(default, deserialize_with = "present")]
+        #[schemars(with = "ScrollDirection")]
         direction: Option<ScrollDirection>,
         #[serde(default)]
         modifiers: Modifiers,

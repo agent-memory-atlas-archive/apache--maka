@@ -38,6 +38,8 @@ pub(super) const FRAME_LIMIT: usize = 2 * 1024 * 1024;
 pub struct Source {
     pub deployment: DeploymentRef,
     pub consumer: InstanceId,
+    /// Original mount, captured by the trusted UI adapter rather than action JSON.
+    pub mount: Uuid,
     pub request: Uuid,
 }
 impl TryFrom<&maka_ui::actions::ServiceSource> for Source {
@@ -49,6 +51,7 @@ impl TryFrom<&maka_ui::actions::ServiceSource> for Source {
                 .ok_or("persisted UI source required")?
                 .clone(),
             consumer: value.consumer().instance().clone(),
+            mount: value.mount().id(),
             request: value.request_id(),
         })
     }
@@ -250,6 +253,7 @@ mod tests {
                     revision: 1,
                 },
                 consumer: InstanceId(vec![Uuid::new_v4()]),
+                mount: uuid::Uuid::new_v4(),
                 request: Uuid::new_v4(),
             },
             method: "read".into(),

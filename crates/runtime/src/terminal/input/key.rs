@@ -18,9 +18,10 @@
  */
 
 use super::InputError;
-use serde::Deserialize;
+use schemars::{JsonSchema, Schema, SchemaGenerator};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Modifier {
     Ctrl,
@@ -54,6 +55,31 @@ impl TryFrom<Vec<Modifier>> for Modifiers {
 impl Modifiers {
     pub(super) fn bits(self) -> u8 {
         self.0
+    }
+}
+
+impl Serialize for Modifiers {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        [
+            (4, Modifier::Ctrl),
+            (2, Modifier::Alt),
+            (1, Modifier::Shift),
+        ]
+        .into_iter()
+        .filter_map(|(bit, modifier)| (self.0 & bit != 0).then_some(modifier))
+        .collect::<Vec<_>>()
+        .serialize(serializer)
+    }
+}
+impl JsonSchema for Modifiers {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "TerminalModifiers".into()
+    }
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        let mut schema = Vec::<Modifier>::json_schema(generator);
+        schema.insert("uniqueItems".into(), true.into());
+        schema.insert("maxItems".into(), 3.into());
+        schema
     }
 }
 

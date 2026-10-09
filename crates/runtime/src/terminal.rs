@@ -17,13 +17,15 @@
  * under the License.
  */
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub mod input;
 
 /// Shared by native PTY allocation, input validation and screen rendering.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "SizeFields")]
+#[schemars(with = "SizeFields")]
 pub struct TerminalSize {
     cols: u16,
     rows: u16,
@@ -46,10 +48,12 @@ impl TerminalSize {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SizeFields {
+    #[schemars(range(min = 2, max = 240))]
     cols: u16,
+    #[schemars(range(min = 1, max = 100))]
     rows: u16,
 }
 
@@ -60,7 +64,7 @@ impl TryFrom<SizeFields> for TerminalSize {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TerminalScreen {
     pub screen: String,
@@ -97,7 +101,7 @@ impl TerminalScreen {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TerminalCursor {
     pub x: u16,
@@ -105,7 +109,7 @@ pub struct TerminalCursor {
     pub visible: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TerminalInputModes {
     pub application_cursor_keys_mode: bool,
@@ -113,7 +117,7 @@ pub struct TerminalInputModes {
     pub mouse_encoding: MouseEncoding,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MouseTracking {
     None,
@@ -123,7 +127,7 @@ pub enum MouseTracking {
     Any,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MouseEncoding {
     Default,

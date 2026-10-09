@@ -24,6 +24,7 @@ use super::*;
 /// guest-supplied global name. Calls preserve the original private Scope evidence.
 pub struct Context {
     pub(super) stream: Option<subscriptions::Emitter>,
+    pub(super) caller: Option<Caller>,
     pub(super) scope: Scope,
     pub(super) consumer: Activation,
     pub(super) operation: Option<RecoveryRef>,
@@ -32,6 +33,11 @@ pub struct Context {
     pub(super) dispatch: Weak<Dispatch>,
 }
 impl Context {
+    /// Original policy-authenticated caller, if the embedding supplies one.
+    /// Equality is only an additional resource-ownership check, never a grant.
+    pub fn caller(&self) -> Option<&Caller> {
+        self.caller.as_ref()
+    }
     /// Publish one bounded, schema-checked subscription item. Backpressure waits
     /// for the reader; producer completion or cancellation rejects further emits.
     pub fn emit(&self, value: Value) -> BoxFuture<'static, Result<()>> {

@@ -292,6 +292,7 @@ async fn dropping_partial_commit_keeps_real_sql_token_and_cannot_append_cancel()
     let source = Source {
         deployment: f.source.clone(),
         consumer: support::identity(2),
+        mount: uuid::Uuid::new_v4(),
         request: Uuid::new_v4(),
     };
     let mut call = Call::new(
@@ -381,6 +382,7 @@ async fn dropping_partial_commit_keeps_real_sql_token_and_cannot_append_cancel()
 
 #[derive(Default)]
 struct Gate {
+    callers: std::sync::Mutex<Vec<Option<maka_runtime_host::application::Caller>>>,
     entered: tokio::sync::Notify,
 }
 impl maka_runtime_host::application::Handler for Gate {
@@ -390,6 +392,7 @@ impl maka_runtime_host::application::Handler for Gate {
         _: serde_json::Value,
         context: maka_runtime_host::application::Context,
     ) -> futures_util::future::BoxFuture<'static, Result<serde_json::Value, String>> {
+        self.callers.lock().unwrap().push(context.caller().cloned());
         let stop = context.scope().cancellation.clone();
         if method == "write" {
             self.entered.notify_one();
@@ -720,6 +723,7 @@ async fn old_selection_cannot_retarget_the_same_alias_in_a_different_host_incarn
         Source {
             deployment: replacement.source.clone(),
             consumer: support::identity(2),
+            mount: uuid::Uuid::new_v4(),
             request: Uuid::new_v4(),
         },
         "write".into(),
@@ -750,6 +754,7 @@ async fn unpolled_dispatch_observer_keeps_actual_sql_custody_until_original_prep
         Source {
             deployment: f.source.clone(),
             consumer: support::identity(2),
+            mount: uuid::Uuid::new_v4(),
             request: Uuid::new_v4(),
         },
         "write".into(),
@@ -878,6 +883,7 @@ async fn completed_original_query_can_ack_cleanup_after_cancel_delivery_is_broke
         Source {
             deployment: f.source.clone(),
             consumer: support::identity(2),
+            mount: uuid::Uuid::new_v4(),
             request: Uuid::new_v4(),
         },
         "read".into(),
@@ -1462,6 +1468,7 @@ async fn revoking_issued_scope_rejects_prepared_commit_without_losing_original_c
         Source {
             deployment: f.source.clone(),
             consumer: support::identity(2),
+            mount: uuid::Uuid::new_v4(),
             request: Uuid::new_v4(),
         },
         "write".into(),
@@ -1641,6 +1648,131 @@ async fn revocation_during_actual_opening_sends_no_wire_and_closes_original_chan
     stop_ui(ui, &root);
     connection.close().await.unwrap();
     drop(connection);
+    f.server.close().await.unwrap();
+    f.cleanup().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn native_caller_preserves_original_mount_across_requests_and_rejects_reopened_view_identity()
+{
+    let gate = Arc::new(Gate::default());
+    let f = Fixture::with_gate(Some(gate.clone())).await;
+    let (mut ui, connection, source, service) = native_ui(
+        &f,
+        Arc::new(Physical {
+            server: f.server.clone(),
+            peer: f.peer.clone(),
+        }),
+    )
+    .await;
+    let root = ui.mount_launch(serde_json::json!({})).unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            ui_action(&mut ui, &root, "read").await["value"]["effects"],
+            0
+        );
+        let captured = source.lock().unwrap().clone().unwrap();
+        assert_eq!(Source::try_from(&captured).unwrap().mount, root.id());
+    }
+    ui.retire(&root).unwrap();
+    ui.close(&root, Ok(())).unwrap();
+    let reopened = ui.mount_launch(serde_json::json!({})).unwrap();
+    assert_ne!(root, reopened);
+    assert_eq!(
+        ui_action(&mut ui, &reopened, "read").await["value"]["effects"],
+        0
+    );
+    {
+        let callers = gate.callers.lock().unwrap();
+        assert_eq!(callers.len(), 3);
+        assert!(callers.iter().all(Option::is_some));
+        assert_eq!(callers[0], callers[1]);
+        assert_ne!(callers[0], callers[2]);
+    }
+    stop_ui(ui, &reopened);
+    connection.close().await.unwrap();
+    drop(service);
+    drop(connection);
+    f.server.close().await.unwrap();
+    f.cleanup().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn native_caller_uses_actual_peer_approval_and_consumer_not_claimed_json_identity() {
+    use maka_application_bridge::transport::Peers;
+    let gate = Arc::new(Gate::default());
+    let f = Fixture::with_gate(Some(gate.clone())).await;
+    let approved = || {
+        Peer::new(
+            f.source.clone(),
+            BTreeSet::from([support::identity(2), support::identity(3)]),
+        )
+        .unwrap()
+    };
+    let peer = Peers::new(approved());
+    let original = Source {
+        deployment: f.source.clone(),
+        consumer: support::identity(2),
+        mount: Uuid::new_v4(),
+        request: Uuid::new_v4(),
+    };
+    for case in 0..8 {
+        let mut source = original.clone();
+        source.request = Uuid::new_v4();
+        let actual_peer = if case == 4 {
+            Peers::new(approved())
+        } else {
+            peer.clone()
+        };
+        match case {
+            2 => source.consumer = support::identity(3),
+            3 => source.mount = Uuid::new_v4(),
+            5 => source.consumer = support::identity(4),
+            6 => source.deployment.deployment = Uuid::new_v4(),
+            7 => source.mount = Uuid::nil(),
+            _ => {}
+        }
+        let (channel, accepted) = tokio::io::duplex(64 * 1024);
+        let (reader, writer) = tokio::io::split(accepted);
+        let observer = f.server.serve(reader, writer, actual_peer).unwrap();
+        let (reader, writer) = tokio::io::split(channel);
+        let mut call = Call::new(
+            reader,
+            writer,
+            f.server.catalogue().select("business").unwrap(),
+            source,
+            "read".into(),
+            serde_json::Value::Null,
+            Default::default(),
+        );
+        if case < 5 {
+            call.start().await.unwrap();
+            match call.receive().await.unwrap() {
+                Reply::Finished { result, cleanup } => {
+                    result.unwrap();
+                    cleanup.unwrap();
+                }
+                other => panic!("unexpected caller admission: {other:?}"),
+            }
+        } else {
+            assert!(call.start().await.is_err());
+        }
+        observer.await.unwrap();
+        assert!(call.cleanup_confirmed());
+    }
+    {
+        let callers = gate.callers.lock().unwrap();
+        assert_eq!(
+            callers.len(),
+            5,
+            "unapproved Source must never reach the Handler"
+        );
+        assert!(callers.iter().all(Option::is_some));
+        assert_eq!(callers[0], callers[1]);
+        for different in &callers[2..] {
+            assert_ne!(&callers[0], different);
+        }
+    }
     f.server.close().await.unwrap();
     f.cleanup().await;
 }

@@ -19,9 +19,10 @@
 
 use super::{InputError, Modifiers};
 use crate::terminal::{MouseEncoding, MouseTracking, TerminalInputModes, TerminalSize};
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MouseButton {
     Left,
@@ -29,7 +30,7 @@ pub enum MouseButton {
     Right,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ScrollDirection {
     Up,
@@ -53,7 +54,7 @@ pub struct MouseAction {
     pub modifiers: Modifiers,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum RawEvent {
     Click,

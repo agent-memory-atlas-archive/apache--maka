@@ -174,6 +174,7 @@ impl Fixture {
         Source {
             deployment: self.source.clone(),
             consumer: support::identity(2),
+            mount: uuid::Uuid::new_v4(),
             request: Uuid::new_v4(),
         }
     }

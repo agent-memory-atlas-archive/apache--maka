@@ -23,19 +23,13 @@ use serde_json::{Value, json};
 
 impl Serialize for InputAction {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let modifiers = |bits: u8| {
-            [(4, "ctrl"), (2, "alt"), (1, "shift")]
-                .into_iter()
-                .filter_map(|(bit, name)| (bits & bit != 0).then_some(name))
-                .collect::<Vec<_>>()
-        };
         let value = match self {
             Self::Text(text) => json!({"type":"text","text":text}),
             Self::Paste(text) => json!({"type":"paste","text":text}),
             Self::Key {
                 key,
                 modifiers: keys,
-            } => json!({"type":"key","key":key.name(),"modifiers":modifiers(keys.bits())}),
+            } => json!({"type":"key","key":key.name(),"modifiers":keys}),
             Self::Mouse(mouse) => {
                 let (event, button, direction) = match mouse.event {
                     MouseEvent::Click(button) => ("click", Some(button), None),
@@ -44,7 +38,7 @@ impl Serialize for InputAction {
                     MouseEvent::Move(button) => ("move", button, None),
                     MouseEvent::Scroll(direction) => ("scroll", None, Some(direction)),
                 };
-                let mut value = json!({"type":"mouse","event":event,"x":mouse.x,"y":mouse.y,"modifiers":modifiers(mouse.modifiers.bits())});
+                let mut value = json!({"type":"mouse","event":event,"x":mouse.x,"y":mouse.y,"modifiers":mouse.modifiers});
                 if let Some(button) = button {
                     value["button"] = json!(match button {
                         MouseButton::Left => "left",

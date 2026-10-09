@@ -19,12 +19,14 @@
 
 //! Host service execution over the shared plugin lifecycle kernel.
 pub mod abi;
+mod caller;
 mod context;
 pub mod management;
 mod native_context;
 pub mod operations;
 mod owner;
 mod resource_ingress;
+pub use caller::Caller;
 pub use context::Context;
 pub use native_context::{NativeContext, NativePersistence, NativeRequest, NativeServices};
 pub use resource_ingress::{
@@ -80,6 +82,12 @@ pub trait Handler: Send + Sync + 'static {
 /// Scope observation, package identity and a binding are not authorization.
 pub trait Policy: Send + Sync + 'static {
     fn admit(&self, invocation: Invocation<'_>) -> Result<()>;
+    /// Correlate resources across requests from one authenticated original
+    /// caller. Called inside final admission, after `admit`, using private Scope
+    /// evidence. This observation grants no method or resource access.
+    fn caller(&self, _scope: &Scope) -> Option<Caller> {
+        None
+    }
     /// Authenticate a peer's caller-commit attestation against the original
     /// Scope's private evidence. This is additional to ordinary admission, not
     /// a Host grant or proof of another process's SQLite commit. Default deny.
