@@ -3196,6 +3196,10 @@ export interface FilePickerProps {
   appearance: InputAppearance;
   label: string;
   pathLabel: string;
+  browseLabel: string;
+  parentLabel: string;
+  emptyLabel: string;
+  truncatedLabel: string;
   placeholder: string;
   disabled: boolean;
   tabIndex: number;

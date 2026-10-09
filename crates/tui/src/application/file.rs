@@ -18,6 +18,7 @@
  */
 
 //! Native path input and original asynchronous selected-file custody.
+mod browser;
 use super::{NativeContext, NativeInput, Placement, Slots, Widget, WidgetInput};
 use crate::editor::{Editor, Geometry};
 use crossterm::event::{Event, KeyCode, MouseButton, MouseEventKind};
@@ -37,13 +38,16 @@ use std::{
     sync::{Arc, mpsc},
 };
 
+use unicode_width::UnicodeWidthStr;
+
 struct Owner {
     context: NativeContext,
     editor: Editor,
     geometry: Option<Geometry>,
     selection: FileSelection,
-    path: Option<PathBuf>,
-    receiver: Option<mpsc::Receiver<Result<Option<Arc<FileSnapshot>>, FileError>>>,
+    path: Option<browser::Request>,
+    browser: Option<browser::Browser>,
+    receiver: Option<mpsc::Receiver<Result<browser::Selected, FileError>>>,
     visible: bool,
     announced: bool,
 }
@@ -52,6 +56,43 @@ impl Owner {
         NativeInput {
             key: "observe".into(),
             value: serde_json::to_value(self.selection.observation()).expect("file observation"),
+        }
+    }
+    fn stage(&mut self, path: PathBuf, directory: bool) -> WidgetInput {
+        self.selection.cancel_intent();
+        match self.selection.stage() {
+            Some(choose) => {
+                self.path = Some(browser::Request { path, directory });
+                WidgetInput::Emitted(NativeInput {
+                    key: "choose".into(),
+                    value: serde_json::to_value(choose).unwrap(),
+                })
+            }
+            None => WidgetInput::Consumed(None),
+        }
+    }
+    fn settle(&mut self, result: Result<browser::Selected, FileError>) {
+        match result {
+            Ok(browser::Selected::File { path, snapshot }) => {
+                self.browser = None;
+                self.editor.clear();
+                self.editor
+                    .insert(path.to_str().expect("validated local path"));
+                self.selection.settle(Ok(Some(snapshot)));
+            }
+            Ok(browser::Selected::Directory(directory)) => {
+                self.selection.settle(Ok(None));
+                let browser =
+                    browser::Browser::new(directory, self.selection.observation().revision);
+                self.editor.clear();
+                self.editor
+                    .insert(browser.path().to_str().expect("validated local path"));
+                self.browser = Some(browser);
+            }
+            Err(error) => {
+                self.browser = None;
+                self.selection.settle(Err(error));
+            }
         }
     }
     fn start(&mut self) {
@@ -77,10 +118,10 @@ impl Owner {
             .spawn(move || {
                 ticket.start();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    read_selected(&path, &budget)
+                    browser::select(path, &budget)
                 }));
                 let (result, cleanup) = match result {
-                    Ok(result) => (result.map(Some), Ok(())),
+                    Ok(result) => (result, Ok(())),
                     Err(_) => (
                         Err(FileError::WorkerFailed),
                         Err("native file worker panicked".into()),
@@ -104,6 +145,7 @@ impl Widget for Recipe {
             geometry: None,
             selection: FileSelection::default(),
             path: None,
+            browser: None,
             receiver: None,
             visible: true,
             announced: false,
@@ -129,7 +171,7 @@ impl Widget for Recipe {
         match receiver.try_recv() {
             Ok(result) => {
                 owner.receiver = None;
-                owner.selection.settle(result);
+                owner.settle(result);
                 Some(owner.observation())
             }
             Err(mpsc::TryRecvError::Disconnected) => {
@@ -145,17 +187,30 @@ impl Widget for Recipe {
         if self.0.props.disabled || !owner.visible || owner.selection.busy() {
             return Ok(WidgetInput::Unhandled);
         }
-        let activate = matches!(event, Event::Key(k) if (k.code == KeyCode::Enter || key == "choose" && k.code == KeyCode::Char(' ')) && k.modifiers.is_empty())
-            || key == "choose"
+        if key == "entries" {
+            return Ok(
+                match owner.browser.as_mut().map(|browser| browser.input(event)) {
+                    Some(browser::Input::Select(path)) => owner.stage(path, false),
+                    Some(browser::Input::Handled) => WidgetInput::Consumed(None),
+                    Some(browser::Input::PreserveFocus) => WidgetInput::PreserveFocus,
+                    _ => WidgetInput::Unhandled,
+                },
+            );
+        }
+        let control = matches!(key, "choose" | "browse" | "parent");
+        let activate = matches!(event, Event::Key(k) if k.kind != crossterm::event::KeyEventKind::Release && (k.code == KeyCode::Enter || control && k.code == KeyCode::Char(' ')) && k.modifiers.is_empty())
+            || control
                 && matches!(event, Event::Mouse(m) if m.kind == MouseEventKind::Down(MouseButton::Left));
         if activate {
-            owner.selection.cancel_intent();
-            if let Some(choose) = owner.selection.stage() {
-                owner.path = Some(PathBuf::from(owner.editor.text()));
-                return Ok(WidgetInput::Emitted(NativeInput {
-                    key: "choose".into(),
-                    value: serde_json::to_value(choose).unwrap(),
-                }));
+            if key == "parent" {
+                return Ok(owner
+                    .browser
+                    .as_ref()
+                    .and_then(browser::Browser::parent)
+                    .map_or(WidgetInput::Consumed(None), |path| owner.stage(path, true)));
+            }
+            if key == "path" || control {
+                return Ok(owner.stage(PathBuf::from(owner.editor.text()), key == "browse"));
             }
         }
         if key != "path" {
@@ -176,8 +231,20 @@ impl Widget for Recipe {
             WidgetInput::Unhandled
         })
     }
+    fn cancel_pointer(&self, state: &mut dyn Any) {
+        let owner = state.downcast_mut::<Owner>().unwrap();
+        owner.editor.cancel_pointer();
+        if let Some(browser) = &mut owner.browser {
+            browser.cancel_pointer();
+        }
+    }
     fn pointer_capture(&self, state: &dyn Any) -> bool {
-        state.downcast_ref::<Owner>().unwrap().editor.dragging()
+        let owner = state.downcast_ref::<Owner>().unwrap();
+        owner.editor.dragging()
+            || owner
+                .browser
+                .as_ref()
+                .is_some_and(browser::Browser::dragging)
     }
     fn capture(
         &self,
@@ -192,8 +259,24 @@ impl Widget for Recipe {
             .selection
             .capture(&capture)
     }
-    fn measure(&self, _: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
-        Ok((width, 3))
+    fn measure(&self, slots: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
+        let owner = slots.native_state::<Owner>()?;
+        let (_, controls) = controls(
+            &self.0.props,
+            width,
+            owner
+                .browser
+                .as_ref()
+                .is_some_and(browser::Browser::has_parent),
+        );
+        Ok((
+            width,
+            2 + controls
+                + owner
+                    .browser
+                    .as_ref()
+                    .map_or(0, |browser| browser.height(browser_rows(slots))),
+        ))
     }
     fn paint(
         &self,
@@ -233,29 +316,78 @@ impl Widget for Recipe {
                 style.fg(color(a.muted_foreground)),
             );
         }
-        super::paint::text(
-            &self.0.props.label,
-            row(2),
-            buffer,
-            if slots.focused_key() == Some("choose") {
+        let enabled = !self.0.props.disabled && !owner.selection.busy();
+        let (controls, control_rows) = controls(
+            &self.0.props,
+            area.width,
+            owner
+                .browser
+                .as_ref()
+                .is_some_and(browser::Browser::has_parent),
+        );
+        let mut targets = Vec::new();
+        for control in controls {
+            let bounds = Placement::new(
+                super::CellRect::new(
+                    area.x + i64::from(control.x),
+                    area.y + 2 + i64::from(control.y),
+                    control.width,
+                    1,
+                ),
+                area.clip,
+            );
+            let tone = if !enabled {
+                style.fg(color(a.muted_foreground))
+            } else if slots.focused_key() == Some(control.key) {
                 style.add_modifier(Modifier::BOLD | Modifier::REVERSED)
             } else {
                 style.add_modifier(Modifier::BOLD)
-            },
-        );
-        let enabled = !self.0.props.disabled && !owner.selection.busy();
-        slots.native_geometry(Box::new(geometry))?;
-        if enabled {
+            };
+            super::paint::text(&control.label, bounds, buffer, tone);
+            targets.push((control.key, bounds));
+        }
+        let browser_geometry = owner.browser.as_ref().map(|browser| {
+            browser.paint(
+                &self.0.props,
+                Placement::new(
+                    super::CellRect::new(
+                        area.x,
+                        area.y + 2 + i64::from(control_rows),
+                        area.width,
+                        browser.height(browser_rows(slots)),
+                    ),
+                    area.clip,
+                ),
+                browser_rows(slots),
+                buffer,
+                style,
+                enabled && slots.focused_key() == Some("entries"),
+            )
+        });
+        let entries = browser_geometry.as_ref().map(|geometry| geometry.area);
+        slots.native_geometry(Box::new((geometry, browser_geometry)))?;
+        // A pending local read keeps keyboard focus; input remains gated above.
+        if !self.0.props.disabled {
             slots.native_target("path", path, self.0.props.tab_index, false)?;
-            slots.native_target("choose", row(2), self.0.props.tab_index, false)?;
+            for (key, bounds) in targets {
+                slots.native_target(key, bounds, self.0.props.tab_index, false)?;
+            }
+            if let Some(entries) = entries {
+                slots.native_target("entries", entries, self.0.props.tab_index, false)?;
+            }
         }
         Ok(())
     }
     fn present(&self, state: &mut dyn Any, geometry: Box<dyn Any>) -> Option<NativeInput> {
         let owner = state.downcast_mut::<Owner>().unwrap();
-        let geometry = *geometry.downcast::<Geometry>().unwrap();
+        let (geometry, browser_geometry) = *geometry
+            .downcast::<(Geometry, Option<browser::Geometry>)>()
+            .unwrap();
         owner.editor.present_geometry(geometry.clone());
         owner.geometry = Some(geometry);
+        if let (Some(browser), Some(geometry)) = (owner.browser.as_mut(), browser_geometry) {
+            browser.present(geometry);
+        }
         None
     }
     fn presentation(&self, state: &mut dyn Any, visible: bool) {
@@ -264,6 +396,9 @@ impl Widget for Recipe {
         if !visible {
             owner.editor.invalidate_geometry();
             owner.geometry = None;
+            if let Some(browser) = &mut owner.browser {
+                browser.suspend();
+            }
             owner.selection.cancel_intent();
             owner.path = None;
         }
@@ -272,6 +407,45 @@ impl Widget for Recipe {
         self.presentation(state, false);
     }
 }
+struct Control {
+    key: &'static str,
+    label: String,
+    x: u16,
+    y: u32,
+    width: u16,
+}
+fn controls(props: &FilePickerProps, width: u16, parent: bool) -> (Vec<Control>, u32) {
+    if width == 0 {
+        return (vec![], 0);
+    }
+    let mut controls = Vec::new();
+    let mut x = 0u16;
+    let mut y = 0u32;
+    for (key, label) in [("choose", &props.label), ("browse", &props.browse_label)]
+        .into_iter()
+        .chain(parent.then_some(("parent", &props.parent_label)))
+    {
+        let label = format!("[ {} ]", super::paint::sanitize(label));
+        let size = label.width().min(usize::from(width)) as u16;
+        if x > 0 && x.saturating_add(size) > width {
+            x = 0;
+            y += 1;
+        }
+        controls.push(Control {
+            key,
+            label,
+            x,
+            y,
+            width: size,
+        });
+        x = x.saturating_add(size).saturating_add(1);
+    }
+    (controls, y + 1)
+}
+fn browser_rows(slots: &Slots<'_>) -> usize {
+    usize::from((slots.viewport().height / 3).clamp(2, 8))
+}
+
 struct Component;
 impl NativeComponent<dyn Widget> for Component {
     fn capture(
@@ -314,12 +488,12 @@ pub(super) fn register(registry: &mut NativeRegistry<dyn Widget>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn props() -> FilePickerProps {
+    pub(super) fn props() -> FilePickerProps {
         serde_json::from_value(serde_json::json!({
         "appearance": {"text":{"font":{"family":".SystemUIFont","fallbacks":[],"size":14,"lineHeight":1.5,"weight":400},"foreground":0x242724ffu32},
             "mutedForeground":0x656a63ffu32,"background":0xfaf9f6ffu32,"selection":0xa7c4b0ffu32,"caret":0x242724ffu32,
             "border":0x656a63ffu32,"focusedBorder":0x416653ffu32,"borderWidth":1,"radius":8,"padding":{"top":8,"right":12,"bottom":8,"left":12}},
-        "label":"Choose plugin file","pathLabel":"Local file path","placeholder":"/absolute/path","disabled":false,"tabIndex":0
+        "label":"Choose plugin file","pathLabel":"Local file path","browseLabel":"Browse","parentLabel":"Parent","emptyLabel":"No files or folders","truncatedLabel":"First 2048 entries","placeholder":"/absolute/path","disabled":false,"tabIndex":0
     })).unwrap()
     }
 

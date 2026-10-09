@@ -1995,6 +1995,9 @@ function frame<N extends Node>(
           },
         },
       ),
+      ...(state.selected?.archived && attached.length && !state.source && !state.image
+        ? [ui.box('archived-attachments', [attachmentsButton], { row: true })]
+        : []),
       ...(target === 'desktop'
         ? [
             ui.box(
@@ -2011,11 +2014,15 @@ function frame<N extends Node>(
                 style: { width: fill, height: pixels(0), grow: 1, shrink: 1, minHeight: 0 },
               },
             ),
-            ui.box('input-area', [attachmentsButton, composer], {
-              visible: !state.image && !state.selected?.archived,
-              padding: 24,
-              style: { width: fill, maxWidth: 808, shrink: 0 },
-            }),
+            ui.box(
+              'input-area',
+              [...(!state.selected?.archived ? [attachmentsButton] : []), composer],
+              {
+                visible: !state.image && !state.selected?.archived,
+                padding: 24,
+                style: { width: fill, maxWidth: 808, shrink: 0 },
+              },
+            ),
           ]
         : [
             ui.box(
@@ -2060,7 +2067,7 @@ function frame<N extends Node>(
                           ),
                         ]
                       : []),
-                    attachmentsButton,
+                    ...(!state.selected?.archived ? [attachmentsButton] : []),
                     ui.box('composer-navigation', [composer], {
                       terminal: { shrink: true },
                       focusShortcuts: [

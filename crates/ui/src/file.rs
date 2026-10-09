@@ -39,6 +39,14 @@ pub struct FilePickerProps {
     pub label: String,
     #[schemars(length(min = 1, max = 512))]
     pub path_label: String,
+    #[schemars(length(min = 1, max = 512))]
+    pub browse_label: String,
+    #[schemars(length(min = 1, max = 512))]
+    pub parent_label: String,
+    #[schemars(length(min = 1, max = 512))]
+    pub empty_label: String,
+    #[schemars(length(min = 1, max = 512))]
+    pub truncated_label: String,
     #[schemars(length(max = 512))]
     pub placeholder: String,
     pub disabled: bool,

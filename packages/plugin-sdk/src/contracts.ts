@@ -699,6 +699,26 @@ export const contracts = {
             minLength: 1,
             maxLength: 512,
           },
+          browseLabel: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 512,
+          },
+          parentLabel: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 512,
+          },
+          emptyLabel: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 512,
+          },
+          truncatedLabel: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 512,
+          },
           placeholder: {
             type: 'string',
             maxLength: 512,
@@ -714,7 +734,18 @@ export const contracts = {
           },
         },
         additionalProperties: false,
-        required: ['appearance', 'label', 'pathLabel', 'placeholder', 'disabled', 'tabIndex'],
+        required: [
+          'appearance',
+          'label',
+          'pathLabel',
+          'browseLabel',
+          'parentLabel',
+          'emptyLabel',
+          'truncatedLabel',
+          'placeholder',
+          'disabled',
+          'tabIndex',
+        ],
         $defs: {
           InputAppearance: {
             type: 'object',

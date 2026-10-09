@@ -11912,6 +11912,25 @@ for (const target of ['desktop', 'tui']) {
     assert.equal(client.state.notice, 'attachmentFailed');
     client.raw('attachment-close');
     client.state.selected = { ...session, archived: true };
+    client.raw('attachment-close'); // Reconcile the archived frame before inspecting visibility.
+    const visibleKeys = (node) =>
+      node.visible === false
+        ? []
+        : [
+            node.key,
+            ...[
+              ...(node.children ?? []),
+              node.content,
+              node.props?.content,
+              typeof node.background === 'object' ? node.background : null,
+            ]
+              .filter(Boolean)
+              .flatMap(visibleKeys),
+          ];
+    assert.ok(
+      visibleKeys(client.output.frame.view).includes('attachments-open'),
+      'archived draft cleanup must be reachable outside the hidden composer',
+    );
     client.raw('attachments-open');
     assert.equal(client.state.dialog, 'attachments');
     observeFile(client, 'attachment-file-' + client.state.attachments.selection.attempt);

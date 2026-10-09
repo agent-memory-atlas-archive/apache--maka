@@ -993,14 +993,65 @@ process.stdout.write(output.outputFiles[0].text);
             std::thread::yield_now();
         }
         capture(&mut presenter, "native-before.txt");
-        let path = fixture._dir.path().join("local-attachment.md");
+        let local = fixture._dir.path().join("local-picker");
+        let nested = local.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        for index in 0..30 {
+            std::fs::write(local.join(format!("item-{index:02}.txt")), b"browse").unwrap();
+        }
+        let path = nested.join("local-attachment.md");
         std::fs::write(&path, "locally selected contents").unwrap();
         click(&mut presenter, "[ Attachments ]");
         click(&mut presenter, "Absolute path on this device");
         presenter
-            .input(Event::Paste(path.to_string_lossy().into_owned()))
+            .input(Event::Paste(local.to_string_lossy().into_owned()))
             .unwrap();
-        click(&mut presenter, "Choose file…");
+        click(&mut presenter, "Browse…");
+        await_screen(&mut presenter, "/ nested");
+        capture(&mut presenter, "native-browser.txt");
+        click(&mut presenter, "/ nested");
+        await_screen(&mut presenter, "local-attachment.md");
+        click(&mut presenter, "Parent");
+        await_screen(&mut presenter, "/ nested");
+        presenter
+            .input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
+            .unwrap();
+        draw(&mut presenter);
+        presenter
+            .input(Event::Key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE)))
+            .unwrap();
+        draw(&mut presenter);
+        let narrow = screen(&draw_at(&mut presenter, Rect::new(0, 0, 40, 16)));
+        assert!(
+            narrow.contains("item-29.txt"),
+            "last file must remain visible after resize:\n{narrow}"
+        );
+        presenter
+            .input(Event::Key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)))
+            .unwrap();
+        let narrow = screen(&draw_at(&mut presenter, Rect::new(0, 0, 40, 16)));
+        assert!(
+            narrow.contains("/ nested"),
+            "first directory must be reachable:\n{narrow}"
+        );
+        presenter
+            .input(Event::Key(KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::NONE,
+            )))
+            .unwrap();
+        wait_for_target_at(
+            &mut presenter,
+            "local-attachment.md",
+            0,
+            Rect::new(0, 0, 40, 16),
+        );
+        presenter
+            .input(Event::Key(KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::NONE,
+            )))
+            .unwrap();
         wait_for_target(&mut presenter, "[ Attach to message ]", 0);
         capture(&mut presenter, "native-selected.txt");
         click(&mut presenter, "[ Attach to message ]");
@@ -1041,6 +1092,40 @@ process.stdout.write(output.outputFiles[0].text);
         runtime.block_on(&mut server).unwrap();
         runtime.block_on(fixture.drained());
         capture(&mut presenter, "native-sent.txt");
+        // A new unsent draft remains removable after canonical archival, even
+        // though the retained native composer is deliberately hidden.
+        std::fs::write(&path, "unsent local draft").unwrap();
+        click(&mut presenter, "[ Attachments ]");
+        click(&mut presenter, "Absolute path on this device");
+        presenter
+            .input(Event::Paste(path.to_string_lossy().into_owned()))
+            .unwrap();
+        click(&mut presenter, "Choose file…");
+        click(&mut presenter, "[ Attach to message ]");
+        await_screen(&mut presenter, "[ Attachments (1) ]");
+        runtime
+            .block_on(fixture.store.set_session_archived::<SessionConfiguration>(
+                &session,
+                true,
+                now(),
+            ))
+            .unwrap();
+        await_screen(&mut presenter, "This conversation is archived.");
+        click(&mut presenter, "[ Attachments (1) ]");
+        await_screen(&mut presenter, "This conversation is archived.");
+        capture(&mut presenter, "native-archived-draft.txt");
+        click(&mut presenter, "[ Remove from message ]");
+        click(&mut presenter, "[ Close ]");
+        assert!(!screen(&draw(&mut presenter)).contains("[ Attachments (1) ]"));
+        assert_eq!(
+            runtime
+                .block_on(fixture.store.list_artifacts(&session, 0, 10))
+                .unwrap()
+                .records
+                .len(),
+            2,
+            "local draft removal must not delete durable artifacts"
+        );
         presenter
             .surface_closed(&presenter.surface(), Ok(()))
             .unwrap();

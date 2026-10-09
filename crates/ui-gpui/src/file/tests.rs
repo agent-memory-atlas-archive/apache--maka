@@ -26,7 +26,7 @@ fn props() -> FilePickerProps {
         "appearance": {"text":{"font":{"family":".SystemUIFont","fallbacks":[],"size":14,"lineHeight":1.5,"weight":400},"foreground":0x242724ffu32},
             "mutedForeground":0x656a63ffu32,"background":0xfaf9f6ffu32,"selection":0xa7c4b0ffu32,"caret":0x242724ffu32,
             "border":0x656a63ffu32,"focusedBorder":0x416653ffu32,"borderWidth":1,"radius":8,"padding":{"top":8,"right":12,"bottom":8,"left":12}},
-        "label":"Choose plugin file","pathLabel":"Local file path","placeholder":"/absolute/path","disabled":false,"tabIndex":0
+        "label":"Choose plugin file","pathLabel":"Local file path","browseLabel":"Browse","parentLabel":"Parent","emptyLabel":"No files or folders","truncatedLabel":"First 2048 entries","placeholder":"/absolute/path","disabled":false,"tabIndex":0
     })).unwrap()
 }
 struct Root {
