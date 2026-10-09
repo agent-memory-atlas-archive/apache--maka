@@ -43,6 +43,7 @@ fn source_sql() -> String {
         CASE json_extract(payload, '$.content.kind') WHEN 'text' THEN 'text' WHEN 'json' THEN 'json'
         WHEN 'image' THEN 'image_descriptor' END ELSE 'text' END AS format,
     json_extract(payload, '$.type') AS role,
+    json_extract(payload, '$.ts') AS timestamp,
     json_type(payload, '$.thinking.text') IS 'text' AS thinking,
     json_type(payload, '$.failureMessage') IS 'text' AS failure_message,
     json_type(payload, '$.errorClass') IS 'text' AS error_class
@@ -135,9 +136,9 @@ impl EventLog {
                     }
                     let sql = source_sql();
                     let header = format!(
-                        "{sql} SELECT format, length(CAST(body AS BLOB)), role, thinking, failure_message, error_class FROM source"
+                        "{sql} SELECT format, length(CAST(body AS BLOB)), role, thinking, failure_message, error_class, timestamp FROM source"
                     );
-                    let (format, total, role, thinking, failure_message, error_class): (Option<String>, Option<i64>, String, bool, bool, bool) =
+                    let (format, total, role, thinking, failure_message, error_class, timestamp): (Option<String>, Option<i64>, String, bool, bool, bool, i64) =
                         sqlx::query_as(sqlx::AssertSqlSafe(header.as_str()))
                             .bind(&session)
                             .bind(sequence_sql)
@@ -243,6 +244,7 @@ impl EventLog {
                     };
                     let source = HistorySource {
                         sequence,
+                        timestamp: sequence_number(timestamp)?,
                         role,
                         fields,
                         field,

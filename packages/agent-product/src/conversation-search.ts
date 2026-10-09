@@ -478,6 +478,7 @@ function historyEvent(
       new Set(source.fields).size !== source.fields.length ||
       (header &&
         (source.role !== header.role ||
+          source.timestamp !== header.timestamp ||
           JSON.stringify(source.fields) !== JSON.stringify(header.fields) ||
           JSON.stringify(source.tool) !== JSON.stringify(header.tool))) ||
       (!source.text && source.totalBytes > 0) ||
@@ -716,6 +717,7 @@ export function historyView<N extends Node>(
       ? messageView(presentation, 'tui', props.theme, props.locale, {
           id: 'find-preview-row',
           role: header.role,
+          timestamp: header.timestamp,
           tool: header.tool,
           text:
             preview.sections.find((section) => section.field === 'body')?.source?.text ??

@@ -17,6 +17,8 @@
  * under the License.
  */
 
+#[path = "product/message_details.rs"]
+mod message_details;
 #[path = "product/studio.rs"]
 mod studio;
 #[cfg(target_os = "macos")]
@@ -1540,6 +1542,9 @@ process.stdout.write(output.outputFiles[0].text);
         terminal::run(&mut presenter, &runtime, &fixture, &session_id);
     }
     if fail_labels_initialization || file_permissions || image {
+        if matches!(case, ProductCase::FilePermissions) {
+            message_details::run(&mut presenter, &runtime, &fixture, &session_id);
+        }
         if fail_labels_initialization {
             // Saved notice, retained old fields, an actual different selected
             // Session and a two-row CJK workspace path used to hide all actions.

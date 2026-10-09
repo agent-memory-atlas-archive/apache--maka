@@ -22,6 +22,22 @@ import type { Theme } from './contracts.js';
 import { copy } from './locale.js';
 import { fill, compactLabel, type Node, type Presentation } from './view.js';
 
+// Host-recorded milliseconds; live deltas never synthesize a message time.
+function timeLabel(millis: number | null): string | null {
+  if (millis === null) return null;
+  const at = new Date(millis),
+    now = new Date();
+  if (!Number.isFinite(at.getTime())) return null;
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const time = pad(at.getHours()) + ':' + pad(at.getMinutes());
+  const date = pad(at.getMonth() + 1) + '-' + pad(at.getDate());
+  return at.getFullYear() !== now.getFullYear()
+    ? at.getFullYear() + '-' + date + ' ' + time
+    : at.getMonth() !== now.getMonth() || at.getDate() !== now.getDate()
+      ? date + ' ' + time
+      : time;
+}
+
 export function messageView<N extends Node>(
   presentation: Presentation<N>,
   target: 'tui' | 'desktop',
@@ -30,6 +46,7 @@ export function messageView<N extends Node>(
   message: {
     id: string;
     role: HistorySource['role'];
+    timestamp: number | null;
     text: string;
     tool: HistorySource['tool'];
     continued: boolean;
@@ -56,9 +73,14 @@ export function messageView<N extends Node>(
             ? text.findFieldFailure
             : text.toolOutput;
   const name = tool && message.tool?.toolName;
+  const time =
+    message.role === 'user' || message.role === 'assistant' ? timeLabel(message.timestamp) : null;
+  const label = name
+    ? caption + ' · ' + compactLabel(name, target === 'desktop' ? 64 : 24)
+    : caption;
   const role = ui.text(
     'role-' + message.id,
-    name ? caption + ' · ' + compactLabel(name, target === 'desktop' ? 64 : 24) : caption,
+    time ? label + ' · ' + time : label,
     13,
     theme.muted,
     550,

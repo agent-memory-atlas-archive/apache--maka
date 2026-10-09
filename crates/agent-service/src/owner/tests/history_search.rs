@@ -175,6 +175,7 @@ async fn search_hits_read_the_exact_field_when_history_body_is_absent_or_differe
                         _ => json!(["body", "result"]),
                     };
                     assert_eq!(source["role"], role);
+                    assert_eq!(source["timestamp"], 1);
                     assert_eq!(source["fields"], fields);
                     if !reverse && source["offset"] == 0 {
                         for other in fields.as_array().unwrap() {
@@ -183,6 +184,7 @@ async fn search_hits_read_the_exact_field_when_history_body_is_absent_or_differe
                             assert_eq!(related["source"]["sequence"], sequence);
                             assert_eq!(related["source"]["role"], role);
                             assert_eq!(related["source"]["fields"], fields);
+                            assert_eq!(related["source"]["timestamp"], source["timestamp"]);
                             if query == "thinking-hit 中" && other == "body" { assert_eq!(related["source"]["text"], ""); }
                         }
                     }
@@ -216,7 +218,7 @@ async fn search_hits_read_the_exact_field_when_history_body_is_absent_or_differe
                     // Exact source must retain the row even when history advances.
                     assert_ne!(page["chunks"][0]["sequence"], sequence);
                 } else {
-                    for field in ["sequence", "offset", "totalBytes", "text", "tool"] {
+                    for field in ["sequence", "timestamp", "offset", "totalBytes", "text", "tool"] {
                         assert_eq!(body["source"][field], page["chunks"][0][field], "tool body {field}");
                     }
                 }

@@ -8794,6 +8794,14 @@ export const contracts = {
                     minimum: 1,
                     maximum: 9007199254740991,
                   },
+                  timestamp: {
+                    description:
+                      'Host-recorded milliseconds of this immutable row; not a client clock.',
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
                   role: {
                     $ref: '#/$defs/HistorySourceRole',
                   },
@@ -8842,6 +8850,7 @@ export const contracts = {
                 additionalProperties: false,
                 required: [
                   'sequence',
+                  'timestamp',
                   'role',
                   'fields',
                   'field',

@@ -4390,6 +4390,10 @@ export interface AgentHistorySourceRead {
  */
 export interface HistorySource {
   sequence: number;
+  /**
+   * Host-recorded milliseconds of this immutable row; not a client clock.
+   */
+  timestamp: number;
   role: HistorySourceRole;
   /**
    * Readable canonical fields of this same immutable row, in display order.

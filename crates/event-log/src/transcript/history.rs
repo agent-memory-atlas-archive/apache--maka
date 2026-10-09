@@ -24,8 +24,19 @@ use sqlx::{Connection, Row, SqliteConnection};
 
 // One body projection for conversation windows and exact source reads.
 pub(super) const BODY: &str = "COALESCE(CASE json_extract(payload, '$.type')
-                    WHEN 'user' THEN COALESCE(json_extract(payload, '$.displayText'), json_extract(payload, '$.text'), '')
-                        || COALESCE((SELECT char(10) || group_concat(json_extract(value, '$.name'), char(10)) FROM json_each(payload, '$.attachments')), '')
+                    WHEN 'user' THEN (SELECT group_concat(line, char(10)) FROM (
+                        SELECT COALESCE(json_extract(payload, '$.displayText'), json_extract(payload, '$.text'), '') AS line
+                            WHERE COALESCE(json_extract(payload, '$.displayText'), json_extract(payload, '$.text'), '') != ''
+                        UNION ALL
+                        SELECT '↳ ' || json_extract(value, '$.name') || CASE
+                            WHEN json_type(value, '$.bytes') IS NOT 'integer' THEN ''
+                            WHEN json_extract(value, '$.bytes') < 1024 THEN ' · ' || json_extract(value, '$.bytes') || ' B'
+                            WHEN json_extract(value, '$.bytes') < 1048576 THEN printf(' · %.1f KiB', json_extract(value, '$.bytes') / 1024.0)
+                            ELSE printf(' · %.1f MiB', json_extract(value, '$.bytes') / 1048576.0) END
+                            FROM json_each(payload, '$.attachments') WHERE json_type(value, '$.name') = 'text'
+                        UNION ALL
+                        SELECT '▱ ' || json_extract(value, '$.path')
+                            FROM json_each(payload, '$.directoryReferences') WHERE json_type(value, '$.path') = 'text'))
                     WHEN 'assistant' THEN json_extract(payload, '$.text')
                     WHEN 'tool_call' THEN COALESCE(json_extract(payload, '$.intent'), json_extract(payload, '$.args.intent'), '')
                     WHEN 'tool_result' THEN CASE json_extract(payload, '$.content.kind')

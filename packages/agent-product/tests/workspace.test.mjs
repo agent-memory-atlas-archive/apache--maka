@@ -3015,6 +3015,7 @@ test('Timeline byte-segment identities leave room for the native key prefix', as
   const message = {
     id: uuid(900),
     contentKey: 'a'.repeat(123),
+    timestamp: null,
     image: false,
     role: 'tool_result',
     tool: null,
@@ -3202,6 +3203,7 @@ test('prepending history preserves the streamed message presentation identity', 
   const message = {
     id: uuid(400),
     contentKey: 'live-' + uuid(400),
+    timestamp: null,
     role: 'assistant',
     tool: null,
     text: '**流式** café 😀',
@@ -3232,6 +3234,7 @@ test('prepending history preserves the streamed message presentation identity', 
         {
           id: uuid(399),
           contentKey: 'canonical-399-0',
+          timestamp: 1,
           role: 'user',
           tool: null,
           text: 'earlier',
@@ -3830,6 +3833,7 @@ test('source errors retain exact original text and retry; closed or reopened rea
     kind: 'ready',
     through: 1000,
     source: {
+      timestamp: 1,
       sequence: 401,
       field: 'body',
       format: 'text',
@@ -4627,6 +4631,7 @@ for (const target of ['desktop', 'tui']) {
             kind: 'ready',
             through: 1000,
             source: {
+              timestamp: 1,
               sequence: 400,
               field: 'arguments',
               format: 'json',
@@ -4681,6 +4686,7 @@ for (const target of ['desktop', 'tui']) {
           kind: 'ready',
           through: 1000,
           source: {
+            timestamp: 1,
             sequence: 400,
             field: 'arguments',
             format: 'json',
@@ -4696,6 +4702,7 @@ for (const target of ['desktop', 'tui']) {
         kind: 'ready',
         through: 1000,
         source: {
+          timestamp: 1,
           sequence: 401,
           field: 'result',
           format: 'json',
@@ -8968,6 +8975,7 @@ for (const target of ['tui', 'desktop']) {
       kind: 'ready',
       through: 10,
       source: {
+        timestamp: 1,
         sequence: 100,
         field: 'arguments',
         format: 'json',
@@ -9195,6 +9203,7 @@ async function conversationFinder() {
       {
         id: 'tool',
         contentKey: 'tool-body',
+        timestamp: 1,
         role: 'tool_result',
         text: 'first 中文 second 中文',
         source: 257,
@@ -9353,6 +9362,7 @@ test('history search follows empty batches, reads the exact selected field and b
     kind: 'ready',
     through: 100,
     source: {
+      timestamp: 1,
       sequence: 301,
       field: 'arguments',
       role: 'tool_call',
@@ -9402,6 +9412,7 @@ test('history search follows empty batches, reads the exact selected field and b
     kind: 'ready',
     through: 100,
     source: {
+      timestamp: 1,
       sequence: 416,
       field: 'arguments',
       role: 'tool_call',
@@ -9461,6 +9472,7 @@ test('history source rejects retargeted fields and search cursors that cannot pr
     kind: 'ready',
     through: 100,
     source: {
+      timestamp: 1,
       sequence: 258,
       field: 'body',
       role: 'assistant',
@@ -9533,6 +9545,7 @@ test('history preview highlights its literal field and guards the initial reveal
     kind: 'ready',
     through: 100,
     source: {
+      timestamp: 1,
       sequence: 257,
       field: 'body',
       role: 'assistant',
@@ -9579,6 +9592,7 @@ test('history preview highlights its literal field and guards the initial reveal
     kind: 'ready',
     through: 100,
     source: {
+      timestamp: 1,
       sequence: 257,
       field: 'body',
       role: 'assistant',
@@ -9619,6 +9633,7 @@ test('history preview loads one selected tool row, retains all field owners on c
     nextAfter: null,
   });
   const metadata = {
+    timestamp: 1,
     sequence: 257,
     role: 'tool_call',
     fields: ['tool_name', 'body', 'arguments'],
@@ -9692,7 +9707,13 @@ test('history row keeps an empty assistant body, rejects changed metadata and re
     ],
     nextAfter: null,
   });
-  const metadata = { sequence: 257, role: 'assistant', fields: ['thinking', 'body'], tool: null };
+  const metadata = {
+    timestamp: 1,
+    sequence: 257,
+    role: 'assistant',
+    fields: ['thinking', 'body'],
+    tool: null,
+  };
   find.complete(find.out.actions[0], {
     kind: 'ready',
     through: 100,
@@ -9728,6 +9749,22 @@ test('history row keeps an empty assistant body, rejects changed metadata and re
   find.complete(find.out.actions[0], {
     kind: 'ready',
     through: 100,
+    source: {
+      ...metadata,
+      timestamp: 2,
+      field: 'body',
+      format: 'text',
+      offset: 0,
+      totalBytes: 0,
+      text: '',
+    },
+  });
+  assert.equal(find.state.search.history.preview.sections[1].failed, true);
+  assert.equal(find.state.search.history.preview.sections[1].source, null);
+  find.raw('find-source-body-retry');
+  find.complete(find.out.actions[0], {
+    kind: 'ready',
+    through: 100,
     source: { ...metadata, field: 'body', format: 'text', offset: 0, totalBytes: 0, text: '' },
   });
   assert.deepEqual(
@@ -9740,3 +9777,64 @@ test('history row keeps an empty assistant body, rejects changed metadata and re
     ),
   );
 });
+
+for (const target of ['tui', 'desktop']) {
+  test(`${target} canonical message time follows local dates and live deltas have no invented time`, async () => {
+    const { component: timeline } = await import(
+      pathToFileURL(resolve(root, `dist/packages/timeline/${target}.js`))
+    );
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 34);
+    const otherMonth = now.getMonth() === 0 ? 1 : 0;
+    const sameYear = new Date(now.getFullYear(), otherMonth, 15, 12, 34);
+    const older = new Date(now.getFullYear() - 1, 6, 8, 9, 10);
+    for (const [timestamp, label] of [
+      [+today, '12:34'],
+      [+sameYear, `${otherMonth === 0 ? '01' : '02'}-15 12:34`],
+      [+older, `${now.getFullYear() - 1}-07-08 09:10`],
+    ]) {
+      const text = 'Prompt\n↳ notes.txt · 2.0 KiB\n▱ src/中文';
+      const client = new Client().start({
+        through: 100,
+        chunks: [historyChunk(text, { role: 'user', timestamp })],
+      });
+      assert.equal(client.messages[0].timestamp, timestamp);
+      const props = client.timeline;
+      const initial = timeline.mount(props, {});
+      const row = (out) => out.frame.view.children[0].children[0].props.content.children[0];
+      assert.equal(
+        row(initial).children.find((n) => n.key.startsWith('role-')).text,
+        'You · ' + label,
+      );
+      const body = modelSlots(row(initial))[0];
+      assert.equal(
+        body.props.source,
+        text,
+        'same canonical labels remain in the native selectable source',
+      );
+      const live = timeline.update(
+        initial.frame.state,
+        {
+          ...props,
+          messages: [{ ...props.messages[0], role: 'assistant', timestamp: null }],
+        },
+        {},
+      );
+      assert.equal(row(live).children.find((n) => n.key.startsWith('role-')).text, 'Maka');
+      assert.equal(row(live).key, row(initial).key);
+      const invalid = timeline.update(
+        live.frame.state,
+        {
+          ...props,
+          messages: [{ ...props.messages[0], timestamp: 9007199254740991 }],
+        },
+        {},
+      );
+      assert.equal(
+        row(invalid).children.find((n) => n.key.startsWith('role-')).text,
+        'You',
+        'unrepresentable Date is not fabricated',
+      );
+    }
+  });
+}

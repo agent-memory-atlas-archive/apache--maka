@@ -982,6 +982,14 @@ async fn empty_projection_boundaries_obey_the_exact_json_window_budget() {
             .unwrap();
         if index == 37 {
             target = sequence;
+            // The attachment body now ends at a two-digit byte offset. Jump
+            // two sequence digits so consuming the next empty row still grows
+            // the wire cursor even when that offset returns to zero. Other
+            // Sessions advance the real log without adding rows to this one.
+            let gap = (0..400)
+                .map(|index| event(&format!("gap-{index}"), opening()))
+                .collect::<Vec<_>>();
+            log.append_batch(&gap).await.unwrap();
         }
     }
     let through = end(&log, "a", InvocationOutcome::Completed).await;
@@ -1006,13 +1014,13 @@ async fn empty_projection_boundaries_obey_the_exact_json_window_budget() {
     };
     assert!(cursor.sequence < 10000);
     let baseline = log
-        .history_text("a", through, Position::After { cursor }, 4, 1, 1024 * 1024)
+        .history_text("a", through, Position::After { cursor }, 32, 1, 1024 * 1024)
         .await
         .unwrap();
     let budget = serde_json::to_vec(&baseline).unwrap().len();
     assert!(budget >= 1024);
     let page = log
-        .history_text("a", through, Position::After { cursor }, 4, 8, budget)
+        .history_text("a", through, Position::After { cursor }, 32, 8, budget)
         .await
         .unwrap();
     assert_eq!(serde_json::to_vec(&page).unwrap().len(), budget);
@@ -1049,5 +1057,213 @@ async fn empty_projection_boundaries_obey_the_exact_json_window_budget() {
         cursor = after;
     }
     assert!(ended, "empty projection windows reach the actual end");
+    log.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn message_material_labels_and_time_survive_exact_paging_and_text_cache_upgrade() {
+    use maka_plugins::session::history::{SourceField, SourcePosition};
+    use maka_runtime::{
+        attachment::{AttachmentKind, AttachmentRef, StorageRef},
+        input::{DirectoryReference, MessageInput},
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("details.sqlite");
+    let log = EventLog::open(&path).await.unwrap();
+    let attachment = |name: &str, bytes| AttachmentRef {
+        kind: AttachmentKind::Other,
+        name: name.into(),
+        mime_type: "application/octet-stream".into(),
+        bytes,
+        storage_ref: StorageRef::WorkspaceFile {
+            relative_path: "not-opened".into(),
+        },
+    };
+    let directory = DirectoryReference {
+        host_id: "original-host".into(),
+        path: "src/中文".into(),
+    };
+    let mut complete: MessageInput = "hidden model text".into();
+    complete.display_text = Some("Visible 中\0tail".into());
+    complete.attachments = Some(vec![
+        attachment("notes.txt", 512),
+        attachment("report.txt", 2048),
+        attachment("image.png", 1572864),
+    ]);
+    complete.directory_references = Some(vec![directory.clone()]);
+    let mut folder: MessageInput = "hidden model text".into();
+    folder.display_text = Some(String::new());
+    folder.directory_references = Some(vec![directory]);
+    let mut file: MessageInput = "".into();
+    file.attachments = Some(vec![attachment("empty.txt", 0)]);
+    let cases = [
+        (
+            "a",
+            complete,
+            "Visible 中\0tail\n↳ notes.txt · 512 B\n↳ report.txt · 2.0 KiB\n↳ image.png · 1.5 MiB\n▱ src/中文",
+        ),
+        ("b", folder, "▱ src/中文"),
+        ("c", file, "↳ empty.txt · 0 B"),
+    ];
+    let timestamp = 1_700_000_000_000u64;
+    let mut sources = Vec::new();
+    for (session, content, expected) in cases {
+        log.create_session(session, "create", &serde_json::json!({}), 1)
+            .await
+            .unwrap();
+        let mut original = event(
+            session,
+            Fact::InvocationOpened {
+                configuration: None,
+                input: InvocationInput::Message {
+                    source_messages: Vec::new(),
+                    content,
+                    request_fingerprint: None,
+                },
+            },
+        )
+        .event()
+        .clone();
+        original.recorded_at = std::time::UNIX_EPOCH + std::time::Duration::from_millis(timestamp);
+        let through = log
+            .append(&maka_runtime::event::EventWrite::plain(original).unwrap())
+            .await
+            .unwrap();
+        assert!(log.prepare_transcript(session, through, 32).await.unwrap());
+        let Page::Ready { chunks, .. } = log
+            .history_text(session, through, Position::Start, 8192, 1, 64 * 1024)
+            .await
+            .unwrap()
+        else {
+            panic!("ready")
+        };
+        assert_eq!(chunks.len(), 1, "material-only prompts remain visible");
+        assert_eq!(chunks[0].text, expected);
+        assert_eq!(chunks[0].timestamp, timestamp);
+        let sequence = chunks[0].sequence;
+        for budget in [4, 19, 8192] {
+            for reverse in [false, true] {
+                let mut position = if reverse {
+                    Position::Tail
+                } else {
+                    Position::Start
+                };
+                let mut actual = String::new();
+                let mut pages = 0;
+                loop {
+                    pages += 1;
+                    assert!(pages < expected.len() + 8, "bounded windows must progress");
+                    let Page::Ready {
+                        chunks,
+                        before,
+                        after,
+                        ..
+                    } = log
+                        .history_text(session, through, position, budget, 1, 64 * 1024)
+                        .await
+                        .unwrap()
+                    else {
+                        panic!("ready")
+                    };
+                    assert!(chunks.len() <= 1);
+                    for chunk in &chunks {
+                        assert_eq!(chunk.timestamp, timestamp);
+                        assert_eq!(chunk.total_bytes, expected.len() as u64);
+                        let source = log
+                            .history_source(
+                                session,
+                                through,
+                                sequence,
+                                SourceField::Body,
+                                if reverse {
+                                    SourcePosition::Before {
+                                        offset: chunk.offset + chunk.text.len() as u64,
+                                    }
+                                } else {
+                                    SourcePosition::After {
+                                        offset: chunk.offset,
+                                    }
+                                },
+                                budget,
+                                64 * 1024,
+                            )
+                            .await
+                            .unwrap();
+                        assert_eq!(source.text, chunk.text);
+                        assert_eq!(source.offset, chunk.offset);
+                        assert_eq!(source.timestamp, chunk.timestamp);
+                        if reverse {
+                            actual.insert_str(0, &chunk.text);
+                        } else {
+                            actual.push_str(&chunk.text);
+                        }
+                    }
+                    let Some(cursor) = (if reverse { before } else { after }) else {
+                        break;
+                    };
+                    let next = if reverse {
+                        Position::Before { cursor }
+                    } else {
+                        Position::After { cursor }
+                    };
+                    assert_ne!(next, position);
+                    position = next;
+                }
+                assert_eq!(actual, expected);
+            }
+        }
+        sources.push((session, through, sequence, expected));
+    }
+    assert!(
+        !temp.path().join("not-opened").exists(),
+        "display paths perform no I/O"
+    );
+    let before = serde_json::to_vec(&log.prefix(10, 65536).await.unwrap()).unwrap();
+    log.close().await.unwrap();
+    let db = Connection::open(&path).unwrap();
+    let canonical = sources
+        .iter()
+        .map(|(session, ..)| rows(&db, session))
+        .collect::<Vec<_>>();
+    db.execute(
+        "UPDATE transcript_text SET body = CAST('old derived text' AS BLOB)",
+        [],
+    )
+    .unwrap();
+    db.execute("DELETE FROM _sqlx_migrations WHERE version = 9", [])
+        .unwrap();
+    drop(db);
+    let log = EventLog::open(&path).await.unwrap();
+    let db = Connection::open(&path).unwrap();
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM transcript_text", [], |row| row
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sources
+            .iter()
+            .map(|(session, ..)| rows(&db, session))
+            .collect::<Vec<_>>(),
+        canonical
+    );
+    assert_eq!(
+        serde_json::to_vec(&log.prefix(10, 65536).await.unwrap()).unwrap(),
+        before
+    );
+    for (session, through, sequence, expected) in sources {
+        let Page::Ready { chunks, .. } = log
+            .history_text(session, through, Position::Start, 8192, 1, 64 * 1024)
+            .await
+            .unwrap()
+        else {
+            panic!("ready")
+        };
+        assert_eq!(chunks[0].text, expected);
+        assert_eq!(chunks[0].sequence, sequence);
+        assert_eq!(chunks[0].timestamp, timestamp);
+    }
+    drop(db);
     log.close().await.unwrap();
 }

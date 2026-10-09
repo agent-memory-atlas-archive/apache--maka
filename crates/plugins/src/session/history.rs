@@ -265,6 +265,9 @@ pub enum SourceRole {
 pub struct HistorySource {
     #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
     pub sequence: u64,
+    /// Host-recorded milliseconds of this immutable row; not a client clock.
+    #[schemars(range(max = 9_007_199_254_740_991u64))]
+    pub timestamp: u64,
     pub role: SourceRole,
     /// Readable canonical fields of this same immutable row, in display order.
     #[schemars(length(min = 1, max = 7))]

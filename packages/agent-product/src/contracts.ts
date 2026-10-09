@@ -65,6 +65,7 @@ export interface Message {
   // Immutable byte-segment identity; 1–123 ASCII letters, digits, underscores or hyphens.
   contentKey: string;
   role: Role;
+  timestamp: number | null;
   text: string;
   tool: AgentHistoryChunk['tool'];
   continued: boolean;
@@ -237,6 +238,9 @@ const messageSchema = object({
   id: string,
   contentKey: { type: 'string', minLength: 1, maxLength: 123, pattern: '^[A-Za-z0-9_-]+$' },
   role: { enum: ['user', 'assistant', 'tool_call', 'tool_result'] },
+  timestamp: {
+    anyOf: [{ type: 'integer', minimum: 0, maximum: 9007199254740991 }, { type: 'null' }],
+  },
   text: { type: 'string', maxLength: 24000 },
   tool: { anyOf: [{ $ref: '#/$defs/HistoryTool' }, { type: 'null' }] },
   continued: { type: 'boolean' },
