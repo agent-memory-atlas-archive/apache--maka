@@ -135,6 +135,7 @@ pub(super) struct Setup {
     questions: bool,
     files: Option<&'static str>,
     processes: bool,
+    images: Option<images::Source>,
     confirmation: contract::ToolConfirmation,
 }
 impl Setup {
@@ -150,6 +151,7 @@ impl Setup {
             questions: false,
             files: None,
             processes: false,
+            images: None,
             confirmation: contract::ToolConfirmation::Preapproved,
         }
     }
@@ -161,6 +163,7 @@ impl Setup {
             questions: false,
             files: None,
             processes: false,
+            images: None,
             confirmation: contract::ToolConfirmation::Preapproved,
         }
     }
@@ -172,6 +175,7 @@ impl Setup {
             questions: true,
             files: None,
             processes: false,
+            images: None,
             confirmation: contract::ToolConfirmation::Preapproved,
         }
     }
@@ -186,6 +190,16 @@ impl Setup {
             processes: true,
             ..Self::javascript()
         }
+    }
+    pub(super) fn images(source: images::Source) -> Self {
+        Self {
+            images: Some(source),
+            ..Self::javascript()
+        }
+    }
+    pub(super) fn without_grant(mut self) -> Self {
+        self.granted = false;
+        self
     }
     pub(super) fn selections(&self) -> Vec<contract::ServiceTool> {
         if self.processes {
@@ -207,7 +221,9 @@ impl Setup {
         }
     }
     fn contract(&self) -> Contract {
-        if self.processes {
+        if let Some(source) = &self.images {
+            source.contract()
+        } else if self.processes {
             crate::processes::contract()
         } else if self.files.is_some() {
             crate::files::contract()
@@ -218,7 +234,9 @@ impl Setup {
         }
     }
     fn export(&self) -> &str {
-        if self.processes {
+        if self.images.is_some() {
+            "Images"
+        } else if self.processes {
             crate::processes::EXPORT
         } else if self.files.is_some() {
             crate::files::EXPORT
@@ -229,7 +247,9 @@ impl Setup {
         }
     }
     pub(super) fn method(&self) -> &str {
-        if self.processes {
+        if self.images.is_some() {
+            "produce"
+        } else if self.processes {
             "execute"
         } else if let Some(method) = self.files {
             method
@@ -244,7 +264,14 @@ impl Setup {
     pub(super) fn selection(&self) -> contract::ServiceTool {
         contract::ServiceTool {
             confirmation: self.confirmation,
-            name: if self.files.is_some() {
+            result: if self.files == Some("readImage")
+                || self.images.as_ref().is_some_and(|source| source.is_image())
+            {
+                contract::ToolResult::Image
+            } else {
+                contract::ToolResult::Json
+            },
+            name: if self.files.is_some() || self.images.is_some() {
                 "WorkspaceFile"
             } else if self.questions {
                 "AskUserQuestion"
@@ -300,7 +327,9 @@ impl Setup {
                 }],
             );
         packages[0] = provider;
-        let implementation = if self.processes {
+        let implementation = if let Some(source) = &self.images {
+            source.implementation()
+        } else if self.processes {
             json!({"kind":"native","implementation":crate::processes::IMPLEMENTATION})
         } else if self.files.is_some() {
             json!({"kind":"native","implementation":crate::files::IMPLEMENTATION})
@@ -315,7 +344,15 @@ impl Setup {
             "implementation":implementation,"configuration":if self.processes { crate::processes::configuration_schema() } else { json!({"type":"object","additionalProperties":false}) },"imports":{},
             "exports":{(self.export()):{"contract":self.contract(),"availability":"required"}}
         }}}})).unwrap())]);
-        if self.counter.is_none() && !self.questions && self.files.is_none() && !self.processes {
+        if let Some(source) = &self.images {
+            if let Some(code) = source.javascript() {
+                files.insert("images.mjs".into(), code.into_bytes());
+            }
+        } else if self.counter.is_none()
+            && !self.questions
+            && self.files.is_none()
+            && !self.processes
+        {
             files.insert("counter.mjs".into(), format!(r#"let effects=0; export function activate(){{return {{Counter:{{contract:{},service:['counter']}}}};}} export const counter={{write({{amount}}){{return {{effects:effects+=amount}};}},read(){{return {{effects}};}}}};"#, serde_json::to_string(&counter_contract()).unwrap()).into_bytes());
         }
         let package = Package::new(files).unwrap();
@@ -339,6 +376,9 @@ impl Setup {
         packages.push(package);
     }
     pub(super) fn provide(&self, registry: &mut NativeRegistry) {
+        if let Some(source) = &self.images {
+            source.provide(registry);
+        }
         if self.processes {
             crate::processes::provide(registry).unwrap();
         }
@@ -405,7 +445,7 @@ async fn tool_response_input(socket: &mut TcpStream, input: Value) {
     );
     socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
 }
-async fn facts(fixture: &Fixture, session: &str) -> Vec<Fact> {
+pub(super) async fn facts(fixture: &Fixture, session: &str) -> Vec<Fact> {
     fixture
         .store
         .scoped_prefix(

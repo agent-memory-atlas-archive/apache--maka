@@ -19,7 +19,8 @@
 
 //! Explicit service-to-tool projection. Imports describe bindings, not grants.
 mod approval;
-use crate::contract::{ServiceTool, ToolConfirmation};
+pub(crate) mod image;
+use crate::contract::{ServiceTool, ToolConfirmation, ToolResult};
 use futures_util::FutureExt;
 use maka_event_log::EventLog;
 use maka_plugin_core::{
@@ -74,7 +75,12 @@ pub(crate) fn catalog(
             let method = methods
                 .get(&selection.method)
                 .ok_or("agent_tool_method_unavailable")?;
-            if method.mode == MethodMode::Subscription || !method.resources.is_empty() {
+            if !method.resources.is_empty()
+                || match selection.result {
+                    ToolResult::Json => method.mode == MethodMode::Subscription,
+                    ToolResult::Image => method.mode != MethodMode::Subscription,
+                }
+            {
                 return Err("agent_tool_method_unsupported".to_owned());
             }
             if selection.description.trim().is_empty() {
@@ -90,7 +96,10 @@ pub(crate) fn catalog(
                     name: selection.name.clone(),
                     description: selection.description.clone(),
                     input_schema: method.input.clone(),
-                    output_schema: Some(method.output.clone()),
+                    output_schema: match selection.result {
+                        ToolResult::Json => Some(method.output.clone()),
+                        ToolResult::Image => None,
+                    },
                     freeform: None,
                 },
                 nesting: ToolNesting::DirectOnly,
@@ -184,7 +193,7 @@ impl ToolPreparer for Service {
                                 invocation: context.invocation,
                                 operation_id: Some(context.operation_id),
                             },
-                            cancellation,
+                            cancellation.clone(),
                         )
                         .map_err(ToolError::Failed)?;
                     // Keep original request custody even if a native descriptor panics.
@@ -226,7 +235,14 @@ impl ToolPreparer for Service {
                                         mutation_result(reply)
                                     }
                                     MethodMode::Subscription => {
-                                        unreachable!("validated tool method")
+                                        image::read(
+                                            &request,
+                                            &selection.import,
+                                            selection.method.clone(),
+                                            input,
+                                            &cancellation,
+                                        )
+                                        .await
                                     }
                                 }
                             })
@@ -259,6 +275,16 @@ impl ToolPreparer for Service {
                             },
                             None => ToolError::CleanupUnconfirmed(message),
                         });
+                    }
+                    // finish() cancels the request itself; only the original
+                    // Tool token can distinguish a stopped run at publication.
+                    if selection.result == ToolResult::Image
+                        && result.is_ok()
+                        && cancellation.is_cancelled()
+                    {
+                        return Err(ToolError::Failed(
+                            "Image tool cancelled before publication".into(),
+                        ));
                     }
                     match (result, observation) {
                         (Err(ToolError::CleanupUnconfirmed(message)), Some(observation)) => {

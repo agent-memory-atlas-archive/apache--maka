@@ -53,6 +53,8 @@ pub struct Configuration {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentServiceTool")]
 pub struct ServiceTool {
+    /// Explicit model projection; JSON data never implicitly grants image access.
+    pub result: ToolResult,
     /// Additional user consent for this exact call; service grants remain independent.
     pub confirmation: ToolConfirmation,
     #[schemars(length(min = 1, max = 128))]
@@ -63,6 +65,37 @@ pub struct ServiceTool {
     pub import: String,
     #[schemars(length(min = 1, max = 256))]
     pub method: String,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "AgentToolResult")]
+pub enum ToolResult {
+    Json,
+    Image,
+}
+
+/// Bounded image bytes from a selected subscription. Complete is a producer
+/// return value, never an emitted item or an executor-cleanup acknowledgement.
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename = "AgentToolImageFrame")]
+pub enum ImageFrame {
+    Chunk {
+        #[schemars(regex(pattern = "^image/(png|jpeg|gif|webp)$"))]
+        mime_type: String,
+        #[schemars(range(min = 1, max = 5242880))]
+        total_bytes: usize,
+        #[schemars(range(max = 5242879))]
+        offset: usize,
+        #[schemars(length(min = 1, max = 43692))]
+        data: String,
+    },
+    Complete,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

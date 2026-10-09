@@ -67,6 +67,7 @@ impl Context {
             method,
             input,
             attachments,
+            self.scope.clone(),
             CallKind::Query(reply),
         )?;
         Ok(Box::pin(async move {
@@ -75,6 +76,45 @@ impl Context {
                 .map_err(|_| "Host deployment is closed".to_string())??
                 .result()
                 .await
+        }))
+    }
+    /// Captures and enqueues a child subscription before returning its observer.
+    /// Closing demand cancels only this child; the parent Ticket waits for the
+    /// actual executor's cleanup, including when the observer is dropped.
+    pub fn subscribe(
+        &self,
+        import: &str,
+        provider: usize,
+        method: String,
+        input: Value,
+        attachments: Attachments,
+    ) -> Result<BoxFuture<'static, Result<Subscription>>> {
+        let scope = self.scope.child().map_err(|error| error.to_string())?;
+        let guard = scope.cancellation.clone().drop_guard();
+        let buffer = self
+            .dispatch
+            .upgrade()
+            .ok_or("Host deployment is closed")?
+            .stream_buffers
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| "Host subscription buffer capacity exhausted".to_string())?;
+        let (reply, result) = oneshot::channel();
+        self.enqueue(
+            import,
+            provider,
+            method,
+            input,
+            attachments,
+            scope,
+            CallKind::Subscription { reply, buffer },
+        )?;
+        Ok(Box::pin(async move {
+            let subscription = result
+                .await
+                .map_err(|_| "Host deployment is closed".to_string())??;
+            guard.disarm();
+            Ok(subscription)
         }))
     }
     /// The observer's outer Err is admission failure. Once accepted, business
@@ -97,6 +137,7 @@ impl Context {
             method,
             input,
             attachments,
+            self.scope.clone(),
             CallKind::Mutation {
                 operation,
                 confirmation: None,
@@ -141,6 +182,7 @@ impl Context {
         method: String,
         input: Value,
         attachments: Attachments,
+        scope: Scope,
         kind: CallKind,
     ) -> Result<()> {
         if self.scope.cancellation.is_cancelled() {
@@ -160,7 +202,7 @@ impl Context {
             binding,
             method,
             input,
-            self.scope.clone(),
+            scope,
             attachments.into(),
             Some(ticket),
             kind,

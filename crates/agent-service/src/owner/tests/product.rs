@@ -229,34 +229,51 @@ fn await_models_closed(presenter: &mut maka_tui::application::Presenter) {
 #[test]
 #[ignore = "opt-in product authoring build and actual HTTP provider"]
 fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owners() {
-    packaged_product(false, false, false);
+    packaged_product(ProductCase::Full);
 }
 
 #[test]
 #[ignore = "opt-in product authoring build and actual HTTP provider"]
 fn packaged_metadata_recovers_a_real_native_initialization_conflict() {
-    packaged_product(true, false, false);
+    packaged_product(ProductCase::MetadataConflict);
 }
 
 #[test]
 #[ignore = "opt-in product authoring build and actual HTTP provider"]
 fn packaged_file_permission_uses_native_policy_controls_and_explicit_response() {
-    packaged_product(false, true, false);
+    packaged_product(ProductCase::FilePermissions);
 }
 
 #[cfg(target_os = "macos")]
 #[test]
 #[ignore = "opt-in product authoring build and actual native sandbox"]
 fn packaged_process_permission_uses_original_native_approval_before_shell_effect() {
-    packaged_product(false, false, true);
+    packaged_product(ProductCase::ProcessPermissions);
 }
 
-fn packaged_product(
-    fail_labels_initialization: bool,
-    file_permissions: bool,
-    process_permissions: bool,
-) {
-    let file_permissions = file_permissions || process_permissions;
+#[test]
+#[ignore = "opt-in product authoring build and actual image-producing service"]
+fn packaged_workspace_image_opens_original_viewer_and_preserves_native_draft() {
+    packaged_product(ProductCase::Image);
+}
+
+#[derive(Clone, Copy)]
+enum ProductCase {
+    Full,
+    MetadataConflict,
+    FilePermissions,
+    #[cfg(target_os = "macos")]
+    ProcessPermissions,
+    Image,
+}
+fn packaged_product(case: ProductCase) {
+    let fail_labels_initialization = matches!(case, ProductCase::MetadataConflict);
+    #[cfg(target_os = "macos")]
+    let process_permissions = matches!(case, ProductCase::ProcessPermissions);
+    #[cfg(not(target_os = "macos"))]
+    let process_permissions = false;
+    let file_permissions = matches!(case, ProductCase::FilePermissions) || process_permissions;
+    let image = matches!(case, ProductCase::Image);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -280,6 +297,16 @@ fn packaged_product(
     let mut respond = Some(respond);
     let mut server = runtime.spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
+        if image {
+            request_with_key(&mut socket, "private-fixture-key").await;
+            response_ready.await.unwrap();
+            super::files::tool_response(&mut socket, json!({"path":"native-image.gif"})).await;
+            let (mut next, _) = listener.accept().await.unwrap();
+            let resumed = request_with_key(&mut next, "private-fixture-key").await;
+            assert_eq!(super::images::model_images(&resumed), vec![super::images::gif(0)]);
+            response(&mut next).await;
+            return;
+        }
         if file_permissions {
             request_with_key(&mut socket, "private-fixture-key").await;
             let workspace = response_ready.await.unwrap();
@@ -317,7 +344,9 @@ fn packaged_product(
         ]}));
         response(&mut next).await;
     });
-    let tooling = if process_permissions {
+    let tooling = if image {
+        Some(super::service_tools::Setup::files("readImage"))
+    } else if process_permissions {
         Some(super::service_tools::Setup::processes())
     } else if file_permissions {
         Some(super::service_tools::Setup::files("write"))
@@ -354,7 +383,23 @@ fn packaged_product(
     runtime.block_on(super::selection::edit(&fixture, |changes| {
         changes.enabled_model_ids =
             Some((0..20).map(|at| format!("fixture-model-{at:02}")).collect());
+        if image {
+            changes.model_overrides = Patch::Set(BTreeMap::from([(
+                "fixture-model-00".into(),
+                ModelOverride {
+                    vision: Some(true),
+                    ..Default::default()
+                },
+            )]));
+        }
     }));
+    if image {
+        std::fs::write(
+            fixture.workspace.join("native-image.gif"),
+            super::images::gif(0),
+        )
+        .unwrap();
+    }
     for (at, name) in [
         "W".repeat(256),
         format!("{}X", "\n".repeat(255)),
@@ -989,6 +1034,41 @@ process.stdout.write(output.outputFiles[0].text);
         .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
         .unwrap();
     await_screen(&mut presenter, "Hello product");
+    if image {
+        click(&mut presenter, "[ Choose model ]");
+        await_screen(&mut presenter, "fixture-model-00");
+        click(&mut presenter, "fixture-model-00");
+        click(&mut presenter, "[ Apply ]");
+        await_models_closed(&mut presenter);
+        click(&mut presenter, "[ Send ]");
+        await_screen(&mut presenter, "What would you like to work on?");
+        click(&mut presenter, "What would you like to work on?");
+        presenter
+            .input(Event::Paste("Image background draft".into()))
+            .unwrap();
+        await_screen(&mut presenter, "Image background draft");
+        respond
+            .take()
+            .unwrap()
+            .send(fixture.workspace.clone())
+            .unwrap();
+        await_screen(&mut presenter, "Elegant response");
+        runtime.block_on(&mut server).unwrap();
+        runtime.block_on(fixture.drained());
+        for _ in 0..2 {
+            if screen(&draw(&mut presenter)).contains("[ View image ]") {
+                break;
+            }
+            click(&mut presenter, "[ Show details ]");
+        }
+        click(&mut presenter, "[ View image ]");
+        await_screen(
+            &mut presenter,
+            "Image preview is available in the desktop app.",
+        );
+        click(&mut presenter, "[ Back to conversation ]");
+        await_screen(&mut presenter, "Image background draft");
+    }
     if file_permissions {
         click(&mut presenter, "[ Details ]");
         // Native focus reveals policy choices below the original editors in a short viewport.
@@ -1148,7 +1228,7 @@ process.stdout.write(output.outputFiles[0].text);
             .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
             .unwrap();
     }
-    if fail_labels_initialization || file_permissions {
+    if fail_labels_initialization || file_permissions || image {
         if fail_labels_initialization {
             // Saved notice, retained old fields, an actual different selected
             // Session and a two-row CJK workspace path used to hide all actions.

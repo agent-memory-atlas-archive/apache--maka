@@ -8912,6 +8912,86 @@ export const contracts = {
           },
           resources: {},
         },
+        readImage: {
+          mode: 'subscription',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              path: {
+                type: 'string',
+                minLength: 1,
+              },
+              offset: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+              limit: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 1,
+                maximum: 9007199254740991,
+              },
+            },
+            required: ['path'],
+            title: 'ReadInput',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  mimeType: {
+                    type: 'string',
+                    pattern: '^image/(png|jpeg|gif|webp)$',
+                  },
+                  totalBytes: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 1,
+                    maximum: 5242880,
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                    maximum: 5242879,
+                  },
+                  data: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 43692,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'chunk',
+                  },
+                },
+                required: ['kind', 'mimeType', 'totalBytes', 'offset', 'data'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'complete',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            description:
+              'Bounded image bytes from a selected subscription. Complete is a producer\nreturn value, never an emitted item or an executor-cleanup acknowledgement.',
+            title: 'AgentToolImageFrame',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
         readText: {
           mode: 'query',
           input: {

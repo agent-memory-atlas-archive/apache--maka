@@ -97,6 +97,11 @@ export const configurations = {
       AgentServiceTool: {
         type: 'object',
         properties: {
+          result: {
+            description:
+              'Explicit model projection; JSON data never implicitly grants image access.',
+            $ref: '#/$defs/AgentToolResult',
+          },
           confirmation: {
             description:
               'Additional user consent for this exact call; service grants remain independent.',
@@ -124,7 +129,11 @@ export const configurations = {
           },
         },
         additionalProperties: false,
-        required: ['confirmation', 'name', 'description', 'import', 'method'],
+        required: ['result', 'confirmation', 'name', 'description', 'import', 'method'],
+      },
+      AgentToolResult: {
+        type: 'string',
+        enum: ['json', 'image'],
       },
       AgentToolConfirmation: {
         type: 'string',

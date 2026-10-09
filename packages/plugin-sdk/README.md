@@ -279,3 +279,5 @@ provider mutation or routing authority. Optional imports contain an empty list;
 undeclared imports are absent. Multiple imports to the same data each count toward
 the complete 1 MiB input before copying. Values and frames share the 32 MiB retained
 budget. No old untagged activation shape is accepted.
+
+Selected Agent image tools use the generated `AgentToolImageFrame` contract and `result: "image"`. Declare a subscription without input resources. Emit `chunk` frames with invariant `mimeType`/`totalBytes`, contiguous `offset`, and padded Base64 `data`: exactly 32768 decoded bytes per chunk except the final positive remainder. Supported MIME types are PNG, JPEG, GIF and WebP; total bytes must be 1–5242880 and dimensions 1–2000. Await each `emit` and return `{ kind: "complete" }` only after all chunks. Emitting `complete`, EOF, a failed return, cancellation or unconfirmed cleanup cannot publish an image. The Agent verifies owned bytes and creates the original immutable tool artifact; paths, artifact IDs and image-shaped JSON never grant image access. JSON tools explicitly select `result: "json"` and remain JSON.

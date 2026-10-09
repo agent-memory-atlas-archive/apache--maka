@@ -33,8 +33,7 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
-const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
-const MAX_IMAGE_DIMENSION: usize = 2000;
+use crate::image::MAX_BYTES as MAX_IMAGE_BYTES;
 
 mod directory;
 mod path;
@@ -290,25 +289,7 @@ impl Authority {
         }
         check_cancelled(&cancellation)?;
         if image {
-            let mime_type = match maka_runtime::attachment::sniff_binary_mime(&bytes) {
-                Some(mime @ ("image/png" | "image/jpeg" | "image/gif" | "image/webp")) => mime,
-                _ => {
-                    return Err(failed(
-                        "Read image requires PNG, JPEG, GIF, or WebP content",
-                    ));
-                }
-            };
-            let dimensions = imagesize::blob_size(&bytes)
-                .map_err(|e| failed(format!("Read image dimensions unavailable: {e}")))?;
-            if dimensions.width == 0
-                || dimensions.height == 0
-                || dimensions.width > MAX_IMAGE_DIMENSION
-                || dimensions.height > MAX_IMAGE_DIMENSION
-            {
-                return Err(failed(
-                    "Read image dimensions must be between 1 and 2000 pixels",
-                ));
-            }
+            let mime_type = crate::image::validate(&bytes)?;
             check_cancelled(&cancellation)?;
             return Ok(ReadOutput::Image {
                 bytes,

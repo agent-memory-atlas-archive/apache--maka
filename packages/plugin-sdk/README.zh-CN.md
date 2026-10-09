@@ -231,3 +231,5 @@ UI activate 返回带 component 或 value kind 的 `UiExport`。value 通过普�
 权限。optional import 保留空数组，未声明 import 不出现。重复绑定的数据每次均计入
 复制前的完整 1 MiB 输入；注册值与 frame 共用 32 MiB 保留额度。不接受旧的无 kind
 激活格式。
+
+Agent 图片工具使用生成的 `AgentToolImageFrame` 契约及 `result: "image"`，声明为不带输入资源的订阅。逐块 `await emit`：`mimeType`／`totalBytes` 恒定，`offset` 连续，`data` 为带 padding 的 Base64；每块解码后固定 32768 字节，最后一块为正数余量。支持 PNG、JPEG、GIF、WebP，总量 1–5242880 字节、每边 1–2000 像素。全部发送后返回 `{ kind: "complete" }`；将 complete 作为事件发送、仅 EOF、失败返回、取消或未确认清理均不能发布图片。Agent 校验实际字节并写入原不可变工具产物，路径／产物 ID／类似图片的 JSON 不提供权限。JSON 工具须显式选择 `result: "json"`，结果仍按 JSON 处理。

@@ -22,6 +22,7 @@ use crate::{
     contract::{Workspace, WorkspaceAccess},
     owner::SessionConfiguration,
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use futures_util::future::BoxFuture;
 use maka_event_log::EventLog;
 use maka_fs_tools::{MutationExecutor, ReadExecutor, ReadLimits, ReadOutput, WriteCoordinator};
@@ -65,7 +66,7 @@ pub enum FileResult {
 fn method(name: &str) -> Option<(&'static str, bool)> {
     use maka_fs_tools::*;
     Some(match name {
-        "readText" => (READ_NAME, false),
+        "readText" | "readImage" => (READ_NAME, false),
         "glob" => (GLOB_NAME, false),
         "grep" => (GREP_NAME, false),
         "write" => (WRITE_NAME, true),
@@ -77,6 +78,7 @@ fn method(name: &str) -> Option<(&'static str, bool)> {
 pub fn contract() -> Contract {
     let methods = [
         ("readText", maka_fs_tools::read_schema()),
+        ("readImage", maka_fs_tools::read_schema()),
         ("glob", maka_fs_tools::glob_schema()),
         ("grep", maka_fs_tools::grep_schema()),
         ("write", maka_fs_tools::write_schema()),
@@ -88,13 +90,19 @@ pub fn contract() -> Contract {
         (
             name.into(),
             Method {
-                mode: if method(name).expect("known method").1 {
+                mode: if name == "readImage" {
+                    MethodMode::Subscription
+                } else if method(name).expect("known method").1 {
                     MethodMode::Mutation
                 } else {
                     MethodMode::Query
                 },
                 input,
-                output: schemars::schema_for!(FileResult).into(),
+                output: if name == "readImage" {
+                    schemars::schema_for!(crate::contract::ImageFrame).into()
+                } else {
+                    schemars::schema_for!(FileResult).into()
+                },
                 resources: BTreeMap::new(),
             },
         )
@@ -170,7 +178,7 @@ impl Handler for Files {
         let writes = self.writes.clone();
         let state_root = self.state_root.clone();
         Box::pin(async move {
-            let (tool, mutation) = method(&name).ok_or("workspace_file_method_unavailable")?;
+            let (_, mutation) = method(&name).ok_or("workspace_file_method_unavailable")?;
             let invocation = context
                 .scope()
                 .identity
@@ -200,7 +208,7 @@ impl Handler for Files {
                 &store,
                 writes,
                 state_root,
-                tool,
+                &name,
                 input,
                 tool_context,
                 &context,
@@ -212,7 +220,24 @@ impl Handler for Files {
             };
             ticket.complete(cleanup);
             let result = match result {
-                Ok(value) => FileResult::Completed { value },
+                Ok(Output::Image { bytes, mime_type }) => {
+                    for (index, chunk) in bytes.chunks(crate::tools::image::CHUNK_BYTES).enumerate()
+                    {
+                        let frame = crate::contract::ImageFrame::Chunk {
+                            mime_type: mime_type.clone(),
+                            total_bytes: bytes.len(),
+                            offset: index * crate::tools::image::CHUNK_BYTES,
+                            data: STANDARD.encode(chunk),
+                        };
+                        context
+                            .emit(serde_json::to_value(frame).map_err(|e| e.to_string())?)
+                            .await?;
+                    }
+                    return serde_json::to_value(crate::contract::ImageFrame::Complete)
+                        .map_err(|e| e.to_string());
+                }
+                Ok(Output::Json(value)) => FileResult::Completed { value },
+                Err(error) if name == "readImage" => return Err(error.to_string()),
                 Err(ToolError::Failed(message) | ToolError::Io { message, .. }) => {
                     FileResult::Failed { message }
                 }
@@ -290,15 +315,21 @@ fn capture(
         ceiling,
     })
 }
+enum Output {
+    Json(Value),
+    Image { bytes: Vec<u8>, mime_type: String },
+}
 async fn execute(
     store: &EventLog,
     writes: Arc<WriteCoordinator>,
     state_root: PathBuf,
-    tool: &'static str,
+    name: &str,
     input: Value,
     tool_context: ToolCallContext,
     context: &Context,
-) -> Result<Value, ToolError> {
+) -> Result<Output, ToolError> {
+    let (tool, _) = method(name).ok_or_else(|| failed("Workspace file method unavailable"))?;
+    let image = name == "readImage";
     let cancellation = &context.scope().cancellation;
     cancelled(cancellation)?;
     let configuration = crate::permissions::live(store, &tool_context.invocation).await?;
@@ -351,6 +382,7 @@ async fn execute(
         executor
             .invoke(tool.into(), input, cancellation.clone())
             .await
+            .map(Output::Json)
     } else {
         let executor = ReadExecutor::from_directory(
             captured.path,
@@ -365,7 +397,15 @@ async fn execute(
                 .read(input.resolve().map_err(failed)?, cancellation.clone())
                 .await?
             {
-                ReadOutput::Text(page) => serde_json::to_value(page).map_err(failed),
+                ReadOutput::Text(_) if image => {
+                    Err(failed("Workspace readImage requires image content"))
+                }
+                ReadOutput::Text(page) => {
+                    serde_json::to_value(page).map(Output::Json).map_err(failed)
+                }
+                ReadOutput::Image { bytes, mime_type } if image => {
+                    Ok(Output::Image { bytes, mime_type })
+                }
                 ReadOutput::Image { .. } => {
                     Err(failed("Workspace readText accepts UTF-8 text, not images"))
                 }
@@ -374,6 +414,7 @@ async fn execute(
             executor
                 .invoke(tool.into(), input, cancellation.clone())
                 .await
+                .map(Output::Json)
         }
     }
 }

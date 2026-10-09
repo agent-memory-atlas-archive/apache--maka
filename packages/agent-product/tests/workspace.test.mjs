@@ -730,6 +730,7 @@ test('both product compositions use actual immutable package refs and check in t
               ? [
                   {
                     name: 'AskUserQuestion',
+                    result: 'json',
                     confirmation: 'preapproved',
                     description: 'Ask required questions.',
                     import: 'questions',
@@ -740,10 +741,19 @@ test('both product compositions use actual immutable package refs and check in t
                 ? [
                     {
                       name: 'Write',
+                      result: 'json',
                       confirmation: 'preapproved',
                       description: 'Write a workspace file.',
                       import: 'files',
                       method: 'write',
+                    },
+                    {
+                      name: 'ReadImage',
+                      result: 'image',
+                      confirmation: 'preapproved',
+                      description: 'Read an image in the selected workspace.',
+                      import: 'files',
+                      method: 'readImage',
                     },
                   ]
                 : [],
@@ -760,6 +770,7 @@ test('both product compositions use actual immutable package refs and check in t
           };
           configuration.agent.tools.push({
             name: 'Shell',
+            result: 'json',
             confirmation: 'required',
             description: 'Run an authorized command.',
             import: 'processes',
@@ -844,7 +855,7 @@ test('both product compositions use actual immutable package refs and check in t
               consumer: [keys.agent],
               provider: [keys['workspace-files']],
               export: 'files',
-              methods: ['write'],
+              methods: ['write', 'readImage'],
               recovery: true,
             },
             {

@@ -740,3 +740,206 @@ async fn terminal_result_schema_and_query_emit_rejection_share_existing_owner() 
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn native_context_subscription_drop_preserves_parent_and_tracks_actual_child_cleanup() {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let leaf = package(
+            "stream.leaf",
+            entry(
+                true,
+                Implementation::Native {
+                    implementation: "native.echo".into(),
+                },
+                MethodMode::Subscription,
+            ),
+            None,
+        );
+        let mut declaration = entry(
+            true,
+            Implementation::Native {
+                implementation: "native.forward.stream".into(),
+            },
+            MethodMode::Query,
+        );
+        declaration.imports = entry(
+            false,
+            Implementation::Native {
+                implementation: "unused".into(),
+            },
+            MethodMode::Subscription,
+        )
+        .imports;
+        let wrapper = package("stream.wrapper", declaration, None);
+        let consumer = consumer();
+        let mut desired = input(&wrapper, &consumer);
+        let parent = desired.instances.get_mut("provider").unwrap();
+        parent.key = Uuid::from_u128(4);
+        parent.bindings.insert(
+            "echo".into(),
+            vec![Target::Instance {
+                path: vec!["leaf".into()],
+                export: "echo".into(),
+            }],
+        );
+        desired
+            .instances
+            .insert("leaf".into(), node(&leaf, 1, true));
+        let cancelled = Arc::new(Semaphore::new(0));
+        let release = Arc::new(Semaphore::new(0));
+        let observed = Arc::new(Semaphore::new(0));
+        let leaf_cancelled = cancelled.clone();
+        let leaf_release = release.clone();
+        let mut registry = registry_contract(
+            Arc::new(StreamHandler(Arc::new(move |input, context| {
+                let cancelled = leaf_cancelled.clone();
+                let release = leaf_release.clone();
+                Box::pin(async move {
+                    context.emit(json!("first")).await?;
+                    if input == "held" {
+                        context.scope().cancellation.cancelled().await;
+                        cancelled.add_permits(1);
+                        permit(&release).await;
+                    }
+                    Ok(json!("complete"))
+                })
+            }))),
+            contract(MethodMode::Subscription),
+        );
+        let returned = observed.clone();
+        registry
+            .insert(
+                "native.forward.stream".into(),
+                Arc::new(move |_, _| {
+                    let returned = returned.clone();
+                    Box::pin(async move {
+                        NativeActivation {
+                            exports: Ok(BTreeMap::from([(
+                                "echo".into(),
+                                Published {
+                                    contract: contract(MethodMode::Query),
+                                    value: Arc::new(StreamHandler(Arc::new(
+                                        move |input, context| {
+                                            let returned = returned.clone();
+                                            // Context admission enqueues synchronously, before polling.
+                                            let pending = context.subscribe(
+                                                "echo",
+                                                0,
+                                                "echo".into(),
+                                                if input == "after" {
+                                                    json!("held")
+                                                } else {
+                                                    json!("healthy")
+                                                },
+                                                Attachments::default(),
+                                            );
+                                            Box::pin(async move {
+                                                let pending = pending?;
+                                                if input == "before" {
+                                                    drop(pending);
+                                                } else {
+                                                    let mut stream = pending.await?;
+                                                    assert_eq!(
+                                                        stream.recv().await,
+                                                        Some(json!("first"))
+                                                    );
+                                                    drop(stream);
+                                                }
+                                                assert!(
+                                                    !context.scope().cancellation.is_cancelled()
+                                                );
+                                                let mut next = context
+                                                    .subscribe(
+                                                        "echo",
+                                                        0,
+                                                        "echo".into(),
+                                                        json!("healthy"),
+                                                        Attachments::default(),
+                                                    )?
+                                                    .await?;
+                                                assert_eq!(next.recv().await, Some(json!("first")));
+                                                assert_eq!(next.recv().await, None);
+                                                let completion = next.completion().await;
+                                                completion.cleanup?;
+                                                assert_eq!(completion.result?, json!("complete"));
+                                                assert!(
+                                                    !context.scope().cancellation.is_cancelled()
+                                                );
+                                                returned.add_permits(1);
+                                                Ok(json!("parent returned"))
+                                            })
+                                        },
+                                    )))
+                                        as Arc<dyn Handler>,
+                                },
+                            )])),
+                            owner: native_owner(|| Box::pin(async { Ok(()) })),
+                        }
+                    })
+                }),
+            )
+            .unwrap();
+        let issuer = Issuer::default();
+        let app = Application::start(
+            desired,
+            vec![leaf, wrapper, consumer],
+            registry,
+            issuer.clone(),
+            Arc::new(ForwardPolicy(issuer.clone())),
+            Limits::default(),
+        )
+        .unwrap();
+        app.ready().await.unwrap();
+        let client = app.client();
+        let binding = client
+            .bind(client.activation(&id(2)).unwrap(), "echo".into())
+            .await
+            .unwrap()
+            .remove(0);
+        // Wrapper admission cannot replace the original child authorization.
+        assert!(
+            client
+                .start(
+                    binding.clone(),
+                    "echo".into(),
+                    json!("denied"),
+                    scope(&issuer, false),
+                    Attachments::default().into()
+                )
+                .await
+                .unwrap()
+                .result()
+                .await
+                .is_err()
+        );
+        for mode in ["before", "after"] {
+            let parent = client
+                .start(
+                    binding.clone(),
+                    "echo".into(),
+                    json!(mode),
+                    scope(&issuer, true),
+                    Attachments::default().into(),
+                )
+                .await
+                .unwrap();
+            permit(&observed).await;
+            let completion = parent.completion();
+            tokio::pin!(completion);
+            if mode == "after" {
+                permit(&cancelled).await;
+                assert!(
+                    futures_util::poll!(&mut completion).is_pending(),
+                    "dropping the child does not confirm actual cleanup"
+                );
+                release.add_permits(1);
+            }
+            let completion = completion.await;
+            completion.cleanup.unwrap();
+            assert_eq!(completion.result.unwrap(), json!("parent returned"));
+        }
+        app.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}

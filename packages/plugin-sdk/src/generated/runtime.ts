@@ -130,6 +130,7 @@ export type RuntimeProtocol =
   | AgentHistoryPage
   | AgentToolSourceRead
   | AgentToolSourcePage
+  | AgentToolImageFrame
   | AgentToolImageRead
   | AgentToolImagePage
   | Read
@@ -798,6 +799,7 @@ export type EditorCapture =
  * Access inside the original selected directory; never an ambient filesystem grant.
  */
 export type AgentWorkspaceAccess = 'read_only' | 'workspace_write';
+export type AgentToolResult = 'json' | 'image';
 export type AgentToolConfirmation = 'required' | 'preapproved';
 export type SettingsModelsRead =
   | {
@@ -1885,6 +1887,21 @@ export type AgentToolSourcePage =
       kind: 'ready';
     };
 export type SourceFormat = 'text' | 'json' | 'image_descriptor';
+/**
+ * Bounded image bytes from a selected subscription. Complete is a producer
+ * return value, never an emitted item or an executor-cleanup acknowledgement.
+ */
+export type AgentToolImageFrame =
+  | {
+      mimeType: string;
+      totalBytes: number;
+      offset: number;
+      data: string;
+      kind: 'chunk';
+    }
+  | {
+      kind: 'complete';
+    };
 export type AgentToolImagePage =
   | {
       through: number;
@@ -2984,6 +3001,10 @@ export interface DirectoryRootSpec {
   path: string;
 }
 export interface AgentServiceTool {
+  /**
+   * Explicit model projection; JSON data never implicitly grants image access.
+   */
+  result: AgentToolResult;
   /**
    * Additional user consent for this exact call; service grants remain independent.
    */

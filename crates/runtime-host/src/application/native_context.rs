@@ -87,7 +87,7 @@ impl NativeServices {
             .map(|(name, bindings)| (name.as_str(), bindings.as_slice()))
     }
     /// The native owner supplies its domain work's identity and cancellation.
-    /// A request is inert until ordinary call/mutate/recover admission succeeds.
+    /// A request is inert until ordinary call/subscribe/mutate/recover admission succeeds.
     pub fn request(
         &self,
         identity: maka_plugins::call::Identity,
