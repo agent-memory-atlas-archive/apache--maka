@@ -562,6 +562,8 @@ pub(super) struct ScopePaint {
     pub scope: SelectionScope,
     pub documents: Vec<DocumentWeak>,
     pub area: Placement,
+    pub find: Option<super::reading::find::Paint>,
+    pub reveal: Option<super::reading::find::Reveal>,
 }
 
 #[cfg(test)]
@@ -596,6 +598,8 @@ mod tests {
             scope: new.clone(),
             documents: vec![Rc::downgrade(&document)],
             area,
+            find: None,
+            reveal: None,
         };
         assert_eq!(Rc::strong_count(&document), 1);
         drop(candidate);

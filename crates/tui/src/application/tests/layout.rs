@@ -295,7 +295,8 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
         packages.push(source);
         if matches!(
             view,
-            View::ReadingSlot(_)
+            View::Reading(_)
+                | View::ReadingSlot(_)
                 | View::OmittedReadingSlot(_, _)
                 | View::WrappedReadingSlot(_, _)
                 | View::PanicLayout(_)

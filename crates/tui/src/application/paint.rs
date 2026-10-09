@@ -204,6 +204,7 @@ pub struct PaintedScene {
     pub(super) keyboard: Option<std::rc::Rc<Ancestor>>,
     placed: std::collections::BTreeSet<uuid::Uuid>,
     laid_out: std::collections::BTreeMap<uuid::Uuid, PaintedMount>,
+    dependencies: std::collections::BTreeMap<uuid::Uuid, PaintedMount>,
     pub(super) scope: Option<super::selection::ScopePaint>,
     pub(super) geometries: Vec<NativeGeometry>,
     pub(super) ancestry: Vec<std::rc::Rc<Ancestor>>,
@@ -345,6 +346,33 @@ impl Slots<'_> {
             .get(&self.parent.id())
             .and_then(|owner| owner.state.downcast_ref())
             .ok_or_else(|| maka_ui::Error::Invalid("terminal native state unavailable".into()))
+    }
+    /// Include an unpainted recipe in this flush's existing owner/recipe proof.
+    /// Reading find inspects folded descendants without placing or focusing them.
+    pub(super) fn depend_on(&mut self, mount: &Mount) -> maka_ui::Result<()> {
+        let frame = self.presenter.application.frame(mount)?;
+        let owner = self
+            .presenter
+            .resources
+            .owners
+            .get(&mount.id())
+            .ok_or_else(|| maka_ui::Error::Invalid("terminal native owner unavailable".into()))?;
+        self.scene
+            .as_mut()
+            .ok_or_else(|| {
+                maka_ui::Error::Invalid("cannot collect paint dependencies while measuring".into())
+            })?
+            .dependencies
+            .insert(
+                mount.id(),
+                PaintedMount {
+                    mount: mount.clone(),
+                    revision: frame.revision,
+                    view: frame.view.clone(),
+                    owner: std::rc::Rc::downgrade(&owner.identity),
+                },
+            );
+        Ok(())
     }
     pub fn native_geometry(&mut self, geometry: Box<dyn std::any::Any>) -> maka_ui::Result<()> {
         let owner = self
@@ -513,6 +541,7 @@ impl Presenter {
             targets: Vec::new(),
             placed: Default::default(),
             laid_out: Default::default(),
+            dependencies: Default::default(),
             scope: None,
             geometries: Vec::new(),
             ancestry: Vec::new(),
@@ -552,7 +581,7 @@ impl Presenter {
             return;
         }
         let mut frames_current = true;
-        for painted in scene.laid_out.values() {
+        for painted in scene.laid_out.values().chain(scene.dependencies.values()) {
             let Ok(frame) = self.application.frame(&painted.mount) else {
                 return;
             };

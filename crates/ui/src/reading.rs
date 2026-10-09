@@ -45,10 +45,62 @@ pub struct ReadingCommand {
 pub enum ReadingTarget {
     Start,
     End,
+    /// Literal find over the original SourceText descendants, including folded slots.
+    Find {
+        #[schemars(length(max = 512))]
+        query: String,
+        step: FindStep,
+    },
+    ClearFind,
+    /// Reveal a UTF-8 byte in an original descendant SourceText.
+    RevealSource {
+        #[schemars(length(min = 1, max = 32))]
+        path: Vec<String>,
+        offset: u32,
+    },
     RevealChild {
         #[schemars(length(min = 1, max = 128))]
         key: String,
     },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FindStep {
+    First,
+    Next,
+    Previous,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReadingMatch {
+    #[schemars(length(min = 1, max = 32))]
+    pub path: Vec<String>,
+    pub offset: u32,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReadingFind {
+    pub sequence: u64,
+    #[schemars(range(max = 4096))]
+    pub count: u32,
+    pub limited: bool,
+    /// One-based current match, or null when no match remains.
+    pub index: Option<u32>,
+    pub active: Option<ReadingMatch>,
+}
+impl ReadingCommand {
+    pub fn valid_target(&self) -> bool {
+        match &self.target {
+            ReadingTarget::Find { query, .. } => query.len() <= 512,
+            ReadingTarget::RevealSource { path, offset } => {
+                !path.is_empty()
+                    && path.len() <= 32
+                    && *offset <= 65536
+                    && path.iter().all(|key| !key.is_empty() && key.len() <= 128)
+            }
+            _ => true,
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -81,6 +133,7 @@ pub struct ReadingObservation {
     pub pending_command: Option<u64>,
     /// Only the most recently settled command is retained, without a ledger.
     pub receipt: Option<ReadingReceipt>,
+    pub find: Option<ReadingFind>,
 }
 pub fn observation_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(ReadingObservation)).expect("reading observation")

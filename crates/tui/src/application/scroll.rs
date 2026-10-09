@@ -150,10 +150,21 @@ impl SceneState {
                     .as_ref()
                     .filter(|pending| pending.intent == reading.scope.intent())
             })
+            .filter(|pending| {
+                !matches!(
+                    pending.command.target,
+                    maka_ui::reading::ReadingTarget::Find { .. }
+                        | maka_ui::reading::ReadingTarget::ClearFind
+                        | maka_ui::reading::ReadingTarget::RevealSource { .. }
+                )
+            })
             .map(|pending| {
                 let command = &pending.command;
                 use maka_ui::reading::ReadingTarget;
                 let target = match &command.target {
+                    ReadingTarget::Find { .. }
+                    | ReadingTarget::ClearFind
+                    | ReadingTarget::RevealSource { .. } => unreachable!(),
                     ReadingTarget::Start => Some(0),
                     ReadingTarget::End => Some(end),
                     ReadingTarget::RevealChild { key } => children

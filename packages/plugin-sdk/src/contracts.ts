@@ -1873,6 +1873,62 @@ export const contracts = {
                 additionalProperties: false,
               },
               {
+                description:
+                  'Literal find over the original SourceText descendants, including folded slots.',
+                type: 'object',
+                properties: {
+                  query: {
+                    type: 'string',
+                    maxLength: 512,
+                  },
+                  step: {
+                    $ref: '#/$defs/FindStep',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'find',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'query', 'step'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'clear_find',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                description: 'Reveal a UTF-8 byte in an original descendant SourceText.',
+                type: 'object',
+                properties: {
+                  path: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    minItems: 1,
+                    maxItems: 32,
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'reveal_source',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'path', 'offset'],
+              },
+              {
                 type: 'object',
                 properties: {
                   key: {
@@ -1889,6 +1945,10 @@ export const contracts = {
                 required: ['kind', 'key'],
               },
             ],
+          },
+          FindStep: {
+            type: 'string',
+            enum: ['first', 'next', 'previous'],
           },
         },
       },
@@ -1989,6 +2049,16 @@ export const contracts = {
                 },
               ],
             },
+            find: {
+              anyOf: [
+                {
+                  $ref: '#/$defs/ReadingFind',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+            },
           },
           additionalProperties: false,
           required: ['readingRevision'],
@@ -2034,6 +2104,63 @@ export const contracts = {
             ReadingStatus: {
               type: 'string',
               enum: ['applied', 'cancelled', 'rejected'],
+            },
+            ReadingFind: {
+              type: 'object',
+              properties: {
+                sequence: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                count: {
+                  type: 'integer',
+                  format: 'uint32',
+                  minimum: 0,
+                  maximum: 4096,
+                },
+                limited: {
+                  type: 'boolean',
+                },
+                index: {
+                  description: 'One-based current match, or null when no match remains.',
+                  type: ['integer', 'null'],
+                  format: 'uint32',
+                  minimum: 0,
+                },
+                active: {
+                  anyOf: [
+                    {
+                      $ref: '#/$defs/ReadingMatch',
+                    },
+                    {
+                      type: 'null',
+                    },
+                  ],
+                },
+              },
+              additionalProperties: false,
+              required: ['sequence', 'count', 'limited'],
+            },
+            ReadingMatch: {
+              type: 'object',
+              properties: {
+                path: {
+                  type: 'array',
+                  items: {
+                    type: 'string',
+                  },
+                  minItems: 1,
+                  maxItems: 32,
+                },
+                offset: {
+                  type: 'integer',
+                  format: 'uint32',
+                  minimum: 0,
+                },
+              },
+              additionalProperties: false,
+              required: ['path', 'offset'],
             },
           },
         },

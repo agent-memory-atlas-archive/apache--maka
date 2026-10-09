@@ -37,6 +37,8 @@ use std::{
     rc::Rc,
     time::{Duration, Instant},
 };
+pub(super) mod find;
+
 const OBSERVED: &str = "__reading_observation";
 pub(super) struct Pending {
     pub command: ReadingCommand,
@@ -51,6 +53,7 @@ pub(super) struct ReadingState {
     viewport: Option<ReadingViewport>,
     published: Option<ReadingObservation>,
     alive: bool,
+    find: find::State,
 }
 impl ReadingState {
     fn new(root_key: String) -> Self {
@@ -63,6 +66,7 @@ impl ReadingState {
             viewport: None,
             published: None,
             alive: true,
+            find: find::State::default(),
         }
     }
     pub fn cancel(&mut self) {
@@ -105,6 +109,7 @@ impl ReadingState {
         self.alive
             && self.scope.0.borrow().enabled
             && self.pending.is_none()
+            && !self.find.active()
             && !self.scope.has_selection()
             && !self.scope.has_pointer_capture()
             && self.viewport.as_ref().is_some_and(|viewport| {
@@ -127,6 +132,7 @@ impl ReadingState {
                 .as_ref()
                 .map(|pending| pending.command.sequence),
             receipt: self.receipt.clone(),
+            find: self.find.observation.clone(),
         };
         if self.published.as_ref() == Some(&observation) {
             return None;
@@ -144,6 +150,8 @@ struct Reading {
 }
 struct ScopeGeometry {
     generation: u64,
+    intent: u64,
+    command: Option<u64>,
     paint: ScopePaint,
 }
 struct Tail {
@@ -204,6 +212,7 @@ impl Widget for Reading {
             reading.scope.touch();
             reading.viewport = None;
             reading.root_key = key.into();
+            reading.find = find::State::default();
         }
         if !self.node.visible() {
             reading.scope.suspend();
@@ -273,11 +282,88 @@ impl Widget for Reading {
         if geometry.generation != state.generation {
             return None;
         }
-        let geometry = geometry.paint;
         let reading = state.reading.as_mut().unwrap();
-        if self.node.visible() {
-            reading.scope.present(geometry.documents, geometry.area);
+        if !self.node.visible() {
+            return None;
         }
+        let current = geometry.intent == reading.scope.intent();
+        let paint = geometry.paint;
+        let command = reading
+            .pending
+            .as_ref()
+            .filter(|pending| {
+                current
+                    && Some(pending.command.sequence) == geometry.command
+                    && pending.intent == geometry.intent
+            })
+            .map(|pending| pending.command.clone());
+        if current
+            && let Some(find) = paint.find
+            && find.valid()
+        {
+            reading.find = find.accept();
+            if let Some(command) = &command
+                && matches!(
+                    command.target,
+                    ReadingTarget::Find { .. } | ReadingTarget::ClearFind
+                )
+            {
+                reading.pending = None;
+                reading.receipt = Some(ReadingReceipt {
+                    sequence: command.sequence,
+                    status: ReadingStatus::Applied,
+                });
+            }
+        }
+        if let Some(command) = command
+            && matches!(command.target, ReadingTarget::RevealSource { .. })
+        {
+            let row = paint.reveal.and_then(|reveal| {
+                let document = reveal.document.upgrade()?;
+                let doc = document.borrow();
+                (doc.alive
+                    && !doc.disabled
+                    && std::sync::Arc::ptr_eq(&doc.source, &reveal.source)
+                    && paint
+                        .documents
+                        .iter()
+                        .any(|weak| weak.ptr_eq(&reveal.document)))
+                .then_some(reveal.row.map(|row| (row, reveal.visible)))
+                .flatten()
+            });
+            let scroll = state.scrolls.get_mut(&reading.root_key).unwrap();
+            if let Some(((row, visible), viewport)) = row
+                .zip(scroll.presented.as_ref())
+                .filter(|(_, viewport)| viewport.reading_intent == Some(geometry.intent))
+            {
+                let offset = (i64::from(viewport.offset) + row
+                    - viewport.area.y
+                    - i64::from(viewport.area.height / 3))
+                .clamp(0, i64::from(viewport.end())) as u32;
+                if viewport.offset == offset {
+                    reading.pending = None;
+                    reading.receipt = Some(ReadingReceipt {
+                        sequence: command.sequence,
+                        status: if visible {
+                            ReadingStatus::Applied
+                        } else {
+                            ReadingStatus::Rejected
+                        },
+                    });
+                } else {
+                    scroll.offset = offset;
+                    scroll.intent += 1;
+                    reading.scope.0.borrow_mut().revision += 1;
+                }
+            } else {
+                reading.pending = None;
+                reading.receipt = Some(ReadingReceipt {
+                    sequence: command.sequence,
+                    status: ReadingStatus::Rejected,
+                });
+            }
+        }
+        reading.scope.present(paint.documents, paint.area);
         reading.observe()
     }
     fn presentation(&self, state: &mut dyn Any, visible: bool) {
@@ -343,7 +429,35 @@ impl Widget for Reading {
         area: Placement,
         buffer: &mut ratatui::buffer::Buffer,
     ) -> maka_ui::Result<()> {
-        let generation = slots.native_state::<SceneState>()?.generation;
+        let state = slots.native_state::<SceneState>()?;
+        let generation = state.generation;
+        let reading = state.reading.as_ref().unwrap();
+        let intent = reading.scope.intent();
+        let pending = reading
+            .pending
+            .as_ref()
+            .filter(|pending| pending.intent == intent);
+        let command = pending.map(|pending| pending.command.sequence);
+        let (entries, dependencies) = if reading.find.active()
+            || pending.is_some_and(|pending| {
+                matches!(
+                    pending.command.target,
+                    ReadingTarget::Find { .. } | ReadingTarget::RevealSource { .. }
+                )
+            }) {
+            find::documents(slots)?
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        let reveal = pending.and_then(|pending| match &pending.command.target {
+            ReadingTarget::RevealSource { path, offset } => {
+                find::Reveal::new(&entries, path, *offset)
+            }
+            _ => None,
+        });
+        let find = reading
+            .find
+            .paint(entries, pending.map(|pending| &pending.command));
         let scope = slots
             .native_state::<SceneState>()?
             .reading
@@ -355,6 +469,9 @@ impl Widget for Reading {
             Node::Stack { padding, .. } => padding,
             _ => unreachable!(),
         };
+        for mount in dependencies {
+            slots.depend_on(&mount)?;
+        }
         let scene = slots
             .scene
             .as_deref_mut()
@@ -363,6 +480,8 @@ impl Widget for Reading {
             scope,
             documents: Vec::new(),
             area: area.inner(padding.into()),
+            find: Some(find),
+            reveal,
         });
         let result = self.node.paint(slots, area, buffer);
         let scene = slots.scene.as_deref_mut().unwrap();
@@ -371,6 +490,8 @@ impl Widget for Reading {
         result?;
         slots.native_geometry(Box::new(ScopeGeometry {
             generation,
+            intent,
+            command,
             paint: geometry,
         }))
     }
@@ -415,7 +536,8 @@ impl NativeComponent<dyn Widget> for Component {
             .filter(|value| !value.is_null())
             .map(|value| serde_json::from_value(value.clone()).expect("reading command state"));
         if let Some(command) = &props.command
-            && (command.sequence == 0
+            && (!command.valid_target()
+                || command.sequence == 0
                 || previous.as_ref().is_some_and(|last| {
                     command.sequence < last.sequence
                         || (command.sequence == last.sequence && command != last)

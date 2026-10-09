@@ -864,9 +864,27 @@ export type ReadingTarget =
       kind: 'end';
     }
   | {
+      query: string;
+      step: FindStep;
+      kind: 'find';
+    }
+  | {
+      kind: 'clear_find';
+    }
+  | {
+      /**
+       * @minItems 1
+       * @maxItems 32
+       */
+      path: [string, ...string[]];
+      offset: number;
+      kind: 'reveal_source';
+    }
+  | {
       key: string;
       kind: 'reveal_child';
     };
+export type FindStep = 'first' | 'next' | 'previous';
 export type ReadingStatus = 'applied' | 'cancelled' | 'rejected';
 export type EditorOutcome =
   | {
@@ -3209,6 +3227,7 @@ export interface ReadingObservation {
    * Only the most recently settled command is retained, without a ledger.
    */
   receipt?: ReadingReceipt | null;
+  find?: ReadingFind | null;
 }
 export interface ReadingViewport {
   /**
@@ -3224,6 +3243,24 @@ export interface ReadingViewport {
 export interface ReadingReceipt {
   sequence: number;
   status: ReadingStatus;
+}
+export interface ReadingFind {
+  sequence: number;
+  count: number;
+  limited: boolean;
+  /**
+   * One-based current match, or null when no match remains.
+   */
+  index?: number | null;
+  active?: ReadingMatch | null;
+}
+export interface ReadingMatch {
+  /**
+   * @minItems 1
+   * @maxItems 32
+   */
+  path: [string, ...string[]];
+  offset: number;
 }
 export interface RowsProps {
   revision: number;

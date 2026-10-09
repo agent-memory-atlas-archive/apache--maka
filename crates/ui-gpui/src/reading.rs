@@ -216,6 +216,7 @@ impl Owner {
                 }),
             pending_command: self.pending.as_ref().map(|pending| pending.sequence),
             receipt: self.receipt.clone(),
+            find: None,
         }
     }
     fn schedule(owner: &Entity<Self>, window: &mut Window, cx: &mut App) {
@@ -336,7 +337,10 @@ impl Widget for Reading {
                     ReadingTarget::RevealChild { key } if self.node.reading_target(key) => Some(
                         ScrollCommand::RevealChild(SharedString::from(key.clone()).into()),
                     ),
-                    ReadingTarget::RevealChild { .. } => None,
+                    ReadingTarget::RevealChild { .. }
+                    | ReadingTarget::Find { .. }
+                    | ReadingTarget::ClearFind
+                    | ReadingTarget::RevealSource { .. } => None,
                 };
                 if let Some(target) = target {
                     let id = state.handle.request_scroll(target);
@@ -477,7 +481,8 @@ impl NativeComponent<dyn Widget> for Component {
             .filter(|value| !value.is_null())
             .map(|value| serde_json::from_value(value.clone()).expect("reading command state"));
         if let Some(command) = &props.command
-            && (command.sequence == 0
+            && (!command.valid_target()
+                || command.sequence == 0
                 || previous.as_ref().is_some_and(|last| {
                     command.sequence < last.sequence
                         || (command.sequence == last.sequence && command != last)

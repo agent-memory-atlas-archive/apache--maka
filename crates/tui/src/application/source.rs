@@ -38,8 +38,8 @@ struct Geometry {
     glyphs: Glyphs,
     parent: Option<SelectionScope>,
 }
-struct Owner {
-    document: DocumentRef,
+pub(super) struct Owner {
+    pub document: DocumentRef,
 }
 impl Owner {
     fn apply(&mut self, props: &SourceTextProps) {
@@ -181,12 +181,44 @@ impl Widget for Recipe {
         } else {
             None
         };
-        if area.is_empty() {
+        let reveal = slots
+            .scene
+            .as_ref()
+            .and_then(|scene| scene.scope.as_ref())
+            .and_then(|scope| scope.reveal.as_ref())
+            .filter(|reveal| reveal.targets(&document));
+        if area.width == 0 || (area.is_empty() && reveal.is_none()) {
             return Ok(());
         }
         let doc = document.borrow();
         let scope = parent.clone().or_else(|| SelectionScope::active(&document));
         let layout = Layout::literal(&doc.source, area.width);
+        if let Some(offset) = reveal.map(|reveal| reveal.offset) {
+            let row = area.y + layout.cursor(offset, false).0 as i64;
+            let visible = area.visible();
+            let reveal = slots
+                .scene
+                .as_mut()
+                .unwrap()
+                .scope
+                .as_mut()
+                .unwrap()
+                .reveal
+                .as_mut()
+                .unwrap();
+            reveal.row = Some(row);
+            reveal.visible = row >= i64::from(visible.y) && row < i64::from(visible.bottom());
+        }
+        if area.is_empty() {
+            return Ok(());
+        }
+        let highlights = slots
+            .scene
+            .as_ref()
+            .and_then(|scene| scene.scope.as_ref())
+            .and_then(|scope| scope.find.as_ref())
+            .map(|find| find.highlights(&document))
+            .unwrap_or_default();
         let range = scope.as_ref().map_or(0..0, |scope| scope.range(&document));
         let mut normal = Style::default().fg(color(self.0.appearance.foreground.0));
         if self.0.appearance.font.weight >= 600 {
@@ -215,6 +247,16 @@ impl Widget for Recipe {
                 let literal = &doc.source[cell.bytes.clone()];
                 let style = if cell.bytes.start < range.end && cell.bytes.end > range.start {
                     selected
+                } else if let Some((_, active)) = highlights
+                    .get(highlights.partition_point(|(range, _)| range.end <= cell.bytes.start))
+                    .filter(|(range, _)| range.start < cell.bytes.end)
+                {
+                    let style = normal.add_modifier(Modifier::UNDERLINED);
+                    if *active {
+                        style.add_modifier(Modifier::REVERSED | Modifier::BOLD)
+                    } else {
+                        style
+                    }
                 } else {
                     normal
                 };
