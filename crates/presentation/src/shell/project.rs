@@ -37,7 +37,12 @@ pub fn local_update(record: ShellRun) -> Result<ResourceUpdate, ProjectionError>
 }
 
 pub fn local_state(record: ShellRun) -> Result<ShellSnapshot, ProjectionError> {
-    project(record, false).map(|update| update.result)
+    local_metadata(record).map(|update| update.result)
+}
+
+/// The same canonical ownership/source envelope without terminal output.
+pub fn local_metadata(record: ShellRun) -> Result<ResourceUpdate, ProjectionError> {
+    project(record, false)
 }
 
 fn project(record: ShellRun, include_output: bool) -> Result<ResourceUpdate, ProjectionError> {

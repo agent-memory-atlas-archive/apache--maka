@@ -410,3 +410,74 @@ async fn read_prefixes_exclude_user_only_and_foreign_tasks_and_prefer_exact_ids(
     );
     log.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn provider_catalog_filters_before_count_pagination_and_digest() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = EventLog::open(&dir.path().join("catalog.sqlite"))
+        .await
+        .unwrap();
+    log.create_session("session", "create", &json!({}), 1)
+        .await
+        .unwrap();
+    for prefix in ["a_other_", "z_owner_"] {
+        for index in 0..70 {
+            let id = format!("{prefix}{index:03}");
+            let record = starting(&id);
+            log.create_shell_run(record).await.unwrap();
+            log.patch_shell_run(
+                "session",
+                &id,
+                state(terminal(ShellOutcome::Failed {
+                    message: "fixture".into(),
+                })),
+            )
+            .await
+            .unwrap();
+        }
+    }
+    log.create_shell_run(starting("zXownerX000")).await.unwrap();
+    let page = log
+        .query_shell_catalog("session", "z_owner_", 0)
+        .await
+        .unwrap();
+    assert_eq!(page.total, 70);
+    assert_eq!(page.resources.len(), 64);
+    assert_eq!(page.next_offset, Some(64));
+    assert!(
+        page.resources
+            .iter()
+            .all(|r| r.result.output.is_none() && r.result.resource_ref.contains("z_owner_"))
+    );
+    let last = log
+        .query_shell_catalog("session", "z_owner_", 64)
+        .await
+        .unwrap();
+    assert_eq!(last.resources.len(), 6);
+    assert_eq!(last.total, 70);
+    assert_eq!(last.revision, page.revision);
+    assert_eq!(last.next_offset, None);
+    log.patch_shell_run(
+        "session",
+        "a_other_000",
+        ShellPatch {
+            output: Some(output("unrelated")),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        log.query_shell_catalog("session", "z_owner_", 0)
+            .await
+            .unwrap()
+            .revision,
+        page.revision
+    );
+    assert!(
+        log.query_shell_catalog("session", "z_owner_%", 0)
+            .await
+            .is_err()
+    );
+    assert!(log.query_shell_catalog("session", "", 0).await.is_err());
+}

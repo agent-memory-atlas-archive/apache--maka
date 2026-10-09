@@ -37,6 +37,7 @@ use tokio_util::sync::CancellationToken;
 
 mod control;
 mod execute;
+pub mod terminal;
 
 pub const IMPLEMENTATION: &str = "maka.workspace.processes";
 pub const EXPORT: &str = "processes";
@@ -50,6 +51,10 @@ pub struct Configuration {
     pub network: Network,
     /// Trusted CLI supporting the original platform sandbox bootstrap.
     pub helper: Option<PathBuf>,
+    /// Trusted Agent Session owner in this Root/deployment. This selects a data
+    /// namespace only; Terminal endpoints still require their own explicit grants.
+    #[serde(default)]
+    pub session_owner: Option<maka_plugin_core::composition::InstanceId>,
 }
 pub fn configuration_schema() -> Value {
     schemars::schema_for!(Configuration).into()
@@ -117,13 +122,23 @@ pub(crate) fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
             Box::pin(async move {
                 match Processes::open(context, input).await {
                     Ok(owner) => NativeActivation {
-                        exports: Ok(BTreeMap::from([(
-                            EXPORT.into(),
-                            maka_plugin_core::runtime::Published {
-                                contract: contract(),
-                                value: Arc::new(Service(owner.clone())) as Arc<dyn Handler>,
-                            },
-                        )])),
+                        exports: Ok(BTreeMap::from([
+                            (
+                                EXPORT.into(),
+                                maka_plugin_core::runtime::Published {
+                                    contract: contract(),
+                                    value: Arc::new(Service(owner.clone())) as Arc<dyn Handler>,
+                                },
+                            ),
+                            (
+                                terminal::EXPORT.into(),
+                                maka_plugin_core::runtime::Published {
+                                    contract: terminal::contract(),
+                                    value: Arc::new(terminal::Service(owner.clone()))
+                                        as Arc<dyn Handler>,
+                                },
+                            ),
+                        ])),
                         owner: Arc::new(Service(owner)),
                     },
                     Err(error) => NativeActivation {
@@ -141,6 +156,8 @@ struct Processes {
     settings: Configuration,
     state_root: PathBuf,
     prefix: String,
+    session_prefix: Option<String>,
+    controllers: Arc<std::sync::Mutex<Vec<terminal::Lease>>>,
     resources: ShellResources,
     drain: CancellationToken,
 }
@@ -155,6 +172,11 @@ impl Processes {
         }
         let settings: Configuration =
             serde_json::from_value(input).map_err(|_| "workspace_process_configuration_invalid")?;
+        if settings.session_owner.as_ref().is_some_and(|id| {
+            id.0.is_empty() || id.0.len() > 32 || id.0.iter().any(uuid::Uuid::is_nil)
+        }) {
+            return Err("workspace_process_session_owner_invalid".into());
+        }
         settings
             .filesystem
             .compile()
@@ -191,6 +213,13 @@ impl Processes {
             persistence.source().deployment,
             context.activation().instance(),
         );
+        let session_prefix = settings.session_owner.as_ref().map(|instance| {
+            crate::owner::namespace(
+                &persistence.source().state_domain,
+                persistence.source().deployment,
+                instance,
+            )
+        });
         let drain = CancellationToken::new();
         let resources = ShellResources::new(persistence.store().clone(), drain.clone());
         let configuration = Arc::new(
@@ -204,6 +233,8 @@ impl Processes {
             settings,
             state_root,
             prefix,
+            session_prefix,
+            controllers: Arc::default(),
             resources,
             drain,
         }))

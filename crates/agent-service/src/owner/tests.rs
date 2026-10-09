@@ -26,6 +26,9 @@ mod files;
 #[path = "tests/processes.rs"]
 mod processes;
 
+#[path = "tests/terminal.rs"]
+mod terminal;
+
 #[path = "tests/interactions.rs"]
 mod interactions;
 
@@ -75,16 +78,22 @@ use std::sync::Mutex as StdMutex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
+struct CallerGrant(maka_runtime_host::application::Caller);
 struct Grant(
     Issuer,
     Option<Arc<maka_application_bridge::transport::PeerPolicy>>,
 );
 impl Policy for Grant {
+    fn caller(&self, scope: &Scope) -> Option<maka_runtime_host::application::Caller> {
+        self.0.evidence::<CallerGrant>(scope).map(|e| e.0.clone())
+    }
     fn recover(
         &self,
         invocation: maka_runtime_host::application::RecoveryInvocation<'_>,
     ) -> Result<(), String> {
-        if self.0.evidence::<bool>(invocation.scope) == Some(&true) {
+        if self.0.evidence::<bool>(invocation.scope) == Some(&true)
+            || self.0.evidence::<CallerGrant>(invocation.scope).is_some()
+        {
             Ok(())
         } else {
             Err("denied".into())
@@ -98,7 +107,9 @@ impl Policy for Grant {
                 .ok_or("native tools denied")?
                 .admit(invocation);
         }
-        if self.0.evidence::<bool>(invocation.scope) == Some(&true) {
+        if self.0.evidence::<bool>(invocation.scope) == Some(&true)
+            || self.0.evidence::<CallerGrant>(invocation.scope).is_some()
+        {
             Ok(())
         } else {
             Err("denied".into())

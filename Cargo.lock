@@ -8703,6 +8703,7 @@ name = "maka-presentation"
 version = "0.2.0"
 dependencies = [
  "maka-runtime",
+ "schemars 1.2.2",
  "serde",
  "serde_json",
  "thiserror 2.0.20",

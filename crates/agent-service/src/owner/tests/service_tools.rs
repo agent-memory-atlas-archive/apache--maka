@@ -342,7 +342,10 @@ impl Setup {
         };
         let mut files = BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({"schemaVersion":2,"id":"fixture.counter","application":{"entries":{"host":{
             "implementation":implementation,"configuration":if self.processes { crate::processes::configuration_schema() } else { json!({"type":"object","additionalProperties":false}) },"imports":{},
-            "exports":{(self.export()):{"contract":self.contract(),"availability":"required"}}
+            "exports":if self.processes {
+                json!({(self.export()):{"contract":self.contract(),"availability":"required"},
+                    "terminal":{"contract":crate::processes::terminal::contract(),"availability":"required"}})
+            } else { json!({(self.export()):{"contract":self.contract(),"availability":"required"}}) }
         }}}})).unwrap())]);
         if let Some(source) = &self.images {
             if let Some(code) = source.javascript() {
@@ -364,7 +367,7 @@ impl Setup {
                 use_package: PackageUse::Entry,
                 configuration: if self.processes {
                     NodeConfiguration { values: serde_json::from_value(json!({
-                        "filesystem":{"default":"write","rules":[],"denyGlobs":[]}, "network":"allowed", "helper":null
+                        "filesystem":{"default":"write","rules":[],"denyGlobs":[]}, "network":"allowed", "helper":null, "sessionOwner":id(1)
                     })).unwrap(), parameters: BTreeMap::new() }
                 } else { Default::default() },
                 parameters: Default::default(),
@@ -374,6 +377,40 @@ impl Setup {
             },
         );
         packages.push(package);
+        if self.processes {
+            let consumer = &packages[1];
+            let mut files = consumer.files().clone();
+            let mut manifest = consumer.manifest().clone();
+            manifest
+                .application
+                .as_mut()
+                .unwrap()
+                .entries
+                .get_mut(&EntryTarget::Host)
+                .unwrap()
+                .imports
+                .insert(
+                    "terminal".into(),
+                    Import {
+                        contract: crate::processes::terminal::contract(),
+                        cardinality: Cardinality::One,
+                    },
+                );
+            files.insert(MANIFEST_FILE.into(), serde_json::to_vec(&manifest).unwrap());
+            let consumer = Package::new(files).unwrap();
+            for name in ["a", "b"] {
+                let node = input.instances.get_mut(name).unwrap();
+                node.package = consumer.application_ref().into();
+                node.bindings.insert(
+                    "terminal".into(),
+                    vec![Target::Instance {
+                        path: vec!["service".into()],
+                        export: "terminal".into(),
+                    }],
+                );
+            }
+            packages[1] = consumer;
+        }
     }
     pub(super) fn provide(&self, registry: &mut NativeRegistry) {
         if let Some(source) = &self.images {

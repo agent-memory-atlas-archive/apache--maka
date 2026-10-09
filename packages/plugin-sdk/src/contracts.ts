@@ -9507,6 +9507,2833 @@ export const contracts = {
       },
     },
   },
+  terminal: {
+    name: 'maka.workspace.Terminal',
+    version: 1,
+    transport: 'remote',
+    interface: {
+      kind: 'service',
+      methods: {
+        acquire: {
+          mode: 'subscription',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              ref: {
+                type: 'string',
+              },
+            },
+            required: ['sessionId', 'ref'],
+            title: 'TerminalTarget',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: {
+                    $ref: '#/$defs/TerminalLeaseUpdate',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'TerminalOutcome_TerminalLeaseUpdate',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              TerminalLeaseUpdate: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  controllerId: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  nextSequence: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  held: {
+                    type: 'boolean',
+                  },
+                  resource: {
+                    $ref: '#/$defs/ResourceUpdate',
+                  },
+                },
+                required: ['controllerId', 'held', 'resource'],
+              },
+              ResourceUpdate: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  ownership: {
+                    $ref: '#/$defs/Ownership',
+                  },
+                  sourceTurnId: {
+                    type: 'string',
+                  },
+                  sourceToolCallId: {
+                    type: 'string',
+                  },
+                  result: {
+                    $ref: '#/$defs/ShellSnapshot',
+                  },
+                },
+                required: ['sessionId', 'ownership', 'sourceTurnId', 'sourceToolCallId', 'result'],
+              },
+              Ownership: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'local',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sourceSessionId: {
+                        type: 'string',
+                      },
+                      ownerSessionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'source_owned',
+                      },
+                    },
+                    required: ['kind', 'sourceSessionId', 'ownerSessionId'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sourceSessionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'source_unavailable',
+                      },
+                    },
+                    required: ['kind', 'sourceSessionId'],
+                  },
+                ],
+              },
+              ShellSnapshot: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  kind: {
+                    $ref: '#/$defs/SnapshotKind',
+                  },
+                  ref: {
+                    type: 'string',
+                  },
+                  mode: {
+                    $ref: '#/$defs/ShellMode',
+                  },
+                  status: {
+                    $ref: '#/$defs/ShellStatus',
+                  },
+                  cwd: {
+                    type: 'string',
+                  },
+                  cmd: {
+                    type: 'string',
+                  },
+                  startedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  completedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  timeoutMs: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  exitCode: {
+                    type: 'integer',
+                    format: 'int64',
+                  },
+                  failureMessage: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  output: {
+                    $ref: '#/$defs/ShellOutput',
+                  },
+                },
+                required: [
+                  'kind',
+                  'ref',
+                  'mode',
+                  'status',
+                  'cwd',
+                  'cmd',
+                  'startedAt',
+                  'updatedAt',
+                  'revision',
+                ],
+              },
+              SnapshotKind: {
+                type: 'string',
+                enum: ['shell_run'],
+              },
+              ShellMode: {
+                type: 'string',
+                enum: ['pipes', 'pty'],
+              },
+              ShellStatus: {
+                type: 'string',
+                enum: [
+                  'starting',
+                  'running',
+                  'completed',
+                  'failed',
+                  'timed_out',
+                  'cancelled',
+                  'orphaned',
+                ],
+              },
+              ShellOutput: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      stdout: {
+                        type: 'string',
+                      },
+                      stderr: {
+                        type: 'string',
+                      },
+                      latestStream: {
+                        $ref: '#/$defs/PipeStream',
+                      },
+                      stdoutTruncated: {
+                        type: 'boolean',
+                      },
+                      stderrTruncated: {
+                        type: 'boolean',
+                      },
+                      redacted: {
+                        type: 'boolean',
+                      },
+                      mode: {
+                        type: 'string',
+                        const: 'pipes',
+                      },
+                    },
+                    required: [
+                      'mode',
+                      'stdout',
+                      'stderr',
+                      'stdoutTruncated',
+                      'stderrTruncated',
+                      'redacted',
+                    ],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      screen: {
+                        type: 'string',
+                      },
+                      scrollback: {
+                        type: 'string',
+                      },
+                      lastAlternateScreen: {
+                        type: 'string',
+                      },
+                      cols: {
+                        type: 'integer',
+                        format: 'uint16',
+                        minimum: 0,
+                        maximum: 65535,
+                      },
+                      rows: {
+                        type: 'integer',
+                        format: 'uint16',
+                        minimum: 0,
+                        maximum: 65535,
+                      },
+                      cursor: {
+                        $ref: '#/$defs/TerminalCursor',
+                      },
+                      alternateScreen: {
+                        type: 'boolean',
+                      },
+                      truncated: {
+                        type: 'boolean',
+                      },
+                      redacted: {
+                        type: 'boolean',
+                      },
+                      mode: {
+                        type: 'string',
+                        const: 'pty',
+                      },
+                    },
+                    required: [
+                      'mode',
+                      'screen',
+                      'scrollback',
+                      'cols',
+                      'rows',
+                      'cursor',
+                      'alternateScreen',
+                      'truncated',
+                      'redacted',
+                    ],
+                  },
+                ],
+              },
+              PipeStream: {
+                type: 'string',
+                enum: ['stdout', 'stderr'],
+              },
+              TerminalCursor: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  x: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 0,
+                    maximum: 65535,
+                  },
+                  y: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 0,
+                    maximum: 65535,
+                  },
+                  visible: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['x', 'y', 'visible'],
+              },
+            },
+          },
+          resources: {},
+        },
+        control: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              controller: {
+                $ref: '#/$defs/TerminalController',
+              },
+              sequence: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 1,
+                maximum: 9007199254740991,
+              },
+              actions: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/RawAction',
+                },
+                maxItems: 64,
+                default: [],
+              },
+              size: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/TerminalSize',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            required: ['controller', 'sequence'],
+            title: 'TerminalControl',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              TerminalController: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  target: {
+                    $ref: '#/$defs/TerminalTarget',
+                  },
+                  controllerId: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                },
+                required: ['target', 'controllerId'],
+              },
+              TerminalTarget: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  ref: {
+                    type: 'string',
+                  },
+                },
+                required: ['sessionId', 'ref'],
+              },
+              RawAction: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      text: {
+                        type: 'string',
+                        minLength: 1,
+                        pattern: '^[^\\x00-\\x1f\\x7f-\\x9f]+$',
+                      },
+                      type: {
+                        type: 'string',
+                        const: 'text',
+                      },
+                    },
+                    required: ['type', 'text'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      text: {
+                        type: 'string',
+                        minLength: 1,
+                        pattern: '^[^\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f-\\x9f]+$',
+                      },
+                      type: {
+                        type: 'string',
+                        const: 'paste',
+                      },
+                    },
+                    required: ['type', 'text'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      key: {
+                        type: 'string',
+                        pattern:
+                          '^(?:[ -~]|enter|escape|tab|backspace|arrow_(?:up|down|left|right)|home|end|insert|delete|page_(?:up|down)|f(?:[1-9]|1[0-2]))$',
+                      },
+                      modifiers: {
+                        $ref: '#/$defs/TerminalModifiers',
+                        default: [],
+                      },
+                      type: {
+                        type: 'string',
+                        const: 'key',
+                      },
+                    },
+                    required: ['type', 'key'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      event: {
+                        $ref: '#/$defs/RawEvent',
+                      },
+                      x: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      y: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      button: {
+                        $ref: '#/$defs/MouseButton',
+                        default: null,
+                      },
+                      direction: {
+                        $ref: '#/$defs/ScrollDirection',
+                        default: null,
+                      },
+                      modifiers: {
+                        $ref: '#/$defs/TerminalModifiers',
+                        default: [],
+                      },
+                      type: {
+                        type: 'string',
+                        const: 'mouse',
+                      },
+                    },
+                    required: ['type', 'event', 'x', 'y'],
+                  },
+                ],
+              },
+              TerminalModifiers: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/Modifier',
+                },
+                uniqueItems: true,
+                maxItems: 3,
+              },
+              Modifier: {
+                type: 'string',
+                enum: ['ctrl', 'alt', 'shift'],
+              },
+              RawEvent: {
+                type: 'string',
+                enum: ['click', 'press', 'release', 'move', 'scroll'],
+              },
+              MouseButton: {
+                type: 'string',
+                enum: ['left', 'middle', 'right'],
+              },
+              ScrollDirection: {
+                type: 'string',
+                enum: ['up', 'down'],
+              },
+              TerminalSize: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  cols: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 2,
+                    maximum: 240,
+                  },
+                  rows: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 1,
+                    maximum: 100,
+                  },
+                },
+                required: ['cols', 'rows'],
+                description:
+                  'Shared by native PTY allocation, input validation and screen rendering.',
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: {
+                    $ref: '#/$defs/TerminalControlReceipt',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'TerminalOutcome_TerminalControlReceipt',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              TerminalControlReceipt: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  controllerId: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  sequence: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  acceptedBytes: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                  },
+                  resized: {
+                    type: 'boolean',
+                  },
+                  resizeChanged: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['controllerId', 'sequence', 'acceptedBytes', 'resized', 'resizeChanged'],
+              },
+            },
+          },
+          resources: {},
+        },
+        list: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              offset: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+                default: 0,
+              },
+            },
+            required: ['sessionId'],
+            title: 'TerminalList',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: {
+                    $ref: '#/$defs/TerminalPage',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'TerminalOutcome_TerminalPage',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              TerminalPage: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  resources: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/ResourceUpdate',
+                    },
+                  },
+                  revision: {
+                    type: 'string',
+                  },
+                  total: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  nextOffset: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                required: ['resources', 'revision', 'total'],
+              },
+              ResourceUpdate: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  ownership: {
+                    $ref: '#/$defs/Ownership',
+                  },
+                  sourceTurnId: {
+                    type: 'string',
+                  },
+                  sourceToolCallId: {
+                    type: 'string',
+                  },
+                  result: {
+                    $ref: '#/$defs/ShellSnapshot',
+                  },
+                },
+                required: ['sessionId', 'ownership', 'sourceTurnId', 'sourceToolCallId', 'result'],
+              },
+              Ownership: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'local',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sourceSessionId: {
+                        type: 'string',
+                      },
+                      ownerSessionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'source_owned',
+                      },
+                    },
+                    required: ['kind', 'sourceSessionId', 'ownerSessionId'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sourceSessionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'source_unavailable',
+                      },
+                    },
+                    required: ['kind', 'sourceSessionId'],
+                  },
+                ],
+              },
+              ShellSnapshot: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  kind: {
+                    $ref: '#/$defs/SnapshotKind',
+                  },
+                  ref: {
+                    type: 'string',
+                  },
+                  mode: {
+                    $ref: '#/$defs/ShellMode',
+                  },
+                  status: {
+                    $ref: '#/$defs/ShellStatus',
+                  },
+                  cwd: {
+                    type: 'string',
+                  },
+                  cmd: {
+                    type: 'string',
+                  },
+                  startedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  completedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  timeoutMs: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  exitCode: {
+                    type: 'integer',
+                    format: 'int64',
+                  },
+                  failureMessage: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  output: {
+                    $ref: '#/$defs/ShellOutput',
+                  },
+                },
+                required: [
+                  'kind',
+                  'ref',
+                  'mode',
+                  'status',
+                  'cwd',
+                  'cmd',
+                  'startedAt',
+                  'updatedAt',
+                  'revision',
+                ],
+              },
+              SnapshotKind: {
+                type: 'string',
+                enum: ['shell_run'],
+              },
+              ShellMode: {
+                type: 'string',
+                enum: ['pipes', 'pty'],
+              },
+              ShellStatus: {
+                type: 'string',
+                enum: [
+                  'starting',
+                  'running',
+                  'completed',
+                  'failed',
+                  'timed_out',
+                  'cancelled',
+                  'orphaned',
+                ],
+              },
+              ShellOutput: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      stdout: {
+                        type: 'string',
+                      },
+                      stderr: {
+                        type: 'string',
+                      },
+                      latestStream: {
+                        $ref: '#/$defs/PipeStream',
+                      },
+                      stdoutTruncated: {
+                        type: 'boolean',
+                      },
+                      stderrTruncated: {
+                        type: 'boolean',
+                      },
+                      redacted: {
+                        type: 'boolean',
+                      },
+                      mode: {
+                        type: 'string',
+                        const: 'pipes',
+                      },
+                    },
+                    required: [
+                      'mode',
+                      'stdout',
+                      'stderr',
+                      'stdoutTruncated',
+                      'stderrTruncated',
+                      'redacted',
+                    ],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      screen: {
+                        type: 'string',
+                      },
+                      scrollback: {
+                        type: 'string',
+                      },
+                      lastAlternateScreen: {
+                        type: 'string',
+                      },
+                      cols: {
+                        type: 'integer',
+                        format: 'uint16',
+                        minimum: 0,
+                        maximum: 65535,
+                      },
+                      rows: {
+                        type: 'integer',
+                        format: 'uint16',
+                        minimum: 0,
+                        maximum: 65535,
+                      },
+                      cursor: {
+                        $ref: '#/$defs/TerminalCursor',
+                      },
+                      alternateScreen: {
+                        type: 'boolean',
+                      },
+                      truncated: {
+                        type: 'boolean',
+                      },
+                      redacted: {
+                        type: 'boolean',
+                      },
+                      mode: {
+                        type: 'string',
+                        const: 'pty',
+                      },
+                    },
+                    required: [
+                      'mode',
+                      'screen',
+                      'scrollback',
+                      'cols',
+                      'rows',
+                      'cursor',
+                      'alternateScreen',
+                      'truncated',
+                      'redacted',
+                    ],
+                  },
+                ],
+              },
+              PipeStream: {
+                type: 'string',
+                enum: ['stdout', 'stderr'],
+              },
+              TerminalCursor: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  x: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 0,
+                    maximum: 65535,
+                  },
+                  y: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 0,
+                    maximum: 65535,
+                  },
+                  visible: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['x', 'y', 'visible'],
+              },
+            },
+          },
+          resources: {},
+        },
+        read: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              ref: {
+                type: 'string',
+              },
+            },
+            required: ['sessionId', 'ref'],
+            title: 'TerminalTarget',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: {
+                    $ref: '#/$defs/ResourceUpdate',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'TerminalOutcome_ResourceUpdate',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              ResourceUpdate: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  ownership: {
+                    $ref: '#/$defs/Ownership',
+                  },
+                  sourceTurnId: {
+                    type: 'string',
+                  },
+                  sourceToolCallId: {
+                    type: 'string',
+                  },
+                  result: {
+                    $ref: '#/$defs/ShellSnapshot',
+                  },
+                },
+                required: ['sessionId', 'ownership', 'sourceTurnId', 'sourceToolCallId', 'result'],
+              },
+              Ownership: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'local',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sourceSessionId: {
+                        type: 'string',
+                      },
+                      ownerSessionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'source_owned',
+                      },
+                    },
+                    required: ['kind', 'sourceSessionId', 'ownerSessionId'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sourceSessionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'source_unavailable',
+                      },
+                    },
+                    required: ['kind', 'sourceSessionId'],
+                  },
+                ],
+              },
+              ShellSnapshot: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  kind: {
+                    $ref: '#/$defs/SnapshotKind',
+                  },
+                  ref: {
+                    type: 'string',
+                  },
+                  mode: {
+                    $ref: '#/$defs/ShellMode',
+                  },
+                  status: {
+                    $ref: '#/$defs/ShellStatus',
+                  },
+                  cwd: {
+                    type: 'string',
+                  },
+                  cmd: {
+                    type: 'string',
+                  },
+                  startedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  completedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  timeoutMs: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  exitCode: {
+                    type: 'integer',
+                    format: 'int64',
+                  },
+                  failureMessage: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  output: {
+                    $ref: '#/$defs/ShellOutput',
+                  },
+                },
+                required: [
+                  'kind',
+                  'ref',
+                  'mode',
+                  'status',
+                  'cwd',
+                  'cmd',
+                  'startedAt',
+                  'updatedAt',
+                  'revision',
+                ],
+              },
+              SnapshotKind: {
+                type: 'string',
+                enum: ['shell_run'],
+              },
+              ShellMode: {
+                type: 'string',
+                enum: ['pipes', 'pty'],
+              },
+              ShellStatus: {
+                type: 'string',
+                enum: [
+                  'starting',
+                  'running',
+                  'completed',
+                  'failed',
+                  'timed_out',
+                  'cancelled',
+                  'orphaned',
+                ],
+              },
+              ShellOutput: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      stdout: {
+                        type: 'string',
+                      },
+                      stderr: {
+                        type: 'string',
+                      },
+                      latestStream: {
+                        $ref: '#/$defs/PipeStream',
+                      },
+                      stdoutTruncated: {
+                        type: 'boolean',
+                      },
+                      stderrTruncated: {
+                        type: 'boolean',
+                      },
+                      redacted: {
+                        type: 'boolean',
+                      },
+                      mode: {
+                        type: 'string',
+                        const: 'pipes',
+                      },
+                    },
+                    required: [
+                      'mode',
+                      'stdout',
+                      'stderr',
+                      'stdoutTruncated',
+                      'stderrTruncated',
+                      'redacted',
+                    ],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      screen: {
+                        type: 'string',
+                      },
+                      scrollback: {
+                        type: 'string',
+                      },
+                      lastAlternateScreen: {
+                        type: 'string',
+                      },
+                      cols: {
+                        type: 'integer',
+                        format: 'uint16',
+                        minimum: 0,
+                        maximum: 65535,
+                      },
+                      rows: {
+                        type: 'integer',
+                        format: 'uint16',
+                        minimum: 0,
+                        maximum: 65535,
+                      },
+                      cursor: {
+                        $ref: '#/$defs/TerminalCursor',
+                      },
+                      alternateScreen: {
+                        type: 'boolean',
+                      },
+                      truncated: {
+                        type: 'boolean',
+                      },
+                      redacted: {
+                        type: 'boolean',
+                      },
+                      mode: {
+                        type: 'string',
+                        const: 'pty',
+                      },
+                    },
+                    required: [
+                      'mode',
+                      'screen',
+                      'scrollback',
+                      'cols',
+                      'rows',
+                      'cursor',
+                      'alternateScreen',
+                      'truncated',
+                      'redacted',
+                    ],
+                  },
+                ],
+              },
+              PipeStream: {
+                type: 'string',
+                enum: ['stdout', 'stderr'],
+              },
+              TerminalCursor: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  x: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 0,
+                    maximum: 65535,
+                  },
+                  y: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 0,
+                    maximum: 65535,
+                  },
+                  visible: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['x', 'y', 'visible'],
+              },
+            },
+          },
+          resources: {},
+        },
+        release: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              target: {
+                $ref: '#/$defs/TerminalTarget',
+              },
+              controllerId: {
+                type: 'string',
+                format: 'uuid',
+              },
+            },
+            required: ['target', 'controllerId'],
+            title: 'TerminalController',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              TerminalTarget: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  ref: {
+                    type: 'string',
+                  },
+                },
+                required: ['sessionId', 'ref'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: {
+                    $ref: '#/$defs/TerminalReleased',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'TerminalOutcome_TerminalReleased',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              TerminalReleased: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  controllerId: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  released: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['controllerId', 'released'],
+              },
+            },
+          },
+          resources: {},
+        },
+        start: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              command: {
+                type: ['string', 'null'],
+                description:
+                  'Omit for an interactive shell; an explicit command runs with bounded pipes.',
+              },
+              size: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/TerminalSize',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            required: ['sessionId'],
+            title: 'TerminalStart',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              TerminalSize: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  cols: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 2,
+                    maximum: 240,
+                  },
+                  rows: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 1,
+                    maximum: 100,
+                  },
+                },
+                required: ['cols', 'rows'],
+                description:
+                  'Shared by native PTY allocation, input validation and screen rendering.',
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: {
+                    $ref: '#/$defs/ResourceUpdate',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'TerminalOutcome_ResourceUpdate',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              ResourceUpdate: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  ownership: {
+                    $ref: '#/$defs/Ownership',
+                  },
+                  sourceTurnId: {
+                    type: 'string',
+                  },
+                  sourceToolCallId: {
+                    type: 'string',
+                  },
+                  result: {
+                    $ref: '#/$defs/ShellSnapshot',
+                  },
+                },
+                required: ['sessionId', 'ownership', 'sourceTurnId', 'sourceToolCallId', 'result'],
+              },
+              Ownership: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'local',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sourceSessionId: {
+                        type: 'string',
+                      },
+                      ownerSessionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'source_owned',
+                      },
+                    },
+                    required: ['kind', 'sourceSessionId', 'ownerSessionId'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sourceSessionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'source_unavailable',
+                      },
+                    },
+                    required: ['kind', 'sourceSessionId'],
+                  },
+                ],
+              },
+              ShellSnapshot: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  kind: {
+                    $ref: '#/$defs/SnapshotKind',
+                  },
+                  ref: {
+                    type: 'string',
+                  },
+                  mode: {
+                    $ref: '#/$defs/ShellMode',
+                  },
+                  status: {
+                    $ref: '#/$defs/ShellStatus',
+                  },
+                  cwd: {
+                    type: 'string',
+                  },
+                  cmd: {
+                    type: 'string',
+                  },
+                  startedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  completedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  timeoutMs: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  exitCode: {
+                    type: 'integer',
+                    format: 'int64',
+                  },
+                  failureMessage: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  output: {
+                    $ref: '#/$defs/ShellOutput',
+                  },
+                },
+                required: [
+                  'kind',
+                  'ref',
+                  'mode',
+                  'status',
+                  'cwd',
+                  'cmd',
+                  'startedAt',
+                  'updatedAt',
+                  'revision',
+                ],
+              },
+              SnapshotKind: {
+                type: 'string',
+                enum: ['shell_run'],
+              },
+              ShellMode: {
+                type: 'string',
+                enum: ['pipes', 'pty'],
+              },
+              ShellStatus: {
+                type: 'string',
+                enum: [
+                  'starting',
+                  'running',
+                  'completed',
+                  'failed',
+                  'timed_out',
+                  'cancelled',
+                  'orphaned',
+                ],
+              },
+              ShellOutput: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      stdout: {
+                        type: 'string',
+                      },
+                      stderr: {
+                        type: 'string',
+                      },
+                      latestStream: {
+                        $ref: '#/$defs/PipeStream',
+                      },
+                      stdoutTruncated: {
+                        type: 'boolean',
+                      },
+                      stderrTruncated: {
+                        type: 'boolean',
+                      },
+                      redacted: {
+                        type: 'boolean',
+                      },
+                      mode: {
+                        type: 'string',
+                        const: 'pipes',
+                      },
+                    },
+                    required: [
+                      'mode',
+                      'stdout',
+                      'stderr',
+                      'stdoutTruncated',
+                      'stderrTruncated',
+                      'redacted',
+                    ],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      screen: {
+                        type: 'string',
+                      },
+                      scrollback: {
+                        type: 'string',
+                      },
+                      lastAlternateScreen: {
+                        type: 'string',
+                      },
+                      cols: {
+                        type: 'integer',
+                        format: 'uint16',
+                        minimum: 0,
+                        maximum: 65535,
+                      },
+                      rows: {
+                        type: 'integer',
+                        format: 'uint16',
+                        minimum: 0,
+                        maximum: 65535,
+                      },
+                      cursor: {
+                        $ref: '#/$defs/TerminalCursor',
+                      },
+                      alternateScreen: {
+                        type: 'boolean',
+                      },
+                      truncated: {
+                        type: 'boolean',
+                      },
+                      redacted: {
+                        type: 'boolean',
+                      },
+                      mode: {
+                        type: 'string',
+                        const: 'pty',
+                      },
+                    },
+                    required: [
+                      'mode',
+                      'screen',
+                      'scrollback',
+                      'cols',
+                      'rows',
+                      'cursor',
+                      'alternateScreen',
+                      'truncated',
+                      'redacted',
+                    ],
+                  },
+                ],
+              },
+              PipeStream: {
+                type: 'string',
+                enum: ['stdout', 'stderr'],
+              },
+              TerminalCursor: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  x: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 0,
+                    maximum: 65535,
+                  },
+                  y: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 0,
+                    maximum: 65535,
+                  },
+                  visible: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['x', 'y', 'visible'],
+              },
+            },
+          },
+          resources: {},
+        },
+        stop: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              ref: {
+                type: 'string',
+              },
+            },
+            required: ['sessionId', 'ref'],
+            title: 'TerminalTarget',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: {
+                    $ref: '#/$defs/TerminalStopped',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'TerminalOutcome_TerminalStopped',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              TerminalStopped: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  applied: {
+                    type: 'boolean',
+                  },
+                  resource: {
+                    $ref: '#/$defs/ResourceUpdate',
+                  },
+                },
+                required: ['applied', 'resource'],
+              },
+              ResourceUpdate: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  ownership: {
+                    $ref: '#/$defs/Ownership',
+                  },
+                  sourceTurnId: {
+                    type: 'string',
+                  },
+                  sourceToolCallId: {
+                    type: 'string',
+                  },
+                  result: {
+                    $ref: '#/$defs/ShellSnapshot',
+                  },
+                },
+                required: ['sessionId', 'ownership', 'sourceTurnId', 'sourceToolCallId', 'result'],
+              },
+              Ownership: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'local',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sourceSessionId: {
+                        type: 'string',
+                      },
+                      ownerSessionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'source_owned',
+                      },
+                    },
+                    required: ['kind', 'sourceSessionId', 'ownerSessionId'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sourceSessionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'source_unavailable',
+                      },
+                    },
+                    required: ['kind', 'sourceSessionId'],
+                  },
+                ],
+              },
+              ShellSnapshot: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  kind: {
+                    $ref: '#/$defs/SnapshotKind',
+                  },
+                  ref: {
+                    type: 'string',
+                  },
+                  mode: {
+                    $ref: '#/$defs/ShellMode',
+                  },
+                  status: {
+                    $ref: '#/$defs/ShellStatus',
+                  },
+                  cwd: {
+                    type: 'string',
+                  },
+                  cmd: {
+                    type: 'string',
+                  },
+                  startedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  completedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  timeoutMs: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  exitCode: {
+                    type: 'integer',
+                    format: 'int64',
+                  },
+                  failureMessage: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  output: {
+                    $ref: '#/$defs/ShellOutput',
+                  },
+                },
+                required: [
+                  'kind',
+                  'ref',
+                  'mode',
+                  'status',
+                  'cwd',
+                  'cmd',
+                  'startedAt',
+                  'updatedAt',
+                  'revision',
+                ],
+              },
+              SnapshotKind: {
+                type: 'string',
+                enum: ['shell_run'],
+              },
+              ShellMode: {
+                type: 'string',
+                enum: ['pipes', 'pty'],
+              },
+              ShellStatus: {
+                type: 'string',
+                enum: [
+                  'starting',
+                  'running',
+                  'completed',
+                  'failed',
+                  'timed_out',
+                  'cancelled',
+                  'orphaned',
+                ],
+              },
+              ShellOutput: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      stdout: {
+                        type: 'string',
+                      },
+                      stderr: {
+                        type: 'string',
+                      },
+                      latestStream: {
+                        $ref: '#/$defs/PipeStream',
+                      },
+                      stdoutTruncated: {
+                        type: 'boolean',
+                      },
+                      stderrTruncated: {
+                        type: 'boolean',
+                      },
+                      redacted: {
+                        type: 'boolean',
+                      },
+                      mode: {
+                        type: 'string',
+                        const: 'pipes',
+                      },
+                    },
+                    required: [
+                      'mode',
+                      'stdout',
+                      'stderr',
+                      'stdoutTruncated',
+                      'stderrTruncated',
+                      'redacted',
+                    ],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      screen: {
+                        type: 'string',
+                      },
+                      scrollback: {
+                        type: 'string',
+                      },
+                      lastAlternateScreen: {
+                        type: 'string',
+                      },
+                      cols: {
+                        type: 'integer',
+                        format: 'uint16',
+                        minimum: 0,
+                        maximum: 65535,
+                      },
+                      rows: {
+                        type: 'integer',
+                        format: 'uint16',
+                        minimum: 0,
+                        maximum: 65535,
+                      },
+                      cursor: {
+                        $ref: '#/$defs/TerminalCursor',
+                      },
+                      alternateScreen: {
+                        type: 'boolean',
+                      },
+                      truncated: {
+                        type: 'boolean',
+                      },
+                      redacted: {
+                        type: 'boolean',
+                      },
+                      mode: {
+                        type: 'string',
+                        const: 'pty',
+                      },
+                    },
+                    required: [
+                      'mode',
+                      'screen',
+                      'scrollback',
+                      'cols',
+                      'rows',
+                      'cursor',
+                      'alternateScreen',
+                      'truncated',
+                      'redacted',
+                    ],
+                  },
+                ],
+              },
+              PipeStream: {
+                type: 'string',
+                enum: ['stdout', 'stderr'],
+              },
+              TerminalCursor: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  x: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 0,
+                    maximum: 65535,
+                  },
+                  y: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 0,
+                    maximum: 65535,
+                  },
+                  visible: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['x', 'y', 'visible'],
+              },
+            },
+          },
+          resources: {},
+        },
+        watch: {
+          mode: 'subscription',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              ref: {
+                type: 'string',
+              },
+            },
+            required: ['sessionId', 'ref'],
+            title: 'TerminalTarget',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: {
+                    $ref: '#/$defs/ResourceUpdate',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'TerminalOutcome_ResourceUpdate',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              ResourceUpdate: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  ownership: {
+                    $ref: '#/$defs/Ownership',
+                  },
+                  sourceTurnId: {
+                    type: 'string',
+                  },
+                  sourceToolCallId: {
+                    type: 'string',
+                  },
+                  result: {
+                    $ref: '#/$defs/ShellSnapshot',
+                  },
+                },
+                required: ['sessionId', 'ownership', 'sourceTurnId', 'sourceToolCallId', 'result'],
+              },
+              Ownership: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'local',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sourceSessionId: {
+                        type: 'string',
+                      },
+                      ownerSessionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'source_owned',
+                      },
+                    },
+                    required: ['kind', 'sourceSessionId', 'ownerSessionId'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sourceSessionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'source_unavailable',
+                      },
+                    },
+                    required: ['kind', 'sourceSessionId'],
+                  },
+                ],
+              },
+              ShellSnapshot: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  kind: {
+                    $ref: '#/$defs/SnapshotKind',
+                  },
+                  ref: {
+                    type: 'string',
+                  },
+                  mode: {
+                    $ref: '#/$defs/ShellMode',
+                  },
+                  status: {
+                    $ref: '#/$defs/ShellStatus',
+                  },
+                  cwd: {
+                    type: 'string',
+                  },
+                  cmd: {
+                    type: 'string',
+                  },
+                  startedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  completedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  timeoutMs: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  exitCode: {
+                    type: 'integer',
+                    format: 'int64',
+                  },
+                  failureMessage: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  output: {
+                    $ref: '#/$defs/ShellOutput',
+                  },
+                },
+                required: [
+                  'kind',
+                  'ref',
+                  'mode',
+                  'status',
+                  'cwd',
+                  'cmd',
+                  'startedAt',
+                  'updatedAt',
+                  'revision',
+                ],
+              },
+              SnapshotKind: {
+                type: 'string',
+                enum: ['shell_run'],
+              },
+              ShellMode: {
+                type: 'string',
+                enum: ['pipes', 'pty'],
+              },
+              ShellStatus: {
+                type: 'string',
+                enum: [
+                  'starting',
+                  'running',
+                  'completed',
+                  'failed',
+                  'timed_out',
+                  'cancelled',
+                  'orphaned',
+                ],
+              },
+              ShellOutput: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      stdout: {
+                        type: 'string',
+                      },
+                      stderr: {
+                        type: 'string',
+                      },
+                      latestStream: {
+                        $ref: '#/$defs/PipeStream',
+                      },
+                      stdoutTruncated: {
+                        type: 'boolean',
+                      },
+                      stderrTruncated: {
+                        type: 'boolean',
+                      },
+                      redacted: {
+                        type: 'boolean',
+                      },
+                      mode: {
+                        type: 'string',
+                        const: 'pipes',
+                      },
+                    },
+                    required: [
+                      'mode',
+                      'stdout',
+                      'stderr',
+                      'stdoutTruncated',
+                      'stderrTruncated',
+                      'redacted',
+                    ],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      screen: {
+                        type: 'string',
+                      },
+                      scrollback: {
+                        type: 'string',
+                      },
+                      lastAlternateScreen: {
+                        type: 'string',
+                      },
+                      cols: {
+                        type: 'integer',
+                        format: 'uint16',
+                        minimum: 0,
+                        maximum: 65535,
+                      },
+                      rows: {
+                        type: 'integer',
+                        format: 'uint16',
+                        minimum: 0,
+                        maximum: 65535,
+                      },
+                      cursor: {
+                        $ref: '#/$defs/TerminalCursor',
+                      },
+                      alternateScreen: {
+                        type: 'boolean',
+                      },
+                      truncated: {
+                        type: 'boolean',
+                      },
+                      redacted: {
+                        type: 'boolean',
+                      },
+                      mode: {
+                        type: 'string',
+                        const: 'pty',
+                      },
+                    },
+                    required: [
+                      'mode',
+                      'screen',
+                      'scrollback',
+                      'cols',
+                      'rows',
+                      'cursor',
+                      'alternateScreen',
+                      'truncated',
+                      'redacted',
+                    ],
+                  },
+                ],
+              },
+              PipeStream: {
+                type: 'string',
+                enum: ['stdout', 'stderr'],
+              },
+              TerminalCursor: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  x: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 0,
+                    maximum: 65535,
+                  },
+                  y: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 0,
+                    maximum: 65535,
+                  },
+                  visible: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['x', 'y', 'visible'],
+              },
+            },
+          },
+          resources: {},
+        },
+        watchList: {
+          mode: 'subscription',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              offset: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+                default: 0,
+              },
+            },
+            required: ['sessionId'],
+            title: 'TerminalList',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: {
+                    $ref: '#/$defs/TerminalPage',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'TerminalOutcome_TerminalPage',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              TerminalPage: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  resources: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/ResourceUpdate',
+                    },
+                  },
+                  revision: {
+                    type: 'string',
+                  },
+                  total: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  nextOffset: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                required: ['resources', 'revision', 'total'],
+              },
+              ResourceUpdate: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  ownership: {
+                    $ref: '#/$defs/Ownership',
+                  },
+                  sourceTurnId: {
+                    type: 'string',
+                  },
+                  sourceToolCallId: {
+                    type: 'string',
+                  },
+                  result: {
+                    $ref: '#/$defs/ShellSnapshot',
+                  },
+                },
+                required: ['sessionId', 'ownership', 'sourceTurnId', 'sourceToolCallId', 'result'],
+              },
+              Ownership: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'local',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sourceSessionId: {
+                        type: 'string',
+                      },
+                      ownerSessionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'source_owned',
+                      },
+                    },
+                    required: ['kind', 'sourceSessionId', 'ownerSessionId'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sourceSessionId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'source_unavailable',
+                      },
+                    },
+                    required: ['kind', 'sourceSessionId'],
+                  },
+                ],
+              },
+              ShellSnapshot: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  kind: {
+                    $ref: '#/$defs/SnapshotKind',
+                  },
+                  ref: {
+                    type: 'string',
+                  },
+                  mode: {
+                    $ref: '#/$defs/ShellMode',
+                  },
+                  status: {
+                    $ref: '#/$defs/ShellStatus',
+                  },
+                  cwd: {
+                    type: 'string',
+                  },
+                  cmd: {
+                    type: 'string',
+                  },
+                  startedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  completedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  timeoutMs: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  exitCode: {
+                    type: 'integer',
+                    format: 'int64',
+                  },
+                  failureMessage: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  output: {
+                    $ref: '#/$defs/ShellOutput',
+                  },
+                },
+                required: [
+                  'kind',
+                  'ref',
+                  'mode',
+                  'status',
+                  'cwd',
+                  'cmd',
+                  'startedAt',
+                  'updatedAt',
+                  'revision',
+                ],
+              },
+              SnapshotKind: {
+                type: 'string',
+                enum: ['shell_run'],
+              },
+              ShellMode: {
+                type: 'string',
+                enum: ['pipes', 'pty'],
+              },
+              ShellStatus: {
+                type: 'string',
+                enum: [
+                  'starting',
+                  'running',
+                  'completed',
+                  'failed',
+                  'timed_out',
+                  'cancelled',
+                  'orphaned',
+                ],
+              },
+              ShellOutput: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      stdout: {
+                        type: 'string',
+                      },
+                      stderr: {
+                        type: 'string',
+                      },
+                      latestStream: {
+                        $ref: '#/$defs/PipeStream',
+                      },
+                      stdoutTruncated: {
+                        type: 'boolean',
+                      },
+                      stderrTruncated: {
+                        type: 'boolean',
+                      },
+                      redacted: {
+                        type: 'boolean',
+                      },
+                      mode: {
+                        type: 'string',
+                        const: 'pipes',
+                      },
+                    },
+                    required: [
+                      'mode',
+                      'stdout',
+                      'stderr',
+                      'stdoutTruncated',
+                      'stderrTruncated',
+                      'redacted',
+                    ],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      screen: {
+                        type: 'string',
+                      },
+                      scrollback: {
+                        type: 'string',
+                      },
+                      lastAlternateScreen: {
+                        type: 'string',
+                      },
+                      cols: {
+                        type: 'integer',
+                        format: 'uint16',
+                        minimum: 0,
+                        maximum: 65535,
+                      },
+                      rows: {
+                        type: 'integer',
+                        format: 'uint16',
+                        minimum: 0,
+                        maximum: 65535,
+                      },
+                      cursor: {
+                        $ref: '#/$defs/TerminalCursor',
+                      },
+                      alternateScreen: {
+                        type: 'boolean',
+                      },
+                      truncated: {
+                        type: 'boolean',
+                      },
+                      redacted: {
+                        type: 'boolean',
+                      },
+                      mode: {
+                        type: 'string',
+                        const: 'pty',
+                      },
+                    },
+                    required: [
+                      'mode',
+                      'screen',
+                      'scrollback',
+                      'cols',
+                      'rows',
+                      'cursor',
+                      'alternateScreen',
+                      'truncated',
+                      'redacted',
+                    ],
+                  },
+                ],
+              },
+              PipeStream: {
+                type: 'string',
+                enum: ['stdout', 'stderr'],
+              },
+              TerminalCursor: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  x: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 0,
+                    maximum: 65535,
+                  },
+                  y: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 0,
+                    maximum: 65535,
+                  },
+                  visible: {
+                    type: 'boolean',
+                  },
+                },
+                required: ['x', 'y', 'visible'],
+              },
+            },
+          },
+          resources: {},
+        },
+      },
+    },
+  },
   settings: {
     name: 'maka.settings.Settings',
     version: 1,

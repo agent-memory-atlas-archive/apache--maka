@@ -20,12 +20,13 @@
 //! Client-facing shell state. It is a projection, never the operational authority.
 mod project;
 pub use maka_runtime::shell_result::*;
-pub use project::{local_state, local_update};
+pub use project::{local_metadata, local_state, local_update};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub const SNAPSHOT_MAX_BYTES: usize = 48 * 1024;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResourceUpdate {
     pub session_id: String,
@@ -35,7 +36,7 @@ pub struct ResourceUpdate {
     pub result: ShellSnapshot,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "kind",
     rename_all = "snake_case",

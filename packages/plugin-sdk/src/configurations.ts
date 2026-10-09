@@ -155,6 +155,19 @@ export const configurations = {
         type: ['string', 'null'],
         description: 'Trusted CLI supporting the original platform sandbox bootstrap.',
       },
+      sessionOwner: {
+        anyOf: [
+          {
+            $ref: '#/$defs/InstanceId',
+          },
+          {
+            type: 'null',
+          },
+        ],
+        description:
+          'Trusted Agent Session owner in this Root/deployment. This selects a data\nnamespace only; Terminal endpoints still require their own explicit grants.',
+        default: null,
+      },
     },
     required: ['filesystem', 'network'],
     description: 'Immutable installation ceiling selected by trusted native composition.',
@@ -263,6 +276,15 @@ export const configurations = {
         required: ['host', 'port'],
         description:
           'Destination authority, independent of the upstream proxy used to reach it.\nA domain grant does not authorize its subdomains or other ports.',
+      },
+      InstanceId: {
+        type: 'array',
+        items: {
+          type: 'string',
+          format: 'uuid',
+        },
+        description:
+          'Hierarchical, stable source keys. Display aliases never become data identities.',
       },
     },
   },

@@ -19,18 +19,19 @@
 
 //! Bounded shell result contracts shared by model and client projections.
 use crate::{shell_run::PipeStream, terminal::TerminalCursor};
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
 pub const RESOURCE_REF_PREFIX: &str = "maka://runtime/background-tasks/";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ShellMode {
     Pipes,
     Pty,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ShellStatus {
     Starting,
@@ -42,7 +43,7 @@ pub enum ShellStatus {
     Orphaned,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ShellSnapshot {
     pub kind: SnapshotKind,
@@ -59,24 +60,28 @@ pub struct ShellSnapshot {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "u64")]
     pub completed_at: Option<u64>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "u64")]
     pub timeout_ms: Option<u64>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "i64")]
     pub exit_code: Option<i64>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "String")]
     pub failure_message: Option<String>,
     pub revision: u64,
     #[serde(
@@ -84,16 +89,17 @@ pub struct ShellSnapshot {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schemars(with = "ShellOutput")]
     pub output: Option<ShellOutput>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum SnapshotKind {
     #[serde(rename = "shell_run")]
     ShellRun,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "mode",
     rename_all = "snake_case",
@@ -109,6 +115,7 @@ pub enum ShellOutput {
             skip_serializing_if = "Option::is_none",
             deserialize_with = "present"
         )]
+        #[schemars(with = "PipeStream")]
         latest_stream: Option<PipeStream>,
         stdout_truncated: bool,
         stderr_truncated: bool,
@@ -122,6 +129,7 @@ pub enum ShellOutput {
             skip_serializing_if = "Option::is_none",
             deserialize_with = "present"
         )]
+        #[schemars(with = "String")]
         last_alternate_screen: Option<String>,
         cols: u16,
         rows: u16,

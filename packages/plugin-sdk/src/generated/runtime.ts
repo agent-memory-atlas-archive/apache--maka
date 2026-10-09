@@ -108,6 +108,22 @@ export type RuntimeProtocol =
   | AgentInteractionResult
   | QuestionAsk
   | WorkspaceProcessConfiguration
+  | TerminalList
+  | TerminalTarget
+  | TerminalStart
+  | TerminalController
+  | TerminalControl
+  | TerminalPage
+  | TerminalLeaseUpdate
+  | TerminalControlReceipt
+  | TerminalReleased
+  | TerminalStopped
+  | TerminalOutcome_TerminalPage
+  | TerminalOutcome_ResourceUpdate
+  | TerminalOutcome_TerminalLeaseUpdate
+  | TerminalOutcome_TerminalControlReceipt
+  | TerminalOutcome_TerminalReleased
+  | TerminalOutcome_TerminalStopped
   | QuestionResult
   | InteractionRecord
   | AgentSession
@@ -1651,6 +1667,141 @@ export type ClosureReason =
   | 'host_restarted'
   | 'provider_disconnected';
 export type AgentInteractionRejection = 'closed' | 'unavailable' | 'invalid_answer' | 'unsupported';
+export type RawAction =
+  | {
+      text: string;
+      type: 'text';
+    }
+  | {
+      text: string;
+      type: 'paste';
+    }
+  | {
+      key: string;
+      modifiers?: TerminalModifiers;
+      type: 'key';
+    }
+  | {
+      event: RawEvent;
+      x: number;
+      y: number;
+      button?: MouseButton;
+      direction?: ScrollDirection;
+      modifiers?: TerminalModifiers;
+      type: 'mouse';
+    };
+/**
+ * @maxItems 3
+ */
+export type TerminalModifiers =
+  | []
+  | [Modifier2]
+  | [Modifier2, Modifier2]
+  | [Modifier2, Modifier2, Modifier2];
+export type Modifier2 = 'ctrl' | 'alt' | 'shift';
+export type RawEvent = 'click' | 'press' | 'release' | 'move' | 'scroll';
+export type MouseButton = 'left' | 'middle' | 'right';
+export type ScrollDirection = 'up' | 'down';
+export type Ownership =
+  | {
+      kind: 'local';
+    }
+  | {
+      sourceSessionId: string;
+      ownerSessionId: string;
+      kind: 'source_owned';
+    }
+  | {
+      sourceSessionId: string;
+      kind: 'source_unavailable';
+    };
+export type SnapshotKind = 'shell_run';
+export type ShellMode = 'pipes' | 'pty';
+export type ShellStatus =
+  | 'starting'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'timed_out'
+  | 'cancelled'
+  | 'orphaned';
+export type ShellOutput =
+  | {
+      stdout: string;
+      stderr: string;
+      latestStream?: PipeStream;
+      stdoutTruncated: boolean;
+      stderrTruncated: boolean;
+      redacted: boolean;
+      mode: 'pipes';
+    }
+  | {
+      screen: string;
+      scrollback: string;
+      lastAlternateScreen?: string;
+      cols: number;
+      rows: number;
+      cursor: TerminalCursor;
+      alternateScreen: boolean;
+      truncated: boolean;
+      redacted: boolean;
+      mode: 'pty';
+    };
+export type PipeStream = 'stdout' | 'stderr';
+export type TerminalOutcome_TerminalPage =
+  | {
+      value: TerminalPage;
+      kind: 'completed';
+    }
+  | {
+      message: string;
+      kind: 'failed';
+    };
+export type TerminalOutcome_ResourceUpdate =
+  | {
+      value: ResourceUpdate;
+      kind: 'completed';
+    }
+  | {
+      message: string;
+      kind: 'failed';
+    };
+export type TerminalOutcome_TerminalLeaseUpdate =
+  | {
+      value: TerminalLeaseUpdate;
+      kind: 'completed';
+    }
+  | {
+      message: string;
+      kind: 'failed';
+    };
+export type TerminalOutcome_TerminalControlReceipt =
+  | {
+      value: TerminalControlReceipt;
+      kind: 'completed';
+    }
+  | {
+      message: string;
+      kind: 'failed';
+    };
+export type TerminalOutcome_TerminalReleased =
+  | {
+      value: TerminalReleased;
+      kind: 'completed';
+    }
+  | {
+      message: string;
+      kind: 'failed';
+    };
+export type TerminalOutcome_TerminalStopped =
+  | {
+      value: TerminalStopped;
+      kind: 'completed';
+    }
+  | {
+      message: string;
+      kind: 'failed';
+    };
 export type QuestionResult =
   | {
       answers: QuestionResponse[];
@@ -3656,6 +3807,11 @@ export interface WorkspaceProcessConfiguration {
    * Trusted CLI supporting the original platform sandbox bootstrap.
    */
   helper?: string | null;
+  /**
+   * Trusted Agent Session owner in this Root/deployment. This selects a data
+   * namespace only; Terminal endpoints still require their own explicit grants.
+   */
+  sessionOwner?: InstanceId | null;
 }
 /**
  * Longest path wins; at the same path exact wins over subtree, then deny wins
@@ -3675,6 +3831,97 @@ export interface Policy {
    * @maxItems 128
    */
   denyGlobs: string[];
+}
+export interface TerminalList {
+  sessionId: string;
+  offset?: number;
+}
+export interface TerminalTarget {
+  sessionId: string;
+  ref: string;
+}
+export interface TerminalStart {
+  sessionId: string;
+  /**
+   * Omit for an interactive shell; an explicit command runs with bounded pipes.
+   */
+  command?: string | null;
+  size?: TerminalSize | null;
+}
+/**
+ * Shared by native PTY allocation, input validation and screen rendering.
+ */
+export interface TerminalSize {
+  cols: number;
+  rows: number;
+}
+export interface TerminalController {
+  target: TerminalTarget;
+  controllerId: string;
+}
+export interface TerminalControl {
+  controller: TerminalController;
+  sequence: number;
+  /**
+   * @maxItems 64
+   */
+  actions?: RawAction[];
+  size?: TerminalSize | null;
+}
+export interface TerminalPage {
+  resources: ResourceUpdate[];
+  revision: string;
+  total: number;
+  nextOffset?: number | null;
+}
+export interface ResourceUpdate {
+  sessionId: string;
+  ownership: Ownership;
+  sourceTurnId: string;
+  sourceToolCallId: string;
+  result: ShellSnapshot;
+}
+export interface ShellSnapshot {
+  kind: SnapshotKind;
+  ref: string;
+  mode: ShellMode;
+  status: ShellStatus;
+  cwd: string;
+  cmd: string;
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  timeoutMs?: number;
+  exitCode?: number;
+  failureMessage?: string;
+  revision: number;
+  output?: ShellOutput;
+}
+export interface TerminalCursor {
+  x: number;
+  y: number;
+  visible: boolean;
+}
+export interface TerminalLeaseUpdate {
+  controllerId: string;
+  nextSequence?: number | null;
+  held: boolean;
+  resource: ResourceUpdate;
+}
+export interface TerminalControlReceipt {
+  controllerId: string;
+  sequence: number;
+  acceptedBytes: number;
+  resized: boolean;
+  resizeChanged: boolean;
+}
+export interface TerminalReleased {
+  controllerId: string;
+  released: boolean;
+}
+export interface TerminalStopped {
+  applied: boolean;
+  resource: ResourceUpdate;
 }
 export interface QuestionResponse {
   question: string;

@@ -129,6 +129,46 @@ pub(super) fn catalog() -> Value {
         root::<maka_agent_service::contract::InteractionResult>(&mut g),
         root::<maka_agent_service::questions::Ask>(&mut g),
         root::<maka_agent_service::processes::Configuration>(&mut g),
+        root::<maka_agent_service::processes::terminal::List>(&mut g),
+        root::<maka_agent_service::processes::terminal::Target>(&mut g),
+        root::<maka_agent_service::processes::terminal::Start>(&mut g),
+        root::<maka_agent_service::processes::terminal::Controller>(&mut g),
+        root::<maka_agent_service::processes::terminal::Control>(&mut g),
+        root::<maka_agent_service::processes::terminal::Page>(&mut g),
+        root::<maka_agent_service::processes::terminal::LeaseUpdate>(&mut g),
+        root::<maka_agent_service::processes::terminal::ControlReceipt>(&mut g),
+        root::<maka_agent_service::processes::terminal::Released>(&mut g),
+        root::<maka_agent_service::processes::terminal::Stopped>(&mut g),
+        root::<
+            maka_agent_service::processes::terminal::Outcome<
+                maka_agent_service::processes::terminal::Page,
+            >,
+        >(&mut g),
+        root::<
+            maka_agent_service::processes::terminal::Outcome<
+                maka_agent_service::processes::terminal::ResourceUpdate,
+            >,
+        >(&mut g),
+        root::<
+            maka_agent_service::processes::terminal::Outcome<
+                maka_agent_service::processes::terminal::LeaseUpdate,
+            >,
+        >(&mut g),
+        root::<
+            maka_agent_service::processes::terminal::Outcome<
+                maka_agent_service::processes::terminal::ControlReceipt,
+            >,
+        >(&mut g),
+        root::<
+            maka_agent_service::processes::terminal::Outcome<
+                maka_agent_service::processes::terminal::Released,
+            >,
+        >(&mut g),
+        root::<
+            maka_agent_service::processes::terminal::Outcome<
+                maka_agent_service::processes::terminal::Stopped,
+            >,
+        >(&mut g),
         root::<maka_agent_service::questions::Answer>(&mut g),
         root::<maka_runtime::interaction::InteractionRecord>(&mut g),
         root::<maka_agent_service::contract::Session>(&mut g),
@@ -188,6 +228,7 @@ pub(super) fn catalog() -> Value {
             "questions": maka_agent_service::questions::contract(),
             "workspaceFiles": maka_agent_service::files::contract(),
             "workspaceProcesses": maka_agent_service::processes::contract(),
+            "terminal": maka_agent_service::processes::terminal::contract(),
             "settings": maka_settings_service::contract::contract(),
             "textReader": text::reader_contract(),
             "callerHistory": maka_ui::operations::caller_history_contract(),

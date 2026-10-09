@@ -19,7 +19,7 @@
 
 use crate::{EventLog, StoreError};
 use futures_util::TryStreamExt;
-use maka_presentation::shell::{ResourceUpdate, local_update};
+use maka_presentation::shell::{ResourceUpdate, local_metadata, local_update};
 use sha2::{Digest, Sha256};
 use sqlx::{Connection, Row};
 
@@ -39,12 +39,38 @@ impl EventLog {
         id: Option<&str>,
         offset: u64,
     ) -> Result<ShellResourcePage, StoreError> {
+        self.query_shell_page(session, id, offset, None, false)
+            .await
+    }
+
+    /// Provider filtering happens before counting, digesting and paging. The
+    /// list projects metadata only; full canonical output belongs to detail reads.
+    pub async fn query_shell_catalog(
+        &self,
+        session: &str,
+        provider_prefix: &str,
+        offset: u64,
+    ) -> Result<ShellResourcePage, StoreError> {
+        maka_runtime::interaction::entity_id(provider_prefix).map_err(super::invalid)?;
+        self.query_shell_page(session, None, offset, Some(provider_prefix), true)
+            .await
+    }
+
+    async fn query_shell_page(
+        &self,
+        session: &str,
+        id: Option<&str>,
+        offset: u64,
+        provider_prefix: Option<&str>,
+        compact: bool,
+    ) -> Result<ShellResourcePage, StoreError> {
         self.validate_root()?;
         maka_runtime::interaction::entity_id(session).map_err(super::invalid)?;
         if let Some(id) = id {
             maka_runtime::interaction::entity_id(id).map_err(super::invalid)?;
         }
         let (session, id) = (session.to_owned(), id.map(str::to_owned));
+        let provider_prefix = provider_prefix.map(str::to_owned);
         self.connection
             .run(move |connection| {
                 Box::pin(async move {
@@ -60,11 +86,15 @@ impl EventLog {
                     }
                     let mut rows = sqlx::query(
                         "SELECT id, record_json FROM shell_runs \
-                     WHERE session_id = ? AND (? IS NULL OR id = ?) ORDER BY id",
+                     WHERE session_id = ? AND (? IS NULL OR id = ?) \
+                     AND (? IS NULL OR substr(id, 1, length(?)) = ?) ORDER BY id",
                     )
                     .bind(&session)
                     .bind(&id)
                     .bind(&id)
+                    .bind(&provider_prefix)
+                    .bind(&provider_prefix)
+                    .bind(&provider_prefix)
                     .fetch(&mut *tx);
                     let mut hash = Sha256::new();
                     hash.update(b"[");
@@ -80,7 +110,11 @@ impl EventLog {
                             &session,
                             row.try_get("id")?,
                         )?;
-                        let projected = local_update(record)?;
+                        let projected = if compact {
+                            local_metadata(record)?
+                        } else {
+                            local_update(record)?
+                        };
                         let bytes = serde_json::to_vec(&projected)?;
                         if total != 0 {
                             hash.update(b",");

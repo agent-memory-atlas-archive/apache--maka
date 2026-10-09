@@ -22,7 +22,7 @@
 use super::*;
 use maka_runtime::interaction::{InteractionRecord, InteractionRequest};
 
-async fn fixture() -> (TcpListener, Fixture, String) {
+pub(super) async fn fixture() -> (TcpListener, Fixture, String) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let f = Fixture::with_services(
         &format!("http://{}/v1", listener.local_addr().unwrap()),
@@ -75,7 +75,7 @@ async fn finish(listener: &TcpListener, f: &Fixture) -> Value {
     f.drained().await;
     result
 }
-async fn roundtrip(
+pub(super) async fn roundtrip(
     listener: &TcpListener,
     f: &Fixture,
     session: &str,
@@ -85,7 +85,7 @@ async fn roundtrip(
     call(listener, f, session, name, input).await;
     finish(listener, f).await
 }
-async fn close(f: &Fixture) {
+pub(super) async fn close(f: &Fixture) {
     f.app.shutdown().await.unwrap();
     f.config.shutdown().await.unwrap();
 }

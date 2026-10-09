@@ -132,6 +132,13 @@ impl Processes {
             };
             record = (*handle.ready().await.map_err(worker_error)?).clone();
             if record.state.active() {
+                if self.controllers.lock().unwrap().iter().any(|lease| {
+                    lease.controller.target.session_id == *session
+                        && lease.controller.target.reference == input.reference
+                        && !lease.cancellation.is_cancelled()
+                }) {
+                    return Err(failed("PTY is controlled by a connected user"));
+                }
                 let current = crate::permissions::live(&self.store, &tool.invocation).await?;
                 if current.boundary_revision != record.permissions.boundary_revision {
                     return Err(failed(

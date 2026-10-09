@@ -497,7 +497,10 @@ const mechanical = {
     entries: {
       host: native(
         'maka.workspace.processes',
-        { processes: required(sdk.contracts.workspaceProcesses) },
+        {
+          processes: required(sdk.contracts.workspaceProcesses),
+          terminal: required(sdk.contracts.terminal),
+        },
         sdk.configurations.workspaceProcesses,
       ),
     },

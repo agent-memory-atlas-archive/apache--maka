@@ -26,11 +26,11 @@ use maka_runtime::{
 };
 use maka_sandbox::filesystem::{Access, Rule};
 
-struct Captured {
-    executor: maka_process::ShellExecutor,
+pub(super) struct Captured {
+    pub(super) executor: maka_process::ShellExecutor,
     ceiling: Sandbox,
 }
-fn capture(
+pub(super) fn capture(
     configuration: &SessionConfiguration,
     settings: &Configuration,
     state_root: &std::path::Path,
