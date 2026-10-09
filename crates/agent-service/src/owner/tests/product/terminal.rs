@@ -238,3 +238,94 @@ pub(super) fn run(
     click(presenter, "[ Close ]");
     await_screen(presenter, "File background draft");
 }
+
+pub(super) fn lost_reply(
+    presenter: &mut maka_tui::application::Presenter,
+    runtime: &tokio::runtime::Runtime,
+    fixture: &Fixture,
+    session: &str,
+    loss: &Arc<super::wire_loss::Loss>,
+) -> maka_plugin_core::operation::RecoveryRef {
+    let before = runtime
+        .block_on(fixture.store.query_shell_resources(session, None, 0))
+        .unwrap();
+    click(presenter, "[ Terminals & tasks ]");
+    loss.arm("start");
+    click(presenter, "[ New terminal ]");
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        match presenter.pump() {
+            Err(maka_ui::Error::Core(maka_plugin_core::Error::CleanupFailed(_))) => break,
+            Err(error) => panic!("unexpected completion failure: {error}"),
+            Ok(()) => {
+                let area = Rect::new(0, 0, 80, 24);
+                let mut buffer = Buffer::empty(area);
+                let scene = presenter.paint(area, &mut buffer).unwrap();
+                presenter.present(scene);
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "no dropped-reply cleanup failure: {}",
+                    screen(&buffer)
+                );
+                std::thread::yield_now();
+            }
+        }
+    }
+    let intercepted = loss
+        .take()
+        .expect("actual complete Host mutation reply intercepted");
+    intercepted
+        .cleanup
+        .expect("the actual Host channel completed before its reply was lost");
+    let lost = intercepted.reply;
+    assert_eq!(lost.reference.method, "start");
+    assert_eq!(lost.reference.contract.name, "maka.workspace.Terminal");
+    let Receipt::Recorded {
+        outcome: OperationOutcome::Returned { value },
+        cleanup,
+    } = &lost.receipt
+    else {
+        panic!(
+            "expected actual Host operation completion: {:?}",
+            lost.receipt
+        );
+    };
+    assert_eq!(
+        *cleanup,
+        maka_plugin_core::operation::OperationCleanup::Confirmed
+    );
+    assert_eq!(value["kind"], "completed");
+    let saved = runtime
+        .block_on(fixture.store.operation_observation(&lost.reference))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        saved.outcome,
+        OperationOutcome::Returned {
+            value: value.clone()
+        }
+    );
+    assert_eq!(saved.cleanup, *cleanup);
+    let after = runtime
+        .block_on(fixture.store.query_shell_resources(session, None, 0))
+        .unwrap();
+    assert_eq!(
+        after.total,
+        before.total + 1,
+        "lost reply must not replay start"
+    );
+    let task = after
+        .resources
+        .iter()
+        .find(|r| r.result.resource_ref == value["value"]["result"]["ref"])
+        .unwrap();
+    assert_eq!(task.result.mode, ShellMode::Pty);
+    assert_eq!(task.result.status, ShellStatus::Running);
+    // The durable business result cannot stand in for the lost physical close
+    // receipt. The original owner must remain fenced even after this lookup.
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
+    assert!(!presenter.can_shutdown());
+    lost.reference
+}

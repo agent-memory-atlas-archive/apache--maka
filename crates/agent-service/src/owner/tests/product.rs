@@ -22,6 +22,9 @@ mod studio;
 #[cfg(target_os = "macos")]
 #[path = "product/terminal.rs"]
 mod terminal;
+#[cfg(target_os = "macos")]
+#[path = "product/wire_loss.rs"]
+mod wire_loss;
 
 use super::*;
 use crossterm::event::{
@@ -33,6 +36,8 @@ use ratatui::{buffer::Buffer, layout::Rect, style::Color};
 use std::{path::PathBuf, process::Command, sync::OnceLock};
 
 struct Physical {
+    #[cfg(target_os = "macos")]
+    loss: Option<Arc<wire_loss::Loss>>,
     server: Arc<maka_application_bridge::transport::Server>,
     peer: Arc<maka_application_bridge::transport::Peers>,
 }
@@ -46,6 +51,8 @@ impl maka_application_bridge::transport::native::Connector for Physical {
     > {
         let server = self.server.clone();
         let peer = self.peer.clone();
+        #[cfg(target_os = "macos")]
+        let loss = self.loss.clone();
         Box::pin(async move {
             if stop.is_cancelled() {
                 return Err("physical opening cancelled before admission".into());
@@ -53,6 +60,11 @@ impl maka_application_bridge::transport::native::Connector for Physical {
             let (channel, accepted) = tokio::io::duplex(64 * 1024);
             let (reader, writer) = tokio::io::split(accepted);
             drop(server.serve(reader, writer, peer)?);
+            #[cfg(target_os = "macos")]
+            let channel = match loss {
+                Some(loss) => loss.channel(channel),
+                None => channel,
+            };
             Ok(Box::new(channel) as maka_application_bridge::transport::native::Stream)
         })
     }
@@ -254,6 +266,13 @@ fn packaged_process_permission_uses_original_native_approval_before_shell_effect
     packaged_product(ProductCase::ProcessPermissions);
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "opt-in product authoring build and actual dropped physical terminal reply"]
+fn packaged_terminal_lost_reply_preserves_original_receipt_and_cleanup_fence() {
+    packaged_product(ProductCase::TerminalLoss);
+}
+
 #[test]
 #[ignore = "opt-in product authoring build and actual image-producing service"]
 fn packaged_workspace_image_opens_original_viewer_and_preserves_native_draft() {
@@ -267,14 +286,23 @@ enum ProductCase {
     FilePermissions,
     #[cfg(target_os = "macos")]
     ProcessPermissions,
+    #[cfg(target_os = "macos")]
+    TerminalLoss,
     Image,
 }
 fn packaged_product(case: ProductCase) {
     let fail_labels_initialization = matches!(case, ProductCase::MetadataConflict);
     #[cfg(target_os = "macos")]
-    let process_permissions = matches!(case, ProductCase::ProcessPermissions);
+    let process_permissions = matches!(
+        case,
+        ProductCase::ProcessPermissions | ProductCase::TerminalLoss
+    );
     #[cfg(not(target_os = "macos"))]
     let process_permissions = false;
+    #[cfg(target_os = "macos")]
+    let terminal_loss = matches!(case, ProductCase::TerminalLoss);
+    #[cfg(target_os = "macos")]
+    let loss = terminal_loss.then(|| Arc::new(wire_loss::Loss::default()));
     let file_permissions = matches!(case, ProductCase::FilePermissions) || process_permissions;
     let image = matches!(case, ProductCase::Image);
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -655,6 +683,8 @@ process.stdout.write(output.outputFiles[0].text);
     let connection = Connection::new(Arc::new(Physical {
         server: wire_server.clone(),
         peer: callers.clone(),
+        #[cfg(target_os = "macos")]
+        loss: loss.clone(),
     }));
     let manager_input: Input = serde_json::from_value(authored["managementHost"].clone()).unwrap();
     let manager_configuration: maka_application_bridge::Host =
@@ -726,6 +756,8 @@ process.stdout.write(output.outputFiles[0].text);
     let manager_connection = Connection::new(Arc::new(Physical {
         server: manager_server.clone(),
         peer: manager_callers.clone(),
+        #[cfg(target_os = "macos")]
+        loss: None,
     }));
     let registrations: Vec<_> = observations
         .iter()
@@ -1248,6 +1280,54 @@ process.stdout.write(output.outputFiles[0].text);
         presenter
             .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
             .unwrap();
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(loss) = &loss {
+        let original = terminal::lost_reply(&mut presenter, &runtime, &fixture, &session_id, loss);
+        let consumer = plan
+            .instances()
+            .values()
+            .find(|instance| instance.path == ["terminal-panel"])
+            .expect("original terminal panel instance")
+            .identity
+            .clone();
+        let intents = runtime
+            .block_on(caller.application_intents(deployment.deployment, consumer.clone(), 0, 128))
+            .unwrap();
+        assert_eq!(
+            intents.len(),
+            1,
+            "only the original start intent was dispatched"
+        );
+        assert_eq!(intents[0].reference, original);
+        assert_eq!(intents[0].caller, deployment);
+        assert_eq!(intents[0].consumer, consumer);
+        assert!(!presenter.can_shutdown());
+        let shutdown = presenter.shutdown().unwrap_err();
+        assert!(
+            matches!(
+                shutdown,
+                maka_ui::Error::Core(maka_plugin_core::Error::CleanupFailed(_))
+            ),
+            "original invocation failure must survive surface restoration: {shutdown}"
+        );
+        runtime.block_on(async {
+            assert!(connection.close().await.is_err());
+            wire_server.close().await.unwrap();
+            manager_connection.close().await.unwrap();
+            manager_server.close().await.unwrap();
+            loss.drain().await;
+        });
+        // Isolated fixture destruction after actual Host channels drained is
+        // not an acknowledgement of the failed original UI/native call.
+        drop(presenter);
+        drop(registrations);
+        drop(connection);
+        runtime.block_on(manager_app.shutdown()).unwrap();
+        runtime.block_on(fixture.app.shutdown()).unwrap();
+        runtime.block_on(fixture.config.shutdown()).unwrap();
+        runtime.block_on(caller.shutdown()).unwrap();
+        return;
     }
     #[cfg(target_os = "macos")]
     if process_permissions {

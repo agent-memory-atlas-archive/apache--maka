@@ -279,6 +279,8 @@ pub(super) fn switch(
         maka_plugin_core::plan::Plan::prepare(&document.input, &declarations, &exports).unwrap();
     let peers = Peers::new(Peer::new(next.clone(), consumers(&plan, "local")).unwrap());
     let connection = Connection::new(Arc::new(Physical {
+        #[cfg(target_os = "macos")]
+        loss: None,
         server: server.clone(),
         peer: peers.clone(),
     }));
