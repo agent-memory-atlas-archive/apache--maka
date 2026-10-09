@@ -160,7 +160,10 @@ fn wait_for_target_at(
             && enabled.is_none_or(|color| buffer[(x, y)].fg == color)
             && (!(label.starts_with("    ")
                 || label.starts_with(['▸', '▾'])
-                || matches!(label, "All" | "Needs You"))
+                || matches!(
+                    label,
+                    "All" | "Needs You" | "Deny this call" | "Allow this call"
+                ))
                 || !buffer[(x, y)]
                     .modifier
                     .contains(ratatui::style::Modifier::DIM))
@@ -275,7 +278,8 @@ fn packaged_product(fail_labels_initialization: bool) {
         ]}));
         response(&mut next).await;
     });
-    let tooling = (!fail_labels_initialization).then(super::service_tools::Setup::questions);
+    let tooling = (!fail_labels_initialization)
+        .then(|| super::service_tools::Setup::questions().require_confirmation());
     let peer = tooling.as_ref().map_or_else(
         || Arc::new(maka_application_bridge::transport::PeerPolicy::default()),
         super::service_tools::Setup::policy,
@@ -342,6 +346,7 @@ fn packaged_product(fail_labels_initialization: bool) {
         "session-details",
         "queue-editor",
         "question-editor",
+        "service-approval",
         "help",
         "deployment",
         "deployment-manager",
@@ -2171,6 +2176,69 @@ process.stdout.write(output.outputFiles[0].text);
         .unwrap();
     await_screen(&mut presenter, "Question background draft");
     respond.send(()).unwrap();
+    await_screen(&mut presenter, "[ Confirm service call 1 ]");
+    click(&mut presenter, "[ Confirm service call 1 ]");
+    await_screen(&mut presenter, "Tool arguments");
+    let (x, y) = wait_for_target(&mut presenter, "[ Close ]", 0);
+    assert!(
+        draw(&mut presenter)[(x, y)]
+            .modifier
+            .contains(ratatui::style::Modifier::REVERSED),
+        "opening service confirmation must focus Close, never Allow"
+    );
+    let original = runtime
+        .block_on(fixture.store.pending_interactions(&session_id))
+        .unwrap();
+    assert_eq!(original.len(), 1);
+    assert!(matches!(
+        original[0].request,
+        maka_runtime::interaction::InteractionRequest::ServiceApproval { .. }
+    ));
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+        .unwrap();
+    await_screen(&mut presenter, "Question background draft");
+    click(&mut presenter, "[ Confirm service call 1 ]");
+    await_screen(&mut presenter, "Tool arguments");
+    wait_for_target(&mut presenter, "Allow this call", 0);
+    click(&mut presenter, "Deny this call");
+    let (x, y) = wait_for_target(&mut presenter, "Deny this call", 0);
+    assert!(
+        draw(&mut presenter)[(x, y)]
+            .modifier
+            .contains(ratatui::style::Modifier::UNDERLINED),
+        "the selected Deny frame must be presented before the next physical key"
+    );
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Right,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    let (x, y) = wait_for_target(&mut presenter, "Allow this call", 0);
+    assert!(
+        draw(&mut presenter)[(x, y)]
+            .modifier
+            .contains(ratatui::style::Modifier::UNDERLINED),
+        "native Right moves focus to Allow without approving"
+    );
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    assert_eq!(
+        runtime
+            .block_on(fixture.store.pending_interactions(&session_id))
+            .unwrap(),
+        original,
+        "selecting Allow must not execute before Confirm choice"
+    );
+    click(&mut presenter, "[ Confirm choice ]");
+    await_screen(&mut presenter, "This call was approved");
+    click(&mut presenter, "[ Close ]");
+    await_screen(&mut presenter, "Question background draft");
     await_screen(&mut presenter, "[ Questions 1 ]");
     click(&mut presenter, "[ Questions 1 ]");
     await_screen(&mut presenter, "Choose\\u{A}format");

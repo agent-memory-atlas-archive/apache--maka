@@ -19,6 +19,7 @@
 
 //! Explicitly bound question producer. Canonical records belong to the Run;
 //! the original admitted Host call owns waiting and durable withdrawal.
+use crate::interaction_wait::{wait, withdraw};
 use futures_util::future::BoxFuture;
 use maka_event_log::EventLog;
 use maka_plugin_core::contract::{Contract, Interface, Method, MethodMode, Transport};
@@ -229,67 +230,6 @@ impl Handler for Questions {
             encode(answer)
         })
     }
-}
-async fn wait(
-    store: &EventLog,
-    id: &str,
-    cancellation: &tokio_util::sync::CancellationToken,
-) -> Result<InteractionOutcome, &'static str> {
-    let mut commits = store.subscribe_commits();
-    loop {
-        let record = store
-            .interaction(id)
-            .await
-            .map_err(|_| "question_read_unavailable")?
-            .ok_or("question_missing")?;
-        if let Some(outcome) = record.outcome {
-            return Ok(outcome);
-        }
-        tokio::select! {
-            biased;
-            _ = cancellation.cancelled() => {
-                return store.commit_interaction_outcome(id, InteractionOutcome::Closure {
-                    reason: ClosureReason::ProducerCancelled, committed_at: super::owner::now(),
-                }).await.map_err(|_| "question_closure_unavailable")?.record.outcome.ok_or("question_outcome_missing");
-            }
-            result = commits.changed() => result.map_err(|_| "question_store_closed")?,
-        }
-    }
-}
-async fn withdraw(
-    store: &EventLog,
-    expected: &InteractionRecord,
-) -> Result<Option<InteractionOutcome>, &'static str> {
-    let Some(record) = store
-        .interaction(&expected.request_id)
-        .await
-        .map_err(|_| "question_cleanup_unconfirmed")?
-    else {
-        return Ok(None);
-    };
-    if record.session_id != expected.session_id
-        || record.turn_id != expected.turn_id
-        || record.run_id != expected.run_id
-        || record.request != expected.request
-    {
-        return Err("question_cleanup_identity_conflict");
-    }
-    let record = if record.outcome.is_none() {
-        store
-            .commit_interaction_outcome(
-                &record.request_id,
-                InteractionOutcome::Closure {
-                    reason: ClosureReason::ProducerCancelled,
-                    committed_at: super::owner::now(),
-                },
-            )
-            .await
-            .map_err(|_| "question_cleanup_unconfirmed")?
-            .record
-    } else {
-        record
-    };
-    Ok(record.outcome)
 }
 fn encode(answer: Answer) -> Result<Value, String> {
     serde_json::to_value(answer).map_err(|_| "question_output_unavailable".into())

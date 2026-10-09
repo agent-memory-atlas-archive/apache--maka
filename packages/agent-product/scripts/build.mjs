@@ -114,6 +114,7 @@ const specifications = {
       details: one(own.sessionDetailsContract),
       queueEditor: one(own.queueEditorContract),
       questionEditor: one(own.questionEditorContract),
+      serviceApproval: one(own.serviceApprovalContract),
       help: one(own.helpContract),
       navigation: one(own.navigationContract),
       timeline: one(own.timelineContract),
@@ -205,6 +206,16 @@ specifications['question-editor'] = {
   export: 'QuestionEditor',
   module: 'question-editor',
   imports: { editor: one(sdk.contracts.textarea) },
+};
+specifications['service-approval'] = {
+  contract: own.serviceApprovalContract,
+  export: 'ServiceApproval',
+  module: 'service-approval',
+  imports: {
+    agent: one(sdk.contracts.agent),
+    timeline: one(own.timelineContract),
+    reading: one(sdk.contracts.readingArea),
+  },
 };
 specifications['session-details'] = {
   contract: own.sessionDetailsContract,

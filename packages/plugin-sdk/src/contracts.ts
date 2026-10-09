@@ -4696,6 +4696,47 @@ export const contracts = {
               InteractionRequest: {
                 oneOf: [
                   {
+                    description:
+                      'Consent for one already journaled service call; never a service grant.',
+                    type: 'object',
+                    properties: {
+                      toolUseId: {
+                        type: 'string',
+                      },
+                      toolName: {
+                        type: 'string',
+                      },
+                      service: {
+                        type: 'string',
+                      },
+                      method: {
+                        type: 'string',
+                      },
+                      binding: {
+                        type: 'string',
+                      },
+                      through: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'service_approval',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: [
+                      'kind',
+                      'toolUseId',
+                      'toolName',
+                      'service',
+                      'method',
+                      'binding',
+                      'through',
+                    ],
+                  },
+                  {
                     type: 'object',
                     properties: {
                       toolUseId: {
@@ -5239,6 +5280,25 @@ export const contracts = {
                       },
                       kind: {
                         type: 'string',
+                        const: 'service_approval_decision',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'decision', 'committedAt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      decision: {
+                        $ref: '#/$defs/Decision2',
+                      },
+                      committedAt: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
                         const: 'permissions_decision',
                       },
                     },
@@ -5325,7 +5385,7 @@ export const contracts = {
                     type: 'object',
                     properties: {
                       decision: {
-                        $ref: '#/$defs/Decision2',
+                        $ref: '#/$defs/Decision',
                       },
                       committedAt: {
                         type: 'integer',
@@ -5362,6 +5422,10 @@ export const contracts = {
                 ],
               },
               Decision: {
+                type: 'string',
+                enum: ['allow', 'deny'],
+              },
+              Decision2: {
                 oneOf: [
                   {
                     type: 'object',
@@ -5416,10 +5480,6 @@ export const contracts = {
                     },
                   },
                 ],
-              },
-              Decision2: {
-                type: 'string',
-                enum: ['allow', 'deny'],
               },
               ClosureReason: {
                 type: 'string',
@@ -6028,7 +6088,7 @@ export const contracts = {
               },
               AgentInteractionKind: {
                 type: 'string',
-                enum: ['question', 'permissions', 'form', 'client_capability'],
+                enum: ['service_approval', 'question', 'permissions', 'form', 'client_capability'],
               },
             },
           },
@@ -6217,6 +6277,20 @@ export const contracts = {
                       },
                       kind: {
                         type: 'string',
+                        const: 'service_approval',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'decision'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      decision: {
+                        $ref: '#/$defs/Decision2',
+                      },
+                      kind: {
+                        type: 'string',
                         const: 'permissions',
                       },
                     },
@@ -6293,7 +6367,7 @@ export const contracts = {
                     type: 'object',
                     properties: {
                       decision: {
-                        $ref: '#/$defs/Decision2',
+                        $ref: '#/$defs/Decision',
                       },
                       kind: {
                         type: 'string',
@@ -6306,6 +6380,10 @@ export const contracts = {
                 ],
               },
               Decision: {
+                type: 'string',
+                enum: ['allow', 'deny'],
+              },
+              Decision2: {
                 oneOf: [
                   {
                     type: 'object',
@@ -6456,10 +6534,6 @@ export const contracts = {
                   },
                 ],
               },
-              Decision2: {
-                type: 'string',
-                enum: ['allow', 'deny'],
-              },
             },
           },
           output: {
@@ -6545,6 +6619,47 @@ export const contracts = {
               },
               InteractionRequest: {
                 oneOf: [
+                  {
+                    description:
+                      'Consent for one already journaled service call; never a service grant.',
+                    type: 'object',
+                    properties: {
+                      toolUseId: {
+                        type: 'string',
+                      },
+                      toolName: {
+                        type: 'string',
+                      },
+                      service: {
+                        type: 'string',
+                      },
+                      method: {
+                        type: 'string',
+                      },
+                      binding: {
+                        type: 'string',
+                      },
+                      through: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'service_approval',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: [
+                      'kind',
+                      'toolUseId',
+                      'toolName',
+                      'service',
+                      'method',
+                      'binding',
+                      'through',
+                    ],
+                  },
                   {
                     type: 'object',
                     properties: {
@@ -7089,6 +7204,25 @@ export const contracts = {
                       },
                       kind: {
                         type: 'string',
+                        const: 'service_approval_decision',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'decision', 'committedAt'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      decision: {
+                        $ref: '#/$defs/Decision2',
+                      },
+                      committedAt: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
                         const: 'permissions_decision',
                       },
                     },
@@ -7175,7 +7309,7 @@ export const contracts = {
                     type: 'object',
                     properties: {
                       decision: {
-                        $ref: '#/$defs/Decision2',
+                        $ref: '#/$defs/Decision',
                       },
                       committedAt: {
                         type: 'integer',
@@ -7212,6 +7346,10 @@ export const contracts = {
                 ],
               },
               Decision: {
+                type: 'string',
+                enum: ['allow', 'deny'],
+              },
+              Decision2: {
                 oneOf: [
                   {
                     type: 'object',
@@ -7266,10 +7404,6 @@ export const contracts = {
                     },
                   },
                 ],
-              },
-              Decision2: {
-                type: 'string',
-                enum: ['allow', 'deny'],
               },
               ClosureReason: {
                 type: 'string',
@@ -7569,11 +7703,8 @@ export const contracts = {
                 minimum: 0,
                 maximum: 9007199254740991,
               },
-              sequence: {
-                type: 'integer',
-                format: 'uint64',
-                minimum: 1,
-                maximum: 9007199254740991,
+              source: {
+                $ref: '#/$defs/AgentToolSourceReference',
               },
               field: {
                 $ref: '#/$defs/ToolSourceField',
@@ -7583,8 +7714,45 @@ export const contracts = {
               },
             },
             additionalProperties: false,
-            required: ['sessionId', 'through', 'sequence', 'field', 'position'],
+            required: ['sessionId', 'through', 'source', 'field', 'position'],
             $defs: {
+              AgentToolSourceReference: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      sequence: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 1,
+                        maximum: 9007199254740991,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'sequence',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'sequence'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      toolUseId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 256,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'tool_use',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'toolUseId'],
+                  },
+                ],
+              },
               ToolSourceField: {
                 description:
                   'An explicitly selected canonical tool field, never an execution grant.',
@@ -8092,7 +8260,7 @@ export const contracts = {
               },
               AgentInteractionKind: {
                 type: 'string',
-                enum: ['question', 'permissions', 'form', 'client_capability'],
+                enum: ['service_approval', 'question', 'permissions', 'form', 'client_capability'],
               },
             },
           },

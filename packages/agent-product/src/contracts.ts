@@ -173,6 +173,15 @@ export interface TimelineProps {
   landing: { sequence: number; edge: 'start' | 'end' };
   live: boolean;
 }
+export interface ServiceApprovalProps {
+  theme: Theme;
+  locale: string;
+  open: boolean;
+  busy: boolean;
+  checking: boolean;
+  status: string;
+  record: InteractionRecord;
+}
 export interface QueueEditorProps {
   theme: Theme;
   locale: string;
@@ -472,6 +481,23 @@ export const questionEditorContract = component(
         }),
       ),
     },
+  },
+);
+export const serviceApprovalContract = component(
+  'maka.agent.ServiceApproval',
+  object({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    busy: { type: 'boolean' },
+    checking: { type: 'boolean' },
+    status: string,
+    record: { $ref: '#/$defs/InteractionRecord' },
+  }),
+  {
+    closed: object({}),
+    check: object({}),
+    submit: object({ requestId: string, decision: { enum: ['allow', 'deny'] } }),
   },
 );
 export const composerContract = component(

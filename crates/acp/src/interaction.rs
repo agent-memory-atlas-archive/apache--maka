@@ -42,6 +42,9 @@ pub fn request(
         return Err("Interaction is no longer pending".into());
     }
     match snapshot.request() {
+        InteractionRequest::ServiceApproval { .. } => {
+            Err("Service confirmation requires the application Agent API".into())
+        }
         InteractionRequest::Permissions { .. } | InteractionRequest::ClientCapability { .. } => {
             permission::request(snapshot)
         }

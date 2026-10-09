@@ -306,6 +306,9 @@ fn project(
                         PendingInteraction {
                             request_id: record.request_id,
                             kind: match record.request {
+                                InteractionRequest::ServiceApproval { .. } => {
+                                    InteractionKind::ServiceApproval
+                                }
                                 InteractionRequest::Question { .. } => InteractionKind::Question,
                                 InteractionRequest::Form { .. } => InteractionKind::Form,
                                 InteractionRequest::Permissions { .. } => {

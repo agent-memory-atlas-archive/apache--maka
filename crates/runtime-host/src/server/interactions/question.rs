@@ -109,6 +109,7 @@ impl ToolPreparer for Interactions {
                             Err(ToolError::Failed(format!("Question closed: {reason:?}")))
                         }
                         InteractionOutcome::FormAnswer { .. }
+                        | InteractionOutcome::ServiceApprovalDecision { .. }
                         | InteractionOutcome::PermissionsDecision { .. }
                         | InteractionOutcome::ClientCapabilityDecision { .. } => {
                             owner.shutdown.cancel();

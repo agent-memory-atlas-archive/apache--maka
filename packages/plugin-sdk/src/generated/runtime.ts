@@ -793,6 +793,7 @@ export type EditorCapture =
       revision: number;
       kind: 'at_revision';
     };
+export type AgentToolConfirmation = 'required' | 'preapproved';
 export type SettingsModelsRead =
   | {
       query?: string;
@@ -1412,10 +1413,19 @@ export type AgentMetadataResult =
       reason: AgentRejection;
       kind: 'rejected';
     };
-export type AgentInteractionKind = 'question' | 'permissions' | 'form' | 'client_capability';
+export type AgentInteractionKind =
+  | 'service_approval'
+  | 'question'
+  | 'permissions'
+  | 'form'
+  | 'client_capability';
 export type InteractionAnswer =
   | {
       decision: Decision;
+      kind: 'service_approval';
+    }
+  | {
+      decision: Decision2;
       kind: 'permissions';
     }
   | {
@@ -1443,10 +1453,11 @@ export type InteractionAnswer =
       [k: string]: unknown | undefined;
     })
   | {
-      decision: Decision2;
+      decision: Decision;
       kind: 'client_capability';
     };
-export type Decision =
+export type Decision = 'allow' | 'deny';
+export type Decision2 =
   | {
       decision: 'deny';
     }
@@ -1472,7 +1483,6 @@ export type Network =
     };
 export type Scope2 = 'once' | 'turn' | 'session';
 export type FormValue = string | number | boolean | string[];
-export type Decision2 = 'allow' | 'deny';
 export type AgentInteractionResult =
   | {
       record: InteractionRecord;
@@ -1483,6 +1493,15 @@ export type AgentInteractionResult =
       kind: 'rejected';
     };
 export type InteractionRequest =
+  | {
+      toolUseId: string;
+      toolName: string;
+      service: string;
+      method: string;
+      binding: string;
+      through: number;
+      kind: 'service_approval';
+    }
   | {
       toolUseId: string | null;
       baseRevision: number;
@@ -1574,6 +1593,11 @@ export type InteractionOutcome =
   | {
       decision: Decision;
       committedAt: number;
+      kind: 'service_approval_decision';
+    }
+  | {
+      decision: Decision2;
+      committedAt: number;
       kind: 'permissions_decision';
     }
   | {
@@ -1603,7 +1627,7 @@ export type InteractionOutcome =
       [k: string]: unknown | undefined;
     })
   | {
-      decision: Decision2;
+      decision: Decision;
       committedAt: number;
       kind: 'client_capability_decision';
     }
@@ -1816,6 +1840,15 @@ export type AgentHistoryPage =
       before: Cursor | null;
       after: Cursor | null;
       kind: 'ready';
+    };
+export type AgentToolSourceReference =
+  | {
+      sequence: number;
+      kind: 'sequence';
+    }
+  | {
+      toolUseId: string;
+      kind: 'tool_use';
     };
 /**
  * An explicitly selected canonical tool field, never an execution grant.
@@ -2938,6 +2971,10 @@ export interface DirectoryRootSpec {
   path: string;
 }
 export interface AgentServiceTool {
+  /**
+   * Additional user consent for this exact call; service grants remain independent.
+   */
+  confirmation: AgentToolConfirmation;
   name: string;
   description: string;
   import: string;
@@ -3652,7 +3689,7 @@ export interface AgentHistoryChunk {
 export interface AgentToolSourceRead {
   sessionId: string;
   through: number;
-  sequence: number;
+  source: AgentToolSourceReference;
   field: ToolSourceField;
   position: SourcePosition;
 }

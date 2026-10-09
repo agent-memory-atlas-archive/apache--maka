@@ -21,6 +21,7 @@
 //! chooses whether to activate it; installing this crate does not start a product.
 /// Public wire types and generated contracts. 公开协议类型与生成契约。
 pub mod contract;
+mod interaction_wait;
 mod model;
 mod owner;
 pub mod questions;

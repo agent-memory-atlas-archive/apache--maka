@@ -100,8 +100,12 @@ impl Owner {
         }
         let settings: Configuration =
             serde_json::from_value(input).map_err(|_| "agent_configuration_invalid")?;
-        let (tools, tool_basis) = crate::tools::catalog(context.services(), &settings.tools)?;
         let persistence = context.persistence().ok_or("agent_requires_persistence")?;
+        let (tools, tool_basis) = crate::tools::catalog(
+            context.services(),
+            persistence.store().clone(),
+            &settings.tools,
+        )?;
         let root = persistence
             .store()
             .owned_root()

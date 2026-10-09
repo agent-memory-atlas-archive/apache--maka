@@ -48,6 +48,8 @@ pub struct Configuration {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentServiceTool")]
 pub struct ServiceTool {
+    /// Additional user consent for this exact call; service grants remain independent.
+    pub confirmation: ToolConfirmation,
     #[schemars(length(min = 1, max = 128))]
     pub name: String,
     #[schemars(length(min = 1, max = 4096))]
@@ -56,6 +58,13 @@ pub struct ServiceTool {
     pub import: String,
     #[schemars(length(min = 1, max = 256))]
     pub method: String,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "AgentToolConfirmation")]
+pub enum ToolConfirmation {
+    Required,
+    Preapproved,
 }
 pub fn configuration_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(Configuration)).expect("configuration schema")
@@ -600,10 +609,27 @@ pub struct ToolSourceRead {
     pub session_id: String,
     #[schemars(range(max = 9_007_199_254_740_991u64))]
     pub through: u64,
-    #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
-    pub sequence: u64,
+    pub source: ToolSourceReference,
     pub field: maka_plugins::session::history::ToolSourceField,
     pub position: maka_plugins::session::history::SourcePosition,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename = "AgentToolSourceReference")]
+pub enum ToolSourceReference {
+    Sequence {
+        #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
+        sequence: u64,
+    },
+    ToolUse {
+        #[schemars(length(min = 1, max = 256))]
+        tool_use_id: String,
+    },
 }
 #[derive(Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]

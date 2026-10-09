@@ -36,6 +36,41 @@ const SOURCE: &str = "WITH source AS (SELECT
     FROM transcript_rows WHERE session_id = ?1 AND sequence = ?2)";
 
 impl EventLog {
+    /// Locate the original call in an already prepared immutable transcript.
+    pub async fn tool_source_sequence(
+        &self,
+        session: &str,
+        through: u64,
+        tool_use_id: &str,
+    ) -> Result<u64, StoreError> {
+        self.validate_root()?;
+        crate::sessions::validate_id(session)?;
+        let fence = maka_presentation::watermark(through)?;
+        let fence_sql = sql_number(fence)?;
+        let session = session.to_owned();
+        let tool_use_id = tool_use_id.to_owned();
+        self.connection
+            .run(move |connection| {
+                Box::pin(async move {
+                    let mut tx = connection.begin().await?;
+                    prepared(&mut tx, &session, fence).await?;
+                    let sequence: i64 = sqlx::query_scalar(
+                        "SELECT sequence FROM transcript_rows
+                 WHERE session_id = ? AND message_id = ? AND sequence <= ?
+                 AND json_extract(payload, '$.type') = 'tool_call'",
+                    )
+                    .bind(&session)
+                    .bind(tool_use_id)
+                    .bind(fence_sql)
+                    .fetch_optional(&mut *tx)
+                    .await?
+                    .ok_or_else(|| invalid("tool source was not found"))?;
+                    tx.commit().await?;
+                    sequence_number(sequence)
+                })
+            })
+            .await
+    }
     /// Reads one selected immutable canonical field; no cache or arbitrary path.
     #[allow(clippy::too_many_arguments)]
     pub async fn tool_source(

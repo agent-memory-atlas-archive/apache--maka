@@ -87,6 +87,7 @@ impl Interactions {
                             "Client Capability approval closed: {reason:?}"
                         ))),
                         InteractionOutcome::FormAnswer { .. }
+                        | InteractionOutcome::ServiceApprovalDecision { .. }
                         | InteractionOutcome::PermissionsDecision { .. }
                         | InteractionOutcome::QuestionAnswer { .. } => {
                             owner.shutdown.cancel();

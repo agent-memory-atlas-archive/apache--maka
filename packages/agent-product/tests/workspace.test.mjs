@@ -722,6 +722,7 @@ test('both product compositions use actual immutable package refs and check in t
               ? [
                   {
                     name: 'AskUserQuestion',
+                    confirmation: 'preapproved',
                     description: 'Ask required questions.',
                     import: 'questions',
                     method: 'ask',
@@ -4477,7 +4478,7 @@ for (const target of ['desktop', 'tui']) {
       assert.deepEqual(first.input, {
         sessionId: session.id,
         through: 1000,
-        sequence: 400,
+        source: { kind: 'sequence', sequence: 400 },
         field: 'arguments',
         position: { kind: 'start' },
       });
@@ -8310,8 +8311,21 @@ const questionRecord = {
   },
   outcome: null,
 };
+const approvalRecord = {
+  ...questionRecord,
+  requestId: 'service_original',
+  request: {
+    kind: 'service_approval',
+    toolUseId: 'original_tool',
+    toolName: 'Counter',
+    service: 'Counter service',
+    method: 'write',
+    binding: 'original_binding',
+    through: 10,
+  },
+};
 for (const target of ['tui', 'desktop']) {
-  async function questionClient() {
+  async function interactionClient(record = questionRecord) {
     const definition = await import(
       pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
     );
@@ -8330,30 +8344,199 @@ for (const target of ['tui', 'desktop']) {
           kind: 'interactions',
           pending: {
             revision: 3,
-            entries: [{ requestId: questionRecord.requestId, kind: 'question' }],
+            entries: [{ requestId: record.requestId, kind: record.request.kind }],
           },
         },
       },
     });
     assert.deepEqual(client.state.watch, watch);
     assert.equal(client.state.epoch, epoch);
-    client.raw('question-open-' + questionRecord.requestId);
-    client.query('interaction', structuredClone(questionRecord));
-    client.question = (name, event = {}) =>
+    client.raw(
+      (record.request.kind === 'question' ? 'question-open-' : 'approval-open-') + record.requestId,
+    );
+    client.query('interaction', structuredClone(record));
+    client.interaction = (name, event = {}) =>
       client.input({
         kind: 'component',
-        child: `question-form-${client.state.question.attempt}`,
+        child: `${record.request.kind === 'question' ? 'question-form' : 'service-approval'}-${client.state.interaction.attempt}`,
         name,
         event,
       });
     return client;
   }
+  test(`${target} service confirmation recovers the original response and rejects stale dialog events`, async () => {
+    const client = await interactionClient(approvalRecord);
+    const selected = structuredClone(client.state.selected),
+      epoch = client.state.epoch;
+    const child = modelSlots(client.output.frame.view).find(
+      (node) => node.binding === 'serviceApproval',
+    );
+    assert.equal(child.props.record.request.toolUseId, 'original_tool');
+    client.interaction('submit', { requestId: 'foreign', decision: 'allow' });
+    assert.equal(client.output.actions.length, 0);
+    client.interaction('submit', { requestId: approvalRecord.requestId, decision: 'allow' });
+    const respond = client.find('respond');
+    assert.deepEqual(respond.input, {
+      sessionId: 'session',
+      requestId: approvalRecord.requestId,
+      answer: { kind: 'service_approval', decision: 'allow' },
+    });
+    const original = { ...reference, method: 'respond' };
+    client.complete(respond, {
+      status: 'operation',
+      reply: { reference: original, receipt: { kind: 'unavailable', diagnostic: 'disconnected' } },
+    });
+    client.interaction('check');
+    assert.ok(client.output.actions.every((action) => action.method !== 'respond'));
+    assert.deepEqual(client.find('read').input, original);
+    const resolved = {
+      ...approvalRecord,
+      outcome: { kind: 'service_approval_decision', decision: 'deny', committedAt: 5 },
+    };
+    client.query('interaction', resolved);
+    assert.deepEqual(client.state.interaction.record, resolved);
+    assert.ok(client.state.uncertain);
+    client.interaction('submit', { requestId: approvalRecord.requestId, decision: 'allow' });
+    assert.equal(client.output.actions.length, 0);
+    client.query('read', {
+      reference: original,
+      receipt: {
+        kind: 'recorded',
+        outcome: { kind: 'returned', value: { kind: 'recorded', record: resolved } },
+        cleanup: { kind: 'confirmed' },
+      },
+    });
+    assert.equal(client.state.uncertain, null);
+    assert.deepEqual(client.state.selected, selected);
+    assert.equal(client.state.epoch, epoch);
+    assert.equal(client.state.command, null);
+    client.interaction('closed');
+    client.interaction('submit', { requestId: approvalRecord.requestId, decision: 'allow' });
+    assert.equal(client.output.actions.length, 0);
+  });
+  test(`${target} confirmation defaults to deny and pages original arguments before explicit allow`, async () => {
+    const { component } = await import(
+      pathToFileURL(resolve(root, `dist/packages/service-approval/${target}.js`))
+    );
+    let props = {
+      theme: values.appearance[0],
+      locale: 'en',
+      open: true,
+      busy: false,
+      checking: false,
+      status: '',
+      record: structuredClone(approvalRecord),
+    };
+    let result = component.mount(props, {});
+    const input = (value) => {
+      result = component.event(structuredClone(result.frame.state), value, props, {});
+    };
+    const raw = (key) => input({ kind: 'raw', key, event: {} });
+    const source = () =>
+      modelSlots(result.frame.view).find((node) => node.binding === 'timeline').props.source;
+    const request = result.actions[0];
+    assert.deepEqual(request.input, {
+      sessionId: 'session',
+      through: 10,
+      source: { kind: 'tool_use', toolUseId: 'original_tool' },
+      field: 'arguments',
+      position: { kind: 'start' },
+    });
+    assert.equal(result.frame.view.children[0].children[0].key, 'close');
+    raw('allow');
+    assert.equal(result.frame.state.decision, 'deny');
+    raw('submit');
+    assert.deepEqual(result.events, [
+      { name: 'submit', value: { requestId: 'service_original', decision: 'deny' } },
+    ]);
+    input({ kind: 'action', key: request.key, event: { status: 'failed', reason: 'offline' } });
+    assert.equal(source().failed, true);
+    input({ kind: 'component', child: 'arguments', name: 'retry', event: {} });
+    const body = JSON.stringify({ note: '界🙂'.repeat(1500), amount: 7 });
+    const prefix = Array.from(body).slice(0, 1500).join(''),
+      suffix = body.slice(prefix.length);
+    const utf8 = (text) => Buffer.byteLength(text);
+    const chunk = (text, offset) => ({
+      kind: 'ready',
+      through: 10,
+      source: {
+        sequence: 100,
+        field: 'arguments',
+        format: 'json',
+        offset,
+        totalBytes: utf8(body),
+        text,
+        tool: { kind: 'call', toolUseId: 'original_tool', toolName: 'Counter' },
+      },
+    });
+    input({
+      kind: 'action',
+      key: result.actions[0].key,
+      event: { status: 'succeeded', value: chunk(prefix, 0) },
+    });
+    assert.equal(source().text, prefix);
+    assert.equal(source().atEnd, false);
+    input({ kind: 'component', child: 'arguments', name: 'next', event: {} });
+    const next = result.actions[0];
+    assert.deepEqual(next.input.position, { kind: 'after', offset: utf8(prefix) });
+    // A preparing response keeps the exact original source and position.
+    input({
+      kind: 'action',
+      key: next.key,
+      event: { status: 'succeeded', value: { kind: 'preparing', through: 10 } },
+    });
+    assert.deepEqual(result.actions[0].input, next.input);
+    input({
+      kind: 'action',
+      key: result.actions[0].key,
+      event: { status: 'succeeded', value: chunk(suffix, utf8(prefix)) },
+    });
+    assert.equal(source().text, suffix);
+    assert.equal(source().atEnd, true);
+    raw('allow');
+    assert.equal(result.events.length, 0);
+    raw('submit');
+    assert.deepEqual(result.events, [
+      { name: 'submit', value: { requestId: 'service_original', decision: 'allow' } },
+    ]);
+    props = { ...props, busy: true };
+    raw('submit');
+    assert.equal(result.events.length, 0);
+    props = { ...props, busy: false, open: false };
+    raw('submit');
+    assert.equal(result.events.length, 0);
+    props = { ...props, open: true, record: { ...approvalRecord, requestId: 'successor' } };
+    result = component.update(result.frame.state, props, {});
+    assert.equal(result.frame.state.decision, 'deny');
+    const current = result.actions[0];
+    input({
+      kind: 'action',
+      key: next.key,
+      event: { status: 'succeeded', value: chunk(suffix, utf8(prefix)) },
+    });
+    assert.equal(source().ready, false);
+    assert.equal(result.frame.state.pending.key, current.key);
+    input({
+      kind: 'action',
+      key: current.key,
+      event: {
+        status: 'succeeded',
+        value: {
+          ...chunk(prefix, 0),
+          through: 9,
+        },
+      },
+    });
+    assert.equal(source().failed, true);
+    raw('allow');
+    assert.equal(result.frame.state.decision, 'deny');
+  });
   test(`${target} question answers capture original fields and recover without resubmission`, async () => {
-    const client = await questionClient();
+    const client = await interactionClient();
     const child = modelSlots(client.output.frame.view).find(
       (node) => node.binding === 'questionEditor',
     );
-    client.question('submit', {
+    client.interaction('submit', {
       requestId: questionRecord.requestId,
       answers: [
         { kind: 'option', index: 0 },
@@ -8381,7 +8564,7 @@ for (const target of ['tui', 'desktop']) {
       reply: { reference: original, receipt: { kind: 'unavailable', diagnostic: 'disconnected' } },
     });
     assert.deepEqual(client.state.uncertain.reference, original);
-    client.question('check');
+    client.interaction('check');
     assert.ok(client.output.actions.every((action) => action.method !== 'respond'));
     assert.deepEqual(client.find('read').input, original);
     const resolved = {
@@ -8393,9 +8576,9 @@ for (const target of ['tui', 'desktop']) {
       },
     };
     client.query('interaction', resolved);
-    assert.deepEqual(client.state.question.record, resolved);
+    assert.deepEqual(client.state.interaction.record, resolved);
     assert.ok(client.state.uncertain, 'a canonical read does not invent an operation receipt');
-    client.question('submit', {
+    client.interaction('submit', {
       requestId: questionRecord.requestId,
       answers: [{ kind: 'skip' }, { kind: 'skip' }, { kind: 'skip' }],
     });
@@ -8412,8 +8595,8 @@ for (const target of ['tui', 'desktop']) {
     assert.equal(client.state.command, null, 'answer never resets the Composer');
   });
   test(`${target} closing during native answer capture never admits a late response`, async () => {
-    const client = await questionClient();
-    client.question('submit', {
+    const client = await interactionClient();
+    client.interaction('submit', {
       requestId: questionRecord.requestId,
       answers: [
         { kind: 'option', index: 0 },
@@ -8422,7 +8605,7 @@ for (const target of ['tui', 'desktop']) {
       ],
     });
     const read = client.find('read');
-    client.question('closed');
+    client.interaction('closed');
     client.complete(read, {
       status: 'succeeded',
       value: { text: 'Hello', metadata: draft.snapshot.text },
@@ -8431,7 +8614,7 @@ for (const target of ['tui', 'desktop']) {
     assert.equal(client.output.actions.length, 0);
     assert.ok(![...client.actions.values()].some((action) => action.method === 'respond'));
     client.raw('question-open-' + questionRecord.requestId);
-    assert.equal(client.state.question.record.requestId, questionRecord.requestId);
+    assert.equal(client.state.interaction.record.requestId, questionRecord.requestId);
   });
   test(`${target} question form preserves three native drafts and requires an explicit submit`, async () => {
     const { component } = await import(

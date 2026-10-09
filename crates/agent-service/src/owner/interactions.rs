@@ -41,6 +41,9 @@ impl Owner {
                 .map(|record| InteractionSummary {
                     request_id: record.request_id,
                     kind: match record.request {
+                        InteractionRequest::ServiceApproval { .. } => {
+                            InteractionKind::ServiceApproval
+                        }
                         InteractionRequest::Question { .. } => InteractionKind::Question,
                         InteractionRequest::Permissions { .. } => InteractionKind::Permissions,
                         InteractionRequest::Form { .. } => InteractionKind::Form,
@@ -87,13 +90,18 @@ impl Owner {
         else {
             return reject(InteractionRejection::Unavailable);
         };
-        // This slice exposes user questions only. Legacy permission records do
-        // not imply a native Agent permission policy or a grant authority.
-        if !matches!(record.request, InteractionRequest::Question { .. }) {
+        // Service confirmation is consent for one captured call, never a grant.
+        // Legacy permission records still require their original policy owner.
+        if !matches!(
+            record.request,
+            InteractionRequest::Question { .. } | InteractionRequest::ServiceApproval { .. }
+        ) {
             return reject(InteractionRejection::Unsupported);
         }
-        if !matches!(input.answer, InteractionAnswer::Question { .. })
-            || input.answer.validate_for_request(&record.request).is_err()
+        if !matches!(
+            input.answer,
+            InteractionAnswer::Question { .. } | InteractionAnswer::ServiceApproval { .. }
+        ) || input.answer.validate_for_request(&record.request).is_err()
         {
             return reject(InteractionRejection::InvalidAnswer);
         }

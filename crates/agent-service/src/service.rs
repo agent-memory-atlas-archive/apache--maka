@@ -225,6 +225,18 @@ impl Handler for Agent {
                         .await
                         .map_err(|_| "agent_history_unavailable")?
                     {
+                        let sequence = match input.source {
+                            ToolSourceReference::Sequence { sequence } => sequence,
+                            ToolSourceReference::ToolUse { tool_use_id } => owner
+                                .store
+                                .tool_source_sequence(
+                                    &input.session_id,
+                                    input.through,
+                                    &tool_use_id,
+                                )
+                                .await
+                                .map_err(|_| "agent_history_unavailable")?,
+                        };
                         ToolSourcePage::Ready {
                             through: input.through,
                             source: owner
@@ -232,7 +244,7 @@ impl Handler for Agent {
                                 .tool_source(
                                     &input.session_id,
                                     input.through,
-                                    input.sequence,
+                                    sequence,
                                     input.field,
                                     input.position,
                                     8192,

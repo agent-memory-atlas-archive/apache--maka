@@ -74,6 +74,11 @@ export const configurations = {
       AgentServiceTool: {
         type: 'object',
         properties: {
+          confirmation: {
+            description:
+              'Additional user consent for this exact call; service grants remain independent.',
+            $ref: '#/$defs/AgentToolConfirmation',
+          },
           name: {
             type: 'string',
             minLength: 1,
@@ -96,7 +101,11 @@ export const configurations = {
           },
         },
         additionalProperties: false,
-        required: ['name', 'description', 'import', 'method'],
+        required: ['confirmation', 'name', 'description', 'import', 'method'],
+      },
+      AgentToolConfirmation: {
+        type: 'string',
+        enum: ['required', 'preapproved'],
       },
     },
   },

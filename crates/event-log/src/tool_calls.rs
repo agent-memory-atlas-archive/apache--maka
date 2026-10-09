@@ -35,6 +35,48 @@ fn identity(value: &str) -> Result<(), StoreError> {
     Ok(())
 }
 
+impl crate::EventLog {
+    /// The immutable T1 whose input the original prepared effect will execute.
+    /// This is evidence for a confirmation, not effect admission or authorization.
+    pub async fn tool_dispatch_fence(
+        &self,
+        context: &maka_runtime::tools::ToolCallContext,
+        name: &str,
+        input: &serde_json::Value,
+    ) -> Result<u64, StoreError> {
+        self.validate_root()?;
+        let context = context.clone();
+        let name = name.to_owned();
+        let input = input.clone();
+        self.connection
+            .run(move |connection| {
+                Box::pin(async move {
+                    let (sequence, encoded): (i64, String) = sqlx::query_as(
+                        "SELECT sequence, event_json FROM runtime_events
+                 WHERE invocation_id = ? AND operation_id = ? AND kind = 'tool_dispatched'",
+                    )
+                    .bind(&context.invocation.invocation_id)
+                    .bind(&context.operation_id)
+                    .fetch_optional(&mut *connection)
+                    .await?
+                    .ok_or_else(|| invalid("service confirmation requires durable dispatch"))?;
+                    let event: RuntimeEvent = serde_json::from_str(&encoded)?;
+                    if event.invocation != context.invocation
+                        || !matches!(event.fact,
+                Fact::ToolDispatched { name: original_name, input: original_input, .. }
+                if original_name == name && original_input == input)
+                    {
+                        return Err(invalid(
+                            "service confirmation differs from durable dispatch",
+                        ));
+                    }
+                    crate::sequence_number(sequence)
+                })
+            })
+            .await
+    }
+}
+
 /// Runs after exact replay detection, inside the append transaction. SQL reads
 /// the committed facts and earlier facts in this batch, never a mutable cache.
 pub(crate) async fn validate(

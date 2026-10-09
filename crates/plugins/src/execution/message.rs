@@ -105,6 +105,7 @@ pub struct PendingInteraction {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InteractionKind {
+    ServiceApproval,
     Question,
     Form,
     Permissions,

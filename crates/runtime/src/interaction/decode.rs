@@ -32,6 +32,28 @@ fn field<T: serde::de::DeserializeOwned>(v: &Value, key: &str) -> Result<T> {
 }
 fn request(v: &Value) -> Result<InteractionRequest> {
     let value = match v["kind"].as_str() {
+        Some("service_approval") => {
+            shape(
+                v,
+                &[
+                    "kind",
+                    "toolUseId",
+                    "toolName",
+                    "service",
+                    "method",
+                    "binding",
+                    "through",
+                ],
+            )?;
+            InteractionRequest::ServiceApproval {
+                tool_use_id: field(v, "toolUseId")?,
+                tool_name: field(v, "toolName")?,
+                service: field(v, "service")?,
+                method: field(v, "method")?,
+                binding: field(v, "binding")?,
+                through: field(v, "through")?,
+            }
+        }
         Some("permissions") => {
             shape(v, &["kind", "toolUseId", "baseRevision", "request"])?;
             InteractionRequest::Permissions {
@@ -92,6 +114,12 @@ fn result(v: &Value, outcome: bool) -> Result<FormResult> {
 }
 fn answer(v: &Value) -> Result<InteractionAnswer> {
     let value = match v["kind"].as_str() {
+        Some("service_approval") => {
+            shape(v, &["kind", "decision"])?;
+            InteractionAnswer::ServiceApproval {
+                decision: field(v, "decision")?,
+            }
+        }
         Some("permissions") => {
             shape(v, &["kind", "decision"])?;
             InteractionAnswer::Permissions {
@@ -121,6 +149,13 @@ fn answer(v: &Value) -> Result<InteractionAnswer> {
 fn outcome(v: &Value) -> Result<InteractionOutcome> {
     let committed_at = field(v, "committedAt")?;
     let value = match v["kind"].as_str() {
+        Some("service_approval_decision") => {
+            shape(v, &["kind", "decision", "committedAt"])?;
+            InteractionOutcome::ServiceApprovalDecision {
+                decision: field(v, "decision")?,
+                committed_at,
+            }
+        }
         Some("permissions_decision") => {
             shape(v, &["kind", "decision", "committedAt"])?;
             InteractionOutcome::PermissionsDecision {

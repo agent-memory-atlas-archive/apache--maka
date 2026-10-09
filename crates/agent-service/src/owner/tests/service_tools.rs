@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 fn counter_contract() -> Contract {
     let write = Method {
         mode: MethodMode::Mutation,
-        input: json!({"type":"object","properties":{"amount":{"type":"integer","minimum":1}},"required":["amount"],"additionalProperties":false}),
+        input: json!({"type":"object","properties":{"amount":{"type":"integer","minimum":1},"note":{"type":"string"}},"required":["amount"],"additionalProperties":false}),
         output: json!({"type":"object","properties":{"effects":{"type":"integer"},"payload":{"type":"string"}},"required":["effects"],"additionalProperties":false}),
         resources: BTreeMap::new(),
     };
@@ -133,14 +133,20 @@ pub(super) struct Setup {
     granted: bool,
     query: bool,
     questions: bool,
+    confirmation: contract::ToolConfirmation,
 }
 impl Setup {
+    pub(super) fn require_confirmation(mut self) -> Self {
+        self.confirmation = contract::ToolConfirmation::Required;
+        self
+    }
     fn javascript() -> Self {
         Self {
             counter: None,
             granted: true,
             query: false,
             questions: false,
+            confirmation: contract::ToolConfirmation::Preapproved,
         }
     }
     fn native(counter: Arc<Counter>, granted: bool) -> Self {
@@ -149,6 +155,7 @@ impl Setup {
             granted,
             query: false,
             questions: false,
+            confirmation: contract::ToolConfirmation::Preapproved,
         }
     }
     pub(super) fn questions() -> Self {
@@ -157,6 +164,7 @@ impl Setup {
             granted: true,
             query: false,
             questions: true,
+            confirmation: contract::ToolConfirmation::Preapproved,
         }
     }
     fn contract(&self) -> Contract {
@@ -184,6 +192,7 @@ impl Setup {
     }
     pub(super) fn selection(&self) -> contract::ServiceTool {
         contract::ServiceTool {
+            confirmation: self.confirmation,
             name: if self.questions {
                 "AskUserQuestion"
             } else {
@@ -314,7 +323,10 @@ impl Setup {
     }
 }
 async fn tool_response(socket: &mut TcpStream) {
-    let delta = json!({"id":"tool-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"counter-call","type":"function","function":{"name":"Counter","arguments":"{\"amount\":1}"}}]},"finish_reason":null}]});
+    tool_response_input(socket, json!({"amount":1})).await;
+}
+async fn tool_response_input(socket: &mut TcpStream, input: Value) {
+    let delta = json!({"id":"tool-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"counter-call","type":"function","function":{"name":"Counter","arguments":input.to_string()}}]},"finish_reason":null}]});
     let body = format!(
         "data: {delta}\n\ndata: {{\"id\":\"tool-model\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"tool_calls\"}}]}}\n\ndata: [DONE]\n\n"
     );
@@ -334,6 +346,155 @@ async fn facts(fixture: &Fixture, session: &str) -> Vec<Fact> {
         .into_iter()
         .map(|event| event.event.fact)
         .collect()
+}
+
+async fn pending_approval(
+    fixture: &Fixture,
+    session: &str,
+) -> maka_runtime::interaction::InteractionRecord {
+    let mut commits = fixture.store.subscribe_commits();
+    loop {
+        if let Some(record) = fixture
+            .store
+            .pending_interactions(session)
+            .await
+            .unwrap()
+            .into_iter()
+            .next()
+        {
+            assert!(matches!(
+                record.request,
+                maka_runtime::interaction::InteractionRequest::ServiceApproval { .. }
+            ));
+            return record;
+        }
+        commits.changed().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn service_confirmation_reviews_exact_large_arguments_and_never_replaces_grant_admission() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        for (granted, query, decision) in [(true, false, "allow"), (true, false, "deny"), (false, false, "allow"), (true, true, "allow")] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let counter = Counter::new(Behavior::Returned);
+            let mut setup = Setup::native(counter.clone(), granted);
+            setup.query = query;
+            setup.confirmation = contract::ToolConfirmation::Required;
+            let fixture = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None, Some(setup)).await;
+            let session = fixture.create("Review exact service call").await;
+            fixture.send(&session).await.unwrap();
+            let (mut socket, _) = listener.accept().await.unwrap();
+            request(&mut socket).await;
+            let input = json!({"amount":7,"note":"界🙂\n".repeat(5000)});
+            tool_response_input(&mut socket, input.clone()).await;
+            let record = pending_approval(&fixture, &session).await;
+            assert_eq!(counter.effects.load(Ordering::SeqCst), 0);
+            assert_eq!(counter.entered.available_permits(), 0);
+            let maka_runtime::interaction::InteractionRequest::ServiceApproval { through, ref tool_use_id, .. } = record.request else { unreachable!() };
+            assert_eq!(fixture.query("observe", json!({"sessionId":session})).await.unwrap()["run"]["state"], "waiting_for_user");
+            assert_eq!(fixture.query("pendingInteractions", json!({"sessionId":session})).await.unwrap()["entries"][0]["kind"], "service_approval");
+            let mut position = json!({"kind":"start"});
+            let mut complete = String::new();
+            loop {
+                let page = fixture.query("toolSource", json!({"sessionId":session,"through":through,
+                    "source":{"kind":"tool_use","toolUseId":tool_use_id},"field":"arguments","position":position})).await.unwrap();
+                if page["kind"] == "preparing" { continue; }
+                assert_eq!(page["source"]["tool"]["toolUseId"], *tool_use_id);
+                let text = page["source"]["text"].as_str().unwrap();
+                assert!(text.len() <= 8192);
+                complete.push_str(text);
+                let end = page["source"]["offset"].as_u64().unwrap() + text.len() as u64;
+                if end == page["source"]["totalBytes"].as_u64().unwrap() { break; }
+                position = json!({"kind":"after","offset":end});
+            }
+            assert_eq!(serde_json::from_str::<Value>(&complete).unwrap(), input);
+            let other = fixture.create("Other service call owner").await;
+            let wrong = fixture.mutation(2, "respond", json!({"sessionId":other,"requestId":record.request_id,
+                "answer":{"kind":"service_approval","decision":"allow"}}), Uuid::new_v4()).await.unwrap();
+            assert_eq!(wrong["reason"], "unavailable");
+            let wrong = fixture.mutation(2, "respond", json!({"sessionId":session,"requestId":record.request_id,
+                "answer":{"kind":"question","answers":["yes"]}}), Uuid::new_v4()).await.unwrap();
+            assert_eq!(wrong["reason"], "invalid_answer");
+            let operation = Uuid::new_v4();
+            let answer = json!({"sessionId":session,"requestId":record.request_id,"answer":{"kind":"service_approval","decision":decision}});
+            let receipt = fixture.mutation(2, "respond", answer.clone(), operation).await.unwrap();
+            assert_eq!(receipt["record"]["outcome"]["decision"], decision);
+            assert_eq!(fixture.mutation(2, "respond", answer, operation).await.unwrap(), receipt);
+            let opposite = if decision == "allow" { "deny" } else { "allow" };
+            assert_eq!(fixture.mutation(2, "respond", json!({"sessionId":session,"requestId":record.request_id,
+                "answer":{"kind":"service_approval","decision":opposite}}), Uuid::new_v4()).await.unwrap(), receipt);
+            let (mut resumed, _) = listener.accept().await.unwrap();
+            request(&mut resumed).await;
+            response(&mut resumed).await;
+            fixture.drained().await;
+            let admitted = granted && decision == "allow";
+            assert_eq!(counter.entered.available_permits(), usize::from(admitted));
+            assert_eq!(counter.effects.load(Ordering::SeqCst), if admitted && !query { 7 } else { 0 });
+            fixture.app.shutdown().await.unwrap();
+            fixture.config.shutdown().await.unwrap();
+        }
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn stop_closes_original_service_confirmation_without_an_effect_or_replay() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let counter = Counter::new(Behavior::Returned);
+        let mut setup = Setup::native(counter.clone(), true);
+        setup.confirmation = contract::ToolConfirmation::Required;
+        let fixture = Fixture::with_services(
+            &format!("http://{}/v1", listener.local_addr().unwrap()),
+            1,
+            None,
+            None,
+            Some(setup),
+        )
+        .await;
+        let session = fixture.create("Stop service confirmation").await;
+        let started = fixture.send(&session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        tool_response(&mut socket).await;
+        let record = pending_approval(&fixture, &session).await;
+        fixture
+            .mutation(
+                2,
+                "stop",
+                json!({"sessionId":session,"invocationId":started["invocationId"]}),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        fixture.drained().await;
+        let late = fixture
+            .mutation(
+                2,
+                "respond",
+                json!({"sessionId":session,"requestId":record.request_id,
+            "answer":{"kind":"service_approval","decision":"allow"}}),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(late["record"]["outcome"]["kind"], "closure");
+        assert_eq!(counter.effects.load(Ordering::SeqCst), 0);
+        assert_eq!(counter.entered.available_permits(), 0);
+        assert!(
+            fixture
+                .store
+                .pending_interactions(&session)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(fixture.owner.permits.available_permits(), 1);
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
 }
 #[tokio::test]
 async fn installed_javascript_service_is_a_real_model_tool_with_business_projection_and_original_receipt()

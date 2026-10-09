@@ -91,6 +91,15 @@ pub enum ClosureReason {
     deny_unknown_fields
 )]
 pub enum InteractionRequest {
+    /// Consent for one already journaled service call; never a service grant.
+    ServiceApproval {
+        tool_use_id: String,
+        tool_name: String,
+        service: String,
+        method: String,
+        binding: String,
+        through: u64,
+    },
     Permissions {
         #[schemars(with = "crate::schema::RequiredNullable<String>")]
         tool_use_id: Option<String>,
@@ -116,6 +125,9 @@ pub enum InteractionRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum InteractionAnswer {
+    ServiceApproval {
+        decision: Decision,
+    },
     Permissions {
         decision: grant::Decision,
     },
@@ -139,6 +151,10 @@ pub enum InteractionAnswer {
     deny_unknown_fields
 )]
 pub enum InteractionOutcome {
+    ServiceApprovalDecision {
+        decision: Decision,
+        committed_at: u64,
+    },
     PermissionsDecision {
         decision: grant::Decision,
         committed_at: u64,
@@ -166,6 +182,7 @@ impl InteractionOutcome {
     pub fn committed_at(&self) -> u64 {
         match self {
             Self::QuestionAnswer { committed_at, .. }
+            | Self::ServiceApprovalDecision { committed_at, .. }
             | Self::PermissionsDecision { committed_at, .. }
             | Self::FormAnswer { committed_at, .. }
             | Self::ClientCapabilityDecision { committed_at, .. }
@@ -177,6 +194,10 @@ impl InteractionOutcome {
 impl InteractionAnswer {
     pub fn into_outcome(self, committed_at: u64) -> InteractionOutcome {
         match self {
+            Self::ServiceApproval { decision } => InteractionOutcome::ServiceApprovalDecision {
+                decision,
+                committed_at,
+            },
             Self::Permissions { decision } => InteractionOutcome::PermissionsDecision {
                 decision,
                 committed_at,
@@ -198,6 +219,12 @@ impl InteractionAnswer {
 
     pub fn matches_outcome(&self, outcome: &InteractionOutcome) -> bool {
         match (self, outcome) {
+            (
+                Self::ServiceApproval { decision: left },
+                InteractionOutcome::ServiceApprovalDecision {
+                    decision: right, ..
+                },
+            ) => left == right,
             (
                 Self::Permissions { decision: left },
                 InteractionOutcome::PermissionsDecision {

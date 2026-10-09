@@ -74,6 +74,29 @@ impl GrantTarget {
 impl InteractionRequest {
     pub fn validate(&self) -> Result<(), &'static str> {
         match self {
+            Self::ServiceApproval {
+                tool_use_id,
+                tool_name,
+                service,
+                method,
+                binding,
+                through,
+            } => {
+                for (value, limit) in [
+                    (tool_use_id, 256),
+                    (tool_name, 128),
+                    (service, 4096),
+                    (method, 256),
+                    (binding, 256),
+                ] {
+                    if value.is_empty() || value.len() > limit {
+                        return Err("Invalid service approval identity");
+                    }
+                }
+                if *through == 0 || *through > MAX_SAFE_INTEGER {
+                    return Err("Invalid service approval source fence");
+                }
+            }
             Self::Permissions {
                 tool_use_id,
                 base_revision,
@@ -156,6 +179,7 @@ impl InteractionOutcome {
         match (request, self) {
             (
                 InteractionRequest::Form { .. }
+                | InteractionRequest::ServiceApproval { .. }
                 | InteractionRequest::Question { .. }
                 | InteractionRequest::Permissions { .. },
                 Self::Closure {
@@ -187,6 +211,7 @@ impl InteractionOutcome {
                 Self::QuestionAnswer { answers, .. },
             ) => question::validate_answer_count(answers, questions),
             (_, Self::Closure { .. })
+            | (InteractionRequest::ServiceApproval { .. }, Self::ServiceApprovalDecision { .. })
             | (
                 InteractionRequest::ClientCapability { .. },
                 Self::ClientCapabilityDecision { .. },
@@ -245,6 +270,7 @@ impl InteractionAnswer {
                 question::validate_answer_count(answers, questions)
             }
             (Self::ClientCapability { .. }, InteractionRequest::ClientCapability { .. }) => Ok(()),
+            (Self::ServiceApproval { .. }, InteractionRequest::ServiceApproval { .. }) => Ok(()),
             (Self::Form { result }, InteractionRequest::Form { fields, .. }) => {
                 result.validate_for_fields(fields)
             }

@@ -18,8 +18,10 @@
  */
 
 //! Explicit service-to-tool projection. Imports describe bindings, not grants.
-use crate::contract::ServiceTool;
+mod approval;
+use crate::contract::{ServiceTool, ToolConfirmation};
 use futures_util::FutureExt;
+use maka_event_log::EventLog;
 use maka_plugin_core::{
     contract::{Interface, MethodMode},
     operation::{OperationCleanup, OperationOutcome, OperationReply, Receipt},
@@ -51,6 +53,7 @@ pub(crate) struct SelectedTool {
 
 pub(crate) fn catalog(
     services: NativeServices,
+    store: Arc<EventLog>,
     selected: &[ServiceTool],
 ) -> Result<(ToolCatalog, Vec<SelectedTool>), String> {
     let mut basis = Vec::new();
@@ -98,6 +101,21 @@ pub(crate) fn catalog(
                 },
                 handler: ToolHandler::Prepared(Arc::new(Service {
                     services: services.clone(),
+                    store: store.clone(),
+                    binding: binding.execution_basis().into(),
+                    target: format!(
+                        "{} · {} v{} · {} / {} · {}",
+                        selection.import,
+                        binding.contract().name,
+                        binding.contract().version,
+                        serde_json::to_string(binding.provider().instance())
+                            .expect("instance identity"),
+                        binding.export(),
+                        binding
+                            .provider()
+                            .remote_target()
+                            .map_or("local", |target| target.deployment.as_str())
+                    ),
                     selection: selection.clone(),
                     mode: method.mode,
                 })),
@@ -109,6 +127,9 @@ pub(crate) fn catalog(
 }
 struct Service {
     services: NativeServices,
+    store: Arc<EventLog>,
+    binding: String,
+    target: String,
     selection: ServiceTool,
     mode: MethodMode,
 }
@@ -124,6 +145,9 @@ impl ToolPreparer for Service {
         cancellation: CancellationToken,
     ) -> PreparationFuture {
         let services = self.services.clone();
+        let store = self.store.clone();
+        let binding = self.binding.clone();
+        let target = self.target.clone();
         let selection = self.selection.clone();
         let mode = self.mode;
         Box::pin(async move {
@@ -136,6 +160,23 @@ impl ToolPreparer for Service {
             // No request or effect is admitted until the existing ToolJournal T1.
             Ok(PreparedEffect::new(move |cancellation| {
                 Box::pin(async move {
+                    if selection.confirmation == ToolConfirmation::Required {
+                        approval::confirm(
+                            &store,
+                            &context,
+                            &selection,
+                            &binding,
+                            target,
+                            &input,
+                            &cancellation,
+                        )
+                        .await?;
+                    }
+                    if cancellation.is_cancelled() {
+                        return Err(ToolError::Failed(
+                            "service call cancelled before admission".into(),
+                        ));
+                    }
                     let operation = operation_id(&context);
                     let request = services
                         .request(

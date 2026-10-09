@@ -86,6 +86,7 @@ impl InteractionSnapshot {
             self.record.outcome,
             Some(
                 InteractionOutcome::ClientCapabilityDecision { .. }
+                    | InteractionOutcome::ServiceApprovalDecision { .. }
                     | InteractionOutcome::PermissionsDecision { .. }
                     | InteractionOutcome::FormAnswer { .. }
                     | InteractionOutcome::QuestionAnswer { .. }
@@ -111,6 +112,7 @@ impl Serialize for InteractionSnapshot {
             Some(InteractionOutcome::Closure { .. }) => "closed",
             Some(
                 InteractionOutcome::ClientCapabilityDecision { .. }
+                | InteractionOutcome::ServiceApprovalDecision { .. }
                 | InteractionOutcome::PermissionsDecision { .. }
                 | InteractionOutcome::FormAnswer { .. }
                 | InteractionOutcome::QuestionAnswer { .. },

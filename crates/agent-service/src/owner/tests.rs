@@ -1483,7 +1483,7 @@ async fn tool_source_uses_original_agent_grant_and_frozen_canonical_fields() {
     let mut position = json!({"kind":"start"});
     let mut complete = String::new();
     loop {
-        let page = fixture.query("toolSource", json!({"sessionId":session,"through":fence,"sequence":sequence,"field":"arguments","position":position})).await.unwrap();
+        let page = fixture.query("toolSource", json!({"sessionId":session,"through":fence,"source":{"kind":"sequence","sequence":sequence},"field":"arguments","position":position})).await.unwrap();
         assert!(serde_json::to_vec(&page).unwrap().len() <= 64 * 1024);
         assert_eq!(page["kind"], "ready");
         assert_eq!(page["through"], fence);
@@ -1500,7 +1500,7 @@ async fn tool_source_uses_original_agent_grant_and_frozen_canonical_fields() {
         position = json!({"kind":"after","offset":end});
     }
     assert_eq!(serde_json::from_str::<Value>(&complete).unwrap(), input);
-    let request = json!({"sessionId":session,"through":fence,"sequence":sequence,"field":"arguments","position":{"kind":"start"}});
+    let request = json!({"sessionId":session,"through":fence,"source":{"kind":"sequence","sequence":sequence},"field":"arguments","position":{"kind":"start"}});
     for (key, value) in [
         ("sessionId", json!("foreign_session")),
         ("through", json!(fence + 1)),

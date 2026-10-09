@@ -26,6 +26,7 @@ import type {
   AgentQueue,
   AgentPendingInteractions,
   InteractionRecord,
+  InteractionAnswer,
   AgentInteractionResult,
   AgentQueueMessage,
   AgentQueueMessageResult,
@@ -67,6 +68,7 @@ import type {
   QueueEditorProps,
   QuestionDraft,
   QuestionEditorProps,
+  ServiceApprovalProps,
   SelectedModel,
 } from './contracts.js';
 import { sameValue } from './value.js';
@@ -108,7 +110,7 @@ type Request =
       field: ToolSourceField;
       position: SourcePosition;
     }
-  | { kind: 'question'; attempt: number; sessionId: string; requestId: string }
+  | { kind: 'interaction'; attempt: number; sessionId: string; requestId: string }
   | { kind: 'questionRead'; attempt: number; index: number; draft: EditorObservation }
   | { kind: 'respond'; attempt: number; sessionId: string; requestId: string }
   | { kind: 'create' }
@@ -160,7 +162,7 @@ export interface State {
   settingsOpen: boolean;
   deploymentOpen: boolean;
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
-  dialog: 'palette' | 'directories' | 'details' | 'help' | 'queue' | 'question' | null;
+  dialog: 'palette' | 'directories' | 'details' | 'help' | 'queue' | 'question' | 'approval' | null;
   window: { page: Extract<AgentHistoryPage, { kind: 'ready' }>; latest: boolean } | null;
   navigation: number;
   image: { sessionId: string; through: number; sequence: number } | null;
@@ -188,7 +190,7 @@ export interface State {
   queueEdit: QueueEdit | null;
   queueDraft: EditorObservation | null;
   interactions: AgentPendingInteractions | null;
-  question: {
+  interaction: {
     attempt: number;
     sessionId: string;
     requestId: string;
@@ -448,7 +450,7 @@ function readToolSource(state: State, actions: Action[], position: SourcePositio
     {
       sessionId: state.selected.id,
       through: source.through,
-      sequence: source.chunk.sequence,
+      source: { kind: 'sequence', sequence: source.chunk.sequence },
       field: source.toolSource.field,
       position,
     },
@@ -645,14 +647,14 @@ function initializeQueueEdit(state: State) {
   edit.body = null;
 }
 function questionChild(state: State) {
-  return `question-form-${state.question?.attempt ?? 0}`;
+  return `question-form-${state.interaction?.attempt ?? 0}`;
 }
-function readQuestion(state: State, actions: Action[]) {
-  const question = state.question;
+function readInteraction(state: State, actions: Action[]) {
+  const question = state.interaction;
   if (
     !question ||
     Object.values(state.pending).some(
-      (r) => r.kind === 'question' && r.attempt === question.attempt,
+      (r) => r.kind === 'interaction' && r.attempt === question.attempt,
     )
   )
     return;
@@ -660,7 +662,7 @@ function readQuestion(state: State, actions: Action[]) {
     state,
     actions,
     {
-      kind: 'question',
+      kind: 'interaction',
       attempt: question.attempt,
       sessionId: question.sessionId,
       requestId: question.requestId,
@@ -672,7 +674,7 @@ function readQuestion(state: State, actions: Action[]) {
 }
 function respondQuestion(state: State, actions: Action[]) {
   const submission = state.questionSubmission,
-    question = state.question;
+    question = state.interaction;
   if (!submission || submission.waiting.length) return;
   state.questionSubmission = null;
   if (
@@ -685,21 +687,34 @@ function respondQuestion(state: State, actions: Action[]) {
     question.record.outcome
   )
     return;
+  respondInteraction(state, actions, { kind: 'question', answers: submission.answers });
+}
+function respondInteraction(state: State, actions: Action[], answer: InteractionAnswer) {
+  const interaction = state.interaction;
+  if (
+    !interaction?.record ||
+    interaction.record.outcome ||
+    interaction.record.request.kind !== answer.kind ||
+    state.selected?.id !== interaction.sessionId ||
+    state.selected.archived ||
+    mutationPending(state)
+  )
+    return;
   intent(
     state,
     actions,
     {
       kind: 'respond',
-      attempt: question.attempt,
-      sessionId: question.sessionId,
-      requestId: question.requestId,
+      attempt: interaction.attempt,
+      sessionId: interaction.sessionId,
+      requestId: interaction.requestId,
     },
     'agent',
     'respond',
     {
-      sessionId: question.sessionId,
-      requestId: question.requestId,
-      answer: { kind: 'question', answers: submission.answers },
+      sessionId: interaction.sessionId,
+      requestId: interaction.requestId,
+      answer,
     },
   );
 }
@@ -708,7 +723,7 @@ function submitQuestion(
   actions: Action[],
   event: { requestId: string; answers: QuestionDraft[] },
 ) {
-  const question = state.question;
+  const question = state.interaction;
   if (
     !question ||
     !question.record ||
@@ -774,10 +789,10 @@ function submitQuestion(
   }
   respondQuestion(state, actions);
 }
-function checkQuestion(state: State, actions: Action[]) {
+function checkInteraction(state: State, actions: Action[]) {
   if (state.uncertain && !Object.values(state.pending).some((r) => r.kind === 'receipt'))
     intent(state, actions, { kind: 'receipt' }, 'receipts', 'read', state.uncertain.reference);
-  readQuestion(state, actions);
+  readInteraction(state, actions);
 }
 function closeDialog(state: State) {
   // Cancel follows the original queue sheet: discard this edit, not an accepted operation.
@@ -826,7 +841,7 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
       closeDialog(state);
   } else if (request.kind === 'respond') {
     const result = value as AgentInteractionResult;
-    const question = state.question;
+    const question = state.interaction;
     if (question?.attempt === request.attempt) {
       if (
         result.kind === 'recorded' &&
@@ -836,7 +851,7 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
       ) {
         question.record = result.record;
         question.notice = null;
-      } else question.notice = 'questionChanged';
+      } else question.notice = 'interactionChanged';
     }
     if (state.selected?.id === request.sessionId) observe(state, actions);
   } else if (request.kind === 'send') {
@@ -872,17 +887,17 @@ function receipt(state: State, actions: Action[], request: Mutation, reply: Oper
 }
 function queryFailed(state: State, request: Request) {
   if (
-    request.kind === 'question' ||
+    request.kind === 'interaction' ||
     request.kind === 'questionRead' ||
     request.kind === 'respond'
   ) {
-    if (state.question?.attempt === request.attempt)
-      state.question.notice =
+    if (state.interaction?.attempt === request.attempt)
+      state.interaction.notice =
         request.kind === 'questionRead'
           ? 'questionInvalid'
           : request.kind === 'respond'
-            ? 'questionUnknown'
-            : 'questionUnavailable';
+            ? 'interactionUnknown'
+            : 'interactionUnavailable';
     if (state.questionSubmission?.attempt === request.attempt) state.questionSubmission = null;
     return;
   }
@@ -920,17 +935,17 @@ function queryFailed(state: State, request: Request) {
 }
 function querySucceeded(state: State, actions: Action[], request: Request, value: unknown) {
   switch (request.kind) {
-    case 'question': {
-      const question = state.question,
+    case 'interaction': {
+      const question = state.interaction,
         record = value as InteractionRecord;
       if (!question || question.attempt !== request.attempt) break;
       if (
         record.sessionId !== request.sessionId ||
         record.requestId !== request.requestId ||
-        record.request.kind !== 'question' ||
+        !['question', 'service_approval'].includes(record.request.kind) ||
         (question.record && !sameValue(question.record.request, record.request))
       ) {
-        question.notice = 'questionUnavailable';
+        question.notice = 'interactionUnavailable';
         break;
       }
       if (!question.record?.outcome) question.record = record;
@@ -939,7 +954,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
     }
     case 'questionRead': {
       const submission = state.questionSubmission,
-        question = state.question;
+        question = state.interaction;
       if (
         !submission ||
         !question ||
@@ -1088,7 +1103,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         intent(state, actions, request, 'agent', 'toolSource', {
           sessionId: state.selected!.id,
           through: request.through,
-          sequence: request.sequence,
+          source: { kind: 'sequence', sequence: request.sequence },
           field: request.field,
           position: request.position,
         });
@@ -1308,14 +1323,14 @@ function delivery(state: State, page: AgentDeliveryPage, actions: Action[]) {
         !state.interactions || !sameValue(state.interactions.entries, page.pending.entries);
       state.interactions = page.pending;
       if (changed) observe(state, actions);
-      const question = state.question;
+      const question = state.interaction;
       if (
         question?.record &&
         !question.record.outcome &&
         question.sessionId === state.selected?.id &&
         !page.pending.entries.some((entry) => entry.requestId === question.requestId)
       )
-        readQuestion(state, actions);
+        readInteraction(state, actions);
     }
     return;
   }
@@ -1707,11 +1722,11 @@ function frame<N extends Node>(
                 ),
               ]),
           ...(state.interactions?.entries
-            .filter((entry) => entry.kind === 'question')
+            .filter((entry) => entry.kind === 'question' || entry.kind === 'service_approval')
             .map((entry, index) =>
               ui.button(
-                `question-open-${entry.requestId}`,
-                `${text.questionsTitle} ${index + 1}`,
+                `${entry.kind === 'question' ? 'question' : 'approval'}-open-${entry.requestId}`,
+                `${entry.kind === 'question' ? text.questionsTitle : text.approvalTitle} ${index + 1}`,
                 !state.selected || state.selected.archived || mutationPending(state),
               ),
             ) ?? []),
@@ -1922,65 +1937,102 @@ function frame<N extends Node>(
       'workspace-dialog',
       state.dialog === 'question'
         ? text.questionsTitle
-        : state.dialog === 'directories'
-          ? text.directoryTitle
-          : state.dialog === 'details'
-            ? text.detailsTitle
-            : state.dialog === 'queue'
-              ? text.queueEdit
-              : state.dialog === 'help'
-                ? text.helpTitle
-                : text.paletteTitle,
+        : state.dialog === 'approval'
+          ? text.approvalTitle
+          : state.dialog === 'directories'
+            ? text.directoryTitle
+            : state.dialog === 'details'
+              ? text.detailsTitle
+              : state.dialog === 'queue'
+                ? text.queueEdit
+                : state.dialog === 'help'
+                  ? text.helpTitle
+                  : text.paletteTitle,
       background,
       ui.box(
         'dialog-content',
         [
-          ...(state.question?.record
+          ...(state.interaction?.record?.request.kind === 'service_approval'
             ? [
                 presentation.slot(
-                  questionChild(state),
-                  'questionEditor',
+                  `service-approval-${state.interaction.attempt}`,
+                  'serviceApproval',
                   {
                     theme,
                     locale,
-                    open: state.dialog === 'question',
-                    record: state.question.record,
+                    open: state.dialog === 'approval',
+                    record: state.interaction.record,
                     busy:
                       mutationPending(state) ||
-                      state.selected?.id !== state.question.sessionId ||
+                      state.selected?.id !== state.interaction.sessionId ||
                       !!state.selected?.archived,
                     checking: Object.values(state.pending).some(
-                      (r) => r.kind === 'question' || r.kind === 'receipt' || r.kind === 'respond',
+                      (r) =>
+                        r.kind === 'interaction' || r.kind === 'receipt' || r.kind === 'respond',
                     ),
                     status: state.uncertain
-                      ? text.questionUnknown
-                      : state.question.notice
-                        ? text[state.question.notice]
-                        : state.selected?.id !== state.question.sessionId
-                          ? text.questionChanged
+                      ? text.interactionUnknown
+                      : state.interaction.notice
+                        ? text[state.interaction.notice]
+                        : state.selected?.id !== state.interaction.sessionId
+                          ? text.interactionChanged
                           : '',
-                  } satisfies QuestionEditorProps,
+                  } satisfies ServiceApprovalProps,
                   { closed: 'closed', submit: 'submit', check: 'check' },
                 ),
               ]
-            : [
-                ui.box(
-                  'question-loading',
-                  [
-                    ui.button('question-close', text.closeModels),
-                    ui.text(
-                      'question-loading-text',
-                      state.question?.notice ? text[state.question.notice] : text.questionLoading,
-                    ),
-                    ui.button(
-                      'question-check',
-                      text.check,
-                      Object.values(state.pending).some((r) => r.kind === 'question'),
-                    ),
-                  ],
-                  { visible: state.dialog === 'question', terminal: { grow: 1 } },
-                ),
-              ]),
+            : state.interaction?.record
+              ? [
+                  presentation.slot(
+                    questionChild(state),
+                    'questionEditor',
+                    {
+                      theme,
+                      locale,
+                      open: state.dialog === 'question',
+                      record: state.interaction.record,
+                      busy:
+                        mutationPending(state) ||
+                        state.selected?.id !== state.interaction.sessionId ||
+                        !!state.selected?.archived,
+                      checking: Object.values(state.pending).some(
+                        (r) =>
+                          r.kind === 'interaction' || r.kind === 'receipt' || r.kind === 'respond',
+                      ),
+                      status: state.uncertain
+                        ? text.interactionUnknown
+                        : state.interaction.notice
+                          ? text[state.interaction.notice]
+                          : state.selected?.id !== state.interaction.sessionId
+                            ? text.interactionChanged
+                            : '',
+                    } satisfies QuestionEditorProps,
+                    { closed: 'closed', submit: 'submit', check: 'check' },
+                  ),
+                ]
+              : [
+                  ui.box(
+                    'question-loading',
+                    [
+                      ui.button('question-close', text.closeModels),
+                      ui.text(
+                        'question-loading-text',
+                        state.interaction?.notice
+                          ? text[state.interaction.notice]
+                          : text.questionLoading,
+                      ),
+                      ui.button(
+                        'question-check',
+                        text.check,
+                        Object.values(state.pending).some((r) => r.kind === 'interaction'),
+                      ),
+                    ],
+                    {
+                      visible: state.dialog === 'question' || state.dialog === 'approval',
+                      terminal: { grow: 1 },
+                    },
+                  ),
+                ]),
           presentation.slot(
             'queue-editor',
             'queueEditor',
@@ -2130,7 +2182,7 @@ export function workspace<N extends Node>(
         queueEdit: null,
         queueDraft: null,
         interactions: null,
-        question: null,
+        interaction: null,
         questionSubmission: null,
         runThrough: 0,
         loading: false,
@@ -2208,10 +2260,25 @@ export function workspace<N extends Node>(
           }
         }
       } else if (input.kind === 'component') {
+        if (input.child === `service-approval-${state.interaction?.attempt}`) {
+          if (state.dialog === 'approval') {
+            if (input.name === 'closed') closeDialog(state);
+            else if (input.name === 'check') checkInteraction(state, actions);
+            else if (input.name === 'submit') {
+              const event = input.event as { requestId: string; decision: 'allow' | 'deny' };
+              if (event.requestId === state.interaction?.requestId)
+                respondInteraction(state, actions, {
+                  kind: 'service_approval',
+                  decision: event.decision,
+                });
+            }
+          }
+          return frame(presentation, locale, state, values, actions);
+        }
         if (input.child === questionChild(state)) {
           if (state.dialog === 'question') {
             if (input.name === 'closed') closeDialog(state);
-            else if (input.name === 'check') checkQuestion(state, actions);
+            else if (input.name === 'check') checkInteraction(state, actions);
             else if (input.name === 'submit')
               submitQuestion(
                 state,
@@ -2622,36 +2689,43 @@ export function workspace<N extends Node>(
         }
       } else if (input.kind === 'raw') {
         if (
-          input.key.startsWith('question-open-') &&
+          (input.key.startsWith('question-open-') || input.key.startsWith('approval-open-')) &&
           !state.dialog &&
           !mutationPending(state) &&
           state.selected &&
           !state.selected.archived
         ) {
           const requestId = input.key.slice(14);
+          const kind = input.key.startsWith('approval-') ? 'service_approval' : 'question';
           if (
             state.interactions?.entries.some(
-              (entry) => entry.requestId === requestId && entry.kind === 'question',
+              (entry) => entry.requestId === requestId && entry.kind === kind,
             )
           ) {
             if (
-              state.question?.requestId !== requestId ||
-              state.question.sessionId !== state.selected.id
+              state.interaction?.requestId !== requestId ||
+              state.interaction.sessionId !== state.selected.id
             )
-              state.question = {
+              state.interaction = {
                 attempt: ++state.serial,
                 sessionId: state.selected.id,
                 requestId,
                 record: null,
                 notice: null,
               };
-            state.dialog = 'question';
-            readQuestion(state, actions);
+            state.dialog = kind === 'question' ? 'question' : 'approval';
+            readInteraction(state, actions);
           }
-        } else if (input.key === 'question-close' && state.dialog === 'question')
+        } else if (
+          input.key === 'question-close' &&
+          (state.dialog === 'question' || state.dialog === 'approval')
+        )
           closeDialog(state);
-        else if (input.key === 'question-check' && state.dialog === 'question')
-          checkQuestion(state, actions);
+        else if (
+          input.key === 'question-check' &&
+          (state.dialog === 'question' || state.dialog === 'approval')
+        )
+          checkInteraction(state, actions);
         else if (input.key === 'catalog-filter-all' || input.key === 'catalog-filter-needs_you') {
           const filter = input.key === 'catalog-filter-all' ? 'all' : 'needs_you';
           if (!mutationPending(state) && !catalogPending(state) && state.catalogFilter !== filter) {

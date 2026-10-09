@@ -40,6 +40,7 @@ pub struct InteractionSummary {
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "AgentInteractionKind")]
 pub enum InteractionKind {
+    ServiceApproval,
     Question,
     Permissions,
     Form,

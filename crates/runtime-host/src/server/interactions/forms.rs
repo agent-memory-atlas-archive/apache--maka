@@ -51,6 +51,7 @@ impl Interactions {
             InteractionOutcome::FormAnswer { result, .. } => Ok(result),
             InteractionOutcome::Closure { .. } => Err(CallError::Cancelled),
             InteractionOutcome::ClientCapabilityDecision { .. }
+            | InteractionOutcome::ServiceApprovalDecision { .. }
             | InteractionOutcome::PermissionsDecision { .. }
             | InteractionOutcome::QuestionAnswer { .. } => {
                 self.shutdown.cancel();
