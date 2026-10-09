@@ -622,6 +622,56 @@ pub struct History {
 }
 pub use maka_plugins::session::history::Position as HistoryPosition;
 
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentHistorySearch")]
+pub struct HistorySearch {
+    #[schemars(length(min = 1, max = 128))]
+    pub session_id: String,
+    /// Original raw-event fence, shared with history reads.
+    #[schemars(range(max = 9_007_199_254_740_991u64))]
+    pub through: u64,
+    /// Exclusive transcript-row sequence returned by the previous batch; zero starts a scan.
+    #[schemars(range(max = 9_007_199_254_740_991u64))]
+    pub after: u64,
+    /// Literal, case-sensitive query, additionally limited to 512 UTF-8 bytes.
+    #[schemars(length(min = 1, max = 512))]
+    pub query: String,
+    pub include_internal: bool,
+}
+
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentHistoryMatch")]
+pub struct HistoryMatch {
+    /// Use this exact cursor with HistoryPosition::After and the same raw-event fence.
+    pub cursor: Cursor,
+    #[schemars(length(max = 384))]
+    pub preview: String,
+}
+
+#[derive(Serialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename = "AgentHistorySearchPage")]
+pub enum HistorySearchPage {
+    Preparing {
+        through: u64,
+    },
+    Ready {
+        through: u64,
+        #[schemars(length(max = 16))]
+        matches: Vec<HistoryMatch>,
+        /// Continue even when this batch has no matches. Null is the end of the scan.
+        #[schemars(with = "maka_runtime::schema::RequiredNullable<u64>")]
+        next_after: Option<u64>,
+    },
+}
+
 #[derive(Serialize, JsonSchema)]
 #[serde(
     tag = "kind",
@@ -765,6 +815,10 @@ pub fn contract() -> Contract {
                 (
                     "history".into(),
                     method::<History, HistoryPage>(MethodMode::Query),
+                ),
+                (
+                    "search".into(),
+                    method::<HistorySearch, HistorySearchPage>(MethodMode::Query),
                 ),
                 (
                     "toolSource".into(),

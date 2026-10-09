@@ -35,6 +35,9 @@ mod interactions;
 #[path = "tests/catalog.rs"]
 mod catalog;
 
+#[path = "tests/history_search.rs"]
+mod history_search;
+
 #[path = "tests/queue.rs"]
 mod queue;
 
@@ -795,6 +798,14 @@ async fn canonical_history_is_bounded_utf8_and_keeps_its_original_fence() {
         assert!(finished);
         assert_eq!(newer_user, "Hello");
         assert_eq!(newer_assistant, "Later response");
+        let search = |through| json!({"sessionId":session,"through":through,"after":0,"query":"Later response","includeInternal":false});
+        let original_search = fixture.query("search", search(event_fence)).await.unwrap();
+        assert_eq!(original_search["matches"], json!([]));
+        let current_search = fixture.query("search", search(newer_fence.unwrap())).await.unwrap();
+        assert_eq!(current_search["matches"].as_array().unwrap().len(), 1);
+        let match_cursor = current_search["matches"][0]["cursor"].clone();
+        let located = fixture.query("history", json!({"sessionId":session,"through":newer_fence.unwrap(),"position":{"kind":"after","cursor":match_cursor}})).await.unwrap();
+        assert_eq!(located["chunks"][0]["text"], "Later response");
         let tail = fixture.query("history", json!({"sessionId":session,"through":event_fence,"position":{"kind":"tail"}})).await.unwrap();
         let cursor = tail["before"].clone();
         assert!(cursor.is_object());

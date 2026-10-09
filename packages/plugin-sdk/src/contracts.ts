@@ -8135,6 +8135,139 @@ export const contracts = {
           },
           resources: {},
         },
+        search: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentHistorySearch',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              through: {
+                description: 'Original raw-event fence, shared with history reads.',
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+              after: {
+                description:
+                  'Exclusive transcript-row sequence returned by the previous batch; zero starts a scan.',
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+              query: {
+                description:
+                  'Literal, case-sensitive query, additionally limited to 512 UTF-8 bytes.',
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              includeInternal: {
+                type: 'boolean',
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'through', 'after', 'query', 'includeInternal'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentHistorySearchPage',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  through: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'preparing',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'through'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  through: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  matches: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/AgentHistoryMatch',
+                    },
+                    maxItems: 16,
+                  },
+                  nextAfter: {
+                    description:
+                      'Continue even when this batch has no matches. Null is the end of the scan.',
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'ready',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'through', 'matches', 'nextAfter'],
+              },
+            ],
+            $defs: {
+              AgentHistoryMatch: {
+                type: 'object',
+                properties: {
+                  cursor: {
+                    description:
+                      'Use this exact cursor with HistoryPosition::After and the same raw-event fence.',
+                    $ref: '#/$defs/Cursor',
+                  },
+                  preview: {
+                    type: 'string',
+                    maxLength: 384,
+                  },
+                },
+                additionalProperties: false,
+                required: ['cursor', 'preview'],
+              },
+              Cursor: {
+                description: "Byte offset in one message's UTF-8 text, not a bearer capability.",
+                type: 'object',
+                properties: {
+                  sequence: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sequence', 'offset'],
+              },
+            },
+          },
+          resources: {},
+        },
         send: {
           mode: 'mutation',
           input: {

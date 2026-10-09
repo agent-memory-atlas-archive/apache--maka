@@ -213,6 +213,67 @@ impl Handler for Agent {
                         .map_err(|_| "agent_history_unavailable")?;
                     Ok(result)
                 }
+                "search" => {
+                    let input: HistorySearch = decode(input)?;
+                    owner.session(&input.session_id).await?;
+                    let fence = maka_presentation::watermark(input.through)
+                        .map_err(|_| "agent_cursor_invalid")?;
+                    if input.through > *owner.store.subscribe_commits().borrow()
+                        || input.after > fence
+                        || input.query.is_empty()
+                        || input.query.len() > 512
+                    {
+                        return Err("agent_search_invalid".into());
+                    }
+                    let page = if owner
+                        .store
+                        .prepare_transcript(&input.session_id, input.through, 32)
+                        .await
+                        .map_err(|_| "agent_history_unavailable")?
+                    {
+                        let batch = owner
+                            .store
+                            .search_transcript(
+                                &input.session_id,
+                                maka_event_log::transcript::search::TranscriptSearch {
+                                    through: fence,
+                                    after: input.after,
+                                    query: input.query,
+                                    include_internal: input.include_internal,
+                                    max_matches: 16,
+                                },
+                            )
+                            .await
+                            .map_err(|_| "agent_history_unavailable")?;
+                        HistorySearchPage::Ready {
+                            through: input.through,
+                            matches: batch
+                                .matches
+                                .into_iter()
+                                .map(|(sequence, preview)| HistoryMatch {
+                                    cursor: maka_plugins::session::history::Cursor {
+                                        sequence,
+                                        offset: 0,
+                                    },
+                                    preview,
+                                })
+                                .collect(),
+                            next_after: batch.next_after,
+                        }
+                    } else {
+                        HistorySearchPage::Preparing {
+                            through: input.through,
+                        }
+                    };
+                    owner.session(&input.session_id).await?;
+                    if context.scope().cancellation.is_cancelled() {
+                        return Err("agent_observation_cancelled".into());
+                    }
+                    let result = encode(page)?;
+                    maka_js_runtime::plugin::check_json_delivery(&result, 16 * 1024)
+                        .map_err(|_| "agent_history_unavailable")?;
+                    Ok(result)
+                }
                 "toolSource" => {
                     let input: ToolSourceRead = decode(input)?;
                     owner.session(&input.session_id).await?;

@@ -193,6 +193,8 @@ pub(super) fn catalog() -> Value {
         root::<maka_agent_service::contract::QueueMutationResult>(&mut g),
         root::<maka_agent_service::contract::HistoryChunk>(&mut g),
         root::<maka_agent_service::contract::HistoryPage>(&mut g),
+        root::<maka_agent_service::contract::HistorySearch>(&mut g),
+        root::<maka_agent_service::contract::HistorySearchPage>(&mut g),
         root::<maka_agent_service::contract::ToolSourceRead>(&mut g),
         root::<maka_agent_service::contract::ToolSourcePage>(&mut g),
         root::<maka_agent_service::contract::ImageFrame>(&mut g),

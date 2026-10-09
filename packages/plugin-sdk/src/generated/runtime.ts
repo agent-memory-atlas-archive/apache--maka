@@ -148,6 +148,8 @@ export type RuntimeProtocol =
   | AgentQueueMutationResult
   | AgentHistoryChunk
   | AgentHistoryPage
+  | AgentHistorySearch
+  | AgentHistorySearchPage
   | AgentToolSourceRead
   | AgentToolSourcePage
   | AgentToolImageFrame
@@ -2012,6 +2014,178 @@ export type AgentHistoryPage =
       chunks: AgentHistoryChunk[];
       before: Cursor | null;
       after: Cursor | null;
+      kind: 'ready';
+    };
+export type AgentHistorySearchPage =
+  | {
+      through: number;
+      kind: 'preparing';
+    }
+  | {
+      through: number;
+      /**
+       * @maxItems 16
+       */
+      matches:
+        | []
+        | [AgentHistoryMatch]
+        | [AgentHistoryMatch, AgentHistoryMatch]
+        | [AgentHistoryMatch, AgentHistoryMatch, AgentHistoryMatch]
+        | [AgentHistoryMatch, AgentHistoryMatch, AgentHistoryMatch, AgentHistoryMatch]
+        | [
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+          ]
+        | [
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+          ]
+        | [
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+          ]
+        | [
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+          ]
+        | [
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+          ]
+        | [
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+          ]
+        | [
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+          ]
+        | [
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+          ]
+        | [
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+          ]
+        | [
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+          ]
+        | [
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+          ]
+        | [
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+            AgentHistoryMatch,
+          ];
+      /**
+       * Continue even when this batch has no matches. Null is the end of the scan.
+       */
+      nextAfter: number | null;
       kind: 'ready';
     };
 export type AgentToolSourceReference =
@@ -4070,6 +4244,29 @@ export interface AgentHistoryChunk {
   totalBytes: number;
   text: string;
   tool: HistoryTool | null;
+}
+export interface AgentHistorySearch {
+  sessionId: string;
+  /**
+   * Original raw-event fence, shared with history reads.
+   */
+  through: number;
+  /**
+   * Exclusive transcript-row sequence returned by the previous batch; zero starts a scan.
+   */
+  after: number;
+  /**
+   * Literal, case-sensitive query, additionally limited to 512 UTF-8 bytes.
+   */
+  query: string;
+  includeInternal: boolean;
+}
+export interface AgentHistoryMatch {
+  /**
+   * Use this exact cursor with HistoryPosition::After and the same raw-event fence.
+   */
+  cursor: Cursor;
+  preview: string;
 }
 export interface AgentToolSourceRead {
   sessionId: string;
