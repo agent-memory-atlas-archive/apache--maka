@@ -764,6 +764,11 @@ export const contracts = {
           disabled: {
             type: 'boolean',
           },
+          focusOnPointer: {
+            description: 'Whether pointer selection also moves keyboard focus to this source.',
+            type: 'boolean',
+            default: true,
+          },
         },
         additionalProperties: false,
         required: ['source', 'appearance', 'selection', 'disabled'],
@@ -1702,7 +1707,7 @@ export const contracts = {
               key: {
                 type: 'string',
                 pattern:
-                  '^([a-z0-9]|escape|enter|delete|space|up|down|left|right|home|end|pageup|pagedown|f([1-9]|1[0-2]))$',
+                  '^([a-z0-9]|escape|enter|tab|delete|space|up|down|left|right|home|end|pageup|pagedown|f([1-9]|1[0-2]))$',
               },
               modifiers: {
                 type: 'array',
@@ -1904,6 +1909,24 @@ export const contracts = {
                 additionalProperties: false,
               },
               {
+                description: 'Move the original terminal viewport by physical rows.',
+                type: 'object',
+                properties: {
+                  rows: {
+                    type: 'integer',
+                    format: 'int32',
+                    minimum: -65536,
+                    maximum: 65536,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'scroll_rows',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'rows'],
+              },
+              {
                 description: 'Reveal a UTF-8 byte in an original descendant SourceText.',
                 type: 'object',
                 properties: {
@@ -1919,6 +1942,14 @@ export const contracts = {
                     type: 'integer',
                     format: 'uint32',
                     minimum: 0,
+                  },
+                  find_sequence: {
+                    description:
+                      'If supplied, reveal only while this accepted find retains its original physical intent.',
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                    default: null,
                   },
                   kind: {
                     type: 'string',
@@ -3266,6 +3297,19 @@ export const contracts = {
             type: 'boolean',
             default: false,
           },
+          maxBytes: {
+            description: 'UTF-8 byte capacity, fixed for this original native editor mount.',
+            type: 'integer',
+            format: 'uint32',
+            minimum: 1,
+            maximum: 65536,
+            default: 65536,
+          },
+          terminalPaste: {
+            description: 'Terminal bracketed-paste policy. Other native insertion remains literal.',
+            $ref: '#/$defs/TerminalPaste',
+            default: 'reject_controls',
+          },
           placeholder: {
             type: 'string',
             maxLength: 512,
@@ -3432,6 +3476,10 @@ export const contracts = {
             },
             additionalProperties: false,
             required: ['top', 'right', 'bottom', 'left'],
+          },
+          TerminalPaste: {
+            type: 'string',
+            enum: ['reject_controls', 'spaces'],
           },
           EditorCommand: {
             type: 'object',
@@ -3757,6 +3805,19 @@ export const contracts = {
             type: 'boolean',
             default: false,
           },
+          maxBytes: {
+            description: 'UTF-8 byte capacity, fixed for this original native editor mount.',
+            type: 'integer',
+            format: 'uint32',
+            minimum: 1,
+            maximum: 65536,
+            default: 65536,
+          },
+          terminalPaste: {
+            description: 'Terminal bracketed-paste policy. Other native insertion remains literal.',
+            $ref: '#/$defs/TerminalPaste',
+            default: 'reject_controls',
+          },
           placeholder: {
             type: 'string',
             maxLength: 512,
@@ -3923,6 +3984,10 @@ export const contracts = {
             },
             additionalProperties: false,
             required: ['top', 'right', 'bottom', 'left'],
+          },
+          TerminalPaste: {
+            type: 'string',
+            enum: ['reject_controls', 'spaces'],
           },
           EditorCommand: {
             type: 'object',

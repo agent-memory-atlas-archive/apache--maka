@@ -54,6 +54,7 @@ pub(super) struct ReadingState {
     published: Option<ReadingObservation>,
     alive: bool,
     find: find::State,
+    find_intent: Option<u64>,
 }
 impl ReadingState {
     fn new(root_key: String) -> Self {
@@ -67,6 +68,7 @@ impl ReadingState {
             published: None,
             alive: true,
             find: find::State::default(),
+            find_intent: None,
         }
     }
     pub fn cancel(&mut self) {
@@ -213,6 +215,7 @@ impl Widget for Reading {
             reading.viewport = None;
             reading.root_key = key.into();
             reading.find = find::State::default();
+            reading.find_intent = None;
         }
         if !self.node.visible() {
             reading.scope.suspend();
@@ -222,8 +225,29 @@ impl Widget for Reading {
             && reading.last_command.as_ref() != Some(command)
         {
             reading.cancel();
-            reading.scope.touch();
+            let stale_find = match command.target {
+                ReadingTarget::RevealSource {
+                    find_sequence: Some(sequence),
+                    ..
+                } => {
+                    reading
+                        .find
+                        .observation
+                        .as_ref()
+                        .is_none_or(|find| find.sequence != sequence)
+                        || reading.find_intent != Some(reading.scope.intent())
+                }
+                _ => false,
+            };
             reading.last_command = Some(command.clone());
+            if stale_find {
+                reading.receipt = Some(ReadingReceipt {
+                    sequence: command.sequence,
+                    status: ReadingStatus::Cancelled,
+                });
+                return Ok(None);
+            }
+            reading.scope.touch();
             if self.node.visible() {
                 reading.pending = Some(Pending {
                     command: command.clone(),
@@ -309,6 +333,8 @@ impl Widget for Reading {
                 )
             {
                 reading.pending = None;
+                reading.find_intent =
+                    matches!(command.target, ReadingTarget::Find { .. }).then_some(geometry.intent);
                 reading.receipt = Some(ReadingReceipt {
                     sequence: command.sequence,
                     status: ReadingStatus::Applied,
@@ -450,7 +476,7 @@ impl Widget for Reading {
             (Vec::new(), Vec::new())
         };
         let reveal = pending.and_then(|pending| match &pending.command.target {
-            ReadingTarget::RevealSource { path, offset } => {
+            ReadingTarget::RevealSource { path, offset, .. } => {
                 find::Reveal::new(&entries, path, *offset)
             }
             _ => None,

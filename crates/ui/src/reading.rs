@@ -52,11 +52,19 @@ pub enum ReadingTarget {
         step: FindStep,
     },
     ClearFind,
+    /// Move the original terminal viewport by physical rows.
+    ScrollRows {
+        #[schemars(range(min = -65536, max = 65536))]
+        rows: i32,
+    },
     /// Reveal a UTF-8 byte in an original descendant SourceText.
     RevealSource {
         #[schemars(length(min = 1, max = 32))]
         path: Vec<String>,
         offset: u32,
+        /// If supplied, reveal only while this accepted find retains its original physical intent.
+        #[serde(default)]
+        find_sequence: Option<u64>,
     },
     RevealChild {
         #[schemars(length(min = 1, max = 128))]
@@ -92,8 +100,14 @@ impl ReadingCommand {
     pub fn valid_target(&self) -> bool {
         match &self.target {
             ReadingTarget::Find { query, .. } => query.len() <= 512,
-            ReadingTarget::RevealSource { path, offset } => {
-                !path.is_empty()
+            ReadingTarget::ScrollRows { rows } => (-65536..=65536).contains(rows),
+            ReadingTarget::RevealSource {
+                path,
+                offset,
+                find_sequence,
+            } => {
+                find_sequence.is_none_or(|sequence| sequence > 0)
+                    && !path.is_empty()
                     && path.len() <= 32
                     && *offset <= 65536
                     && path.iter().all(|key| !key.is_empty() && key.len() <= 128)

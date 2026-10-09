@@ -550,6 +550,9 @@ impl Presenter {
             match &event {
                 Event::Key(key) if key.kind != KeyEventKind::Release => match key.code {
                     KeyCode::Tab | KeyCode::BackTab if !returnable && !native_tab => {
+                        if self.dispatch_focused_shortcut(&event)? {
+                            return Ok(());
+                        }
                         let reverse = key.code == KeyCode::BackTab
                             || key.modifiers.contains(KeyModifiers::SHIFT);
                         let stops = self.tab_stops();
@@ -759,6 +762,28 @@ impl Presenter {
             self.dispatch_shortcut(&[scope], &event, false)?;
         }
         Ok(())
+    }
+    /// Allow a live declared command to own an otherwise reserved embedding key.
+    fn dispatch_focused_shortcut(&mut self, event: &Event) -> maka_ui::Result<bool> {
+        if !self.surface.is_live()
+            || !self.physical_admitted()
+            || !self.resources.ready(&self.application, &self.root)?
+        {
+            return Ok(false);
+        }
+        let ancestors = match self.focus.clone() {
+            Some(target)
+                if self.target_admitted(&target)
+                    && self.resources.admits(&target)
+                    && self.application.mount_visible(&target.mount)
+                    && !self.application.is_retiring(&target.mount) =>
+            {
+                target.ancestors
+            }
+            Some(_) => return Ok(false),
+            None => self.keyboard.clone().into_iter().collect(),
+        };
+        self.dispatch_shortcut(&ancestors, event, false)
     }
     fn dispatch_shortcut(
         &mut self,
@@ -1096,6 +1121,7 @@ fn shortcut_chord(
         KeyCode::Char(c) => c.to_ascii_lowercase().to_string(),
         KeyCode::Esc => "escape".into(),
         KeyCode::Enter => "enter".into(),
+        KeyCode::Tab | KeyCode::BackTab => "tab".into(),
         KeyCode::Delete => "delete".into(),
         KeyCode::Up => "up".into(),
         KeyCode::Down => "down".into(),
@@ -1113,7 +1139,7 @@ fn shortcut_chord(
         maka_ui::shortcut::Modifiers {
             control: key.modifiers.contains(KeyModifiers::CONTROL),
             alt: key.modifiers.contains(KeyModifiers::ALT),
-            shift: key.modifiers.contains(KeyModifiers::SHIFT),
+            shift: key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT),
             super_key: key.modifiers.contains(KeyModifiers::SUPER),
         },
     ))

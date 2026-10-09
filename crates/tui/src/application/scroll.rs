@@ -167,6 +167,9 @@ impl SceneState {
                     | ReadingTarget::RevealSource { .. } => unreachable!(),
                     ReadingTarget::Start => Some(0),
                     ReadingTarget::End => Some(end),
+                    ReadingTarget::ScrollRows { rows } => {
+                        Some((i64::from(offset) + i64::from(*rows)).clamp(0, i64::from(end)) as u32)
+                    }
                     ReadingTarget::RevealChild { key } => children
                         .iter()
                         .find(|(candidate, _, _)| candidate == key)

@@ -158,6 +158,7 @@ export function serviceApproval<N extends Node>(
       newer: false,
       latest: false,
       live: false,
+      search: null,
       landing: { sequence: 0, edge: 'start' },
     };
     const choose = (decision: 'deny' | 'allow', label: string) => {

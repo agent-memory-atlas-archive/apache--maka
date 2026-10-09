@@ -24,6 +24,7 @@ use maka_ui::{appearance::Color, source::SourceTextProps};
 
 fn props(source: &str) -> SourceTextProps {
     SourceTextProps {
+        focus_on_pointer: true,
         source: source.into(),
         appearance: appearance().body,
         selection: Color(0x4466ff55),

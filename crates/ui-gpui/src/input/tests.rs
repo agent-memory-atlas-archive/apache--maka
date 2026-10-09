@@ -53,6 +53,13 @@ struct MountedInput {
     bubble: Rc<Cell<usize>>,
 }
 fn harness(cx: &mut TestAppContext, secret: bool) -> MountedInput {
+    configured_harness(cx, secret, props())
+}
+fn configured_harness(
+    cx: &mut TestAppContext,
+    secret: bool,
+    configured: InputProps,
+) -> MountedInput {
     let events = Rc::new(RefCell::new(Vec::new()));
     let seen = events.clone();
     let live = LiveInput::new(
@@ -71,7 +78,7 @@ fn harness(cx: &mut TestAppContext, secret: bool) -> MountedInput {
     let (harness, _) = cx.add_window_view(move |window, cx| {
         gpui_kit::init(cx);
         Harness {
-            owner: InputOwner::new(&props(), bound, secret, window, cx),
+            owner: InputOwner::new(&configured, bound, secret, window, cx),
             bubble: parent,
         }
     });
@@ -737,3 +744,54 @@ fn single_line_arrows_bubble_without_changing_the_original_native_text(cx: &mut 
 mod modal;
 
 mod dialog;
+
+#[gpui::test]
+fn native_utf8_capacity_covers_typed_text_and_explicit_commands(cx: &mut TestAppContext) {
+    let mut configured = props();
+    configured.max_bytes = 512;
+    let MountedInput {
+        owner,
+        window,
+        live: _live,
+        events,
+        ..
+    } = configured_harness(cx, false, configured.clone());
+    cx.update_window(window, |_, window, cx| {
+        owner
+            .read(cx)
+            .state
+            .clone()
+            .update(cx, |state, cx| state.focus(window, cx));
+    })
+    .unwrap();
+    draw(cx, window);
+    let full = format!("{}ab", "中".repeat(170));
+    cx.simulate_input(window, &full);
+    draw(cx, window);
+    cx.simulate_input(window, "!");
+    draw(cx, window);
+    cx.simulate_keystrokes(window, "shift-enter");
+    assert!(!events.borrow().iter().any(|(key, _)| key == "submit"));
+    cx.update_window(window, |_, window, cx| {
+        owner.update(cx, |owner, cx| {
+            assert_eq!(owner.state.read(cx).value().as_ref(), full);
+            configured.command = Some(EditorCommand {
+                owner: owner.id.clone(),
+                sequence: 1,
+                based_on: owner.revision,
+                edit: EditorEdit::Replace {
+                    text: "x".repeat(513),
+                },
+            });
+            owner.apply(&configured, window, cx);
+            assert_eq!(
+                owner.receipt.as_ref().unwrap().outcome,
+                EditorOutcome::Conflict {
+                    reason: EditorConflict::Representation
+                }
+            );
+            assert_eq!(owner.state.read(cx).value().as_ref(), full);
+        });
+    })
+    .unwrap();
+}

@@ -43,6 +43,7 @@ pub struct InputOwner {
     _observation: Subscription,
     projection: super::appearance::InputProjection,
     secret: bool,
+    max_bytes: usize,
     visible: bool,
     focus: maka_ui::focus::FocusOnReveal,
     _keyboard: Option<Subscription>,
@@ -69,11 +70,12 @@ impl InputOwner {
             .expect("live editor mount")
             .clone();
         let projection = super::appearance::InputProjection::new(&props.appearance);
+        let max_bytes = props.max_bytes as usize;
         let state = cx.new(|cx| {
             let mut state = InputState::new(window, cx)
                 .masked(secret)
-                .filter_inserted_text(representable)
-                .validate(|text, _| representable(text));
+                .filter_inserted_text(move |text| text.len() <= max_bytes && representable(text))
+                .validate(move |text, _| text.len() <= max_bytes && representable(text));
             projection.apply(&mut state);
             state.set_readonly(props.read_only, cx);
             if props.disabled && state.presentation().focus_handle().is_focused(window) {
@@ -119,6 +121,7 @@ impl InputOwner {
                 projection,
                 label: props.accessibility_label.clone(),
                 secret,
+                max_bytes,
                 visible: true,
                 focus: {
                     let mut focus = maka_ui::focus::FocusOnReveal::default();
@@ -131,7 +134,10 @@ impl InputOwner {
         let weak = owner.downgrade();
         let window_id = window.window_handle().window_id();
         let subscription = cx.intercept_keystrokes(move |event, window, cx| {
-            if event.keystroke.key != "enter" || window.window_handle().window_id() != window_id {
+            if event.keystroke.key != "enter"
+                || event.keystroke.modifiers != gpui::Modifiers::default()
+                || window.window_handle().window_id() != window_id
+            {
                 return;
             }
             let Ok(Some(input)) = weak.update(cx, |owner, cx| {
@@ -323,6 +329,10 @@ impl InputOwner {
             }
         } else {
             self.sequence = command.sequence;
+            let value = match &command.edit {
+                EditorEdit::Replace { text } | EditorEdit::Reset { text } => text.clone(),
+                EditorEdit::Append { text } => format!("{}{text}", self.snapshot.text),
+            };
             if command.based_on != self.revision {
                 EditorOutcome::Conflict {
                     reason: EditorConflict::Revision,
@@ -331,10 +341,7 @@ impl InputOwner {
                 EditorOutcome::Conflict {
                     reason: EditorConflict::Composition,
                 }
-            } else if !representable(&match &command.edit {
-                EditorEdit::Replace { text } | EditorEdit::Reset { text } => text.clone(),
-                EditorEdit::Append { text } => format!("{}{text}", self.snapshot.text),
-            }) {
+            } else if value.len() > self.max_bytes || !representable(&value) {
                 EditorOutcome::Conflict {
                     reason: EditorConflict::Representation,
                 }
@@ -441,7 +448,7 @@ impl Render for InputOwner {
                                 return;
                             }
                             owner.state.update(cx, |state, cx| {
-                                if representable(value) {
+                                if value.len() <= owner.max_bytes && representable(value) {
                                     state.replace_all(value.clone(), window, cx);
                                 }
                             });

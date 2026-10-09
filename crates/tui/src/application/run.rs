@@ -143,7 +143,10 @@ pub fn run(
                     return Ok(false);
                 }
                 if is_exit(&input) && !presenter.captures_keyboard().map_err(|e| e.to_string())? {
-                    return Ok(true);
+                    return presenter
+                        .dispatch_focused_shortcut(&input)
+                        .map(|handled| !handled)
+                        .map_err(|error| error.to_string());
                 }
                 presenter.input(input).map_err(|e| e.to_string())?;
                 if let Err(error) = presenter.flush_clipboard(&mut std::io::stdout().lock()) {

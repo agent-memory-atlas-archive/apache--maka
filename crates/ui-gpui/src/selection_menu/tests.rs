@@ -161,6 +161,7 @@ fn fixture_with_ax(
     cx.update(gpui_kit::init);
     let (root, visual) = cx.add_window_view(|window, cx| {
         let source = |value: &str| SourceTextProps {
+            focus_on_pointer: true,
             source: value.into(),
             appearance: text(),
             selection: Color(0x4466ff55),

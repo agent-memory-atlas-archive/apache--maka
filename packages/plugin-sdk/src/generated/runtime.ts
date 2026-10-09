@@ -872,12 +872,20 @@ export type ReadingTarget =
       kind: 'clear_find';
     }
   | {
+      rows: number;
+      kind: 'scroll_rows';
+    }
+  | {
       /**
        * @minItems 1
        * @maxItems 32
        */
       path: [string, ...string[]];
       offset: number;
+      /**
+       * If supplied, reveal only while this accepted find retains its original physical intent.
+       */
+      find_sequence?: number | null;
       kind: 'reveal_source';
     }
   | {
@@ -886,6 +894,7 @@ export type ReadingTarget =
     };
 export type FindStep = 'first' | 'next' | 'previous';
 export type ReadingStatus = 'applied' | 'cancelled' | 'rejected';
+export type TerminalPaste = 'reject_controls' | 'spaces';
 export type EditorOutcome =
   | {
       status: 'applied';
@@ -3134,6 +3143,10 @@ export interface SourceTextProps {
   appearance: TextAppearance;
   selection: Color;
   disabled: boolean;
+  /**
+   * Whether pointer selection also moves keyboard focus to this source.
+   */
+  focusOnPointer?: boolean;
 }
 export interface TerminalViewProps {
   /**
@@ -3338,6 +3351,14 @@ export interface InputProps {
    * enabled. Stable updates and viewport scrolling do not repeat the offer.
    */
   autoFocus?: boolean;
+  /**
+   * UTF-8 byte capacity, fixed for this original native editor mount.
+   */
+  maxBytes?: number;
+  /**
+   * Terminal bracketed-paste policy. Other native insertion remains literal.
+   */
+  terminalPaste?: TerminalPaste & string;
   placeholder?: string;
   command?: EditorCommand | null;
 }

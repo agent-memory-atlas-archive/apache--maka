@@ -39,11 +39,28 @@ pub struct InputProps {
     /// enabled. Stable updates and viewport scrolling do not repeat the offer.
     #[serde(default)]
     pub auto_focus: bool,
+    /// UTF-8 byte capacity, fixed for this original native editor mount.
+    #[serde(default = "default_max_bytes")]
+    #[schemars(range(min = 1, max = 65536))]
+    pub max_bytes: u32,
+    /// Terminal bracketed-paste policy. Other native insertion remains literal.
+    #[serde(default)]
+    pub terminal_paste: TerminalPaste,
     #[serde(default)]
     #[schemars(length(max = 512))]
     pub placeholder: String,
     #[serde(default)]
     pub command: Option<EditorCommand>,
+}
+fn default_max_bytes() -> u32 {
+    65536
+}
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalPaste {
+    #[default]
+    RejectControls,
+    Spaces,
 }
 impl crate::editor::Props for InputProps {
     fn command(&self) -> Option<&EditorCommand> {
@@ -60,7 +77,23 @@ pub fn submitted_schema() -> serde_json::Value {
     json!({"type":"object","additionalProperties":false,"properties":{}})
 }
 pub fn reduce(call: ComponentCall<'_>) -> crate::Result<ComponentOutput<InputProps>> {
-    if let ComponentCall::Event {
+    let (props, previous) = match &call {
+        ComponentCall::Mount { props } => (*props, None),
+        ComponentCall::Update { props, state } | ComponentCall::Event { props, state, .. } => {
+            (*props, Some(*state))
+        }
+    };
+    let typed: InputProps = serde_json::from_value(props.clone())
+        .map_err(|error| crate::Error::Invalid(error.to_string()))?;
+    let limit = typed.max_bytes;
+    if !(1..=65536).contains(&limit)
+        || previous.is_some_and(|state| state["maxBytes"].as_u64() != Some(u64::from(limit)))
+    {
+        return Err(crate::Error::Invalid(
+            "input byte capacity must be valid and remain fixed for its original mount".into(),
+        ));
+    }
+    let mut output = if let ComponentCall::Event {
         state,
         props,
         key: "submit",
@@ -73,9 +106,12 @@ pub fn reduce(call: ComponentCall<'_>) -> crate::Result<ComponentOutput<InputPro
             name: "submitted".into(),
             value: json!({}),
         });
-        return Ok(output);
-    }
-    crate::editor::reduce(call)
+        output
+    } else {
+        crate::editor::reduce(call)?
+    };
+    output.frame.state["maxBytes"] = json!(limit);
+    Ok(output)
 }
 pub fn text_input_contract() -> Contract {
     contract("maka.ui.TextInput")
@@ -105,5 +141,33 @@ fn contract(name: &str) -> Contract {
                 },
             )]),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn capacity_is_validated_and_cannot_replace_the_original_mount_policy() {
+        let appearance = json!({"text":{"font":{"family":"mono","fallbacks":[],"size":14,"lineHeight":1,"weight":400},"foreground":4294967295u32},"mutedForeground":4294967295u32,"background":0,"selection":0,"caret":4294967295u32,"border":0,"focusedBorder":0,"borderWidth":0,"radius":0,"padding":{"top":0,"right":0,"bottom":0,"left":0}});
+        let mut props = json!({"appearance":appearance,"accessibilityLabel":"Find","readOnly":false,"disabled":false,"tabIndex":0,"maxBytes":512});
+        let original = reduce(ComponentCall::Mount { props: &props }).unwrap();
+        for limit in [0, 513, 65537] {
+            props["maxBytes"] = json!(limit);
+            assert!(
+                reduce(ComponentCall::Update {
+                    props: &props,
+                    state: &original.frame.state
+                })
+                .is_err()
+            );
+        }
+        props["maxBytes"] = json!(512);
+        let next = reduce(ComponentCall::Update {
+            props: &props,
+            state: &original.frame.state,
+        })
+        .unwrap();
+        assert_eq!(next.frame.state["maxBytes"], 512);
     }
 }

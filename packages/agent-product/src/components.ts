@@ -27,6 +27,8 @@ import type {
   ReadingCommand,
   ComponentInput,
   UiExport,
+  Action,
+  InputProps,
 } from '../../plugin-sdk/src/index.js';
 import {
   composerContract,
@@ -36,6 +38,14 @@ import {
   type NavigationProps,
   type TimelineProps,
 } from './contracts.js';
+import {
+  syncSearch,
+  searchEvent,
+  searchReady,
+  historyView,
+  searchCount,
+  type ConversationSearch,
+} from './conversation-search.js';
 import { copy } from './locale.js';
 import { output, fill, pixels, compactLabel, type Presentation, type Node } from './view.js';
 interface Revision {
@@ -81,6 +91,7 @@ interface Draft extends Revision {
   observation: EditorObservation | null;
 }
 interface Reading extends Revision {
+  search: ConversationSearch | null;
   expanded: string[];
   observation: ReadingObservation | null;
   command: ReadingCommand | null;
@@ -139,7 +150,7 @@ export function components<N extends Node>(
             ? 'primary_enter'
             : null,
       tabIndex: 1,
-      autoFocus: true,
+      autoFocus: props.autoFocus,
       initialText: '',
       placeholder: text.placeholder,
       command: props.command,
@@ -304,6 +315,7 @@ export function components<N extends Node>(
   const timelineFrame = (state: Reading, props: TimelineProps) => {
     const ui = presentation.paint(props.theme),
       text = copy(props.locale);
+    const search = state.search?.closing ? null : state.search;
     const tools = props.messages.filter(
       (message) =>
         (message.role === 'tool_call' || message.role === 'tool_result') &&
@@ -367,6 +379,7 @@ export function components<N extends Node>(
               'source',
               {
                 source: message.text,
+                focusOnPointer: !search,
                 appearance: props.theme.markdown.body,
                 selection: props.theme.markdown.selection,
                 disabled: false,
@@ -541,6 +554,53 @@ export function components<N extends Node>(
       ui.box(
         'timeline-frame',
         [
+          ...(search
+            ? [
+                ui.box(
+                  'find-bar',
+                  [
+                    ui.button('find-scope', search.history ? '∞' : '⌕'),
+                    ui.box(
+                      'find-editor',
+                      [
+                        presentation.slot(
+                          search.key,
+                          'input',
+                          {
+                            appearance: { ...props.theme.input, borderWidth: 0 },
+                            accessibilityLabel: text.findConversation,
+                            readOnly: false,
+                            disabled: false,
+                            tabIndex: 0,
+                            autoFocus: true,
+                            maxBytes: 512,
+                            terminalPaste: 'spaces',
+                            placeholder: text.findPlaceholder,
+                          } satisfies InputProps,
+                          { changed: 'find-changed', submitted: 'find-submitted' },
+                        ),
+                      ],
+                      { terminal: { grow: 1, shrink: true }, style: { grow: 1, minWidth: 0 } },
+                    ),
+                    ui.text(
+                      'find-count',
+                      search.failed ? text.findFailed : searchCount(state),
+                      12,
+                      props.theme.muted,
+                    ),
+                    ui.button('find-previous', '↑', !searchReady(search)),
+                    ui.button('find-next', '↓', !searchReady(search)),
+                    ui.button('find-close', '×'),
+                  ],
+                  {
+                    row: true,
+                    gap: 1,
+                    terminal: { basis: 1, shrink: false },
+                    style: { width: fill, shrink: 0 },
+                  },
+                ),
+              ]
+            : []),
           ui.box(
             'retained-conversation',
             [
@@ -551,11 +611,12 @@ export function components<N extends Node>(
               ),
             ],
             {
-              visible: !props.source,
+              visible: !props.source && !search?.history,
               style: { width: fill, height: pixels(0), grow: 1, shrink: 1, minHeight: 0 },
               terminal: { grow: 1 },
             },
           ),
+          ...(search?.history ? [historyView(presentation, props, search)] : []),
           ...(props.source
             ? [
                 (() => {
@@ -645,7 +706,7 @@ export function components<N extends Node>(
                 })(),
               ]
             : []),
-          ...(controls.length
+          ...(!search?.history && controls.length
             ? [
                 ui.box('reading-controls', controls, {
                   row: true,
@@ -657,6 +718,33 @@ export function components<N extends Node>(
             : []),
         ],
         {
+          shortcuts: search
+            ? [
+                { key: 'f', modifiers: ['alt'], input: 'find-scope', enabled: true },
+                {
+                  key: 'r',
+                  modifiers: ['control'],
+                  input: 'find-restart',
+                  enabled: !!search.history,
+                },
+                { key: 'up', modifiers: [], input: 'find-previous', enabled: !!search.history },
+                { key: 'down', modifiers: [], input: 'find-next', enabled: !!search.history },
+                { key: 'pageup', modifiers: [], input: 'find-page-up', enabled: !!search.history },
+                {
+                  key: 'pagedown',
+                  modifiers: [],
+                  input: 'find-page-down',
+                  enabled: !!search.history,
+                },
+                { key: 'escape', modifiers: [], input: 'find-close', enabled: true },
+                { key: 'tab', modifiers: [], input: 'find-close', enabled: true },
+                { key: 'tab', modifiers: ['shift'], input: 'find-close', enabled: true },
+                { key: 'c', modifiers: ['control'], input: 'find-close', enabled: true },
+                { key: 'f3', modifiers: [], input: 'find-next', enabled: true },
+                { key: 'f3', modifiers: ['shift'], input: 'find-previous', enabled: true },
+                { key: 'enter', modifiers: ['shift'], input: 'find-previous', enabled: true },
+              ]
+            : [],
           gap: target === 'desktop' ? 8 : 1,
           style: { width: fill, height: fill },
           terminal: { grow: 1 },
@@ -728,20 +816,21 @@ export function components<N extends Node>(
       },
     },
     timeline: {
-      mount: (props) =>
-        timelineFrame(
-          {
-            revision: 0,
-            expanded: [],
-            observation: null,
-            command:
-              props.landing.sequence > 0
-                ? { sequence: 1, target: { kind: props.landing.edge } }
-                : null,
-            landing: props.landing,
-          },
-          props,
-        ),
+      mount: (props) => {
+        const initial: Reading = {
+          revision: 0,
+          search: null,
+          expanded: [],
+          observation: null,
+          command:
+            props.landing.sequence > 0
+              ? { sequence: 1, target: { kind: props.landing.edge } }
+              : null,
+          landing: props.landing,
+        };
+        syncSearch(initial, target === 'tui' ? props.search : null);
+        return timelineFrame(initial, props);
+      },
       update(state, props) {
         if (
           props.landing.sequence < state.landing.sequence ||
@@ -749,30 +838,40 @@ export function components<N extends Node>(
             props.landing.edge !== state.landing.edge)
         )
           throw new Error('Invalid reading landing sequence');
-        return timelineFrame(
-          {
-            ...state,
-            revision: state.revision + 1,
-            command:
-              state.landing.sequence !== props.landing.sequence
-                ? {
-                    sequence: (state.command?.sequence ?? 0) + 1,
-                    target: { kind: props.landing.edge },
-                  }
-                : state.command,
-            landing: props.landing,
-          },
-          props,
-        );
+        const next: Reading = {
+          ...state,
+          revision: state.revision + 1,
+          command:
+            state.landing.sequence !== props.landing.sequence
+              ? {
+                  sequence: (state.command?.sequence ?? 0) + 1,
+                  target: { kind: props.landing.edge },
+                }
+              : state.command,
+          landing: props.landing,
+        };
+        syncSearch(next, target === 'tui' ? props.search : null);
+        return timelineFrame(next, props);
       },
       event(state, input, props) {
         const next = { ...state, revision: state.revision + 1 };
         if (
           input.kind === 'component' &&
-          (input.child === 'reading' || input.child === 'source-reading')
+          (['reading', 'source-reading', 'find-results-reading'].includes(input.child) ||
+            input.child.startsWith('find-preview-reading-'))
         ) {
-          if (input.name === 'observed') next.observation = input.event as ReadingObservation;
+          if (input.child === 'reading' && input.name === 'observed')
+            next.observation = input.event as ReadingObservation;
           if (input.name === 'input') input = input.event as ComponentInput;
+        }
+        const actions: Action[] = [];
+        const handled = searchEvent(next, input, props, actions);
+        if (handled) {
+          const out = timelineFrame(next, props);
+          out.actions.push(...actions);
+          if (handled === 'closed') out.events.push({ name: 'searchClosed', value: {} });
+          if (input.kind === 'raw') out.decision = { preventDefault: true, stopPropagation: true };
+          return out;
         }
         if (
           input.kind === 'raw' &&
@@ -797,6 +896,7 @@ export function components<N extends Node>(
         const out = timelineFrame(next, props);
         if (
           !props.source &&
+          !next.search &&
           input.kind === 'component' &&
           input.child === 'reading' &&
           input.name === 'observed' &&

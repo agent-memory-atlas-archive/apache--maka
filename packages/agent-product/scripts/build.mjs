@@ -362,9 +362,15 @@ for (const [name, spec] of Object.entries(specifications)) {
   }
   if (name === 'workspace') entries.tui.imports.rows = one(sdk.contracts.rows);
   if (name === 'image-viewer') entries.desktop.imports.image = one(sdk.contracts.image);
-  if (name === 'timeline')
+  if (name === 'timeline') {
     for (const target of ['desktop', 'tui'])
       entries[target].imports.reading = one(sdk.contracts.readingArea);
+    Object.assign(entries.tui.imports, {
+      input: one(sdk.contracts.textInput),
+      reader: one(sdk.contracts.textReader),
+      agent: one(sdk.contracts.agent),
+    });
+  }
   // A surface is an explicit capability in the root's checked plan.
   if (name === 'workspace' || name === 'studio' || name === 'recovery')
     for (const target of ['desktop', 'tui'])

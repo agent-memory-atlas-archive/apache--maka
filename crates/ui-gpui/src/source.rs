@@ -72,6 +72,7 @@ impl Owner {
             move |window, cx| {
                 if let Some(owner) = weak.upgrade()
                     && owner.read(cx).enabled()
+                    && owner.read(cx).props.focus_on_pointer
                 {
                     owner.read(cx).focus.clone().focus(window, cx);
                 }
@@ -107,10 +108,18 @@ impl Render for Owner {
         }
         let copy = cx.entity().downgrade();
         let select = copy.clone();
+        let pointer = copy.clone();
         let a = &self.props.appearance;
         div()
             .w_full()
             .when(self.enabled(), |this| this.track_focus(&self.focus))
+            .capture_any_mouse_down(move |_, window, cx| {
+                if pointer.upgrade().is_none_or(|owner| {
+                    !owner.read(cx).enabled() || !owner.read(cx).props.focus_on_pointer
+                }) {
+                    window.prevent_default();
+                }
+            })
             .key_context("TextView")
             .font(font(&a.font))
             .text_size(px(a.font.size))
@@ -288,12 +297,16 @@ mod tests {
     struct Root {
         owner: Entity<Owner>,
         scope: TextSelectionScopeId,
+        keyboard: Option<FocusHandle>,
     }
     impl Render for Root {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             div()
                 .w(px(320.))
                 .h(px(120.))
+                .when_some(self.keyboard.as_ref(), |node, focus| {
+                    node.track_focus(focus)
+                })
                 .child(TextSelectionLayer)
                 .child(self.owner.clone().text_selection_scope(self.scope))
         }
@@ -319,6 +332,7 @@ mod tests {
             Root {
                 owner: Owner::new(&props, input, window, cx),
                 scope,
+                keyboard: None,
             }
         });
         window_cx.update(|window, cx| window.draw(cx).clear(cx));
@@ -407,6 +421,62 @@ mod tests {
                 Some("replacement")
             );
             assert!(TextSelection::has_selection_in_scope(scope, window, cx));
+        });
+    }
+    #[gpui::test]
+    fn pointer_selection_can_leave_native_keyboard_focus_unchanged(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let props: SourceTextProps = serde_json::from_value(json!({"source":"selectable preview",
+            "appearance":{"font":{"family":"Helvetica","fallbacks":[],"size":16,"lineHeight":1.5,"weight":400},"foreground":0x242724ffu32},
+            "selection":0x4466ff55u32,"disabled":false,"focusOnPointer":false})).unwrap();
+        let scope = TextSelectionScopeId::new();
+        let (root, w) = cx.add_window_view(|window, cx| {
+            let input = LiveInput::new(
+                Rc::new(std::cell::RefCell::new(Some(crate::Input(Rc::new(
+                    |_, _, _, _| Ok(Default::default()),
+                ))))),
+                crate::NativeBudget::default(),
+                std::sync::Arc::new(maka_plugins::call::Resources::default()),
+            );
+            Root {
+                owner: Owner::new(&props, input, window, cx),
+                scope,
+                keyboard: Some(cx.focus_handle()),
+            }
+        });
+        w.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            root.read(cx).keyboard.clone().unwrap().focus(window, cx);
+            window.draw(cx).clear(cx);
+        });
+        w.simulate_mouse_down(
+            point(px(1.), px(12.)),
+            gpui_kit::MouseButton::Left,
+            Default::default(),
+        );
+        w.simulate_mouse_move(
+            point(px(220.), px(12.)),
+            Some(gpui_kit::MouseButton::Left),
+            Default::default(),
+        );
+        w.simulate_mouse_up(
+            point(px(220.), px(12.)),
+            gpui_kit::MouseButton::Left,
+            Default::default(),
+        );
+        w.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let owner = root.read(cx).owner.clone();
+            assert!(root.read(cx).keyboard.as_ref().unwrap().is_focused(window));
+            assert_eq!(
+                owner
+                    .read(cx)
+                    .handle
+                    .clone()
+                    .selected_text_in_scope(window, cx)
+                    .as_deref(),
+                Some("selectable preview")
+            );
         });
     }
     struct Peers {

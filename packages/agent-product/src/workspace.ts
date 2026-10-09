@@ -152,6 +152,7 @@ export interface State {
   model: SelectedModel | null;
   catalogEpoch: number;
   modelRefreshing: boolean;
+  searchOpen: boolean;
   settingsOpen: boolean;
   deploymentOpen: boolean;
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
@@ -382,6 +383,7 @@ function follow(state: State, actions: Action[]) {
   if (
     receipt?.landing === state.landing.sequence &&
     !state.source &&
+    !state.searchOpen &&
     !state.image &&
     !state.loading &&
     state.window?.latest &&
@@ -406,6 +408,7 @@ function follow(state: State, actions: Action[]) {
   }
 }
 function select(state: State, actions: Action[], session: AgentSession) {
+  state.searchOpen = false;
   state.selected = session;
   state.epoch++;
   state.window = null;
@@ -483,6 +486,7 @@ function executionPending(state: State) {
 }
 
 type RootCommand =
+  | 'search-open'
   | 'help-open'
   | 'interaction-open'
   | 'create'
@@ -543,11 +547,26 @@ function openInteraction(state: State, actions: Action[], requestId: string, kin
   state.dialog = kind === 'question' ? 'question' : 'approval';
   readInteraction(state, actions);
 }
-function rootCommands(state: State, locale: string): (PaletteCommand & { kind: RootCommand })[] {
+function rootCommands(
+  state: State,
+  locale: string,
+  target: 'tui' | 'desktop',
+): (PaletteCommand & { kind: RootCommand })[] {
   const text = copy(locale);
   const route = conversationRoute(state) && (state.dialog === null || state.dialog === 'palette');
   const review = reviewTarget(state);
   const commands: (PaletteCommand & { kind: RootCommand })[] = [
+    ...(target === 'tui'
+      ? [
+          {
+            kind: 'search-open' as const,
+            id: 'search-open',
+            label: text.findConversation,
+            hint: 'Ctrl F',
+            disabled: !route || !state.selected || state.loading || !!state.source || !!state.image,
+          },
+        ]
+      : []),
     {
       kind: 'help-open',
       id: 'help-open',
@@ -658,10 +677,21 @@ function controlSidebar(state: State, op: TerminalPaneCommand['op']) {
     state.sidebar.command = { sequence: (state.sidebar.command?.sequence ?? 0) + 1, op };
   }
 }
-function rootCommand(state: State, actions: Action[], locale: string, kind: RootCommand) {
-  if (!rootCommands(state, locale).some((command) => command.kind === kind && !command.disabled))
+function rootCommand(
+  state: State,
+  actions: Action[],
+  locale: string,
+  kind: RootCommand,
+  target: 'tui' | 'desktop',
+) {
+  if (
+    !rootCommands(state, locale, target).some(
+      (command) => command.kind === kind && !command.disabled,
+    )
+  )
     return false;
-  if (kind === 'help-open') state.dialog = 'help';
+  if (kind === 'search-open') state.searchOpen = true;
+  else if (kind === 'help-open') state.dialog = 'help';
   else if (kind === 'interaction-open') {
     const review = reviewTarget(state)!;
     openInteraction(state, actions, review.requestId, review.kind);
@@ -1448,6 +1478,8 @@ function frame<N extends Node>(
   actions: Action[] = [],
 ) {
   const target = presentation.target;
+  if (!conversationRoute(state) || state.source || state.image || !state.selected)
+    state.searchOpen = false;
   const theme = values.appearance?.[0] as Theme;
   const text = copy(locale),
     ui = presentation.paint(theme),
@@ -1460,7 +1492,7 @@ function frame<N extends Node>(
       ui.button(
         'create',
         text.new,
-        !rootCommands(state, locale).some(
+        !rootCommands(state, locale, target).some(
           (command) => command.kind === 'create' && !command.disabled,
         ),
       ),
@@ -1547,6 +1579,10 @@ function frame<N extends Node>(
       theme,
       locale,
       messages: messages(state),
+      search:
+        target === 'tui' && state.searchOpen && state.selected
+          ? { sessionId: state.selected.id, epoch: state.epoch, through: state.latestKnown }
+          : null,
       source: state.source
         ? {
             kind: state.source.field === 'body' ? 'message' : state.source.field,
@@ -1592,6 +1628,7 @@ function frame<N extends Node>(
       sourceBack: 'source-back',
       sourceRetry: 'source-retry',
       tailReady: 'tail-ready',
+      searchClosed: 'search-closed',
     },
   );
   const imageViewer = presentation.slot(
@@ -1621,6 +1658,7 @@ function frame<N extends Node>(
         !state.loading &&
         state.notice !== 'unavailable',
       command: state.command,
+      autoFocus: !state.searchOpen,
     },
     { send: 'send', stop: 'stop', changed: 'draft' },
   );
@@ -1721,7 +1759,7 @@ function frame<N extends Node>(
                     ui.button(
                       'details-open',
                       text.detailsOpen,
-                      !rootCommands(state, locale).some(
+                      !rootCommands(state, locale, target).some(
                         (command) => command.kind === 'details-open' && !command.disabled,
                       ),
                     ),
@@ -1746,7 +1784,7 @@ function frame<N extends Node>(
                     ui.button(
                       'details-open',
                       text.detailsOpen,
-                      !rootCommands(state, locale).some(
+                      !rootCommands(state, locale, target).some(
                         (command) => command.kind === 'details-open' && !command.disabled,
                       ),
                     ),
@@ -1842,7 +1880,7 @@ function frame<N extends Node>(
                           ui.button(
                             'interaction-open',
                             `Ctrl G · ${text.reviewRequest}`,
-                            !rootCommands(state, locale).some(
+                            !rootCommands(state, locale, target).some(
                               (command) => command.kind === 'interaction-open' && !command.disabled,
                             ),
                           ),
@@ -1959,12 +1997,20 @@ function frame<N extends Node>(
       style: { width: fill, height: fill, align: 'center' },
       terminal: { grow: 1 },
       shortcuts: [
+        {
+          key: 'f',
+          modifiers: ['primary'],
+          input: 'search-open',
+          enabled: rootCommands(state, locale, target).some(
+            (command) => command.kind === 'search-open' && !command.disabled,
+          ),
+        },
         { key: 'f1', modifiers: [], input: 'help-open', enabled: true },
         {
           key: 'g',
           modifiers: ['primary'],
           input: 'interaction-open',
-          enabled: rootCommands(state, locale).some(
+          enabled: rootCommands(state, locale, target).some(
             (command) => command.kind === 'interaction-open' && !command.disabled,
           ),
         },
@@ -2180,7 +2226,9 @@ function frame<N extends Node>(
               busy: false,
               selectionDisabled:
                 !conversationRoute(state) || mutationPending(state) || catalogPending(state),
-              commands: rootCommands(state, locale).map(({ kind: _kind, ...command }) => command),
+              commands: rootCommands(state, locale, target).map(
+                ({ kind: _kind, ...command }) => command,
+              ),
             },
             { invoked: 'invoked', selected: 'selected', closed: 'closed' },
           ),
@@ -2251,6 +2299,7 @@ export function workspace<N extends Node>(
         modelRefreshing: false,
         settingsOpen: false,
         deploymentOpen: false,
+        searchOpen: false,
         sidebar: target === 'desktop' ? { open: true } : { command: null },
         terminals,
         dialog: null,
@@ -2511,12 +2560,12 @@ export function workspace<N extends Node>(
           if (state.dialog === 'palette' && conversationRoute(state)) {
             if (input.name === 'closed') state.dialog = null;
             else if (input.name === 'invoked') {
-              const command = rootCommands(state, locale).find(
+              const command = rootCommands(state, locale, target).find(
                 (command) => command.id === (input.event as { id: string }).id && !command.disabled,
               );
               if (
                 command &&
-                rootCommand(state, actions, locale, command.kind) &&
+                rootCommand(state, actions, locale, command.kind, target) &&
                 state.dialog === 'palette'
               )
                 state.dialog = null;
@@ -2579,6 +2628,8 @@ export function workspace<N extends Node>(
                 { sessionId: state.selected.id, expectedRevision: event.revision, edit },
               );
           }
+        } else if (input.child === 'timeline' && input.name === 'searchClosed') {
+          state.searchOpen = false;
         } else if (input.child === 'timeline' && input.name === 'tailReady') {
           const receipt = input.event as NonNullable<State['tailReceipt']>;
           if (receipt.landing === state.landing.sequence) {
@@ -2645,7 +2696,7 @@ export function workspace<N extends Node>(
               },
             );
         } else if (input.child === 'composer' && input.name === 'stop') {
-          rootCommand(state, actions, locale, 'stop');
+          rootCommand(state, actions, locale, 'stop', target);
         } else if (
           input.child === 'models' &&
           input.name === 'selected' &&
@@ -2819,14 +2870,16 @@ export function workspace<N extends Node>(
         )
           state.dialog = 'palette';
         else if (input.key === 'help-open') {
-          if (state.dialog === null) rootCommand(state, actions, locale, 'help-open');
+          if (state.dialog === null) rootCommand(state, actions, locale, 'help-open', target);
         } else if (input.key === 'workspace-dialog') closeDialog(state);
         else if (input.key === 'navigation-back' && state.dialog === null) {
           if ('open' in state.sidebar) state.sidebar.open = false;
           else controlSidebar(state, 'toggle');
         } else {
-          const command = rootCommands(state, locale).find((command) => command.kind === input.key);
-          if (command) rootCommand(state, actions, locale, command.kind);
+          const command = rootCommands(state, locale, target).find(
+            (command) => command.kind === input.key,
+          );
+          if (command) rootCommand(state, actions, locale, command.kind, target);
         }
       }
       return frame(presentation, locale, state, values, actions);

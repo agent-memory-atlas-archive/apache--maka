@@ -330,3 +330,130 @@ fn find_stops_at_nested_reading_boundary_and_reveal_does_not_claim_inner_clipped
     );
     close(&mut presenter);
 }
+
+#[test]
+fn relative_reading_rows_settle_only_on_flush_and_physical_scroll_cancels_late_geometry() {
+    let (_runtime, mut presenter, props) = native(vec![source(
+        "preview",
+        &(0..40)
+            .map(|row| format!("line {row}\n"))
+            .collect::<String>(),
+    )]);
+    settle(&mut presenter, 20, 5);
+    command(
+        &mut presenter,
+        &props,
+        1,
+        json!({"kind":"scroll_rows","rows":8}),
+    );
+    let area = Rect::new(0, 0, 20, 5);
+    drop(presenter.paint(area, &mut Buffer::empty(area)).unwrap());
+    assert_eq!(state(&presenter).scrolls["reading"].offset, 0);
+    assert_eq!(observation(&presenter)["pendingCommand"], 1);
+    settle(&mut presenter, 20, 5);
+    assert_eq!(state(&presenter).scrolls["reading"].offset, 8);
+    assert_eq!(observation(&presenter)["receipt"]["status"], "applied");
+    settle(&mut presenter, 20, 5);
+    assert_eq!(state(&presenter).scrolls["reading"].offset, 8);
+    command(
+        &mut presenter,
+        &props,
+        2,
+        json!({"kind":"scroll_rows","rows":-8}),
+    );
+    let stale = presenter.paint(area, &mut Buffer::empty(area)).unwrap();
+    mouse(&mut presenter, MouseEventKind::ScrollDown, 1, 1);
+    let offset = state(&presenter).scrolls["reading"].offset;
+    presenter.present(stale);
+    settle(&mut presenter, 20, 5);
+    assert_eq!(state(&presenter).scrolls["reading"].offset, offset);
+    assert_eq!(observation(&presenter)["receipt"]["status"], "cancelled");
+    command(
+        &mut presenter,
+        &props,
+        3,
+        json!({"kind":"scroll_rows","rows":-65536}),
+    );
+    settle(&mut presenter, 20, 5);
+    assert_eq!(state(&presenter).scrolls["reading"].offset, 0);
+    close(&mut presenter);
+}
+
+#[test]
+fn source_pointer_selection_can_keep_the_existing_keyboard_focus() {
+    let mut preview = source("preview", "selectable preview");
+    preview["props"]["focusOnPointer"] = json!(false);
+    let (_runtime, mut presenter, _) = native(vec![preview, source("other", "original focus")]);
+    settle(&mut presenter, 30, 3);
+    mouse(
+        &mut presenter,
+        MouseEventKind::Down(MouseButton::Left),
+        2,
+        1,
+    );
+    mouse(&mut presenter, MouseEventKind::Up(MouseButton::Left), 2, 1);
+    let focus = presenter.focus.clone().unwrap();
+    mouse(
+        &mut presenter,
+        MouseEventKind::Down(MouseButton::Left),
+        0,
+        0,
+    );
+    mouse(
+        &mut presenter,
+        MouseEventKind::Drag(MouseButton::Left),
+        10,
+        0,
+    );
+    mouse(&mut presenter, MouseEventKind::Up(MouseButton::Left), 10, 0);
+    assert!(presenter.focus.as_ref().unwrap().same(&focus));
+    assert_eq!(copied(&mut presenter).unwrap(), b"selectable");
+    close(&mut presenter);
+}
+
+#[test]
+fn accepted_find_cannot_reveal_after_later_physical_reading_intent() {
+    let (_runtime, mut presenter, props) = native(vec![source(
+        "long",
+        &format!("{}needle", "row\n".repeat(30)),
+    )]);
+    settle(&mut presenter, 20, 5);
+    command(
+        &mut presenter,
+        &props,
+        1,
+        json!({"kind":"find","query":"needle","step":"first"}),
+    );
+    settle(&mut presenter, 20, 5);
+    assert_eq!(observation(&presenter)["receipt"]["status"], "applied");
+    mouse(&mut presenter, MouseEventKind::ScrollDown, 1, 1);
+    settle(&mut presenter, 20, 5);
+    let offset = state(&presenter).scrolls["reading"].offset;
+    command(
+        &mut presenter,
+        &props,
+        2,
+        json!({"kind":"reveal_source","path":["long"],"offset":120,"find_sequence":1}),
+    );
+    settle(&mut presenter, 20, 5);
+    assert_eq!(state(&presenter).scrolls["reading"].offset, offset);
+    assert_eq!(observation(&presenter)["receipt"]["status"], "cancelled");
+    command(
+        &mut presenter,
+        &props,
+        3,
+        json!({"kind":"find","query":"needle","step":"next"}),
+    );
+    settle(&mut presenter, 20, 5);
+    command(
+        &mut presenter,
+        &props,
+        4,
+        json!({"kind":"reveal_source","path":["long"],"offset":120,"find_sequence":3}),
+    );
+    settle(&mut presenter, 20, 5);
+    settle(&mut presenter, 20, 5);
+    assert_eq!(observation(&presenter)["receipt"]["status"], "applied");
+    assert!(state(&presenter).scrolls["reading"].offset > offset);
+    close(&mut presenter);
+}

@@ -9183,3 +9183,388 @@ for (const target of ['tui', 'desktop']) {
     );
   });
 }
+
+async function conversationFinder() {
+  const { component } = await import(pathToFileURL(resolve(root, 'dist/packages/timeline/tui.js')));
+  const props = {
+    theme: values.appearance[0],
+    locale: 'en',
+    messages: [
+      {
+        id: 'tool',
+        contentKey: 'tool-body',
+        role: 'tool_result',
+        text: 'first 中文 second 中文',
+        source: 257,
+        tool: null,
+        continued: false,
+        image: false,
+      },
+    ],
+    source: null,
+    search: { sessionId: uuid(1), epoch: 1, through: 100 },
+    loading: false,
+    older: false,
+    newer: false,
+    latest: false,
+    landing: { sequence: 0, edge: 'end' },
+    live: true,
+  };
+  const finder = {
+    props,
+    component,
+    out: component.mount(props, {}),
+    get state() {
+      return this.out.frame.state;
+    },
+    input(input) {
+      this.out = component.event(structuredClone(this.state), input, this.props, {});
+      return this.out;
+    },
+    raw(key) {
+      return this.input({ kind: 'raw', key, event: {} });
+    },
+    update(patch) {
+      Object.assign(this.props, patch);
+      this.out = component.update(structuredClone(this.state), this.props, {});
+      return this.out;
+    },
+    text(text, revision = 1) {
+      const basis = { owner: 'query-owner', revision, bytes: Buffer.byteLength(text) };
+      this.input({
+        kind: 'component',
+        child: this.state.search.key,
+        name: 'changed',
+        event: {
+          revision,
+          snapshot: {
+            text: basis,
+            selection: { start: basis.bytes, end: basis.bytes },
+            reversed: false,
+            marked: null,
+          },
+          receipt: null,
+        },
+      });
+      return { action: this.out.actions.find((action) => action.method === 'read'), basis, text };
+    },
+    complete(action, value) {
+      return this.input({ kind: 'action', key: action.key, event: { status: 'succeeded', value } });
+    },
+    captured(capture) {
+      return this.complete(capture.action, { text: capture.text, metadata: capture.basis });
+    },
+    query(text, revision = 1) {
+      this.captured(this.text(text, revision));
+    },
+  };
+  return finder;
+}
+test('conversation find captures the native revision, unfolds exact hits and never jumps on streaming observations', async () => {
+  const find = await conversationFinder();
+  assert.deepEqual(find.state.command.target, { kind: 'find', query: '', step: 'first' });
+  const input = modelSlots(find.out.frame.view).find((node) => node.binding === 'input');
+  assert.equal(input.props.maxBytes, 512);
+  assert.equal(input.props.terminalPaste, 'spaces');
+  const old = find.text('old');
+  const latest = find.text('中文', 2);
+  assert.equal(latest.action, undefined, 'one outstanding native capture');
+  find.captured(old);
+  const capture = find.out.actions[0];
+  assert.equal(capture.resources.text.input.revision, 2);
+  find.complete(capture, { text: '中文', metadata: latest.basis });
+  assert.deepEqual(find.state.command.target, { kind: 'find', query: '中文', step: 'first' });
+  const sequence = find.state.command.sequence;
+  const observe = (count) =>
+    find.input({
+      kind: 'component',
+      child: 'reading',
+      name: 'observed',
+      event: {
+        readingRevision: 10,
+        viewport: null,
+        pendingCommand: null,
+        receipt: { sequence, status: 'applied' },
+        find: {
+          sequence,
+          count,
+          limited: false,
+          index: 1,
+          active: { path: ['text-tool-body'], offset: 6 },
+        },
+      },
+    });
+  observe(2);
+  assert.deepEqual(find.state.expanded, ['tool']);
+  assert.deepEqual(find.state.command.target, {
+    kind: 'reveal_source',
+    path: ['text-tool-body'],
+    offset: 6,
+    find_sequence: sequence,
+  });
+  const reveal = structuredClone(find.state.command);
+  observe(3);
+  assert.deepEqual(find.state.command, reveal, 'streaming count cannot repeat explicit reveal');
+  find.raw('find-previous');
+  assert.deepEqual(find.state.command.target, { kind: 'find', query: '中文', step: 'previous' });
+  find.query('中文', 3);
+  assert.equal(
+    find.state.command.target.step,
+    'previous',
+    'selection-only revisions do not restart',
+  );
+  find.input({ kind: 'component', child: find.state.search.key, name: 'submitted', event: {} });
+  assert.equal(find.state.command.target.step, 'next');
+  assert.equal(find.state.search.observation.snapshot.text.revision, 3);
+  const pending = find.text('late', 4);
+  find.raw('find-close');
+  assert.deepEqual(find.out.events, [{ name: 'searchClosed', value: {} }]);
+  assert.equal(find.state.command.target.kind, 'clear_find');
+  find.captured(pending);
+  assert.equal(find.state.command.target.kind, 'clear_find');
+  find.update({ search: null });
+  find.update({ search: { sessionId: uuid(1), epoch: 1, through: 110 } });
+  assert.notEqual(find.state.search.key, pending.action.resources.text.child);
+});
+test('history search follows empty batches, reads the exact selected field and bounds pages without replacing live source owners', async () => {
+  const find = await conversationFinder();
+  find.query('中文');
+  const before = modelSlots(find.out.frame.view).find((node) => node.key === 'text-tool-body');
+  find.raw('find-scope');
+  let request = find.out.actions.find((action) => action.method === 'search');
+  assert.equal(request.input.through, 100);
+  find.complete(request, { kind: 'ready', through: 100, matches: [], nextAfter: 300 });
+  request = find.out.actions.find((action) => action.method === 'search');
+  assert.equal(request.input.after, 300);
+  const hits = (start, count) =>
+    Array.from({ length: count }, (_, i) => ({
+      field: 'arguments',
+      cursor: { sequence: start + i, offset: 0 },
+      preview: `hit ${start + i} 中文`,
+    }));
+  find.complete(request, { kind: 'ready', through: 100, matches: hits(301, 16), nextAfter: 400 });
+  const source = find.out.actions.find((action) => action.method === 'source');
+  assert.deepEqual(source.input.source, { kind: 'sequence', sequence: 301 });
+  assert.equal(source.input.field, 'arguments');
+  request = find.out.actions.find((action) => action.method === 'search');
+  find.complete(source, {
+    kind: 'ready',
+    through: 100,
+    source: {
+      sequence: 301,
+      field: 'arguments',
+      format: 'json',
+      offset: 0,
+      totalBytes: 20000,
+      text: 'first source page',
+      tool: null,
+    },
+  });
+  find.complete(request, { kind: 'ready', through: 100, matches: hits(401, 16), nextAfter: 500 });
+  assert.equal(find.state.search.history.matches.length, 32);
+  assert.equal(find.state.search.history.scanning, false);
+  const retained = modelSlots(find.out.frame.view).find((node) => node.key === 'text-tool-body');
+  assert.deepEqual(retained, before);
+  assert.equal(
+    find.out.frame.view.children.find((node) => node.key === 'retained-conversation').visible,
+    false,
+  );
+  find.raw('find-page-down');
+  assert.deepEqual(find.state.search.history.preview.command.target, {
+    kind: 'scroll_rows',
+    rows: 8,
+  });
+  find.raw('find-hit-31');
+  const stalePreview = find.out.actions.find((action) => action.method === 'source');
+  find.raw('find-next');
+  request = find.out.actions.find((action) => action.method === 'search');
+  assert.equal(request.input.after, 500);
+  find.complete(stalePreview, {
+    kind: 'ready',
+    through: 100,
+    source: {
+      sequence: 416,
+      field: 'arguments',
+      format: 'json',
+      offset: 0,
+      totalBytes: 0,
+      text: '',
+      tool: null,
+    },
+  });
+  assert.equal(find.state.search.history.preview, null);
+  find.complete(request, { kind: 'ready', through: 100, matches: hits(501, 1), nextAfter: null });
+  assert.equal(find.state.search.history.offset, 32);
+  find.raw('find-previous');
+  request = find.out.actions.find((action) => action.method === 'search');
+  assert.equal(request.input.after, 0);
+  find.complete(request, { kind: 'ready', through: 100, matches: hits(301, 16), nextAfter: 400 });
+  assert.equal(find.state.search.history.selected, -1);
+  request = find.out.actions.find((action) => action.method === 'search');
+  find.complete(request, { kind: 'ready', through: 100, matches: hits(401, 16), nextAfter: 500 });
+  assert.equal(find.state.search.history.selected, 31);
+  find.update({ search: { sessionId: uuid(1), epoch: 1, through: 200 } });
+  assert.equal(find.state.search.history.through, 100, 'streaming preserves original search fence');
+  find.raw('find-restart');
+  assert.equal(find.out.actions.find((action) => action.method === 'search').input.through, 200);
+  find.raw('find-scope');
+  assert.equal(find.state.search.history, null);
+  assert.deepEqual(find.state.command.target, { kind: 'find', query: '中文', step: 'first' });
+});
+test('history source rejects retargeted fields and search cursors that cannot progress', async () => {
+  const find = await conversationFinder();
+  find.query('failure');
+  find.raw('find-scope');
+  find.complete(find.out.actions[0], {
+    kind: 'ready',
+    through: 100,
+    matches: [
+      { field: 'failure_message', cursor: { sequence: 257, offset: 0 }, preview: 'failure' },
+    ],
+    nextAfter: null,
+  });
+  const source = find.out.actions[0];
+  find.complete(source, {
+    kind: 'ready',
+    through: 100,
+    source: {
+      sequence: 258,
+      field: 'body',
+      format: 'text',
+      offset: 0,
+      totalBytes: 7,
+      text: 'failure',
+      tool: null,
+    },
+  });
+  assert.equal(find.state.search.history.preview.failed, true);
+  assert.equal(find.state.search.history.preview.source, null);
+  find.raw('find-restart');
+  find.complete(find.out.actions[0], { kind: 'ready', through: 100, matches: [], nextAfter: 0 });
+  assert.equal(find.state.search.history.failed, true);
+  assert.deepEqual(find.out.actions, []);
+});
+
+test('TUI find is available for archived reading, suspends implicit tail reads and retains composer identity', async () => {
+  const { component: workspace } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js'))
+  );
+  const client = new Client(workspace);
+  client.start({ through: 5 });
+  const composer = () =>
+    modelSlots(client.output.frame.view).find((node) => node.binding === 'composer');
+  const original = composer();
+  client.raw('search-open');
+  assert.equal(client.state.searchOpen, true);
+  assert.deepEqual(client.timeline.search, {
+    sessionId: session.id,
+    epoch: client.state.epoch,
+    through: 5,
+  });
+  assert.equal(composer().key, original.key);
+  assert.equal(composer().props.autoFocus, false);
+  client.state.latestKnown = 6;
+  const serial = client.state.serial;
+  client.component('tailReady');
+  assert.equal(
+    client.state.serial,
+    serial,
+    'late tail evidence cannot advance the live window while finding',
+  );
+  client.input({ kind: 'component', child: 'timeline', name: 'searchClosed', event: {} });
+  assert.equal(client.state.searchOpen, false);
+  assert.equal(composer().props.autoFocus, true);
+  client.state.selected.archived = true;
+  client.raw('search-open');
+  assert.equal(client.state.searchOpen, true);
+  client.raw('settings');
+  assert.equal(client.state.searchOpen, false);
+  assert.equal(client.timeline.search, null);
+  client.raw('search-open');
+  assert.equal(client.state.searchOpen, false);
+});
+
+test('history preview highlights its literal field and guards the initial reveal without replaying after manual navigation', async () => {
+  const find = await conversationFinder();
+  find.query('needle');
+  find.raw('find-scope');
+  find.complete(find.out.actions[0], {
+    kind: 'ready',
+    through: 100,
+    matches: [{ field: 'body', cursor: { sequence: 257, offset: 0 }, preview: 'needle' }],
+    nextAfter: null,
+  });
+  find.complete(find.out.actions[0], {
+    kind: 'ready',
+    through: 100,
+    source: {
+      sequence: 257,
+      field: 'body',
+      format: 'text',
+      offset: 0,
+      totalBytes: 9000,
+      text: 'needle',
+      tool: null,
+    },
+  });
+  const sequence = find.state.search.history.preview.command.sequence;
+  const observe = () =>
+    find.input({
+      kind: 'component',
+      child: find.state.search.history.preview.key,
+      name: 'observed',
+      event: {
+        readingRevision: 3,
+        viewport: null,
+        pendingCommand: null,
+        receipt: { sequence, status: 'applied' },
+        find: {
+          sequence,
+          count: 1,
+          limited: false,
+          index: 1,
+          active: { path: ['find-preview-text-257-body-0'], offset: 0 },
+        },
+      },
+    });
+  observe();
+  assert.deepEqual(find.state.search.history.preview.command.target, {
+    kind: 'reveal_source',
+    path: ['find-preview-text-257-body-0'],
+    offset: 0,
+    find_sequence: sequence,
+  });
+  const command = structuredClone(find.state.search.history.preview.command);
+  observe();
+  assert.deepEqual(find.state.search.history.preview.command, command);
+  find.raw('find-source-next');
+  find.complete(find.out.actions[0], {
+    kind: 'ready',
+    through: 100,
+    source: {
+      sequence: 257,
+      field: 'body',
+      format: 'text',
+      offset: 6,
+      totalBytes: 9000,
+      text: 'next',
+      tool: null,
+    },
+  });
+  const late = find.state.search.history.preview.command.sequence;
+  find.raw('find-page-down');
+  const physical = structuredClone(find.state.search.history.preview.command);
+  find.input({
+    kind: 'component',
+    child: find.state.search.history.preview.key,
+    name: 'observed',
+    event: {
+      readingRevision: 5,
+      viewport: null,
+      pendingCommand: null,
+      receipt: { sequence: late, status: 'applied' },
+      find: null,
+    },
+  });
+  assert.deepEqual(find.state.search.history.preview.command, physical);
+});

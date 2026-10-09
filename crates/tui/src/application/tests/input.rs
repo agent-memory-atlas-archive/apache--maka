@@ -24,6 +24,14 @@ use maka_plugin_core::{
 };
 use std::{collections::BTreeMap, rc::Rc};
 fn input_presenter(secret: bool, dialog: bool) -> (tokio::runtime::Runtime, Presenter) {
+    configured_input(secret, dialog, 65536, "reject_controls")
+}
+fn configured_input(
+    secret: bool,
+    dialog: bool,
+    max_bytes: u32,
+    paste: &str,
+) -> (tokio::runtime::Runtime, Presenter) {
     let (runtime, mut input, packages) = textarea::editor_fixture();
     let contract = if secret {
         maka_ui::input::secret_input_contract()
@@ -56,7 +64,7 @@ fn input_presenter(secret: bool, dialog: bool) -> (tokio::runtime::Runtime, Pres
    Implementation::JavaScript{module,..}=>{
     if let Some(export)=entry.exports.get_mut("Textarea"){export.contract=contract.clone();}
     let mut source=std::str::from_utf8(original.file(module).unwrap()).unwrap().replace(&old,&new)
-      .replace("initialText:'Start',", "").replace("menu:state.brand.menu,", "").replace("softWrap:true,", "")
+      .replace("initialText:'Start',", &format!("maxBytes:{max_bytes},terminalPaste:'{paste}',")).replace("menu:state.brand.menu,", "").replace("softWrap:true,", "")
       .replace("appearance:state.brand.textarea", "appearance:Object.fromEntries(Object.entries(state.brand.textarea).filter(([key])=>key!=='scrollbar'))")
       .replace("on:{changed:'changed'}", "on:{changed:'changed',submitted:'submitted'}")
       .replace("name:'changed',value:event.event", "name:event.name,value:event.event")
@@ -421,6 +429,9 @@ fn submit_preserves_retryable_reset_receipt_and_next_command_settles() {
 }
 
 fn shortcut_presenter() -> (tokio::runtime::Runtime, Presenter) {
+    reserved_shortcut_presenter(false)
+}
+fn reserved_shortcut_presenter(reserved: bool) -> (tokio::runtime::Runtime, Presenter) {
     let (runtime, mut input, packages) = textarea::editor_fixture();
     let packages = packages.into_iter().map(|original| {
         let declaration = original.manifest().application.clone().unwrap();
@@ -436,6 +447,7 @@ fn shortcut_presenter() -> (tokio::runtime::Runtime, Presenter) {
                 source = source.replace("return frame({revision:state.revision+1}", "return frame({...state,revision:state.revision+1}");
                 source.push_str("const shortcutFrame=frame;frame=(state,props,events=[])=>{const out=shortcutFrame(state,props,events);if(state.disabled)out.frame.view.props.disabled=true;out.frame.view={kind:'stack',key:'scope',direction:'column',gap:0,padding:0,background:0,shortcuts:[{key:'b',modifiers:['control'],input:'inner',enabled:!props.readOnly},{key:'d',modifiers:['control'],input:'disable',enabled:true}],children:[out.frame.view]};return out;};");
             }
+            if reserved { source = source.replace("shortcuts:[{key:'b'", "shortcuts:[{key:'tab',modifiers:[],input:'close',enabled:true},{key:'tab',modifiers:['shift'],input:'close',enabled:true},{key:'c',modifiers:['control'],input:'close',enabled:true},{key:'b'"); }
             files.insert(module.clone(), source.into_bytes());
         }
         files.insert("maka.extension.json".into(), serde_json::to_vec(&json!({"schemaVersion":2,"id":original.manifest().id,"application":declaration})).unwrap());
@@ -845,5 +857,86 @@ fn dialog_js_composition_keeps_original_editor_and_routes_first_text_paste_submi
     tui.input(key(KeyCode::Char('y'))).unwrap();
     assert_eq!(text(&tui, &original), "xy");
     assert_eq!(text(&tui, &query), "界 ab");
+    close(&mut tui);
+}
+
+#[test]
+fn bounded_query_paste_uses_one_native_edit_and_capacity_survives_commands_and_undo() {
+    let (_runtime, mut tui) = configured_input(false, false, 512, "spaces");
+    draw(&mut tui, 80, 24);
+    tui.input(Event::Paste("中\r\n😀\tquery\rnext\nlast".into()))
+        .unwrap();
+    let observed = observation(&tui);
+    let original = observed["snapshot"]["text"]["owner"].clone();
+    let native = tui.focus.as_ref().unwrap().mount.clone();
+    let text = |tui: &Presenter| {
+        tui.resources.owners[&native.id()]
+            .state
+            .downcast_ref::<super::super::editor::Owner>()
+            .unwrap()
+            .editor
+            .text()
+            .to_owned()
+    };
+    assert_eq!(text(&tui), "中 😀 query next last");
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::SHIFT,
+    )))
+    .unwrap();
+    assert!(tui.application.frame(&tui.root).unwrap().state["submits"].is_null());
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Char('z'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    assert_eq!(text(&tui), "");
+    let full = format!("{}ab", "中".repeat(170));
+    tui.input(Event::Paste(full.clone())).unwrap();
+    assert_eq!(observation(&tui)["snapshot"]["text"]["bytes"], 512);
+    tui.input(Event::Paste("x".into())).unwrap();
+    assert_eq!(text(&tui), full);
+    let rev = observation(&tui)["revision"].clone();
+    dispatch(
+        &mut tui,
+        "configure",
+        json!({"command":{"owner":original,"sequence":1,"basedOn":rev,"edit":{"kind":"replace","text":"x".repeat(513)}}}),
+    );
+    assert_eq!(
+        observation(&tui)["receipt"]["outcome"]["reason"],
+        "representation"
+    );
+    assert_eq!(text(&tui), full);
+    assert_eq!(observation(&tui)["snapshot"]["text"]["owner"], original);
+    close(&mut tui);
+}
+
+#[test]
+fn declared_tab_and_interrupt_keep_original_focus_and_cannot_run_after_hiding() {
+    let (_runtime, mut tui) = reserved_shortcut_presenter(true);
+    draw(&mut tui, 80, 24);
+    let focus = tui.focus.clone().unwrap();
+    let child = tui
+        .application
+        .child_mount(&tui.root, "editor")
+        .unwrap()
+        .clone();
+    for (code, modifiers) in [
+        (KeyCode::Tab, KeyModifiers::NONE),
+        (KeyCode::BackTab, KeyModifiers::NONE),
+        (KeyCode::Tab, KeyModifiers::SHIFT),
+    ] {
+        tui.input(Event::Key(KeyEvent::new(code, modifiers)))
+            .unwrap();
+        assert!(tui.focus.as_ref().unwrap().same(&focus));
+        draw(&mut tui, 80, 24);
+    }
+    let interrupt = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert!(!tui.captures_keyboard().unwrap());
+    assert!(tui.dispatch_focused_shortcut(&interrupt).unwrap());
+    assert_eq!(tui.application.frame(&child).unwrap().state["commands"], 4);
+    dispatch(&mut tui, "configure", json!({"visible":false}));
+    assert!(!tui.dispatch_focused_shortcut(&interrupt).unwrap());
+    assert_eq!(tui.application.frame(&child).unwrap().state["commands"], 4);
     close(&mut tui);
 }

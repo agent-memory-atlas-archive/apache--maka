@@ -1240,6 +1240,130 @@ process.stdout.write(output.outputFiles[0].text);
         await_screen(&mut presenter, "Elegant response");
         runtime.block_on(&mut server).unwrap();
         runtime.block_on(fixture.drained());
+        // Find uses its original native query, then returns to the retained draft.
+        for close_key in [
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+        ] {
+            presenter
+                .input(Event::Key(KeyEvent::new(
+                    KeyCode::Char('f'),
+                    KeyModifiers::CONTROL,
+                )))
+                .unwrap();
+            await_screen(&mut presenter, "Find…");
+            presenter.input(Event::Paste("Elegant".into())).unwrap();
+            await_screen(&mut presenter, "1/1");
+            presenter
+                .input(Event::Key(KeyEvent::new(
+                    KeyCode::Enter,
+                    KeyModifiers::SHIFT,
+                )))
+                .unwrap();
+            await_screen(&mut presenter, "1/1");
+            for key in [KeyCode::Enter, KeyCode::F(3)] {
+                presenter
+                    .input(Event::Key(KeyEvent::new(key, KeyModifiers::NONE)))
+                    .unwrap();
+                await_screen(&mut presenter, "1/1");
+            }
+            presenter.input(Event::Key(close_key)).unwrap();
+            await_screen(&mut presenter, "File background draft");
+            assert!(!screen(&draw(&mut presenter)).contains("[ ⌕ ]"));
+            presenter.input(Event::Paste("!".into())).unwrap();
+            await_screen(&mut presenter, "File background draft!");
+            presenter
+                .input(Event::Key(KeyEvent::new(
+                    KeyCode::Backspace,
+                    KeyModifiers::NONE,
+                )))
+                .unwrap();
+            draw(&mut presenter);
+        }
+        presenter
+            .input(Event::Key(KeyEvent::new(
+                KeyCode::Char('f'),
+                KeyModifiers::CONTROL,
+            )))
+            .unwrap();
+        await_screen(&mut presenter, "Find…");
+        presenter.input(Event::Paste("Elegant".into())).unwrap();
+        await_screen(&mut presenter, "1/1");
+        presenter
+            .input(Event::Key(KeyEvent::new(
+                KeyCode::Char('f'),
+                KeyModifiers::ALT,
+            )))
+            .unwrap();
+        await_screen(&mut presenter, "[ › 1. Elegant response ]");
+        await_screen(&mut presenter, "Message");
+        let narrow = screen(&draw_at(&mut presenter, Rect::new(0, 0, 40, 16)));
+        assert!(narrow.contains("1/1"), "{narrow}");
+        assert!(narrow.contains("Elegant response"), "{narrow}");
+        draw(&mut presenter);
+        click(&mut presenter, "[ › 1. Elegant response ]");
+        presenter.input(Event::Paste("x".into())).unwrap();
+        await_screen(&mut presenter, "No matches");
+        presenter
+            .input(Event::Key(KeyEvent::new(
+                KeyCode::Char('a'),
+                KeyModifiers::CONTROL,
+            )))
+            .unwrap();
+        presenter.input(Event::Paste("Elegant".into())).unwrap();
+        await_screen(&mut presenter, "[ › 1. Elegant response ]");
+        let buffer = draw(&mut presenter);
+        let (row, column) = screen(&buffer)
+            .lines()
+            .enumerate()
+            .filter_map(|(row, line)| {
+                line.find("Elegant response")
+                    .map(|column| (row as u16, column as u16))
+            })
+            .last()
+            .unwrap();
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            presenter
+                .input(Event::Mouse(MouseEvent {
+                    kind,
+                    column: column
+                        + if matches!(kind, MouseEventKind::Down(_)) {
+                            0
+                        } else {
+                            7
+                        },
+                    row,
+                    modifiers: KeyModifiers::NONE,
+                }))
+                .unwrap();
+        }
+        presenter.input(Event::Paste("x".into())).unwrap();
+        await_screen(&mut presenter, "No matches");
+        presenter
+            .input(Event::Key(KeyEvent::new(
+                KeyCode::Char('a'),
+                KeyModifiers::CONTROL,
+            )))
+            .unwrap();
+        presenter.input(Event::Paste("Elegant".into())).unwrap();
+        await_screen(&mut presenter, "[ › 1. Elegant response ]");
+        presenter
+            .input(Event::Key(KeyEvent::new(
+                KeyCode::PageDown,
+                KeyModifiers::NONE,
+            )))
+            .unwrap();
+        draw(&mut presenter);
+        presenter
+            .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+            .unwrap();
+        await_screen(&mut presenter, "File background draft");
         assert_eq!(
             std::fs::read_to_string(fixture.workspace.join("native-approved.txt")).unwrap(),
             "native file contents"

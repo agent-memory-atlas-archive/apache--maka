@@ -31,6 +31,12 @@ pub struct SourceTextProps {
     pub appearance: TextAppearance,
     pub selection: Color,
     pub disabled: bool,
+    /// Whether pointer selection also moves keyboard focus to this source.
+    #[serde(default = "pointer_focus_default")]
+    pub focus_on_pointer: bool,
+}
+fn pointer_focus_default() -> bool {
+    true
 }
 pub fn source_contract() -> Contract {
     Contract {

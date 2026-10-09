@@ -38,6 +38,13 @@ export function help<N extends Node>(
       ['Enter / Space', text.helpActivate],
       ['Ctrl/⌘ K', text.helpCommands],
       ['Ctrl/⌘ G', text.reviewRequest],
+      ...(terminal
+        ? [
+            ['Ctrl F', text.findConversation],
+            ['Alt F', text.findHistory],
+            ['Enter / F3 · Shift', text.findNavigate],
+          ]
+        : []),
       ['Ctrl/⌘ B', text.helpNavigation],
       ['Ctrl/⌘ N', text.helpNew],
       ['Esc', text.helpBack],

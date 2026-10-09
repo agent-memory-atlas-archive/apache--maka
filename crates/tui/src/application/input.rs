@@ -49,7 +49,10 @@ impl Widget for Recipe {
             .cancel_pointer();
     }
     fn create(&self, _: super::NativeContext) -> Box<dyn Any> {
-        Box::new(Owner::new(Editor::single_line(65536, self.secret), ""))
+        Box::new(Owner::new(
+            Editor::single_line(self.props.max_bytes as usize, self.secret),
+            "",
+        ))
     }
     fn commit(&self, state: &mut dyn Any) -> maka_ui::Result<Option<NativeInput>> {
         let owner = state
@@ -101,7 +104,7 @@ impl Widget for Recipe {
                 if key.modifiers.is_empty() && matches!(key.code, KeyCode::Up | KeyCode::Down) {
                     return Ok(WidgetInput::Navigate);
                 }
-                if key.code == KeyCode::Enter && !self.props.read_only {
+                if key.code == KeyCode::Enter && key.modifiers.is_empty() && !self.props.read_only {
                     return Ok(WidgetInput::Emitted(NativeInput {
                         key: "submit".into(),
                         value: serde_json::json!({}),
@@ -123,7 +126,12 @@ impl Widget for Recipe {
                     owner.editor.key(*key)
                 }
             }
-            Event::Paste(text) if !self.props.read_only => owner.editor.insert(text),
+            Event::Paste(text) if !self.props.read_only => match self.props.terminal_paste {
+                TerminalPaste::RejectControls => owner.editor.insert(text),
+                TerminalPaste::Spaces => owner
+                    .editor
+                    .insert(&text.replace("\r\n", " ").replace(['\r', '\n', '\t'], " ")),
+            },
             Event::Mouse(mouse) => owner
                 .presented
                 .as_ref()

@@ -472,7 +472,20 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       },
     ),
     ...(configuration.presentation === 'desktop' ? { image: node('image') } : {}),
-    timeline: node('timeline', {}, { reading: [local('reading-area', 'ReadingArea')] }),
+    timeline: node(
+      'timeline',
+      {},
+      {
+        reading: [local('reading-area', 'ReadingArea')],
+        ...(configuration.presentation === 'tui'
+          ? {
+              input: [local('input', 'TextInput')],
+              reader: [local('reader', 'Reader')],
+              agent: [remote('agent', 'agent')],
+            }
+          : {}),
+      },
+    ),
     'reading-area': node(
       'reading-area',
       {},

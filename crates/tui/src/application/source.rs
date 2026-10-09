@@ -93,11 +93,15 @@ impl Widget for Recipe {
         let handled = enabled
             && SelectionScope::active(&owner.document)
                 .is_some_and(|scope| scope.input(&owner.document, event));
-        Ok(if handled {
-            WidgetInput::Consumed(None)
-        } else {
-            WidgetInput::Unhandled
-        })
+        Ok(
+            if handled && !self.0.focus_on_pointer && matches!(event, Event::Mouse(_)) {
+                WidgetInput::PreserveFocus
+            } else if handled {
+                WidgetInput::Consumed(None)
+            } else {
+                WidgetInput::Unhandled
+            },
+        )
     }
     fn cancel_pointer(&self, state: &mut dyn Any) {
         let owner = state.downcast_mut::<Owner>().unwrap();

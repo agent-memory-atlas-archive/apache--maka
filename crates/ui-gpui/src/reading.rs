@@ -339,6 +339,7 @@ impl Widget for Reading {
                     ),
                     ReadingTarget::RevealChild { .. }
                     | ReadingTarget::Find { .. }
+                    | ReadingTarget::ScrollRows { .. }
                     | ReadingTarget::ClearFind
                     | ReadingTarget::RevealSource { .. } => None,
                 };

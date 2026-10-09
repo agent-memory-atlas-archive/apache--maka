@@ -169,6 +169,7 @@ export interface TimelineProps {
   locale: string;
   messages: Message[];
   source: SourcePage | null;
+  search: { sessionId: string; epoch: number; through: number } | null;
   loading: boolean;
   older: boolean;
   newer: boolean;
@@ -197,6 +198,7 @@ export interface QueueEditorProps {
   command: EditorCommand | null;
 }
 export interface ComposerProps {
+  autoFocus: boolean;
   theme: Theme;
   locale: string;
   busy: boolean;
@@ -381,6 +383,16 @@ export const timelineContract = component(
     theme: { $ref: '#/$defs/Theme' },
     locale,
     messages: { type: 'array', maxItems: 32, items: { $ref: '#/$defs/Message' } },
+    search: {
+      anyOf: [
+        object({
+          sessionId: string,
+          epoch: { type: 'integer', minimum: 0 },
+          through: { type: 'integer', minimum: 0 },
+        }),
+        { type: 'null' },
+      ],
+    },
     source: {
       anyOf: [
         object({
@@ -422,6 +434,7 @@ export const timelineContract = component(
     sourceLast: object({}),
     sourceBack: object({}),
     sourceRetry: object({}),
+    searchClosed: object({}),
     tailReady: object({
       landing: { type: 'integer', minimum: 0 },
       readingRevision: { type: 'integer', minimum: 0 },
@@ -540,6 +553,7 @@ export const permissionApprovalContract = component(
 export const composerContract = component(
   'maka.agent.Composer',
   object({
+    autoFocus: { type: 'boolean' },
     theme: { $ref: '#/$defs/Theme' },
     locale,
     busy: { type: 'boolean' },
