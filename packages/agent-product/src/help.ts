@@ -37,6 +37,7 @@ export function help<N extends Node>(
       ['Tab / Shift Tab', text.helpFocus],
       ['Enter / Space', text.helpActivate],
       ['Ctrl/⌘ K', text.helpCommands],
+      ['Ctrl/⌘ G', text.reviewRequest],
       ['Ctrl/⌘ B', text.helpNavigation],
       ['Ctrl/⌘ N', text.helpNew],
       ['Esc', text.helpBack],

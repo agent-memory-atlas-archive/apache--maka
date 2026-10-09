@@ -8522,6 +8522,108 @@ for (const target of ['tui', 'desktop']) {
       });
     return client;
   }
+  test(`${target} review entry follows pending requests and respects the current route`, async () => {
+    const client = await interactionClient();
+    client.interaction('closed');
+    const original = structuredClone(client.state.interaction);
+    client.raw('interaction-open');
+    assert.equal(client.state.dialog, 'question');
+    assert.deepEqual(client.state.interaction, original);
+    assert.ok(client.output.actions.every((action) => action.method === 'interaction'));
+    client.query('interaction', questionRecord);
+    client.interaction('closed');
+    client.input({
+      kind: 'action',
+      key: client.state.watch.key,
+      event: {
+        status: 'updated',
+        value: {
+          kind: 'interactions',
+          pending: {
+            revision: 4,
+            entries: [
+              { requestId: 'unsupported', kind: 'form' },
+              { requestId: approvalRecord.requestId, kind: 'service_approval' },
+            ],
+          },
+        },
+      },
+    });
+    client.raw('interaction-open');
+    assert.equal(client.state.dialog, 'approval');
+    assert.deepEqual(client.find('interaction').input, {
+      sessionId: 'session',
+      requestId: approvalRecord.requestId,
+    });
+    assert.ok(client.output.actions.every((action) => action.method !== 'respond'));
+    client.raw('workspace-dialog');
+    client.raw('settings');
+    client.raw('interaction-open');
+    assert.equal(client.state.dialog, null);
+    assert.deepEqual(client.output.actions, []);
+  });
+  test(`${target} review reopens the original uncertain answer after its pending entry disappears`, async () => {
+    const client = await interactionClient(approvalRecord);
+    client.interaction('submit', { requestId: approvalRecord.requestId, decision: 'allow' });
+    const respond = client.find('respond');
+    const original = { ...reference, method: 'respond' };
+    client.complete(respond, {
+      status: 'operation',
+      reply: { reference: original, receipt: { kind: 'unavailable', diagnostic: 'lost' } },
+    });
+    client.interaction('closed');
+    const retained = structuredClone(client.state.interaction);
+    client.input({
+      kind: 'action',
+      key: client.state.watch.key,
+      event: {
+        status: 'updated',
+        value: {
+          kind: 'interactions',
+          pending: {
+            revision: 4,
+            entries: [{ requestId: questionRecord.requestId, kind: 'question' }],
+          },
+        },
+      },
+    });
+    client.raw('interaction-open');
+    assert.equal(client.state.dialog, 'approval');
+    assert.deepEqual(client.state.interaction, retained);
+    assert.deepEqual(client.state.uncertain.reference, original);
+    assert.ok(client.output.actions.every((action) => action.method !== 'respond'));
+    client.interaction('check');
+    assert.deepEqual(client.find('read').input, original);
+  });
+  test(`${target} review does not reopen a completed request while pending delivery catches up`, async () => {
+    const client = await interactionClient(approvalRecord);
+    client.interaction('submit', { requestId: approvalRecord.requestId, decision: 'allow' });
+    client.complete(client.find('respond'), {
+      status: 'operation',
+      reply: {
+        reference: { ...reference, method: 'respond' },
+        receipt: {
+          kind: 'recorded',
+          outcome: {
+            kind: 'returned',
+            value: {
+              kind: 'recorded',
+              record: {
+                ...approvalRecord,
+                outcome: { kind: 'service_approval_decision', decision: 'allow', committedAt: 5 },
+              },
+            },
+          },
+          cleanup: { kind: 'confirmed' },
+        },
+      },
+    });
+    client.interaction('closed');
+    assert.equal(client.state.interactions.entries[0].requestId, approvalRecord.requestId);
+    client.raw('interaction-open');
+    assert.equal(client.state.dialog, null);
+    assert.deepEqual(client.output.actions, []);
+  });
   test(`${target} permission approval uses original requested authority and recovers the winning outcome`, async () => {
     const record = {
       ...questionRecord,

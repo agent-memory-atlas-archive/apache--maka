@@ -1173,8 +1173,8 @@ process.stdout.write(output.outputFiles[0].text);
             .unwrap()
             .send(fixture.workspace.clone())
             .unwrap();
-        await_screen(&mut presenter, "[ Approve permissions 1 ]");
-        click(&mut presenter, "[ Approve permissions 1 ]");
+        await_screen(&mut presenter, "[ Ctrl G · Review request ]");
+        click(&mut presenter, "[ Ctrl G · Review request ]");
         await_screen(&mut presenter, "native-approved.txt");
         let (x, y) = wait_for_target(&mut presenter, "[ Close ]", 0);
         assert!(
@@ -1187,7 +1187,7 @@ process.stdout.write(output.outputFiles[0].text);
             .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
             .unwrap();
         await_screen(&mut presenter, "File background draft");
-        click(&mut presenter, "[ Approve permissions 1 ]");
+        click(&mut presenter, "[ Ctrl G · Review request ]");
         await_screen(&mut presenter, "native-approved.txt");
         click(&mut presenter, "Deny this call");
         wait_for_target(&mut presenter, "Deny this call", 0);
@@ -2573,8 +2573,30 @@ process.stdout.write(output.outputFiles[0].text);
         .unwrap()
         .send(fixture.workspace.clone())
         .unwrap();
-    await_screen(&mut presenter, "[ Confirm service call 1 ]");
-    click(&mut presenter, "[ Confirm service call 1 ]");
+    await_screen(&mut presenter, "[ Ctrl G · Review request ]");
+    let review = wait_for_target(&mut presenter, "[ Ctrl G · Review request ]", 0);
+    let draft = wait_for_target(&mut presenter, "Question background draft", 0);
+    assert!(
+        review.1 < draft.1 && draft.1 - review.1 <= 3,
+        "review must remain beside the original composer"
+    );
+    let narrow = screen(&draw_at(&mut presenter, Rect::new(0, 0, 40, 16)));
+    assert!(narrow.contains("[ Ctrl G · Review request ]"), "{narrow}");
+    let wrapped_draft = narrow
+        .lines()
+        .map(|line| line.trim().trim_matches('│').trim())
+        .collect::<String>();
+    assert!(
+        wrapped_draft.contains("Question background draft"),
+        "{narrow}"
+    );
+    draw(&mut presenter);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('g'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
     await_screen(&mut presenter, "Tool arguments");
     let (x, y) = wait_for_target(&mut presenter, "[ Close ]", 0);
     assert!(
@@ -2592,10 +2614,24 @@ process.stdout.write(output.outputFiles[0].text);
         maka_runtime::interaction::InteractionRequest::ServiceApproval { .. }
     ));
     presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('g'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    await_screen(&mut presenter, "Tool arguments");
+    assert_eq!(
+        runtime
+            .block_on(fixture.store.pending_interactions(&session_id))
+            .unwrap(),
+        original,
+        "Ctrl-G while reviewing cannot answer or replace the original request"
+    );
+    presenter
         .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
         .unwrap();
     await_screen(&mut presenter, "Question background draft");
-    click(&mut presenter, "[ Confirm service call 1 ]");
+    click(&mut presenter, "[ Ctrl G · Review request ]");
     await_screen(&mut presenter, "Tool arguments");
     wait_for_target(&mut presenter, "Allow this call", 0);
     click(&mut presenter, "Deny this call");
@@ -2636,8 +2672,8 @@ process.stdout.write(output.outputFiles[0].text);
     await_screen(&mut presenter, "This call was approved");
     click(&mut presenter, "[ Close ]");
     await_screen(&mut presenter, "Question background draft");
-    await_screen(&mut presenter, "[ Questions 1 ]");
-    click(&mut presenter, "[ Questions 1 ]");
+    await_screen(&mut presenter, "[ Ctrl G · Review request ]");
+    click(&mut presenter, "[ Ctrl G · Review request ]");
     await_screen(&mut presenter, "Choose\\u{A}format");
     let (x, y) = wait_for_target(&mut presenter, "[ Close ]", 0);
     assert!(
@@ -2650,7 +2686,7 @@ process.stdout.write(output.outputFiles[0].text);
         .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
         .unwrap();
     await_screen(&mut presenter, "Question background draft");
-    click(&mut presenter, "[ Questions 1 ]");
+    click(&mut presenter, "[ Ctrl G · Review request ]");
     await_screen(&mut presenter, "Choose\\u{A}format");
     click(&mut presenter, "○ Brief");
     click(&mut presenter, "1 ✓");

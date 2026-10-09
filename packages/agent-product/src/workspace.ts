@@ -494,6 +494,7 @@ function executionPending(state: State) {
 
 type RootCommand =
   | 'help-open'
+  | 'interaction-open'
   | 'create'
   | 'terminal-open'
   | 'details-open'
@@ -507,9 +508,55 @@ type RootCommand =
 function conversationRoute(state: State) {
   return !state.settingsOpen && !state.deploymentOpen;
 }
+function reviewTarget(state: State) {
+  const retained = state.interaction,
+    original = state.uncertain?.request;
+  // Keep an unresolved answer attached to its original review even after the
+  // canonical pending list advances. Opening never repeats that answer.
+  if (
+    retained?.record &&
+    retained.sessionId === state.selected?.id &&
+    original?.kind === 'respond' &&
+    original.sessionId === retained.sessionId &&
+    original.attempt === retained.attempt &&
+    original.requestId === retained.requestId
+  )
+    return {
+      requestId: retained.requestId,
+      kind: retained.record.request.kind,
+      retained: true,
+    };
+  const entry = state.interactions?.entries.find(
+    (entry) =>
+      ['question', 'service_approval', 'permissions'].includes(entry.kind) &&
+      !(
+        retained?.sessionId === state.selected?.id &&
+        retained?.requestId === entry.requestId &&
+        retained.record?.outcome
+      ),
+  );
+  return entry ? { ...entry, retained: false } : null;
+}
+function openInteraction(state: State, actions: Action[], requestId: string, kind: string) {
+  if (!state.selected) return;
+  if (
+    state.interaction?.requestId !== requestId ||
+    state.interaction.sessionId !== state.selected.id
+  )
+    state.interaction = {
+      attempt: ++state.serial,
+      sessionId: state.selected.id,
+      requestId,
+      record: null,
+      notice: null,
+    };
+  state.dialog = kind === 'question' ? 'question' : 'approval';
+  readInteraction(state, actions);
+}
 function rootCommands(state: State, locale: string): (PaletteCommand & { kind: RootCommand })[] {
   const text = copy(locale);
   const route = conversationRoute(state) && (state.dialog === null || state.dialog === 'palette');
+  const review = reviewTarget(state);
   const commands: (PaletteCommand & { kind: RootCommand })[] = [
     {
       kind: 'help-open',
@@ -517,6 +564,19 @@ function rootCommands(state: State, locale: string): (PaletteCommand & { kind: R
       label: text.helpTitle,
       hint: 'F1',
       disabled: state.dialog !== null && state.dialog !== 'palette',
+    },
+    {
+      kind: 'interaction-open',
+      id: 'interaction-open',
+      label: text.reviewRequest,
+      hint: 'Ctrl/⌘ G',
+      disabled:
+        !route ||
+        !state.selected ||
+        state.selected.archived ||
+        state.loading ||
+        !review ||
+        (mutationPending(state) && !review.retained),
     },
     {
       kind: 'create',
@@ -612,7 +672,10 @@ function rootCommand(state: State, actions: Action[], locale: string, kind: Root
   if (!rootCommands(state, locale).some((command) => command.kind === kind && !command.disabled))
     return false;
   if (kind === 'help-open') state.dialog = 'help';
-  else if (kind === 'create') createSession(state, actions, locale);
+  else if (kind === 'interaction-open') {
+    const review = reviewTarget(state)!;
+    openInteraction(state, actions, review.requestId, review.kind);
+  } else if (kind === 'create') createSession(state, actions, locale);
   else if (kind === 'create-workspace') state.dialog = 'directories';
   else if (kind === 'terminal-open') state.dialog = 'terminal';
   else if (kind === 'details-open') state.dialog = 'details';
@@ -1750,8 +1813,10 @@ function frame<N extends Node>(
                   { row: true, gap: 0, terminal: { wrap: true } },
                 ),
               ]),
-          ...(state.interactions?.entries
-            .filter((entry) => ['question', 'service_approval', 'permissions'].includes(entry.kind))
+          ...((target === 'desktop' ? state.interactions?.entries : [])
+            ?.filter((entry) =>
+              ['question', 'service_approval', 'permissions'].includes(entry.kind),
+            )
             .map((entry, index) =>
               ui.button(
                 `${entry.kind === 'question' ? 'question' : 'approval'}-open-${entry.requestId}`,
@@ -1823,6 +1888,17 @@ function frame<N extends Node>(
                 ui.box(
                   'retained-composer',
                   [
+                    ...(reviewTarget(state)
+                      ? [
+                          ui.button(
+                            'interaction-open',
+                            `Ctrl G · ${text.reviewRequest}`,
+                            !rootCommands(state, locale).some(
+                              (command) => command.kind === 'interaction-open' && !command.disabled,
+                            ),
+                          ),
+                        ]
+                      : []),
                     presentation.slot('queue', 'rows', queueProps, { activated: 'queue-action' }),
                     ...(queueProps.rows.length && ui.focusButton
                       ? [
@@ -1935,6 +2011,14 @@ function frame<N extends Node>(
       terminal: { grow: 1 },
       shortcuts: [
         { key: 'f1', modifiers: [], input: 'help-open', enabled: true },
+        {
+          key: 'g',
+          modifiers: ['primary'],
+          input: 'interaction-open',
+          enabled: rootCommands(state, locale).some(
+            (command) => command.kind === 'interaction-open' && !command.disabled,
+          ),
+        },
         {
           key: 'k',
           modifiers: ['primary'],
@@ -2790,19 +2874,7 @@ export function workspace<N extends Node>(
             (input.key.startsWith('approval-') &&
               (kind === 'service_approval' || kind === 'permissions'))
           ) {
-            if (
-              state.interaction?.requestId !== requestId ||
-              state.interaction.sessionId !== state.selected.id
-            )
-              state.interaction = {
-                attempt: ++state.serial,
-                sessionId: state.selected.id,
-                requestId,
-                record: null,
-                notice: null,
-              };
-            state.dialog = kind === 'question' ? 'question' : 'approval';
-            readInteraction(state, actions);
+            openInteraction(state, actions, requestId, kind);
           }
         } else if (
           input.key === 'question-close' &&
