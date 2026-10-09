@@ -9363,6 +9363,10 @@ test('history search follows empty batches, reads the exact selected field and b
   find.complete(request, { kind: 'ready', through: 100, matches: hits(401, 16), nextAfter: 500 });
   assert.equal(find.state.search.history.matches.length, 32);
   assert.equal(find.state.search.history.scanning, false);
+  const results = modelSlots(find.out.frame.view).find(
+    (node) => node.key === 'find-results-reading',
+  );
+  assert.deepEqual(results.props.content.wheel, { up: 'find-previous', down: 'find-next' });
   const retained = modelSlots(find.out.frame.view).find((node) => node.key === 'text-tool-body');
   assert.deepEqual(retained, before);
   assert.equal(
@@ -9405,8 +9409,20 @@ test('history search follows empty batches, reads the exact selected field and b
   assert.equal(find.state.search.history.selected, 31);
   find.update({ search: { sessionId: uuid(1), epoch: 1, through: 200 } });
   assert.equal(find.state.search.history.through, 100, 'streaming preserves original search fence');
+  const previousReveal = structuredClone(find.state.search.history.reveal);
   find.raw('find-restart');
+  assert.deepEqual(find.state.search.history.reveal, previousReveal);
   assert.equal(find.out.actions.find((action) => action.method === 'search').input.through, 200);
+  find.complete(
+    find.out.actions.find((action) => action.method === 'search'),
+    {
+      kind: 'ready',
+      through: 200,
+      matches: hits(301, 2),
+      nextAfter: null,
+    },
+  );
+  assert.equal(find.state.search.history.reveal.sequence, previousReveal.sequence + 1);
   find.raw('find-scope');
   assert.equal(find.state.search.history, null);
   assert.deepEqual(find.state.command.target, { kind: 'find', query: '中文', step: 'first' });

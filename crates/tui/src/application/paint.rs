@@ -1176,6 +1176,7 @@ impl Presenter {
                 shortcuts,
                 focus_shortcuts,
                 focus_group,
+                wheel,
                 viewport,
                 ..
             } => {
@@ -1230,7 +1231,14 @@ impl Presenter {
                         .state
                         .downcast_ref::<super::scroll::SceneState>()
                         .unwrap();
-                    let viewport = state.candidate(key, *scroll, inner, flow.size.1, &identities);
+                    let viewport = state.candidate(
+                        key,
+                        *scroll,
+                        wheel.as_ref(),
+                        inner,
+                        flow.size.1,
+                        &identities,
+                    );
                     pass.viewports.push((key.clone(), viewport.clone()));
                     let identity = TargetIdentity {
                         mount: mount.clone(),

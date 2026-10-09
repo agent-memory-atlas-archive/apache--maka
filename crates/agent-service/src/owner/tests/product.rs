@@ -1314,6 +1314,39 @@ process.stdout.write(output.outputFiles[0].text);
             .unwrap();
         presenter.input(Event::Paste("Elegant".into())).unwrap();
         await_screen(&mut presenter, "[ › 1. Elegant response ]");
+        presenter
+            .input(Event::Key(KeyEvent::new(
+                KeyCode::Char('a'),
+                KeyModifiers::CONTROL,
+            )))
+            .unwrap();
+        presenter.input(Event::Paste("native".into())).unwrap();
+        await_screen(&mut presenter, "[ 2.");
+        let (column, row) = wait_for_target(&mut presenter, "[ › 1.", 0);
+        for (kind, selected) in [
+            (MouseEventKind::ScrollDown, "[ › 2."),
+            (MouseEventKind::ScrollUp, "[ › 1."),
+        ] {
+            presenter
+                .input(Event::Mouse(MouseEvent {
+                    kind,
+                    column,
+                    row,
+                    modifiers: KeyModifiers::NONE,
+                }))
+                .unwrap();
+            await_screen(&mut presenter, selected);
+        }
+        presenter.input(Event::Paste("-missing".into())).unwrap();
+        await_screen(&mut presenter, "No matches");
+        presenter
+            .input(Event::Key(KeyEvent::new(
+                KeyCode::Char('a'),
+                KeyModifiers::CONTROL,
+            )))
+            .unwrap();
+        presenter.input(Event::Paste("Elegant".into())).unwrap();
+        await_screen(&mut presenter, "[ › 1. Elegant response ]");
         let buffer = draw(&mut presenter);
         let (row, column) = screen(&buffer)
             .lines()

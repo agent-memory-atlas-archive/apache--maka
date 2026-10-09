@@ -291,7 +291,8 @@ function restartHistory(state: SearchReading, props: TimelineProps, actions: Act
     back: [],
     matches: [],
     selected: -1,
-    reveal: null,
+    // The result ReadingArea survives query restarts, so its command sequence must too.
+    reveal: search.history?.reveal ?? null,
     selectLast: false,
     scanning: false,
     failed: false,
@@ -612,6 +613,7 @@ export function historyView<N extends Node>(
                     ],
                 {
                   scroll: 'manual',
+                  wheel: { up: 'find-previous', down: 'find-next' },
                   gap: 0,
                   terminal: { grow: 1, basis: 0 },
                   style: { width: fill, height: fill },

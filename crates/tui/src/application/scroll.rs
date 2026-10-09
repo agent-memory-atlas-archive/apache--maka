@@ -41,6 +41,7 @@ pub(super) struct ScrollState {
 }
 #[derive(Clone)]
 pub(super) struct Viewport {
+    pub wheel: Option<maka_ui::scene::terminal::WheelCommands>,
     pub area: Placement,
     pub content: u32,
     pub offset: u32,
@@ -114,6 +115,7 @@ impl SceneState {
         &self,
         key: &str,
         policy: ScrollPolicy,
+        wheel: Option<&maka_ui::scene::terminal::WheelCommands>,
         area: Placement,
         content: u32,
         children: &[(String, u32, u32)],
@@ -195,6 +197,7 @@ impl SceneState {
             .find(|(_, start, height)| start.saturating_add(*height) > offset)
             .map(|(key, start, _)| (key.clone(), i64::from(offset) - i64::from(*start)));
         Viewport {
+            wheel: wheel.cloned(),
             area,
             content,
             offset,

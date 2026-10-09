@@ -28,6 +28,33 @@ mod tests {
     use std::time::{Duration, Instant};
 
     #[test]
+    fn wheel_commands_require_a_viewport_and_share_the_original_input_contract() {
+        let value = json!({"kind":"stack","key":"list","direction":"column","gap":0,"padding":0,"background":0,"children":[],"scroll":"manual","wheel":{"up":"previous","down":"next"}});
+        let node: terminal::Node = serde_json::from_value(value.clone()).unwrap();
+        node.validate_root(Instant::now() + Duration::from_secs(1))
+            .unwrap();
+        let mut inputs = std::collections::BTreeMap::new();
+        node.shortcut_inputs(&mut inputs, true).unwrap();
+        assert_eq!(inputs.len(), 2);
+        assert_eq!(inputs["next"], json!(true));
+        inputs.insert("next".into(), json!({"type":"string"}));
+        assert!(node.shortcut_inputs(&mut inputs, true).is_err());
+        for (field, replacement) in [
+            ("scroll", json!("none")),
+            ("wheel", json!({"up":"","down":"next"})),
+            ("wheel", json!({"up":"previous","down":"x".repeat(129)})),
+        ] {
+            let mut invalid = value.clone();
+            invalid[field] = replacement;
+            let node: terminal::Node = serde_json::from_value(invalid).unwrap();
+            assert!(
+                node.validate_root(Instant::now() + Duration::from_secs(1))
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn copy_button_text_has_a_byte_budget_and_no_conflicting_native_default() {
         for text in ["".to_owned(), "界".repeat(24 * 1024)] {
             let value = json!({"kind":"button","key":"copy","label":"Copy","copy_text":text});

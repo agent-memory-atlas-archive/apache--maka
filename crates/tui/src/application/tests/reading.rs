@@ -93,6 +93,63 @@ fn close(presenter: &mut Presenter) {
     presenter.shutdown().unwrap();
 }
 #[test]
+fn wheel_commands_bubble_once_preserve_focus_and_require_presented_bindings() {
+    let (_runtime, mut presenter, props) = native(vec![source("one", "one\ntwo\nthree\nfour")]);
+    props.borrow_mut()["content"]["wheel"] = json!({"up":"previous","down":"next"});
+    refresh(&mut presenter);
+    draw(&mut presenter, 20, 2);
+    mouse(
+        &mut presenter,
+        MouseEventKind::Down(MouseButton::Left),
+        1,
+        0,
+    );
+    mouse(&mut presenter, MouseEventKind::Up(MouseButton::Left), 1, 0);
+    let focus = presenter.focus.clone().unwrap();
+    for (kind, key) in [
+        (MouseEventKind::ScrollDown, "next"),
+        (MouseEventKind::ScrollUp, "previous"),
+    ] {
+        let count = presenter.application.frame(&presenter.root).unwrap().state["count"]
+            .as_u64()
+            .unwrap();
+        mouse(&mut presenter, kind, 1, 0);
+        assert_eq!(
+            presenter.application.frame(&presenter.root).unwrap().state["wheel"],
+            key
+        );
+        assert_eq!(
+            presenter.application.frame(&presenter.root).unwrap().state["count"],
+            count + 1
+        );
+        assert!(presenter.focus.as_ref().unwrap().same(&focus));
+        assert_eq!(state(&presenter).scrolls["reading"].offset, 0);
+    }
+    props.borrow_mut()["content"]["wheel"]["down"] = json!("changed");
+    refresh(&mut presenter);
+    let count = presenter.application.frame(&presenter.root).unwrap().state["count"].clone();
+    mouse(&mut presenter, MouseEventKind::ScrollDown, 1, 0);
+    assert_eq!(
+        presenter.application.frame(&presenter.root).unwrap().state["count"],
+        count
+    );
+    draw(&mut presenter, 20, 2);
+    mouse(&mut presenter, MouseEventKind::ScrollDown, 1, 0);
+    assert_eq!(
+        presenter.application.frame(&presenter.root).unwrap().state["wheel"],
+        "changed"
+    );
+    props.borrow_mut()["content"]["visible"] = json!(false);
+    refresh(&mut presenter);
+    let count = presenter.application.frame(&presenter.root).unwrap().state["count"].clone();
+    mouse(&mut presenter, MouseEventKind::ScrollDown, 1, 0);
+    assert_eq!(
+        presenter.application.frame(&presenter.root).unwrap().state["count"],
+        count
+    );
+    close(&mut presenter);
+}
+#[test]
 fn cross_source_drag_and_select_all_include_clipped_original_bytes() {
     let text = "third\r\n\t中\0";
     let (_runtime, mut presenter, _) = native(vec![

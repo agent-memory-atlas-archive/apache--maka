@@ -51,6 +51,16 @@ pub struct Layout {
     pub shrink: bool,
     pub wrap: bool,
 }
+/// Explicit wheel actions in an original scrolling viewport. Offsets remain native.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "TerminalWheelCommands")]
+pub struct WheelCommands {
+    #[schemars(length(min = 1, max = 128))]
+    pub up: String,
+    #[schemars(length(min = 1, max = 128))]
+    pub down: String,
+}
 /// Native scroll policy; offsets and accepted viewport geometry remain native.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -245,6 +255,8 @@ pub enum Node {
         #[serde(default)]
         focus_group: bool,
         #[serde(default)]
+        wheel: Option<WheelCommands>,
+        #[serde(default)]
         #[schemars(length(max = 32))]
         shortcuts: Vec<crate::shortcut::Shortcut>,
         #[serde(default)]
@@ -405,8 +417,19 @@ impl Node {
                 layout,
                 direction,
                 scroll,
+                wheel,
                 ..
             } => {
+                if wheel.as_ref().is_some_and(|wheel| {
+                    *scroll == ScrollPolicy::None
+                        || [wheel.up.as_str(), wheel.down.as_str()]
+                            .iter()
+                            .any(|key| key.is_empty() || key.len() > 128)
+                }) {
+                    return Err(
+                        "wheel commands require a scrolling viewport and valid input keys".into(),
+                    );
+                }
                 if layout.grow > 1024
                     || (layout.wrap && !matches!(direction, Direction::Row))
                     || (*scroll != ScrollPolicy::None && !matches!(direction, Direction::Column))
@@ -497,6 +520,44 @@ impl Node {
         }
         Ok(())
     }
+    pub fn wheel_commands(&self, key: &str) -> Option<&WheelCommands> {
+        match self {
+            Self::Stack {
+                key: own,
+                wheel,
+                children,
+                visible: true,
+                ..
+            } => {
+                if own == key {
+                    wheel.as_ref()
+                } else {
+                    children.iter().find_map(|child| child.wheel_commands(key))
+                }
+            }
+            Self::Item { content, .. } => content.wheel_commands(key),
+            Self::Dialog {
+                background,
+                content,
+                open,
+                ..
+            } => {
+                if *open {
+                    content.wheel_commands(key)
+                } else {
+                    background.wheel_commands(key)
+                }
+            }
+            Self::AdaptivePane {
+                background,
+                content,
+                ..
+            } => background
+                .wheel_commands(key)
+                .or_else(|| content.wheel_commands(key)),
+            _ => None,
+        }
+    }
     pub fn shortcut_inputs(
         &self,
         inputs: &mut BTreeMap<String, Value>,
@@ -527,12 +588,27 @@ impl Node {
         if let Self::Stack {
             children,
             shortcuts,
+            wheel,
             visible: local,
             ..
         } = self
         {
             if visible && *local {
                 crate::shortcut::inputs(shortcuts, inputs)?;
+                if let Some(wheel) = wheel {
+                    for key in [&wheel.up, &wheel.down] {
+                        if inputs
+                            .get(key)
+                            .is_some_and(|schema| schema != &Value::Bool(true))
+                        {
+                            return Err("wheel command collides with typed native input".into());
+                        }
+                        inputs.insert(key.clone(), Value::Bool(true));
+                    }
+                    if inputs.len() > 64 {
+                        return Err("scene input limit".into());
+                    }
+                }
             }
             for child in children {
                 child.shortcut_inputs(inputs, visible && *local)?;

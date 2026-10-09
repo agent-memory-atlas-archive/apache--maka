@@ -636,7 +636,10 @@ impl Presenter {
                         &emitted.key,
                         emitted.value,
                     )?;
-                    self.focus = Some(target);
+                    if !matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown))
+                    {
+                        self.focus = Some(target);
+                    }
                     self.track_focus_return()?;
                     self.sync_native()?;
                     return Ok(());
@@ -681,6 +684,17 @@ impl Presenter {
                     continue;
                 }
                 let observed = match self.resources.input(ancestor, &event)? {
+                    Some(WidgetInput::Emitted(emitted)) => {
+                        let revision = self.application.frame(&ancestor.mount)?.revision;
+                        self.application.dispatch(
+                            &ancestor.mount,
+                            revision,
+                            &emitted.key,
+                            emitted.value,
+                        )?;
+                        self.sync_native()?;
+                        return Ok(());
+                    }
                     Some(WidgetInput::Consumed(observed)) => observed,
                     Some(WidgetInput::PreserveFocus) => None,
                     _ => continue,

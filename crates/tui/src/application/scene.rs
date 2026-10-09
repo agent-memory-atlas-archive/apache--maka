@@ -165,6 +165,41 @@ impl super::Widget for Node {
                 .unwrap()
                 .choice_input(choice, event));
         }
+        if let crossterm::event::Event::Mouse(mouse) = event
+            && matches!(
+                mouse.kind,
+                crossterm::event::MouseEventKind::ScrollUp
+                    | crossterm::event::MouseEventKind::ScrollDown
+            )
+            && let Some(viewport) = state
+                .downcast_ref::<super::scroll::SceneState>()
+                .unwrap()
+                .scrolls
+                .get(key)
+                .and_then(|scroll| scroll.presented.as_ref())
+        {
+            let current = self.wheel_commands(key);
+            if viewport.wheel.as_ref() != current {
+                return Ok(super::WidgetInput::Consumed(None));
+            }
+            if let Some(wheel) = current {
+                if !viewport
+                    .area
+                    .visible()
+                    .contains((mouse.column, mouse.row).into())
+                {
+                    return Ok(super::WidgetInput::Unhandled);
+                }
+                return Ok(super::WidgetInput::Emitted(super::NativeInput {
+                    key: if mouse.kind == crossterm::event::MouseEventKind::ScrollUp {
+                        wheel.up.clone()
+                    } else {
+                        wheel.down.clone()
+                    },
+                    value: serde_json::json!({"kind":"wheel"}),
+                }));
+            }
+        }
         Ok(
             if state
                 .downcast_mut::<super::scroll::SceneState>()

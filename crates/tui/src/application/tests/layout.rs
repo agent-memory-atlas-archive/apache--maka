@@ -54,6 +54,13 @@ impl NativeComponent<dyn Widget> for Root {
         call: ComponentCall<'_>,
         _: &maka_ui::abi::ValueBindings,
     ) -> maka_ui::Result<ComponentOutput<NativeView<dyn Widget>>> {
+        let wheel = match &call {
+            ComponentCall::Event { key, input, .. } if input["kind"] == "wheel" => json!(key),
+            ComponentCall::Update { state, .. } | ComponentCall::Event { state, .. } => {
+                state["wheel"].clone()
+            }
+            _ => Value::Null,
+        };
         let observation = match &call {
             ComponentCall::Event { key, input, .. }
                 if matches!(
@@ -190,7 +197,7 @@ impl NativeComponent<dyn Widget> for Root {
         }
         Ok(Frame {
             revision,
-            state: json!({"revision":revision,"count":count,"observation":observation}),
+            state: json!({"revision":revision,"count":count,"observation":observation,"wheel":wheel}),
             surface: Some(Surface::Terminal {
                 binding: "surface".into(),
             }),

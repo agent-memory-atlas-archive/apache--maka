@@ -445,6 +445,7 @@ export type TerminalScene =
        * One Tab stop; arrows navigate its items in declaration order.
        */
       focus_group?: boolean;
+      wheel?: TerminalWheelCommands | null;
       /**
        * @maxItems 32
        */
@@ -2733,6 +2734,13 @@ export interface TerminalBorder {
   color: number;
   focused_color: number;
   style: TerminalBorderStyle;
+}
+/**
+ * Explicit wheel actions in an original scrolling viewport. Offsets remain native.
+ */
+export interface TerminalWheelCommands {
+  up: string;
+  down: string;
 }
 export interface Shortcut {
   key: string;
