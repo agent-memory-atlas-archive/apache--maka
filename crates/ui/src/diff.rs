@@ -17,7 +17,7 @@
  * under the License.
  */
 
-//! Read-only annotated source; rows carry display ranges, never file authority.
+//! Read-only source differences; content carries display evidence, never file authority.
 use crate::appearance::{Color, TextAppearance};
 use maka_plugin_core::contract::{Contract, Interface, Transport};
 use schemars::JsonSchema;
@@ -44,6 +44,40 @@ pub struct DiffRow {
     #[schemars(length(max = 128))]
     pub language: Option<String>,
 }
+/// Complete bounded comparisons and structured patches reuse native parsers.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DiffContent {
+    Annotated {
+        #[schemars(length(max = 65536))]
+        source: String,
+        #[schemars(length(max = 8192))]
+        rows: Vec<DiffRow>,
+    },
+    /// Combined inputs must be <= 8192 UTF-8 bytes and <= 256 lines, without NUL.
+    Comparison {
+        #[schemars(length(max = 8192))]
+        before: String,
+        #[schemars(length(max = 8192))]
+        after: String,
+        #[schemars(length(max = 128))]
+        language: Option<String>,
+    },
+    /// Invalid, binary or oversized patches display literally, without diff gutters.
+    Patch {
+        #[schemars(length(max = 65536))]
+        source: String,
+        operation: DiffPatch,
+        #[schemars(length(max = 128))]
+        language: Option<String>,
+    },
+}
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffPatch {
+    Create,
+    Update,
+}
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DiffAppearance {
@@ -57,10 +91,7 @@ pub struct DiffAppearance {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DiffProps {
-    #[schemars(length(max = 65536))]
-    pub source: String,
-    #[schemars(length(max = 8192))]
-    pub rows: Vec<DiffRow>,
+    pub content: DiffContent,
     pub appearance: DiffAppearance,
     pub ascii: bool,
     pub disabled: bool,

@@ -1138,6 +1138,7 @@ signal-hook-registry@1.4.8 (MIT OR Apache-2.0); authors declared by package: Mic
 signal-hook@0.3.18 (Apache-2.0/MIT); authors declared by package: Michal 'vorner' Vaner <vorner@vorner.cz>, Thomas Himmelstoss <thimm@posteo.de>
 signal-hook@0.4.4 (MIT OR Apache-2.0); authors declared by package: Michal 'vorner' Vaner <vorner@vorner.cz>, Thomas Himmelstoss <thimm@posteo.de>
 similar@2.7.0 (Apache-2.0); authors declared by package: Armin Ronacher <armin.ronacher@active-4.com>, Pierre-Étienne Meunier <pe@pijul.org>, Brandon Williams <bwilliams.eng@gmail.com>
+similar@3.2.0 (Apache-2.0); authors declared by package: Armin Ronacher <armin.ronacher@active-4.com>, Pierre-Étienne Meunier <pe@pijul.org>, Brandon Williams <bwilliams.eng@gmail.com>
 simplecss@0.2.2 (Apache-2.0 OR MIT)
 smallvec@1.16.0 (MIT OR Apache-2.0); authors declared by package: The Servo Project Developers
 smol@2.0.2 (Apache-2.0 OR MIT); authors declared by package: Stjepan Glavina <stjepang@gmail.com>
@@ -1425,6 +1426,7 @@ https://crates.io/api/v1/crates/signal-hook-registry/1.4.8/download :: LICENSE-A
 https://crates.io/api/v1/crates/signal-hook/0.3.18/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/signal-hook/0.4.4/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/similar/2.7.0/download :: LICENSE
+https://crates.io/api/v1/crates/similar/3.2.0/download :: LICENSE
 https://crates.io/api/v1/crates/simplecss/0.2.2/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/smallvec/1.16.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/smol/2.0.2/download :: LICENSE-APACHE

@@ -10759,17 +10759,31 @@ for (const target of ['tui', 'desktop']) {
     client.answer(['kind'], 'failed');
     client.answer(['message'], 'No matching text');
     const slots = client.slots();
-    for (const [id, text, kind] of [
-      ['before', 'let old = 1;\n', 'removed'],
-      ['after', 'let new = 2;\n', 'added'],
-    ]) {
-      const body = slots.find((slot) => slot.key === id + '-body');
-      assert.equal(body.props.source, text);
-      assert.equal(body.binding, target === 'tui' ? 'diff' : 'source');
-      if (target === 'tui')
-        assert.deepEqual(body.props.rows, [
-          { start: 0, end: Buffer.byteLength(text), kind, language: 'rs' },
-        ]);
+    if (target === 'tui') {
+      assert.deepEqual(slots.find((slot) => slot.key === 'changes-body').props.content, {
+        kind: 'comparison',
+        before: 'let old = 1;\n',
+        after: 'let new = 2;\n',
+        language: 'rs',
+      });
+      assert.equal(
+        slots.some((slot) => slot.key === 'after-body'),
+        false,
+      );
+      assert.ok(
+        JSON.stringify(client.out.frame.view).includes(
+          'Requested replacement · original → Requested content',
+        ),
+      );
+    } else {
+      for (const [id, text] of [
+        ['before', 'let old = 1;\n'],
+        ['after', 'let new = 2;\n'],
+      ]) {
+        const body = slots.find((slot) => slot.key === id + '-body');
+        assert.equal(body.props.source, text);
+        assert.equal(body.binding, 'source');
+      }
     }
     assert.ok(JSON.stringify(client.out.frame.view).includes('File operation failed'));
     assert.ok(JSON.stringify(client.out.frame.view).includes('No matching text'));
@@ -10844,10 +10858,15 @@ for (const target of ['tui', 'desktop']) {
     client.answer(['operation', 'type'], 'create_file');
     client.answer(['operation', 'diff'], '+recorded\n');
     client.answer(['kind'], 'completed');
-    assert.equal(
-      client.slots().find((slot) => slot.key === 'patch-body').props.source,
-      '+recorded\n',
-    );
+    const patch = client.slots().find((slot) => slot.key === 'patch-body');
+    if (target === 'tui')
+      assert.deepEqual(patch.props.content, {
+        kind: 'patch',
+        source: '+recorded\n',
+        operation: 'create',
+        language: 'txt',
+      });
+    else assert.equal(patch.props.source, '+recorded\n');
     assert.equal(client.requests.size, 0);
     assert.equal(client.out.frame.state.parts.before, undefined);
     assert.equal(client.out.frame.state.parts.after, undefined);
@@ -10858,14 +10877,10 @@ for (const target of ['tui', 'desktop']) {
     client.answer(['old_string'], 'old');
     client.answer(['new_string'], '');
     if (target === 'tui') {
-      assert.equal(
-        client.slots().find((slot) => slot.key === 'before-body').props.rows[0].language,
-        null,
-      );
-      assert.deepEqual(client.slots().find((slot) => slot.key === 'after-body').props.rows[0], {
-        start: 0,
-        end: 0,
-        kind: 'added',
+      assert.deepEqual(client.slots().find((slot) => slot.key === 'changes-body').props.content, {
+        kind: 'comparison',
+        before: 'old',
+        after: '',
         language: null,
       });
     }
@@ -10876,3 +10891,92 @@ for (const target of ['tui', 'desktop']) {
     assert.deepEqual(client.find(['message']).input.path, ['message']);
   });
 }
+
+test('TUI comparisons require complete bounded evidence; independent pages remain navigable', async () => {
+  for (const [before, after, patch] of [
+    ['a'.repeat(4096), 'b'.repeat(4097), {}],
+    ['中'.repeat(1500), '😀'.repeat(1000), {}],
+    ['x\n'.repeat(128), 'y\n'.repeat(129), {}],
+    ['old\0binary', 'new', {}],
+    ['first', 'new', { totalBytes: 9000 }],
+    ['', 'new', { totalBytes: 0 }],
+  ]) {
+    const client = await detailClient('tui', 'edit');
+    client.answer(['old_string'], before, patch);
+    client.answer(['new_string'], after);
+    const combined = before === '';
+    assert.equal(
+      client.slots().some((slot) => slot.key === 'changes-body'),
+      combined,
+    );
+    if (!combined) {
+      assert.equal(
+        client.slots().find((slot) => slot.key === 'before-body').props.content.kind,
+        'annotated',
+      );
+      assert.equal(
+        client.slots().find((slot) => slot.key === 'after-body').props.content.source,
+        after,
+      );
+    }
+    if (patch.totalBytes === 9000) {
+      client.raw('before-next');
+      assert.deepEqual(client.find(['old_string']).input.position, { kind: 'after', offset: 5 });
+    }
+  }
+  const client = await detailClient('tui', 'edit');
+  client.answer(['old_string'], 'a'.repeat(4096));
+  client.answer(['new_string'], 'b'.repeat(4096));
+  assert.equal(
+    client.slots().find((slot) => slot.key === 'changes-body').props.content.kind,
+    'comparison',
+  );
+});
+
+test('TUI write compares only recorded originals after business completion and keeps request labels', async () => {
+  const client = await detailClient('tui', 'write');
+  client.answer(['content'], 'new');
+  assert.equal(
+    client.slots().find((slot) => slot.key === 'after-body').props.content.rows[0].kind,
+    'content',
+  );
+  assert.equal(client.find(['value', 'previousContent']), undefined);
+  client.answer(['kind'], 'completed');
+  client.answer(['value', 'previousContent'], '');
+  assert.deepEqual(client.slots().find((slot) => slot.key === 'changes-body').props.content, {
+    kind: 'comparison',
+    before: '',
+    after: 'new',
+    language: null,
+  });
+  assert.ok(
+    JSON.stringify(client.out.frame.view).includes('Recorded original content → Requested content'),
+  );
+  const failed = await detailClient('tui', 'write');
+  failed.answer(['kind'], 'failed');
+  failed.answer(['content'], 'new');
+  assert.equal(failed.find(['value', 'previousContent']), undefined);
+  assert.equal(
+    failed.slots().some((slot) => slot.key === 'changes-body'),
+    false,
+  );
+});
+
+test('TUI patch pages and oversized inputs stay literal until a complete bounded operation is available', async () => {
+  for (const [source, patch] of [
+    ['+part', { totalBytes: 9000 }],
+    ['+' + 'x'.repeat(8192), {}],
+    ['+x\n'.repeat(257), {}],
+    ['+binary\0', {}],
+  ]) {
+    const client = await detailClient('tui', 'applyPatch');
+    client.answer(['operation', 'type'], 'update_file');
+    client.answer(['operation', 'diff'], source, patch);
+    const body = client.slots().find((slot) => slot.key === 'patch-body');
+    assert.equal(body.binding, 'source');
+    assert.equal(body.props.source, source);
+  }
+  const client = await detailClient('tui', 'applyPatch');
+  client.answer(['operation', 'type'], 'delete_file');
+  assert.equal(client.find(['operation', 'diff']), undefined);
+});

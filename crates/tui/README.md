@@ -39,7 +39,11 @@ component updates and hidden routes. Product-supplied appearance controls their
 styles. Terminal scenes support flexible viewports and native scroll policies;
 SourceText/ReadingArea provide bounded literal selection and Copy.
 The native `maka.ui.diff` implementation exports `Diff` (`maka.ui.Diff` v1).
-Its typed source ranges reuse the original Diff layout and the same reading,
+Its tagged content supports annotated source ranges, bounded before/after line
+comparison and structured create/update patches. Comparisons reuse the original
+`similar` algorithm (8 KiB / 256 combined lines, 2 ms deadline); patch previews
+reuse `apply-patch` validation and fall back to literal text for invalid or large
+inputs. All variants reuse the original Diff layout and the same reading,
 selection and find owner as SourceText/Markdown. Added/removed gutters are
 presentation only and never enter copied or searched content. UTF-8 boundaries,
 ordered disjoint ranges, language hints and source/row budgets are validated

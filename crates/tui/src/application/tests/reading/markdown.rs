@@ -271,7 +271,7 @@ fn standalone_markdown_uses_the_same_native_document_without_a_reading_wrapper()
 
 fn diff(source: &str, rows: Value) -> Value {
     json!({"kind":"component","key":"diff","binding":"diff","member":0,"on":{},"props":{
-        "source":source,"rows":rows,"ascii":false,"disabled":false,"focusOnPointer":true,
+        "content":{"kind":"annotated","source":source,"rows":rows},"ascii":false,"disabled":false,"focusOnPointer":true,
         "appearance":{"text":{"font":{"family":"monospace","fallbacks":[],"size":16,"lineHeight":1.5,"weight":400},"foreground":0xddddddffu32},
         "background":0x111111ffu32,"added":0x33cc55ffu32,"removed":0xdd3344ffu32,"selection":0x335577ffu32,"dark":true}
     }})
@@ -350,4 +350,49 @@ fn native_diff_rejects_invalid_untrusted_byte_ranges_before_layout() {
         json!([{"start":0,"end":3,"kind":"added","language":"unrecognized-language"}]),
     );
     assert!(crate::application::source::compile_diff(&declaration["props"]).is_ok());
+}
+
+#[test]
+fn native_comparison_and_patch_share_reading_copy_find_and_resize() {
+    for (content, expected, needle) in [
+        (
+            json!({"kind":"comparison","before":"same\nold 中😀\nend","after":"same\nnew é\nend","language":"rs"}),
+            "same\nold 中😀\nnew é\nend",
+            "new é",
+        ),
+        (
+            json!({"kind":"patch","source":"@@\n same\n-old 中😀\n+new é","operation":"update","language":"rs"}),
+            "@@\nsame\nold 中😀\nnew é",
+            "new é",
+        ),
+        (
+            json!({"kind":"patch","source":"@@\n-old\n+new\n*** Delete File: injected","operation":"update","language":null}),
+            "@@\n-old\n+new\n*** Delete File: injected",
+            "injected",
+        ),
+    ] {
+        let mut declaration = diff("", json!([]));
+        declaration["props"]["content"] = content;
+        let (_runtime, mut presenter, props) = native(vec![declaration]);
+        settle(&mut presenter, 40, 10);
+        all(&mut presenter);
+        assert_eq!(copied(&mut presenter).unwrap(), expected.as_bytes());
+        presenter
+            .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+            .unwrap();
+        command(
+            &mut presenter,
+            &props,
+            1,
+            json!({"kind":"find","query":needle,"step":"first"}),
+        );
+        settle(&mut presenter, 8, 4);
+        assert_eq!(observation(&presenter)["find"]["count"], 1);
+        let active = observation(&presenter)["find"]["active"].clone();
+        assert_eq!(active["offset"], expected.find(needle).unwrap());
+        settle(&mut presenter, 40, 10);
+        all(&mut presenter);
+        assert_eq!(copied(&mut presenter).unwrap(), expected.as_bytes());
+        close(&mut presenter);
+    }
 }

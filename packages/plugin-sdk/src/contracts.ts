@@ -207,16 +207,8 @@ export const contracts = {
         title: 'DiffProps',
         type: 'object',
         properties: {
-          source: {
-            type: 'string',
-            maxLength: 65536,
-          },
-          rows: {
-            type: 'array',
-            items: {
-              $ref: '#/$defs/DiffRow',
-            },
-            maxItems: 8192,
+          content: {
+            $ref: '#/$defs/DiffContent',
           },
           appearance: {
             $ref: '#/$defs/DiffAppearance',
@@ -232,8 +224,85 @@ export const contracts = {
           },
         },
         additionalProperties: false,
-        required: ['source', 'rows', 'appearance', 'ascii', 'disabled', 'focusOnPointer'],
+        required: ['content', 'appearance', 'ascii', 'disabled', 'focusOnPointer'],
         $defs: {
+          DiffContent: {
+            description:
+              'Complete bounded comparisons and structured patches reuse native parsers.',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  source: {
+                    type: 'string',
+                    maxLength: 65536,
+                  },
+                  rows: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/DiffRow',
+                    },
+                    maxItems: 8192,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'annotated',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'source', 'rows'],
+              },
+              {
+                description:
+                  'Combined inputs must be <= 8192 UTF-8 bytes and <= 256 lines, without NUL.',
+                type: 'object',
+                properties: {
+                  before: {
+                    type: 'string',
+                    maxLength: 8192,
+                  },
+                  after: {
+                    type: 'string',
+                    maxLength: 8192,
+                  },
+                  language: {
+                    type: ['string', 'null'],
+                    maxLength: 128,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'comparison',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'before', 'after'],
+              },
+              {
+                description:
+                  'Invalid, binary or oversized patches display literally, without diff gutters.',
+                type: 'object',
+                properties: {
+                  source: {
+                    type: 'string',
+                    maxLength: 65536,
+                  },
+                  operation: {
+                    $ref: '#/$defs/DiffPatch',
+                  },
+                  language: {
+                    type: ['string', 'null'],
+                    maxLength: 128,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'patch',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'source', 'operation'],
+              },
+            ],
+          },
           DiffRow: {
             type: 'object',
             properties: {
@@ -264,6 +333,10 @@ export const contracts = {
           DiffKind: {
             type: 'string',
             enum: ['removed', 'added', 'context', 'content'],
+          },
+          DiffPatch: {
+            type: 'string',
+            enum: ['create', 'update'],
           },
           DiffAppearance: {
             type: 'object',

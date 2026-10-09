@@ -70,6 +70,12 @@ function bytes(text: string) {
   }
   return size;
 }
+function lines(text: string) {
+  return text ? text.split('\n').length - Number(text.endsWith('\n')) : 0;
+}
+function small(text: string) {
+  return bytes(text) <= 8192 && lines(text) <= 256 && !text.includes('\0');
+}
 function sameIdentity(state: State, props: ToolDetailsProps) {
   return (
     state.context.sessionId === props.context.sessionId &&
@@ -210,8 +216,22 @@ export function toolDetails<N extends Node>(
       operation: text.toolPatchOperation,
       failure: text.toolBusinessFailure,
     };
+    const before = scalar(state, 'before'),
+      after = scalar(state, 'after');
+    const comparison =
+      presentation.target === 'tui' &&
+      typeof before === 'string' &&
+      typeof after === 'string' &&
+      small(before) &&
+      small(after) &&
+      bytes(before) + bytes(after) <= 8192 &&
+      lines(before) + lines(after) <= 256;
+    const path = scalar(state, 'path');
+    const hint = typeof path === 'string' ? path.split(/[\\/]/).at(-1)?.split('.').at(-1) : null;
+    const language = hint && bytes(hint) <= 128 ? hint : null;
+    const operation = scalar(state, 'operation');
     const sections = Object.entries(state.parts)
-      .filter(([id]) => id in labels)
+      .filter(([id]) => id in labels && !(comparison && id === 'after'))
       .map(([id, part]) => {
         const page = part.page,
           end = page ? page.offset + bytes(page.text) : 0;
@@ -224,18 +244,33 @@ export function toolDetails<N extends Node>(
                 : 'content'
               : null;
         const source = page ? page.text : '';
-        const path = scalar(state, 'path');
-        const hint =
-          typeof path === 'string' ? path.split(/[\\/]/).at(-1)?.split('.').at(-1) : null;
-        const language = hint && bytes(hint) <= 128 ? hint : null;
+        const content: DiffProps['content'] | null =
+          comparison && id === 'before'
+            ? { kind: 'comparison', before: before as string, after: after as string, language }
+            : id === 'patch' &&
+                complete(part) &&
+                small(source) &&
+                (operation === 'create_file' || operation === 'update_file')
+              ? {
+                  kind: 'patch',
+                  source,
+                  operation: operation === 'create_file' ? 'create' : 'update',
+                  language,
+                }
+              : change
+                ? {
+                    kind: 'annotated',
+                    source,
+                    rows: [{ start: 0, end: bytes(source), kind: change, language }],
+                  }
+                : null;
         const body =
-          change && presentation.target === 'tui'
+          content && presentation.target === 'tui'
             ? presentation.slot(
-                id + '-body',
+                comparison && id === 'before' ? 'changes-body' : id + '-body',
                 'diff',
                 {
-                  source,
-                  rows: [{ start: 0, end: bytes(source), kind: change, language }],
+                  content,
                   ascii: false,
                   disabled: false,
                   focusOnPointer: props.focusOnPointer,
@@ -265,7 +300,13 @@ export function toolDetails<N extends Node>(
         return ui.box(
           id,
           [
-            ui.text(id + '-label', labels[id]!, 13, props.theme.muted, 550),
+            ui.text(
+              id + '-label',
+              comparison && id === 'before' ? `${labels.before} → ${labels.after}` : labels[id]!,
+              13,
+              props.theme.muted,
+              550,
+            ),
             ...(page ? [body] : []),
             ...(part.pending
               ? [ui.text(id + '-loading', text.loading, 13, props.theme.muted)]

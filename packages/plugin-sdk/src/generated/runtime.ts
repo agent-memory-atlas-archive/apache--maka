@@ -782,7 +782,32 @@ export type EditorEdit =
       text: string;
       kind: 'append';
     };
+/**
+ * Complete bounded comparisons and structured patches reuse native parsers.
+ */
+export type DiffContent =
+  | {
+      source: string;
+      /**
+       * @maxItems 8192
+       */
+      rows: DiffRow[];
+      kind: 'annotated';
+    }
+  | {
+      before: string;
+      after: string;
+      language?: string | null;
+      kind: 'comparison';
+    }
+  | {
+      source: string;
+      operation: DiffPatch;
+      language?: string | null;
+      kind: 'patch';
+    };
 export type DiffKind = 'removed' | 'added' | 'context' | 'content';
+export type DiffPatch = 'create' | 'update';
 export type FilePhase = 'empty' | 'choosing' | 'ready' | 'failed';
 export type FileError =
   | 'invalid_file'
@@ -3080,11 +3105,7 @@ export interface MarkdownAppearance {
   paragraphGap: number;
 }
 export interface DiffProps {
-  source: string;
-  /**
-   * @maxItems 8192
-   */
-  rows: DiffRow[];
+  content: DiffContent;
   appearance: DiffAppearance;
   ascii: boolean;
   disabled: boolean;

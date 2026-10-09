@@ -34,6 +34,7 @@ use std::{any::Any, collections::BTreeMap, rc::Rc, sync::Arc};
 use unicode_width::UnicodeWidthStr;
 
 use super::selection::{Document, DocumentRef, Glyphs, SelectionScope};
+mod diff;
 struct Geometry {
     glyphs: Glyphs,
     parent: Option<SelectionScope>,
@@ -593,44 +594,11 @@ pub(super) fn compile_markdown(
 }
 
 pub(super) fn compile_diff(props: &serde_json::Value) -> maka_ui::Result<NativeView<dyn Widget>> {
-    use maka_ui::diff::{DiffKind, DiffProps};
+    use maka_ui::diff::DiffProps;
     let declaration = props.clone();
     let props: DiffProps = serde_json::from_value(props.clone())
         .map_err(|e| maka_ui::Error::Invalid(e.to_string()))?;
-    if props.source.len() > 65536 || props.rows.len() > 8192 {
-        return Err(maka_ui::Error::Invalid("Diff source or row budget".into()));
-    }
-    let mut end = 0;
-    let mut rows = Vec::with_capacity(props.rows.len());
-    for row in &props.rows {
-        let range = row.start as usize..row.end as usize;
-        if range.start < end
-            || range.end < range.start
-            || props.source.get(range.clone()).is_none()
-            || row
-                .language
-                .as_ref()
-                .is_some_and(|language| language.len() > 128)
-        {
-            return Err(maka_ui::Error::Invalid(
-                "invalid Diff source range or language".into(),
-            ));
-        }
-        end = range.end;
-        rows.push(crate::markdown::diff::Row {
-            source: range,
-            kind: match row.kind {
-                DiffKind::Removed => crate::markdown::diff::Kind::Removed,
-                DiffKind::Added => crate::markdown::diff::Kind::Added,
-                DiffKind::Context => crate::markdown::diff::Kind::Context,
-                DiffKind::Content => crate::markdown::diff::Kind::Content,
-            },
-            language: row
-                .language
-                .as_deref()
-                .and_then(crate::markdown::syntax::language),
-        });
-    }
+    let (text, rows) = diff::prepare(&props.content)?;
     let a = &props.appearance;
     let mut colors = crate::markdown::Palette::default();
     if !a.dark {
@@ -645,7 +613,7 @@ pub(super) fn compile_diff(props: &serde_json::Value) -> maka_ui::Result<NativeV
     colors.success = color(a.added.0);
     colors.error = color(a.removed.0);
     let document = Arc::new(
-        crate::markdown::prepared::Document::diff(&props.source, &rows, props.ascii, colors)
+        crate::markdown::prepared::Document::diff(&text, &rows, props.ascii, colors)
             .map_err(|e| maka_ui::Error::Invalid(e.into()))?,
     );
     if document.text().len() > 65536 {
