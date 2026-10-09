@@ -347,13 +347,14 @@ export function components<N extends Node>(
       );
 
       const body =
-        target === 'desktop' && message.role === 'assistant' && !message.continued
+        message.role === 'assistant' && !message.continued
           ? presentation.slot(
               'text-' + message.contentKey,
               'markdown',
               {
                 source: message.text,
                 appearance: props.theme.markdown,
+                focusOnPointer: !search,
                 selectable: true,
                 disabled: false,
               } satisfies MarkdownProps,

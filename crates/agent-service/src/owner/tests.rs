@@ -708,7 +708,12 @@ async fn request_with_key(socket: &mut TcpStream, key: &str) -> Value {
     serde_json::from_slice(&bytes[boundary..boundary + length]).unwrap()
 }
 async fn response(socket: &mut TcpStream) {
-    let body = "data: {\"id\":\"fixture\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Elegant response\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"fixture\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}\n\ndata: [DONE]\n\n";
+    response_with_text(socket, "Elegant response").await;
+}
+async fn response_with_text(socket: &mut TcpStream, text: &str) {
+    let delta = json!({"id":"fixture","choices":[{"index":0,"delta":{"content":text},"finish_reason":null}]});
+    let end = json!({"id":"fixture","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}});
+    let body = format!("data: {delta}\n\ndata: {end}\n\ndata: [DONE]\n\n");
     socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
 }
 

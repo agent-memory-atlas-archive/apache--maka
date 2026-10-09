@@ -45,6 +45,11 @@ export const contracts = {
           disabled: {
             type: 'boolean',
           },
+          focusOnPointer: {
+            description: 'Whether pointer selection also moves keyboard focus to this document.',
+            type: 'boolean',
+            default: true,
+          },
         },
         additionalProperties: false,
         required: ['source', 'appearance', 'selectable', 'disabled'],
@@ -1879,7 +1884,7 @@ export const contracts = {
               },
               {
                 description:
-                  'Literal find over the original SourceText descendants, including folded slots.',
+                  'Find over native readable descendants, including folded slots. SourceText uses\noriginal literal bytes; Markdown uses its width-independent rendered text.',
                 type: 'object',
                 properties: {
                   query: {
@@ -1927,7 +1932,8 @@ export const contracts = {
                 required: ['kind', 'rows'],
               },
               {
-                description: 'Reveal a UTF-8 byte in an original descendant SourceText.',
+                description:
+                  "Reveal a UTF-8 byte in the descendant's native readable text, as returned by Find.",
                 type: 'object',
                 properties: {
                   path: {

@@ -349,6 +349,7 @@ fn controlled_dialog_restores_nonselectable_markdown_but_not_disabled_document(
                     appearance: appearance(),
                     selectable: false,
                     disabled: false,
+                    focus_on_pointer: true,
                 },
                 input(),
                 window,

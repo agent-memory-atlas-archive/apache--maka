@@ -53,6 +53,7 @@ impl Owner {
         let document = cx.new(|cx| {
             let mut state = TextViewState::markdown(&props.source, cx);
             state.set_selectable(props.selectable, cx);
+            state.set_focus_on_pointer(props.focus_on_pointer, cx);
             state.set_interaction_enabled(!props.disabled, cx);
             cx.on_release(move |_, _| drop(keep)).detach();
             state
@@ -69,6 +70,7 @@ impl Owner {
     fn apply(&mut self, props: &MarkdownProps, window: &mut Window, cx: &mut Context<Self>) {
         self.document.update(cx, |state, cx| {
             state.set_text(&props.source, cx);
+            state.set_focus_on_pointer(props.focus_on_pointer, cx);
             if self.selectable != props.selectable {
                 state.set_selectable(props.selectable, cx);
             }
@@ -436,6 +438,85 @@ mod tests {
                 .unwrap()
                 .ends_with("Streamed café 😀.")
         );
+    }
+    #[gpui::test]
+    fn pointer_selection_can_preserve_the_original_keyboard_target(cx: &mut TestAppContext) {
+        use gpui_kit::{InteractiveElement, MouseButton, point};
+        struct FocusRoot {
+            owner: Entity<Owner>,
+            keyboard: gpui_kit::FocusHandle,
+        }
+        impl Render for FocusRoot {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .w(px(480.))
+                    .h(px(200.))
+                    .track_focus(&self.keyboard)
+                    .child(gpui_kit::base::TextSelectionLayer)
+                    .child(self.owner.clone())
+            }
+        }
+        cx.update(gpui_kit::base::init);
+        let mut props = props();
+        props.source = "preview selection".into();
+        props.focus_on_pointer = false;
+        let input = LiveInput::new(
+            Rc::new(RefCell::new(Some(crate::Input(Rc::new(|_, _, _, _| {
+                Ok(Default::default())
+            }))))),
+            crate::NativeBudget::default(),
+            Arc::new(maka_plugins::call::Resources::default()),
+        );
+        let (root, cx) = cx.add_window_view(|_, cx| FocusRoot {
+            owner: Owner::new(&props, input, cx),
+            keyboard: cx.focus_handle(),
+        });
+        let owner = root.read_with(cx, |root, _| root.owner.clone());
+        let keyboard = root.read_with(cx, |root, _| root.keyboard.clone());
+        cx.run_until_parked();
+        draw(cx);
+        cx.update(|window, cx| keyboard.focus(window, cx));
+        draw(cx);
+        for focus in [false, true] {
+            props.focus_on_pointer = focus;
+            cx.update(|window, cx| Recipe(props.clone()).commit(&mut owner.clone(), window, cx));
+            cx.run_until_parked();
+            draw(cx);
+            cx.simulate_mouse_down(
+                point(px(1.), px(12.)),
+                MouseButton::Left,
+                Default::default(),
+            );
+            cx.simulate_mouse_move(
+                point(px(100.), px(12.)),
+                Some(MouseButton::Left),
+                Default::default(),
+            );
+            cx.simulate_mouse_up(
+                point(px(100.), px(12.)),
+                MouseButton::Left,
+                Default::default(),
+            );
+            draw(cx);
+            assert!(
+                !cx.update(gpui_kit::base::TextSelection::selected_text)
+                    .is_empty()
+            );
+            cx.update(|window, cx| {
+                if focus {
+                    assert!(
+                        owner
+                            .read(cx)
+                            .document
+                            .read(cx)
+                            .focus_handle()
+                            .is_focused(window)
+                    );
+                } else {
+                    assert!(keyboard.is_focused(window));
+                }
+            });
+        }
     }
     #[gpui::test]
     fn original_ax_link_default_obeys_batch_failure_and_reentrant_disable(cx: &mut TestAppContext) {

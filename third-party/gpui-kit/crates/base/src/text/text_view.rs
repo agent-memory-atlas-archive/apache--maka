@@ -577,6 +577,7 @@ impl Element for TextView {
         let input = state.read(cx).interaction_admission();
         let interactive = input.upgrade().is_some();
         let down = input.clone();
+        let pointer_state = state.downgrade();
         let up = input.clone();
         let key_down = input.clone();
         let key_up = input;
@@ -595,6 +596,11 @@ impl Element for TextView {
                 if down.upgrade().is_none() {
                     window.prevent_default();
                     cx.stop_propagation();
+                } else if pointer_state
+                    .upgrade()
+                    .is_some_and(|state| !state.read(cx).focus_on_pointer)
+                {
+                    window.prevent_default();
                 }
             })
             .capture_any_mouse_up(move |_, window, cx| {

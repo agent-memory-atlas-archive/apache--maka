@@ -233,6 +233,7 @@ fn original_markdown_completed_selection_and_owner_gap_stay_in_reading_scope(
         appearance: appearance(),
         selectable: true,
         disabled: false,
+        focus_on_pointer: true,
     };
     let source = scene_source(
         json!([{"kind":"component","key":"document","binding":"markdown","member":0,"props":serde_json::to_value(&props).unwrap(),"on":{}}]),

@@ -36,6 +36,7 @@ pub(super) enum View {
         visible: Rc<Cell<bool>>,
     },
     StandaloneSource(Rc<std::cell::RefCell<Value>>),
+    StandaloneMarkdown(Rc<std::cell::RefCell<Value>>),
     Reading(Rc<std::cell::RefCell<Value>>),
     ReadingSlot(Rc<std::cell::RefCell<Value>>),
     OmittedReadingSlot(Rc<std::cell::RefCell<Value>>, Rc<Cell<bool>>),
@@ -120,8 +121,12 @@ impl NativeComponent<dyn Widget> for Root {
                 vec![],
             )?
             .with_root_visibility(visible.get()),
-            View::StandaloneSource(source) => {
-                let view = super::super::source::compile(&source.borrow())?;
+            View::StandaloneSource(source) | View::StandaloneMarkdown(source) => {
+                let view = if matches!(&self.view, View::StandaloneMarkdown(_)) {
+                    super::super::source::compile_markdown(&source.borrow())?
+                } else {
+                    super::super::source::compile(&source.borrow())?
+                };
                 NativeView::<dyn Widget>::new(
                     view.view,
                     BTreeMap::from([("back".into(), json!(true))]),
@@ -258,50 +263,66 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
             contract::{Availability, Cardinality, Export, Import},
             package::{Declaration, EntryDeclaration},
         };
-        let source_contract = maka_ui::source::source_contract();
-        entry.imports.insert(
-            "source".into(),
-            Import {
-                contract: source_contract.clone(),
-                cardinality: Cardinality::One,
-            },
-        );
-        let source = support::package(
-            "test.source",
-            Declaration {
-                entries: BTreeMap::from([(
-                    EntryTarget::Tui,
-                    EntryDeclaration {
-                        scene: None,
-                        implementation: Implementation::Native {
-                            implementation: "maka.ui.source".into(),
-                        },
-                        configuration: json!({"type":"object"}),
-                        imports: BTreeMap::new(),
-                        exports: BTreeMap::from([(
-                            "SourceText".into(),
-                            Export {
-                                contract: source_contract,
-                                availability: Availability::Required,
+        for (binding, export, implementation, contract, identity) in [
+            (
+                "source",
+                "SourceText",
+                "maka.ui.source",
+                maka_ui::source::source_contract(),
+                150,
+            ),
+            (
+                "markdown",
+                "Markdown",
+                "maka.ui.markdown",
+                maka_ui::markdown::markdown_contract(),
+                156,
+            ),
+        ] {
+            entry.imports.insert(
+                binding.into(),
+                Import {
+                    contract: contract.clone(),
+                    cardinality: Cardinality::One,
+                },
+            );
+            let package = support::package(
+                &format!("test.{binding}"),
+                Declaration {
+                    entries: BTreeMap::from([(
+                        EntryTarget::Tui,
+                        EntryDeclaration {
+                            scene: None,
+                            implementation: Implementation::Native {
+                                implementation: implementation.into(),
                             },
-                        )]),
-                    },
-                )]),
-                composition: None,
-            },
-            None,
-        );
-        input.instances.get_mut("app").unwrap().bindings.insert(
-            "source".into(),
-            vec![Target::Instance {
-                path: vec!["source".into()],
-                export: "SourceText".into(),
-            }],
-        );
-        input
-            .instances
-            .insert("source".into(), support::node(&source, 150));
-        packages.push(source);
+                            configuration: json!({"type":"object"}),
+                            imports: BTreeMap::new(),
+                            exports: BTreeMap::from([(
+                                export.into(),
+                                Export {
+                                    contract,
+                                    availability: Availability::Required,
+                                },
+                            )]),
+                        },
+                    )]),
+                    composition: None,
+                },
+                None,
+            );
+            input.instances.get_mut("app").unwrap().bindings.insert(
+                binding.into(),
+                vec![Target::Instance {
+                    path: vec![binding.into()],
+                    export: export.into(),
+                }],
+            );
+            input
+                .instances
+                .insert(binding.into(), support::node(&package, identity));
+            packages.push(package);
+        }
         if matches!(
             view,
             View::Reading(_)
@@ -334,13 +355,22 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
                                 .into(),
                             },
                             configuration: json!({"type":"object"}),
-                            imports: BTreeMap::from([(
-                                "source".into(),
-                                Import {
-                                    contract: maka_ui::source::source_contract(),
-                                    cardinality: Cardinality::One,
-                                },
-                            )]),
+                            imports: BTreeMap::from([
+                                (
+                                    "source".into(),
+                                    Import {
+                                        contract: maka_ui::source::source_contract(),
+                                        cardinality: Cardinality::One,
+                                    },
+                                ),
+                                (
+                                    "markdown".into(),
+                                    Import {
+                                        contract: maka_ui::markdown::markdown_contract(),
+                                        cardinality: Cardinality::One,
+                                    },
+                                ),
+                            ]),
                             exports: BTreeMap::from([(
                                 "ReadingArea".into(),
                                 Export {
@@ -360,6 +390,13 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
                 vec![Target::Instance {
                     path: vec!["source".into()],
                     export: "SourceText".into(),
+                }],
+            );
+            node.bindings.insert(
+                "markdown".into(),
+                vec![Target::Instance {
+                    path: vec!["markdown".into()],
+                    export: "Markdown".into(),
                 }],
             );
             input.instances.insert("reading".into(), node);

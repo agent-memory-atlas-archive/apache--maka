@@ -3518,51 +3518,53 @@ test('ended part identities are reclaimed without navigating, while active part 
   assert.equal(client.state.watch, null);
   assert.equal(client.state.notice, 'unavailable');
 });
-test('only a complete canonical UTF-8 message becomes Markdown; tail and live excerpts stay selectable literal source', async () => {
-  const { component: timeline } = await import(
-    pathToFileURL(resolve(root, 'dist/packages/timeline/desktop.js'))
-  );
-  const text = '**尾部** 中文😀';
-  const client = new Client().start({
-    through: 100,
-    chunks: [historyChunk(text, { offset: 17, totalBytes: 17 + Buffer.byteLength(text) })],
+for (const target of ['desktop', 'tui']) {
+  test(`${target} only complete canonical UTF-8 messages become Markdown; excerpts remain literal`, async () => {
+    const { component: timeline } = await import(
+      pathToFileURL(resolve(root, `dist/packages/timeline/${target}.js`))
+    );
+    const text = '**尾部** 中文😀';
+    const client = new Client().start({
+      through: 100,
+      chunks: [historyChunk(text, { offset: 17, totalBytes: 17 + Buffer.byteLength(text) })],
+    });
+    assert.equal(client.messages[0].continued, true);
+    const excerpt = timeline.mount(client.timeline, {});
+    const slots = modelSlots(excerpt.frame.view.children[0].children[0].props.content);
+    assert.equal(
+      slots.find((node) => node.key === 'text-' + client.messages[0].contentKey).binding,
+      'source',
+    );
+    assert.equal(
+      slots.some((node) => node.binding === 'markdown'),
+      false,
+    );
+    const complete = timeline.update(
+      excerpt.frame.state,
+      { ...client.timeline, messages: [{ ...client.messages[0], continued: false }] },
+      {},
+    );
+    assert.equal(
+      modelSlots(complete.frame.view.children[0].children[0].props.content).find(
+        (node) => node.key === 'text-' + client.messages[0].contentKey,
+      ).binding,
+      'markdown',
+    );
+    const landing = timeline.update(
+      complete.frame.state,
+      {
+        ...client.timeline,
+        landing: { sequence: client.timeline.landing.sequence + 1, edge: 'start' },
+      },
+      {},
+    );
+    assert.equal(landing.frame.view.children[0].children[0].props.command.target.kind, 'start');
+    assert.throws(
+      () => timeline.update(landing.frame.state, client.timeline, {}),
+      /landing sequence/,
+    );
   });
-  assert.equal(client.messages[0].continued, true);
-  const excerpt = timeline.mount(client.timeline, {});
-  const slots = modelSlots(excerpt.frame.view.children[0].children[0].props.content);
-  assert.equal(
-    slots.find((node) => node.key === 'text-' + client.messages[0].contentKey).binding,
-    'source',
-  );
-  assert.equal(
-    slots.some((node) => node.binding === 'markdown'),
-    false,
-  );
-  const complete = timeline.update(
-    excerpt.frame.state,
-    { ...client.timeline, messages: [{ ...client.messages[0], continued: false }] },
-    {},
-  );
-  assert.equal(
-    modelSlots(complete.frame.view.children[0].children[0].props.content).find(
-      (node) => node.key === 'text-' + client.messages[0].contentKey,
-    ).binding,
-    'markdown',
-  );
-  const landing = timeline.update(
-    complete.frame.state,
-    {
-      ...client.timeline,
-      landing: { sequence: client.timeline.landing.sequence + 1, edge: 'start' },
-    },
-    {},
-  );
-  assert.equal(landing.frame.view.children[0].children[0].props.command.target.kind, 'start');
-  assert.throws(
-    () => timeline.update(landing.frame.state, client.timeline, {}),
-    /landing sequence/,
-  );
-});
+}
 
 test('streaming budget never evicts the displayed prefix before explicit canonical navigation', () => {
   const client = new Client().start();

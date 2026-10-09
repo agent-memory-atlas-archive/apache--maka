@@ -20,8 +20,10 @@
 //! One native selection authority per reading boundary; logical participants are
 //! weak references to original Source documents, never a registry or copied range.
 use super::Placement;
-use crate::editor::layout::Layout;
+mod layout;
+use crate::editor::layout::Layout as LiteralLayout;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
+pub(super) use layout::Layout;
 use ratatui::layout::Position;
 use std::{
     cell::RefCell,
@@ -39,6 +41,7 @@ pub(super) struct Glyphs {
 }
 pub(super) struct Document {
     pub source: Arc<str>,
+    pub markdown: Option<Arc<crate::markdown::prepared::Document>>,
     pub disabled: bool,
     pub alive: bool,
     pub physical: bool,
@@ -485,7 +488,13 @@ impl SelectionScope {
                         None if matches!(key.code, KeyCode::Left | KeyCode::Right) => 1,
                         None => return false,
                     };
-                    let layout = Layout::literal(&doc.source, width);
+                    let layout = match &doc.markdown {
+                        Some(document) => match Layout::markdown(document, width) {
+                            Ok(layout) => layout,
+                            Err(_) => return false,
+                        },
+                        None => LiteralLayout::literal(&doc.source, width).into(),
+                    };
                     let (row, column) = layout.cursor(cursor.byte, false);
                     let mut target = cursor.document.clone();
                     let byte = match key.code {
@@ -522,10 +531,10 @@ impl SelectionScope {
                         }
                         KeyCode::Left => layout.previous(cursor.byte),
                         KeyCode::Right => layout.next(cursor.byte),
-                        KeyCode::Up => layout.byte_at(row.saturating_sub(1), column),
-                        KeyCode::Down => layout.byte_at(row + 1, column),
-                        KeyCode::Home => layout.rows[row].start,
-                        KeyCode::End => layout.rows[row].end,
+                        KeyCode::Up => layout.vertical(row, false, column),
+                        KeyCode::Down => layout.vertical(row, true, column),
+                        KeyCode::Home => layout.row_start(row),
+                        KeyCode::End => layout.row_end(row),
                         _ => return false,
                     };
                     let anchor = self
@@ -576,12 +585,13 @@ mod tests {
         let area: Placement = Rect::new(0, 0, 12, 2).into();
         let document = Rc::new(RefCell::new(Document {
             source: Arc::from("original"),
+            markdown: None,
             disabled: false,
             alive: true,
             physical: true,
             glyphs: Some(Glyphs {
                 source: Arc::from("original"),
-                layout: Layout::literal("original", 12),
+                layout: LiteralLayout::literal("original", 12).into(),
                 area,
             }),
             binding: Weak::new(),

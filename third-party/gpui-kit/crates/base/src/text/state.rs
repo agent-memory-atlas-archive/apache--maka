@@ -94,6 +94,7 @@ pub struct TextViewState {
     bounds: Bounds<Pixels>,
 
     pub(super) selectable: bool,
+    pub(super) focus_on_pointer: bool,
     pub(super) selection_format: SelectionFormat,
     pub(super) scrollable: bool,
     pub(super) text_view_style: Arc<TextViewStyle>,
@@ -192,6 +193,7 @@ impl TextViewState {
             selected_text_override: None,
             select_all: false,
             selectable: false,
+            focus_on_pointer: true,
             selection_format: SelectionFormat::default(),
             scrollable: false,
             // Measure all blocks (not just visible ones) so the scrollbar
@@ -258,6 +260,14 @@ impl TextViewState {
             self.reset_selection();
         }
         cx.notify();
+    }
+
+    /// Keep pointer selection independent of keyboard focus when embedded beside an input.
+    pub fn set_focus_on_pointer(&mut self, focus: bool, cx: &mut Context<Self>) {
+        if self.focus_on_pointer != focus {
+            self.focus_on_pointer = focus;
+            cx.notify();
+        }
     }
 
     /// Set the [`SelectionFormat`], default is [`SelectionFormat::Plain`].

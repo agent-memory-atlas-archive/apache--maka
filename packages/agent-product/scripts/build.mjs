@@ -451,6 +451,7 @@ const mechanical = {
       tui: {
         ...native('maka.ui.reading', { ReadingArea: required(sdk.contracts.readingArea) }),
         imports: {
+          markdown: { contract: sdk.contracts.markdown, cardinality: { kind: 'optional' } },
           source: { contract: sdk.contracts.sourceText, cardinality: { kind: 'optional' } },
         },
       },
@@ -465,6 +466,7 @@ const mechanical = {
   markdown: {
     entries: {
       desktop: native('maka.ui.markdown', { Markdown: required(sdk.contracts.markdown) }),
+      tui: native('maka.ui.markdown', { Markdown: required(sdk.contracts.markdown) }),
     },
   },
   input: {

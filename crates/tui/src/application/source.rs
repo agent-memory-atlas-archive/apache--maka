@@ -17,7 +17,7 @@
  * under the License.
  */
 
-//! Literal original source participates in the nearest native reading boundary.
+//! Literal source and prepared Markdown share the original native reading owner.
 use super::{NativeInput, Placement, Slots, Widget, WidgetInput};
 use crate::editor::layout::Layout;
 use crossterm::event::Event;
@@ -42,13 +42,23 @@ pub(super) struct Owner {
     pub document: DocumentRef,
 }
 impl Owner {
-    fn apply(&mut self, props: &SourceTextProps) {
+    fn apply(&mut self, recipe: &Recipe) {
+        let props = &recipe.0;
+        let format_changed = match (&self.document.borrow().markdown, &recipe.1) {
+            (Some(old), Some(new)) => !Arc::ptr_eq(old, new),
+            (None, None) => false,
+            _ => true,
+        };
         let changed = {
             let doc = self.document.borrow();
-            !props.source.starts_with(doc.source.as_ref()) || props.disabled
+            !props.source.starts_with(doc.source.as_ref()) || props.disabled || !recipe.2
         };
         if let Some(scope) = SelectionScope::active(&self.document) {
-            if self.document.borrow().source.as_ref() != props.source || props.disabled {
+            if self.document.borrow().source.as_ref() != props.source
+                || props.disabled
+                || !recipe.2
+                || format_changed
+            {
                 scope.release_pointer(&self.document);
             }
             if changed {
@@ -56,16 +66,21 @@ impl Owner {
             }
         }
         let mut doc = self.document.borrow_mut();
-        if changed {
+        if changed || format_changed {
             doc.glyphs = None;
         }
         if doc.source.as_ref() != props.source {
             doc.source = Arc::from(props.source.as_str());
         }
         doc.disabled = props.disabled;
+        doc.markdown = recipe.1.clone();
     }
 }
-struct Recipe(SourceTextProps);
+struct Recipe(
+    SourceTextProps,
+    Option<Arc<crate::markdown::prepared::Document>>,
+    bool,
+);
 fn color(rgba: u32) -> Color {
     Color::Rgb((rgba >> 24) as u8, (rgba >> 16) as u8, (rgba >> 8) as u8)
 }
@@ -74,6 +89,7 @@ impl Widget for Recipe {
         Box::new(Owner {
             document: Rc::new(std::cell::RefCell::new(Document {
                 source: Arc::from(self.0.source.as_str()),
+                markdown: self.1.clone(),
                 disabled: self.0.disabled,
                 alive: true,
                 physical: false,
@@ -84,12 +100,13 @@ impl Widget for Recipe {
         })
     }
     fn commit(&self, state: &mut dyn Any) -> maka_ui::Result<Option<NativeInput>> {
-        state.downcast_mut::<Owner>().unwrap().apply(&self.0);
+        state.downcast_mut::<Owner>().unwrap().apply(self);
         Ok(None)
     }
     fn input(&self, state: &mut dyn Any, _: &str, event: &Event) -> maka_ui::Result<WidgetInput> {
         let owner = state.downcast_mut::<Owner>().unwrap();
-        let enabled = !self.0.disabled && self.0.source == owner.document.borrow().source.as_ref();
+        let enabled =
+            self.2 && !self.0.disabled && self.0.source == owner.document.borrow().source.as_ref();
         let handled = enabled
             && SelectionScope::active(&owner.document)
                 .is_some_and(|scope| scope.input(&owner.document, event));
@@ -112,7 +129,8 @@ impl Widget for Recipe {
     fn pointer_capture(&self, state: &dyn Any) -> bool {
         let owner = state.downcast_ref::<Owner>().unwrap();
         let doc = owner.document.borrow();
-        !self.0.disabled
+        self.2
+            && !self.0.disabled
             && doc.alive
             && doc.physical
             && self.0.source == doc.source.as_ref()
@@ -126,7 +144,8 @@ impl Widget for Recipe {
     fn copy(&self, state: &dyn Any) -> maka_ui::Result<Option<String>> {
         let owner = state.downcast_ref::<Owner>().unwrap();
         let doc = owner.document.borrow();
-        if self.0.disabled
+        if !self.2
+            || self.0.disabled
             || doc.disabled
             || !doc.alive
             || !self.0.source.starts_with(doc.source.as_ref())
@@ -161,6 +180,22 @@ impl Widget for Recipe {
         doc.standalone = None;
     }
     fn measure(&self, _: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
+        if let Some(document) = &self.1 {
+            let super::selection::Layout::Markdown { lines, .. } =
+                super::selection::Layout::markdown(document, width)?
+            else {
+                unreachable!()
+            };
+            return Ok((
+                lines
+                    .iter()
+                    .map(|line| line.line.width())
+                    .max()
+                    .unwrap_or(0)
+                    .min(usize::from(width)) as u16,
+                lines.len() as u32,
+            ));
+        }
         let layout = Layout::literal(&self.0.source, width);
         Ok((
             layout
@@ -179,8 +214,11 @@ impl Widget for Recipe {
         area: Placement,
         buffer: &mut Buffer,
     ) -> maka_ui::Result<()> {
+        if let Some(markdown) = &self.1 {
+            return self.paint_markdown(markdown, slots, area, buffer);
+        }
         let document = slots.native_state::<Owner>()?.document.clone();
-        let parent = if !self.0.disabled {
+        let parent = if self.2 && !self.0.disabled {
             slots.participant(&document)
         } else {
             None
@@ -308,13 +346,13 @@ impl Widget for Recipe {
         let geometry = Geometry {
             glyphs: Glyphs {
                 source: doc.source.clone(),
-                layout,
+                layout: layout.into(),
                 area,
             },
             parent,
         };
         slots.native_geometry(Box::new(geometry))?;
-        if !self.0.disabled {
+        if self.2 && !self.0.disabled {
             slots.native_target("source", area, 0, false)?;
         }
         Ok(())
@@ -322,7 +360,8 @@ impl Widget for Recipe {
     fn present(&self, state: &mut dyn Any, geometry: Box<dyn Any>) -> Option<NativeInput> {
         let owner = state.downcast_mut::<Owner>().unwrap();
         let geometry = *geometry.downcast::<Geometry>().unwrap();
-        if !owner.document.borrow().disabled
+        if self.2
+            && !owner.document.borrow().disabled
             && owner
                 .document
                 .borrow()
@@ -338,7 +377,222 @@ impl Widget for Recipe {
         None
     }
 }
-struct Component;
+impl Recipe {
+    fn paint_markdown(
+        &self,
+        markdown: &crate::markdown::prepared::Document,
+        slots: &mut Slots<'_>,
+        area: Placement,
+        buffer: &mut Buffer,
+    ) -> maka_ui::Result<()> {
+        use unicode_segmentation::UnicodeSegmentation;
+        let document = slots.native_state::<Owner>()?.document.clone();
+        let parent = if self.2 && !self.0.disabled {
+            slots.participant(&document)
+        } else {
+            None
+        };
+        let reveal = slots
+            .scene
+            .as_ref()
+            .and_then(|scene| scene.scope.as_ref())
+            .and_then(|scope| scope.reveal.as_ref())
+            .filter(|reveal| reveal.targets(&document))
+            .map(|reveal| reveal.offset);
+        if area.width == 0 || area.is_empty() && reveal.is_none() {
+            return Ok(());
+        }
+        let layout = super::selection::Layout::markdown(markdown, area.width)?;
+        if let Some(offset) = reveal {
+            let row = area.y + layout.cursor(offset, false).0 as i64;
+            let visible = area.visible();
+            let reveal = slots
+                .scene
+                .as_mut()
+                .unwrap()
+                .scope
+                .as_mut()
+                .unwrap()
+                .reveal
+                .as_mut()
+                .unwrap();
+            reveal.row = Some(row);
+            reveal.visible = row >= i64::from(visible.y) && row < i64::from(visible.bottom());
+        }
+        if area.is_empty() {
+            return Ok(());
+        }
+        let highlights = slots
+            .scene
+            .as_ref()
+            .and_then(|scene| scene.scope.as_ref())
+            .and_then(|scope| scope.find.as_ref())
+            .map(|find| find.highlights(&document))
+            .unwrap_or_default();
+        let scope = parent.clone().or_else(|| SelectionScope::active(&document));
+        let range = scope.as_ref().map_or(0..0, |scope| scope.range(&document));
+        let mut normal = Style::default().fg(color(self.0.appearance.foreground.0));
+        if self.0.appearance.font.weight >= 600 {
+            normal = normal.add_modifier(Modifier::BOLD);
+        }
+        let super::selection::Layout::Markdown { lines, .. } = &layout else {
+            unreachable!()
+        };
+        let visible = area.visible();
+        let first = (i64::from(visible.y) - area.y).max(0) as usize;
+        for (row, visual) in lines
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(usize::from(visible.height))
+        {
+            let text = visual.line.to_string();
+            let mut column = 0;
+            let mut styles = Vec::with_capacity(visual.line.spans.len());
+            let mut start = 0;
+            for span in &visual.line.spans {
+                styles.push((start..start + span.content.len(), span.style));
+                start += span.content.len();
+            }
+            for (byte, glyph) in text.grapheme_indices(true) {
+                let width = glyph.width().max(1);
+                let mut logical: Option<std::ops::Range<usize>> = None;
+                for span in &visual.mapping {
+                    let start = byte.max(span.display.start);
+                    let end = (byte + glyph.len()).min(span.display.end);
+                    if start >= end {
+                        continue;
+                    }
+                    let part = if span.display.len() == span.logical.len() {
+                        span.logical.start + start - span.display.start
+                            ..span.logical.start + end - span.display.start
+                    } else {
+                        span.logical.clone()
+                    };
+                    logical = Some(logical.map_or(part.clone(), |old| {
+                        old.start.min(part.start)..old.end.max(part.end)
+                    }));
+                }
+                let mut style = normal.patch(visual.line.style);
+                for (span, part) in &styles {
+                    if span.start < byte + glyph.len() && span.end > byte {
+                        style = style.patch(*part);
+                    }
+                }
+                if let Some(logical) = logical {
+                    if logical.start < range.end && logical.end > range.start {
+                        style = style.bg(color(self.0.selection.0));
+                    } else if let Some((_, active)) = highlights
+                        .get(highlights.partition_point(|(hit, _)| hit.end <= logical.start))
+                        .filter(|(hit, _)| hit.start < logical.end)
+                    {
+                        style = style.add_modifier(Modifier::UNDERLINED);
+                        if *active {
+                            style = style.add_modifier(Modifier::REVERSED | Modifier::BOLD);
+                        }
+                    }
+                }
+                if let Some(point) = area.point(column, row)
+                    && area.point(column + width - 1, row).is_some()
+                {
+                    if glyph.width() == 0 {
+                        buffer.set_stringn(point.x, point.y, format!("◌{glyph}"), width, style);
+                    } else {
+                        buffer.set_stringn(point.x, point.y, glyph, width, style);
+                    }
+                }
+                column += width;
+            }
+        }
+        if slots.focused() && range.is_empty() {
+            let (row, column) = layout.cursor(
+                scope.as_ref().map_or(0, |scope| scope.cursor(&document)),
+                false,
+            );
+            if let Some(point) = area.point(column, row) {
+                buffer[(point.x, point.y)].set_style(normal.add_modifier(Modifier::UNDERLINED));
+            }
+        }
+        slots.native_geometry(Box::new(Geometry {
+            glyphs: Glyphs {
+                source: document.borrow().source.clone(),
+                layout,
+                area,
+            },
+            parent,
+        }))?;
+        if self.2 && !self.0.disabled {
+            slots.native_target("source", area, 0, false)?;
+        }
+        Ok(())
+    }
+}
+fn markdown_palette(a: &maka_ui::markdown::MarkdownAppearance) -> crate::markdown::Palette {
+    let mut colors = crate::markdown::Palette::default();
+    if !a.dark {
+        colors.syntax = [
+            0x804caf, 0x246c48, 0x5e6c82, 0x985812, 0x205fc1, 0x147078, 0x4c5c72,
+        ]
+        .map(|rgb| color((rgb << 8) | 255));
+    }
+    colors.foreground = color(a.code.foreground.0);
+    colors.background = color(a.code_background.0);
+    colors.surface = colors.background;
+    colors.accent = color(a.link.0);
+    colors.muted = color(a.muted.0);
+    colors.subtle = colors.muted;
+    colors.border = color(a.border.0);
+    colors.warning = color(a.code.foreground.0);
+    colors.headings = a.headings.clone().map(|heading| {
+        let style = Style::default().fg(color(heading.foreground.0));
+        if heading.font.weight >= 600 {
+            style.add_modifier(Modifier::BOLD)
+        } else {
+            style
+        }
+    });
+    colors
+}
+pub(super) fn compile_markdown(
+    props: &serde_json::Value,
+) -> maka_ui::Result<NativeView<dyn Widget>> {
+    let declaration = props.clone();
+    let props: maka_ui::markdown::MarkdownProps = serde_json::from_value(props.clone())
+        .map_err(|e| maka_ui::Error::Invalid(e.to_string()))?;
+    if props.source.len() > 65536 {
+        return Err(maka_ui::Error::Invalid(
+            "Markdown source byte budget".into(),
+        ));
+    }
+    let document = Arc::new(
+        crate::markdown::prepared::Document::markdown(
+            &props.source,
+            false,
+            markdown_palette(&props.appearance),
+        )
+        .map_err(|e| maka_ui::Error::Invalid(e.into()))?,
+    );
+    if document.text().len() > 65536 {
+        return Err(maka_ui::Error::Invalid(
+            "Markdown readable text byte budget".into(),
+        ));
+    }
+    let source = SourceTextProps {
+        source: document.text().to_owned(),
+        appearance: props.appearance.body,
+        selection: props.appearance.selection,
+        disabled: props.disabled,
+        focus_on_pointer: props.focus_on_pointer,
+    };
+    NativeView::<dyn Widget>::new(
+        Rc::new(Recipe(source, Some(document), props.selectable)),
+        BTreeMap::new(),
+        vec![],
+    )?
+    .with_declaration(declaration)
+}
+
+struct Component(bool);
 impl NativeComponent<dyn Widget> for Component {
     fn call(
         &self,
@@ -360,7 +614,11 @@ impl NativeComponent<dyn Widget> for Component {
             revision,
             state: json!({"revision":revision}),
             surface: None,
-            view: compile(props)?,
+            view: if self.0 {
+                compile_markdown(props)?
+            } else {
+                compile(props)?
+            },
         }
         .output(vec![]))
     }
@@ -372,17 +630,28 @@ pub(super) fn compile(props: &serde_json::Value) -> maka_ui::Result<NativeView<d
     if props.source.len() > 65536 {
         return Err(maka_ui::Error::Invalid("source byte budget".into()));
     }
-    NativeView::<dyn Widget>::new(Rc::new(Recipe(props)), BTreeMap::new(), vec![])?
+    NativeView::<dyn Widget>::new(Rc::new(Recipe(props, None, true)), BTreeMap::new(), vec![])?
         .with_declaration(declaration)
 }
 pub(super) fn register(registry: &mut NativeRegistry<dyn Widget>) {
+    registry
+        .register("maka.ui.markdown", |_, _| {
+            Ok(BTreeMap::from([(
+                "Markdown".into(),
+                NativeExport {
+                    contract: maka_ui::markdown::markdown_contract(),
+                    value: NativeCapability::Component(Rc::new(Component(true))),
+                },
+            )]))
+        })
+        .expect("unique Markdown factory");
     registry
         .register("maka.ui.source", |_, _| {
             Ok(BTreeMap::from([(
                 "SourceText".into(),
                 NativeExport {
                     contract: source_contract(),
-                    value: NativeCapability::Component(Rc::new(Component)),
+                    value: NativeCapability::Component(Rc::new(Component(false))),
                 },
             )]))
         })

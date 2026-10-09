@@ -50,6 +50,12 @@ pub struct MarkdownProps {
     pub appearance: MarkdownAppearance,
     pub selectable: bool,
     pub disabled: bool,
+    /// Whether pointer selection also moves keyboard focus to this document.
+    #[serde(default = "pointer_focus_default")]
+    pub focus_on_pointer: bool,
+}
+fn pointer_focus_default() -> bool {
+    true
 }
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

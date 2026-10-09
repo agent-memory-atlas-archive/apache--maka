@@ -766,3 +766,6 @@ mod items;
 
 #[path = "reading/find.rs"]
 mod find;
+
+#[path = "reading/markdown.rs"]
+mod markdown;

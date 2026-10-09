@@ -45,7 +45,8 @@ pub struct ReadingCommand {
 pub enum ReadingTarget {
     Start,
     End,
-    /// Literal find over the original SourceText descendants, including folded slots.
+    /// Find over native readable descendants, including folded slots. SourceText uses
+    /// original literal bytes; Markdown uses its width-independent rendered text.
     Find {
         #[schemars(length(max = 512))]
         query: String,
@@ -57,7 +58,7 @@ pub enum ReadingTarget {
         #[schemars(range(min = -65536, max = 65536))]
         rows: i32,
     },
-    /// Reveal a UTF-8 byte in an original descendant SourceText.
+    /// Reveal a UTF-8 byte in the descendant's native readable text, as returned by Find.
     RevealSource {
         #[schemars(length(min = 1, max = 32))]
         path: Vec<String>,

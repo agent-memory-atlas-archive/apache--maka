@@ -355,7 +355,7 @@ fn packaged_product(case: ProductCase) {
             let resumed = request_with_key(&mut next, "private-fixture-key").await;
             let tool = resumed["messages"].as_array().unwrap().iter().rev().find(|m| m["role"] == "tool").unwrap();
             assert_eq!(serde_json::from_str::<Value>(tool["content"].as_str().unwrap()).unwrap()["kind"], "completed");
-            response(&mut next).await;
+            response_with_text(&mut next, "**Elegant response**").await;
             return;
         }
         let body = request_with_key(&mut socket, KEY).await;
@@ -488,6 +488,7 @@ fn packaged_product(case: ProductCase) {
         "reading-area",
         "rows",
         "source-text",
+        "markdown",
         "terminal-view",
         "terminal-panel",
         "appearance",
@@ -1240,6 +1241,14 @@ process.stdout.write(output.outputFiles[0].text);
         await_screen(&mut presenter, "Elegant response");
         runtime.block_on(&mut server).unwrap();
         runtime.block_on(fixture.drained());
+        let (column, row) = wait_for_target(&mut presenter, "Elegant response", 0);
+        let formatted = draw(&mut presenter);
+        assert!(
+            formatted[(column, row)]
+                .modifier
+                .contains(ratatui::style::Modifier::BOLD)
+        );
+        assert!(!screen(&formatted).contains("**Elegant response**"));
         // Find uses its original native query, then returns to the retained draft.
         for close_key in [
             KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
@@ -1297,7 +1306,7 @@ process.stdout.write(output.outputFiles[0].text);
                 KeyModifiers::ALT,
             )))
             .unwrap();
-        await_screen(&mut presenter, "[ › 1. Elegant response ]");
+        await_screen(&mut presenter, "[ › 1. **Elegant response** ]");
         await_screen(&mut presenter, "Message");
         let wide = screen(&draw_at(&mut presenter, Rect::new(0, 0, 160, 32)));
         assert!(
@@ -1327,13 +1336,13 @@ process.stdout.write(output.outputFiles[0].text);
                 KeyModifiers::CONTROL,
             )))
             .unwrap();
-        await_screen(&mut presenter, "[ › 1. Elegant response ]");
+        await_screen(&mut presenter, "[ › 1. **Elegant response** ]");
         draw(&mut presenter);
         click(&mut presenter, "History");
         await_screen(&mut presenter, "Current content");
         click(&mut presenter, "Current content");
-        await_screen(&mut presenter, "[ › 1. Elegant response ]");
-        click(&mut presenter, "[ › 1. Elegant response ]");
+        await_screen(&mut presenter, "[ › 1. **Elegant response** ]");
+        click(&mut presenter, "[ › 1. **Elegant response** ]");
         presenter.input(Event::Paste("x".into())).unwrap();
         await_screen(&mut presenter, "No matches");
         presenter
@@ -1343,7 +1352,7 @@ process.stdout.write(output.outputFiles[0].text);
             )))
             .unwrap();
         presenter.input(Event::Paste("Elegant".into())).unwrap();
-        await_screen(&mut presenter, "[ › 1. Elegant response ]");
+        await_screen(&mut presenter, "[ › 1. **Elegant response** ]");
         presenter
             .input(Event::Key(KeyEvent::new(
                 KeyCode::Char('a'),
@@ -1385,7 +1394,7 @@ process.stdout.write(output.outputFiles[0].text);
             )))
             .unwrap();
         presenter.input(Event::Paste("Elegant".into())).unwrap();
-        await_screen(&mut presenter, "[ › 1. Elegant response ]");
+        await_screen(&mut presenter, "[ › 1. **Elegant response** ]");
         let buffer = draw(&mut presenter);
         let (row, column) = screen(&buffer)
             .lines()
@@ -1424,7 +1433,7 @@ process.stdout.write(output.outputFiles[0].text);
             )))
             .unwrap();
         presenter.input(Event::Paste("Elegant".into())).unwrap();
-        await_screen(&mut presenter, "[ › 1. Elegant response ]");
+        await_screen(&mut presenter, "[ › 1. **Elegant response** ]");
         presenter
             .input(Event::Key(KeyEvent::new(
                 KeyCode::PageDown,

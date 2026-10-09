@@ -643,6 +643,12 @@ export function historyView<N extends Node>(
       const source = section.source,
         key = `find-source-${section.field}-`,
         pending = !!preview.pending;
+      const markdown =
+        source?.role === 'assistant' &&
+        source.format === 'text' &&
+        (source.field === 'body' || source.field === 'thinking') &&
+        source.offset === 0 &&
+        utf8Bytes(source.text) === source.totalBytes;
       return ui.box(
         'find-section-' + section.field,
         [
@@ -651,17 +657,25 @@ export function historyView<N extends Node>(
             ? [
                 presentation.slot(
                   sourceKey(source),
-                  'source',
-                  {
-                    source: source.text,
-                    focusOnPointer: false,
-                    appearance:
-                      source.format === 'text'
-                        ? props.theme.markdown.body
-                        : props.theme.markdown.code,
-                    selection: props.theme.markdown.selection,
-                    disabled: false,
-                  },
+                  markdown ? 'markdown' : 'source',
+                  markdown
+                    ? {
+                        source: source.text,
+                        appearance: props.theme.markdown,
+                        focusOnPointer: false,
+                        selectable: true,
+                        disabled: false,
+                      }
+                    : {
+                        source: source.text,
+                        focusOnPointer: false,
+                        appearance:
+                          source.format === 'text'
+                            ? props.theme.markdown.body
+                            : props.theme.markdown.code,
+                        selection: props.theme.markdown.selection,
+                        disabled: false,
+                      },
                   {},
                 ),
               ]

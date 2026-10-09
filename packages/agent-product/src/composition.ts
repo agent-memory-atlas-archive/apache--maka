@@ -491,12 +491,10 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       {},
       {
         source: [local('source-text', 'SourceText')],
-        ...(configuration.presentation === 'desktop'
-          ? { markdown: [local('markdown', 'Markdown')] }
-          : {}),
+        markdown: [local('markdown', 'Markdown')],
       },
     ),
-    ...(configuration.presentation === 'desktop' ? { markdown: node('markdown') } : {}),
+    markdown: node('markdown'),
   });
   ui.launch = local('workspace', 'Workspace');
   remoteExports.unshift({

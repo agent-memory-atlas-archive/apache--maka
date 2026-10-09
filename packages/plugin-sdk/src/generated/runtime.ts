@@ -3061,6 +3061,10 @@ export interface MarkdownProps {
   appearance: MarkdownAppearance;
   selectable: boolean;
   disabled: boolean;
+  /**
+   * Whether pointer selection also moves keyboard focus to this document.
+   */
+  focusOnPointer?: boolean;
 }
 export interface MarkdownAppearance {
   body: TextAppearance;
