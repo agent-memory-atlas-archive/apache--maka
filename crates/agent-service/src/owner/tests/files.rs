@@ -171,6 +171,19 @@ async fn native_files_reuse_actual_read_search_write_edit_and_patch_executors() 
                 while !f.store.prepare_transcript(&session, through, 32).await.unwrap() {}
                 let page = f.query("history", json!({"sessionId":session,"through":through,"position":{"kind":"start"}})).await.unwrap();
                 assert!(page["chunks"].as_array().unwrap().iter().any(|chunk| chunk["tool"]["call"]["presentation"] == format!("maka.workspace.Files@1/{method}")), "{page}");
+                let call = page["chunks"].as_array().unwrap().iter().find(|chunk| chunk["role"] == "tool_call").unwrap();
+                let path = if method == "applyPatch" { json!(["operation", "path"]) } else { json!(["path"]) };
+                let source = f.query("source", json!({"sessionId":session,"through":through,
+                    "source":{"kind":"sequence","sequence":call["sequence"]},"field":"arguments",
+                    "path":path,"position":{"kind":"start"}})).await.unwrap();
+                assert_eq!(source["filePath"], f.workspace.join(if method == "applyPatch" { "new.txt" } else { "original.txt" }).to_str().unwrap());
+                if matches!(method, "write" | "edit") {
+                    let source = f.query("source", json!({"sessionId":session,"through":through,
+                        "source":{"kind":"sequence","sequence":call["tool"]["result"]["sequence"]},
+                        "field":"result","path":["value", "path"],"position":{"kind":"start"}})).await.unwrap();
+                    assert_eq!(source["filePath"], result["value"]["path"]);
+                }
+
             }
             close(&f).await;
         }

@@ -281,7 +281,7 @@ impl Handler for Agent {
                 }
                 "source" => {
                     let input: HistorySourceRead = decode(input)?;
-                    owner.session(&input.session_id).await?;
+                    let session = owner.session(&input.session_id).await?;
                     if input.through > *owner.store.subscribe_commits().borrow() {
                         return Err("agent_cursor_invalid".into());
                     }
@@ -303,24 +303,28 @@ impl Handler for Agent {
                                 .await
                                 .map_err(|_| "agent_history_unavailable")?,
                         };
+                        let source = owner
+                            .store
+                            .history_source(
+                                &input.session_id,
+                                input.through,
+                                sequence,
+                                input.field,
+                                input.path,
+                                input.position,
+                                8192,
+                                64 * 1024,
+                            )
+                            .await
+                            .map_err(|_| "agent_history_unavailable")?;
+                        let file_path = crate::source_path::file_path(
+                            &source,
+                            &session.configuration.workspace.path,
+                        );
                         HistorySourcePage::Ready {
                             through: input.through,
-                            source: Box::new(
-                                owner
-                                    .store
-                                    .history_source(
-                                        &input.session_id,
-                                        input.through,
-                                        sequence,
-                                        input.field,
-                                        input.path,
-                                        input.position,
-                                        8192,
-                                        64 * 1024,
-                                    )
-                                    .await
-                                    .map_err(|_| "agent_history_unavailable")?,
-                            ),
+                            source: Box::new(source),
+                            file_path,
                         }
                     } else {
                         HistorySourcePage::Preparing {

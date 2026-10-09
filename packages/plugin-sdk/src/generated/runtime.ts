@@ -2269,6 +2269,11 @@ export type AgentHistorySourcePage =
   | {
       through: number;
       source: HistorySource;
+      /**
+       * Complete file-path evidence resolved on the Host for copying only.
+       * This is display text, never a filesystem capability or open command.
+       */
+      filePath?: string | null;
       kind: 'ready';
     };
 /**

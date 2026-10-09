@@ -29,6 +29,7 @@ mod permissions;
 pub mod processes;
 pub mod questions;
 mod service;
+mod source_path;
 mod tools;
 mod workspace;
 pub use contract::{Configuration, ModelSelection, configuration_schema, contract};

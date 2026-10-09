@@ -750,6 +750,11 @@ pub enum HistorySourcePage {
     Ready {
         through: u64,
         source: Box<maka_plugins::session::history::HistorySource>,
+        /// Complete file-path evidence resolved on the Host for copying only.
+        /// This is display text, never a filesystem capability or open command.
+        #[serde(rename = "filePath", skip_serializing_if = "Option::is_none")]
+        #[schemars(length(max = 4096))]
+        file_path: Option<String>,
     },
 }
 

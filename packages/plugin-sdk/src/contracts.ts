@@ -9152,6 +9152,12 @@ export const contracts = {
                   source: {
                     $ref: '#/$defs/HistorySource',
                   },
+                  filePath: {
+                    description:
+                      'Complete file-path evidence resolved on the Host for copying only.\nThis is display text, never a filesystem capability or open command.',
+                    type: ['string', 'null'],
+                    maxLength: 4096,
+                  },
                   kind: {
                     type: 'string',
                     const: 'ready',

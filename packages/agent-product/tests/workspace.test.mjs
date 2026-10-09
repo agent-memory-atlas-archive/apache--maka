@@ -10980,3 +10980,72 @@ test('TUI patch pages and oversized inputs stay literal until a complete bounded
   client.answer(['operation', 'type'], 'delete_file');
   assert.equal(client.find(['operation', 'diff']), undefined);
 });
+
+function filePathButton(node) {
+  if (node.key === 'copy-file-path') return node;
+  for (const child of node.children ?? []) {
+    const found = filePathButton(child);
+    if (found) return found;
+  }
+}
+function answerFilePath(client, path, text, filePath, patch = {}) {
+  const action = client.find(path);
+  client.complete(action, {
+    status: 'succeeded',
+    value: { ...client.page(action, text, patch), filePath },
+  });
+}
+for (const target of ['tui', 'desktop']) {
+  test(`${target} file path copy uses Host display evidence and prefers the completed recorded path`, async () => {
+    const client = await detailClient(target, 'write');
+    const requested = "/remote/目录/../it's $(literal); 🦀.rs";
+    answerFilePath(client, ['path'], "目录/../it's $(literal); 🦀.rs", requested);
+    assert.equal(filePathButton(client.out.frame.view).copy_text, requested);
+    client.answer(['kind'], 'completed');
+    const recorded = '/remote/actual/🦀.rs';
+    answerFilePath(client, ['value', 'path'], recorded, recorded);
+    assert.equal(filePathButton(client.out.frame.view).copy_text, recorded);
+    client.raw('copy-file-path');
+    assert.deepEqual(client.out.actions, []);
+    assert.ok([...client.requests.values()].every((action) => action.method === 'source'));
+  });
+  test(`${target} copied paths cannot come from incomplete, substituted or stale source replies`, async () => {
+    const client = await detailClient(target, 'readText');
+    answerFilePath(client, ['path'], 'first', '/remote/first', { totalBytes: 20 });
+    assert.equal(filePathButton(client.out.frame.view), undefined);
+    const next = client.raw('path-next').actions[0];
+    client.complete(next, {
+      status: 'succeeded',
+      value: { ...client.page(next, 'wrong', { path: ['other'] }), filePath: '/wrong' },
+    });
+    assert.equal(filePathButton(client.out.frame.view), undefined);
+    client.raw('path-retry');
+    const pending = client.find(['path']);
+    client.update({ context: { sessionId: uuid(2), through: 200 } });
+    client.complete(pending, {
+      status: 'succeeded',
+      value: { ...client.page(pending, 'stale'), filePath: '/stale' },
+    });
+    assert.equal(filePathButton(client.out.frame.view), undefined);
+    answerFilePath(client, ['path'], 'current', '/other-host/current');
+    assert.equal(filePathButton(client.out.frame.view).copy_text, '/other-host/current');
+  });
+  test(`${target} missing path metadata is not resolved in the client and business failure keeps requested path copying`, async () => {
+    const client = await detailClient(target, 'edit');
+    client.answer(['path'], '/looks/absolute');
+    client.answer(['kind'], 'failed');
+    assert.equal(filePathButton(client.out.frame.view), undefined);
+    client.update({ context: { sessionId: uuid(2), through: 200 } });
+    answerFilePath(client, ['path'], 'file.txt', '/remote/file.txt');
+    client.answer(['kind'], 'failed');
+    assert.equal(client.out.frame.state.parts.status.page.text, 'failed');
+    assert.equal(client.find(['value', 'path']), undefined);
+    assert.equal(filePathButton(client.out.frame.view).copy_text, '/remote/file.txt');
+    const tool = structuredClone(client.props.tool);
+    tool.call.presentation = null;
+    tool.call.name = 'Edit';
+    client.update({ tool });
+    assert.equal(filePathButton(client.out.frame.view), undefined);
+    assert.deepEqual(client.out.actions, []);
+  });
+}

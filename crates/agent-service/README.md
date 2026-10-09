@@ -42,3 +42,10 @@ The optional `maka.workspace.files` implementation exports `files` (`maka.worksp
 Additional access uses canonical Permissions records and Once/Turn/Session grants. Session metadata changes and explicit `revokeGrants` advance the original permission boundary, atomically close pending approvals from its old revision and invalidate prior additive grants. A final canonical admission check precedes the joined original filesystem executor. Responses use the existing operation receipts; cancellation does not release capacity before resource cleanup.
 
 The initial product composition lives in [agent-product](../../packages/agent-product/README.md). Process execution, image/media tools, form/client-capability approvals, attachment and diff workflows remain subsequent product work; this crate is the execution service, not a complete agent application.
+
+A complete Files presentation path selected through `source` may include `filePath`
+in the ready response. The Agent resolves this display string against its stored
+Session workspace on the Host, preserves literal `..`, and rejects oversized,
+control/bidi and URI inputs. It performs no filesystem access and grants no file
+capability. Unknown presentation keys, unrelated selectors and partial excerpts
+have no projected path. The ordinary product uses it only for native path copying.

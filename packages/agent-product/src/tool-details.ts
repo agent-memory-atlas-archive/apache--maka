@@ -51,6 +51,7 @@ type Part = {
   path: string[];
   format: 'text' | 'json';
   page: HistorySource | null;
+  filePath: string | null;
   failed: boolean;
   pending: { key: string; position: SourcePosition } | null;
   position: SourcePosition;
@@ -97,6 +98,7 @@ function add(
     path,
     format,
     page: null,
+    filePath: null,
     failed: false,
     pending: null,
     position: { kind: 'start' },
@@ -170,6 +172,13 @@ function accept(state: State, part: Part, value: AgentHistorySourcePage, positio
     return;
   }
   part.page = page;
+  part.filePath =
+    page.offset === 0 &&
+    end === page.totalBytes &&
+    typeof value.filePath === 'string' &&
+    bytes(value.filePath) <= 4096
+      ? value.filePath
+      : null;
 }
 export function toolDetails<N extends Node>(
   presentation: Presentation<N>,
@@ -195,6 +204,8 @@ export function toolDetails<N extends Node>(
           add(state, 'patch', 'arguments', ['operation', 'diff']);
       }
       if (scalar(state, 'status') === 'completed') {
+        if (kind === 'write' || kind === 'edit')
+          add(state, 'resolvedPath', 'result', ['value', 'path']);
         if (kind === 'read') {
           add(state, 'content', 'result', ['value', 'content']);
           for (const name of ['offset', 'returnedLines', 'totalLines'])
@@ -230,6 +241,10 @@ export function toolDetails<N extends Node>(
     const hint = typeof path === 'string' ? path.split(/[\\/]/).at(-1)?.split('.').at(-1) : null;
     const language = hint && bytes(hint) <= 128 ? hint : null;
     const operation = scalar(state, 'operation');
+    const resolvedPath = state.parts.resolvedPath;
+    const filePath =
+      (resolvedPath && complete(resolvedPath) ? resolvedPath.filePath : null) ??
+      state.parts.path?.filePath;
     const sections = Object.entries(state.parts)
       .filter(([id]) => id in labels && !(comparison && id === 'after'))
       .map(([id, part]) => {
@@ -336,6 +351,9 @@ export function toolDetails<N extends Node>(
             ui.box(
               id + '-controls',
               [
+                ...(id === 'path' && filePath && !part.failed && complete(part)
+                  ? [ui.button('copy-file-path', text.toolCopyPath, false, false, {}, filePath)]
+                  : []),
                 ...(part.failed
                   ? [ui.button(id + '-retry', text.sourceRetry, !!part.pending)]
                   : []),

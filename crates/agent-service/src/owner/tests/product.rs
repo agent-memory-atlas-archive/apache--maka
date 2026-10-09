@@ -1312,6 +1312,22 @@ process.stdout.write(output.outputFiles[0].text);
             await_screen(&mut presenter, "Requested content");
             await_screen(&mut presenter, "native file contents");
             await_screen(&mut presenter, "Recorded original content");
+            await_screen(&mut presenter, "[ Copy file path ]");
+            click(&mut presenter, "[ Copy file path ]");
+            let mut copied = Vec::new();
+            assert!(presenter.flush_clipboard(&mut copied).unwrap());
+            use base64::Engine as _;
+            let expected_path = fixture.workspace.join("native-approved.txt");
+            assert_eq!(
+                copied,
+                format!(
+                    "\x1b]52;c;{}\x07",
+                    base64::engine::general_purpose::STANDARD
+                        .encode(expected_path.to_str().unwrap())
+                )
+                .as_bytes()
+            );
+            assert!(!presenter.flush_clipboard(&mut Vec::new()).unwrap());
         }
         click(&mut presenter, "[ Tool arguments ]");
         await_screen(&mut presenter, "native-approved.txt");
