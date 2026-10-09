@@ -229,16 +229,22 @@ fn await_models_closed(presenter: &mut maka_tui::application::Presenter) {
 #[test]
 #[ignore = "opt-in product authoring build and actual HTTP provider"]
 fn packaged_product_creates_reads_sends_and_restores_through_actual_native_owners() {
-    packaged_product(false);
+    packaged_product(false, false);
 }
 
 #[test]
 #[ignore = "opt-in product authoring build and actual HTTP provider"]
 fn packaged_metadata_recovers_a_real_native_initialization_conflict() {
-    packaged_product(true);
+    packaged_product(true, false);
 }
 
-fn packaged_product(fail_labels_initialization: bool) {
+#[test]
+#[ignore = "opt-in product authoring build and actual HTTP provider"]
+fn packaged_file_permission_uses_native_policy_controls_and_explicit_response() {
+    packaged_product(false, true);
+}
+
+fn packaged_product(fail_labels_initialization: bool, file_permissions: bool) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -259,8 +265,20 @@ fn packaged_product(fail_labels_initialization: bool) {
     let listener = runtime.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
     let (respond, response_ready) = tokio::sync::oneshot::channel();
-    let server = runtime.spawn(async move {
+    let mut respond = Some(respond);
+    let mut server = runtime.spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
+        if file_permissions {
+            request_with_key(&mut socket, "private-fixture-key").await;
+            response_ready.await.unwrap();
+            super::files::tool_response(&mut socket, json!({"path":"native-approved.txt","content":"native file contents"})).await;
+            let (mut next, _) = listener.accept().await.unwrap();
+            let resumed = request_with_key(&mut next, "private-fixture-key").await;
+            let tool = resumed["messages"].as_array().unwrap().iter().rev().find(|m| m["role"] == "tool").unwrap();
+            assert_eq!(serde_json::from_str::<Value>(tool["content"].as_str().unwrap()).unwrap()["kind"], "completed");
+            response(&mut next).await;
+            return;
+        }
         let body = request_with_key(&mut socket, KEY).await;
         assert_eq!(body["model"], "fixture-model-19");
         assert_eq!(
@@ -278,8 +296,12 @@ fn packaged_product(fail_labels_initialization: bool) {
         ]}));
         response(&mut next).await;
     });
-    let tooling = (!fail_labels_initialization)
-        .then(|| super::service_tools::Setup::questions().require_confirmation());
+    let tooling = if file_permissions {
+        Some(super::service_tools::Setup::files("write"))
+    } else {
+        (!fail_labels_initialization)
+            .then(|| super::service_tools::Setup::questions().require_confirmation())
+    };
     let peer = tooling.as_ref().map_or_else(
         || Arc::new(maka_application_bridge::transport::PeerPolicy::default()),
         super::service_tools::Setup::policy,
@@ -347,6 +369,7 @@ fn packaged_product(fail_labels_initialization: bool) {
         "queue-editor",
         "question-editor",
         "service-approval",
+        "permission-approval",
         "help",
         "deployment",
         "deployment-manager",
@@ -439,7 +462,7 @@ process.stdout.write(output.outputFiles[0].text);
         .collect::<BTreeMap<_, _>>();
     // The authoring function accepts actual Rust-computed package refs. Do not
     // duplicate package hashing or native manifest schemas in a fixture.
-    let script = r#"const {composition,packageNames}=await import(process.argv[1]);const refs=JSON.parse(process.argv[2]);const keys=Object.fromEntries(packageNames.map((name,i)=>[name,'00000000-0000-0000-0000-'+String(i+20).padStart(12,'0')]));keys.agent='00000000-0000-0000-0000-000000000001';keys.receipts='00000000-0000-0000-0000-000000000004';keys.settings='00000000-0000-0000-0000-000000000005';for(const name of packageNames)refs[name]??={id:'unused.'+name,revision:'sha256-'+ 'a'.repeat(64)};const result=composition({presentation:'tui',locale:'en',scheme:'light',packages:refs,keys,agent:{workspaceRoots:[{label:"Fixture",path:"/fixture-workspace"}],maxActiveRuns:1,maxSteps:1,tools:[]},hostRoot:'/fixture',hostDeployment:'00000000-0000-0000-0000-000000000080',managementDeployment:'00000000-0000-0000-0000-000000000081'});console.log(JSON.stringify({input:result.ui,observations:result.remoteExports,managementHost:result.managementHost,managementConfiguration:result.connections.hosts.find(h=>h.name==='manager')}));"#;
+    let script = r#"const {composition,packageNames}=await import(process.argv[1]);const refs=JSON.parse(process.argv[2]);const keys=Object.fromEntries(packageNames.map((name,i)=>[name,'00000000-0000-0000-0000-'+String(i+20).padStart(12,'0')]));keys.agent='00000000-0000-0000-0000-000000000001';keys.receipts='00000000-0000-0000-0000-000000000004';keys.settings='00000000-0000-0000-0000-000000000005';for(const name of packageNames)refs[name]??={id:'unused.'+name,revision:'sha256-'+ 'a'.repeat(64)};const result=composition({presentation:'tui',locale:'en',scheme:'light',packages:refs,keys,agent:{workspaceRoots:[{label:"Fixture",path:"/fixture-workspace"}],maxActiveRuns:1, permissions: { access: 'workspace_write', requestPermissions: true },maxSteps:1,tools:[]},hostRoot:'/fixture',hostDeployment:'00000000-0000-0000-0000-000000000080',managementDeployment:'00000000-0000-0000-0000-000000000081'});console.log(JSON.stringify({input:result.ui,observations:result.remoteExports,managementHost:result.managementHost,managementConfiguration:result.connections.hosts.find(h=>h.name==='manager')}));"#;
     let authored = Command::new("node")
         .arg("--input-type=module")
         .arg("-e")
@@ -943,22 +966,179 @@ process.stdout.write(output.outputFiles[0].text);
         .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
         .unwrap();
     await_screen(&mut presenter, "Hello product");
-    if fail_labels_initialization {
-        // Saved notice, retained old fields, an actual different selected
-        // Session and a two-row CJK workspace path used to hide all actions.
-        click(&mut presenter, "[ Toggle sidebar ]");
-        click(&mut presenter, "[ New conversation ]");
-        wait_for_target(&mut presenter, "    New conversation", 0);
-        click(&mut presenter, "[ Hide sidebar ]");
+    if file_permissions {
         click(&mut presenter, "[ Details ]");
-        click(&mut presenter, "[ Review current details ]");
-        await_screen(&mut presenter, "Review these saved details.");
-        click(&mut presenter, "[ Discard draft and reload ]");
-        click(&mut presenter, "[ Discard draft and reload ]");
-        wait_for_target(&mut presenter, "[ Save details ]", 0);
+        // Native focus reveals policy choices below the original editors in a short viewport.
+        for _ in 0..12 {
+            if screen(&draw(&mut presenter)).contains("Read only") {
+                break;
+            }
+            presenter
+                .input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
+                .unwrap();
+            draw(&mut presenter);
+        }
+        click(&mut presenter, "Read only");
+        click(&mut presenter, "[ Save details ]");
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            draw(&mut presenter);
+            let current = runtime
+                .block_on(fixture.owner.session(&session_id))
+                .unwrap();
+            if current.configuration.permissions.access == WorkspaceAccess::ReadOnly {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "native policy save did not settle"
+            );
+            std::thread::yield_now();
+        }
         presenter
             .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
             .unwrap();
+        await_screen(&mut presenter, "Hello product");
+        click(&mut presenter, "[ Choose model ]");
+        await_screen(&mut presenter, "fixture-model-00");
+        click(&mut presenter, "fixture-model-00");
+        click(&mut presenter, "[ Apply ]");
+        await_models_closed(&mut presenter);
+        click(&mut presenter, "[ Send ]");
+        await_screen(&mut presenter, "What would you like to work on?");
+        click(&mut presenter, "What would you like to work on?");
+        presenter
+            .input(Event::Paste("File background draft".into()))
+            .unwrap();
+        await_screen(&mut presenter, "File background draft");
+        respond.take().unwrap().send(()).unwrap();
+        await_screen(&mut presenter, "[ Approve permissions 1 ]");
+        click(&mut presenter, "[ Approve permissions 1 ]");
+        await_screen(&mut presenter, "native-approved.txt");
+        let (x, y) = wait_for_target(&mut presenter, "[ Close ]", 0);
+        assert!(
+            draw(&mut presenter)[(x, y)]
+                .modifier
+                .contains(ratatui::style::Modifier::REVERSED)
+        );
+        assert!(!fixture.workspace.join("native-approved.txt").exists());
+        presenter
+            .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+            .unwrap();
+        await_screen(&mut presenter, "File background draft");
+        click(&mut presenter, "[ Approve permissions 1 ]");
+        await_screen(&mut presenter, "native-approved.txt");
+        click(&mut presenter, "Deny this call");
+        wait_for_target(&mut presenter, "Deny this call", 0);
+        draw(&mut presenter);
+        presenter
+            .input(Event::Key(KeyEvent::new(
+                KeyCode::Right,
+                KeyModifiers::NONE,
+            )))
+            .unwrap();
+        let (x, y) = wait_for_target(&mut presenter, "Allow this call", 0);
+        assert!(
+            draw(&mut presenter)[(x, y)]
+                .modifier
+                .contains(ratatui::style::Modifier::UNDERLINED)
+        );
+        presenter
+            .input(Event::Key(KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::NONE,
+            )))
+            .unwrap();
+        click(&mut presenter, "This conversation");
+        draw(&mut presenter);
+        assert!(!fixture.workspace.join("native-approved.txt").exists());
+        let pending = runtime
+            .block_on(fixture.store.pending_interactions(&session_id))
+            .unwrap();
+        assert_eq!(pending.len(), 1);
+        click(&mut presenter, "[ Confirm choice ]");
+        await_screen(&mut presenter, "Approved access");
+        let record = runtime
+            .block_on(fixture.store.interaction(&pending[0].request_id))
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            record.outcome,
+            Some(
+                maka_runtime::interaction::InteractionOutcome::PermissionsDecision {
+                    decision: maka_sandbox::grant::Decision::Allow {
+                        scope: maka_sandbox::grant::Scope::Session,
+                        ..
+                    },
+                    ..
+                }
+            )
+        ));
+        click(&mut presenter, "[ Close ]");
+        await_screen(&mut presenter, "File background draft");
+        await_screen(&mut presenter, "Elegant response");
+        runtime.block_on(&mut server).unwrap();
+        runtime.block_on(fixture.drained());
+        assert_eq!(
+            std::fs::read_to_string(fixture.workspace.join("native-approved.txt")).unwrap(),
+            "native file contents"
+        );
+        click(&mut presenter, "[ Details ]");
+        for _ in 0..16 {
+            if screen(&draw(&mut presenter)).contains("Clear additional approvals on save") {
+                break;
+            }
+            presenter
+                .input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
+                .unwrap();
+            draw(&mut presenter);
+        }
+        click(&mut presenter, "Clear additional approvals on save");
+        click(&mut presenter, "[ Save details ]");
+        // Execution advanced the canonical metadata revision; preserve the revoke
+        // draft while explicitly reviewing and adopting its new CAS basis.
+        await_screen(&mut presenter, "This conversation changed.");
+        click(&mut presenter, "[ Review current details ]");
+        await_screen(&mut presenter, "[ Use this version ]");
+        click(&mut presenter, "[ Use this version ]");
+        click(&mut presenter, "[ Save details ]");
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            draw(&mut presenter);
+            let current = runtime
+                .block_on(fixture.owner.session(&session_id))
+                .unwrap();
+            if current.configuration.boundary_revision == 2 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "native revoke did not settle"
+            );
+            std::thread::yield_now();
+        }
+        presenter
+            .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+            .unwrap();
+    }
+    if fail_labels_initialization || file_permissions {
+        if fail_labels_initialization {
+            // Saved notice, retained old fields, an actual different selected
+            // Session and a two-row CJK workspace path used to hide all actions.
+            click(&mut presenter, "[ Toggle sidebar ]");
+            click(&mut presenter, "[ New conversation ]");
+            wait_for_target(&mut presenter, "    New conversation", 0);
+            click(&mut presenter, "[ Hide sidebar ]");
+            click(&mut presenter, "[ Details ]");
+            click(&mut presenter, "[ Review current details ]");
+            await_screen(&mut presenter, "Review these saved details.");
+            click(&mut presenter, "[ Discard draft and reload ]");
+            click(&mut presenter, "[ Discard draft and reload ]");
+            wait_for_target(&mut presenter, "[ Save details ]", 0);
+            presenter
+                .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+                .unwrap();
+        }
         presenter
             .surface_closed(&presenter.surface(), Ok(()))
             .unwrap();
@@ -2175,7 +2355,7 @@ process.stdout.write(output.outputFiles[0].text);
         .input(Event::Paste("Question background draft".into()))
         .unwrap();
     await_screen(&mut presenter, "Question background draft");
-    respond.send(()).unwrap();
+    respond.take().unwrap().send(()).unwrap();
     await_screen(&mut presenter, "[ Confirm service call 1 ]");
     click(&mut presenter, "[ Confirm service call 1 ]");
     await_screen(&mut presenter, "Tool arguments");
@@ -2315,7 +2495,7 @@ process.stdout.write(output.outputFiles[0].text);
         wait_for_target(&mut presenter, "[ Latest messages ]", 0);
     }
     await_screen(&mut presenter, "Hello product");
-    runtime.block_on(server).unwrap();
+    runtime.block_on(&mut server).unwrap();
     runtime.block_on(fixture.drained());
     presenter
         .surface_closed(&presenter.surface(), Ok(()))

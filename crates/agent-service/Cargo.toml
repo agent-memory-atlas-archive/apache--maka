@@ -24,6 +24,7 @@ publish.workspace = true
 
 [dependencies]
 base64 = "0.22.1"
+cap-std.workspace = true
 maka-agent.workspace = true
 maka-config.workspace = true
 maka-event-log.workspace = true
@@ -38,6 +39,7 @@ maka-providers.workspace = true
 maka-protocol.workspace = true
 maka-runtime.workspace = true
 maka-runtime-host.workspace = true
+maka-sandbox.workspace = true
 maka-tools.workspace = true
 futures-util.workspace = true
 jsonschema.workspace = true

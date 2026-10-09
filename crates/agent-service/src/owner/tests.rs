@@ -20,6 +20,9 @@
 #[path = "tests/service_tools.rs"]
 mod service_tools;
 
+#[path = "tests/files.rs"]
+mod files;
+
 #[path = "tests/interactions.rs"]
 mod interactions;
 
@@ -439,6 +442,10 @@ impl Fixture {
             maka_config::oauth::enrollment::LoginCompletion::Committed(_)
         ));
         let mut settings = Configuration {
+            permissions: WorkspacePermissions {
+                access: WorkspaceAccess::WorkspaceWrite,
+                request_permissions: true,
+            },
             workspace_roots: vec![
                 maka_runtime_host::server::DirectoryRootSpec {
                     label: "Workspace".into(),

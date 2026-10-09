@@ -21,6 +21,7 @@
 //! chooses whether to activate it; installing this crate does not start a product.
 /// Public wire types and generated contracts. 公开协议类型与生成契约。
 pub mod contract;
+pub mod files;
 mod interaction_wait;
 mod model;
 mod owner;
@@ -39,6 +40,7 @@ pub const IMPLEMENTATION: &str = "maka.agent.api";
 pub const EXPORT: &str = "agent";
 
 pub fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
+    files::provide(registry)?;
     questions::provide(registry)?;
     registry.insert(
         IMPLEMENTATION.into(),

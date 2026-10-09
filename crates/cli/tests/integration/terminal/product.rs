@@ -147,7 +147,7 @@ fn authored(
         const common={...configuration,packages,keys};
         const {activate}=await import(process.argv[4]);
         const accent=activate({scheme:configuration.scheme}).Appearance.value.accent >>> 8;
-        console.log(JSON.stringify([composition({...common,agent:{maxActiveRuns:1,maxSteps:1,tools:[]}}),
+        console.log(JSON.stringify([composition({...common,agent:{maxActiveRuns:1, permissions: { access: 'workspace_write', requestPermissions: true },maxSteps:1,tools:[]}}),
             studioComposition({...common,hostRoot:configuration.studioRoot,hostDeployment:configuration.studioDeployment}),accent]));
     "#]).arg(format!("file://{}", module.display())).arg(configuration.to_string())
         .arg(serde_json::to_string(refs).unwrap())

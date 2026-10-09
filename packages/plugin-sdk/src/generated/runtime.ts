@@ -793,6 +793,10 @@ export type EditorCapture =
       revision: number;
       kind: 'at_revision';
     };
+/**
+ * Access inside the original selected directory; never an ambient filesystem grant.
+ */
+export type AgentWorkspaceAccess = 'read_only' | 'workspace_write';
 export type AgentToolConfirmation = 'required' | 'preapproved';
 export type SettingsModelsRead =
   | {
@@ -2913,6 +2917,10 @@ export interface TextChunk {
 }
 export interface AgentConfiguration {
   /**
+   * Initial policy within the selected workspace capability.
+   */
+  permissions: AgentWorkspacePermissions;
+  /**
    * Installation-published directories, captured without creating workspace markers.
    *
    * @minItems 1
@@ -2965,6 +2973,10 @@ export interface AgentConfiguration {
    * @maxItems 128
    */
   tools: AgentServiceTool[];
+}
+export interface AgentWorkspacePermissions {
+  access: AgentWorkspaceAccess;
+  requestPermissions: boolean;
 }
 export interface DirectoryRootSpec {
   label: string;
@@ -3289,6 +3301,8 @@ export interface AgentDirectorySelection {
   directoryIdentity: string;
 }
 export interface AgentSession {
+  permissions: AgentWorkspacePermissions;
+  boundaryRevision: number;
   id: string;
   title: string;
   labels: string[];
@@ -3309,6 +3323,10 @@ export interface AgentDirectory {
   selection: AgentDirectorySelection;
 }
 export interface AgentMetadata {
+  /**
+   * Omission leaves the permission boundary and its approvals unchanged.
+   */
+  permissions?: AgentPermissionChange | null;
   sessionId: string;
   expectedRevision: number;
   title: string;
@@ -3316,6 +3334,13 @@ export interface AgentMetadata {
    * @maxItems 32
    */
   labels: string[];
+}
+export interface AgentPermissionChange {
+  settings: AgentWorkspacePermissions;
+  /**
+   * Invalidate additive approvals even when the base policy is unchanged.
+   */
+  revokeGrants: boolean;
 }
 export interface AgentSend {
   model: ModelSelection;

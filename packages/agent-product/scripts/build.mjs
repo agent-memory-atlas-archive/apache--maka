@@ -115,6 +115,7 @@ const specifications = {
       queueEditor: one(own.queueEditorContract),
       questionEditor: one(own.questionEditorContract),
       serviceApproval: one(own.serviceApprovalContract),
+      permissionApproval: one(own.permissionApprovalContract),
       help: one(own.helpContract),
       navigation: one(own.navigationContract),
       timeline: one(own.timelineContract),
@@ -206,6 +207,12 @@ specifications['question-editor'] = {
   export: 'QuestionEditor',
   module: 'question-editor',
   imports: { editor: one(sdk.contracts.textarea) },
+};
+specifications['permission-approval'] = {
+  contract: own.permissionApprovalContract,
+  export: 'PermissionApproval',
+  module: 'permission-approval',
+  imports: { reading: one(sdk.contracts.readingArea) },
 };
 specifications['service-approval'] = {
   contract: own.serviceApprovalContract,
@@ -477,8 +484,14 @@ const mechanical = {
         ),
         imports: {
           questions: { contract: sdk.contracts.questions, cardinality: { kind: 'optional' } },
+          files: { contract: sdk.contracts.workspaceFiles, cardinality: { kind: 'optional' } },
         },
       },
+    },
+  },
+  'workspace-files': {
+    entries: {
+      host: native('maka.workspace.files', { files: required(sdk.contracts.workspaceFiles) }),
     },
   },
   questions: {

@@ -133,6 +133,7 @@ pub(super) struct Setup {
     granted: bool,
     query: bool,
     questions: bool,
+    files: Option<&'static str>,
     confirmation: contract::ToolConfirmation,
 }
 impl Setup {
@@ -146,6 +147,7 @@ impl Setup {
             granted: true,
             query: false,
             questions: false,
+            files: None,
             confirmation: contract::ToolConfirmation::Preapproved,
         }
     }
@@ -155,6 +157,7 @@ impl Setup {
             granted,
             query: false,
             questions: false,
+            files: None,
             confirmation: contract::ToolConfirmation::Preapproved,
         }
     }
@@ -164,25 +167,38 @@ impl Setup {
             granted: true,
             query: false,
             questions: true,
+            files: None,
             confirmation: contract::ToolConfirmation::Preapproved,
         }
     }
+    pub(super) fn files(method: &'static str) -> Self {
+        Self {
+            files: Some(method),
+            ..Self::javascript()
+        }
+    }
     fn contract(&self) -> Contract {
-        if self.questions {
+        if self.files.is_some() {
+            crate::files::contract()
+        } else if self.questions {
             crate::questions::contract()
         } else {
             counter_contract()
         }
     }
     fn export(&self) -> &str {
-        if self.questions {
+        if self.files.is_some() {
+            crate::files::EXPORT
+        } else if self.questions {
             crate::questions::EXPORT
         } else {
             "Counter"
         }
     }
     pub(super) fn method(&self) -> &str {
-        if self.questions {
+        if let Some(method) = self.files {
+            method
+        } else if self.questions {
             "ask"
         } else if self.query {
             "read"
@@ -193,13 +209,17 @@ impl Setup {
     pub(super) fn selection(&self) -> contract::ServiceTool {
         contract::ServiceTool {
             confirmation: self.confirmation,
-            name: if self.questions {
+            name: if self.files.is_some() {
+                "WorkspaceFile"
+            } else if self.questions {
                 "AskUserQuestion"
             } else {
                 "Counter"
             }
             .into(),
-            description: if self.questions {
+            description: if self.files.is_some() {
+                "Use the selected workspace files."
+            } else if self.questions {
                 "Ask required bounded questions."
             } else {
                 "Increment the explicitly selected counter."
@@ -245,7 +265,9 @@ impl Setup {
                 }],
             );
         packages[0] = provider;
-        let implementation = if self.questions {
+        let implementation = if self.files.is_some() {
+            json!({"kind":"native","implementation":crate::files::IMPLEMENTATION})
+        } else if self.questions {
             json!({"kind":"native","implementation":crate::questions::IMPLEMENTATION})
         } else if self.counter.is_some() {
             json!({"kind":"native","implementation":"fixture.counter"})
@@ -256,7 +278,7 @@ impl Setup {
             "implementation":implementation,"configuration":{"type":"object","additionalProperties":false},"imports":{},
             "exports":{(self.export()):{"contract":self.contract(),"availability":"required"}}
         }}}})).unwrap())]);
-        if self.counter.is_none() && !self.questions {
+        if self.counter.is_none() && !self.questions && self.files.is_none() {
             files.insert("counter.mjs".into(), format!(r#"let effects=0; export function activate(){{return {{Counter:{{contract:{},service:['counter']}}}};}} export const counter={{write({{amount}}){{return {{effects:effects+=amount}};}},read(){{return {{effects}};}}}};"#, serde_json::to_string(&counter_contract()).unwrap()).into_bytes());
         }
         let package = Package::new(files).unwrap();
@@ -276,6 +298,9 @@ impl Setup {
         packages.push(package);
     }
     pub(super) fn provide(&self, registry: &mut NativeRegistry) {
+        if self.files.is_some() {
+            crate::files::provide(registry).unwrap();
+        }
         if self.questions {
             crate::questions::provide(registry).unwrap();
         }

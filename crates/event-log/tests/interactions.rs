@@ -693,3 +693,149 @@ async fn closure_cannot_grant_and_browser_authority_is_session_provider_contract
     assert!(log.interaction("invalid").await.unwrap().is_none());
     log.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn permission_metadata_cas_closes_only_old_pending_requests_and_notifies_waiters() {
+    use maka_event_log::sessions::SessionMutation;
+    use maka_runtime::interaction::PermissionRequest;
+    use maka_sandbox::{Network, grant};
+    use serde_json::{Value, json};
+    let temp = tempfile::tempdir().unwrap();
+    let log = EventLog::open(&temp.path().join("permission-cas.sqlite"))
+        .await
+        .unwrap();
+    for session in ["session", "other"] {
+        log.create_session(session, session, &json!({"boundary_revision": 4}), 1)
+            .await
+            .unwrap();
+    }
+    let permissions = |id: &str, session: &str| InteractionRecord {
+        session_id: session.into(),
+        request: InteractionRequest::Permissions {
+            tool_use_id: Some("tool-use".into()),
+            base_revision: 4,
+            request: PermissionRequest {
+                reason: "Exact write".into(),
+                command: None,
+                permissions: grant::Permissions {
+                    filesystem: vec![],
+                    network: Network::Denied,
+                },
+            },
+        },
+        ..request(id)
+    };
+    for record in [
+        permissions("waiting", "session"),
+        permissions("settled", "session"),
+        permissions("foreign", "other"),
+        request("capability"),
+    ] {
+        log.establish_interaction(&record).await.unwrap();
+    }
+    let winner = InteractionOutcome::PermissionsDecision {
+        decision: grant::Decision::Deny,
+        committed_at: 12,
+    };
+    log.commit_interaction_outcome("settled", winner.clone())
+        .await
+        .unwrap();
+    let current = log.get_session::<Value>("session").await.unwrap().unwrap();
+    assert!(matches!(
+        log.update_session_permissions::<Value, _>(
+            "session",
+            current.revision + 1,
+            20,
+            |_| panic!("CAS conflict must not run update")
+        )
+        .await
+        .unwrap(),
+        SessionMutation::RevisionConflict { .. }
+    ));
+    log.update_session_permissions::<Value, _>("session", current.revision, 20, |_| Ok(()))
+        .await
+        .unwrap();
+    assert!(
+        log.interaction("waiting")
+            .await
+            .unwrap()
+            .unwrap()
+            .outcome
+            .is_none()
+    );
+    let mut commits = log.subscribe_commits();
+    let changed = log
+        .update_session_permissions::<Value, _>("session", current.revision, 21, |value| {
+            value["boundary_revision"] = json!(5);
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(changed, SessionMutation::Committed(ref session) if session.configuration["boundary_revision"] == 5)
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(1), commits.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    let closed = log.interaction("waiting").await.unwrap().unwrap();
+    assert_eq!(
+        closed.outcome,
+        Some(InteractionOutcome::Closure {
+            reason: ClosureReason::ProducerCancelled,
+            committed_at: 21
+        })
+    );
+    assert_eq!(
+        log.interaction("settled").await.unwrap().unwrap().outcome,
+        Some(winner)
+    );
+    for id in ["foreign", "capability"] {
+        assert!(
+            log.interaction(id)
+                .await
+                .unwrap()
+                .unwrap()
+                .outcome
+                .is_none()
+        );
+    }
+    // A malformed boundary update rolls back configuration and outcome changes together.
+    let current = log.get_session::<Value>("session").await.unwrap().unwrap();
+    assert!(
+        log.update_session_permissions::<Value, _>("session", current.revision, 22, |value| {
+            value["boundary_revision"] = json!(3);
+            Ok(())
+        })
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        log.get_session::<Value>("session")
+            .await
+            .unwrap()
+            .unwrap()
+            .configuration["boundary_revision"],
+        5
+    );
+    log.create_session("missing", "missing", &json!({}), 1)
+        .await
+        .unwrap();
+    let missing = log.get_session::<Value>("missing").await.unwrap().unwrap();
+    assert!(
+        log.update_session_permissions::<Value, _>("missing", missing.revision, 22, |value| {
+            value["boundary_revision"] = json!(1);
+            Ok(())
+        })
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        log.get_session::<Value>("missing")
+            .await
+            .unwrap()
+            .unwrap()
+            .configuration,
+        json!({})
+    );
+}

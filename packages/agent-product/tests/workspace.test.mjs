@@ -42,6 +42,8 @@ for (const target of ['desktop', 'tui']) {
       title: `Long ${'界面'.repeat(40)} ${id}`,
       archived,
       activity: 'idle',
+      permissions: { access: 'workspace_write', requestPermissions: true },
+      boundaryRevision: 0,
       labels: [],
       revision: 1,
       updatedAt: 1,
@@ -95,6 +97,8 @@ for (const target of ['desktop', 'tui']) {
       sessions: props.sessions.map((entry, index) => ({
         ...entry,
         activity: index === 0 ? 'waiting' : index === 1 ? 'working' : 'idle',
+        permissions: { access: 'workspace_write', requestPermissions: true },
+        boundaryRevision: 0,
       })),
     };
     result = navigation.update(result.frame.state, props, {});
@@ -306,6 +310,8 @@ const session = {
   updatedAt: 1,
   archived: false,
   activity: 'idle',
+  permissions: { access: 'workspace_write', requestPermissions: true },
+  boundaryRevision: 0,
 };
 const draft = {
   revision: 4,
@@ -709,6 +715,7 @@ test('both product compositions use actual immutable package refs and check in t
     for (const productName of ['agent', 'studio'])
       for (const presentation of ['desktop', 'tui']) {
         const questionsEnabled = productName === 'agent' && presentation === 'desktop';
+        const filesEnabled = productName === 'agent' && presentation === 'tui';
         const configuration = {
           presentation,
           locale: 'zh-Hant-HK',
@@ -717,6 +724,7 @@ test('both product compositions use actual immutable package refs and check in t
           agent: {
             workspaceRoots: [{ label: 'Projects', path: '/private/product-workspace' }],
             maxActiveRuns: 1,
+            permissions: { access: 'workspace_write', requestPermissions: true },
             maxSteps: 1,
             tools: questionsEnabled
               ? [
@@ -728,7 +736,17 @@ test('both product compositions use actual immutable package refs and check in t
                     method: 'ask',
                   },
                 ]
-              : [],
+              : filesEnabled
+                ? [
+                    {
+                      name: 'Write',
+                      confirmation: 'preapproved',
+                      description: 'Write a workspace file.',
+                      import: 'files',
+                      method: 'write',
+                    },
+                  ]
+                : [],
           },
           hostRoot: '/private/product-fixture',
           hostDeployment: uuid(80),
@@ -802,7 +820,22 @@ test('both product compositions use actual immutable package refs and check in t
               recovery: true,
             },
           ]);
+        } else if (filesEnabled) {
+          assert.deepEqual(host.instances.agent.bindings.files, [
+            { kind: 'instance', path: ['workspace-files'], export: 'files' },
+          ]);
+          assert.deepEqual(business.native, [
+            {
+              origin: [keys.agent],
+              consumer: [keys.agent],
+              provider: [keys['workspace-files']],
+              export: 'files',
+              methods: ['write'],
+              recovery: true,
+            },
+          ]);
         } else assert.equal(business.native, undefined);
+        assert.equal('workspace-files' in host.instances, filesEnabled);
 
         assert.equal(business.deployment, configuration.hostDeployment);
         assert.deepEqual(
@@ -5996,6 +6029,8 @@ for (const target of ['tui', 'desktop']) {
         updatedAt: 1,
         archived: false,
         activity: 'idle',
+        permissions: { access: 'workspace_write', requestPermissions: true },
+        boundaryRevision: 0,
       })),
     };
   }
@@ -7005,6 +7040,88 @@ for (const target of ['desktop', 'tui']) {
     form.observe('labels', '未完成', 'applied', { start: 0, end: 3 });
     form.raw('save');
     assert.equal(form.output.actions.length, 0);
+  });
+  test(`${target} permission settings and revocation retain original metadata capture, receipt and review`, () => {
+    const form = new DetailsClient(details).commands();
+    form.raw('access-read_only');
+    form.raw('permissions-no-ask');
+    form.raw('permissions-revoke');
+    const expected = {
+      settings: { access: 'read_only', requestPermissions: false },
+      revokeGrants: true,
+    };
+    const captures = form.capture();
+    form.raw('access-workspace_write');
+    form.raw('permissions-ask');
+    form.raw('permissions-revoke');
+    assert.deepEqual(form.state.current.permissions, expected);
+    for (const { action, text } of captures)
+      form.complete(action, {
+        status: 'succeeded',
+        value: {
+          text,
+          metadata: form.state.current.captured[action.resources.text.child.slice(8)].snapshot.text,
+        },
+      });
+    const mutation = form.find('metadata');
+    assert.deepEqual(mutation.input.permissions, expected);
+    form.complete(mutation, {
+      status: 'operation',
+      reply: { reference: metadataRef, receipt: { kind: 'unavailable', diagnostic: 'lost' } },
+    });
+    form.raw('access-workspace_write');
+    assert.equal(form.state.permissions.access, 'read_only');
+    form.raw('check');
+    assert.deepEqual(form.find('read').input, metadataRef);
+    form.query(
+      'read',
+      metadataReply({
+        kind: 'committed',
+        session: { ...session, revision: 2, boundaryRevision: 1, permissions: expected.settings },
+      }).reply,
+    );
+    assert.deepEqual(form.state.permissions, expected.settings);
+    assert.equal(form.state.revokeGrants, false);
+    form.readAll();
+    assert.equal(form.find('metadata').input.permissions, undefined);
+    form.complete(
+      form.find('metadata'),
+      metadataReply({ kind: 'revision_conflict', expected: 2, actual: 3 }),
+    );
+    form.raw('review');
+    form.query('observe', {
+      session: { ...session, revision: 3 },
+      through: 0,
+      run: null,
+      parts: [],
+    });
+    form.raw('use-version');
+    assert.deepEqual(
+      form.state.permissions,
+      expected.settings,
+      'adopting a basis keeps the deliberate policy draft',
+    );
+    form.raw('review');
+    form.query('observe', {
+      session: { ...session, revision: 4 },
+      through: 0,
+      run: null,
+      parts: [],
+    });
+    form.raw('reload');
+    form.raw('use-version');
+    assert.deepEqual(
+      form.state.permissions,
+      session.permissions,
+      'explicit discard adopts canonical policy',
+    );
+    form.commands();
+    form.raw('permissions-revoke');
+    form.readAll();
+    assert.deepEqual(form.find('metadata').input.permissions, {
+      settings: session.permissions,
+      revokeGrants: true,
+    });
   });
   test(`${target} metadata captures both original revisions and freezes CAS despite run props and later typing`, () => {
     const form = new DetailsClient(details).commands();
@@ -8358,12 +8475,209 @@ for (const target of ['tui', 'desktop']) {
     client.interaction = (name, event = {}) =>
       client.input({
         kind: 'component',
-        child: `${record.request.kind === 'question' ? 'question-form' : 'service-approval'}-${client.state.interaction.attempt}`,
+        child: `${record.request.kind === 'question' ? 'question-form' : record.request.kind === 'permissions' ? 'permission-approval' : 'service-approval'}-${client.state.interaction.attempt}`,
         name,
         event,
       });
     return client;
   }
+  test(`${target} permission approval uses original requested authority and recovers the winning outcome`, async () => {
+    const record = {
+      ...questionRecord,
+      requestId: 'permission_original',
+      request: {
+        kind: 'permissions',
+        toolUseId: 'write-call',
+        baseRevision: 3,
+        request: {
+          reason: 'Write requested file',
+          permissions: {
+            filesystem: [{ path: '/workspace/one.txt', scope: 'exact', access: 'write' }],
+            network: 'denied',
+          },
+        },
+      },
+    };
+    const client = await interactionClient(record);
+    const retained = {
+      epoch: client.state.epoch,
+      selected: structuredClone(client.state.selected),
+      draft: structuredClone(client.state.draft),
+    };
+    assert.equal(
+      modelSlots(client.output.frame.view).find((n) => n.binding === 'permissionApproval').props
+        .record.requestId,
+      record.requestId,
+    );
+    client.interaction('submit', { requestId: 'foreign', decision: 'allow', scope: 'session' });
+    assert.equal(client.output.actions.length, 0);
+    client.interaction('submit', {
+      requestId: record.requestId,
+      decision: 'allow',
+      scope: 'turn',
+      permissions: { network: 'allowed' },
+    });
+    const respond = client.find('respond');
+    assert.deepEqual(respond.input.answer, {
+      kind: 'permissions',
+      decision: {
+        decision: 'allow',
+        scope: 'turn',
+        permissions: record.request.request.permissions,
+      },
+    });
+    const original = { ...reference, method: 'respond' };
+    client.complete(respond, {
+      status: 'operation',
+      reply: { reference: original, receipt: { kind: 'unavailable', diagnostic: 'lost' } },
+    });
+    client.interaction('check');
+    assert.ok(client.output.actions.every((action) => action.method !== 'respond'));
+    assert.deepEqual(client.find('read').input, original);
+    const resolved = {
+      ...record,
+      outcome: { kind: 'permissions_decision', decision: { decision: 'deny' }, committedAt: 5 },
+    };
+    client.query('interaction', resolved);
+    assert.ok(client.state.uncertain);
+    client.interaction('submit', {
+      requestId: record.requestId,
+      decision: 'allow',
+      scope: 'session',
+    });
+    assert.equal(client.output.actions.length, 0);
+    client.query('read', {
+      reference: original,
+      receipt: {
+        kind: 'recorded',
+        outcome: { kind: 'returned', value: { kind: 'recorded', record: resolved } },
+        cleanup: { kind: 'confirmed' },
+      },
+    });
+    assert.equal(client.state.uncertain, null);
+    assert.deepEqual(client.state.interaction.record, resolved);
+    assert.deepEqual(
+      { epoch: client.state.epoch, selected: client.state.selected, draft: client.state.draft },
+      retained,
+    );
+    client.interaction('closed');
+    client.interaction('submit', { requestId: record.requestId, decision: 'allow', scope: 'once' });
+    assert.equal(client.output.actions.length, 0);
+  });
+  test(`${target} permission dialog retains complete targets and defaults to deny once until explicit confirmation`, async () => {
+    const { component } = await import(
+      pathToFileURL(resolve(root, `dist/packages/permission-approval/${target}.js`))
+    );
+    const path = '/workspace/' + '界/segment/'.repeat(90) + 'end.txt';
+    let props = {
+      theme: values.appearance[0],
+      locale: 'en',
+      open: true,
+      busy: false,
+      checking: false,
+      status: '',
+      record: {
+        ...questionRecord,
+        requestId: 'permissions',
+        request: {
+          kind: 'permissions',
+          toolUseId: 'tool',
+          baseRevision: 0,
+          request: {
+            reason: 'Write all these exact files',
+            command: { command: 'write file', cwd: '/workspace' },
+            permissions: {
+              filesystem: [
+                { path, scope: 'exact', access: 'write' },
+                { path: '/workspace/second', scope: 'subtree', access: 'read' },
+              ],
+              network: { restricted: { destinations: [{ host: 'example.test', port: 443 }] } },
+            },
+          },
+        },
+      },
+    };
+    let result = component.mount(props, {});
+    const raw = (key) => {
+      result = component.event(
+        structuredClone(result.frame.state),
+        { kind: 'raw', key, event: {} },
+        props,
+        {},
+      );
+    };
+    assert.equal(result.frame.view.children[0].children[0].key, 'close');
+    const reading = modelSlots(result.frame.view).find((n) => n.binding === 'reading');
+    assert.ok(JSON.stringify(reading.props.content).includes(path));
+    assert.ok(JSON.stringify(reading.props.content).includes('example.test'));
+    assert.equal(result.frame.state.decision, 'deny');
+    assert.equal(result.frame.state.scope, 'once');
+    raw('submit');
+    assert.deepEqual(result.events, [
+      { name: 'submit', value: { requestId: 'permissions', decision: 'deny', scope: 'once' } },
+    ]);
+    for (const scope of ['once', 'turn', 'session']) {
+      raw('allow');
+      raw(scope);
+      assert.equal(result.events.length, 0);
+      raw('submit');
+      assert.deepEqual(result.events, [
+        { name: 'submit', value: { requestId: 'permissions', decision: 'allow', scope } },
+      ]);
+    }
+    props = {
+      ...props,
+      record: {
+        ...props.record,
+        outcome: {
+          kind: 'permissions_decision',
+          committedAt: 5,
+          decision: {
+            decision: 'allow',
+            scope: 'once',
+            permissions: {
+              filesystem: [{ path: '/workspace/second', scope: 'exact', access: 'read' }],
+              network: 'denied',
+            },
+          },
+        },
+      },
+    };
+    result = component.update(result.frame.state, props, {});
+    assert.ok(JSON.stringify(result.frame.view).includes('Approved access · Once'));
+    const granted = modelSlots(result.frame.view).find((n) => n.binding === 'reading').props
+      .content;
+    assert.ok(JSON.stringify(granted).includes('permission-granted-path-0'));
+    assert.ok(
+      JSON.stringify(granted).includes(path),
+      'the original requested scope remains reviewable',
+    );
+    raw('submit');
+    assert.equal(result.events.length, 0);
+    props = { ...props, record: { ...props.record, outcome: null } };
+    props = { ...props, busy: true };
+    raw('submit');
+    assert.equal(result.events.length, 0);
+    props = { ...props, busy: false, open: false };
+    raw('submit');
+    assert.equal(result.events.length, 0);
+    props = { ...props, open: true, record: { ...props.record, requestId: 'replacement' } };
+    raw('submit');
+    assert.equal(result.events.length, 0);
+    assert.equal(result.frame.state.decision, 'deny');
+    assert.equal(result.frame.state.scope, 'once');
+    props = {
+      ...props,
+      record: {
+        ...props.record,
+        outcome: { kind: 'closure', reason: 'producer_cancelled', committedAt: 4 },
+      },
+    };
+    raw('submit');
+    assert.equal(result.events.length, 0);
+    raw('close');
+    assert.deepEqual(result.events, [{ name: 'closed', value: {} }]);
+  });
   test(`${target} service confirmation recovers the original response and rejects stale dialog events`, async () => {
     const client = await interactionClient(approvalRecord);
     const selected = structuredClone(client.state.selected),

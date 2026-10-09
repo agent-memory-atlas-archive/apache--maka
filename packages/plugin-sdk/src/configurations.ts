@@ -24,6 +24,10 @@ export const configurations = {
     title: 'AgentConfiguration',
     type: 'object',
     properties: {
+      permissions: {
+        description: 'Initial policy within the selected workspace capability.',
+        $ref: '#/$defs/AgentWorkspacePermissions',
+      },
       workspaceRoots: {
         description:
           'Installation-published directories, captured without creating workspace markers.',
@@ -56,8 +60,27 @@ export const configurations = {
       },
     },
     additionalProperties: false,
-    required: ['workspaceRoots', 'maxActiveRuns', 'maxSteps', 'tools'],
+    required: ['permissions', 'workspaceRoots', 'maxActiveRuns', 'maxSteps', 'tools'],
     $defs: {
+      AgentWorkspacePermissions: {
+        type: 'object',
+        properties: {
+          access: {
+            $ref: '#/$defs/AgentWorkspaceAccess',
+          },
+          requestPermissions: {
+            type: 'boolean',
+          },
+        },
+        additionalProperties: false,
+        required: ['access', 'requestPermissions'],
+      },
+      AgentWorkspaceAccess: {
+        description:
+          'Access inside the original selected directory; never an ambient filesystem grant.',
+        type: 'string',
+        enum: ['read_only', 'workspace_write'],
+      },
       DirectoryRootSpec: {
         type: 'object',
         properties: {

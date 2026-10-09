@@ -508,6 +508,8 @@ pub(crate) fn summary(session: SessionRecord<SessionConfiguration>) -> Session {
         SessionActivity::Idle
     };
     Session {
+        permissions: session.configuration.permissions,
+        boundary_revision: session.configuration.boundary_revision,
         activity,
         id: session.id,
         revision: session.revision,

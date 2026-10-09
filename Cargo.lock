@@ -8168,6 +8168,7 @@ name = "maka-agent-service"
 version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
+ "cap-std",
  "crossterm",
  "futures-util",
  "jsonschema 0.56.0",
@@ -8186,6 +8187,7 @@ dependencies = [
  "maka-providers",
  "maka-runtime",
  "maka-runtime-host",
+ "maka-sandbox",
  "maka-settings-service",
  "maka-tools",
  "maka-tui",

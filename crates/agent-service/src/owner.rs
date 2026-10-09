@@ -53,6 +53,10 @@ pub(crate) struct SessionConfiguration {
     pub title: String,
     pub labels: Vec<String>,
     pub workspace: Workspace,
+    pub permissions: WorkspacePermissions,
+    /// Original canonical permission-grant fence, not a second grant ledger.
+    #[serde(rename = "boundary_revision")]
+    pub boundary_revision: u64,
 }
 /// Frozen accepted message prerequisites, interpreted only by this Agent.
 #[derive(Clone, Serialize, Deserialize)]
@@ -256,6 +260,8 @@ impl Owner {
                     title: input.title,
                     labels: input.labels,
                     workspace: selected,
+                    permissions: self.settings.permissions.clone(),
+                    boundary_revision: 0,
                 },
                 now(),
             )
@@ -296,20 +302,42 @@ impl Owner {
             });
         }
         use maka_event_log::sessions::SessionMutation;
-        match self
-            .store
-            .update_session_metadata::<SessionConfiguration, _>(
-                &input.session_id,
-                input.expected_revision,
-                move |configuration| {
-                    configuration.title = input.title;
-                    configuration.labels = input.labels;
-                    Ok(())
-                },
-            )
-            .await
-            .map_err(|_| "agent_metadata_failed")?
-        {
+        let permissions = input.permissions.is_some();
+        let update = move |configuration: &mut SessionConfiguration| {
+            configuration.title = input.title;
+            configuration.labels = input.labels;
+            if let Some(change) = input.permissions
+                && (change.settings != configuration.permissions || change.revoke_grants)
+            {
+                configuration.boundary_revision = configuration
+                    .boundary_revision
+                    .checked_add(1)
+                    .filter(|revision| *revision <= maka_runtime::interaction::MAX_SAFE_INTEGER)
+                    .ok_or_else(|| {
+                        maka_event_log::StoreError::InvalidTransition(
+                            "permission boundary revision exhausted".into(),
+                        )
+                    })?;
+                configuration.permissions = change.settings;
+            }
+            Ok(())
+        };
+        let changed = if permissions {
+            self.store
+                .update_session_permissions(
+                    &input.session_id,
+                    input.expected_revision,
+                    now(),
+                    update,
+                )
+                .await
+        } else {
+            self.store
+                .update_session_metadata(&input.session_id, input.expected_revision, update)
+                .await
+        }
+        .map_err(|_| "agent_metadata_failed")?;
+        match changed {
             SessionMutation::Committed(record) => Ok(MetadataResult::Committed {
                 session: crate::service::summary(record),
             }),

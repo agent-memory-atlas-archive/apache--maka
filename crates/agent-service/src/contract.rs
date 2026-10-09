@@ -28,11 +28,16 @@ use std::collections::BTreeMap;
 #[path = "contract_interactions.rs"]
 mod interaction;
 pub use interaction::*;
+#[path = "contract_permissions.rs"]
+mod permissions;
 pub use maka_runtime::configuration::ModelSelection;
+pub use permissions::*;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentConfiguration")]
 pub struct Configuration {
+    /// Initial policy within the selected workspace capability.
+    pub permissions: WorkspacePermissions,
     /// Installation-published directories, captured without creating workspace markers.
     #[schemars(length(min = 1, max = 8))]
     pub workspace_roots: Vec<maka_runtime_host::server::DirectoryRootSpec>,
@@ -193,6 +198,9 @@ pub struct Workspace {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentMetadata")]
 pub struct Metadata {
+    /// Omission leaves the permission boundary and its approvals unchanged.
+    #[serde(default)]
+    pub permissions: Option<PermissionChange>,
     #[schemars(length(min = 1, max = 128))]
     pub session_id: String,
     #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
@@ -261,6 +269,8 @@ pub struct Watch {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentSession")]
 pub struct Session {
+    pub permissions: WorkspacePermissions,
+    pub boundary_revision: u64,
     pub id: String,
     pub title: String,
     pub labels: Vec<String>,

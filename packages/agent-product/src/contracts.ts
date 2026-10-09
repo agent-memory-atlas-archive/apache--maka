@@ -500,6 +500,27 @@ export const serviceApprovalContract = component(
     submit: object({ requestId: string, decision: { enum: ['allow', 'deny'] } }),
   },
 );
+export const permissionApprovalContract = component(
+  'maka.agent.PermissionApproval',
+  object({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    busy: { type: 'boolean' },
+    checking: { type: 'boolean' },
+    status: string,
+    record: { $ref: '#/$defs/InteractionRecord' },
+  }),
+  {
+    closed: object({}),
+    check: object({}),
+    submit: object({
+      requestId: string,
+      decision: { enum: ['allow', 'deny'] },
+      scope: { enum: ['once', 'turn', 'session'] },
+    }),
+  },
+);
 export const composerContract = component(
   'maka.agent.Composer',
   object({

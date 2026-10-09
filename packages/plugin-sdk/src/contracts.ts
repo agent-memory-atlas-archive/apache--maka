@@ -3697,6 +3697,14 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  permissions: {
+                    $ref: '#/$defs/AgentWorkspacePermissions',
+                  },
+                  boundaryRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
                   id: {
                     type: 'string',
                   },
@@ -3731,6 +3739,8 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'permissions',
+                  'boundaryRevision',
                   'id',
                   'title',
                   'labels',
@@ -3740,6 +3750,25 @@ export const contracts = {
                   'archived',
                   'activity',
                 ],
+              },
+              AgentWorkspacePermissions: {
+                type: 'object',
+                properties: {
+                  access: {
+                    $ref: '#/$defs/AgentWorkspaceAccess',
+                  },
+                  requestPermissions: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['access', 'requestPermissions'],
+              },
+              AgentWorkspaceAccess: {
+                description:
+                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                type: 'string',
+                enum: ['read_only', 'workspace_write'],
               },
               AgentWorkspace: {
                 type: 'object',
@@ -3891,6 +3920,14 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  permissions: {
+                    $ref: '#/$defs/AgentWorkspacePermissions',
+                  },
+                  boundaryRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
                   id: {
                     type: 'string',
                   },
@@ -3925,6 +3962,8 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'permissions',
+                  'boundaryRevision',
                   'id',
                   'title',
                   'labels',
@@ -3934,6 +3973,25 @@ export const contracts = {
                   'archived',
                   'activity',
                 ],
+              },
+              AgentWorkspacePermissions: {
+                type: 'object',
+                properties: {
+                  access: {
+                    $ref: '#/$defs/AgentWorkspaceAccess',
+                  },
+                  requestPermissions: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['access', 'requestPermissions'],
+              },
+              AgentWorkspaceAccess: {
+                description:
+                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                type: 'string',
+                enum: ['read_only', 'workspace_write'],
               },
               AgentWorkspace: {
                 type: 'object',
@@ -5621,6 +5679,14 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  permissions: {
+                    $ref: '#/$defs/AgentWorkspacePermissions',
+                  },
+                  boundaryRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
                   id: {
                     type: 'string',
                   },
@@ -5655,6 +5721,8 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'permissions',
+                  'boundaryRevision',
                   'id',
                   'title',
                   'labels',
@@ -5664,6 +5732,25 @@ export const contracts = {
                   'archived',
                   'activity',
                 ],
+              },
+              AgentWorkspacePermissions: {
+                type: 'object',
+                properties: {
+                  access: {
+                    $ref: '#/$defs/AgentWorkspaceAccess',
+                  },
+                  requestPermissions: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['access', 'requestPermissions'],
+              },
+              AgentWorkspaceAccess: {
+                description:
+                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                type: 'string',
+                enum: ['read_only', 'workspace_write'],
               },
               AgentWorkspace: {
                 type: 'object',
@@ -5700,6 +5787,17 @@ export const contracts = {
             title: 'AgentMetadata',
             type: 'object',
             properties: {
+              permissions: {
+                description: 'Omission leaves the permission boundary and its approvals unchanged.',
+                anyOf: [
+                  {
+                    $ref: '#/$defs/AgentPermissionChange',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
               sessionId: {
                 type: 'string',
                 minLength: 1,
@@ -5726,6 +5824,42 @@ export const contracts = {
             },
             additionalProperties: false,
             required: ['sessionId', 'expectedRevision', 'title', 'labels'],
+            $defs: {
+              AgentPermissionChange: {
+                type: 'object',
+                properties: {
+                  settings: {
+                    $ref: '#/$defs/AgentWorkspacePermissions',
+                  },
+                  revokeGrants: {
+                    description:
+                      'Invalidate additive approvals even when the base policy is unchanged.',
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['settings', 'revokeGrants'],
+              },
+              AgentWorkspacePermissions: {
+                type: 'object',
+                properties: {
+                  access: {
+                    $ref: '#/$defs/AgentWorkspaceAccess',
+                  },
+                  requestPermissions: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['access', 'requestPermissions'],
+              },
+              AgentWorkspaceAccess: {
+                description:
+                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                type: 'string',
+                enum: ['read_only', 'workspace_write'],
+              },
+            },
           },
           output: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
@@ -5785,6 +5919,14 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  permissions: {
+                    $ref: '#/$defs/AgentWorkspacePermissions',
+                  },
+                  boundaryRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
                   id: {
                     type: 'string',
                   },
@@ -5819,6 +5961,8 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'permissions',
+                  'boundaryRevision',
                   'id',
                   'title',
                   'labels',
@@ -5828,6 +5972,25 @@ export const contracts = {
                   'archived',
                   'activity',
                 ],
+              },
+              AgentWorkspacePermissions: {
+                type: 'object',
+                properties: {
+                  access: {
+                    $ref: '#/$defs/AgentWorkspaceAccess',
+                  },
+                  requestPermissions: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['access', 'requestPermissions'],
+              },
+              AgentWorkspaceAccess: {
+                description:
+                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                type: 'string',
+                enum: ['read_only', 'workspace_write'],
               },
               AgentWorkspace: {
                 type: 'object',
@@ -5919,6 +6082,14 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  permissions: {
+                    $ref: '#/$defs/AgentWorkspacePermissions',
+                  },
+                  boundaryRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
                   id: {
                     type: 'string',
                   },
@@ -5953,6 +6124,8 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'permissions',
+                  'boundaryRevision',
                   'id',
                   'title',
                   'labels',
@@ -5962,6 +6135,25 @@ export const contracts = {
                   'archived',
                   'activity',
                 ],
+              },
+              AgentWorkspacePermissions: {
+                type: 'object',
+                properties: {
+                  access: {
+                    $ref: '#/$defs/AgentWorkspaceAccess',
+                  },
+                  requestPermissions: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['access', 'requestPermissions'],
+              },
+              AgentWorkspaceAccess: {
+                description:
+                  'Access inside the original selected directory; never an ambient filesystem grant.',
+                type: 'string',
+                enum: ['read_only', 'workspace_write'],
               },
               AgentWorkspace: {
                 type: 'object',
@@ -8414,6 +8606,428 @@ export const contracts = {
                 enum: ['invalid_input', 'unavailable'],
               },
             },
+          },
+          resources: {},
+        },
+      },
+    },
+  },
+  workspaceFiles: {
+    name: 'maka.workspace.Files',
+    version: 1,
+    transport: 'remote',
+    interface: {
+      kind: 'service',
+      methods: {
+        applyPatch: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              callId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 4096,
+              },
+              operation: {
+                $ref: '#/$defs/NativeOperation',
+              },
+            },
+            required: ['callId', 'operation'],
+            title: 'NativeInput',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              NativeOperation: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      path: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 4096,
+                      },
+                      diff: {
+                        type: 'string',
+                        maxLength: 1048576,
+                      },
+                      type: {
+                        type: 'string',
+                        const: 'create_file',
+                      },
+                    },
+                    required: ['type', 'path', 'diff'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      path: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 4096,
+                      },
+                      diff: {
+                        type: 'string',
+                        maxLength: 1048576,
+                      },
+                      type: {
+                        type: 'string',
+                        const: 'update_file',
+                      },
+                    },
+                    required: ['type', 'path', 'diff'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      path: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 4096,
+                      },
+                      type: {
+                        type: 'string',
+                        const: 'delete_file',
+                      },
+                    },
+                    required: ['type', 'path'],
+                  },
+                ],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: true,
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+                description:
+                  'A known completed failure. Uncertain external effects use the original receipt.',
+              },
+            ],
+            title: 'WorkspaceFileResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
+        edit: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              path: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 4096,
+              },
+              old_string: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 1048576,
+              },
+              new_string: {
+                type: 'string',
+                maxLength: 1048576,
+              },
+            },
+            required: ['path', 'old_string', 'new_string'],
+            title: 'EditInput',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: true,
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+                description:
+                  'A known completed failure. Uncertain external effects use the original receipt.',
+              },
+            ],
+            title: 'WorkspaceFileResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
+        glob: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              pattern: {
+                type: 'string',
+                minLength: 1,
+              },
+              cwd: {
+                type: 'string',
+                minLength: 1,
+                default: '.',
+              },
+            },
+            required: ['pattern'],
+            title: 'Input',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: true,
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+                description:
+                  'A known completed failure. Uncertain external effects use the original receipt.',
+              },
+            ],
+            title: 'WorkspaceFileResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
+        grep: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              pattern: {
+                type: 'string',
+                maxLength: 8192,
+              },
+              path: {
+                type: 'string',
+                default: '.',
+              },
+              glob: {
+                type: 'string',
+                maxLength: 4096,
+              },
+            },
+            required: ['pattern'],
+            title: 'Input',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: true,
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+                description:
+                  'A known completed failure. Uncertain external effects use the original receipt.',
+              },
+            ],
+            title: 'WorkspaceFileResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
+        readText: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              path: {
+                type: 'string',
+                minLength: 1,
+              },
+              offset: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+              limit: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 1,
+                maximum: 9007199254740991,
+              },
+            },
+            required: ['path'],
+            title: 'ReadInput',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: true,
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+                description:
+                  'A known completed failure. Uncertain external effects use the original receipt.',
+              },
+            ],
+            title: 'WorkspaceFileResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
+        write: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              path: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 4096,
+              },
+              content: {
+                type: 'string',
+                maxLength: 1048576,
+              },
+            },
+            required: ['path', 'content'],
+            title: 'WriteInput',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: true,
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+                description:
+                  'A known completed failure. Uncertain external effects use the original receipt.',
+              },
+            ],
+            title: 'WorkspaceFileResult',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
           },
           resources: {},
         },

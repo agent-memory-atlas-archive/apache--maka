@@ -90,17 +90,21 @@ impl Owner {
         else {
             return reject(InteractionRejection::Unavailable);
         };
-        // Service confirmation is consent for one captured call, never a grant.
-        // Legacy permission records still require their original policy owner.
+        // Each supported producer owns its policy; the store commits only the
+        // original bounded answer and current permission boundary.
         if !matches!(
             record.request,
-            InteractionRequest::Question { .. } | InteractionRequest::ServiceApproval { .. }
+            InteractionRequest::Question { .. }
+                | InteractionRequest::ServiceApproval { .. }
+                | InteractionRequest::Permissions { .. }
         ) {
             return reject(InteractionRejection::Unsupported);
         }
         if !matches!(
             input.answer,
-            InteractionAnswer::Question { .. } | InteractionAnswer::ServiceApproval { .. }
+            InteractionAnswer::Question { .. }
+                | InteractionAnswer::ServiceApproval { .. }
+                | InteractionAnswer::Permissions { .. }
         ) || input.answer.validate_for_request(&record.request).is_err()
         {
             return reject(InteractionRejection::InvalidAnswer);

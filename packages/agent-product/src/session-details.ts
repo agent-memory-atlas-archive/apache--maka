@@ -24,6 +24,8 @@ import type {
   AgentMetadataResult,
   AgentObservation,
   AgentSession,
+  AgentWorkspacePermissions,
+  AgentPermissionChange,
   CallerIntent,
   Component,
   EditorCommand,
@@ -60,9 +62,12 @@ interface State {
   serial: number;
   target: AgentSession | null;
   fields: Record<FieldName, Field>;
+  permissions: AgentWorkspacePermissions | null;
+  revokeGrants: boolean;
   pending: Record<string, Request>;
   current: {
     target: AgentSession;
+    permissions: AgentPermissionChange | undefined;
     attempt: number;
     captured: Record<FieldName, EditorObservation>;
     values: Partial<Record<FieldName, string>>;
@@ -146,7 +151,18 @@ function save(state: State, props: SessionDetailsProps, actions: Action[]) {
     labels: state.fields.labels.observation!,
   };
   const attempt = ++state.serial;
-  state.current = { target: state.target!, attempt, captured, values: {}, reference: null };
+  state.current = {
+    target: state.target!,
+    attempt,
+    captured,
+    values: {},
+    reference: null,
+    permissions:
+      state.permissions &&
+      (state.revokeGrants || !sameValue(state.permissions, state.target!.permissions))
+        ? { settings: { ...state.permissions }, revokeGrants: state.revokeGrants }
+        : undefined,
+  };
   state.notice = null;
   for (const name of names) {
     const observation = captured[name];
@@ -191,6 +207,7 @@ function mutate(state: State, props: SessionDetailsProps, actions: Action[]) {
     expectedRevision: current.target.revision,
     title,
     labels,
+    ...(current.permissions ? { permissions: current.permissions } : {}),
   };
   request(state, actions, { kind: 'mutate' }, 'agent', 'metadata', input);
 }
@@ -213,6 +230,8 @@ function settle(state: State, reply: OperationReply, events: Emission[]) {
       return;
     }
     state.target = value.session;
+    state.permissions = { ...value.session.permissions };
+    state.revokeGrants = false;
     state.conflict = false;
     state.notice = 'detailsSaved';
     events.push({ name: 'changed', value: { sessionId: value.session.id } });
@@ -243,6 +262,17 @@ function frame<N extends Node>(
   const ui = presentation.paint(props.theme),
     text = copy(props.locale);
   const locked = !active(state, props) || busy(state) || !!state.reviewed || state.historyOpen;
+  const policyLocked =
+    locked ||
+    !state.target ||
+    state.target.archived ||
+    !!props.session?.archived ||
+    state.target.id !== props.session?.id ||
+    state.conflict;
+  const choice = (key: string, label: string, selected: boolean) =>
+    ui.item
+      ? ui.item(key, ui.text(key + '-label', label), selected, policyLocked)
+      : ui.button(key, label, policyLocked, selected);
   const form = ui.box(
     'details-form',
     [
@@ -320,6 +350,53 @@ function frame<N extends Node>(
             );
           }),
           ui.text('details-help', text.detailsLabelsHelp, 12, props.theme.muted),
+          ui.text('details-permissions', text.permissionsTitle, 13, props.theme.muted),
+          ui.box(
+            'details-access',
+            [
+              choice(
+                'access-read_only',
+                text.permissionReadOnly,
+                state.permissions?.access === 'read_only',
+              ),
+              choice(
+                'access-workspace_write',
+                text.permissionWorkspaceWrite,
+                state.permissions?.access === 'workspace_write',
+              ),
+            ],
+            {
+              row: true,
+              gap: 1,
+              focusGroup: true,
+              terminal: { wrap: true },
+              style: { wrap: true },
+            },
+          ),
+          ui.box(
+            'details-permission-prompts',
+            [
+              choice(
+                'permissions-ask',
+                text.permissionAsk,
+                state.permissions?.requestPermissions === true,
+              ),
+              choice(
+                'permissions-no-ask',
+                text.permissionNoAsk,
+                state.permissions?.requestPermissions === false,
+              ),
+            ],
+            {
+              row: true,
+              gap: 1,
+              focusGroup: true,
+              terminal: { wrap: true },
+              style: { wrap: true },
+            },
+          ),
+          choice('permissions-revoke', text.permissionRevoke, state.revokeGrants),
+          ui.text('details-permissions-help', text.permissionPolicyHelp, 12, props.theme.muted),
         ],
         {
           gap: target === 'desktop' ? 8 : 0,
@@ -393,6 +470,24 @@ function frame<N extends Node>(
                 ui.text(`review-label-${at}`, label, 13, props.theme.muted),
               ),
               ui.text('review-workspace', reviewed?.workspace.path ?? '', 13, props.theme.muted),
+              ...(reviewed
+                ? [
+                    ui.text(
+                      'review-permissions',
+                      reviewed.permissions.access === 'read_only'
+                        ? text.permissionReadOnly
+                        : text.permissionWorkspaceWrite,
+                      13,
+                    ),
+                    ui.text(
+                      'review-permission-prompts',
+                      reviewed.permissions.requestPermissions
+                        ? text.permissionAsk
+                        : text.permissionNoAsk,
+                      13,
+                    ),
+                  ]
+                : []),
             ],
             {
               scroll: 'manual',
@@ -524,6 +619,8 @@ export function sessionDetails<N extends Node>(
         serial: 0,
         target: props.open ? props.session : null,
         fields: { title: field(), labels: field() },
+        permissions: props.open && props.session ? { ...props.session.permissions } : null,
+        revokeGrants: false,
         pending: {},
         current: null,
         conflict: false,
@@ -539,7 +636,10 @@ export function sessionDetails<N extends Node>(
     },
     update(state, props) {
       state.revision++;
-      if (props.open && !state.target && props.session) state.target = props.session;
+      if (props.open && !state.target && props.session) {
+        state.target = props.session;
+        state.permissions = { ...props.session.permissions };
+      }
       if (props.open) initialize(state);
       return frame(presentation, state, props);
     },
@@ -630,7 +730,34 @@ export function sessionDetails<N extends Node>(
         }
       } else if (input.kind === 'raw') {
         if (input.key === 'close' && props.open) events.push({ name: 'closed', value: {} });
-        else if (input.key === 'save') save(state, props, actions);
+        else if (
+          [
+            'access-read_only',
+            'access-workspace_write',
+            'permissions-ask',
+            'permissions-no-ask',
+            'permissions-revoke',
+          ].includes(input.key)
+        ) {
+          if (
+            active(state, props) &&
+            !busy(state) &&
+            !state.reviewed &&
+            !state.historyOpen &&
+            !state.conflict &&
+            state.target &&
+            !state.target.archived &&
+            !props.session?.archived &&
+            state.target.id === props.session?.id &&
+            state.permissions
+          ) {
+            if (input.key === 'permissions-revoke') state.revokeGrants = !state.revokeGrants;
+            else if (input.key.startsWith('access-'))
+              state.permissions.access =
+                input.key === 'access-read_only' ? 'read_only' : 'workspace_write';
+            else state.permissions.requestPermissions = input.key === 'permissions-ask';
+          }
+        } else if (input.key === 'save') save(state, props, actions);
         else if (
           input.key === 'check' &&
           state.current?.reference &&
@@ -665,6 +792,8 @@ export function sessionDetails<N extends Node>(
           state.conflict = false;
           state.notice = null;
           if (state.discard) {
+            state.permissions = { ...state.target.permissions };
+            state.revokeGrants = false;
             for (const name of names) {
               state.fields[name].phase = 'initial';
             }

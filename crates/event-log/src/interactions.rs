@@ -19,7 +19,7 @@
 
 //! Append-only requests/outcomes and atomically derived Session grants.
 pub(crate) mod lifecycle;
-mod permissions;
+pub(crate) mod permissions;
 mod records;
 pub use permissions::PermissionGrant;
 

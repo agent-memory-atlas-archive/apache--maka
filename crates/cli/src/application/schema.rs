@@ -181,6 +181,7 @@ pub(super) fn catalog() -> Value {
             // Bundled availability is data, never an activated service or grant.
             "agent": maka_agent_service::contract(),
             "questions": maka_agent_service::questions::contract(),
+            "workspaceFiles": maka_agent_service::files::contract(),
             "settings": maka_settings_service::contract::contract(),
             "textReader": text::reader_contract(),
             "callerHistory": maka_ui::operations::caller_history_contract(),

@@ -942,7 +942,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
       if (
         record.sessionId !== request.sessionId ||
         record.requestId !== request.requestId ||
-        !['question', 'service_approval'].includes(record.request.kind) ||
+        !['question', 'service_approval', 'permissions'].includes(record.request.kind) ||
         (question.record && !sameValue(question.record.request, record.request))
       ) {
         question.notice = 'interactionUnavailable';
@@ -1722,11 +1722,11 @@ function frame<N extends Node>(
                 ),
               ]),
           ...(state.interactions?.entries
-            .filter((entry) => entry.kind === 'question' || entry.kind === 'service_approval')
+            .filter((entry) => ['question', 'service_approval', 'permissions'].includes(entry.kind))
             .map((entry, index) =>
               ui.button(
                 `${entry.kind === 'question' ? 'question' : 'approval'}-open-${entry.requestId}`,
-                `${entry.kind === 'question' ? text.questionsTitle : text.approvalTitle} ${index + 1}`,
+                `${entry.kind === 'question' ? text.questionsTitle : entry.kind === 'permissions' ? text.permissionApprovalTitle : text.approvalTitle} ${index + 1}`,
                 !state.selected || state.selected.archived || mutationPending(state),
               ),
             ) ?? []),
@@ -1938,7 +1938,9 @@ function frame<N extends Node>(
       state.dialog === 'question'
         ? text.questionsTitle
         : state.dialog === 'approval'
-          ? text.approvalTitle
+          ? state.interaction?.record?.request.kind === 'permissions'
+            ? text.permissionApprovalTitle
+            : text.approvalTitle
           : state.dialog === 'directories'
             ? text.directoryTitle
             : state.dialog === 'details'
@@ -1952,11 +1954,14 @@ function frame<N extends Node>(
       ui.box(
         'dialog-content',
         [
-          ...(state.interaction?.record?.request.kind === 'service_approval'
+          ...(state.interaction?.record?.request.kind === 'service_approval' ||
+          state.interaction?.record?.request.kind === 'permissions'
             ? [
                 presentation.slot(
-                  `service-approval-${state.interaction.attempt}`,
-                  'serviceApproval',
+                  `${state.interaction.record.request.kind === 'permissions' ? 'permission' : 'service'}-approval-${state.interaction.attempt}`,
+                  state.interaction.record.request.kind === 'permissions'
+                    ? 'permissionApproval'
+                    : 'serviceApproval',
                   {
                     theme,
                     locale,
@@ -2260,6 +2265,36 @@ export function workspace<N extends Node>(
           }
         }
       } else if (input.kind === 'component') {
+        if (input.child === `permission-approval-${state.interaction?.attempt}`) {
+          if (state.dialog === 'approval') {
+            if (input.name === 'closed') closeDialog(state);
+            else if (input.name === 'check') checkInteraction(state, actions);
+            else if (input.name === 'submit') {
+              const event = input.event as {
+                requestId: string;
+                decision: 'deny' | 'allow';
+                scope: 'once' | 'turn' | 'session';
+              };
+              const request = state.interaction?.record?.request;
+              if (
+                event.requestId === state.interaction?.requestId &&
+                request?.kind === 'permissions'
+              )
+                respondInteraction(state, actions, {
+                  kind: 'permissions',
+                  decision:
+                    event.decision === 'deny'
+                      ? { decision: 'deny' }
+                      : {
+                          decision: 'allow',
+                          scope: event.scope,
+                          permissions: request.request.permissions,
+                        },
+                });
+            }
+          }
+          return frame(presentation, locale, state, values, actions);
+        }
         if (input.child === `service-approval-${state.interaction?.attempt}`) {
           if (state.dialog === 'approval') {
             if (input.name === 'closed') closeDialog(state);
@@ -2696,11 +2731,13 @@ export function workspace<N extends Node>(
           !state.selected.archived
         ) {
           const requestId = input.key.slice(14);
-          const kind = input.key.startsWith('approval-') ? 'service_approval' : 'question';
+          const kind = state.interactions?.entries.find(
+            (entry) => entry.requestId === requestId,
+          )?.kind;
           if (
-            state.interactions?.entries.some(
-              (entry) => entry.requestId === requestId && entry.kind === kind,
-            )
+            (input.key.startsWith('question-') && kind === 'question') ||
+            (input.key.startsWith('approval-') &&
+              (kind === 'service_approval' || kind === 'permissions'))
           ) {
             if (
               state.interaction?.requestId !== requestId ||

@@ -46,7 +46,7 @@ pub(super) async fn require_revision(
     Ok(())
 }
 
-async fn boundary_revision(
+pub(crate) async fn boundary_revision(
     connection: &mut sqlx::SqliteConnection,
     session: &str,
 ) -> Result<Option<u64>, StoreError> {
@@ -127,4 +127,43 @@ impl EventLog {
             Ok(grants)
         })).await
     }
+}
+
+/// Called only inside the owning metadata CAS. Existing first-writer outcomes
+/// stay immutable; the new revision makes those earlier grants inapplicable.
+pub(crate) async fn close_previous_boundary(
+    connection: &mut sqlx::SqliteConnection,
+    session: &str,
+    previous: u64,
+    now: u64,
+) -> Result<usize, StoreError> {
+    let current = boundary_revision(connection, session)
+        .await?
+        .ok_or_else(|| invalid("Session permission boundary disappeared"))?;
+    if current == previous {
+        return Ok(0);
+    }
+    if current <= previous {
+        return Err(invalid("Session permission boundary must advance"));
+    }
+    let closure = InteractionOutcome::Closure {
+        reason: maka_runtime::interaction::ClosureReason::ProducerCancelled,
+        committed_at: now,
+    };
+    let mut closed = 0;
+    for record in super::pending(connection, session).await? {
+        if matches!(record.request, InteractionRequest::Permissions { base_revision, .. } if base_revision == previous)
+        {
+            closure
+                .validate_for_request(&record.request)
+                .map_err(invalid)?;
+            sqlx::query("INSERT INTO interaction_outcomes VALUES (?, ?)")
+                .bind(&record.request_id)
+                .bind(super::records::encode(&closure, 8 * 1024)?)
+                .execute(&mut *connection)
+                .await?;
+            closed += 1;
+        }
+    }
+    Ok(closed)
 }

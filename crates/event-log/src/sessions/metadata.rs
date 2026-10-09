@@ -88,7 +88,25 @@ impl EventLog {
         T: Serialize + DeserializeOwned + Clone + PartialEq + Send + 'static,
         F: FnOnce(&mut T) -> Result<(), StoreError> + Send + 'static,
     {
-        self.mutate_session_metadata(id, expected, false, update)
+        self.mutate_session_metadata(id, expected, false, None, update)
+            .await
+    }
+
+    /// Permission changes atomically retire pending requests from the old boundary.
+    /// The domain closure owns the configuration and its boundary revision.
+    pub async fn update_session_permissions<T, F>(
+        &self,
+        id: &str,
+        expected: u64,
+        now: u64,
+        update: F,
+    ) -> Result<SessionMutation<T>, StoreError>
+    where
+        T: Serialize + DeserializeOwned + Clone + PartialEq + Send + 'static,
+        F: FnOnce(&mut T) -> Result<(), StoreError> + Send + 'static,
+    {
+        validate_time(now)?;
+        self.mutate_session_metadata(id, expected, false, Some(now), update)
             .await
     }
 
@@ -103,7 +121,7 @@ impl EventLog {
     where
         T: Serialize + DeserializeOwned + Clone + PartialEq + Send + 'static,
     {
-        self.mutate_session_metadata(id, expected, true, move |current| {
+        self.mutate_session_metadata(id, expected, true, None, move |current| {
             *current = configuration;
             Ok(())
         })
@@ -115,6 +133,7 @@ impl EventLog {
         id: &str,
         expected: u64,
         always_advance: bool,
+        permission_time: Option<u64>,
         update: F,
     ) -> Result<SessionMutation<T>, StoreError>
     where
@@ -127,6 +146,7 @@ impl EventLog {
             return Err(invalid("invalid expected Session revision"));
         }
         let id = id.to_owned();
+        let commits = self.commits.clone();
         self.connection
             .run(move |connection| {
                 Box::pin(async move {
@@ -141,6 +161,15 @@ impl EventLog {
                             actual: record.revision,
                         });
                     }
+                    let boundary = if permission_time.is_some() {
+                        Some(
+                            crate::interactions::permissions::boundary_revision(&mut tx, &id)
+                                .await?
+                                .ok_or_else(|| invalid("session permission boundary is missing"))?,
+                        )
+                    } else {
+                        None
+                    };
                     let previous = record.configuration.clone();
                     update(&mut record.configuration)?;
                     if !always_advance && record.configuration == previous {
@@ -166,11 +195,22 @@ impl EventLog {
                     {
                         return Err(invalid("session metadata revision exhausted"));
                     }
+                    let closed = if let (Some(old), Some(now)) = (boundary, permission_time) {
+                        crate::interactions::permissions::close_previous_boundary(
+                            &mut tx, &id, old, now,
+                        )
+                        .await?
+                    } else {
+                        0
+                    };
                     advance_catalog(&mut tx).await?;
                     let record = read(&mut tx, &id)
                         .await?
                         .ok_or(StoreError::SessionNotFound)?;
                     tx.commit().await.map_err(StoreError::CommitUnknown)?;
+                    if closed > 0 {
+                        commits.send_modify(|_| {});
+                    }
                     Ok(SessionMutation::Committed(record))
                 })
             })

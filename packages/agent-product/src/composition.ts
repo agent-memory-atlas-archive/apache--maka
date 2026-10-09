@@ -34,7 +34,9 @@ export const packageNames = [
   'queue-editor',
   'question-editor',
   'service-approval',
+  'permission-approval',
   'questions',
+  'workspace-files',
   'help',
   'studio',
   'studio-gateway',
@@ -294,12 +296,23 @@ export function composition(configuration: CompositionConfiguration): Applicatio
   const { host, managementHost, ui, remoteExports, connections, local, remote, node } =
     settingsComposition(configuration, 'gateway');
   const asksQuestions = configuration.agent.tools.some((tool) => tool.import === 'questions');
+  const fileMethods = [
+    ...new Set(
+      configuration.agent.tools
+        .filter((tool) => tool.import === 'files')
+        .map((tool) => tool.method),
+    ),
+  ];
   host.instances.agent = node(
     'agent',
     { ...configuration.agent },
-    asksQuestions ? { questions: [local('questions', 'questions')] } : {},
+    {
+      ...(asksQuestions ? { questions: [local('questions', 'questions')] } : {}),
+      ...(fileMethods.length ? { files: [local('workspace-files', 'files')] } : {}),
+    },
   );
   if (asksQuestions) host.instances.questions = node('questions');
+  if (fileMethods.length) host.instances['workspace-files'] = node('workspace-files');
   host.instances.gateway!.bindings!.agent = [local('agent', 'agent')];
   Object.assign(ui.instances, {
     workspace: node(
@@ -318,6 +331,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         queueEditor: [local('queue-editor', 'QueueEditor')],
         questionEditor: [local('question-editor', 'QuestionEditor')],
         serviceApproval: [local('service-approval', 'ServiceApproval')],
+        permissionApproval: [local('permission-approval', 'PermissionApproval')],
         help: [local('help', 'Help')],
         models: [local('models', 'Models')],
         connections: [local('connections', 'Connections')],
@@ -365,6 +379,11 @@ export function composition(configuration: CompositionConfiguration): Applicatio
     help: node('help', {}, { reading: [local('reading-area', 'ReadingArea')] }),
     'queue-editor': node('queue-editor', {}, { editor: [local('editor', 'Textarea')] }),
     'question-editor': node('question-editor', {}, { editor: [local('editor', 'Textarea')] }),
+    'permission-approval': node(
+      'permission-approval',
+      {},
+      { reading: [local('reading-area', 'ReadingArea')] },
+    ),
     'service-approval': node(
       'service-approval',
       {},
@@ -408,17 +427,33 @@ export function composition(configuration: CompositionConfiguration): Applicatio
   Object.assign(connections.hosts.find((host) => host.name === 'local')!.imports, {
     agent: { methods: Object.keys(contracts.agent.interface.methods), recovery: true },
   });
-  if (asksQuestions)
+  if (asksQuestions || fileMethods.length)
     Object.assign(connections.hosts.find((host) => host.name === 'local')!, {
       native: [
-        {
-          origin: [keys.agent],
-          consumer: [keys.agent],
-          provider: [keys.questions],
-          export: 'questions',
-          methods: ['ask'],
-          recovery: true,
-        },
+        ...(asksQuestions
+          ? [
+              {
+                origin: [keys.agent],
+                consumer: [keys.agent],
+                provider: [keys.questions],
+                export: 'questions',
+                methods: ['ask'],
+                recovery: true,
+              },
+            ]
+          : []),
+        ...(fileMethods.length
+          ? [
+              {
+                origin: [keys.agent],
+                consumer: [keys.agent],
+                provider: [keys['workspace-files']],
+                export: 'files',
+                methods: fileMethods,
+                recovery: true,
+              },
+            ]
+          : []),
       ],
     });
   return { host, managementHost, ui, remoteExports, connections };
