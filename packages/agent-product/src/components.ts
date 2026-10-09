@@ -124,8 +124,9 @@ export function components<N extends Node>(
       !props.busy &&
       (target === 'tui' || !props.running) &&
       !pending &&
-      !state.observation?.snapshot.marked &&
-      !!state.observation?.snapshot.text.bytes;
+      !!state.observation &&
+      !state.observation.snapshot.marked &&
+      (!!state.observation?.snapshot.text.bytes || props.hasAttachments);
     const textarea: TextareaProps = {
       appearance:
         target === 'tui' ? { ...props.theme.textarea, borderWidth: 0 } : props.theme.textarea,
@@ -815,7 +816,7 @@ export function components<N extends Node>(
           !props.busy &&
           (target === 'tui' || !props.running) &&
           next.observation &&
-          next.observation.snapshot.text.bytes > 0 &&
+          (next.observation.snapshot.text.bytes > 0 || props.hasAttachments) &&
           !next.observation.snapshot.marked &&
           (!props.command ||
             (next.observation.receipt?.owner === props.command.owner &&

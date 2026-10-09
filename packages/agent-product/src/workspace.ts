@@ -48,6 +48,8 @@ import type {
   AgentDirectorySelection,
   AgentList,
   AgentSendResult,
+  AgentAttachmentUploadResult,
+  FileObservation,
   AgentQueueMutationResult,
   AgentQueueAction,
   RowsProps,
@@ -76,6 +78,14 @@ import { sameValue } from './value.js';
 import { copy, type Copy } from './locale.js';
 import { fill, output, pixels, type Presentation, type Node } from './view.js';
 
+import {
+  attachmentFiles,
+  attachmentCapacity,
+  attachmentChild,
+  attachmentView,
+  type AttachmentDrafts,
+} from './attachments.js';
+
 type Notice = keyof Copy | null;
 type Request =
   | { kind: 'observe'; epoch: number }
@@ -90,6 +100,7 @@ type Request =
     }
   | {
       kind: 'read';
+      attachments: string[];
       draft: EditorObservation;
       sessionId: string;
       model: ModelSelection;
@@ -111,11 +122,13 @@ type Request =
   | { kind: 'createDirectory'; title: string }
   | {
       kind: 'send';
+      attachments: string[];
       draft: EditorObservation;
       sessionId: string;
       model: ModelSelection;
       thinkingLevel: ThinkingLevel | null;
     }
+  | { kind: 'uploadAttachment'; sessionId: string; attempt: number }
   | { kind: 'markRead'; sessionId: string }
   | { kind: 'stop'; sessionId: string }
   | { kind: 'queue'; sessionId: string; saved?: { attempt: number; draft: EditorObservation } }
@@ -125,7 +138,10 @@ type Request =
   | { kind: 'restorePage' }
   | { kind: 'restoreReceipt'; reference: RecoveryRef; cursor: number };
 type Mutation =
-  | Extract<Request, { kind: 'create' | 'send' | 'stop' | 'queue' | 'respond' | 'markRead' }>
+  | Extract<
+      Request,
+      { kind: 'create' | 'send' | 'stop' | 'queue' | 'respond' | 'markRead' | 'uploadAttachment' }
+    >
   | { kind: 'restored' };
 interface DisplayPart extends AgentPart {
   invocationId: string | null;
@@ -135,6 +151,7 @@ interface Uncertain {
   request: Mutation;
 }
 interface QueueEdit {
+  hasAttachments: boolean;
   attempt: number;
   target: AgentQueueMessage;
   phase: 'loading' | 'initializing' | 'ready' | 'failed';
@@ -142,6 +159,7 @@ interface QueueEdit {
   command: EditorCommand | null;
 }
 export interface State {
+  attachments: AttachmentDrafts;
   revision: number;
   serial: number;
   epoch: number;
@@ -160,6 +178,7 @@ export interface State {
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
   terminals: boolean;
   dialog:
+    | 'attachments'
     | 'terminal'
     | 'palette'
     | 'directories'
@@ -495,6 +514,7 @@ function mutationPending(state: State) {
         'questionRead',
         'respond',
         'markRead',
+        'uploadAttachment',
         'create',
         'createDirectory',
         'send',
@@ -757,7 +777,14 @@ function rootCommand(
 
 function loadQueueEdit(state: State, actions: Action[], target: AgentQueueMessage) {
   const attempt = ++state.serial;
-  state.queueEdit = { attempt, target, phase: 'loading', body: null, command: null };
+  state.queueEdit = {
+    attempt,
+    target,
+    phase: 'loading',
+    hasAttachments: false,
+    body: null,
+    command: null,
+  };
   state.dialog = 'queue';
   state.notice = null;
   intent(state, actions, { kind: 'queueBody', attempt }, 'agent', 'queueMessage', target);
@@ -1004,12 +1031,30 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
             : 'interactionChanged';
     }
     if (state.selected?.id === request.sessionId) observe(state, actions);
+  } else if (request.kind === 'uploadAttachment') {
+    const result = value as AgentAttachmentUploadResult;
+    if (result.kind === 'uploaded') {
+      if (
+        !state.attachments.files.some(
+          (file) => file.id === result.attachment.id && file.sessionId === request.sessionId,
+        )
+      )
+        state.attachments.files.push(result.attachment);
+      if (state.attachments.selection?.attempt === request.attempt) {
+        if (state.dialog === 'attachments') state.dialog = null;
+        state.attachments.selection = null;
+      }
+      state.notice = null;
+    } else state.notice = 'attachmentFailed';
   } else if (request.kind === 'send') {
     const started = value as AgentSendResult;
     if (started.sessionId !== request.sessionId) {
       state.notice = 'unknown';
       return;
     }
+    state.attachments.files = state.attachments.files.filter(
+      (file) => file.sessionId !== request.sessionId || !request.attachments.includes(file.id),
+    );
     // Clear only the exact captured draft after a durable returned admission.
     // The native editor rejects this command if a newer draft or IME composition exists.
     state.command = {
@@ -1029,7 +1074,19 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
 }
 function receipt(state: State, actions: Action[], request: Mutation, reply: OperationReply) {
   if (reply.receipt.kind === 'recorded' && reply.receipt.outcome.kind === 'returned') {
-    settled(state, actions, request, reply.receipt.outcome.value);
+    const value = reply.receipt.outcome.value;
+    const returned = value as AgentAttachmentUploadResult;
+    if (
+      (request.kind === 'send' && (value as AgentSendResult).sessionId !== request.sessionId) ||
+      (request.kind === 'uploadAttachment' &&
+        returned.kind === 'uploaded' &&
+        returned.attachment.sessionId !== request.sessionId)
+    ) {
+      state.uncertain = { reference: reply.reference, request };
+      state.notice = 'unknown';
+      return;
+    }
+    settled(state, actions, request, value);
   } else {
     state.uncertain = { reference: reply.reference, request };
     state.notice = 'unknown';
@@ -1080,7 +1137,13 @@ function queryFailed(state: State, request: Request) {
       state.uncertain = { reference: request.reference, request: { kind: 'restored' } };
       state.restoring = false;
       state.notice = 'unknown';
-    } else state.notice = request.kind === 'read' ? 'draftKept' : 'unavailable';
+    } else
+      state.notice =
+        request.kind === 'read'
+          ? 'draftKept'
+          : request.kind === 'uploadAttachment'
+            ? 'attachmentFailed'
+            : 'unavailable';
   }
 }
 function querySucceeded(state: State, actions: Action[], request: Request, value: unknown) {
@@ -1310,6 +1373,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         break;
       }
       edit.body = body.message;
+      edit.hasAttachments = body.hasAttachments;
       edit.phase = 'initializing';
       initializeQueueEdit(state);
       break;
@@ -1323,7 +1387,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         state.notice = 'draftKept';
         break;
       }
-      if (!chunk.text.trim()) {
+      if (!chunk.text.trim() && !edit.hasAttachments) {
         state.notice = 'empty';
         break;
       }
@@ -1362,7 +1426,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         state.notice = 'draftKept';
         break;
       }
-      if (!chunk.text.trim()) {
+      if (!chunk.text.trim() && request.attachments.length === 0) {
         state.notice = 'empty';
         break;
       }
@@ -1371,6 +1435,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         actions,
         {
           kind: 'send',
+          attachments: request.attachments,
           draft: request.draft,
           sessionId: request.sessionId,
           model: request.model,
@@ -1381,6 +1446,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         {
           sessionId: request.sessionId,
           message: chunk.text,
+          attachments: request.attachments,
           model: request.model,
           thinkingLevel: request.thinkingLevel,
         },
@@ -1730,6 +1796,12 @@ function frame<N extends Node>(
     },
     { closed: 'image-closed' },
   );
+  const attached = attachmentFiles(state.attachments, state.selected?.id);
+  const attachmentsButton = ui.button(
+    'attachments-open',
+    `${text.attachmentTitle}${attached.length ? ` (${attached.length})` : ''}`,
+    !state.selected || busy || state.loading,
+  );
   const composer = presentation.slot(
     'composer',
     'composer',
@@ -1747,6 +1819,7 @@ function frame<N extends Node>(
         state.notice !== 'unavailable',
       command: state.command,
       autoFocus: !state.searchOpen,
+      hasAttachments: attached.length > 0,
     },
     { send: 'send', stop: 'stop', changed: 'draft' },
   );
@@ -1938,7 +2011,7 @@ function frame<N extends Node>(
                 style: { width: fill, height: pixels(0), grow: 1, shrink: 1, minHeight: 0 },
               },
             ),
-            ui.box('input-area', [composer], {
+            ui.box('input-area', [attachmentsButton, composer], {
               visible: !state.image && !state.selected?.archived,
               padding: 24,
               style: { width: fill, maxWidth: 808, shrink: 0 },
@@ -1987,6 +2060,7 @@ function frame<N extends Node>(
                           ),
                         ]
                       : []),
+                    attachmentsButton,
                     ui.box('composer-navigation', [composer], {
                       terminal: { shrink: true },
                       focusShortcuts: [
@@ -2131,29 +2205,51 @@ function frame<N extends Node>(
     state,
     ui.dialog(
       'workspace-dialog',
-      state.dialog === 'terminal'
-        ? text.terminalTitle
-        : state.dialog === 'question'
-          ? state.interaction?.record?.request.kind === 'form'
-            ? text.formTitle
-            : text.questionsTitle
-          : state.dialog === 'approval'
-            ? state.interaction?.record?.request.kind === 'permissions'
-              ? text.permissionApprovalTitle
-              : text.approvalTitle
-            : state.dialog === 'directories'
-              ? text.directoryTitle
-              : state.dialog === 'details'
-                ? text.detailsTitle
-                : state.dialog === 'queue'
-                  ? text.queueEdit
-                  : state.dialog === 'help'
-                    ? text.helpTitle
-                    : text.paletteTitle,
+      state.dialog === 'attachments'
+        ? text.attachmentTitle
+        : state.dialog === 'terminal'
+          ? text.terminalTitle
+          : state.dialog === 'question'
+            ? state.interaction?.record?.request.kind === 'form'
+              ? text.formTitle
+              : text.questionsTitle
+            : state.dialog === 'approval'
+              ? state.interaction?.record?.request.kind === 'permissions'
+                ? text.permissionApprovalTitle
+                : text.approvalTitle
+              : state.dialog === 'directories'
+                ? text.directoryTitle
+                : state.dialog === 'details'
+                  ? text.detailsTitle
+                  : state.dialog === 'queue'
+                    ? text.queueEdit
+                    : state.dialog === 'help'
+                      ? text.helpTitle
+                      : text.paletteTitle,
       background,
       ui.box(
         'dialog-content',
         [
+          ...(state.dialog === 'attachments' && state.attachments.selection
+            ? [
+                attachmentView(
+                  presentation,
+                  theme,
+                  locale,
+                  state.attachments,
+                  busy,
+                  state.selected?.id === state.attachments.selection.sessionId &&
+                    !state.selected.archived,
+                  state.notice
+                    ? text[state.notice]
+                    : state.selected?.archived
+                      ? text.archivedConversation
+                      : null,
+                  !!state.uncertain,
+                  Object.values(state.pending).some((request) => request.kind === 'receipt'),
+                ),
+              ]
+            : []),
           ...(state.interaction?.record?.request.kind === 'service_approval' ||
           state.interaction?.record?.request.kind === 'permissions'
             ? [
@@ -2248,6 +2344,7 @@ function frame<N extends Node>(
               locale,
               open: state.dialog === 'queue',
               ready: state.queueEdit?.phase === 'ready',
+              hasAttachments: state.queueEdit?.hasAttachments ?? false,
               busy: mutationPending(state),
               uncertain: !!state.uncertain,
               checking: Object.values(state.pending).some((request) => request.kind === 'receipt'),
@@ -2378,6 +2475,7 @@ export function workspace<N extends Node>(
     mount(_props, values) {
       const state: State = {
         revision: 0,
+        attachments: { files: [], selection: null },
         serial: 0,
         epoch: 0,
         catalog: null,
@@ -2475,7 +2573,8 @@ export function workspace<N extends Node>(
                 request.kind === 'stop' ||
                 request.kind === 'queue' ||
                 request.kind === 'respond' ||
-                request.kind === 'markRead')
+                request.kind === 'markRead' ||
+                request.kind === 'uploadAttachment')
             )
               receipt(state, actions, request, outcome.reply);
             else if (outcome.status === 'succeeded')
@@ -2487,6 +2586,15 @@ export function workspace<N extends Node>(
           }
         }
       } else if (input.kind === 'component') {
+        if (input.child === attachmentChild(state.attachments) && input.name === 'changed') {
+          if (
+            state.dialog === 'attachments' &&
+            state.attachments.selection &&
+            !mutationPending(state)
+          )
+            state.attachments.selection.file = input.event as FileObservation;
+          return frame(presentation, locale, state, values, actions);
+        }
         if (input.child === `permission-approval-${state.interaction?.attempt}`) {
           if (state.dialog === 'approval') {
             if (input.name === 'closed') closeDialog(state);
@@ -2754,7 +2862,12 @@ export function workspace<N extends Node>(
             state.command = null;
           }
         } else if (
+          input.child === 'composer' &&
           input.name === 'send' &&
+          conversationRoute(state) &&
+          !state.dialog &&
+          !state.image &&
+          !state.source &&
           !executionPending(state) &&
           state.notice !== 'unavailable' &&
           !mutationPending(state) &&
@@ -2775,6 +2888,9 @@ export function workspace<N extends Node>(
               actions,
               {
                 kind: 'read',
+                attachments: attachmentFiles(state.attachments, state.selected.id).map(
+                  (file) => file.id,
+                ),
                 draft,
                 sessionId: state.selected.id,
                 model: state.model.choice.selection,
@@ -2963,6 +3079,80 @@ export function workspace<N extends Node>(
             history(state, actions, { kind: 'tail' }, state.latestKnown, true);
         }
       } else if (input.kind === 'raw') {
+        if (
+          input.key === 'attachments-open' &&
+          conversationRoute(state) &&
+          !state.dialog &&
+          state.selected &&
+          !state.loading &&
+          !state.source &&
+          !state.image &&
+          !mutationPending(state)
+        ) {
+          state.attachments.selection = {
+            attempt: ++state.serial,
+            sessionId: state.selected.id,
+            file: null,
+          };
+          state.dialog = 'attachments';
+        } else if (input.key === 'attachment-close' && state.dialog === 'attachments') {
+          closeDialog(state);
+        } else if (input.key === 'attachment-check' && state.dialog === 'attachments') {
+          if (
+            state.uncertain &&
+            !Object.values(state.pending).some((request) => request.kind === 'receipt')
+          )
+            intent(
+              state,
+              actions,
+              { kind: 'receipt' },
+              'receipts',
+              'read',
+              state.uncertain.reference,
+            );
+        } else if (
+          state.dialog === 'attachments' &&
+          state.attachments.selection &&
+          state.selected?.id === state.attachments.selection.sessionId &&
+          !mutationPending(state)
+        ) {
+          const selection = state.attachments.selection;
+          if (input.key.startsWith('attachment-remove-')) {
+            const id = input.key.slice('attachment-remove-'.length);
+            state.attachments.files = state.attachments.files.filter(
+              (file) => file.sessionId !== selection.sessionId || file.id !== id,
+            );
+          } else if (
+            input.key === 'attachment-upload' &&
+            !state.selected.archived &&
+            attachmentCapacity(state.attachments, selection.sessionId) &&
+            selection.file?.phase === 'ready' &&
+            selection.file.file
+          ) {
+            const file = selection.file;
+            state.notice = null;
+            intent(
+              state,
+              actions,
+              {
+                kind: 'uploadAttachment',
+                sessionId: selection.sessionId,
+                attempt: selection.attempt,
+              },
+              'agent',
+              'uploadAttachment',
+              { sessionId: selection.sessionId, ...file.file },
+              {
+                file: {
+                  child: attachmentChild(state.attachments),
+                  method: 'snapshot',
+                  input: { owner: file.owner, revision: file.revision },
+                },
+              },
+            );
+          }
+        }
+
         if (
           (input.key.startsWith('question-open-') || input.key.startsWith('approval-open-')) &&
           !state.dialog &&

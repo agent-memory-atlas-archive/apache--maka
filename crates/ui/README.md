@@ -414,7 +414,7 @@ Observations expose owner/revision, basename, SHA-256, byte count and a bounded
 phase/error code. `snapshot` captures that exact ready selection as immutable
 `maka.bytes` chunks; changing the original file does not change captured bytes.
 Consumers still validate content, including the DeploymentManager's complete
-package bundle checks. Selection permits at most 32 MiB of regular-file bytes,
+package bundle checks. Selection permits at most 50 MiB of regular-file bytes,
 uses no-follow opens and charges actual 64 KiB chunks to the presenter's shared
 `budget::NativeBudget`. Byte permits follow snapshots; job permits and original
 resource tickets follow actual dialog/read settlement. Lost dialog observation

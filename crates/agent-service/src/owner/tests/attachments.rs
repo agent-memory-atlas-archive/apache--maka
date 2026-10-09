@@ -92,6 +92,10 @@ async fn attachment_upload_send_queue_and_resource_read_keep_session_and_receipt
         assert_eq!(queue.entries[0].source.unprepared_content.attachments, refs);
         assert_eq!(queue.entries[0].source.message.content.attachments, refs);
         assert_eq!(queue.entries[0].source.unprepared_content.text, "");
+        let body = f.query("queueMessage", json!({"sessionId":session,"messageId":queued["messageId"],"expectedRevision":queue.revision})).await.unwrap();
+        assert_eq!(body["hasAttachments"], true);
+        assert_eq!(body["message"], "");
+        assert_eq!(f.owner.queue(&session).await.unwrap().entries[0].preview, "notes.md");
         // Real Files dispatch receives authority from this invocation, not the URI.
         files::tool_response(&mut socket, json!({"path":format!("attachment:{id}")})).await;
         let (mut socket, _) = listener.accept().await.unwrap();

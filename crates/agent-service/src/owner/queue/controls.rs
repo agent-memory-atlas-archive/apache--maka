@@ -59,14 +59,21 @@ impl Owner {
                         MessageDisposition::Steering => QueueKind::Steering,
                         MessageDisposition::Followup => QueueKind::Followup,
                     },
-                    preview: entry
-                        .source
-                        .unprepared_content
-                        .text
-                        .chars()
-                        .take(80)
-                        .map(|c| if c.is_control() { ' ' } else { c })
-                        .collect(),
+                    preview: if entry.source.unprepared_content.text.trim().is_empty() {
+                        entry
+                            .source
+                            .unprepared_content
+                            .attachments
+                            .as_ref()
+                            .and_then(|files| files.first())
+                            .map_or("", |file| file.name.as_str())
+                    } else {
+                        &entry.source.unprepared_content.text
+                    }
+                    .chars()
+                    .take(80)
+                    .map(|c| if c.is_control() { ' ' } else { c })
+                    .collect(),
                 })
                 .collect(),
         })
@@ -87,6 +94,12 @@ impl Owner {
             {
                 Some(entry) => QueueMessageResult::Ready {
                     revision: queue.revision,
+                    has_attachments: entry
+                        .source
+                        .unprepared_content
+                        .attachments
+                        .as_ref()
+                        .is_some_and(|files| !files.is_empty()),
                     message: entry.source.unprepared_content.text.clone(),
                 },
                 None => QueueMessageResult::Missing,

@@ -7620,6 +7620,9 @@ export const contracts = {
                     format: 'uint64',
                     minimum: 0,
                   },
+                  hasAttachments: {
+                    type: 'boolean',
+                  },
                   message: {
                     type: 'string',
                     maxLength: 65536,
@@ -7630,7 +7633,7 @@ export const contracts = {
                   },
                 },
                 additionalProperties: false,
-                required: ['kind', 'revision', 'message'],
+                required: ['kind', 'revision', 'hasAttachments', 'message'],
               },
               {
                 type: 'object',

@@ -2038,6 +2038,7 @@ export type AgentQueueKind = 'in_flight' | 'steering' | 'followup';
 export type AgentQueueMessageResult =
   | {
       revision: number;
+      hasAttachments: boolean;
       message: string;
       kind: 'ready';
     }

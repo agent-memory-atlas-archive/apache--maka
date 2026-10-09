@@ -306,8 +306,14 @@ fn packaged_workspace_image_opens_original_viewer_and_preserves_native_draft() {
 fn packaged_form_uses_original_native_editors_and_canonical_response() {
     packaged_product(ProductCase::Form);
 }
+#[test]
+#[ignore = "opt-in product authoring build and actual native file selection"]
+fn packaged_attachment_uses_local_file_capture_and_empty_native_composer() {
+    packaged_product(ProductCase::Attachment);
+}
 #[derive(Clone, Copy)]
 enum ProductCase {
+    Attachment,
     Form,
     Full,
     MetadataConflict,
@@ -334,6 +340,7 @@ fn packaged_product(case: ProductCase) {
     let file_permissions = matches!(case, ProductCase::FilePermissions) || process_permissions;
     let image = matches!(case, ProductCase::Image);
     let form = matches!(case, ProductCase::Form);
+    let attachment = matches!(case, ProductCase::Attachment);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -355,8 +362,19 @@ fn packaged_product(case: ProductCase) {
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
     let (respond, response_ready) = tokio::sync::oneshot::channel::<PathBuf>();
     let mut respond = Some(respond);
+    let (attachment_id, attachment_ready) = tokio::sync::oneshot::channel::<String>();
     let mut server = runtime.spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
+        if attachment {
+            let sent = request_with_key(&mut socket, "private-fixture-key").await;
+            assert!(sent.to_string().contains("local-attachment.md"));
+            let id = attachment_ready.await.unwrap();
+            assert!(sent.to_string().contains(&format!("{}{id}", maka_runtime::attachment::ATTACHMENT_RESOURCE_PREFIX)));
+            assert!(!sent.to_string().contains("locally selected contents"));
+            response_ready.await.unwrap();
+            response(&mut socket).await;
+            return;
+        }
         if form {
             request_with_key(&mut socket, "private-fixture-key").await;
             response_ready.await.unwrap();
@@ -944,6 +962,110 @@ process.stdout.write(output.outputFiles[0].text);
         .unwrap();
     await_sidebar_closed(&mut presenter);
     await_screen(&mut presenter, "A place to think.");
+    if attachment {
+        let capture = |presenter: &mut maka_tui::application::Presenter, name: &str| {
+            if let Some(directory) = std::env::var_os("MAKA_ATTACHMENT_EVIDENCE") {
+                let directory = PathBuf::from(directory);
+                std::fs::create_dir_all(&directory).unwrap();
+                let buffer = draw(presenter);
+                std::fs::write(directory.join(name), screen(&buffer)).unwrap();
+                let cells: Vec<_> = (0..buffer.area.height).flat_map(|y| {
+                    let buffer = &buffer;
+                    (0..buffer.area.width).map(move |x| {
+                        let cell = &buffer[(x, y)];
+                        json!({"x":x,"y":y,"text":cell.symbol(),"fg":format!("{:?}",cell.fg),"bg":format!("{:?}",cell.bg),"bold":cell.modifier.contains(ratatui::style::Modifier::BOLD)})
+                    })
+                }).collect();
+                std::fs::write(
+                    directory.join(name.replace(".txt", ".json")),
+                    serde_json::to_vec(&cells).unwrap(),
+                )
+                .unwrap();
+            }
+        };
+        wait_for_target(&mut presenter, "[ Attachments ]", 0);
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while !screen(&draw(&mut presenter)).starts_with("New conversation") {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "conversation layout did not settle"
+            );
+            std::thread::yield_now();
+        }
+        capture(&mut presenter, "native-before.txt");
+        let path = fixture._dir.path().join("local-attachment.md");
+        std::fs::write(&path, "locally selected contents").unwrap();
+        click(&mut presenter, "[ Attachments ]");
+        click(&mut presenter, "Absolute path on this device");
+        presenter
+            .input(Event::Paste(path.to_string_lossy().into_owned()))
+            .unwrap();
+        click(&mut presenter, "Choose file…");
+        wait_for_target(&mut presenter, "[ Attach to message ]", 0);
+        capture(&mut presenter, "native-selected.txt");
+        click(&mut presenter, "[ Attach to message ]");
+        await_screen(&mut presenter, "[ Attachments (1) ]");
+        let session = runtime
+            .block_on(
+                fixture
+                    .store
+                    .list_sessions::<SessionConfiguration>(None, None, 32),
+            )
+            .unwrap()
+            .sessions
+            .pop()
+            .unwrap()
+            .id;
+        let artifacts = runtime
+            .block_on(fixture.store.list_artifacts(&session, 0, 10))
+            .unwrap()
+            .records;
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0].name, "local-attachment.md");
+        attachment_id.send(artifacts[0].id.clone()).unwrap();
+        // Removing the path proves send consumes the admitted immutable artifact.
+        std::fs::remove_file(&path).unwrap();
+        click(&mut presenter, "[ Choose model ]");
+        await_screen(&mut presenter, "fixture-model-00");
+        click(&mut presenter, "fixture-model-00");
+        click(&mut presenter, "[ Apply ]");
+        await_models_closed(&mut presenter);
+        click(&mut presenter, "[ Send ]");
+        await_screen(&mut presenter, "[ Attachments ]");
+        respond
+            .take()
+            .unwrap()
+            .send(fixture.workspace.clone())
+            .unwrap();
+        await_screen(&mut presenter, "Elegant response");
+        runtime.block_on(&mut server).unwrap();
+        runtime.block_on(fixture.drained());
+        capture(&mut presenter, "native-sent.txt");
+        presenter
+            .surface_closed(&presenter.surface(), Ok(()))
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !presenter.can_shutdown() {
+            presenter.pump().unwrap();
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        presenter.shutdown().unwrap();
+        drop(presenter);
+        runtime.block_on(async {
+            let (physical, host_wire) = tokio::join!(connection.close(), wire_server.close());
+            physical.unwrap();
+            host_wire.unwrap();
+            manager_connection.close().await.unwrap();
+            manager_server.close().await.unwrap();
+        });
+        drop(registrations);
+        runtime.block_on(manager_app.shutdown()).unwrap();
+        runtime.block_on(fixture.app.shutdown()).unwrap();
+        runtime.block_on(fixture.config.shutdown()).unwrap();
+        runtime.block_on(caller.shutdown()).unwrap();
+        return;
+    }
     // Closing navigation restores the retained native composer through its
     // declared tab order. This command/draft path needs no mouse or forged input.
     presenter

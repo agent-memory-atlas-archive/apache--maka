@@ -388,6 +388,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       { locale: configuration.locale, terminals: !!configuration.processes },
       {
         agent: [remote('agent', 'agent')],
+        file: [local('file', 'FilePicker')],
         receipts: [remote('receipts', 'Receipts')],
         reader: [local('reader', 'Reader')],
         history: [local('history', 'History')],

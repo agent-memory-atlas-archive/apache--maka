@@ -593,6 +593,7 @@ pub struct QueueMessage {
 pub enum QueueMessageResult {
     Ready {
         revision: u64,
+        has_attachments: bool,
         #[schemars(length(max = 65536))]
         message: String,
     },

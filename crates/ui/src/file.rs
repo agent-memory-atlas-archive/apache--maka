@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-pub const MAX_FILE_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_FILE_BYTES: usize = maka_runtime::attachment::MAX_ATTACHMENT_BYTES as usize;
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

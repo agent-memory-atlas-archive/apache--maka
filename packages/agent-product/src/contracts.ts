@@ -200,6 +200,7 @@ export interface ServiceApprovalProps {
   record: InteractionRecord;
 }
 export interface QueueEditorProps {
+  hasAttachments: boolean;
   theme: Theme;
   locale: string;
   open: boolean;
@@ -211,6 +212,7 @@ export interface QueueEditorProps {
   command: EditorCommand | null;
 }
 export interface ComposerProps {
+  hasAttachments: boolean;
   autoFocus: boolean;
   theme: Theme;
   locale: string;
@@ -500,6 +502,7 @@ export const timelineContract = component(
 export const queueEditorContract = component(
   'maka.agent.QueueEditor',
   object({
+    hasAttachments: { type: 'boolean' },
     theme: { $ref: '#/$defs/Theme' },
     locale,
     open: { type: 'boolean' },
@@ -626,6 +629,7 @@ export const composerContract = component(
   'maka.agent.Composer',
   object({
     autoFocus: { type: 'boolean' },
+    hasAttachments: { type: 'boolean' },
     theme: { $ref: '#/$defs/Theme' },
     locale,
     busy: { type: 'boolean' },

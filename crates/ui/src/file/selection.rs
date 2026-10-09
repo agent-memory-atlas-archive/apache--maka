@@ -123,6 +123,13 @@ pub fn read_selected(path: &Path, budget: &NativeBudget) -> Result<Arc<FileSnaps
             break;
         }
     }
+    let after = file.metadata().map_err(|_| FileError::ReadFailed)?;
+    if total as u64 != metadata.len()
+        || after.len() != metadata.len()
+        || after.modified().ok() != metadata.modified().ok()
+    {
+        return Err(FileError::ReadFailed);
+    }
     Ok(Arc::new(FileSnapshot {
         chunks,
         descriptor: FileDescriptor {
@@ -300,6 +307,13 @@ mod tests {
             read_selected(&path, &budget),
             Err(FileError::LimitExceeded)
         ));
+        file.set_len(MAX_FILE_BYTES as u64).unwrap();
+        let full_budget = NativeBudget::default();
+        let full = read_selected(&path, &full_budget).unwrap();
+        assert_eq!(full.bytes(), 50 * 1024 * 1024);
+        assert_eq!(full_budget.usage(), (MAX_FILE_BYTES, 0, 0));
+        drop(full);
+        assert_eq!(full_budget.usage(), (0, 0, 0));
         file.set_len(0).unwrap();
         let empty = read_selected(&path, &budget).unwrap();
         assert_eq!(empty.bytes(), 0);

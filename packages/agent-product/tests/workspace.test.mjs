@@ -11772,3 +11772,181 @@ for (const target of ['tui', 'desktop']) {
     assert.ok(hidden.events.every((e) => e.name !== 'markRead'));
   });
 }
+
+for (const target of ['desktop', 'tui']) {
+  const { component } = await import(
+    pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+  );
+  const file = {
+    owner: uuid(99),
+    revision: 4,
+    phase: 'ready',
+    file: { name: 'notes.md', bytes: 123, digest: 'sha256:' + 'b'.repeat(64) },
+    error: null,
+  };
+  const attachment = {
+    sessionId: session.id,
+    id: 'artifact',
+    name: 'notes.md',
+    bytes: 123,
+    mimeType: 'text/markdown',
+  };
+  const uploadRef = { ...reference, method: 'uploadAttachment' };
+  const uploadReply = (value) => ({
+    ...returned(value),
+    reply: { ...returned(value).reply, reference: uploadRef },
+  });
+  const observeFile = (client, child, event = file) =>
+    client.input({ kind: 'component', child, name: 'changed', event });
+  test(`${target} attachment selection binds the original capture and recovers without reupload`, () => {
+    const client = new Client(component).start();
+    client.raw('attachments-open');
+    const child = 'attachment-file-' + client.state.attachments.selection.attempt;
+    client.raw('attachment-upload');
+    assert.equal(client.output.actions.length, 0);
+    observeFile(client, child + '-stale');
+    assert.equal(client.state.attachments.selection.file, null);
+    observeFile(client, child);
+    client.raw('attachment-upload');
+    const action = client.find('uploadAttachment');
+    assert.deepEqual(action.input, { sessionId: session.id, ...file.file });
+    assert.deepEqual(action.resources, {
+      file: { child, method: 'snapshot', input: { owner: file.owner, revision: file.revision } },
+    });
+    client.complete(action, {
+      status: 'operation',
+      reply: { reference: uploadRef, receipt: { kind: 'unknown' } },
+    });
+    client.raw('attachment-upload');
+    assert.equal(client.output.actions.length, 0);
+    client.raw('attachment-check');
+    assert.deepEqual(client.find('read').input, uploadRef);
+    client.query(
+      'read',
+      uploadReply({ kind: 'uploaded', attachment: { ...attachment, sessionId: 'foreign' } }).reply,
+    );
+    assert.deepEqual(client.state.uncertain.reference, uploadRef);
+    assert.equal(client.state.attachments.files.length, 0);
+    client.raw('attachment-check');
+    client.query('read', uploadReply({ kind: 'uploaded', attachment }).reply);
+    assert.equal(client.state.uncertain, null);
+    assert.equal(client.state.dialog, null);
+    assert.deepEqual(client.state.attachments.files, [attachment]);
+    client.raw('attachments-open');
+    observeFile(client, child);
+    assert.equal(client.state.attachments.selection.file, null);
+    client.raw('attachment-remove-artifact');
+    assert.equal(client.state.attachments.files.length, 0);
+    assert.equal(client.output.actions.length, 0, 'draft removal does not delete durable storage');
+  });
+  test(`${target} attachment-only send retains exact IDs until original admission and preserves other session drafts`, () => {
+    const client = new Client(component).start();
+    const other = { ...attachment, sessionId: 'other', id: 'other-file' };
+    client.state.attachments.files = [attachment, other];
+    const empty = structuredClone(draft);
+    empty.snapshot.text.bytes = 0;
+    empty.snapshot.selection = { start: 0, end: 0 };
+    client.input({ kind: 'component', child: 'foreign', name: 'send', event: empty });
+    assert.equal(client.output.actions.length, 0);
+    client.raw('attachments-open');
+    client.component('send', empty);
+    assert.equal(client.output.actions.length, 0);
+    client.raw('attachment-close');
+    client.component('send', empty);
+    assert.deepEqual(client.find('read').input, { start: 0, end: 0 });
+    client.query('read', { text: '', metadata: empty.snapshot.text });
+    const send = client.find('send');
+    assert.equal(send.input.message, '');
+    assert.deepEqual(send.input.attachments, ['artifact']);
+    client.complete(send, {
+      status: 'operation',
+      reply: { reference, receipt: { kind: 'unknown' } },
+    });
+    assert.deepEqual(client.state.attachments.files, [attachment, other]);
+    assert.equal(client.state.command, null);
+    client.raw('check');
+    client.query(
+      'read',
+      returned({ kind: 'started', sessionId: 'foreign', invocationId: 'run' }).reply,
+    );
+    assert.deepEqual(client.state.uncertain.reference, reference);
+    assert.deepEqual(client.state.attachments.files, [attachment, other]);
+    client.raw('check');
+    client.query(
+      'read',
+      returned({ kind: 'started', sessionId: session.id, invocationId: 'run' }).reply,
+    );
+    assert.deepEqual(client.state.attachments.files, [other]);
+    assert.equal(client.state.command.basedOn, empty.revision);
+  });
+  test(`${target} attachment capacity and late results remain bound to their original session`, () => {
+    const client = new Client(component).start();
+    client.raw('attachments-open');
+    const child = 'attachment-file-' + client.state.attachments.selection.attempt;
+    observeFile(client, child);
+    client.state.attachments.files = Array.from({ length: 8 }, (_, i) => ({
+      ...attachment,
+      id: `full-${i}`,
+    }));
+    client.raw('attachment-upload');
+    assert.equal(client.output.actions.length, 0);
+    client.raw('attachment-remove-full-0');
+    client.raw('attachment-upload');
+    const upload = client.find('uploadAttachment');
+    client.raw('attachment-close');
+    // A later selected session must not acquire the original operation's result.
+    client.state.selected = { ...session, id: 'other' };
+    client.complete(upload, uploadReply({ kind: 'uploaded', attachment }));
+    assert.equal(client.state.selected.id, 'other');
+    assert.equal(client.state.attachments.files.length, 8);
+    assert.ok(client.state.attachments.files.every((file) => file.sessionId === session.id));
+    client.raw('attachments-open');
+    observeFile(client, 'attachment-file-' + client.state.attachments.selection.attempt);
+    client.raw('attachment-upload');
+    client.complete(
+      client.find('uploadAttachment'),
+      uploadReply({ kind: 'rejected', reason: 'busy' }),
+    );
+    assert.equal(client.state.uncertain, null);
+    assert.equal(client.state.dialog, 'attachments');
+    assert.equal(client.state.notice, 'attachmentFailed');
+    client.raw('attachment-close');
+    client.state.selected = { ...session, archived: true };
+    client.raw('attachments-open');
+    assert.equal(client.state.dialog, 'attachments');
+    observeFile(client, 'attachment-file-' + client.state.attachments.selection.attempt);
+    client.raw('attachment-upload');
+    assert.equal(client.output.actions.length, 0, 'archived sessions cannot upload');
+    client.raw('attachment-remove-artifact');
+    assert.equal(
+      client.state.attachments.files.length,
+      7,
+      'archived draft references remain removable',
+    );
+    assert.equal(client.output.actions.length, 0, 'local removal does not mutate archived storage');
+  });
+}
+
+test('attachment-only queue edits require canonical attachment evidence', async () => {
+  for (const hasAttachments of [false, true]) {
+    const client = await queueEditorClient();
+    client.query('queueMessage', { kind: 'ready', revision: 7, message: '', hasAttachments });
+    const command = client.state.queueEdit.command;
+    const empty = structuredClone(draft);
+    empty.snapshot.text.bytes = 0;
+    empty.snapshot.selection = { start: 0, end: 0 };
+    empty.receipt = {
+      owner: command.owner,
+      sequence: command.sequence,
+      outcome: { status: 'applied' },
+    };
+    client.editor('changed', empty);
+    client.editor('save', empty);
+    client.query('read', { text: '', metadata: empty.snapshot.text });
+    assert.equal(
+      client.output.actions.some((action) => action.method === 'editQueue'),
+      hasAttachments,
+    );
+    if (hasAttachments) assert.equal(client.find('editQueue').input.edit.message, '');
+  }
+});

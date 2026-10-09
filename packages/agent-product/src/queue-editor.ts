@@ -38,7 +38,7 @@ export function queueEditor<N extends Node>(
     !props.command &&
     !!state.observation &&
     !state.observation.snapshot.marked &&
-    state.observation.snapshot.text.bytes > 0 &&
+    (state.observation.snapshot.text.bytes > 0 || props.hasAttachments) &&
     state.observation.snapshot.text.bytes <= 65536;
   function frame(state: State, props: QueueEditorProps, events: Emission[] = []) {
     const ui = presentation.paint(props.theme),
