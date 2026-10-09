@@ -20,7 +20,7 @@
 use super::*;
 use maka_plugins::{
     composition::Scope,
-    session::history::{Page, Position, SourceField, SourceFormat, SourcePosition},
+    session::history::{Page, Position, SourceField, SourceFormat, SourcePosition, SourceRole},
     storage::Namespace,
 };
 use maka_runtime::import::{Content, Record, Source};
@@ -142,6 +142,26 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
                         .await
                         .unwrap();
                     assert_eq!(source.format, SourceFormat::Json);
+                    assert_eq!(
+                        source.role,
+                        if field == SourceField::Arguments {
+                            SourceRole::ToolCall
+                        } else {
+                            SourceRole::ToolResult
+                        }
+                    );
+                    assert_eq!(
+                        source.fields,
+                        if field == SourceField::Arguments {
+                            vec![
+                                SourceField::ToolName,
+                                SourceField::Body,
+                                SourceField::Arguments,
+                            ]
+                        } else {
+                            vec![SourceField::Body, SourceField::Result]
+                        }
+                    );
                     assert_eq!(source.total_bytes, expected.len() as u64);
                     assert!(source.text.len() <= budget);
                     assert!(!source.text.is_empty());
@@ -386,6 +406,11 @@ async fn failure_search_reads_original_diagnostic_fields_without_a_body_row() {
                 .unwrap();
             assert_eq!(page.sequence, hit.sequence);
             assert_eq!(page.field, field);
+            assert_eq!(page.role, SourceRole::Failure);
+            assert_eq!(
+                page.fields,
+                [SourceField::ErrorClass, SourceField::FailureMessage]
+            );
             assert_eq!(page.format, SourceFormat::Text);
             assert!(page.tool.is_none());
             collected.push_str(&page.text);

@@ -1187,7 +1187,14 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         queryFailed(state, request);
         break;
       }
-      source.chunk = { ...source.chunk, ...next };
+      source.chunk = {
+        ...source.chunk,
+        sequence: next.sequence,
+        offset: next.offset,
+        totalBytes: next.totalBytes,
+        text: next.text,
+        tool: next.tool,
+      };
       source.format = next.format;
       source.ready = true;
       source.loading = false;

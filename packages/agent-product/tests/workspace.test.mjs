@@ -9353,6 +9353,8 @@ test('history search follows empty batches, reads the exact selected field and b
     source: {
       sequence: 301,
       field: 'arguments',
+      role: 'tool_call',
+      fields: ['arguments'],
       format: 'json',
       offset: 0,
       totalBytes: 20000,
@@ -9400,6 +9402,8 @@ test('history search follows empty batches, reads the exact selected field and b
     source: {
       sequence: 416,
       field: 'arguments',
+      role: 'tool_call',
+      fields: ['arguments'],
       format: 'json',
       offset: 0,
       totalBytes: 0,
@@ -9457,6 +9461,8 @@ test('history source rejects retargeted fields and search cursors that cannot pr
     source: {
       sequence: 258,
       field: 'body',
+      role: 'assistant',
+      fields: ['body'],
       format: 'text',
       offset: 0,
       totalBytes: 7,
@@ -9464,8 +9470,8 @@ test('history source rejects retargeted fields and search cursors that cannot pr
       tool: null,
     },
   });
-  assert.equal(find.state.search.history.preview.failed, true);
-  assert.equal(find.state.search.history.preview.source, null);
+  assert.equal(find.state.search.history.preview.sections[0].failed, true);
+  assert.equal(find.state.search.history.preview.sections[0].source, null);
   find.raw('find-restart');
   find.complete(find.out.actions[0], { kind: 'ready', through: 100, matches: [], nextAfter: 0 });
   assert.equal(find.state.search.history.failed, true);
@@ -9527,6 +9533,8 @@ test('history preview highlights its literal field and guards the initial reveal
     source: {
       sequence: 257,
       field: 'body',
+      role: 'assistant',
+      fields: ['body'],
       format: 'text',
       offset: 0,
       totalBytes: 9000,
@@ -9564,13 +9572,15 @@ test('history preview highlights its literal field and guards the initial reveal
   const command = structuredClone(find.state.search.history.preview.command);
   observe();
   assert.deepEqual(find.state.search.history.preview.command, command);
-  find.raw('find-source-next');
+  find.raw('find-source-body-next');
   find.complete(find.out.actions[0], {
     kind: 'ready',
     through: 100,
     source: {
       sequence: 257,
       field: 'body',
+      role: 'assistant',
+      fields: ['body'],
       format: 'text',
       offset: 6,
       totalBytes: 9000,
@@ -9594,4 +9604,137 @@ test('history preview highlights its literal field and guards the initial reveal
     },
   });
   assert.deepEqual(find.state.search.history.preview.command, physical);
+});
+
+test('history preview loads one selected tool row, retains all field owners on collapse and pages only the chosen field', async () => {
+  const find = await conversationFinder();
+  find.query('needle');
+  find.raw('find-scope');
+  find.complete(find.out.actions[0], {
+    kind: 'ready',
+    through: 100,
+    matches: [{ field: 'arguments', cursor: { sequence: 257, offset: 0 }, preview: 'needle' }],
+    nextAfter: null,
+  });
+  const metadata = {
+    sequence: 257,
+    role: 'tool_call',
+    fields: ['tool_name', 'body', 'arguments'],
+    tool: { kind: 'call', toolUseId: 'original-tool', toolName: 'Run command' },
+  };
+  const complete = (field, text, totalBytes = Buffer.byteLength(text), offset = 0) => {
+    const request = find.out.actions.find((action) => action.method === 'source');
+    assert.equal(request.input.field, field);
+    assert.equal(request.input.through, 100);
+    assert.deepEqual(request.input.source, { kind: 'sequence', sequence: 257 });
+    find.complete(request, {
+      kind: 'ready',
+      through: 100,
+      source: {
+        ...metadata,
+        field,
+        format: field === 'arguments' ? 'json' : 'text',
+        offset,
+        totalBytes,
+        text,
+      },
+    });
+  };
+  complete('arguments', '{"needle":1}', 20000);
+  const initialFind = structuredClone(find.state.search.history.preview.command);
+  assert.equal(initialFind.target.kind, 'find');
+  complete('tool_name', 'Run command');
+  complete('body', 'Original tool intent');
+  assert.deepEqual(
+    find.state.search.history.preview.command,
+    initialFind,
+    'remaining fields refresh the original find without scrolling',
+  );
+  assert.deepEqual(find.out.actions, []);
+  const sources = () =>
+    modelSlots(find.out.frame.view).filter((node) => node.key.startsWith('find-preview-text-'));
+  assert.deepEqual(
+    sources().map((node) => node.props.source),
+    ['Run command', 'Original tool intent', '{"needle":1}'],
+  );
+  assert.ok(modelButtons(find.out.frame.view).includes('find-preview-toggle'));
+  const original = sources();
+  find.raw('find-preview-toggle');
+  assert.equal(find.state.search.history.preview.expanded, false);
+  assert.deepEqual(sources(), original);
+  assert.equal(find.state.search.history.preview.highlight, null);
+  find.raw('find-preview-toggle');
+  find.raw('find-source-arguments-next');
+  assert.deepEqual(find.out.actions[0].input.position, { kind: 'after', offset: 12 });
+  complete('arguments', 'second page', 20000, 12);
+  assert.deepEqual(
+    sources().map((node) => node.props.source),
+    ['Run command', 'Original tool intent', 'second page'],
+  );
+  assert.deepEqual(find.state.search.history.preview.command.target, {
+    kind: 'reveal_source',
+    path: ['find-preview-text-257-arguments-12'],
+    offset: 0,
+  });
+});
+
+test('history row keeps an empty assistant body, rejects changed metadata and retries only the failed field', async () => {
+  const find = await conversationFinder();
+  find.query('needle');
+  find.raw('find-scope');
+  find.complete(find.out.actions[0], {
+    kind: 'ready',
+    through: 100,
+    matches: [
+      { field: 'thinking', cursor: { sequence: 257, offset: 0 }, preview: 'needle thought' },
+    ],
+    nextAfter: null,
+  });
+  const metadata = { sequence: 257, role: 'assistant', fields: ['thinking', 'body'], tool: null };
+  find.complete(find.out.actions[0], {
+    kind: 'ready',
+    through: 100,
+    source: {
+      ...metadata,
+      field: 'thinking',
+      format: 'text',
+      offset: 0,
+      totalBytes: 6,
+      text: 'needle',
+    },
+  });
+  const source = find.out.actions[0];
+  assert.equal(source.input.field, 'body');
+  find.complete(source, {
+    kind: 'ready',
+    through: 100,
+    source: {
+      ...metadata,
+      role: 'user',
+      field: 'body',
+      format: 'text',
+      offset: 0,
+      totalBytes: 0,
+      text: '',
+    },
+  });
+  assert.equal(find.state.search.history.preview.sections[1].failed, true);
+  assert.equal(find.state.search.history.preview.sections[1].source, null);
+  assert.deepEqual(find.out.actions, []);
+  find.raw('find-source-body-retry');
+  assert.equal(find.out.actions[0].input.field, 'body');
+  find.complete(find.out.actions[0], {
+    kind: 'ready',
+    through: 100,
+    source: { ...metadata, field: 'body', format: 'text', offset: 0, totalBytes: 0, text: '' },
+  });
+  assert.deepEqual(
+    find.state.search.history.preview.sections.map((section) => section.source.text),
+    ['needle', ''],
+  );
+  assert.ok(
+    modelSlots(find.out.frame.view).some(
+      (node) => node.key === 'find-preview-text-257-body-0' && node.props.source === '',
+    ),
+  );
 });

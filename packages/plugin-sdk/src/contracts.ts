@@ -8788,6 +8788,19 @@ export const contracts = {
                     minimum: 1,
                     maximum: 9007199254740991,
                   },
+                  role: {
+                    $ref: '#/$defs/HistorySourceRole',
+                  },
+                  fields: {
+                    description:
+                      'Readable canonical fields of this same immutable row, in display order.',
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/SourceField',
+                    },
+                    minItems: 1,
+                    maxItems: 7,
+                  },
                   field: {
                     $ref: '#/$defs/SourceField',
                   },
@@ -8821,7 +8834,23 @@ export const contracts = {
                   },
                 },
                 additionalProperties: false,
-                required: ['sequence', 'field', 'format', 'offset', 'totalBytes', 'text', 'tool'],
+                required: [
+                  'sequence',
+                  'role',
+                  'fields',
+                  'field',
+                  'format',
+                  'offset',
+                  'totalBytes',
+                  'text',
+                  'tool',
+                ],
+              },
+              HistorySourceRole: {
+                description:
+                  'Presentation role of the exact row, including diagnostics omitted from the\nordinary conversation window. This carries no execution authority.',
+                type: 'string',
+                enum: ['user', 'assistant', 'tool_call', 'tool_result', 'failure'],
               },
               SourceField: {
                 description:

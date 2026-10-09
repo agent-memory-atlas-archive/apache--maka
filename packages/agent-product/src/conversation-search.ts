@@ -34,6 +34,7 @@ import type {
 } from '../../plugin-sdk/src/index.js';
 import type { TimelineProps } from './contracts.js';
 import { copy } from './locale.js';
+import { messageView } from './message-view.js';
 import { fill, compactLabel, type Node, type Presentation } from './view.js';
 
 export interface ConversationSearch {
@@ -239,9 +240,9 @@ interface HistorySearch {
   preview: {
     key: string;
     hit: AgentHistoryMatch;
-    source: HistorySource | null;
-    pending: { key: string; position: SourcePosition } | null;
-    failed: boolean;
+    sections: { field: HistorySource['field']; source: HistorySource | null; failed: boolean }[];
+    expanded: boolean;
+    pending: { key: string; field: HistorySource['field']; position: SourcePosition } | null;
     command: ReadingCommand | null;
     highlight: { sequence: number; stage: 'land' | 'find'; reveal: boolean } | null;
   } | null;
@@ -301,7 +302,12 @@ function restartHistory(state: SearchReading, props: TimelineProps, actions: Act
   };
   scan(search, actions);
 }
-function readPreview(search: ConversationSearch, actions: Action[], position: SourcePosition) {
+function readPreview(
+  search: ConversationSearch,
+  actions: Action[],
+  field: HistorySource['field'],
+  position: SourcePosition,
+) {
   const history = search.history!,
     preview = history.preview!;
   if (preview.pending) return;
@@ -309,12 +315,11 @@ function readPreview(search: ConversationSearch, actions: Action[], position: So
     sessionId: search.context.sessionId,
     through: history.through,
     source: { kind: 'sequence', sequence: preview.hit.cursor.sequence },
-    field: preview.hit.field,
+    field,
     position,
   });
-  preview.highlight = null;
-  preview.pending = { key: request.key, position };
-  preview.failed = false;
+  preview.pending = { key: request.key, field, position };
+  preview.sections.find((section) => section.field === field)!.failed = false;
   actions.push(request);
 }
 function pick(search: ConversationSearch, index: number, actions: Action[]) {
@@ -330,13 +335,13 @@ function pick(search: ConversationSearch, index: number, actions: Action[]) {
   history.preview = {
     key: `find-preview-reading-${hit.cursor.sequence}-${hit.field}`,
     hit,
-    source: null,
+    sections: [{ field: hit.field, source: null, failed: false }],
+    expanded: true,
     pending: null,
-    failed: false,
     highlight: null,
     command: { sequence, target: { kind: 'start' } },
   };
-  readPreview(search, actions, { kind: 'start' });
+  readPreview(search, actions, hit.field, { kind: 'start' });
 }
 function navigate(state: SearchReading, forward: boolean, actions: Action[]) {
   const search = state.search!,
@@ -439,52 +444,83 @@ function historyEvent(
   if (input.kind === 'action' && preview && input.key === preview.pending?.key) {
     const request = preview.pending;
     preview.pending = null;
+    const section = preview.sections.find((section) => section.field === request.field)!;
     const result = input.event as ActionOutcome;
+    const next = () => {
+      const missing = preview.sections.find((section) => !section.source && !section.failed);
+      if (missing) readPreview(search, actions, missing.field, { kind: 'start' });
+    };
+    const fail = () => {
+      section.failed = true;
+      next();
+    };
     if (result.status !== 'succeeded') {
-      preview.failed = true;
+      fail();
       return true;
     }
     const page = result.value as AgentHistorySourcePage;
     if (page.through !== history.through) {
-      preview.failed = true;
+      fail();
       return true;
     }
     if (page.kind === 'preparing') {
-      readPreview(search, actions, request.position);
+      readPreview(search, actions, request.field, request.position);
       return true;
     }
     const source = page.source,
       end = source.offset + utf8Bytes(source.text),
-      position = request.position;
+      position = request.position,
+      header = preview.sections.find((section) => section.source)?.source;
     if (
       source.sequence !== preview.hit.cursor.sequence ||
-      source.field !== preview.hit.field ||
+      source.field !== request.field ||
+      !source.fields.includes(source.field) ||
+      new Set(source.fields).size !== source.fields.length ||
+      (header &&
+        (source.role !== header.role ||
+          JSON.stringify(source.fields) !== JSON.stringify(header.fields) ||
+          JSON.stringify(source.tool) !== JSON.stringify(header.tool))) ||
       (!source.text && source.totalBytes > 0) ||
       end > source.totalBytes ||
-      (preview.source &&
-        (source.totalBytes !== preview.source.totalBytes ||
-          source.format !== preview.source.format)) ||
+      (section.source &&
+        (source.totalBytes !== section.source.totalBytes ||
+          source.format !== section.source.format)) ||
       (position.kind === 'start' && source.offset !== 0) ||
       (position.kind === 'tail' && end !== source.totalBytes) ||
       (position.kind === 'after' && source.offset !== position.offset) ||
       (position.kind === 'before' && end !== position.offset)
     ) {
-      preview.failed = true;
+      fail();
       return true;
     }
-    const first = preview.source === null;
-    preview.source = source;
-    preview.command = {
-      sequence: (preview.command?.sequence ?? 0) + 1,
-      target: first
-        ? { kind: 'find', query: search.query, step: 'first' }
-        : { kind: position.kind === 'tail' || position.kind === 'before' ? 'end' : 'start' },
-    };
-    preview.highlight = {
-      sequence: preview.command.sequence,
-      stage: first ? 'find' : 'land',
-      reveal: first,
-    };
+    const first = section.source === null;
+    section.source = source;
+    if (!header)
+      preview.sections = source.fields.map((field) =>
+        field === source.field ? section : { field, source: null, failed: false },
+      );
+    // Keep the original selected row bounded: one page per field, fetched serially.
+    next();
+    if (!first || !header) {
+      preview.command = {
+        sequence: (preview.command?.sequence ?? 0) + 1,
+        target: first
+          ? { kind: 'find', query: search.query, step: 'first' }
+          : {
+              kind: 'reveal_source',
+              path: [sourceKey(source)],
+              offset:
+                position.kind === 'tail' || position.kind === 'before'
+                  ? Math.max(0, utf8Bytes(source.text) - utf8Bytes([...source.text].at(-1) ?? ''))
+                  : 0,
+            },
+      };
+      preview.highlight = {
+        sequence: preview.command.sequence,
+        stage: first ? 'find' : 'land',
+        reveal: first,
+      };
+    }
     return true;
   }
   if (
@@ -537,39 +573,51 @@ function historyEvent(
   }
   if (input.key === 'find-page-up' || input.key === 'find-page-down') {
     if (preview) preview.highlight = null;
-    if (preview?.source)
+    if (preview?.sections.some((section) => section.source))
       preview.command = {
         sequence: (preview.command?.sequence ?? 0) + 1,
         target: { kind: 'scroll_rows', rows: input.key === 'find-page-up' ? -8 : 8 },
       };
     return true;
   }
+  if (preview && input.key === 'find-preview-toggle') {
+    preview.expanded = !preview.expanded;
+    preview.highlight = null;
+    return true;
+  }
   if (preview && !preview.pending) {
-    const source = preview.source;
-    const position: SourcePosition | null =
-      input.key === 'find-source-retry'
-        ? { kind: 'start' }
-        : source && input.key === 'find-source-first' && source.offset > 0
+    for (const section of preview.sections) {
+      const source = section.source,
+        key = `find-source-${section.field}-`;
+      const position: SourcePosition | null =
+        input.key === key + 'retry' && section.failed
           ? { kind: 'start' }
-          : source && input.key === 'find-source-previous' && source.offset > 0
-            ? { kind: 'before', offset: source.offset }
-            : source &&
-                input.key === 'find-source-next' &&
-                source.offset + utf8Bytes(source.text) < source.totalBytes
-              ? { kind: 'after', offset: source.offset + utf8Bytes(source.text) }
+          : source && input.key === key + 'first' && source.offset > 0
+            ? { kind: 'start' }
+            : source && input.key === key + 'previous' && source.offset > 0
+              ? { kind: 'before', offset: source.offset }
               : source &&
-                  input.key === 'find-source-last' &&
+                  input.key === key + 'next' &&
                   source.offset + utf8Bytes(source.text) < source.totalBytes
-                ? { kind: 'tail' }
-                : null;
-    if (position) {
-      readPreview(search, actions, position);
-      return true;
+                ? { kind: 'after', offset: source.offset + utf8Bytes(source.text) }
+                : source &&
+                    input.key === key + 'last' &&
+                    source.offset + utf8Bytes(source.text) < source.totalBytes
+                  ? { kind: 'tail' }
+                  : null;
+      if (position) {
+        preview.highlight = null;
+        readPreview(search, actions, section.field, position);
+        return true;
+      }
     }
   }
   return false;
 }
 
+function sourceKey(source: HistorySource) {
+  return `find-preview-text-${source.sequence}-${source.field}-${source.offset}`;
+}
 export function historyView<N extends Node>(
   presentation: Presentation<N>,
   props: TimelineProps,
@@ -579,8 +627,98 @@ export function historyView<N extends Node>(
     ui = presentation.paint(props.theme),
     text = copy(props.locale),
     preview = history.preview;
-  const source = preview?.source,
-    pending = !!preview?.pending;
+  const header = preview?.sections.find((section) => section.source)?.source;
+  const fieldLabel = (field: HistorySource['field']) =>
+    ({
+      body: text.findFieldBody,
+      thinking: text.findFieldThinking,
+      tool_name: text.findFieldTool,
+      arguments: text.findFieldArguments,
+      result: text.findFieldResult,
+      failure_message: text.findFieldFailure,
+      error_class: text.findFieldError,
+    })[field];
+  const sections =
+    preview?.sections.map((section) => {
+      const source = section.source,
+        key = `find-source-${section.field}-`,
+        pending = !!preview.pending;
+      return ui.box(
+        'find-section-' + section.field,
+        [
+          ui.text('find-field-' + section.field, fieldLabel(section.field), 13, props.theme.muted),
+          ...(source
+            ? [
+                presentation.slot(
+                  sourceKey(source),
+                  'source',
+                  {
+                    source: source.text,
+                    focusOnPointer: false,
+                    appearance:
+                      source.format === 'text'
+                        ? props.theme.markdown.body
+                        : props.theme.markdown.code,
+                    selection: props.theme.markdown.selection,
+                    disabled: false,
+                  },
+                  {},
+                ),
+              ]
+            : [
+                ui.text(
+                  'find-loading-' + section.field,
+                  section.failed ? text.sourceFailed : text.loading,
+                  13,
+                  props.theme.muted,
+                ),
+              ]),
+          ui.box(
+            'find-controls-' + section.field,
+            [
+              ...(source && source.offset > 0
+                ? [
+                    ui.button(key + 'first', text.sourceFirst, pending),
+                    ui.button(key + 'previous', text.sourcePrevious, pending),
+                  ]
+                : []),
+              ...(source && source.offset + utf8Bytes(source.text) < source.totalBytes
+                ? [
+                    ui.button(key + 'next', text.sourceNext, pending),
+                    ui.button(key + 'last', text.sourceLast, pending),
+                  ]
+                : []),
+              ...(section.failed ? [ui.button(key + 'retry', text.sourceRetry, pending)] : []),
+            ],
+            { row: true, gap: 1, terminal: { wrap: true } },
+          ),
+        ],
+        { gap: 0 },
+      );
+    }) ?? [];
+  const rowBody = ui.box('find-row-fields', sections, { gap: 0 });
+  const row =
+    header && preview
+      ? messageView(presentation, 'tui', props.theme, props.locale, {
+          id: 'find-preview-row',
+          role: header.role,
+          tool: header.tool,
+          text:
+            preview.sections.find((section) => section.field === 'body')?.source?.text ??
+            preview.hit.preview,
+          continued: preview.sections.some(
+            (section) =>
+              !!section.source &&
+              (section.source.offset > 0 ||
+                utf8Bytes(section.source.text) < section.source.totalBytes),
+          ),
+          expanded: preview.expanded,
+          toggle: 'find-preview-toggle',
+          body: rowBody,
+          actions: [],
+          sourceActions: [],
+        })
+      : rowBody;
   const rows = history.matches.map((hit, index) => {
     const label = `${index === history.selected ? '› ' : ''}${history.offset + index + 1}. ${compactLabel(hit.preview, 96)}`;
     return ui.button(`find-hit-${index}`, label, !searchReady(search), false, {
@@ -643,20 +781,7 @@ export function historyView<N extends Node>(
           ...(history.failed ? [ui.button('find-restart', text.findFailed)] : []),
           ...(preview
             ? [
-                ui.text(
-                  'find-preview-label',
-                  {
-                    body: text.findFieldBody,
-                    thinking: text.findFieldThinking,
-                    tool_name: text.findFieldTool,
-                    arguments: text.findFieldArguments,
-                    result: text.findFieldResult,
-                    failure_message: text.findFieldFailure,
-                    error_class: text.findFieldError,
-                  }[preview.hit.field],
-                  13,
-                  props.theme.muted,
-                ),
+                ui.text('find-preview-label', fieldLabel(preview.hit.field), 13, props.theme.muted),
                 ui.text(
                   'find-preview-hit',
                   compactLabel(preview.hit.preview, 160),
@@ -669,41 +794,12 @@ export function historyView<N extends Node>(
                     presentation.reading(
                       preview.key,
                       {
-                        content: ui.box(
-                          'find-preview-document',
-                          source
-                            ? [
-                                presentation.slot(
-                                  `find-preview-text-${source.sequence}-${source.field}-${source.offset}`,
-                                  'source',
-                                  {
-                                    source: source.text,
-                                    focusOnPointer: false,
-                                    appearance:
-                                      source.format === 'text'
-                                        ? props.theme.markdown.body
-                                        : props.theme.markdown.code,
-                                    selection: props.theme.markdown.selection,
-                                    disabled: false,
-                                  },
-                                  {},
-                                ),
-                              ]
-                            : [
-                                ui.text(
-                                  'find-preview-loading',
-                                  preview.failed ? text.sourceFailed : text.loading,
-                                  13,
-                                  props.theme.muted,
-                                ),
-                              ],
-                          {
-                            scroll: 'anchor',
-                            gap: 0,
-                            terminal: { grow: 1, basis: 0 },
-                            style: { width: fill, height: fill },
-                          },
-                        ),
+                        content: ui.box('find-preview-document', [row], {
+                          scroll: 'anchor',
+                          gap: 0,
+                          terminal: { grow: 1, basis: 0 },
+                          style: { width: fill, height: fill },
+                        }),
                         command: preview.command,
                       },
                       { input: 'find-preview-input', observed: 'find-preview-observed' },
@@ -714,34 +810,6 @@ export function historyView<N extends Node>(
                     style: { width: fill, grow: 1, minHeight: 0 },
                   },
                 ),
-                ...((source &&
-                  (source.offset > 0 ||
-                    source.offset + utf8Bytes(source.text) < source.totalBytes)) ||
-                preview.failed
-                  ? [
-                      ui.box(
-                        'find-source-controls',
-                        [
-                          ...(source && source.offset > 0
-                            ? [
-                                ui.button('find-source-first', text.sourceFirst, pending),
-                                ui.button('find-source-previous', text.sourcePrevious, pending),
-                              ]
-                            : []),
-                          ...(source && source.offset + utf8Bytes(source.text) < source.totalBytes
-                            ? [
-                                ui.button('find-source-next', text.sourceNext, pending),
-                                ui.button('find-source-last', text.sourceLast, pending),
-                              ]
-                            : []),
-                          ...(preview.failed
-                            ? [ui.button('find-source-retry', text.sourceRetry, pending)]
-                            : []),
-                        ],
-                        { row: true, gap: 1, terminal: { wrap: true } },
-                      ),
-                    ]
-                  : []),
               ]
             : []),
         ],

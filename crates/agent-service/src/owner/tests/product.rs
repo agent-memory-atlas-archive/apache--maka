@@ -1352,6 +1352,15 @@ process.stdout.write(output.outputFiles[0].text);
             .unwrap();
         presenter.input(Event::Paste("native".into())).unwrap();
         await_screen(&mut presenter, "[ 2.");
+        // The selected canonical tool row includes its name, body and arguments,
+        // and uses the same retained disclosure as the ordinary timeline.
+        await_screen(&mut presenter, "Message");
+        await_screen(&mut presenter, "[ Hide details ]");
+        click(&mut presenter, "[ Hide details ]");
+        await_screen(&mut presenter, "[ Show details ]");
+        assert!(!screen(&draw(&mut presenter)).contains("Message"));
+        click(&mut presenter, "[ Show details ]");
+        await_screen(&mut presenter, "Message");
         let (column, row) = wait_for_target(&mut presenter, "[ › 1.", 0);
         for (kind, selected) in [
             (MouseEventKind::ScrollDown, "[ › 2."),

@@ -246,6 +246,18 @@ pub enum SourceFormat {
     Json,
     ImageDescriptor,
 }
+/// Presentation role of the exact row, including diagnostics omitted from the
+/// ordinary conversation window. This carries no execution authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "HistorySourceRole")]
+pub enum SourceRole {
+    User,
+    Assistant,
+    ToolCall,
+    ToolResult,
+    Failure,
+}
 /// One literal UTF-8 excerpt of an immutable field. JSON excerpts need not be
 /// standalone JSON. Image descriptors carry no artifact read authorization.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -253,6 +265,10 @@ pub enum SourceFormat {
 pub struct HistorySource {
     #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
     pub sequence: u64,
+    pub role: SourceRole,
+    /// Readable canonical fields of this same immutable row, in display order.
+    #[schemars(length(min = 1, max = 7))]
+    pub fields: Vec<SourceField>,
     pub field: SourceField,
     pub format: SourceFormat,
     #[schemars(range(max = 9_007_199_254_740_991u64))]

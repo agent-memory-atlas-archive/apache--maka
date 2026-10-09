@@ -165,6 +165,27 @@ async fn search_hits_read_the_exact_field_when_history_body_is_absent_or_differe
                     assert_eq!(page["kind"], "ready");
                     assert_eq!(page["through"], through);
                     let source = &page["source"];
+                    let role = if query == "user-body-hit" { "user" } else if is_tool {
+                        if field == "result" { "tool_result" } else { "tool_call" }
+                    } else { "assistant" };
+                    let fields = match role {
+                        "user" => json!(["body"]),
+                        "assistant" => json!(["thinking", "body"]),
+                        "tool_call" => json!(["tool_name", "body", "arguments"]),
+                        _ => json!(["body", "result"]),
+                    };
+                    assert_eq!(source["role"], role);
+                    assert_eq!(source["fields"], fields);
+                    if !reverse && source["offset"] == 0 {
+                        for other in fields.as_array().unwrap() {
+                            let related = fixture.query("source", json!({"sessionId":session,"through":through,
+                                "source":{"kind":"sequence","sequence":sequence},"field":other,"position":{"kind":"start"}})).await.unwrap();
+                            assert_eq!(related["source"]["sequence"], sequence);
+                            assert_eq!(related["source"]["role"], role);
+                            assert_eq!(related["source"]["fields"], fields);
+                            if query == "thinking-hit 中" && other == "body" { assert_eq!(related["source"]["text"], ""); }
+                        }
+                    }
                     assert_eq!(source["sequence"], sequence);
                     assert_eq!(source["field"], field);
                     assert_eq!(source["totalBytes"], expected.len());

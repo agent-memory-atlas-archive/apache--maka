@@ -22,7 +22,9 @@ use super::{
     read::{prepared, sql_number},
 };
 use crate::{EventLog, StoreError, sequence_number};
-use maka_plugins::session::history::{HistorySource, SourceField, SourceFormat, SourcePosition};
+use maka_plugins::session::history::{
+    HistorySource, SourceField, SourceFormat, SourcePosition, SourceRole,
+};
 use sqlx::Connection;
 
 fn source_sql() -> String {
@@ -40,7 +42,10 @@ fn source_sql() -> String {
     CASE ?3 WHEN 'arguments' THEN 'json' WHEN 'result' THEN
         CASE json_extract(payload, '$.content.kind') WHEN 'text' THEN 'text' WHEN 'json' THEN 'json'
         WHEN 'image' THEN 'image_descriptor' END ELSE 'text' END AS format,
-    json_extract(payload, '$.type') AS role
+    json_extract(payload, '$.type') AS role,
+    json_type(payload, '$.thinking.text') IS 'text' AS thinking,
+    json_type(payload, '$.failureMessage') IS 'text' AS failure_message,
+    json_type(payload, '$.errorClass') IS 'text' AS error_class
     FROM transcript_rows WHERE session_id = ?1 AND sequence = ?2)", body = super::history::BODY)
 }
 
@@ -130,9 +135,9 @@ impl EventLog {
                     }
                     let sql = source_sql();
                     let header = format!(
-                        "{sql} SELECT format, length(CAST(body AS BLOB)), role FROM source"
+                        "{sql} SELECT format, length(CAST(body AS BLOB)), role, thinking, failure_message, error_class FROM source"
                     );
-                    let (format, total, role): (Option<String>, Option<i64>, String) =
+                    let (format, total, role, thinking, failure_message, error_class): (Option<String>, Option<i64>, String, bool, bool, bool) =
                         sqlx::query_as(sqlx::AssertSqlSafe(header.as_str()))
                             .bind(&session)
                             .bind(sequence_sql)
@@ -149,6 +154,20 @@ impl EventLog {
                         Some("image_descriptor") => SourceFormat::ImageDescriptor,
                         _ => return Err(invalid("invalid history source format")),
                     };
+                    let (role, fields) = match role.as_str() {
+                        "user" => (SourceRole::User, vec![SourceField::Body]),
+                        "assistant" => (SourceRole::Assistant, if thinking {
+                            vec![SourceField::Thinking, SourceField::Body]
+                        } else { vec![SourceField::Body] }),
+                        "tool_call" => (SourceRole::ToolCall, vec![SourceField::ToolName, SourceField::Body, SourceField::Arguments]),
+                        "tool_result" => (SourceRole::ToolResult, vec![SourceField::Body, SourceField::Result]),
+                        "turn_state" => (SourceRole::Failure, [
+                            error_class.then_some(SourceField::ErrorClass),
+                            failure_message.then_some(SourceField::FailureMessage),
+                        ].into_iter().flatten().collect()),
+                        _ => return Err(invalid("invalid history source role")),
+                    };
+                    if !fields.contains(&field) { return Err(invalid("field is not a history source")); }
                     let read =
                         format!("{sql} SELECT substr(CAST(body AS BLOB), ?4, ?5) FROM source");
                     let offset = match position {
@@ -211,7 +230,7 @@ impl EventLog {
                     if text.is_empty() && start < total && !(reverse && offset == 0) {
                         return Err(invalid("history source made no progress"));
                     }
-                    let tool = if matches!(role.as_str(), "tool_call" | "tool_result") {
+                    let tool = if matches!(role, SourceRole::ToolCall | SourceRole::ToolResult) {
                         Some(
                             tool_metadata(&mut tx, &session, sequence, fence_sql, max_json_bytes)
                                 .await?
@@ -224,6 +243,8 @@ impl EventLog {
                     };
                     let source = HistorySource {
                         sequence,
+                        role,
+                        fields,
                         field,
                         format,
                         offset: start,

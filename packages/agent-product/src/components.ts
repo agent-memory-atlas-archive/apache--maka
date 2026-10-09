@@ -47,6 +47,7 @@ import {
   type ConversationSearch,
 } from './conversation-search.js';
 import { copy } from './locale.js';
+import { messageView } from './message-view.js';
 import { output, fill, pixels, compactLabel, type Presentation, type Node } from './view.js';
 interface Revision {
   revision: number;
@@ -325,22 +326,6 @@ export function components<N extends Node>(
     const messages: N[] = props.messages.map((message) => {
       const tool = message.role === 'tool_call' || message.role === 'tool_result';
       const expanded = state.expanded.includes(message.id);
-      const caption =
-        message.role === 'user'
-          ? text.you
-          : message.role === 'assistant'
-            ? text.assistant
-            : message.role === 'tool_call'
-              ? text.toolActivity
-              : text.toolOutput;
-      const name = tool && message.tool?.toolName;
-      const role = ui.text(
-        'role-' + message.id,
-        name ? caption + ' · ' + compactLabel(name, target === 'desktop' ? 64 : 24) : caption,
-        13,
-        props.theme.muted,
-        550,
-      );
       const sourceAction = ui.button(
         'source-' + message.source,
         text.readSource,
@@ -386,94 +371,30 @@ export function components<N extends Node>(
               },
               {},
             );
-      return ui.box(
-        'message-' + message.id,
-        [
-          tool
-            ? ui.box(
-                'tool-heading-' + message.id,
-                [
-                  role,
-                  ...(message.source !== null || message.text
-                    ? [
-                        ui.button(
-                          'toggle-' + message.id,
-                          expanded ? text.collapseTool : text.expandTool,
-                        ),
-                      ]
-                    : []),
-                ],
-                {
-                  row: true,
-                  gap: target === 'desktop' ? 12 : 1,
-                  surface: true,
-                  terminal: { wrap: true },
-                  style: { width: fill, wrap: true, align: 'center' },
-                },
-              )
-            : role,
-          ...(message.continued
-            ? [ui.text('continued-' + message.id, text.partial, 12, props.theme.muted)]
-            : []),
-          ...(tool && message.tool?.kind === 'result' && message.tool.isError
-            ? [ui.text('tool-error-' + message.id, text.toolReportedError, 13, props.theme.muted)]
-            : []),
-          ...(tool
+      return messageView(presentation, target, props.theme, props.locale, {
+        ...message,
+        expanded,
+        toggle: tool && (message.source !== null || message.text) ? 'toggle-' + message.id : null,
+        body,
+        actions: [
+          ...(message.source !== null
             ? [
-                ...(!expanded
-                  ? [
-                      ui.text(
-                        'summary-' + message.id,
-                        message.text
-                          ? compactLabel(message.text, target === 'desktop' ? 96 : 72)
-                          : text.toolNoText,
-                        14,
-                        props.theme.muted,
-                      ),
-                    ]
-                  : []),
-                ui.box(
-                  'details-' + message.id,
-                  [
-                    body,
-                    ui.box(
-                      'tool-actions-' + message.id,
-                      [
-                        ...(message.source !== null
-                          ? [
-                              ui.button(
-                                'tool-source-' + message.source,
-                                message.role === 'tool_call' ? text.toolArguments : text.toolResult,
-                                props.loading,
-                              ),
-                            ]
-                          : []),
-                        ...(message.image && message.source !== null
-                          ? [ui.button('image-' + message.source, text.viewImage, props.loading)]
-                          : []),
-                        ...(message.source !== null && message.text
-                          ? [ui.button('source-' + message.source, text.readSource, props.loading)]
-                          : []),
-                      ],
-                      {
-                        row: true,
-                        gap: target === 'desktop' ? 8 : 1,
-                        surface: true,
-                        terminal: { wrap: true },
-                        style: { width: fill, wrap: true },
-                      },
-                    ),
-                  ],
-                  {
-                    visible: expanded,
-                    gap: target === 'desktop' ? 8 : 1,
-                    surface: true,
-                    style: { width: fill },
-                  },
+                ui.button(
+                  'tool-source-' + message.source,
+                  message.role === 'tool_call' ? text.toolArguments : text.toolResult,
+                  props.loading,
                 ),
               ]
-            : [body]),
-          ...(!tool && message.source !== null
+            : []),
+          ...(message.image && message.source !== null
+            ? [ui.button('image-' + message.source, text.viewImage, props.loading)]
+            : []),
+          ...(message.source !== null && message.text
+            ? [ui.button('source-' + message.source, text.readSource, props.loading)]
+            : []),
+        ],
+        sourceActions:
+          message.source !== null
             ? [
                 ui.box('source-actions-' + message.id, [sourceAction], {
                   row: true,
@@ -482,15 +403,8 @@ export function components<N extends Node>(
                   surface: message.role === 'user',
                 }),
               ]
-            : []),
-        ],
-        {
-          gap: target === 'desktop' ? 8 : 0,
-          style: { width: fill, maxWidth: 760, shrink: 0, radius: tool ? 8 : 0 },
-          surface: message.role === 'user' || tool,
-          padding: target === 'desktop' && (message.role === 'user' || tool) ? 16 : 0,
-        },
-      );
+            : [],
+      });
     });
     const content = ui.box(
       'timeline',

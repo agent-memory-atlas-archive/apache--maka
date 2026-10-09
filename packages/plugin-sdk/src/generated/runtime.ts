@@ -2262,6 +2262,11 @@ export type AgentHistorySourcePage =
       source: HistorySource;
       kind: 'ready';
     };
+/**
+ * Presentation role of the exact row, including diagnostics omitted from the
+ * ordinary conversation window. This carries no execution authority.
+ */
+export type HistorySourceRole = 'user' | 'assistant' | 'tool_call' | 'tool_result' | 'failure';
 export type SourceFormat = 'text' | 'json' | 'image_descriptor';
 /**
  * Bounded image bytes from a selected subscription. Complete is a producer
@@ -4381,6 +4386,21 @@ export interface AgentHistorySourceRead {
  */
 export interface HistorySource {
   sequence: number;
+  role: HistorySourceRole;
+  /**
+   * Readable canonical fields of this same immutable row, in display order.
+   *
+   * @minItems 1
+   * @maxItems 7
+   */
+  fields:
+    | [SourceField]
+    | [SourceField, SourceField]
+    | [SourceField, SourceField, SourceField]
+    | [SourceField, SourceField, SourceField, SourceField]
+    | [SourceField, SourceField, SourceField, SourceField, SourceField]
+    | [SourceField, SourceField, SourceField, SourceField, SourceField, SourceField]
+    | [SourceField, SourceField, SourceField, SourceField, SourceField, SourceField, SourceField];
   field: SourceField;
   format: SourceFormat;
   offset: number;
