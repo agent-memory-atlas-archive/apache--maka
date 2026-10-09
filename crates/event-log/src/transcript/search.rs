@@ -19,6 +19,7 @@
 
 use super::read::{prepared, sql_number};
 use crate::{EventLog, StoreError, sequence_number, sessions};
+use maka_plugins::session::history::SourceField;
 use serde_json::Value;
 use sqlx::{Connection, Row, SqliteConnection};
 
@@ -30,8 +31,13 @@ pub struct TranscriptSearch {
     pub include_internal: bool,
     pub max_matches: usize,
 }
+pub struct TranscriptMatch {
+    pub sequence: u64,
+    pub field: SourceField,
+    pub preview: String,
+}
 pub struct TranscriptSearchBatch {
-    pub matches: Vec<(u64, String)>,
+    pub matches: Vec<TranscriptMatch>,
     pub next_after: Option<u64>,
 }
 
@@ -101,8 +107,12 @@ impl EventLog {
                         {
                             continue;
                         }
-                        if let Some(preview) = matching_text(&row, &input.query) {
-                            result.matches.push((position, preview));
+                        if let Some((field, preview)) = matching_text(&row, &input.query) {
+                            result.matches.push(TranscriptMatch {
+                                sequence: position,
+                                field,
+                                preview,
+                            });
                         }
                     }
                     Ok(result)
@@ -152,27 +162,44 @@ async fn internal(
     ))
 }
 
-fn matching_text(row: &Value, query: &str) -> Option<String> {
+fn matching_text(row: &Value, query: &str) -> Option<(SourceField, String)> {
+    let find = |field, value: &str| text(value, query).map(|preview| (field, preview));
     match row["type"].as_str()? {
-        "user" => text(
+        "user" => find(
+            SourceField::Body,
             row["displayText"]
                 .as_str()
                 .or_else(|| row["text"].as_str())?,
-            query,
         ),
-        "assistant" => text(row["text"].as_str().unwrap_or(""), query)
-            .or_else(|| text(row["thinking"]["text"].as_str().unwrap_or(""), query)),
-        "tool_call" => text(row["toolName"].as_str().unwrap_or(""), query)
-            .or_else(|| json_text(&row["args"], query)),
+        "assistant" => find(SourceField::Body, row["text"].as_str().unwrap_or("")).or_else(|| {
+            find(
+                SourceField::Thinking,
+                row["thinking"]["text"].as_str().unwrap_or(""),
+            )
+        }),
+        "tool_call" => find(
+            SourceField::ToolName,
+            row["toolName"].as_str().unwrap_or(""),
+        )
+        .or_else(|| {
+            json_text(&row["args"], query).map(|preview| (SourceField::Arguments, preview))
+        }),
         "tool_result" => match row["content"]["kind"].as_str()? {
-            "text" => text(row["content"]["text"].as_str()?, query),
-            "json" => json_text(&row["content"]["value"], query),
+            "text" => find(SourceField::Result, row["content"]["text"].as_str()?),
+            "json" => json_text(&row["content"]["value"], query)
+                .map(|preview| (SourceField::Result, preview)),
             _ => None, // No searching image bytes or storage locators.
         },
-        "turn_state" if row["status"] == "failed" => {
-            text(row["failureMessage"].as_str().unwrap_or(""), query)
-                .or_else(|| text(row["errorClass"].as_str().unwrap_or(""), query))
-        }
+        "turn_state" if row["status"] == "failed" => find(
+            SourceField::FailureMessage,
+            row["failureMessage"].as_str().unwrap_or(""),
+        )
+        .or_else(|| {
+            find(
+                SourceField::ErrorClass,
+                row["errorClass"].as_str().unwrap_or(""),
+            )
+        }),
         _ => None,
     }
 }
@@ -220,7 +247,9 @@ mod tests {
     fn search_is_literal_content_only_and_previews_are_bounded_unicode() {
         let row = json!({"type":"user","id":"private-id","text":"raw hidden","displayText":"中文🦀 needle"});
         assert_eq!(
-            matching_text(&row, "中文").as_deref(),
+            matching_text(&row, "中文")
+                .map(|(_, preview)| preview)
+                .as_deref(),
             Some("中文🦀 needle")
         );
         assert!(matching_text(&row, "private-id").is_none());

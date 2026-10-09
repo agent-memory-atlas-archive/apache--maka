@@ -22,6 +22,18 @@ use crate::{EventLog, StoreError, sequence_number};
 use maka_plugins::session::history::{Chunk, Cursor, Page, Position, Role, Tool};
 use sqlx::{Connection, Row, SqliteConnection};
 
+// One body projection for conversation windows and exact source reads.
+pub(super) const BODY: &str = "COALESCE(CASE json_extract(payload, '$.type')
+                    WHEN 'user' THEN COALESCE(json_extract(payload, '$.displayText'), json_extract(payload, '$.text'), '')
+                        || COALESCE((SELECT char(10) || group_concat(json_extract(value, '$.name'), char(10)) FROM json_each(payload, '$.attachments')), '')
+                    WHEN 'assistant' THEN json_extract(payload, '$.text')
+                    WHEN 'tool_call' THEN COALESCE(json_extract(payload, '$.intent'), json_extract(payload, '$.args.intent'), '')
+                    WHEN 'tool_result' THEN CASE json_extract(payload, '$.content.kind')
+                        WHEN 'text' THEN json_extract(payload, '$.content.text')
+                        WHEN 'json' THEN (SELECT group_concat(atom, char(10)) FROM json_tree(payload, '$.content.value') WHERE type = 'text')
+                        ELSE '' END
+                    ELSE '' END, '')";
+
 impl EventLog {
     /// Exact ascending UTF-8 windows over immutable derived text. The byte and
     /// fragment budgets apply to the whole window, never to a silently clipped
@@ -339,21 +351,17 @@ async fn materialize(
     if cached {
         return Ok(0);
     }
-    sqlx::query(
+    let query = format!(
         "INSERT INTO transcript_text
             SELECT session_id, sequence, json_extract(payload, '$.ts'), json_extract(payload, '$.type'),
-                CAST(COALESCE(CASE json_extract(payload, '$.type')
-                    WHEN 'user' THEN COALESCE(json_extract(payload, '$.displayText'), json_extract(payload, '$.text'), '')
-                        || COALESCE((SELECT char(10) || group_concat(json_extract(value, '$.name'), char(10)) FROM json_each(payload, '$.attachments')), '')
-                    WHEN 'assistant' THEN json_extract(payload, '$.text')
-                    WHEN 'tool_call' THEN COALESCE(json_extract(payload, '$.intent'), json_extract(payload, '$.args.intent'), '')
-                    WHEN 'tool_result' THEN CASE json_extract(payload, '$.content.kind')
-                        WHEN 'text' THEN json_extract(payload, '$.content.text')
-                        WHEN 'json' THEN (SELECT group_concat(atom, char(10)) FROM json_tree(payload, '$.content.value') WHERE type = 'text')
-                        ELSE '' END
-                    ELSE '' END, '') AS BLOB)
+                CAST({BODY} AS BLOB)
             FROM transcript_rows WHERE session_id = ?1 AND sequence = ?2"
-    ).bind(session).bind(sql_number(sequence)?).execute(tx).await?;
+    );
+    sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
+        .bind(session)
+        .bind(sql_number(sequence)?)
+        .execute(tx)
+        .await?;
     usize::try_from(sequence_number(bytes)?)
         .map_err(|_| invalid("history source exceeds address space"))
 }

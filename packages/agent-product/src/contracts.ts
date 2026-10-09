@@ -35,7 +35,7 @@ import {
   type EditorObservation,
   type Role,
   type AgentHistoryChunk,
-  type ToolSourceField,
+  type SourceField,
   type SourceFormat,
 } from '../../plugin-sdk/src/index.js';
 export type Schema = Record<string, unknown>;
@@ -152,7 +152,7 @@ export interface NavigationProps {
   busy: boolean;
 }
 export interface SourcePage {
-  kind: 'message' | ToolSourceField;
+  kind: 'message' | SourceField;
   format: SourceFormat;
   ready: boolean;
   key: string;
@@ -215,7 +215,7 @@ const defs = {
   ...native.secretInput.interface.props.$defs,
   ...session.$defs,
   ...native.agent.interface.methods.history.output.$defs,
-  ...native.agent.interface.methods.toolSource.output.$defs,
+  ...native.agent.interface.methods.source.output.$defs,
   ...native.agent.interface.methods.respond.output.$defs,
 };
 const themeSchema = object({
@@ -384,7 +384,7 @@ export const timelineContract = component(
     source: {
       anyOf: [
         object({
-          kind: { anyOf: [{ const: 'message' }, { $ref: '#/$defs/ToolSourceField' }] },
+          kind: { anyOf: [{ const: 'message' }, { $ref: '#/$defs/SourceField' }] },
           format: { $ref: '#/$defs/SourceFormat' },
           ready: { type: 'boolean' },
           key: string,

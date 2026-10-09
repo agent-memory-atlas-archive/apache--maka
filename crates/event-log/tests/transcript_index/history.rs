@@ -427,15 +427,15 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
                 for chunk in chunks {
                     if matches!(chunk.role, Role::ToolCall | Role::ToolResult) {
                         use maka_plugins::session::history::{
-                            SourceFormat, SourcePosition, ToolSourceField,
+                            SourceField, SourceFormat, SourcePosition,
                         };
                         let field = if chunk.role == Role::ToolCall {
-                            ToolSourceField::Arguments
+                            SourceField::Arguments
                         } else {
-                            ToolSourceField::Result
+                            SourceField::Result
                         };
                         let source = log
-                            .tool_source(
+                            .history_source(
                                 session,
                                 through,
                                 chunk.sequence,
@@ -446,10 +446,10 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
                             )
                             .await
                             .unwrap();
-                        assert_eq!(Some(&source.tool), chunk.tool.as_ref());
+                        assert_eq!(source.tool.as_ref().unwrap(), chunk.tool.as_ref().unwrap());
                         if chunk.role == Role::ToolResult {
                             assert!(
-                                log.tool_source(
+                                log.history_source(
                                     session,
                                     call_fence,
                                     chunk.sequence,

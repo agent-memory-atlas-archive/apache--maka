@@ -150,8 +150,8 @@ export type RuntimeProtocol =
   | AgentHistoryPage
   | AgentHistorySearch
   | AgentHistorySearchPage
-  | AgentToolSourceRead
-  | AgentToolSourcePage
+  | AgentHistorySourceRead
+  | AgentHistorySourcePage
   | AgentToolImageFrame
   | AgentToolImageRead
   | AgentToolImagePage
@@ -2188,7 +2188,18 @@ export type AgentHistorySearchPage =
       nextAfter: number | null;
       kind: 'ready';
     };
-export type AgentToolSourceReference =
+/**
+ * An explicitly selected canonical transcript field, never an execution grant.
+ */
+export type SourceField =
+  | 'body'
+  | 'thinking'
+  | 'tool_name'
+  | 'failure_message'
+  | 'error_class'
+  | 'arguments'
+  | 'result';
+export type AgentHistorySourceReference =
   | {
       sequence: number;
       kind: 'sequence';
@@ -2197,10 +2208,6 @@ export type AgentToolSourceReference =
       toolUseId: string;
       kind: 'tool_use';
     };
-/**
- * An explicitly selected canonical tool field, never an execution grant.
- */
-export type ToolSourceField = 'arguments' | 'result';
 export type SourcePosition =
   | {
       kind: 'start';
@@ -2216,14 +2223,14 @@ export type SourcePosition =
       offset: number;
       kind: 'after';
     };
-export type AgentToolSourcePage =
+export type AgentHistorySourcePage =
   | {
       through: number;
       kind: 'preparing';
     }
   | {
       through: number;
-      source: ToolSource;
+      source: HistorySource;
       kind: 'ready';
     };
 export type SourceFormat = 'text' | 'json' | 'image_descriptor';
@@ -4263,30 +4270,34 @@ export interface AgentHistorySearch {
 }
 export interface AgentHistoryMatch {
   /**
+   * Exact canonical field to read through the source query; history body may omit it.
+   */
+  field: SourceField;
+  /**
    * Use this exact cursor with HistoryPosition::After and the same raw-event fence.
    */
   cursor: Cursor;
   preview: string;
 }
-export interface AgentToolSourceRead {
+export interface AgentHistorySourceRead {
   sessionId: string;
   through: number;
-  source: AgentToolSourceReference;
-  field: ToolSourceField;
+  source: AgentHistorySourceReference;
+  field: SourceField;
   position: SourcePosition;
 }
 /**
  * One literal UTF-8 excerpt of an immutable field. JSON excerpts need not be
  * standalone JSON. Image descriptors carry no artifact read authorization.
  */
-export interface ToolSource {
+export interface HistorySource {
   sequence: number;
-  field: ToolSourceField;
+  field: SourceField;
   format: SourceFormat;
   offset: number;
   totalBytes: number;
   text: string;
-  tool: HistoryTool;
+  tool: HistoryTool | null;
 }
 export interface AgentToolImageRead {
   sessionId: string;

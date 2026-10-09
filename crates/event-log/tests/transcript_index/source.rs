@@ -20,7 +20,7 @@
 use super::*;
 use maka_plugins::{
     composition::Scope,
-    session::history::{Page, Position, SourceFormat, SourcePosition, ToolSourceField},
+    session::history::{Page, Position, SourceField, SourceFormat, SourcePosition},
     storage::Namespace,
 };
 use maka_runtime::import::{Content, Record, Source};
@@ -117,8 +117,8 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
     assert!(!chunks.is_empty());
     let expected = serde_json::to_string(&value).unwrap();
     for (sequence, field) in [
-        (sequences[0], ToolSourceField::Arguments),
-        (sequences[1], ToolSourceField::Result),
+        (sequences[0], SourceField::Arguments),
+        (sequences[1], SourceField::Result),
     ] {
         for budget in [4, 13, 8192] {
             for reverse in [false, true] {
@@ -130,7 +130,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
                 let mut text = String::new();
                 loop {
                     let source = log
-                        .tool_source(
+                        .history_source(
                             "source",
                             through,
                             sequence,
@@ -169,7 +169,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
             }
         }
         assert!(
-            log.tool_source(
+            log.history_source(
                 "source",
                 0,
                 sequence,
@@ -182,7 +182,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
             .is_err()
         );
         assert!(
-            log.tool_source(
+            log.history_source(
                 "other",
                 through,
                 sequence,
@@ -194,13 +194,13 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
             .await
             .is_err()
         );
-        let wrong = if field == ToolSourceField::Arguments {
-            ToolSourceField::Result
+        let wrong = if field == SourceField::Arguments {
+            SourceField::Result
         } else {
-            ToolSourceField::Arguments
+            SourceField::Arguments
         };
         assert!(
-            log.tool_source(
+            log.history_source(
                 "source",
                 through,
                 sequence,
@@ -219,7 +219,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
             .unwrap() as u64
             + 1;
         assert!(
-            log.tool_source(
+            log.history_source(
                 "source",
                 through,
                 sequence,
@@ -232,7 +232,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
             .is_err()
         );
         assert!(
-            log.tool_source(
+            log.history_source(
                 "source",
                 through,
                 sequence,
@@ -248,11 +248,11 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
         );
     }
     for (sequence, field) in [
-        (sequences[2], ToolSourceField::Arguments),
-        (sequences[3], ToolSourceField::Result),
+        (sequences[2], SourceField::Arguments),
+        (sequences[3], SourceField::Result),
     ] {
         let source = log
-            .tool_source(
+            .history_source(
                 "source",
                 through,
                 sequence,
@@ -265,7 +265,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
             .unwrap();
         // Import's optional input treats JSON null as absent; the canonical
         // call therefore contains {}, while its result retains JSON null.
-        let expected = if field == ToolSourceField::Arguments {
+        let expected = if field == SourceField::Arguments {
             "{}"
         } else {
             "null"
@@ -273,7 +273,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
         assert_eq!(source.text, expected);
         assert_eq!(source.total_bytes, expected.len() as u64);
         let eof = log
-            .tool_source(
+            .history_source(
                 "source",
                 through,
                 sequence,
@@ -290,11 +290,11 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
         assert!(eof.text.is_empty());
     }
     assert!(
-        log.tool_source(
+        log.history_source(
             "source",
             through,
             sequences[4],
-            ToolSourceField::Arguments,
+            SourceField::Arguments,
             SourcePosition::Start,
             8192,
             1024
@@ -303,11 +303,11 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
         .is_err()
     );
     let full = log
-        .tool_source(
+        .history_source(
             "source",
             through,
             sequences[4],
-            ToolSourceField::Arguments,
+            SourceField::Arguments,
             SourcePosition::Start,
             8192,
             64 * 1024,
@@ -316,4 +316,112 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
         .unwrap();
     assert_eq!(full.text, "{}");
     log.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn failure_search_reads_original_diagnostic_fields_without_a_body_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = EventLog::open(&dir.path().join("failure.sqlite"))
+        .await
+        .unwrap();
+    log.create_session("failed", "create-failed", &serde_json::json!({}), 1)
+        .await
+        .unwrap();
+    log.append(&event("failed", opening())).await.unwrap();
+    let message = format!("failure-hit {}", "中😀\n".repeat(2000));
+    let through = end(
+        &log,
+        "failed",
+        InvocationOutcome::Failed {
+            class: "failure-class-hit".into(),
+            message: Some(message.clone()),
+        },
+    )
+    .await;
+    assert!(log.prepare_transcript("failed", through, 32).await.unwrap());
+    for (query, field, expected) in [
+        // The original transcript intentionally limits displayed failure messages
+        // to 256 UTF-8 bytes; source reads preserve that same searchable field.
+        (
+            "failure-hit",
+            SourceField::FailureMessage,
+            message[..message.floor_char_boundary(256)].to_owned(),
+        ),
+        (
+            "failure-class-hit",
+            SourceField::ErrorClass,
+            "failure-class-hit".into(),
+        ),
+    ] {
+        let result = log
+            .search_transcript(
+                "failed",
+                maka_event_log::transcript::search::TranscriptSearch {
+                    through: maka_presentation::watermark(through).unwrap(),
+                    after: 0,
+                    query: query.into(),
+                    include_internal: false,
+                    max_matches: 16,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.matches.len(), 1);
+        let hit = &result.matches[0];
+        assert_eq!(hit.field, field);
+        let mut collected = String::new();
+        let mut position = SourcePosition::Start;
+        for _ in 0..16 {
+            let page = log
+                .history_source(
+                    "failed",
+                    through,
+                    hit.sequence,
+                    field,
+                    position,
+                    31,
+                    64 * 1024,
+                )
+                .await
+                .unwrap();
+            assert_eq!(page.sequence, hit.sequence);
+            assert_eq!(page.field, field);
+            assert_eq!(page.format, SourceFormat::Text);
+            assert!(page.tool.is_none());
+            collected.push_str(&page.text);
+            let offset = page.offset + page.text.len() as u64;
+            if offset == page.total_bytes {
+                break;
+            }
+            position = SourcePosition::After { offset };
+        }
+        assert_eq!(collected, expected);
+        assert!(
+            log.history_source(
+                "failed",
+                through,
+                hit.sequence,
+                SourceField::Body,
+                SourcePosition::Start,
+                8192,
+                64 * 1024
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            log.history_source(
+                "failed",
+                through - 1,
+                hit.sequence,
+                field,
+                SourcePosition::Start,
+                8192,
+                64 * 1024
+            )
+            .await
+            .is_err()
+        );
+    }
+    log.shutdown().await.unwrap();
 }

@@ -32,8 +32,8 @@ import type {
   AgentQueueMessageResult,
   AgentHistoryPage,
   AgentHistoryChunk,
-  AgentToolSourcePage,
-  ToolSourceField,
+  AgentHistorySourcePage,
+  SourceField,
   SourceFormat,
   SourcePosition,
   HistoryPosition,
@@ -88,13 +88,6 @@ type Request =
       position: HistoryPosition;
     }
   | {
-      kind: 'source';
-      epoch: number;
-      navigation: number;
-      through: number;
-      position: HistoryPosition;
-    }
-  | {
       kind: 'read';
       draft: EditorObservation;
       sessionId: string;
@@ -102,12 +95,12 @@ type Request =
       thinkingLevel: ThinkingLevel | null;
     }
   | {
-      kind: 'toolSource';
+      kind: 'source';
       epoch: number;
       navigation: number;
       through: number;
       sequence: number;
-      field: ToolSourceField;
+      field: SourceField;
       position: SourcePosition;
     }
   | { kind: 'interaction'; attempt: number; sessionId: string; requestId: string }
@@ -183,13 +176,10 @@ export interface State {
     landing: { sequence: number; edge: 'start' | 'end' };
     loading: boolean;
     failed: boolean;
-    position: HistoryPosition | null;
-    toolSource: {
-      field: ToolSourceField;
-      format: SourceFormat | null;
-      ready: boolean;
-      position: SourcePosition;
-    } | null;
+    field: SourceField;
+    format: SourceFormat | null;
+    ready: boolean;
+    position: SourcePosition;
   } | null;
   landing: { sequence: number; edge: 'start' | 'end' };
   tailReceipt: { landing: number; readingRevision: number } | null;
@@ -436,32 +426,32 @@ function select(state: State, actions: Action[], session: AgentSession) {
   state.notice = null;
   observe(state, actions);
 }
-function readToolSource(state: State, actions: Action[], position: SourcePosition) {
+function readHistorySource(state: State, actions: Action[], position: SourcePosition) {
   const source = state.source;
-  if (!source?.toolSource || !state.selected) return;
+  if (!source || !state.selected) return;
   source.navigation = ++state.navigation;
   source.loading = true;
   source.failed = false;
-  source.toolSource.position = position;
+  source.position = position;
   intent(
     state,
     actions,
     {
-      kind: 'toolSource',
+      kind: 'source',
       epoch: state.epoch,
       navigation: source.navigation,
       through: source.through,
       sequence: source.chunk.sequence,
-      field: source.toolSource.field,
+      field: source.field,
       position,
     },
     'agent',
-    'toolSource',
+    'source',
     {
       sessionId: state.selected.id,
       through: source.through,
       source: { kind: 'sequence', sequence: source.chunk.sequence },
-      field: source.toolSource.field,
+      field: source.field,
       position,
     },
   );
@@ -992,7 +982,7 @@ function queryFailed(state: State, request: Request) {
   }
   // Optional presentation work does not disable input or change execution facts.
   if (request.kind === 'history' && request.implicit) return;
-  if (request.kind === 'source' || request.kind === 'toolSource') {
+  if (request.kind === 'source') {
     if (request.epoch === state.epoch && request.navigation === state.source?.navigation) {
       state.source.loading = false;
       state.source.failed = true;
@@ -1128,61 +1118,20 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
     }
     case 'source': {
       const source = state.source;
-      if (request.epoch !== state.epoch || !source || request.navigation !== source.navigation)
-        break;
-      const page = value as AgentHistoryPage;
-      if (page.through !== request.through) {
-        queryFailed(state, request);
-        break;
-      }
-      if (page.kind === 'preparing') {
-        intent(state, actions, request, 'agent', 'history', {
-          sessionId: state.selected!.id,
-          through: request.through,
-          position: request.position,
-        });
-        break;
-      }
-      const chunk = page.chunks.find((chunk) => chunk.sequence === source.chunk.sequence);
-      const end = chunk ? chunk.offset + utf8Bytes(chunk.text) : 0;
-      const position = request.position;
-      if (
-        !chunk ||
-        chunk.messageId !== source.chunk.messageId ||
-        chunk.totalBytes !== source.chunk.totalBytes ||
-        !chunk.text ||
-        end > chunk.totalBytes ||
-        (position.kind === 'after' && chunk.offset !== position.cursor.offset) ||
-        (position.kind === 'before' && end !== position.cursor.offset)
-      ) {
-        queryFailed(state, request);
-        break;
-      }
-      source.chunk = chunk;
-      source.loading = false;
-      source.failed = false;
-      source.landing = {
-        sequence: request.navigation,
-        edge: position.kind === 'before' ? 'end' : 'start',
-      };
-      break;
-    }
-    case 'toolSource': {
-      const source = state.source;
       if (
         request.epoch !== state.epoch ||
-        !source?.toolSource ||
+        !source ||
         request.navigation !== source.navigation ||
-        request.field !== source.toolSource.field
+        request.field !== source.field
       )
         break;
-      const page = value as AgentToolSourcePage;
+      const page = value as AgentHistorySourcePage;
       if (page.through !== request.through) {
         queryFailed(state, request);
         break;
       }
       if (page.kind === 'preparing') {
-        intent(state, actions, request, 'agent', 'toolSource', {
+        intent(state, actions, request, 'agent', 'source', {
           sessionId: state.selected!.id,
           through: request.through,
           source: { kind: 'sequence', sequence: request.sequence },
@@ -1196,10 +1145,10 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
       if (
         next.sequence !== request.sequence ||
         next.field !== request.field ||
+        (!next.text && next.totalBytes > 0) ||
         end > next.totalBytes ||
-        (source.toolSource.ready &&
-          (next.totalBytes !== source.chunk.totalBytes ||
-            next.format !== source.toolSource.format)) ||
+        (source.ready &&
+          (next.totalBytes !== source.chunk.totalBytes || next.format !== source.format)) ||
         (request.position.kind === 'after' && next.offset !== request.position.offset) ||
         (request.position.kind === 'before' && end !== request.position.offset) ||
         (request.position.kind === 'start' && next.offset !== 0) ||
@@ -1209,8 +1158,8 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         break;
       }
       source.chunk = { ...source.chunk, ...next };
-      source.toolSource.format = next.format;
-      source.toolSource.ready = true;
+      source.format = next.format;
+      source.ready = true;
       source.loading = false;
       source.failed = false;
       source.landing = {
@@ -1600,10 +1549,10 @@ function frame<N extends Node>(
       messages: messages(state),
       source: state.source
         ? {
-            kind: state.source.toolSource?.field ?? 'message',
-            format: state.source.toolSource?.format ?? 'text',
-            ready: state.source.toolSource?.ready ?? true,
-            key: `${state.source.toolSource ? state.source.toolSource.field + '-' : ''}${state.source.through}-${state.source.chunk.sequence}-${state.source.chunk.offset}`,
+            kind: state.source.field === 'body' ? 'message' : state.source.field,
+            format: state.source.format ?? 'text',
+            ready: state.source.ready,
+            key: `${state.source.field}-${state.source.through}-${state.source.chunk.sequence}-${state.source.chunk.offset}`,
             text: state.source.chunk.text,
             atStart: state.source.chunk.offset === 0,
             atEnd:
@@ -2746,70 +2695,22 @@ export function workspace<N extends Node>(
         } else if (input.child === 'timeline' && state.source) {
           const source = state.source;
           if (input.name === 'sourceBack') state.source = null;
-          else if (!source.loading && source.toolSource) {
-            const tool = source.toolSource;
+          else if (!source.loading) {
             const chunk = source.chunk;
             const end = chunk.offset + utf8Bytes(chunk.text);
             const position: SourcePosition | null =
               input.name === 'sourceRetry' && source.failed
-                ? tool.position
-                : input.name === 'sourceFirst'
+                ? source.position
+                : input.name === 'sourceFirst' && chunk.offset > 0
                   ? { kind: 'start' }
-                  : input.name === 'sourceLast'
+                  : input.name === 'sourceLast' && end < chunk.totalBytes
                     ? { kind: 'tail' }
                     : input.name === 'sourcePrevious' && chunk.offset > 0
                       ? { kind: 'before', offset: chunk.offset }
                       : input.name === 'sourceNext' && end < chunk.totalBytes
                         ? { kind: 'after', offset: end }
                         : null;
-            if (position) readToolSource(state, actions, position);
-          } else if (!source.loading) {
-            const chunk = source.chunk;
-            const end = chunk.offset + utf8Bytes(chunk.text);
-            const offset =
-              input.name === 'sourceFirst'
-                ? 0
-                : input.name === 'sourcePrevious'
-                  ? chunk.offset
-                  : input.name === 'sourceNext'
-                    ? end
-                    : chunk.totalBytes;
-            const position: HistoryPosition | null =
-              input.name === 'sourceRetry' && source.failed
-                ? source.position
-                : (input.name === 'sourceFirst' || input.name === 'sourcePrevious') &&
-                    chunk.offset > 0
-                  ? {
-                      kind: input.name === 'sourceFirst' ? 'after' : 'before',
-                      cursor: { sequence: chunk.sequence, offset },
-                    }
-                  : (input.name === 'sourceNext' || input.name === 'sourceLast') &&
-                      end < chunk.totalBytes
-                    ? {
-                        kind: input.name === 'sourceNext' ? 'after' : 'before',
-                        cursor: { sequence: chunk.sequence, offset },
-                      }
-                    : null;
-            if (position) {
-              source.navigation = ++state.navigation;
-              source.loading = true;
-              source.failed = false;
-              source.position = position;
-              intent(
-                state,
-                actions,
-                {
-                  kind: 'source',
-                  epoch: state.epoch,
-                  navigation: source.navigation,
-                  through: source.through,
-                  position,
-                },
-                'agent',
-                'history',
-                { sessionId: state.selected!.id, through: source.through, position },
-              );
-            }
+            if (position) readHistorySource(state, actions, position);
           }
         } else if (input.child === 'timeline' && !state.loading && state.window) {
           const page = state.window.page;
@@ -2825,8 +2726,10 @@ export function workspace<N extends Node>(
                 landing: { sequence: state.navigation, edge: 'start' },
                 loading: false,
                 failed: false,
-                position: null,
-                toolSource: null,
+                field: 'body',
+                format: 'text',
+                ready: true,
+                position: { kind: 'after', offset: chunk.offset },
               };
           } else if (input.name === 'toolSource') {
             const chunk = page.chunks.find(
@@ -2840,15 +2743,12 @@ export function workspace<N extends Node>(
                 landing: { sequence: state.navigation, edge: 'start' },
                 loading: false,
                 failed: false,
-                position: null,
-                toolSource: {
-                  field: chunk.role === 'tool_call' ? 'arguments' : 'result',
-                  format: null,
-                  ready: false,
-                  position: { kind: 'start' },
-                },
+                field: chunk.role === 'tool_call' ? 'arguments' : 'result',
+                format: null,
+                ready: false,
+                position: { kind: 'start' },
               };
-              readToolSource(state, actions, { kind: 'start' });
+              readHistorySource(state, actions, { kind: 'start' });
             }
           } else if (input.name === 'older' && page.before)
             history(state, actions, { kind: 'before', cursor: page.before }, page.through, false);

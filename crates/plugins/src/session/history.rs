@@ -213,10 +213,15 @@ pub enum Tool {
     },
 }
 
-/// An explicitly selected canonical tool field, never an execution grant.
+/// An explicitly selected canonical transcript field, never an execution grant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ToolSourceField {
+pub enum SourceField {
+    Body,
+    Thinking,
+    ToolName,
+    FailureMessage,
+    ErrorClass,
     Arguments,
     Result,
 }
@@ -245,17 +250,18 @@ pub enum SourceFormat {
 /// standalone JSON. Image descriptors carry no artifact read authorization.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ToolSource {
+pub struct HistorySource {
     #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
     pub sequence: u64,
-    pub field: ToolSourceField,
+    pub field: SourceField,
     pub format: SourceFormat,
     #[schemars(range(max = 9_007_199_254_740_991u64))]
     pub offset: u64,
     #[schemars(range(max = 9_007_199_254_740_991u64))]
     pub total_bytes: u64,
     pub text: String,
-    pub tool: Tool,
+    #[schemars(with = "maka_runtime::schema::RequiredNullable<Tool>")]
+    pub tool: Option<Tool>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

@@ -178,7 +178,10 @@ impl Transcript {
             matches: batch
                 .matches
                 .into_iter()
-                .map(|(sequence, preview)| TranscriptSearchMatch { sequence, preview })
+                .map(|found| TranscriptSearchMatch {
+                    sequence: found.sequence,
+                    preview: found.preview,
+                })
                 .collect(),
             next_cursor: batch
                 .next_after

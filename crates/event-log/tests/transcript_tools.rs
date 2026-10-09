@@ -295,7 +295,8 @@ async fn tool_boundaries_page_independently_and_rebuild_exact_ids_without_readin
                 .await
                 .unwrap();
             batches += 1;
-            for (sequence, preview) in result.matches {
+            for found in result.matches {
+                let (sequence, preview) = (found.sequence, found.preview);
                 assert!(preview.len() <= 384 && preview.contains(query));
                 assert!(sequences.last().is_none_or(|last| sequence > *last));
                 sequences.push(sequence);

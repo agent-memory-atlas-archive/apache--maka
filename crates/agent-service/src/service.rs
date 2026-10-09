@@ -250,12 +250,13 @@ impl Handler for Agent {
                             matches: batch
                                 .matches
                                 .into_iter()
-                                .map(|(sequence, preview)| HistoryMatch {
+                                .map(|found| HistoryMatch {
+                                    field: found.field,
                                     cursor: maka_plugins::session::history::Cursor {
-                                        sequence,
+                                        sequence: found.sequence,
                                         offset: 0,
                                     },
-                                    preview,
+                                    preview: found.preview,
                                 })
                                 .collect(),
                             next_after: batch.next_after,
@@ -274,8 +275,8 @@ impl Handler for Agent {
                         .map_err(|_| "agent_history_unavailable")?;
                     Ok(result)
                 }
-                "toolSource" => {
-                    let input: ToolSourceRead = decode(input)?;
+                "source" => {
+                    let input: HistorySourceRead = decode(input)?;
                     owner.session(&input.session_id).await?;
                     if input.through > *owner.store.subscribe_commits().borrow() {
                         return Err("agent_cursor_invalid".into());
@@ -287,8 +288,8 @@ impl Handler for Agent {
                         .map_err(|_| "agent_history_unavailable")?
                     {
                         let sequence = match input.source {
-                            ToolSourceReference::Sequence { sequence } => sequence,
-                            ToolSourceReference::ToolUse { tool_use_id } => owner
+                            HistorySourceReference::Sequence { sequence } => sequence,
+                            HistorySourceReference::ToolUse { tool_use_id } => owner
                                 .store
                                 .tool_source_sequence(
                                     &input.session_id,
@@ -298,11 +299,11 @@ impl Handler for Agent {
                                 .await
                                 .map_err(|_| "agent_history_unavailable")?,
                         };
-                        ToolSourcePage::Ready {
+                        HistorySourcePage::Ready {
                             through: input.through,
                             source: owner
                                 .store
-                                .tool_source(
+                                .history_source(
                                     &input.session_id,
                                     input.through,
                                     sequence,
@@ -315,7 +316,7 @@ impl Handler for Agent {
                                 .map_err(|_| "agent_history_unavailable")?,
                         }
                     } else {
-                        ToolSourcePage::Preparing {
+                        HistorySourcePage::Preparing {
                             through: input.through,
                         }
                     };

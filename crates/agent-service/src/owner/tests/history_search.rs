@@ -104,3 +104,117 @@ async fn history_search_preserves_empty_batches_and_exact_cursors_with_original_
         fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn search_hits_read_the_exact_field_when_history_body_is_absent_or_different() {
+    tokio::time::timeout(Duration::from_secs(45), async {
+        let fixture = Fixture::new("http://127.0.0.1:9/v1", 1, None).await;
+        let seed = fixture.create("Fields").await;
+        let configuration = fixture.owner.session(&seed).await.unwrap().configuration;
+        let session = format!("{}{}", fixture.owner.prefix, Uuid::new_v4().simple());
+        let owner = PluginSession {
+            session_id: session.clone(),
+            creator: Namespace::new("source.fixture", StorageScope::Profile).unwrap(),
+            fingerprint: "search-source-fields".into(), managed: false, authority_session_id: None,
+        };
+        fixture.store.begin_session_import(&owner, &Source {
+            adapter: "fixture".into(), session_id: "original".into(),
+        }, &configuration, 1).await.unwrap();
+        let body = format!("user-body-hit {}", "中😀\0\n".repeat(1400));
+        let thought = format!("thinking-hit {}", "中😀\0\n".repeat(1400));
+        let args = json!({"argument-key-hit": "原始😀\"\n".repeat(1400)});
+        let result = json!({"result-key-hit": "原始输出😀".repeat(1400)});
+        let records = [
+            Content::User { text: body.clone() },
+            Content::Assistant { text: String::new(), model: None, thinking: Some(thought.clone()) },
+            Content::Assistant { text: "body-hit-after-empty-thought".into(), model: None, thinking: Some("other-thinking-hit".into()) },
+            Content::ToolCall { call_id: "call".into(), name: "tool-name-hit".into(), input: Some(args.clone()) },
+            Content::ToolResult { call_id: "call".into(), output: result.clone(), is_error: false },
+        ].into_iter().enumerate().map(|(i, content)| Record {
+            source_message_id: format!("record-{i}"), source_turn_id: "turn".into(), timestamp: Some(1), content,
+        }).collect();
+        fixture.store.append_session_import(&session, 0, records).await.unwrap();
+        fixture.store.publish_session_import(&session, 5).await.unwrap();
+        let through = *fixture.store.subscribe_commits().borrow();
+        for (query, field, expected, is_tool) in [
+            ("user-body-hit", "body", body, false),
+            ("thinking-hit 中", "thinking", thought, false),
+            ("body-hit-after", "body", "body-hit-after-empty-thought".to_owned(), false),
+            ("other-thinking-hit", "thinking", "other-thinking-hit".to_owned(), false),
+            ("tool-name-hit", "tool_name", "tool-name-hit".to_owned(), true),
+            ("argument-key-hit", "arguments", serde_json::to_string(&args).unwrap(), true),
+            ("result-key-hit", "result", serde_json::to_string(&result).unwrap(), true),
+        ] {
+            let mut hit = None;
+            for _ in 0..8 {
+                let page = fixture.query("search", json!({"sessionId":session,"through":through,"after":0,"query":query,"includeInternal":false})).await.unwrap();
+                if page["kind"] == "preparing" { continue; }
+                assert_eq!(page["matches"].as_array().unwrap().len(), 1, "{query}");
+                hit = Some(page["matches"][0].clone()); break;
+            }
+            let hit = hit.unwrap();
+            assert_eq!(hit["field"], field);
+            let sequence = hit["cursor"]["sequence"].as_u64().unwrap();
+            for reverse in [false, true] {
+                let mut position = json!({"kind":if reverse {"tail"} else {"start"}});
+                let mut text = String::new();
+                let mut finished = false;
+                for _ in 0..16 {
+                    let page = fixture.query("source", json!({"sessionId":session,"through":through,
+                        "source":{"kind":"sequence","sequence":sequence},"field":field,"position":position})).await.unwrap();
+                    assert_eq!(page["kind"], "ready");
+                    assert_eq!(page["through"], through);
+                    let source = &page["source"];
+                    assert_eq!(source["sequence"], sequence);
+                    assert_eq!(source["field"], field);
+                    assert_eq!(source["totalBytes"], expected.len());
+                    assert_eq!(source["tool"].is_object(), is_tool);
+                    let part = source["text"].as_str().unwrap();
+                    assert!(part.len() <= 8192 && serde_json::to_vec(&page).unwrap().len() <= 64 * 1024);
+                    if reverse { text.insert_str(0, part); } else { text.push_str(part); }
+                    let offset = source["offset"].as_u64().unwrap() + if reverse {0} else {part.len() as u64};
+                    if offset == if reverse {0} else {expected.len() as u64} { finished = true; break; }
+                    position = json!({"kind":if reverse {"before"} else {"after"},"offset":offset});
+                }
+                assert!(finished);
+                assert_eq!(text, expected);
+            }
+            if is_tool {
+                let body = fixture.query("source", json!({"sessionId":session,"through":through,
+                    "source":{"kind":"sequence","sequence":sequence},"field":"body","position":{"kind":"start"}})).await.unwrap();
+                let page = fixture.query("history", json!({"sessionId":session,"through":through,
+                    "position":{"kind":"after","cursor":hit["cursor"]}})).await.unwrap();
+                assert_eq!(body["source"]["field"], "body");
+                assert_eq!(body["source"]["format"], "text");
+                assert_eq!(body["source"]["sequence"], sequence);
+                if body["source"]["totalBytes"] == 0 {
+                    assert_eq!(body["source"]["text"], "");
+                    assert_eq!(body["source"]["tool"]["kind"], "call");
+                    assert_eq!(body["source"]["tool"]["toolName"], "tool-name-hit");
+                    // A zero offset is already the end of an empty projected body.
+                    // Exact source must retain the row even when history advances.
+                    assert_ne!(page["chunks"][0]["sequence"], sequence);
+                } else {
+                    for field in ["sequence", "offset", "totalBytes", "text", "tool"] {
+                        assert_eq!(body["source"][field], page["chunks"][0][field], "tool body {field}");
+                    }
+                }
+            }
+            if query == "thinking-hit 中" {
+                let page = fixture.query("history", json!({"sessionId":session,"through":through,"position":{"kind":"after","cursor":hit["cursor"]}})).await.unwrap();
+                assert_ne!(page["chunks"][0]["sequence"], sequence, "body projection must not be mistaken for the search source");
+                for (key, value) in [("sessionId", json!("foreign")), ("through", json!(0)), ("field", json!("arguments"))] {
+                    let mut input = json!({"sessionId":session,"through":through,"source":{"kind":"sequence","sequence":sequence},"field":field,"position":{"kind":"start"}});
+                    input[key] = value;
+                    assert!(fixture.query("source", input).await.is_err(), "{key}");
+                }
+                let denied = fixture.app.client().start(fixture.binding(2).await, "source".into(),
+                    json!({"sessionId":session,"through":through,"source":{"kind":"sequence","sequence":sequence},"field":field,"position":{"kind":"start"}}),
+                    scope(&fixture.issuer, false), Attachments::new().into()).await;
+                assert!(denied.is_err());
+            }
+        }
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}

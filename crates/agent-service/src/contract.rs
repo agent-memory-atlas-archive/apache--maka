@@ -644,6 +644,8 @@ pub struct HistorySearch {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentHistoryMatch")]
 pub struct HistoryMatch {
+    /// Exact canonical field to read through the source query; history body may omit it.
+    pub field: maka_plugins::session::history::SourceField,
     /// Use this exact cursor with HistoryPosition::After and the same raw-event fence.
     pub cursor: Cursor,
     #[schemars(length(max = 384))]
@@ -696,14 +698,14 @@ pub enum HistoryPage {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[schemars(rename = "AgentToolSourceRead")]
-pub struct ToolSourceRead {
+#[schemars(rename = "AgentHistorySourceRead")]
+pub struct HistorySourceRead {
     #[schemars(length(min = 1, max = 128))]
     pub session_id: String,
     #[schemars(range(max = 9_007_199_254_740_991u64))]
     pub through: u64,
-    pub source: ToolSourceReference,
-    pub field: maka_plugins::session::history::ToolSourceField,
+    pub source: HistorySourceReference,
+    pub field: maka_plugins::session::history::SourceField,
     pub position: maka_plugins::session::history::SourcePosition,
 }
 #[derive(Deserialize, JsonSchema)]
@@ -713,8 +715,8 @@ pub struct ToolSourceRead {
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
-#[schemars(rename = "AgentToolSourceReference")]
-pub enum ToolSourceReference {
+#[schemars(rename = "AgentHistorySourceReference")]
+pub enum HistorySourceReference {
     Sequence {
         #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
         sequence: u64,
@@ -726,14 +728,14 @@ pub enum ToolSourceReference {
 }
 #[derive(Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-#[schemars(rename = "AgentToolSourcePage")]
-pub enum ToolSourcePage {
+#[schemars(rename = "AgentHistorySourcePage")]
+pub enum HistorySourcePage {
     Preparing {
         through: u64,
     },
     Ready {
         through: u64,
-        source: maka_plugins::session::history::ToolSource,
+        source: maka_plugins::session::history::HistorySource,
     },
 }
 
@@ -821,8 +823,8 @@ pub fn contract() -> Contract {
                     method::<HistorySearch, HistorySearchPage>(MethodMode::Query),
                 ),
                 (
-                    "toolSource".into(),
-                    method::<ToolSourceRead, ToolSourcePage>(MethodMode::Query),
+                    "source".into(),
+                    method::<HistorySourceRead, HistorySourcePage>(MethodMode::Query),
                 ),
                 (
                     "toolImage".into(),

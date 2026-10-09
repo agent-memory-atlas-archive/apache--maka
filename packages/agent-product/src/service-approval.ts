@@ -20,11 +20,11 @@
 import type {
   Action,
   ActionOutcome,
-  AgentToolSourcePage,
+  AgentHistorySourcePage,
   Component,
   Emission,
   SourcePosition,
-  ToolSource,
+  HistorySource,
 } from '../../plugin-sdk/src/index.js';
 import {
   serviceApprovalContract,
@@ -40,7 +40,7 @@ type State = {
   serial: number;
   identity: Pick<ServiceApprovalProps['record'], 'sessionId' | 'requestId' | 'request'>;
   decision: 'deny' | 'allow';
-  page: ToolSource | null;
+  page: HistorySource | null;
   pending: { key: string; position: SourcePosition } | null;
   position: SourcePosition;
   failed: boolean;
@@ -69,7 +69,7 @@ function read(state: State, actions: Action[], position: SourcePosition) {
     key,
     binding: 'agent',
     member: 0,
-    method: 'toolSource',
+    method: 'source',
     resources: {},
     input: {
       sessionId: state.identity.sessionId,
@@ -80,7 +80,7 @@ function read(state: State, actions: Action[], position: SourcePosition) {
     },
   });
 }
-function accept(state: State, value: AgentToolSourcePage, position: SourcePosition) {
+function accept(state: State, value: AgentHistorySourcePage, position: SourcePosition) {
   const request = state.identity.request;
   if (request.kind !== 'service_approval' || value.through !== request.through) {
     state.failed = true;
@@ -92,7 +92,7 @@ function accept(state: State, value: AgentToolSourcePage, position: SourcePositi
   if (
     next.field !== 'arguments' ||
     next.format !== 'json' ||
-    next.tool.kind !== 'call' ||
+    next.tool?.kind !== 'call' ||
     next.tool.toolUseId !== request.toolUseId ||
     next.tool.toolName !== request.toolName ||
     end > next.totalBytes ||
@@ -309,7 +309,7 @@ export function serviceApproval<N extends Node>(
         const result = input.event as ActionOutcome;
         if (result.status !== 'succeeded') state.failed = true;
         else {
-          const page = result.value as AgentToolSourcePage;
+          const page = result.value as AgentHistorySourcePage;
           accept(state, page, position);
           if (page.kind === 'preparing' && !state.failed && props.open)
             read(state, actions, position);

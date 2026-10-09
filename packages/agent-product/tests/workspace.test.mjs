@@ -3717,12 +3717,15 @@ for (const target of ['desktop', 'tui']) {
       assert.equal(client.output.actions.length, 0);
       client.page([fact(1001, { kind: 'opened' })], 1001);
       const completePage = () => {
-        const action = client.find('history');
+        const action = client.find('source');
         assert.equal(action.input.through, 1000);
-        assert.equal(action.input.position.cursor.sequence, sequence);
-        const { kind, cursor } = action.input.position;
-        let start = kind === 'after' ? cursor.offset : Math.max(0, cursor.offset - 8192);
-        let end = kind === 'before' ? cursor.offset : Math.min(bytes.length, start + 8192);
+        assert.deepEqual(action.input.source, { kind: 'sequence', sequence });
+        assert.equal(action.input.field, 'body');
+        const { kind, offset } = action.input.position;
+        const reverse = kind === 'before' || kind === 'tail';
+        const at = kind === 'tail' ? bytes.length : (offset ?? 0);
+        let start = reverse ? Math.max(0, at - 8192) : at;
+        let end = reverse ? at : Math.min(bytes.length, start + 8192);
         while ((bytes[start] & 0xc0) === 0x80) start++;
         while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--;
         client.complete(action, {
@@ -3730,23 +3733,29 @@ for (const target of ['desktop', 'tui']) {
           value: {
             kind: 'ready',
             through: 1000,
-            chunks: [chunkAt(start, end)],
-            before: null,
-            after: null,
+            source: {
+              sequence,
+              field: 'body',
+              format: 'text',
+              offset: start,
+              totalBytes: bytes.length,
+              text: bytes.subarray(start, end).toString('utf8'),
+              tool: null,
+            },
           },
         });
         assert.ok(client.state.source.chunk.text.isWellFormed());
         assert.ok(Buffer.byteLength(client.state.source.chunk.text) <= 8192);
       };
       client.component('sourceFirst');
-      const initial = client.find('history');
+      const initial = client.find('source');
       const expected = structuredClone(initial.input);
       const oldPage = structuredClone(client.timeline.source);
       client.complete(initial, {
         status: 'succeeded',
         value: { kind: 'preparing', through: 1000 },
       });
-      assert.deepEqual(client.find('history').input, expected);
+      assert.deepEqual(client.find('source').input, expected);
       assert.equal(client.timeline.source.text, oldPage.text);
       assert.equal(client.timeline.source.navigation, oldPage.navigation);
       completePage();
@@ -3787,13 +3796,13 @@ test('source errors retain exact original text and retry; closed or reopened rea
   const client = new Client().start({ through: 1000, chunks: [chunk] });
   client.component('source', { sequence });
   client.component('sourceFirst');
-  const action = client.find('history');
+  const action = client.find('source');
   client.complete(action, { status: 'failed', reason: 'not available' });
   assert.equal(client.timeline.source.text, 'tail');
   assert.equal(client.timeline.source.failed, true);
   client.component('sourceRetry');
-  assert.deepEqual(client.find('history').input, action.input);
-  const stale = client.find('history');
+  assert.deepEqual(client.find('source').input, action.input);
+  const stale = client.find('source');
   client.component('sourceBack');
   client.component('source', { sequence });
   const reopened = structuredClone(client.state.source);
@@ -3802,29 +3811,63 @@ test('source errors retain exact original text and retry; closed or reopened rea
     value: {
       kind: 'ready',
       through: 1000,
-      chunks: [historyChunk('wrong replacement', { sequence, totalBytes: 104 })],
-      before: null,
-      after: null,
+      source: {
+        sequence,
+        field: 'body',
+        format: 'text',
+        offset: 0,
+        totalBytes: 104,
+        text: 'wrong replacement',
+        tool: null,
+      },
     },
   });
   assert.deepEqual(client.state.source, reopened);
   client.component('sourceFirst');
-  client.query('history', {
+  client.query('source', {
     kind: 'ready',
     through: 1000,
-    chunks: [historyChunk('neighbor', { sequence: 401, totalBytes: 104 })],
-    before: null,
-    after: null,
+    source: {
+      sequence: 401,
+      field: 'body',
+      format: 'text',
+      offset: 0,
+      totalBytes: 104,
+      text: 'neighbor',
+      tool: null,
+    },
   });
   assert.equal(client.timeline.source.text, 'tail');
   assert.equal(client.timeline.source.failed, true);
   client.component('sourceRetry');
-  client.query('history', {
+  client.query('source', {
     kind: 'ready',
     through: 1000,
-    chunks: [historyChunk('wrong size', { sequence, totalBytes: 105 })],
-    before: null,
-    after: null,
+    source: {
+      sequence,
+      field: 'body',
+      format: 'text',
+      offset: 0,
+      totalBytes: 105,
+      text: 'wrong size',
+      tool: null,
+    },
+  });
+  assert.equal(client.timeline.source.text, 'tail');
+  assert.equal(client.timeline.source.failed, true);
+  client.component('sourceRetry');
+  client.query('source', {
+    kind: 'ready',
+    through: 1000,
+    source: {
+      sequence,
+      field: 'body',
+      format: 'text',
+      offset: 0,
+      totalBytes: 104,
+      text: '',
+      tool: null,
+    },
   });
   assert.equal(client.timeline.source.text, 'tail');
   assert.equal(client.timeline.source.failed, true);
@@ -4548,7 +4591,7 @@ for (const target of ['desktop', 'tui']) {
       assert.equal(client.timeline.source.kind, 'arguments');
       assert.equal(client.timeline.source.ready, false);
       assert.equal(client.timeline.source.text, '');
-      const first = client.find('toolSource');
+      const first = client.find('source');
       assert.deepEqual(first.input, {
         sessionId: session.id,
         through: 1000,
@@ -4556,15 +4599,15 @@ for (const target of ['desktop', 'tui']) {
         field: 'arguments',
         position: { kind: 'start' },
       });
-      client.query('toolSource', { kind: 'preparing', through: 1000 });
-      assert.deepEqual(client.find('toolSource').input, first.input);
-      client.complete(client.find('toolSource'), { status: 'failed', reason: 'unavailable' });
+      client.query('source', { kind: 'preparing', through: 1000 });
+      assert.deepEqual(client.find('source').input, first.input);
+      client.complete(client.find('source'), { status: 'failed', reason: 'unavailable' });
       assert.equal(client.timeline.source.failed, true);
       assert.equal(client.timeline.source.ready, false);
       client.component('sourceRetry');
-      assert.deepEqual(client.find('toolSource').input, first.input);
+      assert.deepEqual(client.find('source').input, first.input);
       const complete = () => {
-        const action = client.find('toolSource');
+        const action = client.find('source');
         assert.equal(action.input.through, 1000);
         const position = action.input.position;
         const reverse = ['before', 'tail'].includes(position.kind);
@@ -4602,13 +4645,19 @@ for (const target of ['desktop', 'tui']) {
       while (!client.timeline.source.atEnd) {
         client.component('sourceNext');
         const old = client.timeline.source.text;
-        client.complete(client.find('toolSource'), { status: 'failed', reason: 'interrupted' });
+        client.complete(client.find('source'), { status: 'failed', reason: 'interrupted' });
         assert.equal(client.timeline.source.text, old);
         client.component('sourceRetry');
         complete();
         forward.push(client.timeline.source.text);
       }
       assert.equal(forward.join(''), body);
+      client.component('sourceLast');
+      assert.equal(client.output.actions.length, 0);
+      client.component('sourceFirst');
+      complete();
+      client.component('sourceFirst');
+      assert.equal(client.output.actions.length, 0);
       client.component('sourceLast');
       complete();
       const reverse = [client.timeline.source.text];
@@ -4620,7 +4669,7 @@ for (const target of ['desktop', 'tui']) {
       assert.equal(reverse.join(''), body);
       const argumentKey = client.timeline.source.key;
       client.component('sourceNext');
-      const stale = client.find('toolSource');
+      const stale = client.find('source');
       client.component('sourceBack');
       client.component('toolSource', { sequence: 401 });
       const reopened = structuredClone(client.state.source);
@@ -4641,7 +4690,7 @@ for (const target of ['desktop', 'tui']) {
         },
       });
       assert.deepEqual(client.state.source, reopened);
-      client.query('toolSource', {
+      client.query('source', {
         kind: 'ready',
         through: 1000,
         source: {

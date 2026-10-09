@@ -547,7 +547,7 @@ async fn service_confirmation_reviews_exact_large_arguments_and_never_replaces_g
             let mut position = json!({"kind":"start"});
             let mut complete = String::new();
             loop {
-                let page = fixture.query("toolSource", json!({"sessionId":session,"through":through,
+                let page = fixture.query("source", json!({"sessionId":session,"through":through,
                     "source":{"kind":"tool_use","toolUseId":tool_use_id},"field":"arguments","position":position})).await.unwrap();
                 if page["kind"] == "preparing" { continue; }
                 assert_eq!(page["source"]["tool"]["toolUseId"], *tool_use_id);

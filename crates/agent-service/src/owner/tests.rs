@@ -1516,7 +1516,7 @@ async fn tool_source_uses_original_agent_grant_and_frozen_canonical_fields() {
     let mut position = json!({"kind":"start"});
     let mut complete = String::new();
     loop {
-        let page = fixture.query("toolSource", json!({"sessionId":session,"through":fence,"source":{"kind":"sequence","sequence":sequence},"field":"arguments","position":position})).await.unwrap();
+        let page = fixture.query("source", json!({"sessionId":session,"through":fence,"source":{"kind":"sequence","sequence":sequence},"field":"arguments","position":position})).await.unwrap();
         assert!(serde_json::to_vec(&page).unwrap().len() <= 64 * 1024);
         assert_eq!(page["kind"], "ready");
         assert_eq!(page["through"], fence);
@@ -1542,14 +1542,14 @@ async fn tool_source_uses_original_agent_grant_and_frozen_canonical_fields() {
     ] {
         let mut invalid = request.clone();
         invalid[key] = value;
-        assert!(fixture.query("toolSource", invalid).await.is_err());
+        assert!(fixture.query("source", invalid).await.is_err());
     }
     let denied = fixture
         .app
         .client()
         .start(
             fixture.binding(2).await,
-            "toolSource".into(),
+            "source".into(),
             request,
             scope(&fixture.issuer, false),
             Attachments::new().into(),
