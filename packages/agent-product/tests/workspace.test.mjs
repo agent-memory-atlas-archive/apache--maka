@@ -391,6 +391,7 @@ class Client {
               'sourceLast',
               'sourceBack',
               'sourceRetry',
+              'sourceField',
               'toolSource',
               'tailReady',
             ].includes(name)
@@ -3747,6 +3748,7 @@ for (const target of ['desktop', 'tui']) {
             source: {
               sequence,
               field: 'body',
+              fields: ['body'],
               format: 'text',
               offset: start,
               totalBytes: bytes.length,
@@ -3825,6 +3827,7 @@ test('source errors retain exact original text and retry; closed or reopened rea
       source: {
         sequence,
         field: 'body',
+        fields: ['body'],
         format: 'text',
         offset: 0,
         totalBytes: 104,
@@ -3842,6 +3845,7 @@ test('source errors retain exact original text and retry; closed or reopened rea
       timestamp: 1,
       sequence: 401,
       field: 'body',
+      fields: ['body'],
       format: 'text',
       offset: 0,
       totalBytes: 104,
@@ -3858,6 +3862,7 @@ test('source errors retain exact original text and retry; closed or reopened rea
     source: {
       sequence,
       field: 'body',
+      fields: ['body'],
       format: 'text',
       offset: 0,
       totalBytes: 105,
@@ -3874,6 +3879,7 @@ test('source errors retain exact original text and retry; closed or reopened rea
     source: {
       sequence,
       field: 'body',
+      fields: ['body'],
       format: 'text',
       offset: 0,
       totalBytes: 104,
@@ -4301,6 +4307,7 @@ for (const target of ['desktop', 'tui']) {
       const sourceRoute = {
         ...next.timeline,
         source: {
+          fields: [],
           key: 'source-page',
           text: 'source',
           atStart: true,
@@ -4640,6 +4647,7 @@ for (const target of ['desktop', 'tui']) {
               timestamp: 1,
               sequence: 400,
               field: 'arguments',
+              fields: ['arguments'],
               format: 'json',
               offset: start,
               totalBytes: bytes.length,
@@ -4695,6 +4703,7 @@ for (const target of ['desktop', 'tui']) {
             timestamp: 1,
             sequence: 400,
             field: 'arguments',
+            fields: ['arguments'],
             format: 'json',
             offset: 0,
             totalBytes: 2,
@@ -4711,6 +4720,7 @@ for (const target of ['desktop', 'tui']) {
           timestamp: 1,
           sequence: 401,
           field: 'result',
+          fields: ['result'],
           format: 'json',
           offset: 0,
           totalBytes: 2,
@@ -8984,6 +8994,7 @@ for (const target of ['tui', 'desktop']) {
         timestamp: 1,
         sequence: 100,
         field: 'arguments',
+        fields: ['arguments'],
         format: 'json',
         offset,
         totalBytes: utf8(body),
@@ -10024,5 +10035,106 @@ for (const target of ['tui', 'desktop']) {
       assert.ok(client.state.live.length <= 64);
       assert.ok(client.state.live.reduce((n, f) => n + f.text.length, 0) <= 16000);
     }
+  });
+}
+
+for (const target of ['tui', 'desktop']) {
+  test(target + ' service result and receipt share one fenced source reader', async () => {
+    const module = await import(
+      pathToFileURL(resolve(root, 'dist/packages/workspace/' + target + '.js'))
+    );
+    module.activate({ locale: 'en' });
+    const { component: timeline } = await import(
+      pathToFileURL(resolve(root, 'dist/packages/timeline/' + target + '.js'))
+    );
+    const tool = {
+      kind: 'result',
+      toolUseId: uuid(902),
+      toolName: 'Write',
+      isError: false,
+      image: false,
+    };
+    const client = new Client(module.component).start({
+      through: 1000,
+      chunks: [historyChunk('Saved', { sequence: 400, role: 'tool_result', tool })],
+    });
+    const window = structuredClone(client.state.window);
+    client.component('toolSource', { sequence: 400 });
+    const answer = (text, totalBytes = Buffer.byteLength(text)) => {
+      const action = client.find('source');
+      assert.equal(action.input.through, 1000);
+      assert.deepEqual(action.input.source, { kind: 'sequence', sequence: 400 });
+      client.complete(action, {
+        status: 'succeeded',
+        value: {
+          kind: 'ready',
+          through: 1000,
+          source: {
+            timestamp: 1,
+            sequence: 400,
+            role: 'tool_result',
+            fields: ['body', 'result', 'receipt'],
+            field: action.input.field,
+            format: 'json',
+            offset: 0,
+            totalBytes,
+            text,
+            tool,
+          },
+        },
+      });
+    };
+    answer('{"text":"Saved"}');
+    let rendered = timeline.mount(client.timeline, {});
+    assert.ok(modelButtons(rendered.frame.view).includes('source-field-receipt'));
+    rendered = timeline.event(
+      rendered.frame.state,
+      { kind: 'raw', key: 'source-field-receipt', event: {} },
+      client.timeline,
+      {},
+    );
+    assert.deepEqual(rendered.events, [{ name: 'sourceField', value: { field: 'receipt' } }]);
+    client.component('sourceField', { field: 'thinking' });
+    assert.equal(client.output.actions.length, 0, 'only advertised fields are readable');
+    client.component('sourceField', { field: 'receipt' });
+    assert.equal(client.timeline.source.ready, false);
+    assert.equal(
+      client.timeline.source.text,
+      '',
+      'old business text cannot appear under receipt heading',
+    );
+    assert.equal(client.find('source').input.field, 'receipt');
+    const pending = client.find('source');
+    client.component('sourceField', { field: 'result' });
+    assert.equal(
+      client.find('source').key,
+      pending.key,
+      'field changes wait for the original query',
+    );
+    client.complete(pending, { status: 'failed', reason: 'connection lost' });
+    client.component('sourceRetry');
+    assert.deepEqual(client.find('source').input, pending.input);
+    answer('{"reference":"original"}', 100);
+    assert.equal(client.timeline.source.kind, 'receipt');
+    rendered = timeline.mount(client.timeline, {});
+    assert.ok(JSON.stringify(rendered.frame.view).includes('Operation receipt'));
+    client.component('sourceNext');
+    const late = client.find('source');
+    client.component('sourceBack');
+    client.component('toolSource', { sequence: 400 });
+    answer('{"text":"Saved"}');
+    const current = structuredClone(client.state.source);
+    client.complete(late, { status: 'failed', reason: 'late old receipt' });
+    assert.deepEqual(client.state.source, current);
+    client.component('sourceField', { field: 'receipt' });
+    answer('{"reference":"original"}');
+    client.component('sourceField', { field: 'result' });
+    answer('{"text":"Saved"}');
+    client.component('sourceBack');
+    assert.deepEqual(
+      client.state.window,
+      window,
+      'one source reader leaves the original timeline intact',
+    );
   });
 }

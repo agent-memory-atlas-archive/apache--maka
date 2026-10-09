@@ -346,3 +346,89 @@ async fn journal_effect_runs_once_and_raw_is_delivered_only_after_t2_ack() {
         );
     }
 }
+
+fn operation(value: Value) -> ToolOutput {
+    ToolOutput::Operation(Box::new(serde_json::from_value(json!({
+        "reference": {
+            "source": {"stateDomain":"a".repeat(64),"deployment":"00000000-0000-0000-0000-000000000001","revision":1},
+            "namespace":["00000000-0000-0000-0000-000000000002"],
+            "export":"tools","method":"write","operation":"00000000-0000-0000-0000-000000000003",
+            "fingerprint":"b".repeat(64), "recovery":"journal_v1",
+            "contract":{"name":"fixture.Tools","version":1,"transport":"remote","interface":{"kind":"service","methods":{
+                "write":{"mode":"mutation","input":true,"output":true,"resources":{}}
+            }}}
+        },
+        "receipt":{"kind":"recorded","outcome":{"kind":"returned","value":value},"cleanup":{"kind":"confirmed"}}
+    })).unwrap()))
+}
+
+#[test]
+fn explicit_operation_preserves_receipt_but_projects_only_business_value() {
+    for value in [
+        Value::Null,
+        json!(false),
+        json!(42),
+        json!("中😀"),
+        json!({"receipt":{"kind":"business"},"lines":["中😀", "second"]}),
+    ] {
+        let output = operation(value.clone());
+        let event = write(&output);
+        assert_eq!(projection(&event), &DurableToolProjection::Json { value });
+        let Fact::ToolSettled {
+            outcome: ToolOutcome::Succeeded { raw, .. },
+            ..
+        } = &event.event().fact
+        else {
+            panic!()
+        };
+        assert_eq!(
+            decode_raw_tool_result(event.raw_payload().unwrap(), raw).unwrap(),
+            output
+        );
+        // Identical ordinary JSON remains an ordinary JSON value.
+        let json = ToolOutput::Json(output.to_json());
+        assert_eq!(
+            projection(&write(&json)),
+            &DurableToolProjection::Json {
+                value: json.to_json()
+            }
+        );
+    }
+}
+
+#[test]
+fn operation_raw_budget_covers_business_and_contract_and_requires_confirmed_result() {
+    let mut deep = Value::Null;
+    for _ in 0..65 {
+        deep = json!([deep]);
+    }
+    let mut bad_contract = operation(Value::Null);
+    let ToolOutput::Operation(reply) = &mut bad_contract else {
+        panic!()
+    };
+    let maka_plugin_core::contract::Interface::Service { methods } =
+        &mut reply.reference.contract.interface
+    else {
+        panic!()
+    };
+    methods.get_mut("write").unwrap().input = deep.clone();
+    let mut unknown = operation(Value::Null);
+    let ToolOutput::Operation(reply) = &mut unknown else {
+        panic!()
+    };
+    reply.receipt = maka_plugin_core::operation::Receipt::Unavailable {
+        diagnostic: "unknown".into(),
+    };
+    for output in [operation(deep), bad_contract, unknown] {
+        assert!(
+            EventWrite::tool_success(
+                "outcome".into(),
+                UNIX_EPOCH,
+                invocation(),
+                "operation".into(),
+                output.into()
+            )
+            .is_err()
+        );
+    }
+}

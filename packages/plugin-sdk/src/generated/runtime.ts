@@ -2225,13 +2225,8 @@ export type AgentHistorySearchPage =
  * An explicitly selected canonical transcript field, never an execution grant.
  */
 export type SourceField =
-  | 'body'
-  | 'thinking'
-  | 'tool_name'
-  | 'failure_message'
-  | 'error_class'
-  | 'arguments'
-  | 'result';
+  | ('body' | 'thinking' | 'tool_name' | 'failure_message' | 'error_class' | 'arguments' | 'result')
+  | 'receipt';
 export type AgentHistorySourceReference =
   | {
       sequence: number;

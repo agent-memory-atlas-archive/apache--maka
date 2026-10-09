@@ -141,6 +141,7 @@ export function serviceApproval<N extends Node>(
       messages: [],
       source: {
         kind: 'arguments',
+        fields: [],
         format: 'json',
         ready: page !== null,
         key: props.record.requestId + '-' + (page?.offset ?? 0),

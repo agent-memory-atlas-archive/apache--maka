@@ -30,8 +30,8 @@ use std::{
 };
 
 pub const MAX_RAW_TOOL_RESULT_BYTES: usize = 64 * 1024 * 1024;
-/// Embedded JSON root is depth zero. The typed raw envelopes add at most four
-/// containers, safely below serde_json's default 128-level decoder guard.
+/// Embedded JSON root is depth zero. Typed raw envelopes add at most seven
+/// containers, below serde_json's 128-level decoder guard.
 pub const MAX_RAW_TOOL_RESULT_JSON_DEPTH: usize = 64;
 pub const DURABLE_TOOL_PROJECTION_FAILURE_MESSAGE: &str =
     "The tool completed, but its model-visible result could not be projected safely.";
@@ -111,6 +111,24 @@ fn validate_raw_depth(output: &ToolOutput) -> Result<(), &'static str> {
     }
     let valid = match output {
         ToolOutput::Json(value) => within_limit(value, 0),
+        ToolOutput::Operation(reply) => {
+            let maka_plugin_core::operation::Receipt::Recorded {
+                outcome: maka_plugin_core::operation::OperationOutcome::Returned { value },
+                cleanup: maka_plugin_core::operation::OperationCleanup::Confirmed,
+            } = &reply.receipt
+            else {
+                return Err("successful operation output requires a confirmed returned receipt");
+            };
+            let maka_plugin_core::contract::Interface::Service { methods } =
+                &reply.reference.contract.interface
+            else {
+                return Err("operation output requires a service contract");
+            };
+            within_limit(value, 0)
+                && methods
+                    .values()
+                    .all(|method| within_limit(&method.input, 0) && within_limit(&method.output, 0))
+        }
         ToolOutput::Mcp(result) => {
             result
                 .structured_content
@@ -200,6 +218,18 @@ pub(crate) fn freeze(
                 ))
             }
         }
+        ToolOutput::Operation(reply) => match &reply.receipt {
+            maka_plugin_core::operation::Receipt::Recorded {
+                outcome: maka_plugin_core::operation::OperationOutcome::Returned { value },
+                cleanup: maka_plugin_core::operation::OperationCleanup::Confirmed,
+            } => Some((
+                DurableToolProjection::Json {
+                    value: value.clone(),
+                },
+                Vec::new(),
+            )),
+            _ => None,
+        },
         ToolOutput::Text(text) => (text.len() <= MAX_PROJECTION_BYTES).then(|| {
             (
                 DurableToolProjection::Json {

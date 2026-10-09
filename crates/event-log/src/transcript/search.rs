@@ -188,6 +188,11 @@ fn matching_text(row: &Value, query: &str) -> Option<(SourceField, String)> {
             "text" => find(SourceField::Result, row["content"]["text"].as_str()?),
             "json" => json_text(&row["content"]["value"], query)
                 .map(|preview| (SourceField::Result, preview)),
+            "operation" => json_text(
+                &row["content"]["reply"]["receipt"]["outcome"]["value"],
+                query,
+            )
+            .map(|preview| (SourceField::Result, preview)),
             _ => None, // No searching image bytes or storage locators.
         },
         "turn_state" if row["status"] == "failed" => find(
@@ -255,6 +260,17 @@ mod tests {
         assert!(matching_text(&row, "private-id").is_none());
         assert!(matching_text(&row, "hidden").is_none());
         assert!(matching_text(&row, "NEEDLE").is_none());
+        let operation = json!({"type":"tool_result","content":{"kind":"operation","reply":{
+            "reference":{"method":"private-reference"},"receipt":{"outcome":{"value":{"text":"business 中😀", "number":42}}}
+        }}});
+        assert_eq!(
+            matching_text(&operation, "中😀"),
+            Some((SourceField::Result, "business 中😀".into()))
+        );
+        assert!(matching_text(&operation, "private-reference").is_none());
+        // Shape alone does not change ordinary JSON's content semantics.
+        let ordinary = json!({"type":"tool_result","content":{"kind":"json","value":operation["content"]["reply"]}});
+        assert!(matching_text(&ordinary, "private-reference").is_some());
         assert!(
             matching_text(
                 &json!({"type":"tool_result","content":{"kind":"image","ref":"needle"}}),

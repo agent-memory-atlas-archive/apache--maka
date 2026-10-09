@@ -22,6 +22,8 @@ use crate::capability::CallResult;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub use maka_plugin_core::operation::OperationReply;
+
 pub mod audio;
 mod durable;
 mod mcp;
@@ -40,6 +42,8 @@ pub use media::{ToolContent, ToolSuccess};
 pub enum ToolOutput {
     Model(Box<crate::model::ModelGeneration>),
     Json(Value),
+    /// Explicit service operation evidence; never inferred from JSON shape.
+    Operation(Box<OperationReply>),
     Mcp(CallResult),
     Image(ImageOutput),
     Text(String),
@@ -94,6 +98,7 @@ impl ToolOutput {
         match self {
             Self::Model(result) => serde_json::to_value(result).expect("typed model result"),
             Self::Json(value) => value,
+            Self::Operation(reply) => serde_json::to_value(reply).expect("typed operation reply"),
             Self::Mcp(result) => {
                 serde_json::to_value(result).expect("MCP evidence contains only JSON values")
             }
@@ -106,6 +111,7 @@ impl ToolOutput {
         match self {
             Self::Model(result) => serde_json::to_value(result).expect("typed model result"),
             Self::Json(value) => value.clone(),
+            Self::Operation(reply) => serde_json::to_value(reply).expect("typed operation reply"),
             Self::Mcp(result) => {
                 serde_json::to_value(result).expect("MCP evidence contains only JSON values")
             }

@@ -8478,15 +8478,25 @@ export const contracts = {
               SourceField: {
                 description:
                   'An explicitly selected canonical transcript field, never an execution grant.',
-                type: 'string',
-                enum: [
-                  'body',
-                  'thinking',
-                  'tool_name',
-                  'failure_message',
-                  'error_class',
-                  'arguments',
-                  'result',
+                oneOf: [
+                  {
+                    type: 'string',
+                    enum: [
+                      'body',
+                      'thinking',
+                      'tool_name',
+                      'failure_message',
+                      'error_class',
+                      'arguments',
+                      'result',
+                    ],
+                  },
+                  {
+                    description:
+                      'The original service operation observation, separate from its returned value.',
+                    type: 'string',
+                    const: 'receipt',
+                  },
                 ],
               },
               Cursor: {
@@ -8707,15 +8717,25 @@ export const contracts = {
               SourceField: {
                 description:
                   'An explicitly selected canonical transcript field, never an execution grant.',
-                type: 'string',
-                enum: [
-                  'body',
-                  'thinking',
-                  'tool_name',
-                  'failure_message',
-                  'error_class',
-                  'arguments',
-                  'result',
+                oneOf: [
+                  {
+                    type: 'string',
+                    enum: [
+                      'body',
+                      'thinking',
+                      'tool_name',
+                      'failure_message',
+                      'error_class',
+                      'arguments',
+                      'result',
+                    ],
+                  },
+                  {
+                    description:
+                      'The original service operation observation, separate from its returned value.',
+                    type: 'string',
+                    const: 'receipt',
+                  },
                 ],
               },
               SourcePosition: {
@@ -8908,15 +8928,25 @@ export const contracts = {
               SourceField: {
                 description:
                   'An explicitly selected canonical transcript field, never an execution grant.',
-                type: 'string',
-                enum: [
-                  'body',
-                  'thinking',
-                  'tool_name',
-                  'failure_message',
-                  'error_class',
-                  'arguments',
-                  'result',
+                oneOf: [
+                  {
+                    type: 'string',
+                    enum: [
+                      'body',
+                      'thinking',
+                      'tool_name',
+                      'failure_message',
+                      'error_class',
+                      'arguments',
+                      'result',
+                    ],
+                  },
+                  {
+                    description:
+                      'The original service operation observation, separate from its returned value.',
+                    type: 'string',
+                    const: 'receipt',
+                  },
                 ],
               },
               SourceFormat: {

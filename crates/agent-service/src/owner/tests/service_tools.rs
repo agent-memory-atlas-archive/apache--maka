@@ -738,6 +738,119 @@ async fn installed_javascript_service_is_a_real_model_tool_with_business_project
         let text = serde_json::to_string(&raw).unwrap();
         assert!(text.contains("journal_v1"));
         assert!(text.contains("00000000-0000-0000-0000-000000000015"));
+        assert!(matches!(
+            raw,
+            maka_runtime::tool_output::ToolOutput::Operation(_)
+        ));
+        let through = *fixture.store.subscribe_commits().borrow();
+        while !fixture
+            .store
+            .prepare_transcript(&session, through, 32)
+            .await
+            .unwrap()
+        {}
+        use maka_plugins::session::history::{
+            Page, Position, SourceField, SourceFormat, SourcePosition,
+        };
+        let Page::Ready { chunks, .. } = fixture
+            .store
+            .history_text(
+                &session,
+                through,
+                Position::Start,
+                false,
+                8192,
+                8,
+                64 * 1024,
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("ready")
+        };
+        let result = chunks
+            .iter()
+            .find(|chunk| chunk.role == maka_plugins::session::history::Role::ToolResult)
+            .unwrap();
+        assert!(
+            result.text.is_empty(),
+            "numeric business result must not display receipt strings"
+        );
+        for (field, expected) in [
+            (
+                SourceField::Result,
+                serde_json::to_string(&json!({"effects":1})).unwrap(),
+            ),
+            (
+                SourceField::Receipt,
+                serde_json::to_string(&raw.to_json()).unwrap(),
+            ),
+        ] {
+            for reverse in [false, true] {
+                let mut position = if reverse {
+                    SourcePosition::Tail
+                } else {
+                    SourcePosition::Start
+                };
+                let mut actual = String::new();
+                loop {
+                    let source = fixture
+                        .store
+                        .history_source(
+                            &session,
+                            through,
+                            result.sequence,
+                            field,
+                            position,
+                            13,
+                            64 * 1024,
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(source.format, SourceFormat::Json);
+                    assert_eq!(
+                        source.fields,
+                        [SourceField::Body, SourceField::Result, SourceField::Receipt]
+                    );
+                    assert_eq!(source.total_bytes, expected.len() as u64);
+                    if reverse {
+                        actual.insert_str(0, &source.text);
+                    } else {
+                        actual.push_str(&source.text);
+                    }
+                    let end = source.offset + source.text.len() as u64;
+                    if (reverse && source.offset == 0) || (!reverse && end == source.total_bytes) {
+                        break;
+                    }
+                    position = if reverse {
+                        SourcePosition::Before {
+                            offset: source.offset,
+                        }
+                    } else {
+                        SourcePosition::After { offset: end }
+                    };
+                }
+                assert_eq!(actual, expected);
+            }
+        }
+        let matches = fixture
+            .store
+            .search_transcript(
+                &session,
+                maka_event_log::transcript::search::TranscriptSearch {
+                    through,
+                    after: 0,
+                    query: "journal_v1".into(),
+                    include_internal: true,
+                    max_matches: 64,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(
+            matches.matches.is_empty(),
+            "receipt metadata is not conversation search text"
+        );
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
     })

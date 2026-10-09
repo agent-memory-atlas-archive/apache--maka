@@ -22,6 +22,20 @@ import type { Theme } from './contracts.js';
 import { copy } from './locale.js';
 import { fill, compactLabel, type Node, type Presentation } from './view.js';
 
+export function sourceFieldLabel(locale: string, field: HistorySource['field']): string {
+  const text = copy(locale);
+  return {
+    body: text.findFieldBody,
+    thinking: text.findFieldThinking,
+    tool_name: text.findFieldTool,
+    arguments: text.findFieldArguments,
+    result: text.findFieldResult,
+    receipt: text.findFieldReceipt,
+    failure_message: text.findFieldFailure,
+    error_class: text.findFieldError,
+  }[field];
+}
+
 // Host-recorded milliseconds; live deltas never synthesize a message time.
 function timeLabel(millis: number | null): string | null {
   if (millis === null) return null;

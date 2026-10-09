@@ -154,6 +154,7 @@ export interface NavigationProps {
 }
 export interface SourcePage {
   kind: 'message' | SourceField;
+  fields: SourceField[];
   format: SourceFormat;
   ready: boolean;
   key: string;
@@ -401,6 +402,12 @@ export const timelineContract = component(
       anyOf: [
         object({
           kind: { anyOf: [{ const: 'message' }, { $ref: '#/$defs/SourceField' }] },
+          fields: {
+            type: 'array',
+            maxItems: 8,
+            uniqueItems: true,
+            items: { $ref: '#/$defs/SourceField' },
+          },
           format: { $ref: '#/$defs/SourceFormat' },
           ready: { type: 'boolean' },
           key: string,
@@ -441,6 +448,7 @@ export const timelineContract = component(
     sourceLast: object({}),
     sourceBack: object({}),
     sourceRetry: object({}),
+    sourceField: withDefs(object({ field: { $ref: '#/$defs/SourceField' } })),
     searchClosed: object({}),
     tailReady: object({
       landing: { type: 'integer', minimum: 0 },

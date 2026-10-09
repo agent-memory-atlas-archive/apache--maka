@@ -181,6 +181,9 @@ pub enum ToolContent {
     Json {
         value: Value,
     },
+    Operation {
+        reply: Box<maka_runtime::tool_output::OperationReply>,
+    },
     Image {
         #[serde(rename = "mimeType")]
         mime_type: String,
@@ -206,6 +209,9 @@ impl ToolContent {
                         reference: image.reference.clone(),
                     },
                     ToolOutput::Text(text) => Self::Text { text: text.clone() },
+                    ToolOutput::Operation(reply) => Self::Operation {
+                        reply: reply.clone(),
+                    },
                     value => Self::Json {
                         value: value.to_json(),
                     },

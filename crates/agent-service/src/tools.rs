@@ -30,7 +30,7 @@ use maka_plugin_core::{
 use maka_plugins::call::{Attachments, Identity};
 use maka_runtime::{
     tool_call::ToolRejection,
-    tool_output::{DurableToolProjection, ToolOutput, ToolSuccess},
+    tool_output::{ToolOutput, ToolSuccess},
     tools::{
         PreparationFuture, PreparedEffect, ToolCallContext, ToolDefinition, ToolError, ToolHandler,
         ToolNesting, ToolPreparer, ToolRegistration, ToolSemantics,
@@ -312,7 +312,6 @@ fn operation_id(context: &ToolCallContext) -> Uuid {
     Uuid::from_bytes(bytes)
 }
 fn mutation_result(reply: OperationReply) -> Result<ToolSuccess, ToolError> {
-    let raw = serde_json::to_value(&reply).expect("Host operation observation");
     match &reply.receipt {
         Receipt::Recorded { outcome, cleanup } => {
             if *cleanup != OperationCleanup::Confirmed {
@@ -321,9 +320,7 @@ fn mutation_result(reply: OperationReply) -> Result<ToolSuccess, ToolError> {
                 ));
             }
             match outcome {
-                OperationOutcome::Returned { value } => Ok(ToolSuccess::projected(
-                    ToolOutput::Json(raw), DurableToolProjection::Json { value: value.clone() },
-                )),
+                OperationOutcome::Returned { .. } => Ok(ToolOutput::Operation(Box::new(reply)).into()),
                 OperationOutcome::Unknown { .. } | OperationOutcome::Unresolved =>
                     Err(ToolError::OperationUnknown { message: "Native service result is unknown; inspect its original receipt before retrying.".into(), observation: Box::new(reply) }),
             }

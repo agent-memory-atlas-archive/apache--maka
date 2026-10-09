@@ -47,7 +47,7 @@ import {
   type ConversationSearch,
 } from './conversation-search.js';
 import { copy } from './locale.js';
-import { messageView } from './message-view.js';
+import { messageView, sourceFieldLabel } from './message-view.js';
 import { output, fill, pixels, compactLabel, type Presentation, type Node } from './view.js';
 interface Revision {
   revision: number;
@@ -448,6 +448,17 @@ export function components<N extends Node>(
     const controls: N[] = props.source
       ? [
           ui.button('source-back', text.sourceBack),
+          ...props.source.fields
+            .filter(
+              (field) => field !== (props.source!.kind === 'message' ? 'body' : props.source!.kind),
+            )
+            .map((field) =>
+              ui.button(
+                'source-field-' + field,
+                sourceFieldLabel(props.locale, field),
+                props.source!.loading,
+              ),
+            ),
           ...(!props.source.atStart
             ? [
                 ui.button('source-first', text.sourceFirst, props.source.loading),
@@ -571,7 +582,9 @@ export function components<N extends Node>(
                           ? text.toolArguments
                           : source.kind === 'result'
                             ? text.toolResult
-                            : text.sourceTitle,
+                            : source.kind === 'receipt'
+                              ? text.findFieldReceipt
+                              : text.sourceTitle,
                         20,
                         props.theme.text,
                         600,
@@ -870,6 +883,13 @@ export function components<N extends Node>(
                         ? 'sourceRetry'
                         : null;
           if (event) out.events.push({ name: event, value: {} });
+          const field = source.fields.find((field) => input.key === 'source-field-' + field);
+          if (
+            !source.loading &&
+            field &&
+            field !== (source.kind === 'message' ? 'body' : source.kind)
+          )
+            out.events.push({ name: 'sourceField', value: { field } });
         } else if (input.kind === 'raw' && !props.loading) {
           const tool = props.messages.find(
             (message) =>

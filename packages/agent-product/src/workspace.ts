@@ -178,6 +178,7 @@ export interface State {
     loading: boolean;
     failed: boolean;
     field: SourceField;
+    fields: SourceField[];
     format: SourceFormat | null;
     ready: boolean;
     position: SourcePosition;
@@ -1197,6 +1198,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
       if (
         next.sequence !== request.sequence ||
         next.field !== request.field ||
+        !next.fields.includes(next.field) ||
         (!next.text && next.totalBytes > 0) ||
         end > next.totalBytes ||
         (source.ready &&
@@ -1217,6 +1219,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         text: next.text,
         tool: next.tool,
       };
+      source.fields = next.fields;
       source.format = next.format;
       source.ready = true;
       source.loading = false;
@@ -1620,6 +1623,7 @@ function frame<N extends Node>(
       source: state.source
         ? {
             kind: state.source.field === 'body' ? 'message' : state.source.field,
+            fields: state.source.fields,
             format: state.source.format ?? 'text',
             ready: state.source.ready,
             key: `${state.source.field}-${state.source.through}-${state.source.chunk.sequence}-${state.source.chunk.offset}`,
@@ -1661,6 +1665,7 @@ function frame<N extends Node>(
       sourceLast: 'source-last',
       sourceBack: 'source-back',
       sourceRetry: 'source-retry',
+      sourceField: 'source-field',
       tailReady: 'tail-ready',
       searchClosed: 'search-closed',
     },
@@ -2780,7 +2785,16 @@ export function workspace<N extends Node>(
         } else if (input.child === 'timeline' && state.source) {
           const source = state.source;
           if (input.name === 'sourceBack') state.source = null;
-          else if (!source.loading) {
+          else if (!source.loading && input.name === 'sourceField') {
+            const field = (input.event as { field: SourceField }).field;
+            if (field !== source.field && source.fields.includes(field)) {
+              source.field = field;
+              source.ready = false;
+              source.format = null;
+              source.chunk = { ...source.chunk, offset: 0, totalBytes: 0, text: '' };
+              readHistorySource(state, actions, { kind: 'start' });
+            }
+          } else if (!source.loading) {
             const chunk = source.chunk;
             const end = chunk.offset + utf8Bytes(chunk.text);
             const position: SourcePosition | null =
@@ -2814,6 +2828,7 @@ export function workspace<N extends Node>(
                 loading: false,
                 failed: false,
                 field: chunk.field ?? 'body',
+                fields: [chunk.field ?? 'body'],
                 format: 'text',
                 ready: true,
                 position: { kind: 'after', offset: chunk.offset },
@@ -2831,6 +2846,7 @@ export function workspace<N extends Node>(
                 loading: false,
                 failed: false,
                 field: chunk.role === 'tool_call' ? 'arguments' : 'result',
+                fields: [],
                 format: null,
                 ready: false,
                 position: { kind: 'start' },

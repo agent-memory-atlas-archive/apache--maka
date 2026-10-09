@@ -38,15 +38,18 @@ fn source_sql() -> String {
     WHEN 'arguments' THEN CASE WHEN json_extract(payload, '$.type') = 'tool_call' THEN payload -> '$.args' END
     WHEN 'result' THEN CASE WHEN json_extract(payload, '$.type') = 'tool_result' THEN
         CASE json_extract(payload, '$.content.kind') WHEN 'text' THEN json_extract(payload, '$.content.text')
-        WHEN 'json' THEN payload -> '$.content.value' WHEN 'image' THEN payload -> '$.content' END END END AS body,
-    CASE ?3 WHEN 'arguments' THEN 'json' WHEN 'result' THEN
+        WHEN 'json' THEN payload -> '$.content.value' WHEN 'image' THEN payload -> '$.content'
+        WHEN 'operation' THEN payload -> '$.content.reply.receipt.outcome.value' END END
+    WHEN 'receipt' THEN CASE WHEN json_extract(payload, '$.type') = 'tool_result' AND json_extract(payload, '$.content.kind') = 'operation' THEN payload -> '$.content.reply' END END AS body,
+    CASE ?3 WHEN 'arguments' THEN 'json' WHEN 'receipt' THEN 'json' WHEN 'result' THEN
         CASE json_extract(payload, '$.content.kind') WHEN 'text' THEN 'text' WHEN 'json' THEN 'json'
-        WHEN 'image' THEN 'image_descriptor' END ELSE 'text' END AS format,
+        WHEN 'image' THEN 'image_descriptor' WHEN 'operation' THEN 'json' END ELSE 'text' END AS format,
     json_extract(payload, '$.type') AS role,
     json_extract(payload, '$.ts') AS timestamp,
     json_type(payload, '$.thinking.text') IS 'text' AS thinking,
     json_type(payload, '$.failureMessage') IS 'text' AS failure_message,
-    json_type(payload, '$.errorClass') IS 'text' AS error_class
+    json_type(payload, '$.errorClass') IS 'text' AS error_class,
+    json_extract(payload, '$.content.kind') IS 'operation' AS operation
     FROM transcript_rows WHERE session_id = ?1 AND sequence = ?2)", body = super::history::BODY)
 }
 
@@ -119,6 +122,7 @@ impl EventLog {
             SourceField::ErrorClass => "error_class",
             SourceField::Arguments => "arguments",
             SourceField::Result => "result",
+            SourceField::Receipt => "receipt",
         };
         self.connection
             .run(move |connection| {
@@ -136,9 +140,9 @@ impl EventLog {
                     }
                     let sql = source_sql();
                     let header = format!(
-                        "{sql} SELECT format, length(CAST(body AS BLOB)), role, thinking, failure_message, error_class, timestamp FROM source"
+                        "{sql} SELECT format, length(CAST(body AS BLOB)), role, thinking, failure_message, error_class, timestamp, operation FROM source"
                     );
-                    let (format, total, role, thinking, failure_message, error_class, timestamp): (Option<String>, Option<i64>, String, bool, bool, bool, i64) =
+                    let (format, total, role, thinking, failure_message, error_class, timestamp, operation): (Option<String>, Option<i64>, String, bool, bool, bool, i64, bool) =
                         sqlx::query_as(sqlx::AssertSqlSafe(header.as_str()))
                             .bind(&session)
                             .bind(sequence_sql)
@@ -161,7 +165,7 @@ impl EventLog {
                             vec![SourceField::Thinking, SourceField::Body]
                         } else { vec![SourceField::Body] }),
                         "tool_call" => (SourceRole::ToolCall, vec![SourceField::ToolName, SourceField::Body, SourceField::Arguments]),
-                        "tool_result" => (SourceRole::ToolResult, vec![SourceField::Body, SourceField::Result]),
+                        "tool_result" => (SourceRole::ToolResult, if operation { vec![SourceField::Body, SourceField::Result, SourceField::Receipt] } else { vec![SourceField::Body, SourceField::Result] }),
                         "turn_state" => (SourceRole::Failure, [
                             error_class.then_some(SourceField::ErrorClass),
                             failure_message.then_some(SourceField::FailureMessage),

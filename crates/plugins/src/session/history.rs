@@ -238,6 +238,8 @@ pub enum SourceField {
     ErrorClass,
     Arguments,
     Result,
+    /// The original service operation observation, separate from its returned value.
+    Receipt,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]

@@ -34,7 +34,7 @@ import type {
 } from '../../plugin-sdk/src/index.js';
 import type { TimelineProps } from './contracts.js';
 import { copy } from './locale.js';
-import { messageView } from './message-view.js';
+import { messageView, sourceFieldLabel } from './message-view.js';
 import { fill, compactLabel, type Node, type Presentation } from './view.js';
 
 export interface ConversationSearch {
@@ -629,16 +629,6 @@ export function historyView<N extends Node>(
     text = copy(props.locale),
     preview = history.preview;
   const header = preview?.sections.find((section) => section.source)?.source;
-  const fieldLabel = (field: HistorySource['field']) =>
-    ({
-      body: text.findFieldBody,
-      thinking: text.findFieldThinking,
-      tool_name: text.findFieldTool,
-      arguments: text.findFieldArguments,
-      result: text.findFieldResult,
-      failure_message: text.findFieldFailure,
-      error_class: text.findFieldError,
-    })[field];
   const sections =
     preview?.sections.map((section) => {
       const source = section.source,
@@ -653,7 +643,12 @@ export function historyView<N extends Node>(
       return ui.box(
         'find-section-' + section.field,
         [
-          ui.text('find-field-' + section.field, fieldLabel(section.field), 13, props.theme.muted),
+          ui.text(
+            'find-field-' + section.field,
+            sourceFieldLabel(props.locale, section.field),
+            13,
+            props.theme.muted,
+          ),
           ...(source
             ? [
                 presentation.slot(
@@ -797,7 +792,12 @@ export function historyView<N extends Node>(
           ...(history.failed ? [ui.button('find-restart', text.findFailed)] : []),
           ...(preview
             ? [
-                ui.text('find-preview-label', fieldLabel(preview.hit.field), 13, props.theme.muted),
+                ui.text(
+                  'find-preview-label',
+                  sourceFieldLabel(props.locale, preview.hit.field),
+                  13,
+                  props.theme.muted,
+                ),
                 ui.text(
                   'find-preview-hit',
                   compactLabel(preview.hit.preview, 160),

@@ -42,6 +42,7 @@ pub(super) const BODY: &str = "COALESCE(CASE json_extract(payload, '$.type')
                     WHEN 'tool_result' THEN CASE json_extract(payload, '$.content.kind')
                         WHEN 'text' THEN json_extract(payload, '$.content.text')
                         WHEN 'json' THEN (SELECT group_concat(atom, char(10)) FROM json_tree(payload, '$.content.value') WHERE type = 'text')
+                        WHEN 'operation' THEN (SELECT group_concat(atom, char(10)) FROM json_tree(payload, '$.content.reply.receipt.outcome.value') WHERE type = 'text')
                         ELSE '' END
                     ELSE '' END, '')";
 

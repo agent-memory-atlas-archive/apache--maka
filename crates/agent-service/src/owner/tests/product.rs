@@ -1279,6 +1279,21 @@ process.stdout.write(output.outputFiles[0].text);
             std::thread::yield_now();
         };
         assert!(!screen(&formatted_thinking).contains("**Reasoned decision**"));
+        // The preceding service result exposes business JSON and the exact
+        // original receipt through one retained, fenced source reader.
+        click(&mut presenter, "[ Show details ]");
+        click(&mut presenter, "[ Tool result ]");
+        await_screen(&mut presenter, "completed");
+        assert!(!screen(&draw(&mut presenter)).contains("journal_v1"));
+        click(&mut presenter, "[ Operation receipt ]");
+        await_screen(&mut presenter, "Operation receipt");
+        // The receipt can span excerpts; its beginning retains the original
+        // reference, while the business result is separately selectable.
+        await_screen(&mut presenter, "reference");
+        click(&mut presenter, "[ Tool result ]");
+        await_screen(&mut presenter, "completed");
+        click(&mut presenter, "[ Back to conversation ]");
+        click(&mut presenter, "[ Hide details ]");
         click(&mut presenter, "[ Read message source ]");
         await_screen(&mut presenter, "[ Back to conversation ]");
         await_screen(&mut presenter, "**Reasoned decision**");
