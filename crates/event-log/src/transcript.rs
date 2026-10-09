@@ -27,6 +27,7 @@ pub mod navigation;
 mod read;
 pub mod search;
 mod source;
+mod tool_metadata;
 mod tools;
 use crate::{EventLog, StoreError};
 use maka_presentation::{InvocationView, MAX_TOOL_ROW_BYTES, ProjectionError, Row, watermark};

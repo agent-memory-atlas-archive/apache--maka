@@ -17,9 +17,12 @@
  * under the License.
  */
 
-use super::read::{prepared, sql_number};
+use super::{
+    read::{prepared, sql_number},
+    tool_metadata::read as tool_metadata,
+};
 use crate::{EventLog, StoreError, sequence_number};
-use maka_plugins::session::history::{Chunk, Cursor, HistoryField, Page, Position, Role, Tool};
+use maka_plugins::session::history::{Chunk, Cursor, HistoryField, Page, Position, Role};
 use sqlx::{Connection, Row, SqliteConnection};
 
 // One body projection for conversation windows and exact source reads.
@@ -249,48 +252,6 @@ impl EventLog {
             Ok(Page::Ready { through, chunks, before, after })
         })).await
     }
-}
-
-pub(super) async fn tool_metadata(
-    tx: &mut SqliteConnection,
-    session: &str,
-    sequence: u64,
-    through: i64,
-    budget: usize,
-) -> Result<Option<Tool>, StoreError> {
-    // Select scalar canonical facts only. A result's call must belong to this
-    // Session and be visible at this exact fence, including copied histories.
-    // Reject oversized metadata before transporting/allocating its JSON string.
-    let (bytes, encoded): (i64, Option<String>) = sqlx::query_as(
-        "WITH metadata AS (SELECT CASE json_extract(source.payload, '$.type')
-            WHEN 'tool_call' THEN json_object('kind', 'call',
-                'toolUseId', source.message_id, 'toolName', json_extract(source.payload, '$.toolName'))
-            WHEN 'tool_result' THEN json_object('kind', 'result',
-                'toolUseId', json_extract(source.payload, '$.toolUseId'),
-                'toolName', (SELECT json_extract(call.payload, '$.toolName') FROM transcript_rows call
-                    WHERE call.session_id = source.session_id AND call.sequence <= ?3 AND call.sequence < source.sequence
-                      AND call.message_id = json_extract(source.payload, '$.toolUseId')
-                      AND json_extract(call.payload, '$.type') = 'tool_call' LIMIT 1),
-                'image', json(CASE json_extract(source.payload, '$.content.kind') WHEN 'image' THEN 'true' ELSE 'false' END),
-                'isError', json(CASE json_extract(source.payload, '$.isError') WHEN 1 THEN 'true' ELSE 'false' END))
-            END AS value FROM transcript_rows source WHERE source.session_id = ?1 AND source.sequence = ?2)
-         SELECT length(CAST(value AS BLOB)), CASE WHEN length(CAST(value AS BLOB)) <= ?4 THEN value END FROM metadata",
-    )
-    .bind(session)
-    .bind(sql_number(sequence)?)
-    .bind(through)
-    .bind(budget as i64)
-    .fetch_one(tx)
-    .await?;
-    if bytes < 0 {
-        return Err(invalid("invalid history tool metadata size"));
-    }
-    if bytes as usize > budget {
-        return Ok(None);
-    }
-    Ok(Some(serde_json::from_str(&encoded.ok_or_else(|| {
-        invalid("missing history tool metadata")
-    })?)?))
 }
 
 async fn boundaries(

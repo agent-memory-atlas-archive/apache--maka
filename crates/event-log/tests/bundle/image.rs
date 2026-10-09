@@ -131,7 +131,7 @@ async fn rows(
         };
         for chunk in chunks {
             if chunk.role == Role::ToolResult
-                && let Some(Tool::Result { tool_use_id, .. }) = chunk.tool
+                && let Some(Tool { tool_use_id, .. }) = chunk.tool
             {
                 for step in ["generated", "borrowed", "missing", "later", "current"] {
                     let expected = maka_presentation::tool_message_id(

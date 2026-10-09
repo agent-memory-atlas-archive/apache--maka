@@ -34,6 +34,7 @@ import type {
 } from '../../plugin-sdk/src/index.js';
 import type { TimelineProps } from './contracts.js';
 import { copy } from './locale.js';
+import { toolCards } from './tool-cards.js';
 import { messageView, sourceFieldLabel } from './message-view.js';
 import { fill, compactLabel, type Node, type Presentation } from './view.js';
 
@@ -192,7 +193,12 @@ export function searchEvent(
             hit.active!.path.length === 1 && hit.active!.path[0] === 'text-' + message.contentKey,
         );
         if (message) {
-          if (!state.expanded.includes(message.id)) state.expanded.push(message.id);
+          const id = toolCards(props.messages).find(
+            (card) =>
+              card.message.contentKey === message.contentKey ||
+              card.result?.contentKey === message.contentKey,
+          )!.message.id;
+          if (!state.expanded.includes(id)) state.expanded.push(id);
           command(state, { kind: 'reveal_source', ...hit.active, find_sequence: hit.sequence });
         }
       }

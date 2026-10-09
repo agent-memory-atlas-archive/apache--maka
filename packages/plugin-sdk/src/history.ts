@@ -47,6 +47,8 @@ export interface HistoryChunk extends HistoryCursor {
   readonly role: 'user' | 'assistant' | 'tool_call' | 'tool_result';
   readonly totalBytes: number;
   readonly text: string;
+  /** References verified at this window's fence; they confer no execution authority. */
+  readonly tool: import('./generated/runtime.js').HistoryTool | null;
   /** User attachment descriptors, only in the first chunk of each message. */
   readonly attachments: readonly import('./execution.js').Attachment[];
 }

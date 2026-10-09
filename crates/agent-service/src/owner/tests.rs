@@ -1531,7 +1531,7 @@ async fn tool_source_uses_original_agent_grant_and_frozen_canonical_fields() {
         assert_eq!(page["through"], fence);
         let source = &page["source"];
         assert_eq!(source["format"], "json");
-        assert_eq!(source["tool"]["toolName"], "Count");
+        assert_eq!(source["tool"]["call"]["name"], "Count");
         let text = source["text"].as_str().unwrap();
         assert!(text.len() <= 8192);
         complete.push_str(text);

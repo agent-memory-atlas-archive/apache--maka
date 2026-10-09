@@ -88,7 +88,7 @@ export function messageView<N extends Node>(
             : message.role === 'failure'
               ? text.findFieldFailure
               : text.toolOutput;
-  const name = tool && message.tool?.toolName;
+  const name = tool && message.tool?.call?.name;
   const time =
     message.role === 'user' || message.role === 'assistant' ? timeLabel(message.timestamp) : null;
   const label = name
@@ -125,7 +125,7 @@ export function messageView<N extends Node>(
       ...(message.continued
         ? [ui.text('continued-' + message.id, text.partial, 12, theme.muted)]
         : []),
-      ...(tool && message.tool?.kind === 'result' && message.tool.isError
+      ...(tool && message.tool?.result?.isError
         ? [ui.text('tool-error-' + message.id, text.toolReportedError, 13, theme.muted)]
         : []),
       ...(tool

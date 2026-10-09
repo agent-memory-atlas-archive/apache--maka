@@ -18,8 +18,8 @@
  */
 
 use super::{
-    history::tool_metadata,
     read::{prepared, sql_number},
+    tool_metadata::read as tool_metadata,
 };
 use crate::{EventLog, StoreError, sequence_number};
 use maka_plugins::session::history::{

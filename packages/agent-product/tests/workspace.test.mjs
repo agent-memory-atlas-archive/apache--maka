@@ -3045,31 +3045,32 @@ for (const target of ['desktop', 'tui']) {
             messageId: uuid(901),
             sequence: 39,
             role: 'tool_call',
-            tool: { kind: 'call', toolUseId: uuid(901), toolName: 'Count' },
+            tool: {
+              toolUseId: uuid(901),
+              call: { sequence: 39, name: 'Count' },
+              result: { sequence: 40, isError: true, image: false },
+            },
           }),
           historyChunk('', {
             sequence: 40,
             role: 'tool_result',
             tool: {
-              kind: 'result',
               toolUseId: uuid(901),
-              toolName: 'Count',
-              isError: true,
-              image: false,
+              call: { sequence: 39, name: 'Count' },
+              result: { sequence: 40, isError: true, image: false },
             },
           }),
         ],
       });
       const out = timeline.mount({ ...client.timeline, locale: 'zh-CN' }, {});
       const rows = out.frame.view.children[0].children[0].props.content.children;
-      assert.equal(rows.length, 2);
+      assert.equal(rows.length, 1);
       assert.equal(rows[0].children[0].children[0].text, '工具活动 · Count');
-      assert.equal(rows[1].children[0].children[0].text, '工具输出 · Count');
       assert.equal(
-        rows[1].children.find((node) => node.key === 'tool-error-' + uuid(900)).text,
+        rows[0].children.find((node) => node.key === 'tool-error-' + uuid(901)).text,
         '工具报告错误',
       );
-      for (const [index, row] of rows.entries()) {
+      for (const row of rows) {
         assert.equal(
           row.children.find((node) => node.key.startsWith('summary-')).text,
           '无文本摘要',
@@ -3081,8 +3082,10 @@ for (const target of ['desktop', 'tui']) {
           '展开详情',
         );
         const actions = details.children.find((node) => node.key.startsWith('tool-actions-'));
-        assert.equal(actions.children.length, 1);
-        assert.equal(actions.children[0].label, index === 0 ? '工具参数' : '工具结果');
+        assert.deepEqual(
+          actions.children.map((node) => node.label),
+          ['工具参数', '工具结果'],
+        );
       }
       assert.equal(out.actions.length, 0);
       assert.equal(out.events.length, 0);
@@ -4130,10 +4133,10 @@ for (const target of ['desktop', 'tui']) {
               sequence: 40,
               role,
               tool: {
-                kind: role === 'tool_call' ? 'call' : 'result',
                 toolUseId: uuid(901),
-                toolName: 'Draw',
-                ...(role === 'tool_result' ? { isError: true, image: true } : {}),
+                call: { sequence: role === 'tool_call' ? 40 : 39, name: 'Draw' },
+                result:
+                  role === 'tool_result' ? { sequence: 40, isError: true, image: true } : null,
               },
             }),
           ],
@@ -4159,22 +4162,35 @@ for (const target of ['desktop', 'tui']) {
           );
           return out.events;
         };
-        const toggle = 'toggle-' + client.messages[0].id;
+        const toggle = 'toggle-' + client.messages[0].tool.toolUseId;
         assert.deepEqual(
           visibleButtons(row()).map((n) => n.key),
           [toggle],
         );
-        for (const hidden of ['tool-source-40', 'image-40', 'source-40'])
+        for (const hidden of [
+          'tool-source-40-arguments',
+          'tool-source-40-result',
+          'image-40',
+          'source-40',
+        ])
           assert.deepEqual(input(hidden), [], 'a collapsed inspector has no active actions');
         input(toggle);
         const expanded = visibleButtons(row());
         assert.equal(
-          expanded.find((n) => n.key === 'tool-source-40').label,
+          expanded.find(
+            (n) => n.key === 'tool-source-40-' + (role === 'tool_call' ? 'arguments' : 'result'),
+          ).label,
           role === 'tool_call' ? 'Tool arguments' : 'Tool result',
         );
-        assert.deepEqual(input('tool-source-40'), [
-          { name: 'toolSource', value: { sequence: 40 } },
-        ]);
+        assert.deepEqual(
+          input('tool-source-40-' + (role === 'tool_call' ? 'arguments' : 'result')),
+          [
+            {
+              name: 'toolSource',
+              value: { sequence: 40, field: role === 'tool_call' ? 'arguments' : 'result' },
+            },
+          ],
+        );
         assert.deepEqual(
           input('image-40'),
           role === 'tool_result' ? [{ name: 'viewImage', value: { sequence: 40 } }] : [],
@@ -4221,7 +4237,9 @@ for (const target of ['desktop', 'tui']) {
       let out = timeline.mount(props, {});
       const row = () => out.frame.view.children[0].children[0].props.content.children[0];
       const details = () => row().children.find((node) => node.key === 'details-' + uuid(900));
-      const source = structuredClone(details().children[0]);
+      const source = structuredClone(
+        modelSlots(details()).find((node) => node.binding === 'source'),
+      );
       assert.equal(row().children[0].children[0].text, '工具输出');
       assert.equal(details().visible, false);
       assert.ok(
@@ -4245,12 +4263,18 @@ for (const target of ['desktop', 'tui']) {
       };
       toggle();
       assert.equal(details().visible, true);
-      assert.deepEqual(details().children[0], source);
+      assert.deepEqual(
+        modelSlots(details()).find((node) => node.binding === 'source'),
+        source,
+      );
       assert.equal(out.events.length, 0);
       assert.equal(out.actions.length, 0);
       toggle();
       assert.equal(details().visible, false);
-      assert.deepEqual(details().children[0], source);
+      assert.deepEqual(
+        modelSlots(details()).find((node) => node.binding === 'source'),
+        source,
+      );
       out = timeline.update(out.frame.state, { ...props, messages: [] }, {});
       assert.deepEqual(out.frame.state.expanded, []);
     },
@@ -4295,8 +4319,7 @@ for (const target of ['desktop', 'tui']) {
       );
       const after = timeline.update(expanded.frame.state, next.timeline, {});
       const row = (out) => out.frame.view.children[0].children[0].props.content.children[0];
-      const body = (out) =>
-        row(out).children.find((node) => node.key === 'details-' + uuid(900)).children[0];
+      const body = (out) => modelSlots(row(out)).find((node) => node.binding === 'source');
       assert.equal(row(expanded).key, row(after).key);
       assert.equal(body(expanded).props.source, body(after).props.source);
       assert.notEqual(body(expanded).key, body(after).key);
@@ -4592,7 +4615,11 @@ for (const target of ['desktop', 'tui']) {
         text: '中文😀\u0000\r\n'.repeat(1000),
       });
       const bytes = Buffer.from(body);
-      const tool = { kind: 'call', toolUseId: uuid(902), toolName: 'Count' };
+      const tool = {
+        toolUseId: uuid(902),
+        call: { sequence: 400, name: 'Count' },
+        result: { sequence: 401, isError: false, image: false },
+      };
       const client = new Client(module.component).start({
         through: 1000,
         chunks: [
@@ -4600,13 +4627,13 @@ for (const target of ['desktop', 'tui']) {
           historyChunk('', {
             sequence: 401,
             role: 'tool_result',
-            tool: { ...tool, kind: 'result', isError: false, image: false },
+            tool: tool,
           }),
         ],
       });
       const window = structuredClone(client.state.window);
       const landing = structuredClone(client.state.landing);
-      client.component('toolSource', { sequence: 400 });
+      client.component('toolSource', { sequence: 400, field: 'arguments' });
       assert.equal(client.timeline.source.kind, 'arguments');
       assert.equal(client.timeline.source.ready, false);
       assert.equal(client.timeline.source.text, '');
@@ -4692,7 +4719,7 @@ for (const target of ['desktop', 'tui']) {
       client.component('sourceNext');
       const stale = client.find('source');
       client.component('sourceBack');
-      client.component('toolSource', { sequence: 401 });
+      client.component('toolSource', { sequence: 401, field: 'result' });
       const reopened = structuredClone(client.state.source);
       client.complete(stale, {
         status: 'succeeded',
@@ -4725,7 +4752,7 @@ for (const target of ['desktop', 'tui']) {
           offset: 0,
           totalBytes: 2,
           text: '{}',
-          tool: { ...tool, kind: 'result', isError: false, image: false },
+          tool: tool,
         },
       });
       assert.equal(client.timeline.source.kind, 'result');
@@ -4928,11 +4955,9 @@ test('image semantic TUI has no pixel loader and Desktop back retains conversati
         sequence: 40,
         role: 'tool_result',
         tool: {
-          kind: 'result',
           toolUseId: uuid(901),
-          toolName: 'Draw',
-          isError: false,
-          image: true,
+          call: { sequence: 39, name: 'Draw' },
+          result: { sequence: 40, isError: false, image: true },
         },
       }),
     ],
@@ -4972,11 +4997,9 @@ test('returning from an image follows new canonical facts, including an in-fligh
           sequence: 40,
           role: 'tool_result',
           tool: {
-            kind: 'result',
             toolUseId: uuid(901),
-            toolName: 'Draw',
-            isError: false,
-            image: true,
+            call: { sequence: 39, name: 'Draw' },
+            result: { sequence: 40, isError: false, image: true },
           },
         }),
       ],
@@ -8999,7 +9022,11 @@ for (const target of ['tui', 'desktop']) {
         offset,
         totalBytes: utf8(body),
         text,
-        tool: { kind: 'call', toolUseId: 'original_tool', toolName: 'Counter' },
+        tool: {
+          toolUseId: 'original_tool',
+          call: { sequence: 100, name: 'Counter' },
+          result: null,
+        },
       },
     });
     input({
@@ -9654,7 +9681,11 @@ test('history preview loads one selected tool row, retains all field owners on c
     sequence: 257,
     role: 'tool_call',
     fields: ['tool_name', 'body', 'arguments'],
-    tool: { kind: 'call', toolUseId: 'original-tool', toolName: 'Run command' },
+    tool: {
+      toolUseId: 'original-tool',
+      call: { sequence: 257, name: 'Run command' },
+      result: null,
+    },
   };
   const complete = (field, text, totalBytes = Buffer.byteLength(text), offset = 0) => {
     const request = find.out.actions.find((action) => action.method === 'source');
@@ -10048,18 +10079,16 @@ for (const target of ['tui', 'desktop']) {
       pathToFileURL(resolve(root, 'dist/packages/timeline/' + target + '.js'))
     );
     const tool = {
-      kind: 'result',
       toolUseId: uuid(902),
-      toolName: 'Write',
-      isError: false,
-      image: false,
+      call: { sequence: 399, name: 'Write' },
+      result: { sequence: 400, isError: false, image: false },
     };
     const client = new Client(module.component).start({
       through: 1000,
       chunks: [historyChunk('Saved', { sequence: 400, role: 'tool_result', tool })],
     });
     const window = structuredClone(client.state.window);
-    client.component('toolSource', { sequence: 400 });
+    client.component('toolSource', { sequence: 400, field: 'result' });
     const answer = (text, totalBytes = Buffer.byteLength(text)) => {
       const action = client.find('source');
       assert.equal(action.input.through, 1000);
@@ -10121,7 +10150,7 @@ for (const target of ['tui', 'desktop']) {
     client.component('sourceNext');
     const late = client.find('source');
     client.component('sourceBack');
-    client.component('toolSource', { sequence: 400 });
+    client.component('toolSource', { sequence: 400, field: 'result' });
     answer('{"text":"Saved"}');
     const current = structuredClone(client.state.source);
     client.complete(late, { status: 'failed', reason: 'late old receipt' });
@@ -10138,3 +10167,211 @@ for (const target of ['tui', 'desktop']) {
     );
   });
 }
+
+for (const target of ['tui', 'desktop']) {
+  test(
+    target + ' paired tool card retains both native bodies and checked source actions',
+    async () => {
+      const { component: timeline } = await import(
+        pathToFileURL(resolve(root, 'dist/packages/timeline/' + target + '.js'))
+      );
+      const tool = {
+        toolUseId: uuid(901),
+        call: { sequence: 40, name: 'Write' },
+        result: { sequence: 41, isError: true, image: false },
+      };
+      const call = historyChunk('Save the requested file', {
+        messageId: uuid(901),
+        sequence: 40,
+        role: 'tool_call',
+        tool,
+      });
+      const result = historyChunk('**literal failure** 中😀', {
+        messageId: uuid(902),
+        sequence: 41,
+        role: 'tool_result',
+        tool,
+      });
+      const initial = new Client().start({
+        through: 100,
+        chunks: [{ ...call, tool: { ...tool, result: null } }],
+      });
+      let props = initial.timeline;
+      let out = timeline.mount(props, {});
+      out = timeline.event(
+        out.frame.state,
+        { kind: 'raw', key: 'toggle-' + uuid(901), event: {} },
+        props,
+        {},
+      );
+      const bodies = () =>
+        modelSlots(out.frame.view).filter(
+          (node) => node.binding === 'source' && node.key.startsWith('text-canonical-'),
+        );
+      const original = structuredClone(bodies()[0]);
+      const combined = new Client().start({ through: 101, chunks: [call, result] });
+      props = combined.timeline;
+      out = timeline.update(out.frame.state, props, {});
+      const rows = modelSlots(out.frame.view).find((node) => node.key === 'reading').props.content
+        .children;
+      assert.equal(rows.length, 1);
+      assert.deepEqual(out.frame.state.expanded, [uuid(901)]);
+      assert.equal(bodies().length, 2);
+      assert.deepEqual(
+        bodies()[0],
+        original,
+        'publishing the result retains the original call source',
+      );
+      assert.equal(bodies()[1].props.source, result.text);
+      assert.ok(modelButtons(out.frame.view).includes('tool-source-40-result'));
+      for (const field of ['arguments', 'result']) {
+        out = timeline.event(
+          out.frame.state,
+          { kind: 'raw', key: 'tool-source-40-' + field, event: {} },
+          props,
+          {},
+        );
+        assert.deepEqual(out.events, [{ name: 'toolSource', value: { sequence: 40, field } }]);
+      }
+      const duplicate = {
+        ...result,
+        messageId: uuid(903),
+        sequence: 42,
+        tool: { ...tool, result: { ...tool.result, sequence: 42 } },
+      };
+      const ambiguous = new Client().start({ through: 101, chunks: [call, result, duplicate] });
+      out = timeline.update(out.frame.state, ambiguous.timeline, {});
+      const rawRows = modelSlots(out.frame.view).find((node) => node.key === 'reading').props
+        .content.children;
+      assert.equal(rawRows.length, 3, 'contradictory references cannot hide a row');
+      assert.equal(new Set(rawRows.map((row) => row.key)).size, 3);
+    },
+  );
+  test(
+    target +
+      ' paired references inspect off-window arguments, results and images at the original fence',
+    async () => {
+      const module = await import(
+        pathToFileURL(resolve(root, 'dist/packages/workspace/' + target + '.js'))
+      );
+      module.activate({ locale: 'en' });
+      const tool = {
+        toolUseId: uuid(901),
+        call: { sequence: 40, name: 'Draw' },
+        result: { sequence: 41, isError: false, image: true },
+      };
+      for (const role of ['tool_call', 'tool_result']) {
+        const anchor = role === 'tool_call' ? 40 : 41;
+        const field = role === 'tool_call' ? 'result' : 'arguments';
+        const sequence = role === 'tool_call' ? 41 : 40;
+        const client = new Client(module.component).start({
+          through: 100,
+          chunks: [
+            historyChunk('', {
+              messageId: uuid(role === 'tool_call' ? 901 : 902),
+              sequence: anchor,
+              role,
+              tool,
+            }),
+          ],
+        });
+        const window = structuredClone(client.state.window);
+        client.component('toolSource', { sequence: anchor, field });
+        assert.deepEqual(client.find('source').input, {
+          sessionId: session.id,
+          through: 100,
+          source: { kind: 'sequence', sequence },
+          field,
+          position: { kind: 'start' },
+        });
+        client.query('source', { kind: 'preparing', through: 100 });
+        assert.equal(client.find('source').input.source.sequence, sequence);
+        client.query('source', {
+          kind: 'ready',
+          through: 100,
+          source: {
+            sequence,
+            timestamp: 1,
+            role: role === 'tool_call' ? 'tool_result' : 'tool_call',
+            fields: [field],
+            field,
+            format: 'json',
+            offset: 0,
+            totalBytes: 2,
+            text: '{}',
+            tool,
+          },
+        });
+        assert.equal(client.timeline.source.kind, field);
+        assert.equal(client.timeline.source.ready, true);
+        client.component('sourceBack');
+        assert.deepEqual(client.state.window, window);
+        client.input({
+          kind: 'component',
+          key: 'view-image',
+          child: 'timeline',
+          name: 'viewImage',
+          event: { sequence: anchor },
+        });
+        assert.deepEqual(client.state.image, { sessionId: session.id, through: 100, sequence: 41 });
+      }
+    },
+  );
+}
+
+test('find in a paired result unfolds its call card and reveals the original source identity', async () => {
+  const find = await conversationFinder();
+  const tool = {
+    toolUseId: 'call',
+    call: { sequence: 40, name: 'Write' },
+    result: { sequence: 41, isError: false, image: false },
+  };
+  const common = { timestamp: 1, continued: false, image: false, tool };
+  find.update({
+    messages: [
+      {
+        ...common,
+        id: 'call',
+        contentKey: 'call-body',
+        role: 'tool_call',
+        text: 'intent',
+        source: 40,
+      },
+      {
+        ...common,
+        id: 'result',
+        contentKey: 'result-body',
+        role: 'tool_result',
+        text: 'needle',
+        source: 41,
+      },
+    ],
+  });
+  find.query('needle');
+  const sequence = find.state.command.sequence;
+  find.input({
+    kind: 'component',
+    child: 'reading',
+    name: 'observed',
+    event: {
+      readingRevision: 1,
+      viewport: null,
+      pendingCommand: null,
+      receipt: { sequence, status: 'applied' },
+      find: {
+        sequence,
+        count: 1,
+        limited: false,
+        index: 1,
+        active: { path: ['text-result-body'], offset: 0 },
+      },
+    },
+  });
+  assert.deepEqual(find.state.expanded, ['call']);
+  assert.deepEqual(find.state.command.target, {
+    kind: 'reveal_source',
+    path: ['text-result-body'],
+    offset: 0,
+    find_sequence: sequence,
+  });
+});

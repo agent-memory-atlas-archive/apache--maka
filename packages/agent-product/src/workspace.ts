@@ -172,7 +172,7 @@ export interface State {
   image: { sessionId: string; through: number; sequence: number } | null;
   source: {
     through: number;
-    chunk: AgentHistoryChunk;
+    chunk: Pick<AgentHistoryChunk, 'sequence' | 'offset' | 'totalBytes' | 'text'>;
     navigation: number;
     landing: { sequence: number; edge: 'start' | 'end' };
     loading: boolean;
@@ -296,7 +296,7 @@ function messages(state: State): Message[] {
     tool: chunk.tool,
     continued: chunk.offset !== 0 || utf8Bytes(chunk.text) !== chunk.totalBytes,
     source: chunk.sequence,
-    image: chunk.tool?.kind === 'result' && chunk.tool.image,
+    image: chunk.tool?.result?.image ?? false,
   }));
   if (!state.window?.latest) return canonical;
   const live = new Map<string, Message>();
@@ -1217,7 +1217,6 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         offset: next.offset,
         totalBytes: next.totalBytes,
         text: next.text,
-        tool: next.tool,
       };
       source.fields = next.fields;
       source.format = next.format;
@@ -2770,17 +2769,13 @@ export function workspace<N extends Node>(
         ) {
           const sequence = (input.event as { sequence: number }).sequence;
           const chunk = state.window.page.chunks.find(
-            (c) =>
-              c.sequence === sequence &&
-              c.role === 'tool_result' &&
-              c.tool?.kind === 'result' &&
-              c.tool.image,
+            (c) => c.sequence === sequence && c.tool?.result?.image,
           );
           if (chunk)
             state.image = {
               sessionId: state.selected.id,
               through: state.window.page.through,
-              sequence,
+              sequence: chunk.tool!.result!.sequence,
             };
         } else if (input.child === 'timeline' && state.source) {
           const source = state.source;
@@ -2822,7 +2817,12 @@ export function workspace<N extends Node>(
             if (chunk)
               state.source = {
                 through: page.through,
-                chunk,
+                chunk: {
+                  sequence: chunk.sequence,
+                  offset: chunk.offset,
+                  totalBytes: chunk.totalBytes,
+                  text: chunk.text,
+                },
                 navigation: ++state.navigation,
                 landing: { sequence: state.navigation, edge: 'start' },
                 loading: false,
@@ -2834,18 +2834,23 @@ export function workspace<N extends Node>(
                 position: { kind: 'after', offset: chunk.offset },
               };
           } else if (input.name === 'toolSource') {
-            const chunk = page.chunks.find(
-              (chunk) => chunk.sequence === (input.event as { sequence: number }).sequence,
-            );
-            if (chunk && (chunk.role === 'tool_call' || chunk.role === 'tool_result')) {
+            const event = input.event as { sequence: number; field: 'arguments' | 'result' };
+            const chunk = page.chunks.find((chunk) => chunk.sequence === event.sequence);
+            const reference =
+              event.field === 'arguments'
+                ? chunk?.tool?.call
+                : event.field === 'result'
+                  ? chunk?.tool?.result
+                  : null;
+            if (reference) {
               state.source = {
                 through: page.through,
-                chunk: { ...chunk, offset: 0, totalBytes: 0, text: '' },
+                chunk: { sequence: reference.sequence, offset: 0, totalBytes: 0, text: '' },
                 navigation: state.navigation,
                 landing: { sequence: state.navigation, edge: 'start' },
                 loading: false,
                 failed: false,
-                field: chunk.role === 'tool_call' ? 'arguments' : 'result',
+                field: event.field,
                 fields: [],
                 format: null,
                 ready: false,

@@ -1282,6 +1282,9 @@ process.stdout.write(output.outputFiles[0].text);
         // The preceding service result exposes business JSON and the exact
         // original receipt through one retained, fenced source reader.
         click(&mut presenter, "[ Show details ]");
+        click(&mut presenter, "[ Tool arguments ]");
+        await_screen(&mut presenter, "native-approved.txt");
+        click(&mut presenter, "[ Back to conversation ]");
         click(&mut presenter, "[ Tool result ]");
         await_screen(&mut presenter, "completed");
         assert!(!screen(&draw(&mut presenter)).contains("journal_v1"));
@@ -3145,13 +3148,19 @@ process.stdout.write(output.outputFiles[0].text);
     await_sidebar_closed(&mut reopened);
     await_screen(&mut reopened, "This conversation is archived.");
     assert!(!screen(&draw(&mut reopened)).contains("[ Send ]"));
-    await_screen(&mut reopened, "Tool output · Count");
+    await_screen(&mut reopened, "Tool activity · Count");
     await_screen(&mut reopened, "[ Show details ]");
-    for (nth, heading, beginning, ending) in [
-        (0, "Tool arguments", "\"count\":42", "99999"),
-        (1, "Tool result", "\"count\":43", "99998"),
+    assert_eq!(
+        screen(&draw(&mut reopened))
+            .matches("[ Show details ]")
+            .count(),
+        1
+    );
+    for (heading, beginning, ending) in [
+        ("Tool arguments", "\"count\":42", "99999"),
+        ("Tool result", "\"count\":43", "99998"),
     ] {
-        click_nth(&mut reopened, "[ Show details ]", nth);
+        click(&mut reopened, "[ Show details ]");
         let action = format!("[ {heading} ]");
         // Expansion can move the next card's controls outside this 80x24
         // viewport. Reveal them through the original native scroll command.

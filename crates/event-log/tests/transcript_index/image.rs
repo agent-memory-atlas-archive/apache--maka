@@ -130,10 +130,12 @@ async fn actual_tool_images_are_immutable_scoped_and_reconstructed_without_paths
         .find(|chunk| chunk.role == Role::ToolResult)
         .unwrap()
         .sequence;
-    assert!(chunks.iter().any(|chunk| matches!(
-        &chunk.tool,
-        Some(maka_plugins::session::history::Tool::Result { image: true, .. })
-    )));
+    assert!(chunks.iter().any(|chunk| {
+        chunk
+            .tool
+            .as_ref()
+            .is_some_and(|tool| tool.result.as_ref().is_some_and(|result| result.image))
+    }));
     for limit in [1, 17, 8192, 32768] {
         let mut assembled = Vec::new();
         while assembled.len() < bytes.len() {

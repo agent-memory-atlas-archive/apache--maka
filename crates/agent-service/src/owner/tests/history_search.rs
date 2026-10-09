@@ -233,8 +233,8 @@ async fn search_hits_read_the_exact_field_when_history_body_is_absent_or_differe
                 assert_eq!(body["source"]["sequence"], sequence);
                 if body["source"]["totalBytes"] == 0 {
                     assert_eq!(body["source"]["text"], "");
-                    assert_eq!(body["source"]["tool"]["kind"], "call");
-                    assert_eq!(body["source"]["tool"]["toolName"], "tool-name-hit");
+                    assert_eq!(body["source"]["tool"]["call"]["sequence"], body["source"]["sequence"]);
+                    assert_eq!(body["source"]["tool"]["call"]["name"], "tool-name-hit");
                     // A zero offset is already the end of an empty projected body.
                     // Exact source must retain the row even when history advances.
                     assert_ne!(page["chunks"][0]["sequence"], sequence);

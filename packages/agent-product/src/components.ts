@@ -47,6 +47,7 @@ import {
   type ConversationSearch,
 } from './conversation-search.js';
 import { copy } from './locale.js';
+import { toolCards } from './tool-cards.js';
 import { messageView, sourceFieldLabel } from './message-view.js';
 import { output, fill, pixels, compactLabel, type Presentation, type Node } from './view.js';
 interface Revision {
@@ -317,13 +318,16 @@ export function components<N extends Node>(
     const ui = presentation.paint(props.theme),
       text = copy(props.locale);
     const search = state.search?.closing ? null : state.search;
-    const tools = props.messages.filter(
-      (message) =>
-        (message.role === 'tool_call' || message.role === 'tool_result') &&
-        (message.source !== null || message.text.length > 0),
-    );
+    const rows = toolCards(props.messages);
+    const tools = rows
+      .map(({ message }) => message)
+      .filter(
+        (message) =>
+          (message.role === 'tool_call' || message.role === 'tool_result') &&
+          (message.source !== null || message.text.length > 0),
+      );
     state.expanded = state.expanded.filter((id) => tools.some((message) => message.id === id));
-    const messages: N[] = props.messages.map((message) => {
+    const messages: N[] = rows.map(({ message, result }) => {
       const tool = message.role === 'tool_call' || message.role === 'tool_result';
       const expanded = state.expanded.includes(message.id);
       const sourceAction = ui.button(
@@ -376,13 +380,48 @@ export function components<N extends Node>(
         ...message,
         expanded,
         toggle: tool && (message.source !== null || message.text) ? 'toggle-' + message.id : null,
-        body,
+        text: result ? [message.text, result.text].filter(Boolean).join(' · ') : message.text,
+        continued: message.continued || !!result?.continued,
+        body: tool
+          ? ui.box(
+              'tool-body-' + message.id,
+              [
+                body,
+                ...(result
+                  ? [
+                      presentation.slot(
+                        'text-' + result.contentKey,
+                        'source',
+                        {
+                          source: result.text,
+                          focusOnPointer: !search,
+                          appearance: props.theme.markdown.body,
+                          selection: props.theme.markdown.selection,
+                          disabled: false,
+                        },
+                        {},
+                      ),
+                    ]
+                  : []),
+              ],
+              { surface: true, style: { width: fill } },
+            )
+          : body,
         actions: [
-          ...(message.source !== null
+          ...(message.source !== null && message.tool?.call
             ? [
                 ui.button(
-                  'tool-source-' + message.source,
-                  message.role === 'tool_call' ? text.toolArguments : text.toolResult,
+                  'tool-source-' + message.source + '-arguments',
+                  text.toolArguments,
+                  props.loading,
+                ),
+              ]
+            : []),
+          ...(message.source !== null && message.tool?.result
+            ? [
+                ui.button(
+                  'tool-source-' + message.source + '-result',
+                  text.toolResult,
                   props.loading,
                 ),
               ]
@@ -836,12 +875,14 @@ export function components<N extends Node>(
         )
           next.command = { sequence: (next.command?.sequence ?? 0) + 1, target: { kind: 'end' } };
         if (input.kind === 'raw' && !props.source) {
-          const tool = props.messages.find(
-            (message) =>
-              (message.role === 'tool_call' || message.role === 'tool_result') &&
-              (message.source !== null || message.text.length > 0) &&
-              input.key === 'toggle-' + message.id,
-          );
+          const tool = toolCards(props.messages)
+            .map(({ message }) => message)
+            .find(
+              (message) =>
+                (message.role === 'tool_call' || message.role === 'tool_result') &&
+                (message.source !== null || message.text.length > 0) &&
+                input.key === 'toggle-' + message.id,
+            );
           if (tool)
             next.expanded = next.expanded.includes(tool.id)
               ? next.expanded.filter((id) => id !== tool.id)
@@ -891,30 +932,46 @@ export function components<N extends Node>(
           )
             out.events.push({ name: 'sourceField', value: { field } });
         } else if (input.kind === 'raw' && !props.loading) {
-          const tool = props.messages.find(
-            (message) =>
-              message.source !== null &&
-              (message.role === 'tool_call' || message.role === 'tool_result') &&
-              next.expanded.includes(message.id) &&
-              input.key === 'tool-source-' + message.source,
-          );
-          const image = props.messages.find(
-            (message) =>
-              message.image &&
-              message.source !== null &&
-              next.expanded.includes(message.id) &&
-              input.key === 'image-' + message.source,
-          );
+          const tool = toolCards(props.messages)
+            .map(({ message }) => message)
+            .find(
+              (message) =>
+                message.source !== null &&
+                (message.role === 'tool_call' || message.role === 'tool_result') &&
+                next.expanded.includes(message.id) &&
+                ((message.tool?.call &&
+                  input.key === 'tool-source-' + message.source + '-arguments') ||
+                  (message.tool?.result &&
+                    input.key === 'tool-source-' + message.source + '-result')),
+            );
+          const image = toolCards(props.messages)
+            .map(({ message }) => message)
+            .find(
+              (message) =>
+                message.image &&
+                message.source !== null &&
+                next.expanded.includes(message.id) &&
+                input.key === 'image-' + message.source,
+            );
           if (image) out.events.push({ name: 'viewImage', value: { sequence: image.source } });
-          if (tool) out.events.push({ name: 'toolSource', value: { sequence: tool.source } });
-          const message = props.messages.find(
-            (message) =>
-              message.source !== null &&
-              ((message.role !== 'tool_call' && message.role !== 'tool_result') ||
-                (message.text.length > 0 && next.expanded.includes(message.id))) &&
-              input.key ===
-                'source-' + message.source + (message.role === 'thinking' ? '-thinking' : ''),
-          );
+          if (tool)
+            out.events.push({
+              name: 'toolSource',
+              value: {
+                sequence: tool.source,
+                field: input.key.endsWith('-arguments') ? 'arguments' : 'result',
+              },
+            });
+          const message = toolCards(props.messages)
+            .map(({ message }) => message)
+            .find(
+              (message) =>
+                message.source !== null &&
+                ((message.role !== 'tool_call' && message.role !== 'tool_result') ||
+                  (message.text.length > 0 && next.expanded.includes(message.id))) &&
+                input.key ===
+                  'source-' + message.source + (message.role === 'thinking' ? '-thinking' : ''),
+            );
           if (message)
             out.events.push({
               name: 'source',

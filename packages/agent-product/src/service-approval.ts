@@ -92,9 +92,9 @@ function accept(state: State, value: AgentHistorySourcePage, position: SourcePos
   if (
     next.field !== 'arguments' ||
     next.format !== 'json' ||
-    next.tool?.kind !== 'call' ||
+    next.tool?.call?.sequence !== next.sequence ||
     next.tool.toolUseId !== request.toolUseId ||
-    next.tool.toolName !== request.toolName ||
+    next.tool.call.name !== request.toolName ||
     end > next.totalBytes ||
     (state.page &&
       (state.page.sequence !== next.sequence || state.page.totalBytes !== next.totalBytes)) ||

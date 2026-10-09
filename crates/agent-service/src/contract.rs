@@ -909,7 +909,7 @@ mod tests {
         page["chunks"] = json!([{
             "messageId":"result", "field":"body", "turnId":"turn", "timestamp":1, "role":"tool_result",
             "sequence":1, "offset":0, "totalBytes":0, "text":"",
-            "tool":{"kind":"result", "toolUseId":"call", "toolName":null, "isError":true, "image":false}
+            "tool":{"toolUseId":"call", "call":null, "result":{"sequence":1,"isError":true, "image":false}}
         }]);
         assert!(validator.is_valid(&page));
         let tool = page["chunks"][0]
@@ -925,12 +925,12 @@ mod tests {
         page["chunks"][0]["tool"]
             .as_object_mut()
             .unwrap()
-            .remove("toolName");
+            .remove("call");
         assert!(
             !validator.is_valid(&page),
-            "missing tool name is not an observed absence"
+            "missing call reference is not an observed absence"
         );
-        page["chunks"][0]["tool"]["toolName"] = json!(null);
+        page["chunks"][0]["tool"]["call"] = json!(null);
         assert!(validator.is_valid(&page));
         for field in ["before", "after"] {
             let value = page.as_object_mut().unwrap().remove(field).unwrap();

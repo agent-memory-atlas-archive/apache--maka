@@ -2015,28 +2015,6 @@ export type AgentQueueRejection =
  * Tool body JSON contributes string values, never its keys.
  */
 export type Role = 'user' | 'assistant' | 'tool_call' | 'tool_result';
-/**
- * Immutable canonical presentation facts, not execution or recovery authority.
- */
-export type HistoryTool =
-  | {
-      toolUseId: string;
-      toolName: string;
-      kind: 'call';
-    }
-  | {
-      toolUseId: string;
-      toolName: string | null;
-      /**
-       * The presentation's error flag does not distinguish failed from unknown effects.
-       */
-      isError: boolean;
-      /**
-       * Canonical content is an image; this does not grant artifact reads.
-       */
-      image: boolean;
-      kind: 'result';
-    };
 export type AgentHistoryPage =
   | {
       through: number;
@@ -4351,6 +4329,31 @@ export interface AgentHistoryChunk {
   totalBytes: number;
   text: string;
   tool: HistoryTool | null;
+}
+/**
+ * Canonical references at the requested fence, never execution authority.
+ * Both references are present only for a unique same-Turn call/result pair
+ * with matching origin and parentage. An unpaired row retains its own reference.
+ */
+export interface HistoryTool {
+  toolUseId: string;
+  call: HistoryToolCall | null;
+  result: HistoryToolResult | null;
+}
+export interface HistoryToolCall {
+  sequence: number;
+  name: string;
+}
+export interface HistoryToolResult {
+  sequence: number;
+  /**
+   * Does not distinguish failed from unknown effects.
+   */
+  isError: boolean;
+  /**
+   * Canonical content is an image; this does not grant artifact reads.
+   */
+  image: boolean;
 }
 export interface AgentHistorySearch {
   sessionId: string;

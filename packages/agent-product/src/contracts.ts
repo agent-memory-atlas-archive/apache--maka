@@ -440,7 +440,10 @@ export const timelineContract = component(
       sequence: { type: 'integer', minimum: 1 },
       field: { enum: ['body', 'thinking'] },
     }),
-    toolSource: object({ sequence: { type: 'integer', minimum: 1 } }),
+    toolSource: object({
+      sequence: { type: 'integer', minimum: 1 },
+      field: { enum: ['arguments', 'result'] },
+    }),
     viewImage: object({ sequence: { type: 'integer', minimum: 1 } }),
     sourceFirst: object({}),
     sourcePrevious: object({}),

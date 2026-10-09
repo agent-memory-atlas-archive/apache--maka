@@ -103,7 +103,7 @@ impl EventLog {
                 ).bind(&session).bind(position as i64).fetch_one(&mut *tx).await?;
                         let row: Value = serde_json::from_slice(&payload)?;
                         if !input.include_internal
-                            && internal(&mut tx, &session, through, &row).await?
+                            && internal(&mut tx, &session, through, position, &row).await?
                         {
                             continue;
                         }
@@ -126,6 +126,7 @@ async fn internal(
     tx: &mut SqliteConnection,
     session: &str,
     through: i64,
+    sequence: u64,
     row: &Value,
 ) -> Result<bool, StoreError> {
     // Errors remain discoverable even when normal orchestration is hidden.
@@ -134,22 +135,11 @@ async fn internal(
     }
     let owned;
     let call = if row["type"] == "tool_result" {
-        let Some(id) = row["toolUseId"].as_str() else {
+        owned = super::tool_metadata::read(tx, session, sequence, through, 64 * 1024).await?;
+        let Some(call) = owned.as_ref().and_then(|tool| tool.call.as_ref()) else {
             return Ok(false);
         };
-        let metadata: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT json_extract(payload, '$.origin'), json_extract(payload, '$.toolName')
-             FROM transcript_rows WHERE session_id = ?1 AND message_id = ?2 AND turn_id = ?3
-             AND sequence <= ?4 AND json_extract(payload, '$.type') = 'tool_call'",
-        )
-        .bind(session)
-        .bind(id)
-        .bind(row["turnId"].as_str().unwrap_or(""))
-        .bind(through)
-        .fetch_optional(tx)
-        .await?;
-        owned = metadata.unwrap_or_default();
-        (owned.0.as_deref(), owned.1.as_deref())
+        (row["origin"].as_str(), Some(call.name.as_str()))
     } else if row["type"] == "tool_call" {
         (row["origin"].as_str(), row["toolName"].as_str())
     } else {

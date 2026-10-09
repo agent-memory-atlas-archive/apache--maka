@@ -134,28 +134,27 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
             panic!("prepared")
         };
         for chunk in chunks {
-            match &chunk.tool {
-                Some(maka_plugins::session::history::Tool::Call {
-                    tool_use_id,
-                    tool_name,
-                }) => {
-                    assert_eq!(tool_use_id, &chunk.message_id);
-                    assert_eq!(tool_name, "Read");
-                    assert_eq!(chunk.role, Role::ToolCall);
+            if let Some(tool) = &chunk.tool {
+                assert_eq!(
+                    tool.call.as_ref().map(|call| call.name.as_str()),
+                    Some("Read")
+                );
+                match chunk.role {
+                    Role::ToolCall => {
+                        assert_eq!(tool.tool_use_id, chunk.message_id);
+                        assert_eq!(tool.call.as_ref().unwrap().sequence, chunk.sequence);
+                    }
+                    Role::ToolResult => {
+                        let result = tool.result.as_ref().unwrap();
+                        assert_eq!(result.sequence, chunk.sequence);
+                        assert!(!result.is_error);
+                        assert!(!result.image);
+                        assert!(messages.contains_key(&tool.tool_use_id));
+                    }
+                    _ => panic!("tool metadata on non-tool row"),
                 }
-                Some(maka_plugins::session::history::Tool::Result {
-                    tool_use_id,
-                    tool_name,
-                    is_error,
-                    image,
-                }) => {
-                    assert_eq!(tool_name.as_deref(), Some("Read"));
-                    assert!(!is_error);
-                    assert!(!image);
-                    assert!(messages.contains_key(tool_use_id));
-                    assert_eq!(chunk.role, Role::ToolResult);
-                }
-                None => assert!(matches!(chunk.role, Role::User | Role::Assistant)),
+            } else {
+                assert!(matches!(chunk.role, Role::User | Role::Assistant));
             }
             let entry = messages
                 .entry(chunk.message_id)
@@ -297,7 +296,6 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
 
 #[tokio::test]
 async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen_windows() {
-    use maka_plugins::session::history::Tool;
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("tools.sqlite");
     let log = EventLog::open(&path).await.unwrap();
@@ -414,7 +412,9 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
         };
         assert!(chunks.iter().any(|chunk| chunk.role == Role::ToolCall
             && chunk.text.is_empty()
-            && matches!(&chunk.tool, Some(Tool::Call { tool_name, .. }) if tool_name == "Count")));
+            && chunk.tool.as_ref().is_some_and(|tool| {
+                tool.call.as_ref().is_some_and(|call| call.name == "Count") && tool.result.is_none()
+            })));
         assert!(
             chunks.iter().all(|chunk| chunk.role != Role::ToolResult),
             "old fence excludes settled result"
@@ -513,33 +513,15 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
                 2,
                 "empty tool rows must not disappear or stall paging"
             );
-            let (
-                text,
-                Tool::Result {
-                    tool_use_id,
-                    tool_name,
-                    is_error,
-                    image,
-                },
-            ) = &tools[&(Role::ToolResult as u8)]
-            else {
-                panic!("result")
-            };
-            assert_eq!(tool_name.as_deref(), Some("Count"));
-            assert_eq!(*is_error, session == "unknown");
-            assert_eq!(*image, session == "image");
+            let (text, tool) = &tools[&(Role::ToolResult as u8)];
+            let call = tool.call.as_ref().unwrap();
+            let result = tool.result.as_ref().unwrap();
+            assert_eq!(call.name, "Count");
+            assert_eq!(result.is_error, session == "unknown");
+            assert_eq!(result.image, session == "image");
             assert_eq!(text.is_empty(), session != "unknown");
-            let (
-                _,
-                Tool::Call {
-                    tool_use_id: call_id,
-                    ..
-                },
-            ) = &tools[&(Role::ToolCall as u8)]
-            else {
-                panic!("call")
-            };
-            assert_eq!(tool_use_id, call_id);
+            let (_, call_tool) = &tools[&(Role::ToolCall as u8)];
+            assert_eq!(tool, call_tool);
         }
     }
     log.close().await.unwrap();
@@ -565,7 +547,15 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
     else {
         panic!("ready")
     };
-    assert!(chunks.iter().any(|chunk| matches!(&chunk.tool, Some(Tool::Result { tool_name, is_error: false, .. }) if tool_name.as_deref() == Some("Count"))));
+    assert!(
+        chunks
+            .iter()
+            .any(|chunk| chunk.tool.as_ref().is_some_and(|tool| tool
+                .call
+                .as_ref()
+                .is_some_and(|call| call.name == "Count")
+                && tool.result.as_ref().is_some_and(|result| !result.is_error)))
+    );
     log.close().await.unwrap();
 }
 

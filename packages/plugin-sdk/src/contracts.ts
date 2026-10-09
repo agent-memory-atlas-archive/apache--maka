@@ -5351,53 +5351,73 @@ export const contracts = {
               },
               HistoryTool: {
                 description:
-                  'Immutable canonical presentation facts, not execution or recovery authority.',
-                oneOf: [
-                  {
-                    type: 'object',
-                    properties: {
-                      toolUseId: {
-                        type: 'string',
-                      },
-                      toolName: {
-                        type: 'string',
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'call',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'toolUseId', 'toolName'],
+                  'Canonical references at the requested fence, never execution authority.\nBoth references are present only for a unique same-Turn call/result pair\nwith matching origin and parentage. An unpaired row retains its own reference.',
+                type: 'object',
+                properties: {
+                  toolUseId: {
+                    type: 'string',
                   },
-                  {
-                    type: 'object',
-                    properties: {
-                      toolUseId: {
-                        type: 'string',
+                  call: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/HistoryToolCall',
                       },
-                      toolName: {
-                        type: ['string', 'null'],
+                      {
+                        type: 'null',
                       },
-                      isError: {
-                        description:
-                          "The presentation's error flag does not distinguish failed from unknown effects.",
-                        type: 'boolean',
-                      },
-                      image: {
-                        description:
-                          'Canonical content is an image; this does not grant artifact reads.',
-                        type: 'boolean',
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'result',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'toolUseId', 'toolName', 'isError', 'image'],
+                    ],
                   },
-                ],
+                  result: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/HistoryToolResult',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
+                required: ['toolUseId', 'call', 'result'],
+              },
+              HistoryToolCall: {
+                type: 'object',
+                properties: {
+                  sequence: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['sequence', 'name'],
+              },
+              HistoryToolResult: {
+                type: 'object',
+                properties: {
+                  sequence: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  isError: {
+                    description: 'Does not distinguish failed from unknown effects.',
+                    type: 'boolean',
+                  },
+                  image: {
+                    description:
+                      'Canonical content is an image; this does not grant artifact reads.',
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['sequence', 'isError', 'image'],
               },
               Cursor: {
                 description:
@@ -8955,53 +8975,73 @@ export const contracts = {
               },
               HistoryTool: {
                 description:
-                  'Immutable canonical presentation facts, not execution or recovery authority.',
-                oneOf: [
-                  {
-                    type: 'object',
-                    properties: {
-                      toolUseId: {
-                        type: 'string',
-                      },
-                      toolName: {
-                        type: 'string',
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'call',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'toolUseId', 'toolName'],
+                  'Canonical references at the requested fence, never execution authority.\nBoth references are present only for a unique same-Turn call/result pair\nwith matching origin and parentage. An unpaired row retains its own reference.',
+                type: 'object',
+                properties: {
+                  toolUseId: {
+                    type: 'string',
                   },
-                  {
-                    type: 'object',
-                    properties: {
-                      toolUseId: {
-                        type: 'string',
+                  call: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/HistoryToolCall',
                       },
-                      toolName: {
-                        type: ['string', 'null'],
+                      {
+                        type: 'null',
                       },
-                      isError: {
-                        description:
-                          "The presentation's error flag does not distinguish failed from unknown effects.",
-                        type: 'boolean',
-                      },
-                      image: {
-                        description:
-                          'Canonical content is an image; this does not grant artifact reads.',
-                        type: 'boolean',
-                      },
-                      kind: {
-                        type: 'string',
-                        const: 'result',
-                      },
-                    },
-                    additionalProperties: false,
-                    required: ['kind', 'toolUseId', 'toolName', 'isError', 'image'],
+                    ],
                   },
-                ],
+                  result: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/HistoryToolResult',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
+                required: ['toolUseId', 'call', 'result'],
+              },
+              HistoryToolCall: {
+                type: 'object',
+                properties: {
+                  sequence: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['sequence', 'name'],
+              },
+              HistoryToolResult: {
+                type: 'object',
+                properties: {
+                  sequence: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  isError: {
+                    description: 'Does not distinguish failed from unknown effects.',
+                    type: 'boolean',
+                  },
+                  image: {
+                    description:
+                      'Canonical content is an image; this does not grant artifact reads.',
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['sequence', 'isError', 'image'],
               },
             },
           },

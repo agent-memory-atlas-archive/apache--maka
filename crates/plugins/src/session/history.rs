@@ -202,29 +202,37 @@ pub enum Role {
     ToolCall,
     ToolResult,
 }
-/// Immutable canonical presentation facts, not execution or recovery authority.
+/// Canonical references at the requested fence, never execution authority.
+/// Both references are present only for a unique same-Turn call/result pair
+/// with matching origin and parentage. An unpaired row retains its own reference.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(
-    tag = "kind",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase",
-    deny_unknown_fields
-)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "HistoryTool")]
-pub enum Tool {
-    Call {
-        tool_use_id: String,
-        tool_name: String,
-    },
-    Result {
-        tool_use_id: String,
-        #[schemars(with = "maka_runtime::schema::RequiredNullable<String>")]
-        tool_name: Option<String>,
-        /// The presentation's error flag does not distinguish failed from unknown effects.
-        is_error: bool,
-        /// Canonical content is an image; this does not grant artifact reads.
-        image: bool,
-    },
+pub struct Tool {
+    pub tool_use_id: String,
+    #[schemars(with = "maka_runtime::schema::RequiredNullable<ToolCall>")]
+    pub call: Option<ToolCall>,
+    #[schemars(with = "maka_runtime::schema::RequiredNullable<ToolResult>")]
+    pub result: Option<ToolResult>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "HistoryToolCall")]
+pub struct ToolCall {
+    #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
+    pub sequence: u64,
+    pub name: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "HistoryToolResult")]
+pub struct ToolResult {
+    #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
+    pub sequence: u64,
+    /// Does not distinguish failed from unknown effects.
+    pub is_error: bool,
+    /// Canonical content is an image; this does not grant artifact reads.
+    pub image: bool,
 }
 
 /// An explicitly selected canonical transcript field, never an execution grant.
