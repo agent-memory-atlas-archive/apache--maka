@@ -91,7 +91,14 @@ interface Painter<N extends Node> {
     content: N,
     command: TerminalPaneCommand | null,
   ): N;
-  dialog(key: string, label: string, background: N, content: N, open: boolean): N;
+  dialog(
+    key: string,
+    label: string,
+    background: N,
+    content: N,
+    open: boolean,
+    style?: DesktopStyle,
+  ): N;
   box(key: string, children: N[], options?: BoxOptions): N;
 }
 export interface Presentation<N extends Node> {
@@ -145,7 +152,7 @@ function desktopPaint(theme: Theme): Painter<DesktopNode> {
         focus: { border: theme.accent, borderWidth: 2 },
         active: disabled ? {} : { background: primary ? theme.accent : theme.selected },
       }),
-    dialog: (key, label, background, content, open) =>
+    dialog: (key, label, background, content, open, style = {}) =>
       ui.desktop.dialog({
         key,
         label,
@@ -159,6 +166,7 @@ function desktopPaint(theme: Theme): Painter<DesktopNode> {
           radius: 16,
           border: theme.border,
           borderWidth: 1,
+          ...style,
         },
       }),
     box: (key, children, options = {}) =>

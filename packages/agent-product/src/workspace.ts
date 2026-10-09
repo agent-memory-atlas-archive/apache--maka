@@ -2159,6 +2159,7 @@ function frame<N extends Node>(
         },
       ),
       state.dialog !== null,
+      state.dialog === 'terminal' ? { width: pixels(900) } : {},
     ),
   );
   out.frame.surface =

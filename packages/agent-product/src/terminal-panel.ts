@@ -477,8 +477,10 @@ function frame<N extends Node>(
                     ...(state.page?.resources.map((r) =>
                       ui.button(
                         state.rowKeys[r.result.ref],
-                        `${r.result.ref === state.selected ? '● ' : ''}${compactLabel(r.result.cmd || r.result.ref, desktop ? 64 : 40)} · ${r.result.status}`,
+                        `${r.result.ref === state.selected ? '● ' : ''}${desktop ? r.result.cmd || r.result.ref : compactLabel(r.result.cmd || r.result.ref, 40)} · ${r.result.status}`,
                         !!state.confirmation,
+                        false,
+                        { width: fill, minWidth: 0, truncate: true, justify: 'start' },
                       ),
                     ) ?? [ui.text('terminal-loading', text.terminalLoading)]),
                     ...(state.page?.total === 0
@@ -487,10 +489,11 @@ function frame<N extends Node>(
                   ],
                   {
                     scroll: 'manual',
+                    gap: desktop ? 2 : 1,
                     terminal: {
                       basis: Math.max(1, Math.min(3, state.page?.resources.length ?? 1)),
                     },
-                    style: { height: pixels(100), width: fill },
+                    style: { maxHeight: 120, width: fill, minWidth: 0 },
                   },
                 ),
               },
@@ -502,20 +505,31 @@ function frame<N extends Node>(
                 ui.button('previous', text.back, !state.previous.length),
                 ui.button('next', text.moreOperations, state.page?.nextOffset == null),
               ],
-              { row: true, gap: 1 },
+              {
+                row: true,
+                gap: 1,
+                visible: !desktop || !!state.previous.length || state.page?.nextOffset != null,
+              },
             ),
             ...(resource
               ? [
                   ui.text(
                     'terminal-cwd',
-                    compactLabel(resource.result.cwd, desktop ? 160 : 60),
+                    desktop ? resource.result.cwd : compactLabel(resource.result.cwd, 60),
                     12,
                     props.theme.muted,
+                    400,
+                    { width: fill, minWidth: 0, truncate: desktop },
                   ),
                   ui.text(
                     'terminal-detail',
-                    compactLabel(resource.result.cmd || resource.result.ref, desktop ? 256 : 60),
+                    desktop
+                      ? resource.result.cmd || resource.result.ref
+                      : compactLabel(resource.result.cmd || resource.result.ref, 60),
                     12,
+                    props.theme.text,
+                    400,
+                    { width: fill, minWidth: 0, truncate: desktop },
                   ),
                   ui.text(
                     'terminal-status',
