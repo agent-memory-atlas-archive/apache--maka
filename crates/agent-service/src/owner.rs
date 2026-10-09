@@ -23,6 +23,7 @@ use crate::{
 use futures_util::future::BoxFuture;
 use maka_agent::{Engine, RunError, RunInput, RunWork};
 
+mod attachments;
 mod interactions;
 mod queue;
 use maka_config::ConfigurationStore;
@@ -94,6 +95,7 @@ pub(crate) struct Owner {
     tool_basis: Vec<crate::tools::SelectedTool>,
     runs: Mutex<Runs>,
     permits: Arc<Semaphore>,
+    upload_capacity: Arc<Semaphore>,
     workers: TaskTracker,
     stop: CancellationToken,
 }
@@ -149,6 +151,7 @@ impl Owner {
             managed_worktrees,
             revision,
             permits: Arc::new(Semaphore::new(settings.max_active_runs)),
+            upload_capacity: Arc::new(Semaphore::new(1)),
             settings,
             configuration,
             engine,
@@ -381,13 +384,17 @@ impl Owner {
     }
     pub async fn send(
         self: &Arc<Self>,
-        id: String,
-        text: String,
-        selection: crate::ModelSelection,
-        thinking_level: Option<maka_runtime::execution::ThinkingLevel>,
+        input: Send,
         operation: &maka_plugin_core::operation::RecoveryRef,
     ) -> Result<crate::contract::SendResult, String> {
-        if text.trim().is_empty() || text.len() > 64 * 1024 {
+        let Send {
+            session_id: id,
+            message: text,
+            model: selection,
+            thinking_level,
+            attachments,
+        } = input;
+        if (text.trim().is_empty() && attachments.is_empty()) || text.len() > 64 * 1024 {
             return Err("agent_message_invalid".into());
         }
         let mut runs = self.runs.lock().await;
@@ -444,7 +451,8 @@ impl Owner {
             run_id: format!("r_{identity}"),
             invocation_id: format!("i_{identity}"),
         });
-        let message: MessageInput = text.into();
+        let mut message: MessageInput = text.into();
+        message.attachments = self.attachment_refs(&id, attachments).await?;
         let delivered = RootSourceMessage {
             message: DeliveredMessage {
                 message_id: format!("m_{identity}"),

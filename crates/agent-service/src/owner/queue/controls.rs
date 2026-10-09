@@ -146,10 +146,19 @@ impl Owner {
                 message_id,
                 message,
             } => {
-                if message.trim().is_empty() || message.len() > 64 * 1024 {
+                let mut content = entry
+                    .expect("targeted update")
+                    .source
+                    .unprepared_content
+                    .clone();
+                if (message.trim().is_empty()
+                    && content.attachments.as_ref().is_none_or(Vec::is_empty))
+                    || message.len() > 64 * 1024
+                {
                     return rejected(QueueRejection::InvalidEdit);
                 }
-                let message = MessageInput::from(message);
+                content.text = message;
+                let message = content;
                 QueueEdit::Update {
                     message_id,
                     content: Box::new(message.clone()),

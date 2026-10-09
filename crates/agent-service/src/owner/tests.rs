@@ -20,6 +20,9 @@
 #[path = "tests/service_tools.rs"]
 mod service_tools;
 
+#[path = "tests/attachments.rs"]
+mod attachments;
+
 #[path = "tests/files.rs"]
 mod files;
 
@@ -584,6 +587,17 @@ impl Fixture {
         input: Value,
         operation: Uuid,
     ) -> Result<Value, String> {
+        self.mutation_with(consumer, method, input, operation, Attachments::new())
+            .await
+    }
+    async fn mutation_with(
+        &self,
+        consumer: u128,
+        method: &str,
+        input: Value,
+        operation: Uuid,
+        attachments: Attachments,
+    ) -> Result<Value, String> {
         let client = self.app.client();
         let prepared = client
             .prepare_mutation(
@@ -592,7 +606,7 @@ impl Fixture {
                 input,
                 scope(&self.issuer, true),
                 operation,
-                Attachments::new().into(),
+                attachments.into(),
             )
             .await?;
         let recorded = self
@@ -603,7 +617,7 @@ impl Fixture {
                 prepared.reference().clone(),
             )
             .await
-            .unwrap();
+            .map_err(|error| error.to_string())?;
         let reply = client.mutate(prepared, recorded).await?.result().await;
         match reply.receipt {
             Receipt::Recorded {
@@ -1139,10 +1153,13 @@ async fn cleanup_case(panic: bool) {
             fixture
                 .owner
                 .send(
-                    session.clone(),
-                    "after failed cleanup".into(),
-                    selection,
-                    None,
+                    Send {
+                        session_id: session.clone(),
+                        message: "after failed cleanup".into(),
+                        model: selection,
+                        thinking_level: None,
+                        attachments: vec![]
+                    },
                     &reference
                 )
                 .await

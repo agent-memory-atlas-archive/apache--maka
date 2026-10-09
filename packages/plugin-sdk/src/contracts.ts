@@ -5210,7 +5210,6 @@ export const contracts = {
                       },
                       message: {
                         type: 'string',
-                        minLength: 1,
                         maxLength: 65536,
                       },
                       kind: {
@@ -9029,6 +9028,16 @@ export const contracts = {
             title: 'AgentSend',
             type: 'object',
             properties: {
+              attachments: {
+                description:
+                  'IDs of immutable user uploads in this Session; metadata is resolved by the owner.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                },
+                maxItems: 8,
+                default: [],
+              },
               model: {
                 $ref: '#/$defs/ModelSelection',
               },
@@ -9050,7 +9059,6 @@ export const contracts = {
               },
               message: {
                 type: 'string',
-                minLength: 1,
                 maxLength: 65536,
               },
             },
@@ -9758,6 +9766,108 @@ export const contracts = {
             ],
           },
           resources: {},
+        },
+        uploadAttachment: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentUploadAttachment',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              name: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              bytes: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+                maximum: 52428800,
+              },
+              digest: {
+                type: 'string',
+                pattern: '^sha256:[a-f0-9]{64}$',
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'name', 'bytes', 'digest'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentAttachmentUploadResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  attachment: {
+                    $ref: '#/$defs/AgentAttachment',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'uploaded',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'attachment'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/AgentAttachmentRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+            ],
+            $defs: {
+              AgentAttachment: {
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  id: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                  mimeType: {
+                    type: 'string',
+                  },
+                  bytes: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'id', 'name', 'mimeType', 'bytes'],
+              },
+              AgentAttachmentRejection: {
+                type: 'string',
+                enum: ['invalid_file', 'busy', 'closed', 'archived'],
+              },
+            },
+          },
+          resources: {
+            file: {
+              name: 'maka.bytes',
+              version: 1,
+            },
+          },
         },
         watch: {
           mode: 'subscription',

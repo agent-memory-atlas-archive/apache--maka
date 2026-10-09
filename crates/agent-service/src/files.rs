@@ -46,6 +46,7 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
+mod attachments;
 mod permissions;
 
 pub const IMPLEMENTATION: &str = "maka.workspace.files";
@@ -333,6 +334,38 @@ async fn execute(
     let cancellation = &context.scope().cancellation;
     cancelled(cancellation)?;
     let configuration = crate::permissions::live(store, &tool_context.invocation).await?;
+    if tool == maka_fs_tools::READ_NAME {
+        let read: maka_runtime::read::ReadInput =
+            serde_json::from_value(input.clone()).map_err(failed)?;
+        let mut request = read.resolve().map_err(failed)?;
+        if let Some(mut address) =
+            maka_runtime::read::ResourceAddress::parse(request.path()).map_err(failed)?
+        {
+            if !matches!(address, maka_runtime::read::ResourceAddress::Attachment(_)) {
+                return Err(failed(
+                    "This Files service supports only attachment resources",
+                ));
+            }
+            if !request.is_continuation() {
+                address = store
+                    .resolve_read_resource(&tool_context.invocation.session_id, address)
+                    .await
+                    .map_err(failed)?
+                    .ok_or_else(|| failed("Attachment was not found in this Session"))?;
+                request.bind_resource(&address).map_err(failed)?;
+            }
+            return attachments::read(
+                store,
+                &tool_context.invocation.session_id,
+                address.id(),
+                &request,
+                image,
+                cancellation,
+            )
+            .await;
+        }
+    }
+
     let workspace = configuration.workspace.clone();
     let access = configuration.permissions.access;
     let mut captured =

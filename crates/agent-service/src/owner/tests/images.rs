@@ -272,7 +272,7 @@ pub(super) fn model_images(sent: &Value) -> Vec<Vec<u8>> {
         })
         .collect()
 }
-async fn enable_vision(f: &Fixture) {
+pub(super) async fn enable_vision(f: &Fixture) {
     selection::edit(f, |changes| {
         changes.model_overrides = Patch::Set(BTreeMap::from([(
             "fixture-model".into(),

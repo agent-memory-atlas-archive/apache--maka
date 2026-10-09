@@ -279,13 +279,56 @@ pub enum MetadataResult {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentSend")]
 pub struct Send {
+    /// IDs of immutable user uploads in this Session; metadata is resolved by the owner.
+    #[serde(default)]
+    #[schemars(length(max = 8))]
+    pub attachments: Vec<String>,
     pub model: ModelSelection,
     /// Omission/null uses the configured model default; `off` is explicit.
     pub thinking_level: Option<maka_runtime::execution::ThinkingLevel>,
     #[schemars(length(min = 1, max = 128))]
     pub session_id: String,
-    #[schemars(length(min = 1, max = 65536))]
+    #[schemars(length(max = 65536))]
     pub message: String,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentUploadAttachment")]
+pub struct UploadAttachment {
+    #[schemars(length(min = 1, max = 128))]
+    pub session_id: String,
+    #[schemars(length(min = 1, max = 512))]
+    pub name: String,
+    #[schemars(range(max = 52428800))]
+    pub bytes: usize,
+    #[schemars(regex(pattern = "^sha256:[a-f0-9]{64}$"))]
+    pub digest: String,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "AgentAttachmentUploadResult")]
+pub enum AttachmentUploadResult {
+    Uploaded { attachment: Attachment },
+    Rejected { reason: AttachmentRejection },
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "AgentAttachmentRejection")]
+pub enum AttachmentRejection {
+    InvalidFile,
+    Busy,
+    Closed,
+    Archived,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentAttachment")]
+pub struct Attachment {
+    pub session_id: String,
+    pub id: String,
+    pub name: String,
+    pub mime_type: String,
+    pub bytes: u64,
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -589,7 +632,7 @@ pub enum QueueAction {
     Update {
         #[schemars(length(min = 1, max = 128))]
         message_id: String,
-        #[schemars(length(min = 1, max = 65536))]
+        #[schemars(length(max = 65536))]
         message: String,
     },
     Reorder {
@@ -879,6 +922,16 @@ pub fn contract() -> Contract {
                 (
                     "send".into(),
                     method::<Send, SendResult>(MethodMode::Mutation),
+                ),
+                (
+                    "uploadAttachment".into(),
+                    Method {
+                        resources: BTreeMap::from([(
+                            "file".into(),
+                            maka_plugin_core::contract::binary_resource_type(),
+                        )]),
+                        ..method::<UploadAttachment, AttachmentUploadResult>(MethodMode::Mutation)
+                    },
                 ),
                 ("stop".into(), method::<Stop, Stopped>(MethodMode::Mutation)),
                 (

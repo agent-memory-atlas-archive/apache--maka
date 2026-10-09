@@ -106,6 +106,9 @@ export type RuntimeProtocol =
   | AgentMetadataResult
   | AgentSend
   | AgentStop
+  | AgentUploadAttachment
+  | AgentAttachment
+  | AgentAttachmentUploadResult
   | AgentMarkRead
   | AgentMarkReadResult
   | AgentWatch
@@ -1571,6 +1574,16 @@ export type AgentMetadataResult =
       reason: AgentRejection;
       kind: 'rejected';
     };
+export type AgentAttachmentUploadResult =
+  | {
+      attachment: AgentAttachment;
+      kind: 'uploaded';
+    }
+  | {
+      reason: AgentAttachmentRejection;
+      kind: 'rejected';
+    };
+export type AgentAttachmentRejection = 'invalid_file' | 'busy' | 'closed' | 'archived';
 export type AgentMarkReadResult =
   | {
       session: AgentSession;
@@ -3966,6 +3979,21 @@ export interface AgentPermissionChange {
   revokeGrants: boolean;
 }
 export interface AgentSend {
+  /**
+   * IDs of immutable user uploads in this Session; metadata is resolved by the owner.
+   *
+   * @maxItems 8
+   */
+  attachments?:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string];
   model: ModelSelection;
   /**
    * Omission/null uses the configured model default; `off` is explicit.
@@ -3977,6 +4005,19 @@ export interface AgentSend {
 export interface AgentStop {
   sessionId: string;
   invocationId: string;
+}
+export interface AgentUploadAttachment {
+  sessionId: string;
+  name: string;
+  bytes: number;
+  digest: string;
+}
+export interface AgentAttachment {
+  sessionId: string;
+  id: string;
+  name: string;
+  mimeType: string;
+  bytes: number;
 }
 export interface AgentMarkRead {
   sessionId: string;

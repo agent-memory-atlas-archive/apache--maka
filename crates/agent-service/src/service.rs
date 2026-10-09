@@ -390,20 +390,13 @@ impl Handler for Agent {
                         .map_err(|_| "agent_image_unavailable")?;
                     Ok(result)
                 }
+                "uploadAttachment" => {
+                    encode(owner.upload_attachment(decode(input)?, context).await?)
+                }
                 "send" => {
                     let input: Send = decode(input)?;
                     let operation = context.operation().ok_or("agent_mutation_required")?;
-                    encode(
-                        owner
-                            .send(
-                                input.session_id,
-                                input.message,
-                                input.model,
-                                input.thinking_level,
-                                operation,
-                            )
-                            .await?,
-                    )
+                    encode(owner.send(input, operation).await?)
                 }
                 "stop" => {
                     let input: Stop = decode(input)?;
