@@ -157,6 +157,11 @@ Root 中确认 caller intent，再接受 Work。`Application::finish_task` 回�
 全部后继。准备由 provider 的 Core Resource 保护，准入后 Work 接手；未保存预览拒绝
 mutation。native 授权仍独立检查。
 
+mutation 可携带 `Action.recovery` 本地恢复关联元数据，完整 JSON 编码最多 32 KiB。
+它在 dispatch 前与原 caller intent 原子提交，由原 caller history 返回；Query 和
+Subscription 不接受该字段。远端确认消息不携带它，它也不是重放授权或业务结果。
+产品恢复本地状态前须自行验证格式、业务数据来源及精确编辑修订。
+
 mutation feedback 为 `{ status: "operation", reply: OperationReply }`，保留实际原目标 Ref。
 回执事实与本次实际 executor cleanup 分别结算；无法交付的结果降为同 Ref `unavailable`，
 不改原 journal、不自动重放。清理失败或中断的准备仍受 owner 保有，也会列入

@@ -37,7 +37,7 @@ mod subscriptions;
 pub use subscriptions::Subscription;
 
 use futures_util::future::BoxFuture;
-use maka_event_log::applications::intents::{CallerIntent, RecordedIntent};
+use maka_event_log::applications::intents::{CallerConfirmation, RecordedIntent};
 use maka_js_runtime::plugin::Limits;
 use maka_plugin_core::{
     composition::{ExecutionLocation, Input, InstanceId},
@@ -95,7 +95,7 @@ pub trait Policy: Send + Sync + 'static {
     fn confirm_peer_mutation(
         &self,
         _invocation: Invocation<'_>,
-        _intent: &CallerIntent,
+        _intent: &CallerConfirmation,
     ) -> Result<()> {
         Err("peer caller confirmation is not authorized".into())
     }
@@ -435,13 +435,13 @@ pub(super) enum CallKind {
 // the final confirmation policy; the actual token stays in the caller process.
 pub(super) enum Confirmation {
     Recorded(Box<RecordedIntent>),
-    Peer(Box<CallerIntent>),
+    Peer(Box<CallerConfirmation>),
 }
 impl Confirmation {
-    fn intent(&self) -> &CallerIntent {
+    fn reference(&self) -> &RecoveryRef {
         match self {
-            Self::Recorded(recorded) => recorded.intent(),
-            Self::Peer(intent) => intent,
+            Self::Recorded(recorded) => &recorded.intent().reference,
+            Self::Peer(intent) => &intent.reference,
         }
     }
 }
@@ -484,7 +484,7 @@ impl CallKind {
             _ => None,
         }
     }
-    fn peer_intent(&self) -> Option<&CallerIntent> {
+    fn peer_intent(&self) -> Option<&CallerConfirmation> {
         match self {
             Self::Mutation {
                 confirmation: Some(Confirmation::Peer(intent)),
@@ -498,7 +498,7 @@ impl CallKind {
             Self::Mutation {
                 confirmation: Some(confirmation),
                 ..
-            } => Some(&confirmation.intent().reference),
+            } => Some(confirmation.reference()),
             _ => None,
         }
     }
@@ -892,7 +892,7 @@ impl Client {
     pub async fn mutate_from_peer(
         &self,
         prepared: PreparedMutation,
-        intent: CallerIntent,
+        intent: CallerConfirmation,
     ) -> Result<Mutation> {
         intent.validate().map_err(|e| e.to_string())?;
         self.dispatch_mutation(prepared, Confirmation::Peer(Box::new(intent)))
@@ -903,7 +903,7 @@ impl Client {
         mut prepared: PreparedMutation,
         confirmation: Confirmation,
     ) -> Result<Mutation> {
-        if prepared.reference != confirmation.intent().reference {
+        if &prepared.reference != confirmation.reference() {
             return Err("caller intent disagrees with original preparation".into());
         }
         let reference = prepared.reference.clone();

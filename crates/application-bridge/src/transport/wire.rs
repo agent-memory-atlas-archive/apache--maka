@@ -19,7 +19,7 @@
 
 //! Bounded frames; payload chunks are raw bytes, never expanded JSON arrays.
 use crate::Result;
-use maka_event_log::applications::intents::CallerIntent;
+use maka_event_log::applications::intents::CallerConfirmation;
 use maka_plugin_core::{
     composition::InstanceId,
     deployment::DeploymentRef,
@@ -70,7 +70,7 @@ pub(super) struct Open {
 pub(super) enum Control {
     Pull,
     Cancel,
-    Commit { intent: Box<CallerIntent> },
+    Commit { intent: Box<CallerConfirmation> },
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]

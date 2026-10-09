@@ -18,7 +18,7 @@
  */
 
 use super::*;
-use maka_event_log::applications::intents::{CallerIntent, RecordedIntent};
+use maka_event_log::applications::intents::{CallerConfirmation, RecordedIntent};
 use maka_plugin_core::deployment::DeploymentRef;
 use maka_runtime_host::application::{Binding, Client, PreparedMutation};
 
@@ -54,7 +54,7 @@ impl Policy for PeerPolicy {
     fn confirm_peer_mutation(
         &self,
         invocation: Invocation<'_>,
-        intent: &CallerIntent,
+        intent: &CallerConfirmation,
     ) -> Result<()> {
         match self.confirmation.load(Ordering::SeqCst) {
             0 => return Err("peer trust revoked".into()),
@@ -309,15 +309,25 @@ impl Fixture {
             .unwrap();
         (prepared, scope, weak)
     }
-    async fn record(&self, prepared: &PreparedMutation) -> (RecordedIntent, CallerIntent) {
+    async fn record(&self, prepared: &PreparedMutation) -> (RecordedIntent, CallerConfirmation) {
         let recorded = self
             .caller_store
-            .record_application_intent(self.source.clone(), id(41), prepared.reference().clone())
+            .record_application_intent(
+                self.source.clone(),
+                id(41),
+                prepared.reference().clone(),
+                json!({"draft":"caller-local-correlation"}),
+            )
             .await
             .unwrap();
         // Exercise actual observation serialization. It cannot reconstruct the token.
-        let intent =
-            serde_json::from_slice(&serde_json::to_vec(recorded.intent()).unwrap()).unwrap();
+        let bytes = serde_json::to_vec(&recorded.intent().confirmation()).unwrap();
+        assert!(
+            !std::str::from_utf8(&bytes)
+                .unwrap()
+                .contains("caller-local-correlation")
+        );
+        let intent = serde_json::from_slice(&bytes).unwrap();
         (recorded, intent)
     }
     async fn assert_no_effect(&self, reference: &maka_plugin_core::operation::RecoveryRef) {

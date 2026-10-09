@@ -182,7 +182,12 @@ async fn original_bundle_survives_prepare_dispatch_and_new_capture_cannot_replay
         );
         assert!(rejected.upgrade().is_none());
         let recorded = store
-            .record_application_intent(reference.source.clone(), id(2), reference.clone())
+            .record_application_intent(
+                reference.source.clone(),
+                id(2),
+                reference.clone(),
+                serde_json::Value::Null,
+            )
             .await
             .unwrap();
         let completed = client
@@ -220,7 +225,8 @@ async fn original_bundle_survives_prepare_dispatch_and_new_capture_cannot_replay
                 .record_application_intent(
                     reference.source.clone(),
                     id(2),
-                    prepared.reference().clone()
+                    prepared.reference().clone(),
+                    serde_json::Value::Null
                 )
                 .await
                 .is_err()
@@ -407,7 +413,7 @@ async fn failed_resource_mutation_keeps_original_snapshot_and_capacity_after_bus
         let (resources,weak)=bytes(64*1024*1024);
         let prepared=client.prepare_mutation(binding.clone(),"echo".into(),json!("fail-cleanup"),original_scope.clone(),Uuid::new_v4(),resources.into()).await.unwrap();
         let reference=prepared.reference().clone();
-        let recorded=store.record_application_intent(reference.source.clone(),id(2),reference.clone()).await.unwrap();
+        let recorded=store.record_application_intent(reference.source.clone(),id(2),reference.clone(), serde_json::Value::Null).await.unwrap();
         let completed=client.mutate(prepared,recorded).await.unwrap().completion().await;
         assert!(completed.cleanup.is_err());
         assert!(matches!(completed.reply.receipt,Receipt::Recorded {outcome:OperationOutcome::Returned {ref value},cleanup:OperationCleanup::Failed {..}} if value==&json!("xxxxx")));
@@ -509,7 +515,12 @@ async fn received_original_payload_reservation_survives_prepare_and_real_caller_
                 drop(prepared);
             } else {
                 let token = store
-                    .record_application_intent(reference.source.clone(), id(2), reference.clone())
+                    .record_application_intent(
+                        reference.source.clone(),
+                        id(2),
+                        reference.clone(),
+                        serde_json::Value::Null,
+                    )
                     .await
                     .unwrap();
                 let completed = client

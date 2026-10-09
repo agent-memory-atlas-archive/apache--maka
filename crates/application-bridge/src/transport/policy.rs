@@ -20,7 +20,7 @@
 //! Private invocation evidence from a trusted launcher or authenticated acceptor.
 use super::wire::Source;
 use crate::{Grant, Result};
-use maka_event_log::applications::intents::CallerIntent;
+use maka_event_log::applications::intents::CallerConfirmation;
 use maka_plugin_core::{
     composition::InstanceId,
     contract::{Interface, Transport},
@@ -374,7 +374,7 @@ impl Policy for PeerPolicy {
     fn confirm_peer_mutation(
         &self,
         invocation: Invocation<'_>,
-        intent: &CallerIntent,
+        intent: &CallerConfirmation,
     ) -> Result<()> {
         let e = self.evidence(invocation.scope)?;
         if intent.caller != e.source.deployment

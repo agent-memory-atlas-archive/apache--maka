@@ -50,6 +50,10 @@ pub struct Action {
     pub method: String,
     pub input: Value,
     pub resources: BTreeMap<String, CaptureSource>,
+    // Caller-owned JSON correlation, persisted before mutation dispatch.
+    // Excluded from provider input and peer confirmation; not execution authority.
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub recovery: Value,
     #[serde(default)]
     pub continuations: Vec<CaptureSource>,
 }
@@ -268,6 +272,7 @@ pub(super) struct Prepared<V: ?Sized> {
     pub key: String,
     pub method: String,
     pub input: Value,
+    pub recovery: Value,
     pub capability: Capability<Export<V>>,
     pub captures: BTreeMap<String, CaptureTarget>,
     continuations: Vec<CaptureTarget>,
@@ -483,6 +488,13 @@ impl<V: ?Sized + 'static> Application<V> {
         let (mode, resources, valid) =
             declaration.ok_or_else(|| Error::Invalid("undeclared action method".into()))?;
         valid?;
+        if !action.recovery.is_null() && mode != MethodMode::Mutation {
+            return Err(Error::Invalid(
+                "recovery metadata requires a mutation".into(),
+            ));
+        }
+        maka_event_log::applications::intents::validate_recovery(&action.recovery)
+            .map_err(|error| Error::Invalid(error.to_string()))?;
         if (mode == MethodMode::Subscription) != subscription {
             return Err(Error::Invalid(
                 "action and subscription method mode mismatch".into(),
@@ -532,6 +544,7 @@ impl<V: ?Sized + 'static> Application<V> {
             key: action.key,
             method: action.method,
             input: action.input,
+            recovery: action.recovery,
             capability,
             captures,
             continuations,

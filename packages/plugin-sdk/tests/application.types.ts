@@ -90,11 +90,16 @@ const historyPage = { after: 0, limit: 16 } satisfies CallerHistoryPage;
 const forgedHistoryPage = { after: 0, limit: 16, consumer: ['other'] } satisfies CallerHistoryPage;
 function originalCallerIntent(intent: CallerIntent) {
   const original = intent.reference;
+  // Local correlation accepts scalar JSON too, and readers must validate it.
+  const scalar: Action['recovery'] = 'draft-version';
+  const list: Action['recovery'] = [1, null, { revision: 2 }];
+  // @ts-expect-error Persisted correlation has no trusted product shape.
+  const uncheckedRevision = intent.recovery.editor.revision;
   // @ts-expect-error Caller history does not assert business journal facts.
   const businessOutcome = intent.receipt;
   // @ts-expect-error Observation data contains no dispatch authorization token.
   const token = intent.token;
-  void [original, businessOutcome, token];
+  void [original, scalar, list, uncheckedRevision, businessOutcome, token];
 }
 void [historyPage, forgedHistoryPage, originalCallerIntent];
 

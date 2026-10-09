@@ -189,8 +189,13 @@ struct State {
 }
 struct Effect(Arc<State>);
 impl Handler for Effect {
-    fn call(&self, method: String, _: Value, context: Context) -> EffectFuture {
+    fn call(&self, method: String, input: Value, context: Context) -> EffectFuture {
         assert_eq!(method, "commit");
+        assert_eq!(
+            input,
+            json!("draft"),
+            "local recovery metadata never enters Host input"
+        );
         if self.0.mode == Mode::FailedCleanup {
             let mut ticket = context.scope().resources.reserve().unwrap();
             ticket.start();
@@ -213,7 +218,8 @@ impl Handler for Effect {
             assert!(
                 intents
                     .iter()
-                    .any(|i| i.caller == source && i.reference == *original),
+                    .any(|i| i.caller == source && i.reference == *original
+                        && i.recovery == json!({"format":"test.draft@1","editor":{"owner":"original-editor","revision":4}})),
                 "real caller commit must precede the real effect"
             );
             drop(caller);
@@ -403,7 +409,7 @@ fn ui_fixture() -> (
         );
     let source = std::str::from_utf8(old.file("index.mjs").unwrap()).unwrap().replace(
         "method:'read',input:{start:event.event?.start??0,end:event.event?.end??5},resources:{text:{child:'editor',method:'snapshot',input:event.event?.capture??{kind:'current'}}}",
-        "method:'save',input:'draft',resources:{}",
+        "method:'save',input:'draft',resources:{},recovery:{format:'test.draft@1',editor:{owner:'original-editor',revision:4}}",
     );
     let package = support::package(
         "dynamic.app",

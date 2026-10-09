@@ -615,6 +615,7 @@ impl Fixture {
                 prepared.reference().source.clone(),
                 prepared.consumer().instance().clone(),
                 prepared.reference().clone(),
+                serde_json::Value::Null,
             )
             .await
             .map_err(|error| error.to_string())?;

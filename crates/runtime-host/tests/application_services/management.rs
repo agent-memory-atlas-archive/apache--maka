@@ -220,6 +220,7 @@ impl Fixture {
                 prepared.reference().source.clone(),
                 id(2),
                 prepared.reference().clone(),
+                serde_json::Value::Null,
             )
             .await
             .unwrap();

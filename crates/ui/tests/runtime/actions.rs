@@ -626,6 +626,7 @@ impl NativeComponent<()> for ExactFeedback {
         .output(vec![]);
         if initial {
             output.actions.push(Action {
+                recovery: Value::Null,
                 continuations: Vec::new(),
                 key: "read".into(),
                 binding: "reader".into(),
@@ -1284,6 +1285,31 @@ fn completed_undelivered_witnesses_count_toward_the_same_capture_budget() {
     close_all(&mut app, &[root]);
 }
 
+#[test]
+fn query_recovery_metadata_is_rejected_before_publication_or_capture() {
+    let timer = timer();
+    let (mut app, root) = guarded_application_with(&timer, |source| {
+        source.replace(
+            "return out;",
+            "out.actions[0].recovery={format:'draft@1'};return out;",
+        )
+    });
+    let before = app.frame(&root).unwrap().revision;
+    assert!(
+        app.dispatch(&root, before, "read", Value::Null)
+            .unwrap_err()
+            .to_string()
+            .contains("recovery metadata requires a mutation")
+    );
+    assert_eq!(app.frame(&root).unwrap().revision, before);
+    assert_eq!(app.pending_action_count(), 0);
+    app.capture_actions(&root, |_| {
+        panic!("rejected metadata cannot start a capture")
+    })
+    .unwrap();
+    assert!(!app.is_retiring(&root));
+    close_all(&mut app, &[root]);
+}
 #[test]
 fn duplicate_action_keys_in_one_callback_do_not_publish_or_start_capture() {
     let timer = timer();

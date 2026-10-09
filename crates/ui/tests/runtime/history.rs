@@ -309,15 +309,30 @@ fn explicit_deployment_history_reads_original_consumers_but_never_another_deploy
         .block_on(store.commit_application(Uuid::new_v4(), 0, input, vec![], packages))
         .unwrap();
     let a = timer
-        .block_on(store.record_application_intent(original.clone(), identity(2), reference(0)))
+        .block_on(store.record_application_intent(
+            original.clone(),
+            identity(2),
+            reference(0),
+            serde_json::Value::Null,
+        ))
         .unwrap()
         .intent()
         .clone();
     timer
-        .block_on(store.record_application_intent(other_deployment, identity(2), reference(0)))
+        .block_on(store.record_application_intent(
+            other_deployment,
+            identity(2),
+            reference(0),
+            serde_json::Value::Null,
+        ))
         .unwrap();
     let b = timer
-        .block_on(store.record_application_intent(original, identity(4), reference(0)))
+        .block_on(store.record_application_intent(
+            original,
+            identity(4),
+            reference(0),
+            serde_json::Value::Null,
+        ))
         .unwrap()
         .intent()
         .clone();
@@ -372,12 +387,18 @@ fn both_variants_read_original_caller_history_after_root_reopen_and_source_repla
                 first.clone(),
                 identity(2),
                 original.clone(),
+                json!({"format":"test.draft@1","editor":{"owner":"original","revision":7},"attachments":["unsent"]}),
             ))
             .unwrap()
             .intent()
             .clone();
         let other = timer
-            .block_on(store1.record_application_intent(first.clone(), identity(4), reference(0)))
+            .block_on(store1.record_application_intent(
+                first.clone(),
+                identity(4),
+                reference(0),
+                serde_json::Value::Null,
+            ))
             .unwrap()
             .intent()
             .clone();
@@ -461,6 +482,7 @@ fn large_history_page_delivery_failure_keeps_reader_active_for_smaller_pages_wit
                     source.clone(),
                     identity(2),
                     reference(85_500),
+                    serde_json::Value::Null,
                 ))
                 .unwrap()
                 .intent()
@@ -557,7 +579,12 @@ fn accepted_history_waiting_behind_real_sql_writer_retains_root_after_surface_ex
         .block_on(store.commit_application(deployment, 0, input.clone(), vec![], packages.clone()))
         .unwrap();
     let original = timer
-        .block_on(store.record_application_intent(source.clone(), identity(2), reference(0)))
+        .block_on(store.record_application_intent(
+            source.clone(),
+            identity(2),
+            reference(0),
+            serde_json::Value::Null,
+        ))
         .unwrap()
         .intent()
         .clone();
@@ -664,7 +691,12 @@ fn live_adoption_keeps_queued_history_source_and_retained_history_serves_new_con
             ))
             .unwrap();
         let mine = timer
-            .block_on(store.record_application_intent(first.clone(), identity(2), reference(0)))
+            .block_on(store.record_application_intent(
+                first.clone(),
+                identity(2),
+                reference(0),
+                serde_json::Value::Null,
+            ))
             .unwrap()
             .intent()
             .clone();

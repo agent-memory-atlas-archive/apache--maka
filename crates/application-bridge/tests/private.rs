@@ -316,7 +316,12 @@ async fn dropping_partial_commit_keeps_real_sql_token_and_cannot_append_cancel()
     let reference = call.reference().unwrap().clone();
     let recorded = f
         .caller
-        .record_application_intent(f.source.clone(), support::identity(2), reference.clone())
+        .record_application_intent(
+            f.source.clone(),
+            support::identity(2),
+            reference.clone(),
+            serde_json::Value::Null,
+        )
         .await
         .unwrap();
     let before = written.load(Ordering::SeqCst);
@@ -653,7 +658,12 @@ async fn concurrent_native_dispatch_and_close_cancel_the_original_host_without_a
     let reference = session.clone().prepare().await.unwrap();
     let recorded = f
         .caller
-        .record_application_intent(f.source.clone(), support::identity(2), reference.clone())
+        .record_application_intent(
+            f.source.clone(),
+            support::identity(2),
+            reference.clone(),
+            serde_json::Value::Null,
+        )
         .await
         .unwrap();
     let dispatched = tokio::spawn(session.clone().dispatch(recorded));
@@ -769,6 +779,7 @@ async fn unpolled_dispatch_observer_keeps_actual_sql_custody_until_original_prep
             f.source.clone(),
             support::identity(2),
             call.reference().unwrap().clone(),
+            serde_json::Value::Null,
         )
         .await
         .unwrap();
@@ -1313,7 +1324,12 @@ async fn lost_close_before_dispatch_poll_keeps_the_actual_confirmed_sql_token() 
     let reference = session.clone().prepare().await.unwrap();
     let token = f
         .caller
-        .record_application_intent(f.source.clone(), support::identity(2), reference.clone())
+        .record_application_intent(
+            f.source.clone(),
+            support::identity(2),
+            reference.clone(),
+            serde_json::Value::Null,
+        )
         .await
         .unwrap();
     let dispatch = session.clone().dispatch(token);
@@ -1483,7 +1499,12 @@ async fn revoking_issued_scope_rejects_prepared_commit_without_losing_original_c
     let reference = call.reference().unwrap().clone();
     let intent = f
         .caller
-        .record_application_intent(f.source.clone(), support::identity(2), reference.clone())
+        .record_application_intent(
+            f.source.clone(),
+            support::identity(2),
+            reference.clone(),
+            serde_json::Value::Null,
+        )
         .await
         .unwrap();
     f.peer.replace(vec![]).unwrap();

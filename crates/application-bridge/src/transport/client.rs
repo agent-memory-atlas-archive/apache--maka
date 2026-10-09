@@ -261,7 +261,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Call<R, W> {
                 Err("caller token differs from the original remote preparation".to_string())
             } else {
                 Ok(Control::Commit {
-                    intent: Box::new(intent.clone()),
+                    intent: Box::new(intent.confirmation()),
                 })
             }
         };

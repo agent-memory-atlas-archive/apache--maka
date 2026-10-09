@@ -102,35 +102,76 @@ async fn caller_history_keeps_first_source_and_original_owner_across_revisions_a
     let deployment = Uuid::new_v4();
     let first = source(&store, deployment, 0).await;
     let original = reference();
+    let recovery =
+        json!({"format":"draft@1","owner":"native-editor","revision":4,"attachments":["file"]});
     let (a, b) = tokio::join!(
-        store.record_application_intent(first.clone(), consumer(), original.clone()),
-        store.record_application_intent(first.clone(), consumer(), original.clone())
+        store.record_application_intent(
+            first.clone(),
+            consumer(),
+            original.clone(),
+            recovery.clone()
+        ),
+        store.record_application_intent(
+            first.clone(),
+            consumer(),
+            original.clone(),
+            recovery.clone()
+        )
     );
     let a = a.unwrap();
     let b = b.unwrap();
     assert_eq!(a.intent(), b.intent());
     assert_eq!(a.intent().reference, original);
+    assert_eq!(a.intent().recovery, recovery);
+    let confirmation = a.intent().confirmation();
+    confirmation.validate().unwrap();
+    assert_eq!(confirmation.reference, original);
+    assert!(
+        serde_json::to_value(&confirmation)
+            .unwrap()
+            .get("recovery")
+            .is_none()
+    );
+    assert!(
+        serde_json::from_value::<CallerConfirmation>(serde_json::to_value(a.intent()).unwrap())
+            .is_err(),
+        "local history metadata is not part of a peer attestation"
+    );
     assert!(
         store.operation_observation(&original).await.is_err(),
         "caller Root is not the original business journal"
     );
     let second = source(&store, deployment, 1).await;
     let again = store
-        .record_application_intent(second, consumer(), original.clone())
+        .record_application_intent(second, consumer(), original.clone(), recovery.clone())
         .await
         .unwrap();
     assert_eq!(again.intent().caller, first);
+    assert!(
+        matches!(
+            store
+                .record_application_intent(
+                    first.clone(),
+                    consumer(),
+                    original.clone(),
+                    json!({"revision":5})
+                )
+                .await,
+            Err(StoreError::EventConflict)
+        ),
+        "the original correlation cannot be replaced or silently ignored"
+    );
     let mut rebound = original.clone();
     rebound.source.state_domain = "c".repeat(64);
     assert!(matches!(
         store
-            .record_application_intent(first.clone(), consumer(), rebound)
+            .record_application_intent(first.clone(), consumer(), rebound, recovery.clone())
             .await,
         Err(StoreError::EventConflict)
     ));
     let other = reference();
     let other = store
-        .record_application_intent(first.clone(), consumer(), other)
+        .record_application_intent(first.clone(), consumer(), other, recovery.clone())
         .await
         .unwrap();
     let page = store
@@ -165,7 +206,7 @@ async fn caller_requires_owned_exact_source_and_actual_executable_namespace() {
     foreign.state_domain = "e".repeat(64);
     assert!(
         store
-            .record_application_intent(foreign, consumer(), reference())
+            .record_application_intent(foreign, consumer(), reference(), serde_json::Value::Null)
             .await
             .is_err()
     );
@@ -173,7 +214,7 @@ async fn caller_requires_owned_exact_source_and_actual_executable_namespace() {
     missing.revision = 2;
     assert!(
         store
-            .record_application_intent(missing, consumer(), reference())
+            .record_application_intent(missing, consumer(), reference(), serde_json::Value::Null)
             .await
             .is_err()
     );
@@ -182,14 +223,20 @@ async fn caller_requires_owned_exact_source_and_actual_executable_namespace() {
             .record_application_intent(
                 first.clone(),
                 InstanceId(vec![Uuid::from_u128(43)]),
-                reference()
+                reference(),
+                serde_json::Value::Null
             )
             .await
             .is_err()
     );
     assert!(
         store
-            .record_application_intent(first, InstanceId(vec![]), reference())
+            .record_application_intent(
+                first,
+                InstanceId(vec![]),
+                reference(),
+                serde_json::Value::Null
+            )
             .await
             .is_err()
     );
@@ -209,7 +256,12 @@ async fn corrupted_history_is_bounded_and_never_overwritten_as_a_fresh_intent() 
     let caller = source(&store, deployment, 0).await;
     let original = reference();
     let token = store
-        .record_application_intent(caller.clone(), consumer(), original.clone())
+        .record_application_intent(
+            caller.clone(),
+            consumer(),
+            original.clone(),
+            serde_json::Value::Null,
+        )
         .await
         .unwrap();
     let cursor = token.intent().cursor;
@@ -261,7 +313,7 @@ async fn corrupted_history_is_bounded_and_never_overwritten_as_a_fresh_intent() 
     );
     assert!(
         store
-            .record_application_intent(caller, consumer(), original)
+            .record_application_intent(caller, consumer(), original, serde_json::Value::Null)
             .await
             .is_err()
     );
@@ -293,7 +345,7 @@ async fn caller_commit_error_produces_no_dispatch_token() {
     })).await.unwrap();
     assert!(matches!(
         store
-            .record_application_intent(caller, consumer(), reference())
+            .record_application_intent(caller, consumer(), reference(), serde_json::Value::Null)
             .await,
         Err(StoreError::CommitUnknown(_))
     ));
@@ -319,7 +371,12 @@ async fn history_pages_bound_the_complete_encoded_array_without_skipping_the_nex
         };
         methods.get_mut("change").unwrap().input = json!({"description": "\"\\\n".repeat(70_000)});
         let token = store
-            .record_application_intent(caller.clone(), consumer(), original)
+            .record_application_intent(
+                caller.clone(),
+                consumer(),
+                original,
+                json!({"metadata":"x".repeat(30_000)}),
+            )
             .await
             .unwrap();
         expected.push(token.intent().clone());
@@ -344,4 +401,60 @@ async fn history_pages_bound_the_complete_encoded_array_without_skipping_the_nex
     }
     assert_eq!(lengths, [2, 2, 1]);
     assert_eq!(all, expected);
+}
+
+#[tokio::test]
+async fn recovery_metadata_bounds_encoded_bytes_and_rejects_oversized_stored_values() {
+    let (_dir, store) = store().await;
+    let deployment = Uuid::new_v4();
+    let caller = source(&store, deployment, 0).await;
+    let maximum = json!("x".repeat(MAX_RECOVERY - 2));
+    assert_eq!(serde_json::to_vec(&maximum).unwrap().len(), MAX_RECOVERY);
+    let original = reference();
+    let token = store
+        .record_application_intent(caller.clone(), consumer(), original, maximum.clone())
+        .await
+        .unwrap();
+    assert_eq!(token.intent().recovery, maximum);
+    for oversized in [
+        json!("x".repeat(MAX_RECOVERY - 1)),
+        json!("\n".repeat(MAX_RECOVERY / 2)),
+    ] {
+        assert!(
+            store
+                .record_application_intent(caller.clone(), consumer(), reference(), oversized)
+                .await
+                .is_err()
+        );
+    }
+    let before = store
+        .application_intents(deployment, consumer(), 0, 128)
+        .await
+        .unwrap();
+    assert_eq!(
+        before.len(),
+        1,
+        "rejected correlation creates no dispatch token or row"
+    );
+    let cursor = token.intent().cursor;
+    store
+        .connection
+        .run(move |connection| {
+            Box::pin(async move {
+                sqlx::query("UPDATE application_intents SET recovery_json=? WHERE cursor=?")
+                    .bind(serde_json::to_string(&"x".repeat(MAX_RECOVERY)).unwrap())
+                    .bind(cursor as i64)
+                    .execute(connection)
+                    .await?;
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+    assert!(
+        store
+            .application_intents(deployment, consumer(), 0, 128)
+            .await
+            .is_err()
+    );
 }

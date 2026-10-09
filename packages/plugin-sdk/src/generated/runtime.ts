@@ -2755,6 +2755,7 @@ export interface Action {
   resources: {
     [k: string]: CaptureSource | undefined;
   };
+  recovery?: unknown;
   continuations?: CaptureSource[];
 }
 export interface CaptureSource {
@@ -3008,6 +3009,7 @@ export interface CallerIntent {
   caller: DeploymentRef;
   consumer: InstanceId;
   reference: RecoveryRef;
+  recovery?: unknown;
 }
 export interface LabelProps {
   text: string;

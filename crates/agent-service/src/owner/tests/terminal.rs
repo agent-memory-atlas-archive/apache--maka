@@ -78,6 +78,7 @@ async fn begin(
             prepared.reference().source.clone(),
             prepared.consumer().instance().clone(),
             prepared.reference().clone(),
+            serde_json::Value::Null,
         )
         .await
         .unwrap();

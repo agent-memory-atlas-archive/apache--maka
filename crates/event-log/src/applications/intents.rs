@@ -34,9 +34,27 @@ use uuid::Uuid;
 
 const MAX_REFERENCE: usize = 512 * 1024;
 const MAX_PAGE: usize = 1024 * 1024;
+const MAX_RECOVERY: usize = 32 * 1024;
+
+/// Caller-owned correlation only; no business outcome or execution authority.
+pub fn validate_recovery(value: &serde_json::Value) -> Result<(), StoreError> {
+    encode(value, MAX_RECOVERY).map(|_| ())
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CallerIntent {
+    pub cursor: u64,
+    pub caller: DeploymentRef,
+    pub consumer: InstanceId,
+    pub reference: RecoveryRef,
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub recovery: serde_json::Value,
+}
+/// Peer attestation excludes caller-local recovery data. The receiving Host
+/// still requires its private admission evidence; this is not a commit token.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CallerConfirmation {
     pub cursor: u64,
     pub caller: DeploymentRef,
     pub consumer: InstanceId,
@@ -45,6 +63,22 @@ pub struct CallerIntent {
 impl CallerIntent {
     /// Checks a bounded observation's shape, not whether a caller committed it.
     /// Deserialized observations are never `RecordedIntent` or effect authority.
+    pub fn validate(&self) -> Result<(), StoreError> {
+        self.confirmation().validate()?;
+        validate_recovery(&self.recovery)?;
+        encode(self, MAX_PAGE)?;
+        Ok(())
+    }
+    pub fn confirmation(&self) -> CallerConfirmation {
+        CallerConfirmation {
+            cursor: self.cursor,
+            caller: self.caller.clone(),
+            consumer: self.consumer.clone(),
+            reference: self.reference.clone(),
+        }
+    }
+}
+impl CallerConfirmation {
     pub fn validate(&self) -> Result<(), StoreError> {
         if self.cursor == 0 || self.cursor > i64::MAX as u64 {
             return Err(invalid("invalid caller intent cursor"));
@@ -83,12 +117,16 @@ async fn read(
     consumer: &InstanceId,
     operation: Uuid,
 ) -> Result<Option<CallerIntent>, StoreError> {
-    let row = sqlx::query("SELECT cursor, source_revision, CASE WHEN length(CAST(reference_json AS BLOB)) <= 524288 THEN reference_json END AS reference_json FROM application_intents WHERE deployment=? AND consumer=? AND operation=?")
+    let row = sqlx::query("SELECT cursor, source_revision, CASE WHEN length(CAST(reference_json AS BLOB)) <= 524288 THEN reference_json END AS reference_json, CASE WHEN length(CAST(recovery_json AS BLOB)) <= 32768 THEN recovery_json END AS recovery_json FROM application_intents WHERE deployment=? AND consumer=? AND operation=?")
         .bind(deployment.to_string()).bind(encode(consumer,4096)?).bind(operation.to_string()).fetch_optional(connection).await?;
     row.map(|row| {
         let reference: RecoveryRef = serde_json::from_str(
             &row.try_get::<Option<String>, _>("reference_json")?
                 .ok_or_else(|| invalid("caller reference exceeds 512 KiB"))?,
+        )?;
+        let recovery = serde_json::from_str(
+            &row.try_get::<Option<String>, _>("recovery_json")?
+                .ok_or_else(|| invalid("caller recovery metadata exceeds 32 KiB"))?,
         )?;
         reference.validate().map_err(|e| invalid(e.to_string()))?;
         if reference.operation != operation {
@@ -109,6 +147,7 @@ async fn read(
             caller,
             consumer: consumer.clone(),
             reference,
+            recovery,
         })
     })
     .transpose()
@@ -121,10 +160,12 @@ impl EventLog {
         caller: DeploymentRef,
         consumer: InstanceId,
         reference: RecoveryRef,
+        recovery: serde_json::Value,
     ) -> Result<RecordedIntent, StoreError> {
         consumer_valid(&consumer)?;
         reference.validate().map_err(|e| invalid(e.to_string()))?;
         let encoded = encode(&reference, MAX_REFERENCE)?;
+        let encoded_recovery = encode(&recovery, MAX_RECOVERY)?;
         let loaded = self
             .load_application_at(&caller)
             .await?
@@ -166,13 +207,13 @@ impl EventLog {
             let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
             let old = read(&mut tx,&domain,caller.deployment,&consumer,reference.operation).await?;
             let intent = if let Some(old) = old {
-                if old.reference != reference { return Err(StoreError::EventConflict); }
+                if old.reference != reference || old.recovery != recovery { return Err(StoreError::EventConflict); }
                 // Keep the first source and original reference, even after a caller update.
                 old
             } else {
-                let result = sqlx::query("INSERT INTO application_intents (deployment,consumer,operation,source_revision,reference_json) VALUES (?,?,?,?,?)")
-                    .bind(caller.deployment.to_string()).bind(encode(&consumer,4096)?).bind(reference.operation.to_string()).bind(caller.revision as i64).bind(encoded).execute(&mut *tx).await?;
-                CallerIntent {cursor:result.last_insert_rowid() as u64,caller,consumer,reference}
+                let result = sqlx::query("INSERT INTO application_intents (deployment,consumer,operation,source_revision,reference_json,recovery_json) VALUES (?,?,?,?,?,?)")
+                    .bind(caller.deployment.to_string()).bind(encode(&consumer,4096)?).bind(reference.operation.to_string()).bind(caller.revision as i64).bind(encoded).bind(encoded_recovery).execute(&mut *tx).await?;
+                CallerIntent {cursor:result.last_insert_rowid() as u64,caller,consumer,reference,recovery}
             };
             tx.commit().await.map_err(StoreError::CommitUnknown)?;
             commits.send_modify(|_| {});

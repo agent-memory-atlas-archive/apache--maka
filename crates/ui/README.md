@@ -230,6 +230,13 @@ every successor even when the window or terminal is gone. Preparation is fenced
 by a provider-owned Core resource, then accepted Work takes over its protection.
 Unsaved previews reject mutations. Native authorization remains independent.
 
+A mutation may include `Action.recovery`: up to 32 KiB of encoded, caller-local
+correlation data. It commits atomically with the original caller intent before
+dispatch and is returned by caller history. Queries and subscriptions reject it.
+It is neither a replay grant nor a business result; the peer confirmation omits
+it entirely. Products must validate their own format, data source and editing
+revision before using it to restore local state.
+
 Mutation feedback is `{ status: "operation", reply: OperationReply }`, preserving
 the actual original target reference. Receipt knowledge and actual executor cleanup
 are independent. Undeliverable results become `unavailable` with that same reference;

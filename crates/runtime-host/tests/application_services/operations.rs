@@ -190,6 +190,7 @@ async fn mutate(
             prepared.reference().source.clone(),
             prepared.consumer().instance().clone(),
             prepared.reference().clone(),
+            serde_json::Value::Null,
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -1451,7 +1452,12 @@ async fn preparation_is_effect_free_does_not_lock_native_root_and_never_redirect
         .unwrap();
         replacement.ready().await.unwrap();
         let recorded = reopened
-            .record_application_intent(reference.source.clone(), id(2), reference.clone())
+            .record_application_intent(
+                reference.source.clone(),
+                id(2),
+                reference.clone(),
+                serde_json::Value::Null,
+            )
             .await
             .unwrap();
         assert!(
@@ -1516,7 +1522,12 @@ async fn recorded_intent_does_not_override_revocation_between_prepare_and_dispat
                 .unwrap();
             let reference = prepared.reference().clone();
             let recorded = store
-                .record_application_intent(reference.source.clone(), id(2), reference.clone())
+                .record_application_intent(
+                    reference.source.clone(),
+                    id(2),
+                    reference.clone(),
+                    serde_json::Value::Null,
+                )
                 .await
                 .unwrap();
             if provider_retired {
@@ -1819,7 +1830,7 @@ async fn separate_caller_root_stays_owned_through_effect_cleanup_and_keeps_origi
             let prepared=client.prepare_mutation(binding,"echo".into(),json!("original"),scope(&issuer,true),Uuid::new_v4(),Attachments::new().into()).await.unwrap();
             let reference=prepared.reference().clone();
             assert!(host_store.operation_observation(&reference).await.unwrap().is_none());
-            let recorded=caller_store.record_application_intent(caller_source.clone(),id(41),reference.clone()).await.unwrap();
+            let recorded=caller_store.record_application_intent(caller_source.clone(),id(41),reference.clone(), serde_json::Value::Null).await.unwrap();
             let next=ui_caller_source(&caller_store,caller_deployment,1,declared,"replacement-host").await;
             assert_ne!(next,caller_source);
             let accepted=client.mutate(prepared,recorded).await.unwrap();

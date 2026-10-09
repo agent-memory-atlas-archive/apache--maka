@@ -203,6 +203,7 @@ impl NativeComponent<()> for Parent {
         let count = if matches!(self.0, Mode::Many) { 16 } else { 1 };
         output.subscriptions = (0..count)
             .map(|i| Action {
+                recovery: Value::Null,
                 continuations: Vec::new(),
                 key: format!("feed{i}"),
                 binding: "stream".into(),
@@ -228,6 +229,7 @@ impl NativeComponent<()> for Parent {
         {
             output.frame.state["queried"] = json!(true);
             output.actions.push(Action {
+                recovery: Value::Null,
                 continuations: Vec::new(),
                 key: "probe".into(),
                 binding: "stream".into(),
@@ -247,6 +249,7 @@ impl NativeComponent<()> for Parent {
             )
         {
             output.actions.push(Action {
+                recovery: Value::Null,
                 continuations: Vec::new(),
                 key: "panic".into(),
                 binding: "stream".into(),

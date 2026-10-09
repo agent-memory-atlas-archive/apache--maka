@@ -240,7 +240,7 @@ async fn cancelled_attachment_upload_retains_physical_capacity_until_worker_fini
         let prepared = client.prepare_mutation(f.binding(2).await, "uploadAttachment".into(),
             json!({"sessionId":session,"name":"held.txt","bytes":3,"digest":content_digest(b"abc")}),
             original, Uuid::new_v4(), BTreeMap::from([("file".into(), resource as Arc<dyn maka_plugins::call::ReadResource>)]).into()).await.unwrap();
-        let recorded = f.store.record_application_intent(prepared.reference().source.clone(), prepared.consumer().instance().clone(), prepared.reference().clone()).await.unwrap();
+        let recorded = f.store.record_application_intent(prepared.reference().source.clone(), prepared.consumer().instance().clone(), prepared.reference().clone(), serde_json::Value::Null).await.unwrap();
         let mutation = client.mutate(prepared, recorded).await.unwrap();
         entered.acquire().await.unwrap().forget();
         cancellation.cancel();

@@ -398,6 +398,7 @@ fn private_mutation_requires_actual_caller_sql_and_recovers_original_receipt_aft
                 f.source.clone(),
                 support::identity(2),
                 call.reference().unwrap().clone(),
+                serde_json::Value::Null,
             )
             .await
             .unwrap();
@@ -530,7 +531,7 @@ fn private_host_loss_retains_real_caller_token_and_reopens_only_original_receipt
     let reference=f.timer.block_on(async {
         call.start().await.unwrap();assert!(matches!(call.receive().await.unwrap(),Reply::Prepared {..}));
         let reference=call.reference().unwrap().clone();
-        let recorded=f.caller.record_application_intent(f.source.clone(),support::identity(2),reference.clone()).await.unwrap();
+        let recorded=f.caller.record_application_intent(f.source.clone(),support::identity(2),reference.clone(), serde_json::Value::Null).await.unwrap();
         let options=SqliteConnectOptions::new().filename(f.host_path().join(maka_event_log::root::ROOT_DATABASE)).read_only(true);
         let mut reader=SqliteConnection::connect_with(&options).await.unwrap();
         let dispatched=call.commit(recorded);tokio::pin!(dispatched);
@@ -621,6 +622,7 @@ fn shared_host_keeps_actual_javascript_state_across_independent_channels() {
                 f.source.clone(),
                 support::identity(2),
                 write.reference().unwrap().clone(),
+                serde_json::Value::Null,
             )
             .await
             .unwrap();

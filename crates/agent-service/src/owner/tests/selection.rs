@@ -342,6 +342,7 @@ async fn ordinary_settings_pages_keep_root_revision_and_exact_default_cas_withou
             prepared.reference().source.clone(),
             prepared.consumer().instance().clone(),
             prepared.reference().clone(),
+            serde_json::Value::Null,
         )
         .await
         .unwrap();

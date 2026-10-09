@@ -73,6 +73,7 @@ impl<V: ?Sized + 'static> Application<V> {
             .own_resource(action.capability.provider(), "mutation preparation")?;
         let id = action.id;
         let consumer = action.capability.consumer().instance().clone();
+        let recovery = action.recovery.clone();
         let request = ServiceRequest {
             source: ServiceSource {
                 deployment: Some(source.clone()),
@@ -159,7 +160,7 @@ impl<V: ?Sized + 'static> Application<V> {
                         .set(original.clone())
                         .map_err(|_| "original operation already prepared")?;
                     store
-                        .record_application_intent(source, consumer, original)
+                        .record_application_intent(source, consumer, original, recovery)
                         .await
                         .map_err(|e| e.to_string())
                 }

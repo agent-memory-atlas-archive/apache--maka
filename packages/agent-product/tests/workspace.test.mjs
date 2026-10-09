@@ -480,6 +480,14 @@ test('a durable admission clears only the captured owner; unknown never replays 
     metadata: { owner: 'original-editor', revision: 4, bytes: 5 },
   });
   const send = client.find('send');
+  assert.deepEqual(send.recovery, {
+    format: 'maka.agent.draft-send@1',
+    sessionId: 'session',
+    editor: { owner: 'original-editor', revision: 4 },
+    attachments: [],
+  });
+  assert.equal(Object.hasOwn(send.input, 'recovery'), false);
+  assert.equal(JSON.stringify(send.recovery).includes('Hello'), false);
   assert.equal(client.state.command, null);
   client.complete(send, {
     status: 'operation',

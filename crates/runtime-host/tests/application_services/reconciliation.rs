@@ -78,7 +78,12 @@ async fn live_adoption_preserves_original_mutation_preparation_and_unchanged_act
                 .unwrap();
             let reference = prepared.reference().clone();
             let recorded = store
-                .record_application_intent(original.clone(), id(2), reference.clone())
+                .record_application_intent(
+                    original.clone(),
+                    id(2),
+                    reference.clone(),
+                    serde_json::Value::Null,
+                )
                 .await
                 .unwrap();
             let (provider, consumer) = mutation_packages();

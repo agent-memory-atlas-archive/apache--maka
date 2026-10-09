@@ -17380,6 +17380,7 @@ export const contracts = {
                   reference: {
                     $ref: '#/$defs/RecoveryRef',
                   },
+                  recovery: true,
                 },
                 additionalProperties: false,
                 required: ['cursor', 'caller', 'consumer', 'reference'],

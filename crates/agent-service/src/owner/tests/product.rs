@@ -1173,6 +1173,31 @@ process.stdout.write(output.outputFiles[0].text);
         runtime.block_on(&mut server).unwrap();
         runtime.block_on(fixture.drained());
         capture(&mut presenter, "native-sent.txt");
+        let intents = runtime
+            .block_on(caller.application_deployment_intents(deployment.deployment, 0, 128))
+            .unwrap();
+        let sent = intents
+            .iter()
+            .find(|entry| entry.reference.method == "send")
+            .unwrap();
+        assert_eq!(sent.recovery["format"], "maka.agent.draft-send@1");
+        assert_eq!(sent.recovery["sessionId"], session);
+        assert!(
+            sent.recovery["editor"]["owner"]
+                .as_str()
+                .is_some_and(|owner| !owner.is_empty())
+        );
+        assert!(sent.recovery["editor"]["revision"].as_u64().is_some());
+        assert_eq!(
+            sent.recovery["attachments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|id| id.as_str().unwrap())
+                .collect::<std::collections::BTreeSet<_>>(),
+            artifacts.iter().map(|item| item.id.as_str()).collect()
+        );
+        assert!(sent.recovery.get("message").is_none());
         // A new unsent draft remains removable after canonical archival, even
         // though the retained native composer is deliberately hidden.
         std::fs::write(&path, "unsent local draft").unwrap();

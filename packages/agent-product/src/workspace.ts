@@ -368,7 +368,25 @@ function intent(
 ) {
   const key = 'request-' + ++state.serial;
   state.pending[key] = request;
-  actions.push({ key, binding, member: 0, method, input, resources, continuations });
+  actions.push({
+    key,
+    binding,
+    member: 0,
+    method,
+    input,
+    resources,
+    continuations,
+    ...(request.kind === 'send'
+      ? {
+          recovery: {
+            format: 'maka.agent.draft-send@1',
+            sessionId: request.sessionId,
+            editor: { owner: request.draft.snapshot.text.owner, revision: request.draft.revision },
+            attachments: request.attachments,
+          },
+        }
+      : {}),
+  });
 }
 function createSession(state: State, actions: Action[], locale: string) {
   if (mutationPending(state) || catalogPending(state)) return;
