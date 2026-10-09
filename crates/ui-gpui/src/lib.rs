@@ -31,6 +31,7 @@ mod reading;
 pub mod scene;
 mod selection_menu;
 mod source;
+mod terminal;
 pub mod textarea;
 
 use gpui_kit::{
@@ -273,6 +274,7 @@ pub fn registry() -> NativeRegistry<dyn Widget> {
     image::register(&mut registry);
     reading::register(&mut registry);
     source::register(&mut registry);
+    terminal::register(&mut registry);
     selection_menu::register(&mut registry);
     input::register(&mut registry);
     file::register(&mut registry);

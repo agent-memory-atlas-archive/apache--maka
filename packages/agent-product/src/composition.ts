@@ -52,6 +52,7 @@ export const packageNames = [
   'timeline',
   'markdown',
   'source-text',
+  'terminal-view',
   'reading-area',
   'rows',
   'appearance',

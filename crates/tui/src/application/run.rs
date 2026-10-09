@@ -142,7 +142,7 @@ pub fn run(
                     }
                     return Ok(false);
                 }
-                if is_exit(&input) {
+                if is_exit(&input) && !presenter.captures_keyboard().map_err(|e| e.to_string())? {
                     return Ok(true);
                 }
                 presenter.input(input).map_err(|e| e.to_string())?;

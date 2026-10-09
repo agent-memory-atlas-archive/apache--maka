@@ -9089,6 +9089,7 @@ dependencies = [
  "maka-js-runtime",
  "maka-plugin-core",
  "maka-plugins",
+ "maka-runtime",
  "rusqlite",
  "schemars 1.2.2",
  "serde",
@@ -9118,6 +9119,8 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "tokio",
+ "unicode-segmentation",
+ "unicode-width",
  "uuid",
 ]
 

@@ -28,6 +28,8 @@ sha2.workspace = true
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 gpui-kit.workspace = true
 maka-ui.workspace = true
+unicode-segmentation.workspace = true
+unicode-width.workspace = true
 maka-plugins.workspace = true
 maka-plugin-core.workspace = true
 serde_json.workspace = true

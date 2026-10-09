@@ -316,6 +316,19 @@ impl Resources {
             }
         }
     }
+    pub(super) fn captures_keyboard(
+        &mut self,
+        target: &paint::TargetIdentity,
+    ) -> maka_ui::Result<bool> {
+        Ok(self
+            .read_native(target, |recipe, state| recipe.captures_keyboard(state))?
+            .unwrap_or(false))
+    }
+    pub(super) fn raw_pointer(&mut self, target: &paint::TargetIdentity) -> maka_ui::Result<bool> {
+        Ok(self
+            .read_native(target, |recipe, state| recipe.raw_pointer(state))?
+            .unwrap_or(false))
+    }
     pub(super) fn handles_tab(&mut self, target: &paint::TargetIdentity) -> maka_ui::Result<bool> {
         Ok(self
             .read_native(target, |recipe, state| {

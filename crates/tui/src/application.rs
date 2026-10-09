@@ -40,6 +40,7 @@ mod scene;
 mod scroll;
 mod selection;
 mod source;
+mod terminal;
 mod textarea;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
@@ -102,6 +103,14 @@ pub trait Widget: std::any::Any {
     /// original frame/owner admission. Geometry alone cannot consume an offer.
     /// Compact selectors may return to the original outer typing target.
     fn returns_focus(&self) -> bool {
+        false
+    }
+    /// Exclusive native keyboard interaction, such as an embedded terminal.
+    fn captures_keyboard(&self, _: &dyn std::any::Any) -> bool {
+        false
+    }
+    /// Deliver all physical mouse buttons and motion to this native target.
+    fn raw_pointer(&self, _: &dyn std::any::Any) -> bool {
         false
     }
     /// A native transient selector can consume Tab without acquiring focus-return ownership.
@@ -440,6 +449,21 @@ impl Presenter {
         }
         Ok(presenter)
     }
+    /// The embedding may reserve a surface-wide exit key only when the actual
+    /// admitted native focus does not own exclusive keyboard interaction.
+    pub fn captures_keyboard(&mut self) -> maka_ui::Result<bool> {
+        let Some(target) = self.focus.clone() else {
+            return Ok(false);
+        };
+        if !self.surface.is_live()
+            || !self.target_admitted(&target)
+            || self.application.is_retiring(&target.mount)
+            || !self.application.mount_visible(&target.mount)
+        {
+            return Ok(false);
+        }
+        self.resources.captures_keyboard(&target)
+    }
     /// Resolve raw coordinates immediately against the last successfully flushed
     /// scene. Crossterm supplies no screen epoch; never re-resolve a captured key.
     /// 输入立即绑定到最后成功输出的场景和真实 mount/revision。
@@ -461,8 +485,27 @@ impl Presenter {
             self.clear_hover()?;
             return Ok(());
         }
+        let raw_pointer_target = if let Event::Mouse(mouse) = &event {
+            let target = self
+                .scene
+                .iter()
+                .rev()
+                .find(|t| t.area.contains((mouse.column, mouse.row).into()))
+                .cloned();
+            match target {
+                Some(target)
+                    if self.target_admitted(&target) && self.resources.raw_pointer(&target)? =>
+                {
+                    Some(target)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
         if let Event::Mouse(mouse) = &event
             && mouse.kind == MouseEventKind::Moved
+            && raw_pointer_target.is_none()
         {
             return self.move_pointer((mouse.column, mouse.row).into());
         }
@@ -497,61 +540,65 @@ impl Presenter {
         if self.navigate_items(&event)? {
             return Ok(());
         }
-        let target = match &event {
-            Event::Key(key) if key.kind != KeyEventKind::Release => match key.code {
-                KeyCode::Tab | KeyCode::BackTab if !returnable && !native_tab => {
-                    let reverse =
-                        key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
-                    let stops = self.tab_stops();
-                    if !stops.is_empty() {
-                        let index = self
-                            .focus
-                            .as_ref()
-                            .and_then(|focus| stops.iter().position(|target| target.same(focus)));
-                        let n = stops.len();
-                        let next = match (index, reverse) {
-                            (Some(i), true) => (i + n - 1) % n,
-                            (Some(i), false) => (i + 1) % n,
-                            (None, true) => n - 1,
-                            (None, false) => 0,
-                        };
-                        let target = stops[next];
-                        if !self.focus.as_ref().is_some_and(|old| old.same(target)) {
-                            self.focus_item(target.clone())?;
+        let target = if raw_pointer_target.is_some() {
+            raw_pointer_target
+        } else {
+            match &event {
+                Event::Key(key) if key.kind != KeyEventKind::Release => match key.code {
+                    KeyCode::Tab | KeyCode::BackTab if !returnable && !native_tab => {
+                        let reverse = key.code == KeyCode::BackTab
+                            || key.modifiers.contains(KeyModifiers::SHIFT);
+                        let stops = self.tab_stops();
+                        if !stops.is_empty() {
+                            let index = self.focus.as_ref().and_then(|focus| {
+                                stops.iter().position(|target| target.same(focus))
+                            });
+                            let n = stops.len();
+                            let next = match (index, reverse) {
+                                (Some(i), true) => (i + n - 1) % n,
+                                (Some(i), false) => (i + 1) % n,
+                                (None, true) => n - 1,
+                                (None, false) => 0,
+                            };
+                            let target = stops[next];
+                            if !self.focus.as_ref().is_some_and(|old| old.same(target)) {
+                                self.focus_item(target.clone())?;
+                            }
                         }
+                        self.track_focus_return()?;
+                        None
                     }
-                    self.track_focus_return()?;
-                    None
+                    KeyCode::Enter | KeyCode::Char(' ') if key.modifiers.is_empty() => {
+                        self.focus.clone()
+                    }
+                    _ => self.focus.clone(),
+                },
+                Event::Paste(_) => self.focus.clone(),
+                Event::Mouse(mouse)
+                    if matches!(
+                        mouse.kind,
+                        MouseEventKind::Down(MouseButton::Left | MouseButton::Right)
+                            | MouseEventKind::ScrollUp
+                            | MouseEventKind::ScrollDown
+                    ) =>
+                {
+                    self.scene
+                        .iter()
+                        .rev()
+                        .find(|t| t.area.contains((mouse.column, mouse.row).into()))
+                        .cloned()
                 }
-                KeyCode::Enter | KeyCode::Char(' ') if key.modifiers.is_empty() => {
-                    self.focus.clone()
+                Event::Mouse(mouse)
+                    if matches!(
+                        mouse.kind,
+                        MouseEventKind::Drag(MouseButton::Left)
+                            | MouseEventKind::Up(MouseButton::Left)
+                    ) =>
+                {
+                    self.drag.clone()
                 }
-                _ => self.focus.clone(),
-            },
-            Event::Paste(_) => self.focus.clone(),
-            Event::Mouse(mouse)
-                if matches!(
-                    mouse.kind,
-                    MouseEventKind::Down(MouseButton::Left | MouseButton::Right)
-                        | MouseEventKind::ScrollUp
-                        | MouseEventKind::ScrollDown
-                ) =>
-            {
-                self.scene
-                    .iter()
-                    .rev()
-                    .find(|t| t.area.contains((mouse.column, mouse.row).into()))
-                    .cloned()
+                _ => None,
             }
-            Event::Mouse(mouse)
-                if matches!(
-                    mouse.kind,
-                    MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
-                ) =>
-            {
-                self.drag.clone()
-            }
-            _ => None,
         };
         if let Some(target) = target {
             if self.application.is_retiring(&target.mount) || !self.target_admitted(&target) {
@@ -606,7 +653,7 @@ impl Presenter {
                     self.resources.observe(&target.mount, observed);
                 }
                 if !preserve_focus
-                    && !matches!(event,Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown | MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)))
+                    && !matches!(event,Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown | MouseEventKind::Drag(_) | MouseEventKind::Up(_) | MouseEventKind::Moved))
                 {
                     self.focus = Some(target);
                 }

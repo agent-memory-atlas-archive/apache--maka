@@ -58,7 +58,10 @@ impl NativeComponent<dyn Widget> for Root {
             ComponentCall::Event { key, input, .. }
                 if matches!(
                     *key,
-                    "__reading_observation" | "reading-observed" | "row-activated"
+                    "__reading_observation"
+                        | "reading-observed"
+                        | "row-activated"
+                        | "terminal-observed"
                 ) || matches!(
                     input.get("kind").and_then(Value::as_str),
                     Some("selected" | "activate" | "submit")
@@ -377,6 +380,13 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
             152,
         )];
         if matches!(view, View::InteractiveScene(..)) {
+            components.push((
+                "terminal",
+                "TerminalView",
+                "maka.ui.terminal",
+                maka_ui::terminal::terminal_view_contract(),
+                155,
+            ));
             components.push((
                 "reading",
                 "ReadingArea",

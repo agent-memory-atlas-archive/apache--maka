@@ -41,6 +41,7 @@ pub mod scene;
 pub mod selection_menu;
 pub mod shortcut;
 pub mod source;
+pub mod terminal;
 pub mod text;
 pub mod textarea;
 mod tree;

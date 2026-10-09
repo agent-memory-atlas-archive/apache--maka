@@ -62,6 +62,10 @@ export type RuntimeProtocol =
   | ImageProps
   | ImageObservation
   | SourceTextProps
+  | TerminalViewProps
+  | TerminalViewObservation
+  | TerminalInputBatch
+  | TerminalInputAcknowledgement
   | SelectionMenuProps
   | ReadingProps
   | ReadingObservation
@@ -781,6 +785,65 @@ export type ImageError =
   | 'unsupported_format'
   | 'invalid_image'
   | 'decode_failed';
+export type ShellOutput =
+  | {
+      stdout: string;
+      stderr: string;
+      latestStream?: PipeStream;
+      stdoutTruncated: boolean;
+      stderrTruncated: boolean;
+      redacted: boolean;
+      mode: 'pipes';
+    }
+  | {
+      screen: string;
+      scrollback: string;
+      lastAlternateScreen?: string;
+      cols: number;
+      rows: number;
+      cursor: TerminalCursor;
+      alternateScreen: boolean;
+      truncated: boolean;
+      redacted: boolean;
+      mode: 'pty';
+    };
+export type PipeStream = 'stdout' | 'stderr';
+export type RawAction =
+  | {
+      text: string;
+      type: 'text';
+    }
+  | {
+      text: string;
+      type: 'paste';
+    }
+  | {
+      key: string;
+      modifiers?: TerminalModifiers;
+      type: 'key';
+    }
+  | {
+      event: RawEvent;
+      x: number;
+      y: number;
+      button?: MouseButton;
+      direction?: ScrollDirection;
+      modifiers?: TerminalModifiers;
+      type: 'mouse';
+    };
+/**
+ * @maxItems 3
+ */
+export type TerminalModifiers =
+  | []
+  | [Modifier2]
+  | [Modifier2, Modifier2]
+  | [Modifier2, Modifier2, Modifier2];
+export type Modifier2 = 'ctrl' | 'alt' | 'shift';
+export type RawEvent = 'click' | 'press' | 'release' | 'move' | 'scroll';
+export type MouseButton = 'left' | 'middle' | 'right';
+export type ScrollDirection = 'up' | 'down';
+export type TerminalViewError = 'input_full' | 'input_failed' | 'budget_exhausted';
 export type ReadingTarget =
   | {
       kind: 'start';
@@ -1667,41 +1730,6 @@ export type ClosureReason =
   | 'host_restarted'
   | 'provider_disconnected';
 export type AgentInteractionRejection = 'closed' | 'unavailable' | 'invalid_answer' | 'unsupported';
-export type RawAction =
-  | {
-      text: string;
-      type: 'text';
-    }
-  | {
-      text: string;
-      type: 'paste';
-    }
-  | {
-      key: string;
-      modifiers?: TerminalModifiers;
-      type: 'key';
-    }
-  | {
-      event: RawEvent;
-      x: number;
-      y: number;
-      button?: MouseButton;
-      direction?: ScrollDirection;
-      modifiers?: TerminalModifiers;
-      type: 'mouse';
-    };
-/**
- * @maxItems 3
- */
-export type TerminalModifiers =
-  | []
-  | [Modifier2]
-  | [Modifier2, Modifier2]
-  | [Modifier2, Modifier2, Modifier2];
-export type Modifier2 = 'ctrl' | 'alt' | 'shift';
-export type RawEvent = 'click' | 'press' | 'release' | 'move' | 'scroll';
-export type MouseButton = 'left' | 'middle' | 'right';
-export type ScrollDirection = 'up' | 'down';
 export type Ownership =
   | {
       kind: 'local';
@@ -1725,29 +1753,6 @@ export type ShellStatus =
   | 'timed_out'
   | 'cancelled'
   | 'orphaned';
-export type ShellOutput =
-  | {
-      stdout: string;
-      stderr: string;
-      latestStream?: PipeStream;
-      stdoutTruncated: boolean;
-      stderrTruncated: boolean;
-      redacted: boolean;
-      mode: 'pipes';
-    }
-  | {
-      screen: string;
-      scrollback: string;
-      lastAlternateScreen?: string;
-      cols: number;
-      rows: number;
-      cursor: TerminalCursor;
-      alternateScreen: boolean;
-      truncated: boolean;
-      redacted: boolean;
-      mode: 'pty';
-    };
-export type PipeStream = 'stdout' | 'stderr';
 export type TerminalOutcome_TerminalPage =
   | {
       value: TerminalPage;
@@ -2917,6 +2922,60 @@ export interface SourceTextProps {
   selection: Color;
   disabled: boolean;
 }
+export interface TerminalViewProps {
+  /**
+   * Changed when the selected canonical resource changes, including read-only views.
+   */
+  source: string;
+  accessibilityLabel: string;
+  output?: ShellOutput | null;
+  controller?: string | null;
+  acknowledgement?: TerminalInputAcknowledgement | null;
+  appearance: TextAppearance;
+  background: Color;
+  caret: Color;
+  rows: number;
+  tabIndex: number;
+}
+export interface TerminalCursor {
+  x: number;
+  y: number;
+  visible: boolean;
+}
+export interface TerminalInputAcknowledgement {
+  owner: string;
+  controller: string;
+  sequence: number;
+  /**
+   * True only after the exact original mutation has a successful result.
+   */
+  accepted: boolean;
+}
+export interface TerminalViewObservation {
+  owner: string;
+  revision: number;
+  source: string;
+  controller?: string | null;
+  captured: boolean;
+  batch?: TerminalInputBatch | null;
+  error?: TerminalViewError | null;
+}
+export interface TerminalInputBatch {
+  controller: string;
+  sequence: number;
+  /**
+   * @maxItems 64
+   */
+  actions: RawAction[];
+  size?: TerminalSize | null;
+}
+/**
+ * Shared by native PTY allocation, input validation and screen rendering.
+ */
+export interface TerminalSize {
+  cols: number;
+  rows: number;
+}
 export interface SelectionMenuProps {
   appearance: MenuAppearance;
   labels: SelectionMenuLabels;
@@ -3848,13 +3907,6 @@ export interface TerminalStart {
   command?: string | null;
   size?: TerminalSize | null;
 }
-/**
- * Shared by native PTY allocation, input validation and screen rendering.
- */
-export interface TerminalSize {
-  cols: number;
-  rows: number;
-}
 export interface TerminalController {
   target: TerminalTarget;
   controllerId: string;
@@ -3896,11 +3948,6 @@ export interface ShellSnapshot {
   failureMessage?: string;
   revision: number;
   output?: ShellOutput;
-}
-export interface TerminalCursor {
-  x: number;
-  y: number;
-  visible: boolean;
 }
 export interface TerminalLeaseUpdate {
   controllerId: string;

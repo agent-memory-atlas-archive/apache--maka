@@ -354,6 +354,14 @@ for (const [name, spec] of Object.entries(specifications)) {
   packages.push(name);
 }
 const mechanical = {
+  'terminal-view': {
+    entries: Object.fromEntries(
+      ['desktop', 'tui'].map((target) => [
+        target,
+        native('maka.ui.terminal', { TerminalView: required(sdk.contracts.terminalView) }),
+      ]),
+    ),
+  },
   rows: { entries: { tui: native('maka.ui.rows', { Rows: required(sdk.contracts.rows) }) } },
   'studio-gateway': {
     id: 'maka.studio.gateway',

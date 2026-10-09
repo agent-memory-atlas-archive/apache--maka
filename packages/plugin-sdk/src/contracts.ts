@@ -834,6 +834,525 @@ export const contracts = {
       captures: {},
     },
   },
+  terminalView: {
+    name: 'maka.ui.TerminalView',
+    version: 1,
+    transport: 'local',
+    interface: {
+      kind: 'component',
+      props: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          source: {
+            type: 'string',
+            description:
+              'Changed when the selected canonical resource changes, including read-only views.',
+            minLength: 1,
+            maxLength: 1024,
+          },
+          accessibilityLabel: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 512,
+          },
+          output: {
+            anyOf: [
+              {
+                $ref: '#/$defs/ShellOutput',
+              },
+              {
+                type: 'null',
+              },
+            ],
+          },
+          controller: {
+            type: ['string', 'null'],
+            format: 'uuid',
+          },
+          acknowledgement: {
+            anyOf: [
+              {
+                $ref: '#/$defs/TerminalInputAcknowledgement',
+              },
+              {
+                type: 'null',
+              },
+            ],
+          },
+          appearance: {
+            $ref: '#/$defs/TextAppearance',
+          },
+          background: {
+            $ref: '#/$defs/Color',
+          },
+          caret: {
+            $ref: '#/$defs/Color',
+          },
+          rows: {
+            type: 'integer',
+            format: 'uint16',
+            minimum: 1,
+            maximum: 100,
+          },
+          tabIndex: {
+            type: 'integer',
+            format: 'int16',
+            minimum: -1,
+            maximum: 32767,
+          },
+        },
+        required: [
+          'source',
+          'accessibilityLabel',
+          'appearance',
+          'background',
+          'caret',
+          'rows',
+          'tabIndex',
+        ],
+        title: 'TerminalViewProps',
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        $defs: {
+          ShellOutput: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  stdout: {
+                    type: 'string',
+                  },
+                  stderr: {
+                    type: 'string',
+                  },
+                  latestStream: {
+                    $ref: '#/$defs/PipeStream',
+                  },
+                  stdoutTruncated: {
+                    type: 'boolean',
+                  },
+                  stderrTruncated: {
+                    type: 'boolean',
+                  },
+                  redacted: {
+                    type: 'boolean',
+                  },
+                  mode: {
+                    type: 'string',
+                    const: 'pipes',
+                  },
+                },
+                required: [
+                  'mode',
+                  'stdout',
+                  'stderr',
+                  'stdoutTruncated',
+                  'stderrTruncated',
+                  'redacted',
+                ],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  screen: {
+                    type: 'string',
+                  },
+                  scrollback: {
+                    type: 'string',
+                  },
+                  lastAlternateScreen: {
+                    type: 'string',
+                  },
+                  cols: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 0,
+                    maximum: 65535,
+                  },
+                  rows: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 0,
+                    maximum: 65535,
+                  },
+                  cursor: {
+                    $ref: '#/$defs/TerminalCursor',
+                  },
+                  alternateScreen: {
+                    type: 'boolean',
+                  },
+                  truncated: {
+                    type: 'boolean',
+                  },
+                  redacted: {
+                    type: 'boolean',
+                  },
+                  mode: {
+                    type: 'string',
+                    const: 'pty',
+                  },
+                },
+                required: [
+                  'mode',
+                  'screen',
+                  'scrollback',
+                  'cols',
+                  'rows',
+                  'cursor',
+                  'alternateScreen',
+                  'truncated',
+                  'redacted',
+                ],
+              },
+            ],
+          },
+          PipeStream: {
+            type: 'string',
+            enum: ['stdout', 'stderr'],
+          },
+          TerminalCursor: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              x: {
+                type: 'integer',
+                format: 'uint16',
+                minimum: 0,
+                maximum: 65535,
+              },
+              y: {
+                type: 'integer',
+                format: 'uint16',
+                minimum: 0,
+                maximum: 65535,
+              },
+              visible: {
+                type: 'boolean',
+              },
+            },
+            required: ['x', 'y', 'visible'],
+          },
+          TerminalInputAcknowledgement: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              owner: {
+                type: 'string',
+                format: 'uuid',
+              },
+              controller: {
+                type: 'string',
+                format: 'uuid',
+              },
+              sequence: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 1,
+                maximum: 9007199254740991,
+              },
+              accepted: {
+                type: 'boolean',
+                description: 'True only after the exact original mutation has a successful result.',
+              },
+            },
+            required: ['owner', 'controller', 'sequence', 'accepted'],
+          },
+          TextAppearance: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              font: {
+                $ref: '#/$defs/FontAppearance',
+              },
+              foreground: {
+                $ref: '#/$defs/Color',
+              },
+            },
+            required: ['font', 'foreground'],
+          },
+          FontAppearance: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              family: {
+                $ref: '#/$defs/FontFamily',
+              },
+              fallbacks: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/FontFamily',
+                },
+                maxItems: 8,
+              },
+              size: {
+                type: 'number',
+                format: 'float',
+                minimum: 6,
+                maximum: 96,
+              },
+              lineHeight: {
+                type: 'number',
+                format: 'float',
+                description: 'Line height relative to this font size.',
+                minimum: 1,
+                maximum: 3,
+              },
+              weight: {
+                type: 'integer',
+                format: 'uint16',
+                minimum: 1,
+                maximum: 1000,
+              },
+            },
+            required: ['family', 'fallbacks', 'size', 'lineHeight', 'weight'],
+          },
+          FontFamily: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+          },
+          Color: {
+            type: 'integer',
+            format: 'uint32',
+            minimum: 0,
+            description: 'Packed RGBA, including explicit alpha zero.',
+          },
+        },
+      },
+      events: {
+        observed: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            owner: {
+              type: 'string',
+              format: 'uuid',
+            },
+            revision: {
+              type: 'integer',
+              format: 'uint64',
+              minimum: 0,
+            },
+            source: {
+              type: 'string',
+            },
+            controller: {
+              type: ['string', 'null'],
+              format: 'uuid',
+            },
+            captured: {
+              type: 'boolean',
+            },
+            batch: {
+              anyOf: [
+                {
+                  $ref: '#/$defs/TerminalInputBatch',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+            },
+            error: {
+              anyOf: [
+                {
+                  $ref: '#/$defs/TerminalViewError',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+            },
+          },
+          required: ['owner', 'revision', 'source', 'captured'],
+          title: 'TerminalViewObservation',
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          $defs: {
+            TerminalInputBatch: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                controller: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+                sequence: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 1,
+                  maximum: 9007199254740991,
+                },
+                actions: {
+                  type: 'array',
+                  items: {
+                    $ref: '#/$defs/RawAction',
+                  },
+                  maxItems: 64,
+                },
+                size: {
+                  anyOf: [
+                    {
+                      $ref: '#/$defs/TerminalSize',
+                    },
+                    {
+                      type: 'null',
+                    },
+                  ],
+                },
+              },
+              required: ['controller', 'sequence', 'actions'],
+            },
+            RawAction: {
+              oneOf: [
+                {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    text: {
+                      type: 'string',
+                      minLength: 1,
+                      pattern: '^[^\\x00-\\x1f\\x7f-\\x9f]+$',
+                    },
+                    type: {
+                      type: 'string',
+                      const: 'text',
+                    },
+                  },
+                  required: ['type', 'text'],
+                },
+                {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    text: {
+                      type: 'string',
+                      minLength: 1,
+                      pattern: '^[^\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f-\\x9f]+$',
+                    },
+                    type: {
+                      type: 'string',
+                      const: 'paste',
+                    },
+                  },
+                  required: ['type', 'text'],
+                },
+                {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    key: {
+                      type: 'string',
+                      pattern:
+                        '^(?:[ -~]|enter|escape|tab|backspace|arrow_(?:up|down|left|right)|home|end|insert|delete|page_(?:up|down)|f(?:[1-9]|1[0-2]))$',
+                    },
+                    modifiers: {
+                      $ref: '#/$defs/TerminalModifiers',
+                      default: [],
+                    },
+                    type: {
+                      type: 'string',
+                      const: 'key',
+                    },
+                  },
+                  required: ['type', 'key'],
+                },
+                {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    event: {
+                      $ref: '#/$defs/RawEvent',
+                    },
+                    x: {
+                      type: 'integer',
+                      format: 'uint64',
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    y: {
+                      type: 'integer',
+                      format: 'uint64',
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    button: {
+                      $ref: '#/$defs/MouseButton',
+                      default: null,
+                    },
+                    direction: {
+                      $ref: '#/$defs/ScrollDirection',
+                      default: null,
+                    },
+                    modifiers: {
+                      $ref: '#/$defs/TerminalModifiers',
+                      default: [],
+                    },
+                    type: {
+                      type: 'string',
+                      const: 'mouse',
+                    },
+                  },
+                  required: ['type', 'event', 'x', 'y'],
+                },
+              ],
+            },
+            TerminalModifiers: {
+              type: 'array',
+              items: {
+                $ref: '#/$defs/Modifier',
+              },
+              uniqueItems: true,
+              maxItems: 3,
+            },
+            Modifier: {
+              type: 'string',
+              enum: ['ctrl', 'alt', 'shift'],
+            },
+            RawEvent: {
+              type: 'string',
+              enum: ['click', 'press', 'release', 'move', 'scroll'],
+            },
+            MouseButton: {
+              type: 'string',
+              enum: ['left', 'middle', 'right'],
+            },
+            ScrollDirection: {
+              type: 'string',
+              enum: ['up', 'down'],
+            },
+            TerminalSize: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                cols: {
+                  type: 'integer',
+                  format: 'uint16',
+                  minimum: 2,
+                  maximum: 240,
+                },
+                rows: {
+                  type: 'integer',
+                  format: 'uint16',
+                  minimum: 1,
+                  maximum: 100,
+                },
+              },
+              required: ['cols', 'rows'],
+              description:
+                'Shared by native PTY allocation, input validation and screen rendering.',
+            },
+            TerminalViewError: {
+              type: 'string',
+              enum: ['input_full', 'input_failed', 'budget_exhausted'],
+            },
+          },
+        },
+      },
+      captures: {},
+    },
+  },
   selectionMenu: {
     name: 'maka.ui.SelectionMenu',
     version: 1,
