@@ -2214,6 +2214,11 @@ export type AgentHistorySourceReference =
       toolUseId: string;
       kind: 'tool_use';
     };
+/**
+ * A structural selector into an original JSON field. Keys and array indices
+ * remain distinct; neither locates a filesystem resource nor grants access.
+ */
+export type HistorySourceSegment = string | number;
 export type SourcePosition =
   | {
       kind: 'start';
@@ -4406,6 +4411,168 @@ export interface AgentHistorySourceRead {
   through: number;
   source: AgentHistorySourceReference;
   field: SourceField;
+  /**
+   * Optional JSON keys/array indices within arguments, result or receipt.
+   *
+   * @maxItems 16
+   */
+  path?:
+    | []
+    | [HistorySourceSegment]
+    | [HistorySourceSegment, HistorySourceSegment]
+    | [HistorySourceSegment, HistorySourceSegment, HistorySourceSegment]
+    | [HistorySourceSegment, HistorySourceSegment, HistorySourceSegment, HistorySourceSegment]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | null;
   position: SourcePosition;
 }
 /**
@@ -4434,6 +4601,168 @@ export interface HistorySource {
     | [SourceField, SourceField, SourceField, SourceField, SourceField, SourceField]
     | [SourceField, SourceField, SourceField, SourceField, SourceField, SourceField, SourceField];
   field: SourceField;
+  /**
+   * Omission reads the encoded field. A selected JSON string is literal text.
+   *
+   * @maxItems 16
+   */
+  path?:
+    | []
+    | [HistorySourceSegment]
+    | [HistorySourceSegment, HistorySourceSegment]
+    | [HistorySourceSegment, HistorySourceSegment, HistorySourceSegment]
+    | [HistorySourceSegment, HistorySourceSegment, HistorySourceSegment, HistorySourceSegment]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | [
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+        HistorySourceSegment,
+      ]
+    | null;
   format: SourceFormat;
   offset: number;
   totalBytes: number;

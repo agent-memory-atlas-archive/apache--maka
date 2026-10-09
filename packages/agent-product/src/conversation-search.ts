@@ -479,6 +479,7 @@ function historyEvent(
       header = preview.sections.find((section) => section.source)?.source;
     if (
       source.sequence !== preview.hit.cursor.sequence ||
+      source.path != null ||
       source.field !== request.field ||
       !source.fields.includes(source.field) ||
       new Set(source.fields).size !== source.fields.length ||

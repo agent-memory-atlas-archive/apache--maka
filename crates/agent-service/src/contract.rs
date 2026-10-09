@@ -712,6 +712,10 @@ pub struct HistorySourceRead {
     pub through: u64,
     pub source: HistorySourceReference,
     pub field: maka_plugins::session::history::SourceField,
+    /// Optional JSON keys/array indices within arguments, result or receipt.
+    #[serde(default)]
+    #[schemars(length(max = 16))]
+    pub path: Option<Vec<maka_plugins::session::history::SourceSegment>>,
     pub position: maka_plugins::session::history::SourcePosition,
 }
 #[derive(Deserialize, JsonSchema)]

@@ -456,6 +456,7 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
                                 through,
                                 chunk.sequence,
                                 field,
+                                None,
                                 SourcePosition::Start,
                                 8192,
                                 64 * 1024,
@@ -470,6 +471,7 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
                                     call_fence,
                                     chunk.sequence,
                                     field,
+                                    None,
                                     SourcePosition::Start,
                                     8192,
                                     64 * 1024
@@ -1224,6 +1226,7 @@ async fn message_material_labels_and_time_survive_exact_paging_and_text_cache_up
                                 through,
                                 sequence,
                                 SourceField::Body,
+                                None,
                                 if reverse {
                                     SourcePosition::Before {
                                         offset: chunk.offset + chunk.text.len() as u64,
@@ -1566,6 +1569,7 @@ async fn thinking_windows_preserve_field_order_bytes_and_explicit_body_only_read
             through,
             cursor.sequence,
             maka_plugins::session::history::SourceField::Thinking,
+            None,
             maka_plugins::session::history::SourcePosition::Start,
             8192,
             64 * 1024,

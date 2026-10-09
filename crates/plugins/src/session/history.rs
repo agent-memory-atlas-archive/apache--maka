@@ -286,6 +286,16 @@ pub enum SourceRole {
     ToolResult,
     Failure,
 }
+/// A structural selector into an original JSON field. Keys and array indices
+/// remain distinct; neither locates a filesystem resource nor grants access.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+#[schemars(rename = "HistorySourceSegment")]
+pub enum SourceSegment {
+    Key(#[schemars(length(max = 256))] String),
+    Index(u32),
+}
+
 /// One literal UTF-8 excerpt of an immutable field. JSON excerpts need not be
 /// standalone JSON. Image descriptors carry no artifact read authorization.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -301,6 +311,10 @@ pub struct HistorySource {
     #[schemars(length(min = 1, max = 7))]
     pub fields: Vec<SourceField>,
     pub field: SourceField,
+    /// Omission reads the encoded field. A selected JSON string is literal text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(max = 16))]
+    pub path: Option<Vec<SourceSegment>>,
     pub format: SourceFormat,
     #[schemars(range(max = 9_007_199_254_740_991u64))]
     pub offset: u64,

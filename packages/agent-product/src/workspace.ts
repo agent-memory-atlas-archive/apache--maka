@@ -1197,6 +1197,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
       const end = next.offset + utf8Bytes(next.text);
       if (
         next.sequence !== request.sequence ||
+        next.path != null ||
         next.field !== request.field ||
         !next.fields.includes(next.field) ||
         (!next.text && next.totalBytes > 0) ||

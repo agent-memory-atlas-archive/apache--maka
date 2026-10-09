@@ -90,6 +90,7 @@ function accept(state: State, value: AgentHistorySourcePage, position: SourcePos
   const next = value.source,
     end = next.offset + bytes(next.text);
   if (
+    next.path != null ||
     next.field !== 'arguments' ||
     next.format !== 'json' ||
     next.tool?.call?.sequence !== next.sequence ||

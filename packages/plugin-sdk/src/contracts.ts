@@ -8727,6 +8727,16 @@ export const contracts = {
               field: {
                 $ref: '#/$defs/SourceField',
               },
+              path: {
+                description:
+                  'Optional JSON keys/array indices within arguments, result or receipt.',
+                type: ['array', 'null'],
+                items: {
+                  $ref: '#/$defs/HistorySourceSegment',
+                },
+                maxItems: 16,
+                default: null,
+              },
               position: {
                 $ref: '#/$defs/SourcePosition',
               },
@@ -8792,6 +8802,21 @@ export const contracts = {
                       'The original service operation observation, separate from its returned value.',
                     type: 'string',
                     const: 'receipt',
+                  },
+                ],
+              },
+              HistorySourceSegment: {
+                description:
+                  'A structural selector into an original JSON field. Keys and array indices\nremain distinct; neither locates a filesystem resource nor grants access.',
+                anyOf: [
+                  {
+                    type: 'string',
+                    maxLength: 256,
+                  },
+                  {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
                   },
                 ],
               },
@@ -8933,6 +8958,15 @@ export const contracts = {
                   field: {
                     $ref: '#/$defs/SourceField',
                   },
+                  path: {
+                    description:
+                      'Omission reads the encoded field. A selected JSON string is literal text.',
+                    type: ['array', 'null'],
+                    items: {
+                      $ref: '#/$defs/HistorySourceSegment',
+                    },
+                    maxItems: 16,
+                  },
                   format: {
                     $ref: '#/$defs/SourceFormat',
                   },
@@ -9003,6 +9037,21 @@ export const contracts = {
                       'The original service operation observation, separate from its returned value.',
                     type: 'string',
                     const: 'receipt',
+                  },
+                ],
+              },
+              HistorySourceSegment: {
+                description:
+                  'A structural selector into an original JSON field. Keys and array indices\nremain distinct; neither locates a filesystem resource nor grants access.',
+                anyOf: [
+                  {
+                    type: 'string',
+                    maxLength: 256,
+                  },
+                  {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
                   },
                 ],
               },

@@ -1542,7 +1542,30 @@ async fn tool_source_uses_original_agent_grant_and_frozen_canonical_fields() {
         position = json!({"kind":"after","offset":end});
     }
     assert_eq!(serde_json::from_str::<Value>(&complete).unwrap(), input);
-    let request = json!({"sessionId":session,"through":fence,"source":{"kind":"sequence","sequence":sequence},"field":"arguments","position":{"kind":"start"}});
+    let mut literal = String::new();
+    let mut offset = 0;
+    loop {
+        let page = fixture
+            .query(
+                "source",
+                json!({"sessionId":session,"through":fence,
+            "source":{"kind":"sequence","sequence":sequence},"field":"arguments","path":["text"],
+            "position":{"kind":"after","offset":offset}}),
+            )
+            .await
+            .unwrap();
+        let source = &page["source"];
+        assert_eq!(source["path"], json!(["text"]));
+        assert_eq!(source["format"], "text");
+        assert_eq!(source["offset"], offset);
+        literal.push_str(source["text"].as_str().unwrap());
+        offset = literal.len();
+        if offset as u64 == source["totalBytes"].as_u64().unwrap() {
+            break;
+        }
+    }
+    assert_eq!(literal, input["text"].as_str().unwrap());
+    let request = json!({"sessionId":session,"through":fence,"source":{"kind":"sequence","sequence":sequence},"field":"arguments","path":["text"],"position":{"kind":"start"}});
     for (key, value) in [
         ("sessionId", json!("foreign_session")),
         ("through", json!(fence + 1)),

@@ -312,6 +312,7 @@ impl Handler for Agent {
                                     input.through,
                                     sequence,
                                     input.field,
+                                    input.path,
                                     input.position,
                                     8192,
                                     64 * 1024,

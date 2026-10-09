@@ -143,6 +143,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
                             through,
                             sequence,
                             field,
+                            None,
                             position,
                             budget,
                             64 * 1024,
@@ -202,6 +203,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
                 0,
                 sequence,
                 field,
+                None,
                 SourcePosition::Start,
                 8192,
                 64 * 1024
@@ -215,6 +217,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
                 through,
                 sequence,
                 field,
+                None,
                 SourcePosition::Start,
                 8192,
                 64 * 1024
@@ -233,6 +236,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
                 through,
                 sequence,
                 wrong,
+                None,
                 SourcePosition::Start,
                 8192,
                 64 * 1024
@@ -252,6 +256,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
                 through,
                 sequence,
                 field,
+                None,
                 SourcePosition::After { offset: middle },
                 8192,
                 64 * 1024
@@ -265,6 +270,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
                 through,
                 sequence,
                 field,
+                None,
                 SourcePosition::After {
                     offset: expected.len() as u64 + 1
                 },
@@ -285,6 +291,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
                 through,
                 sequence,
                 field,
+                None,
                 SourcePosition::Start,
                 8192,
                 64 * 1024,
@@ -306,6 +313,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
                 through,
                 sequence,
                 field,
+                None,
                 SourcePosition::After {
                     offset: expected.len() as u64,
                 },
@@ -323,6 +331,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
             through,
             sequences[4],
             SourceField::Arguments,
+            None,
             SourcePosition::Start,
             8192,
             1024
@@ -336,6 +345,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
             through,
             sequences[4],
             SourceField::Arguments,
+            None,
             SourcePosition::Start,
             8192,
             64 * 1024,
@@ -406,6 +416,7 @@ async fn failure_search_reads_original_diagnostic_fields_without_a_body_row() {
                     through,
                     hit.sequence,
                     field,
+                    None,
                     position,
                     31,
                     64 * 1024,
@@ -435,6 +446,7 @@ async fn failure_search_reads_original_diagnostic_fields_without_a_body_row() {
                 through,
                 hit.sequence,
                 SourceField::Body,
+                None,
                 SourcePosition::Start,
                 8192,
                 64 * 1024
@@ -448,6 +460,7 @@ async fn failure_search_reads_original_diagnostic_fields_without_a_body_row() {
                 through - 1,
                 hit.sequence,
                 field,
+                None,
                 SourcePosition::Start,
                 8192,
                 64 * 1024
@@ -457,4 +470,290 @@ async fn failure_search_reads_original_diagnostic_fields_without_a_body_row() {
         );
     }
     log.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn structured_values_page_literal_text_and_exact_json_without_aliasing_keys_or_authority() {
+    use maka_plugins::session::history::SourceSegment::{Index, Key};
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("structured.sqlite");
+    let log = EventLog::open(&database).await.unwrap();
+    let text = "中😀\0\r\n".repeat(1000);
+    let value = serde_json::json!({
+        "content":text, "array":[{"0":"object key", "":true}],
+        "a.\"\\/\0key":{"value":u64::MAX}, "empty":"", "nil":null,
+        "boolean":false, "number":1.2345678901234567, "object":{"x":1}
+    });
+    let owner = maka_event_log::sessions::PluginSession {
+        session_id: "structured".into(),
+        creator: Namespace::new("source.fixture", Scope::Profile).unwrap(),
+        fingerprint: "structured-import".into(),
+        managed: false,
+        authority_session_id: None,
+    };
+    log.begin_session_import(
+        &owner,
+        &Source {
+            adapter: "fixture".into(),
+            session_id: "foreign".into(),
+        },
+        &serde_json::json!({}),
+        1,
+    )
+    .await
+    .unwrap();
+    log.append_session_import(
+        "structured",
+        0,
+        [
+            Content::User {
+                text: "Inspect structured tool fields".into(),
+            },
+            Content::ToolCall {
+                call_id: "call".into(),
+                name: "Arbitrary alias".into(),
+                input: Some(value.clone()),
+            },
+            Content::ToolResult {
+                call_id: "call".into(),
+                output: value.clone(),
+                is_error: false,
+            },
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, content)| Record {
+            source_message_id: format!("row-{i}"),
+            source_turn_id: "turn".into(),
+            timestamp: Some(1),
+            content,
+        })
+        .collect(),
+    )
+    .await
+    .unwrap();
+    log.publish_session_import("structured", 3).await.unwrap();
+    let through = *log.subscribe_commits().borrow();
+    while !log
+        .prepare_transcript("structured", through, 32)
+        .await
+        .unwrap()
+    {}
+    let sequences = Connection::open(&database).unwrap().prepare("SELECT sequence FROM transcript_rows WHERE session_id='structured' AND json_extract(payload, '$.type') IN ('tool_call','tool_result') ORDER BY sequence").unwrap().query_map([], |row| row.get::<_,i64>(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
+    assert_eq!(sequences.len(), 2);
+    for (sequence, field) in [
+        (sequences[0] as u64, SourceField::Arguments),
+        (sequences[1] as u64, SourceField::Result),
+    ] {
+        for budget in [13, 8192] {
+            for reverse in [false, true] {
+                let mut offset = if reverse { text.len() as u64 } else { 0 };
+                let mut complete = String::new();
+                loop {
+                    let position = if reverse {
+                        SourcePosition::Before { offset }
+                    } else {
+                        SourcePosition::After { offset }
+                    };
+                    let source = log
+                        .history_source(
+                            "structured",
+                            through,
+                            sequence,
+                            field,
+                            Some(vec![Key("content".into())]),
+                            position,
+                            budget,
+                            65536,
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(source.path, Some(vec![Key("content".into())]));
+                    assert_eq!(source.sequence, sequence);
+                    assert_eq!(source.field, field);
+                    assert_eq!(source.format, SourceFormat::Text);
+                    assert_eq!(source.total_bytes, text.len() as u64);
+                    assert!(source.text.len() <= budget);
+                    assert_eq!(
+                        source.text,
+                        text[source.offset as usize..source.offset as usize + source.text.len()]
+                    );
+                    if reverse {
+                        complete.insert_str(0, &source.text);
+                        offset = source.offset;
+                    } else {
+                        complete.push_str(&source.text);
+                        offset = source.offset + source.text.len() as u64;
+                    }
+                    if (reverse && offset == 0) || (!reverse && offset == source.total_bytes) {
+                        break;
+                    }
+                    assert!(!source.text.is_empty());
+                }
+                assert_eq!(complete, text);
+            }
+        }
+        for (path, expected, format) in [
+            (
+                vec![Key("array".into()), Index(0), Key("0".into())],
+                "object key".to_owned(),
+                SourceFormat::Text,
+            ),
+            (
+                vec![Key("array".into()), Index(0), Key("".into())],
+                "true".into(),
+                SourceFormat::Json,
+            ),
+            (
+                vec![Key("a.\"\\/\0key".into()), Key("value".into())],
+                u64::MAX.to_string(),
+                SourceFormat::Json,
+            ),
+            (vec![Key("empty".into())], String::new(), SourceFormat::Text),
+            (vec![Key("nil".into())], "null".into(), SourceFormat::Json),
+            (
+                vec![Key("boolean".into())],
+                "false".into(),
+                SourceFormat::Json,
+            ),
+            (
+                vec![Key("number".into())],
+                value["number"].to_string(),
+                SourceFormat::Json,
+            ),
+            (
+                vec![Key("object".into())],
+                value["object"].to_string(),
+                SourceFormat::Json,
+            ),
+        ] {
+            let source = log
+                .history_source(
+                    "structured",
+                    through,
+                    sequence,
+                    field,
+                    Some(path.clone()),
+                    SourcePosition::Start,
+                    8192,
+                    65536,
+                )
+                .await
+                .unwrap();
+            assert_eq!(source.path, Some(path));
+            assert_eq!(source.format, format);
+            assert_eq!(source.text, expected);
+        }
+        for path in [
+            vec![Key("missing".into())],
+            vec![Key("array".into()), Key("0".into())],
+            vec![Key("array".into()), Index(0), Index(0)],
+            vec![Key("array".into()), Index(u32::MAX)],
+            vec![Key("content".into()); 17],
+            vec![Key("界".repeat(86))],
+        ] {
+            assert!(
+                log.history_source(
+                    "structured",
+                    through,
+                    sequence,
+                    field,
+                    Some(path),
+                    SourcePosition::Start,
+                    8192,
+                    65536
+                )
+                .await
+                .is_err()
+            );
+        }
+        assert!(
+            log.history_source(
+                "structured",
+                through,
+                sequence,
+                SourceField::Body,
+                Some(vec![]),
+                SourcePosition::Start,
+                8192,
+                65536
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            log.history_source(
+                "structured",
+                through,
+                sequence,
+                field,
+                Some(vec![Key("content".into())]),
+                SourcePosition::After { offset: 1 },
+                8192,
+                65536
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            log.history_source(
+                "foreign",
+                through,
+                sequence,
+                field,
+                Some(vec![Key("content".into())]),
+                SourcePosition::Start,
+                8192,
+                65536
+            )
+            .await
+            .is_err()
+        );
+        let root = log
+            .history_source(
+                "structured",
+                through,
+                sequence,
+                field,
+                Some(vec![]),
+                SourcePosition::Tail,
+                8192,
+                65536,
+            )
+            .await
+            .unwrap();
+        let raw = log
+            .history_source(
+                "structured",
+                through,
+                sequence,
+                field,
+                None,
+                SourcePosition::Tail,
+                8192,
+                65536,
+            )
+            .await
+            .unwrap();
+        assert_eq!(root.text, raw.text);
+        assert_eq!(root.total_bytes, raw.total_bytes);
+        assert_eq!(root.path, Some(vec![]));
+        assert!(raw.path.is_none());
+    }
+    log.shutdown().await.unwrap();
+    let reopened = EventLog::open(&database).await.unwrap();
+    let source = reopened
+        .history_source(
+            "structured",
+            through,
+            sequences[1] as u64,
+            SourceField::Result,
+            Some(vec![Key("content".into())]),
+            SourcePosition::Tail,
+            8192,
+            65536,
+        )
+        .await
+        .unwrap();
+    assert!(text.ends_with(&source.text));
 }

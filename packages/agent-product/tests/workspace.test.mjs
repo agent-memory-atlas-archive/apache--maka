@@ -9052,6 +9052,21 @@ for (const target of ['tui', 'desktop']) {
         },
       },
     });
+    const selectedValue = chunk(prefix, 0);
+    selectedValue.source.path = [];
+    input({
+      kind: 'action',
+      key: result.actions[0].key,
+      event: { status: 'succeeded', value: selectedValue },
+    });
+    assert.equal(
+      source().failed,
+      true,
+      'a selected JSON value cannot replace original approval arguments',
+    );
+    assert.equal(source().text, '');
+    input({ kind: 'component', child: 'arguments', name: 'retry', event: {} });
+    assert.deepEqual(result.actions[0].input, request.input);
     input({
       kind: 'action',
       key: result.actions[0].key,
@@ -10522,3 +10537,84 @@ for (const target of ['tui', 'desktop']) {
     },
   );
 }
+
+for (const target of ['tui', 'desktop']) {
+  test(
+    target +
+      ' whole tool source rejects selected JSON values and retries its exact original request',
+    async () => {
+      const module = await import(
+        pathToFileURL(resolve(root, 'dist/packages/workspace/' + target + '.js'))
+      );
+      module.activate({ locale: 'en' });
+      const tool = {
+        toolUseId: uuid(901),
+        call: { sequence: 40, name: 'Inspect', title: null, pending: false },
+        result: null,
+      };
+      const client = new Client(module.component).start({
+        through: 100,
+        chunks: [historyChunk('', { role: 'tool_call', sequence: 40, messageId: uuid(901), tool })],
+      });
+      client.component('toolSource', { sequence: 40, field: 'arguments' });
+      const request = client.find('source');
+      const source = {
+        timestamp: 1,
+        sequence: 40,
+        role: 'tool_call',
+        fields: ['arguments'],
+        field: 'arguments',
+        format: 'json',
+        offset: 0,
+        totalBytes: 2,
+        text: '{}',
+        tool,
+      };
+      client.complete(request, {
+        status: 'succeeded',
+        value: { kind: 'ready', through: 100, source: { ...source, path: [] } },
+      });
+      assert.equal(client.timeline.source.failed, true);
+      assert.equal(client.timeline.source.text, '');
+      client.component('sourceRetry');
+      assert.deepEqual(client.find('source').input, request.input);
+      client.complete(client.find('source'), {
+        status: 'succeeded',
+        value: { kind: 'ready', through: 100, source },
+      });
+      assert.equal(client.timeline.source.text, '{}');
+      assert.equal(client.timeline.source.failed, false);
+    },
+  );
+}
+
+test('history preview does not accept selected JSON as the matching original field', async () => {
+  const find = await conversationFinder();
+  find.query('needle');
+  find.raw('find-scope');
+  find.complete(find.out.actions[0], {
+    kind: 'ready',
+    through: 100,
+    matches: [{ field: 'arguments', cursor: { sequence: 257, offset: 0 }, preview: 'needle' }],
+    nextAfter: null,
+  });
+  find.complete(find.out.actions[0], {
+    kind: 'ready',
+    through: 100,
+    source: {
+      timestamp: 1,
+      sequence: 257,
+      role: 'tool_call',
+      field: 'arguments',
+      fields: ['arguments'],
+      format: 'json',
+      offset: 0,
+      totalBytes: 8,
+      text: '"needle"',
+      tool: null,
+      path: ['nested'],
+    },
+  });
+  assert.equal(find.state.search.history.preview.sections[0].failed, true);
+  assert.equal(find.state.search.history.preview.sections[0].source, null);
+});

@@ -23,12 +23,12 @@ use super::{
 };
 use crate::{EventLog, StoreError, sequence_number};
 use maka_plugins::session::history::{
-    HistorySource, SourceField, SourceFormat, SourcePosition, SourceRole,
+    HistorySource, SourceField, SourceFormat, SourcePosition, SourceRole, SourceSegment,
 };
 use sqlx::Connection;
 
 fn source_sql() -> String {
-    format!("WITH source AS (SELECT
+    format!("WITH original AS (SELECT
     CASE ?3
     WHEN 'body' THEN CASE WHEN json_extract(payload, '$.type') IN ('user', 'assistant', 'tool_call', 'tool_result') THEN {body} END
     WHEN 'thinking' THEN CASE WHEN json_extract(payload, '$.type') = 'assistant' THEN json_extract(payload, '$.thinking.text') END
@@ -50,7 +50,13 @@ fn source_sql() -> String {
     json_type(payload, '$.failureMessage') IS 'text' AS failure_message,
     json_type(payload, '$.errorClass') IS 'text' AS error_class,
     json_extract(payload, '$.content.kind') IS 'operation' AS operation
-    FROM transcript_rows WHERE session_id = ?1 AND sequence = ?2)", body = super::history::BODY)
+    FROM transcript_rows WHERE session_id = ?1 AND sequence = ?2),
+    source AS (SELECT
+        CASE WHEN ?4 IS NULL THEN body WHEN format = 'json' THEN
+            CASE json_type(body, ?4) WHEN 'text' THEN json_extract(body, ?4) ELSE body -> ?4 END END AS body,
+        CASE WHEN ?4 IS NULL THEN format WHEN format = 'json' THEN
+            CASE json_type(body, ?4) WHEN 'text' THEN 'text' ELSE 'json' END END AS format,
+        role, timestamp, thinking, failure_message, error_class, operation FROM original)", body = super::history::BODY)
 }
 
 impl EventLog {
@@ -97,6 +103,7 @@ impl EventLog {
         through: u64,
         sequence: u64,
         field: SourceField,
+        path: Option<Vec<SourceSegment>>,
         position: SourcePosition,
         max_bytes: usize,
         max_json_bytes: usize,
@@ -107,6 +114,7 @@ impl EventLog {
         {
             return Err(invalid("invalid history source limits"));
         }
+        let json_path = json_path(field, path.as_deref())?;
         let fence = maka_presentation::watermark(through)?;
         if sequence == 0 || sequence > fence {
             return Err(invalid("history source exceeds its fence"));
@@ -147,6 +155,7 @@ impl EventLog {
                             .bind(&session)
                             .bind(sequence_sql)
                             .bind(selected)
+                            .bind(json_path.as_deref())
                             .fetch_optional(&mut *tx)
                             .await?
                             .ok_or_else(|| invalid("history source was not found"))?;
@@ -174,7 +183,7 @@ impl EventLog {
                     };
                     if !fields.contains(&field) { return Err(invalid("field is not a history source")); }
                     let read =
-                        format!("{sql} SELECT substr(CAST(body AS BLOB), ?4, ?5) FROM source");
+                        format!("{sql} SELECT substr(CAST(body AS BLOB), ?5, ?6) FROM source");
                     let offset = match position {
                         SourcePosition::Start => 0,
                         SourcePosition::Tail => total,
@@ -190,6 +199,7 @@ impl EventLog {
                         .bind(&session)
                         .bind(sequence_sql)
                         .bind(selected)
+                        .bind(json_path.as_deref())
                         .bind(sql_number(offset)? + 1)
                         .bind(1i64)
                         .fetch_one(&mut *tx)
@@ -210,6 +220,7 @@ impl EventLog {
                         .bind(&session)
                         .bind(sequence_sql)
                         .bind(selected)
+                        .bind(json_path.as_deref())
                         .bind(sql_number(start)? + 1)
                         .bind((end - start) as i64)
                         .fetch_one(&mut *tx)
@@ -252,6 +263,7 @@ impl EventLog {
                         role,
                         fields,
                         field,
+                        path,
                         format,
                         offset: start,
                         total_bytes: total,
@@ -270,4 +282,30 @@ impl EventLog {
 }
 fn invalid(message: &str) -> StoreError {
     StoreError::InvalidTransition(message.into())
+}
+
+fn json_path(
+    field: SourceField,
+    path: Option<&[SourceSegment]>,
+) -> Result<Option<String>, StoreError> {
+    let Some(path) = path else { return Ok(None) };
+    if !matches!(
+        field,
+        SourceField::Arguments | SourceField::Result | SourceField::Receipt
+    ) || path.len() > 16
+    {
+        return Err(invalid("invalid structured history source path"));
+    }
+    let mut result = String::from("$");
+    for segment in path {
+        match segment {
+            SourceSegment::Key(key) if key.len() <= 256 => {
+                result.push('.');
+                result.push_str(&serde_json::to_string(key)?);
+            }
+            SourceSegment::Index(index) => result.push_str(&format!("[{index}]")),
+            SourceSegment::Key(_) => return Err(invalid("history source key exceeds limit")),
+        }
+    }
+    Ok(Some(result))
 }
