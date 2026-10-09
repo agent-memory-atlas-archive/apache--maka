@@ -597,6 +597,7 @@ pub enum QueueRejection {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentHistoryChunk")]
 pub struct HistoryChunk {
+    pub field: maka_plugins::session::history::HistoryField,
     pub message_id: String,
     pub turn_id: String,
     pub timestamp: u64,
@@ -619,6 +620,8 @@ pub struct History {
     #[schemars(range(max = 9_007_199_254_740_991u64))]
     pub through: Option<u64>,
     pub position: HistoryPosition,
+    #[serde(default)]
+    pub include_thinking: bool,
 }
 pub use maka_plugins::session::history::Position as HistoryPosition;
 
@@ -896,6 +899,7 @@ mod tests {
             chunks: Vec::new(),
             before: None,
             after: Some(Cursor {
+                field: Default::default(),
                 sequence: 4096,
                 offset: 0,
             }),
@@ -903,7 +907,7 @@ mod tests {
         .unwrap();
         assert!(validator.is_valid(&page));
         page["chunks"] = json!([{
-            "messageId":"result", "turnId":"turn", "timestamp":1, "role":"tool_result",
+            "messageId":"result", "field":"body", "turnId":"turn", "timestamp":1, "role":"tool_result",
             "sequence":1, "offset":0, "totalBytes":0, "text":"",
             "tool":{"kind":"result", "toolUseId":"call", "toolName":null, "isError":true, "image":false}
         }]);

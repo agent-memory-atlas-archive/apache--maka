@@ -126,6 +126,7 @@ impl Executions {
                     &input.session_id,
                     through,
                     input.position,
+                    input.include_thinking,
                     128 * 1024,
                     8,
                     1024 * 1024,

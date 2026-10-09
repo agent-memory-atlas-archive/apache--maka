@@ -46,6 +46,7 @@ impl Reader {
             history,
             call,
             input: Read {
+                include_thinking: false,
                 session_id: session,
                 through,
                 position: Position::Start,

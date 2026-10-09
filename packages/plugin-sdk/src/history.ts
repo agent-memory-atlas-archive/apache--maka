@@ -34,11 +34,13 @@ export interface SessionCatalogPage {
   readonly nextCursor: string | null;
 }
 export interface HistoryCursor {
+  readonly field?: 'body' | 'thinking';
   readonly sequence: number;
   /** UTF-8 byte offset, not a JavaScript string index. */
   readonly offset: number;
 }
 export interface HistoryChunk extends HistoryCursor {
+  readonly field: 'body' | 'thinking';
   readonly messageId: string;
   readonly turnId: string;
   readonly timestamp: number;
@@ -121,6 +123,8 @@ export interface History {
   read(input: {
     sessionId: string;
     through?: number;
+    /** Include Thinking fields before assistant bodies; omitted means body only. */
+    includeThinking?: boolean;
     position: import('./generated/runtime.js').HistoryPosition;
   }): Promise<HistoryPage>;
 }

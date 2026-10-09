@@ -150,6 +150,7 @@ impl Handler for Agent {
                         return Err("agent_cursor_invalid".into());
                     }
                     Read {
+                        include_thinking: input.include_thinking,
                         session_id: input.session_id.clone(),
                         through: input.through,
                         position: input.position,
@@ -175,6 +176,7 @@ impl Handler for Agent {
                                 &input.session_id,
                                 through,
                                 input.position,
+                                input.include_thinking,
                                 8192,
                                 2,
                                 64 * 1024,
@@ -191,6 +193,7 @@ impl Handler for Agent {
                             chunks: chunks
                                 .into_iter()
                                 .map(|chunk| HistoryChunk {
+                                    field: chunk.field,
                                     message_id: chunk.message_id,
                                     turn_id: chunk.turn_id,
                                     timestamp: chunk.timestamp,
@@ -253,6 +256,7 @@ impl Handler for Agent {
                                 .map(|found| HistoryMatch {
                                     field: found.field,
                                     cursor: maka_plugins::session::history::Cursor {
+                                        field: Default::default(),
                                         sequence: found.sequence,
                                         offset: 0,
                                     },

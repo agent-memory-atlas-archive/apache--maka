@@ -357,7 +357,7 @@ fn packaged_product(case: ProductCase) {
             let resumed = request_with_key(&mut next, "private-fixture-key").await;
             let tool = resumed["messages"].as_array().unwrap().iter().rev().find(|m| m["role"] == "tool").unwrap();
             assert_eq!(serde_json::from_str::<Value>(tool["content"].as_str().unwrap()).unwrap()["kind"], "completed");
-            response_with_text(&mut next, "**Elegant response**").await;
+            response_with_thinking(&mut next, "**Elegant response**", Some("**Reasoned decision** 中😀")).await;
             return;
         }
         let body = request_with_key(&mut socket, KEY).await;
@@ -1251,6 +1251,43 @@ process.stdout.write(output.outputFiles[0].text);
                 .contains(ratatui::style::Modifier::BOLD)
         );
         assert!(!screen(&formatted).contains("**Elegant response**"));
+        // Read the preceding ordinary window: trailing canonical metadata can
+        // leave only the answer in the bounded tail window.
+        click(&mut presenter, "[ Earlier messages ]");
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let formatted_thinking = loop {
+            let frame = draw(&mut presenter);
+            let bold_thinking = (0..frame.area.height).any(|y| {
+                (0..frame.area.width.saturating_sub(17)).any(|x| {
+                    "Reasoned decision"
+                        .chars()
+                        .enumerate()
+                        .all(|(i, ch)| frame[(x + i as u16, y)].symbol() == ch.to_string())
+                        && frame[(x, y)]
+                            .modifier
+                            .contains(ratatui::style::Modifier::BOLD)
+                })
+            });
+            if bold_thinking {
+                break frame;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Thinking did not reach its canonical Markdown: {}",
+                screen(&frame)
+            );
+            std::thread::yield_now();
+        };
+        assert!(!screen(&formatted_thinking).contains("**Reasoned decision**"));
+        click(&mut presenter, "[ Read message source ]");
+        await_screen(&mut presenter, "[ Back to conversation ]");
+        await_screen(&mut presenter, "**Reasoned decision**");
+        assert!(!screen(&draw(&mut presenter)).contains("**Elegant response**"));
+        click(&mut presenter, "[ Back to conversation ]");
+        await_screen(&mut presenter, "Reasoned decision");
+        click(&mut presenter, "[ Latest messages ]");
+        await_screen(&mut presenter, "Elegant response");
+
         // Find uses its original native query, then returns to the retained draft.
         for close_key in [
             KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),

@@ -96,7 +96,15 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
     let through = *log.subscribe_commits().borrow();
     while !log.prepare_transcript("source", through, 32).await.unwrap() {}
     let Page::Ready { chunks, .. } = log
-        .history_text("source", through, Position::Start, 8192, 8, 64 * 1024)
+        .history_text(
+            "source",
+            through,
+            Position::Start,
+            false,
+            8192,
+            8,
+            64 * 1024,
+        )
         .await
         .unwrap()
     else {

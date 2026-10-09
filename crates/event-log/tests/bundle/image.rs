@@ -123,7 +123,7 @@ async fn rows(
     let mut position = Position::Start;
     loop {
         let Page::Ready { chunks, after, .. } = log
-            .history_text(session, through, position, 8192, 8, 65536)
+            .history_text(session, through, position, false, 8192, 8, 65536)
             .await
             .unwrap()
         else {

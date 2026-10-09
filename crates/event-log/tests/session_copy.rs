@@ -676,6 +676,7 @@ async fn copies_own_history_and_files_without_replaying_execution_across_retries
                 session,
                 root.high_water,
                 maka_plugins::session::history::Position::Start,
+                false,
                 16 * 1024,
                 8,
                 1024 * 1024,
@@ -716,6 +717,7 @@ async fn copies_own_history_and_files_without_replaying_execution_across_retries
                     session,
                     root.high_water,
                     maka_plugins::session::history::Position::Start,
+                    false,
                     16 * 1024,
                     8,
                     1024 * 1024

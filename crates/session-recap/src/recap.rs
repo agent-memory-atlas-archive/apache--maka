@@ -116,6 +116,7 @@ impl Recaps {
     }
     async fn check(&self, scope: &call::Scope, session: &str) -> Result<(), Error> {
         history::Read {
+            include_thinking: false,
             session_id: session.into(),
             through: Some(0),
             position: history::Position::Start,
@@ -137,6 +138,7 @@ impl Recaps {
             .read(
                 scope.clone(),
                 history::Read {
+                    include_thinking: false,
                     session_id: session.into(),
                     through: Some(0),
                     position: history::Position::Start,
@@ -307,6 +309,7 @@ impl Recaps {
                 .read(
                     scope.clone(),
                     history::Read {
+                        include_thinking: false,
                         session_id: session.into(),
                         through,
                         position: cursor.map_or(history::Position::Start, |cursor| {
@@ -500,6 +503,7 @@ mod tests {
                 Ok(history::Page::Ready {
                     through: 7,
                     chunks: vec![history::Chunk {
+                        field: Default::default(),
                         message_id: "m".into(),
                         turn_id: "t".into(),
                         timestamp: 1,
@@ -514,6 +518,7 @@ mod tests {
                     before: None,
                     after: (!second || self.endless.load(Ordering::SeqCst)).then_some(
                         history::Cursor {
+                            field: Default::default(),
                             sequence: 2,
                             offset: 0,
                         },

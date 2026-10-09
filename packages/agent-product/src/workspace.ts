@@ -208,6 +208,7 @@ export interface State {
     stepId: string;
     text: string;
     closedAt: number | null;
+    field: 'body' | 'thinking';
   }[];
   latestKnown: number;
   watch: { key: string; input: { sessionId: string; after: number }; last: number } | null;
@@ -237,14 +238,28 @@ function appendLive(
   text: string,
 ) {
   const messageId = part.messageId;
+  const field = part.textKind === 'thinking' ? 'thinking' : 'body';
   if (
     state.window &&
     sequence <= state.window.page.through &&
-    state.window.page.chunks.some((chunk) => chunk.messageId === messageId)
+    state.window.page.chunks.some(
+      (chunk) => chunk.messageId === messageId && (chunk.field ?? 'body') === field,
+    )
   )
     return;
   const ids = new Set(state.live.map((fragment) => fragment.messageId));
-  const remaining = 16000 - state.live.reduce((total, fragment) => total + fragment.text.length, 0);
+  let remaining = 16000 - state.live.reduce((total, fragment) => total + fragment.text.length, 0);
+  // Thinking shares the existing prefix budget but leaves room for an answer
+  // before atomic providers publish either field. Never evict a displayed prefix.
+  if (field === 'thinking') {
+    const thinking = state.live.filter((fragment) => fragment.field === 'thinking');
+    const thinkingIds = new Set(thinking.map((fragment) => fragment.messageId));
+    if (thinking.length >= 32 || (!thinkingIds.has(messageId) && thinkingIds.size >= 8)) return;
+    remaining = Math.min(
+      remaining,
+      8000 - thinking.reduce((total, fragment) => total + fragment.text.length, 0),
+    );
+  }
   // A truncated surrogate can leave one unused code unit; keep the prefix closed.
   if (remaining <= 1 || state.live.length >= 64 || (!ids.has(messageId) && ids.size >= 16)) return;
   text = text.slice(0, remaining);
@@ -258,6 +273,7 @@ function appendLive(
       stepId: part.stepId,
       text,
       closedAt: null,
+      field,
     });
 }
 function closeLive(state: State, sequence: number, invocationId: string, stepId?: string) {
@@ -270,10 +286,10 @@ function closeLive(state: State, sequence: number, invocationId: string, stepId?
       fragment.closedAt = sequence;
 }
 function messages(state: State): Message[] {
-  const canonical = (state.window?.page.chunks ?? []).map((chunk) => ({
-    id: chunk.messageId,
-    contentKey: `canonical-${chunk.sequence}-${chunk.offset}`,
-    role: chunk.role,
+  const canonical: Message[] = (state.window?.page.chunks ?? []).map((chunk) => ({
+    id: chunk.field === 'thinking' ? 'thinking-' + chunk.messageId : chunk.messageId,
+    contentKey: `canonical-${chunk.sequence}-${chunk.offset}${chunk.field === 'thinking' ? '-thinking' : ''}`,
+    role: chunk.field === 'thinking' ? 'thinking' : chunk.role,
     timestamp: chunk.timestamp,
     text: chunk.text,
     tool: chunk.tool,
@@ -286,15 +302,19 @@ function messages(state: State): Message[] {
   for (const fragment of state.live) {
     if (
       fragment.sequence <= state.window.page.through &&
-      canonical.some((message) => message.id === fragment.messageId)
+      state.window.page.chunks.some(
+        (chunk) =>
+          chunk.messageId === fragment.messageId && (chunk.field ?? 'body') === fragment.field,
+      )
     )
       continue;
-    let message = live.get(fragment.messageId);
+    const key = fragment.messageId + (fragment.field === 'thinking' ? '-thinking' : '');
+    let message = live.get(key);
     if (!message) {
       message = {
-        id: 'live-' + fragment.messageId,
-        contentKey: 'live-' + fragment.messageId,
-        role: 'assistant',
+        id: 'live-' + key,
+        contentKey: 'live-' + key,
+        role: fragment.field === 'thinking' ? 'thinking' : 'assistant',
         timestamp: null,
         text: '',
         tool: null,
@@ -302,7 +322,7 @@ function messages(state: State): Message[] {
         source: null,
         image: false,
       };
-      live.set(fragment.messageId, message);
+      live.set(key, message);
     }
     message.text += fragment.text;
   }
@@ -375,7 +395,7 @@ function history(
     { kind: 'history', epoch: state.epoch, navigation, through, latest, implicit, position },
     'agent',
     'history',
-    { sessionId: state.selected.id, through, position },
+    { sessionId: state.selected.id, through, position, includeThinking: true },
     {},
     implicit ? [{ child: 'timeline', method: 'tail', input: null }] : [],
   );
@@ -1226,6 +1246,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
             sessionId: state.selected!.id,
             through: request.through,
             position: request.position,
+            includeThinking: true,
           },
           {},
           request.implicit ? [{ child: 'timeline', method: 'tail', input: null }] : [],
@@ -1243,7 +1264,11 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
         (fragment) =>
           fragment.sequence > page.through ||
           ((fragment.closedAt === null || fragment.closedAt > page.through) &&
-            !page.chunks.some((chunk) => chunk.messageId === fragment.messageId)),
+            !page.chunks.some(
+              (chunk) =>
+                chunk.messageId === fragment.messageId &&
+                (chunk.field ?? 'body') === fragment.field,
+            )),
       );
       break;
     }
@@ -1451,7 +1476,7 @@ function delivery(state: State, page: AgentDeliveryPage, actions: Action[]) {
           part.stepId === fact.stepId &&
           part.partId === fact.partId,
       );
-      if (part?.textKind === 'text') {
+      if (part) {
         appendLive(state, event.sequence, part, event.invocationId, fact.text);
       }
     } else if (fact.kind === 'part_finished') {
@@ -2776,7 +2801,9 @@ export function workspace<N extends Node>(
           const page = state.window.page;
           if (input.name === 'source') {
             const chunk = page.chunks.find(
-              (chunk) => chunk.sequence === (input.event as { sequence: number }).sequence,
+              (chunk) =>
+                chunk.sequence === (input.event as { sequence: number }).sequence &&
+                (chunk.field ?? 'body') === ((input.event as { field?: string }).field ?? 'body'),
             );
             if (chunk)
               state.source = {
@@ -2786,7 +2813,7 @@ export function workspace<N extends Node>(
                 landing: { sequence: state.navigation, edge: 'start' },
                 loading: false,
                 failed: false,
-                field: 'body',
+                field: chunk.field ?? 'body',
                 format: 'text',
                 ready: true,
                 position: { kind: 'after', offset: chunk.offset },

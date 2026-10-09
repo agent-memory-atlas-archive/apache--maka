@@ -136,6 +136,27 @@ async fn search_hits_read_the_exact_field_when_history_body_is_absent_or_differe
         fixture.store.append_session_import(&session, 0, records).await.unwrap();
         fixture.store.publish_session_import(&session, 5).await.unwrap();
         let through = *fixture.store.subscribe_commits().borrow();
+        for include in [false, true] {
+            let mut position = json!({"kind":"start"});
+            let mut thinking = String::new();
+            let mut finished = false;
+            for _ in 0..64 {
+                let page = fixture.query("history", json!({"sessionId":session,"through":through,"position":position,"includeThinking":include})).await.unwrap();
+                assert!(serde_json::to_vec(&page).unwrap().len() <= 64 * 1024);
+                if page["kind"] == "preparing" { continue; }
+                for chunk in page["chunks"].as_array().unwrap() {
+                    if chunk["field"] == "thinking" {
+                        assert!(include);
+                        assert_eq!(chunk["role"], "assistant");
+                        thinking.push_str(chunk["text"].as_str().unwrap());
+                    } else { assert_eq!(chunk["field"], "body"); }
+                }
+                if page["after"].is_null() { finished = true; break; }
+                position = json!({"kind":"after","cursor":page["after"]});
+            }
+            assert!(finished);
+            assert_eq!(thinking, if include { thought.clone() + "other-thinking-hit" } else { String::new() });
+        }
         for (query, field, expected, is_tool) in [
             ("user-body-hit", "body", body, false),
             ("thinking-hit 中", "thinking", thought, false),

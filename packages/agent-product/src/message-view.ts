@@ -45,7 +45,7 @@ export function messageView<N extends Node>(
   locale: string,
   message: {
     id: string;
-    role: HistorySource['role'];
+    role: HistorySource['role'] | 'thinking';
     timestamp: number | null;
     text: string;
     tool: HistorySource['tool'];
@@ -63,15 +63,17 @@ export function messageView<N extends Node>(
     expanded = message.expanded,
     body = message.body;
   const caption =
-    message.role === 'user'
-      ? text.you
-      : message.role === 'assistant'
-        ? text.assistant
-        : message.role === 'tool_call'
-          ? text.toolActivity
-          : message.role === 'failure'
-            ? text.findFieldFailure
-            : text.toolOutput;
+    message.role === 'thinking'
+      ? text.findFieldThinking
+      : message.role === 'user'
+        ? text.you
+        : message.role === 'assistant'
+          ? text.assistant
+          : message.role === 'tool_call'
+            ? text.toolActivity
+            : message.role === 'failure'
+              ? text.findFieldFailure
+              : text.toolOutput;
   const name = tool && message.tool?.toolName;
   const time =
     message.role === 'user' || message.role === 'assistant' ? timeLabel(message.timestamp) : null;

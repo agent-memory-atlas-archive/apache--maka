@@ -108,10 +108,21 @@ impl CopyMaterial {
     }
 }
 
-/// Byte offset in one message's UTF-8 text, not a bearer capability.
+/// A readable field in a conversation window, in presentation order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryField {
+    Thinking,
+    #[default]
+    Body,
+}
+
+/// Byte offset in one message field's UTF-8 text, not a bearer capability.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Cursor {
+    #[serde(default)]
+    pub field: HistoryField,
     #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
     pub sequence: u64,
     #[schemars(range(max = 9_007_199_254_740_991u64))]
@@ -148,6 +159,8 @@ pub struct Read {
     #[schemars(range(max = 9_007_199_254_740_991u64))]
     pub through: Option<u64>,
     pub position: Position,
+    #[serde(default)]
+    pub include_thinking: bool,
 }
 impl Read {
     pub fn validate(&self) -> Result<(), CommandError> {
@@ -162,7 +175,8 @@ impl Read {
                 if self.through.is_none()
                     || cursor.sequence == 0
                     || cursor.sequence > MAX
-                    || cursor.offset > MAX =>
+                    || cursor.offset > MAX
+                    || (!self.include_thinking && cursor.field == HistoryField::Thinking) =>
             {
                 Err(invalid())
             }
@@ -178,8 +192,8 @@ impl Read {
     }
 }
 
-/// Text visible in the durable conversation; reasoning and runtime metadata are
-/// not conversation text. Tool JSON contributes string values, never its keys.
+/// Canonical message author/kind; the field identifies body versus thinking.
+/// Tool body JSON contributes string values, never its keys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
@@ -285,6 +299,7 @@ pub struct HistorySource {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Chunk {
+    pub field: HistoryField,
     pub message_id: String,
     pub turn_id: String,
     pub timestamp: u64,
@@ -360,11 +375,13 @@ mod tests {
     #[test]
     fn history_positions_require_fixed_cursor_fences_and_distinguish_raw_events() {
         let cursor = Cursor {
+            field: Default::default(),
             sequence: 4096,
             offset: 0,
         };
         for position in [Position::Before { cursor }, Position::After { cursor }] {
             let mut read = Read {
+                include_thinking: false,
                 session_id: "session".into(),
                 through: None,
                 position,
@@ -383,6 +400,7 @@ mod tests {
         ] {
             assert!(
                 Read {
+                    include_thinking: false,
                     session_id: "session".into(),
                     through: None,
                     position
@@ -393,6 +411,7 @@ mod tests {
         }
         assert!(
             Read {
+                include_thinking: false,
                 session_id: "session".into(),
                 through: Some(15),
                 position: Position::Event { sequence: 16 }
@@ -403,6 +422,7 @@ mod tests {
         for position in [
             Position::Before {
                 cursor: Cursor {
+                    field: Default::default(),
                     sequence: 0,
                     offset: 0,
                 },
@@ -411,6 +431,7 @@ mod tests {
         ] {
             assert!(
                 Read {
+                    include_thinking: false,
                     session_id: "session".into(),
                     through: Some(16),
                     position

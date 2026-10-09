@@ -711,9 +711,13 @@ async fn response(socket: &mut TcpStream) {
     response_with_text(socket, "Elegant response").await;
 }
 async fn response_with_text(socket: &mut TcpStream, text: &str) {
+    response_with_thinking(socket, text, None).await;
+}
+async fn response_with_thinking(socket: &mut TcpStream, text: &str, thinking: Option<&str>) {
+    let reasoning = thinking.map(|text| format!("data: {}\n\n", json!({"id":"fixture","choices":[{"index":0,"delta":{"reasoning_content":text},"finish_reason":null}]}))).unwrap_or_default();
     let delta = json!({"id":"fixture","choices":[{"index":0,"delta":{"content":text},"finish_reason":null}]});
     let end = json!({"id":"fixture","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}});
-    let body = format!("data: {delta}\n\ndata: {end}\n\ndata: [DONE]\n\n");
+    let body = format!("{reasoning}data: {delta}\n\ndata: {end}\n\ndata: [DONE]\n\n");
     socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
 }
 

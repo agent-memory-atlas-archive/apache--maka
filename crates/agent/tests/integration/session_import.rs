@@ -230,6 +230,7 @@ async fn import_is_retryable_history_not_an_execution_and_survives_copy_and_rest
             "imported",
             prefix.high_water,
             maka_plugins::session::history::Position::Start,
+            false,
             16 * 1024,
             8,
             1024 * 1024,

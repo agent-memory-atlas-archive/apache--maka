@@ -267,6 +267,7 @@ mod tests {
                 session,
                 0,
                 Chunk {
+                    field: Default::default(),
                     message_id: id.into(),
                     turn_id: turn.into(),
                     timestamp: 1,

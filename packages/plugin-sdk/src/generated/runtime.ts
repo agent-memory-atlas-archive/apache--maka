@@ -1933,6 +1933,10 @@ export type HistoryPosition =
       sequence: number;
       kind: 'event';
     };
+/**
+ * A readable field in a conversation window, in presentation order.
+ */
+export type HistoryField = 'thinking' | 'body';
 export type AgentDeliveryPage =
   | {
       through: number;
@@ -2007,8 +2011,8 @@ export type AgentQueueRejection =
   | 'execution_changed'
   | 'not_running';
 /**
- * Text visible in the durable conversation; reasoning and runtime metadata are
- * not conversation text. Tool JSON contributes string values, never its keys.
+ * Canonical message author/kind; the field identifies body versus thinking.
+ * Tool body JSON contributes string values, never its keys.
  */
 export type Role = 'user' | 'assistant' | 'tool_call' | 'tool_result';
 /**
@@ -4309,11 +4313,13 @@ export interface AgentHistoryRead {
   sessionId: string;
   through?: number | null;
   position: HistoryPosition;
+  includeThinking?: boolean;
 }
 /**
- * Byte offset in one message's UTF-8 text, not a bearer capability.
+ * Byte offset in one message field's UTF-8 text, not a bearer capability.
  */
 export interface Cursor {
+  field?: HistoryField & string;
   sequence: number;
   offset: number;
 }
@@ -4340,6 +4346,7 @@ export interface AgentQueueMutation {
   edit: AgentQueueAction;
 }
 export interface AgentHistoryChunk {
+  field: HistoryField;
   messageId: string;
   turnId: string;
   timestamp: number;
@@ -4429,6 +4436,7 @@ export interface Read {
   sessionId: string;
   through?: number | null;
   position: HistoryPosition;
+  includeThinking?: boolean;
 }
 export interface HostActivation {
   contract: Contract;

@@ -542,7 +542,7 @@ test('a new mount restores original references and never clears its new draft', 
   );
   assert.deepEqual(client.find('page').input, { after: 7, limit: 1 });
 });
-test('bootstrap replays the original active prefix and does not render thinking as an answer', () => {
+test('bootstrap replays the original active prefix and labels thinking separately', () => {
   const parts = [
     { startSequence: 3, messageId: 'answer', stepId: 'step', partId: 'same', textKind: 'text' },
     {
@@ -570,7 +570,9 @@ test('bootstrap replays the original active prefix and does not render thinking 
     9,
   );
   assert.equal(client.liveMessages[0].text, 'prefix suffix');
-  assert.equal(client.liveMessages.length, 1);
+  assert.equal(client.liveMessages.length, 2);
+  assert.equal(client.liveMessages[1].role, 'thinking');
+  assert.equal(client.liveMessages[1].text, 'private reasoning');
   client.page([fact(9, { kind: 'delta', stepId: 'step', partId: 'same', text: 'duplicate' })], 9);
   assert.equal(client.liveMessages[0].text, 'prefix suffix');
   client.page(
@@ -3354,6 +3356,7 @@ test('desktop scroll-to-end uses native painted facts and preserves its accepted
 });
 
 const historyChunk = (text, overrides = {}) => ({
+  field: 'body',
   messageId: uuid(900),
   turnId: uuid(901),
   timestamp: 1,
@@ -3381,6 +3384,7 @@ test('canonical navigation replaces one exact fixed-fence window and keeps it du
     sessionId: session.id,
     through: 100,
     position: { kind: 'before', cursor: page.before },
+    includeThinking: true,
   };
   assert.deepEqual(action.input, expected);
   assert.deepEqual(client.state.window.page, page);
@@ -3417,6 +3421,7 @@ test('canonical navigation replaces one exact fixed-fence window and keeps it du
     sessionId: session.id,
     through: 100,
     position: { kind: 'after', cursor: older.after },
+    includeThinking: true,
   });
   client.query('history', page);
   assert.equal(client.state.landing.edge, 'start');
@@ -3425,6 +3430,7 @@ test('canonical navigation replaces one exact fixed-fence window and keeps it du
     sessionId: session.id,
     through: 101,
     position: { kind: 'tail' },
+    includeThinking: true,
   });
   client.query('history', { ...page, through: 101, before: page.before, after: null });
   assert.equal(client.state.landing.edge, 'end');
@@ -4095,7 +4101,7 @@ for (const target of ['desktop', 'tui']) {
         client.timeline,
         {},
       );
-      assert.deepEqual(opened.events, [{ name: 'source', value: { sequence: 40 } }]);
+      assert.deepEqual(opened.events, [{ name: 'source', value: { sequence: 40, field: 'body' } }]);
     }
   });
   test(target + ' tool inspection has one disclosure and keeps hidden actions inert', async () => {
@@ -4169,7 +4175,7 @@ for (const target of ['desktop', 'tui']) {
         );
         assert.deepEqual(
           input('source-40'),
-          bodyText ? [{ name: 'source', value: { sequence: 40 } }] : [],
+          bodyText ? [{ name: 'source', value: { sequence: 40, field: 'body' } }] : [],
         );
         const loading = timeline.update(out.frame.state, { ...props, loading: true }, {});
         const loadingRow = loading.frame.view.children[0].children[0].props.content.children[0];
@@ -9835,6 +9841,188 @@ for (const target of ['tui', 'desktop']) {
         'You',
         'unrepresentable Date is not fabricated',
       );
+    }
+  });
+}
+
+for (const target of ['tui', 'desktop']) {
+  test(`${target} ordinary Thinking has distinct identity, native body and exact source navigation`, async () => {
+    const module = await import(
+      pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+    );
+    module.activate({ locale: 'en' });
+    const { component: timeline } = await import(
+      pathToFileURL(resolve(root, `dist/packages/timeline/${target}.js`))
+    );
+    const chunks = [historyChunk('**Reason 中😀**', { field: 'thinking' }), historyChunk('Answer')];
+    const client = new Client(module.component).start({ through: 100, chunks });
+    assert.deepEqual(
+      client.messages.map((m) => m.role),
+      ['thinking', 'assistant'],
+    );
+    assert.notEqual(client.messages[0].id, client.messages[1].id);
+    assert.notEqual(client.messages[0].contentKey, client.messages[1].contentKey);
+    const props = client.timeline;
+    let rendered = timeline.mount(props, {});
+    const rows = rendered.frame.view.children[0].children[0].props.content.children;
+    assert.equal(rows[0].children.find((n) => n.key.startsWith('role-')).text, 'Thinking');
+    const native = modelSlots(rows[0])[0];
+    assert.equal(native.binding, 'markdown');
+    assert.equal(native.props.source, chunks[0].text);
+    rendered = timeline.event(
+      rendered.frame.state,
+      { kind: 'raw', key: 'source-25600-thinking', event: null },
+      props,
+      {},
+    );
+    assert.deepEqual(rendered.events, [
+      { name: 'source', value: { sequence: 25600, field: 'thinking' } },
+    ]);
+    client.component('source', rendered.events[0].value);
+    assert.equal(client.state.source.field, 'thinking');
+    assert.equal(client.state.source.chunk.text, chunks[0].text);
+    client.component('sourceBack');
+    client.component('latest');
+    assert.equal(client.find('history').input.includeThinking, true);
+    client.query('history', { kind: 'preparing', through: 100 });
+    assert.equal(
+      client.find('history').input.includeThinking,
+      true,
+      'preparation retains the requested projection',
+    );
+  });
+  test(`${target} Thinking deltas survive unrelated bodies and replace only on publication or actual closure`, async () => {
+    const module = await import(
+      pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+    );
+    module.activate({ locale: 'en' });
+    const client = new Client(module.component).start();
+    client.page(
+      [
+        fact(1, { kind: 'opened' }),
+        fact(2, {
+          kind: 'part_started',
+          messageId: 'same',
+          stepId: 'step',
+          partId: 'reason',
+          textKind: 'thinking',
+        }),
+        fact(3, { kind: 'delta', stepId: 'step', partId: 'reason', text: 'Reason 中' }),
+        fact(4, {
+          kind: 'part_started',
+          messageId: 'same',
+          stepId: 'step',
+          partId: 'answer',
+          textKind: 'text',
+        }),
+        fact(5, { kind: 'delta', stepId: 'step', partId: 'answer', text: 'Answer' }),
+      ],
+      5,
+    );
+    assert.deepEqual(
+      client.liveMessages.map((m) => [m.role, m.text]),
+      [
+        ['thinking', 'Reason 中'],
+        ['assistant', 'Answer'],
+      ],
+    );
+    client.query('history', {
+      kind: 'ready',
+      through: 5,
+      chunks: [historyChunk('Answer', { messageId: 'same' })],
+      before: null,
+      after: null,
+    });
+    assert.deepEqual(
+      client.liveMessages.map((m) => m.text),
+      ['Reason 中'],
+      'body publication cannot cover Thinking',
+    );
+    client.component('tailReady');
+    client.page(
+      [
+        fact(6, { kind: 'delta', stepId: 'step', partId: 'reason', text: '😀 suffix' }),
+        fact(7, { kind: 'part_finished', stepId: 'step', partId: 'reason' }),
+      ],
+      7,
+    );
+    client.query('history', {
+      kind: 'ready',
+      through: 7,
+      chunks: [historyChunk('Answer', { messageId: 'same' })],
+      before: null,
+      after: null,
+    });
+    assert.equal(client.liveMessages[0].text, 'Reason 中😀 suffix');
+    client.component('tailReady');
+    client.page([fact(8, { kind: 'step_ended', stepId: 'step' })], 8);
+    client.query('history', {
+      kind: 'ready',
+      through: 8,
+      chunks: [
+        historyChunk('Reason 中😀 suffix', { messageId: 'same', field: 'thinking' }),
+        historyChunk('Answer', { messageId: 'same' }),
+      ],
+      before: null,
+      after: null,
+    });
+    assert.equal(client.state.live.length, 0);
+    assert.deepEqual(
+      client.messages.map((m) => [m.role, m.text]),
+      [
+        ['thinking', 'Reason 中😀 suffix'],
+        ['assistant', 'Answer'],
+      ],
+    );
+  });
+}
+
+for (const target of ['tui', 'desktop']) {
+  test(`${target} Thinking cannot starve answer streaming through bytes, fragments or message identities`, async () => {
+    const module = await import(
+      pathToFileURL(resolve(root, `dist/packages/workspace/${target}.js`))
+    );
+    module.activate({ locale: 'en' });
+    for (const limit of ['bytes', 'fragments', 'identities']) {
+      const client = new Client(module.component).start();
+      let sequence = 0;
+      const page = (event) => client.page([fact(++sequence, event)], sequence);
+      for (let i = 0; i < (limit === 'identities' ? 17 : 1); i++) {
+        page({
+          kind: 'part_started',
+          messageId: 'thinking-' + i,
+          stepId: 'step',
+          partId: 'reason-' + i,
+          textKind: 'thinking',
+        });
+        for (let j = 0; j < (limit === 'fragments' ? 70 : 1); j++)
+          page({
+            kind: 'delta',
+            stepId: 'step',
+            partId: 'reason-' + i,
+            text: limit === 'bytes' ? '中😀'.repeat(6000) : '中',
+          });
+      }
+      const prefix = client.liveMessages.map((m) => m.text);
+      assert.ok(prefix.length > 0 && prefix.length <= 8);
+      assert.ok(prefix.every((text) => text.isWellFormed()));
+      assert.ok(prefix.reduce((n, text) => n + text.length, 0) <= 8000);
+      assert.ok(client.state.live.length <= 32);
+      page({
+        kind: 'part_started',
+        messageId: 'answer',
+        stepId: 'step',
+        partId: 'answer',
+        textKind: 'text',
+      });
+      page({ kind: 'delta', stepId: 'step', partId: 'answer', text: 'Visible answer' });
+      assert.deepEqual(
+        client.liveMessages.filter((m) => m.role === 'thinking').map((m) => m.text),
+        prefix,
+      );
+      assert.equal(client.liveMessages.find((m) => m.role === 'assistant').text, 'Visible answer');
+      assert.ok(client.state.live.length <= 64);
+      assert.ok(client.state.live.reduce((n, f) => n + f.text.length, 0) <= 16000);
     }
   });
 }

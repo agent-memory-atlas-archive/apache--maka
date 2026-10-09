@@ -111,7 +111,15 @@ async fn actual_tool_images_are_immutable_scoped_and_reconstructed_without_paths
     let through = end(&log, "images", InvocationOutcome::Completed).await;
     assert!(log.prepare_transcript("images", through, 32).await.unwrap());
     let Page::Ready { chunks, .. } = log
-        .history_text("images", through, Position::Start, 8192, 8, 64 * 1024)
+        .history_text(
+            "images",
+            through,
+            Position::Start,
+            false,
+            8192,
+            8,
+            64 * 1024,
+        )
         .await
         .unwrap()
     else {
@@ -219,7 +227,15 @@ async fn actual_tool_images_are_immutable_scoped_and_reconstructed_without_paths
         chunks: copy_chunks,
         ..
     } = log
-        .history_text("copy", copy_fence, Position::Start, 8192, 8, 64 * 1024)
+        .history_text(
+            "copy",
+            copy_fence,
+            Position::Start,
+            false,
+            8192,
+            8,
+            64 * 1024,
+        )
         .await
         .unwrap()
     else {
@@ -501,7 +517,7 @@ async fn borrowed_upload_is_frozen_at_settlement_before_any_history_copy() {
     for session in ["borrowed", "borrowed-copy"] {
         assert!(log.prepare_transcript(session, through, 32).await.unwrap());
         let Page::Ready { chunks, .. } = log
-            .history_text(session, through, Position::Start, 8192, 8, 64 * 1024)
+            .history_text(session, through, Position::Start, false, 8192, 8, 64 * 1024)
             .await
             .unwrap()
         else {

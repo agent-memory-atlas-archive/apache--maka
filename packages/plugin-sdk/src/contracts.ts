@@ -5096,6 +5096,10 @@ export const contracts = {
               position: {
                 $ref: '#/$defs/HistoryPosition',
               },
+              includeThinking: {
+                type: 'boolean',
+                default: false,
+              },
             },
             additionalProperties: false,
             required: ['sessionId', 'position'],
@@ -5176,9 +5180,14 @@ export const contracts = {
                 ],
               },
               Cursor: {
-                description: "Byte offset in one message's UTF-8 text, not a bearer capability.",
+                description:
+                  "Byte offset in one message field's UTF-8 text, not a bearer capability.",
                 type: 'object',
                 properties: {
+                  field: {
+                    $ref: '#/$defs/HistoryField',
+                    default: 'body',
+                  },
                   sequence: {
                     type: 'integer',
                     format: 'uint64',
@@ -5194,6 +5203,11 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['sequence', 'offset'],
+              },
+              HistoryField: {
+                description: 'A readable field in a conversation window, in presentation order.',
+                type: 'string',
+                enum: ['thinking', 'body'],
               },
             },
           },
@@ -5264,6 +5278,9 @@ export const contracts = {
               AgentHistoryChunk: {
                 type: 'object',
                 properties: {
+                  field: {
+                    $ref: '#/$defs/HistoryField',
+                  },
                   messageId: {
                     type: 'string',
                   },
@@ -5309,6 +5326,7 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'field',
                   'messageId',
                   'turnId',
                   'timestamp',
@@ -5320,9 +5338,14 @@ export const contracts = {
                   'tool',
                 ],
               },
+              HistoryField: {
+                description: 'A readable field in a conversation window, in presentation order.',
+                type: 'string',
+                enum: ['thinking', 'body'],
+              },
               Role: {
                 description:
-                  'Text visible in the durable conversation; reasoning and runtime metadata are\nnot conversation text. Tool JSON contributes string values, never its keys.',
+                  'Canonical message author/kind; the field identifies body versus thinking.\nTool body JSON contributes string values, never its keys.',
                 type: 'string',
                 enum: ['user', 'assistant', 'tool_call', 'tool_result'],
               },
@@ -5377,9 +5400,14 @@ export const contracts = {
                 ],
               },
               Cursor: {
-                description: "Byte offset in one message's UTF-8 text, not a bearer capability.",
+                description:
+                  "Byte offset in one message field's UTF-8 text, not a bearer capability.",
                 type: 'object',
                 properties: {
+                  field: {
+                    $ref: '#/$defs/HistoryField',
+                    default: 'body',
+                  },
                   sequence: {
                     type: 'integer',
                     format: 'uint64',
@@ -8462,9 +8490,14 @@ export const contracts = {
                 ],
               },
               Cursor: {
-                description: "Byte offset in one message's UTF-8 text, not a bearer capability.",
+                description:
+                  "Byte offset in one message field's UTF-8 text, not a bearer capability.",
                 type: 'object',
                 properties: {
+                  field: {
+                    $ref: '#/$defs/HistoryField',
+                    default: 'body',
+                  },
                   sequence: {
                     type: 'integer',
                     format: 'uint64',
@@ -8480,6 +8513,11 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['sequence', 'offset'],
+              },
+              HistoryField: {
+                description: 'A readable field in a conversation window, in presentation order.',
+                type: 'string',
+                enum: ['thinking', 'body'],
               },
             },
           },

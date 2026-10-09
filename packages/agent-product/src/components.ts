@@ -327,7 +327,7 @@ export function components<N extends Node>(
       const tool = message.role === 'tool_call' || message.role === 'tool_result';
       const expanded = state.expanded.includes(message.id);
       const sourceAction = ui.button(
-        'source-' + message.source,
+        'source-' + message.source + (message.role === 'thinking' ? '-thinking' : ''),
         text.readSource,
         props.loading,
         false,
@@ -347,7 +347,7 @@ export function components<N extends Node>(
       );
 
       const body =
-        message.role === 'assistant' && !message.continued
+        (message.role === 'assistant' || message.role === 'thinking') && !message.continued
           ? presentation.slot(
               'text-' + message.contentKey,
               'markdown',
@@ -391,7 +391,13 @@ export function components<N extends Node>(
             ? [ui.button('image-' + message.source, text.viewImage, props.loading)]
             : []),
           ...(message.source !== null && message.text
-            ? [ui.button('source-' + message.source, text.readSource, props.loading)]
+            ? [
+                ui.button(
+                  'source-' + message.source + (message.role === 'thinking' ? '-thinking' : ''),
+                  text.readSource,
+                  props.loading,
+                ),
+              ]
             : []),
         ],
         sourceActions:
@@ -886,9 +892,17 @@ export function components<N extends Node>(
               message.source !== null &&
               ((message.role !== 'tool_call' && message.role !== 'tool_result') ||
                 (message.text.length > 0 && next.expanded.includes(message.id))) &&
-              input.key === 'source-' + message.source,
+              input.key ===
+                'source-' + message.source + (message.role === 'thinking' ? '-thinking' : ''),
           );
-          if (message) out.events.push({ name: 'source', value: { sequence: message.source } });
+          if (message)
+            out.events.push({
+              name: 'source',
+              value: {
+                sequence: message.source,
+                field: message.role === 'thinking' ? 'thinking' : 'body',
+              },
+            });
           if (input.key === 'older' && props.older) out.events.push({ name: 'older', value: {} });
           if (input.key === 'newer' && props.newer) out.events.push({ name: 'newer', value: {} });
           if (input.key === 'latest' && props.latest)

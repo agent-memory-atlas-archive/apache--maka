@@ -64,7 +64,7 @@ export interface Message {
   id: string;
   // Immutable byte-segment identity; 1–123 ASCII letters, digits, underscores or hyphens.
   contentKey: string;
-  role: Role;
+  role: Role | 'thinking';
   timestamp: number | null;
   text: string;
   tool: AgentHistoryChunk['tool'];
@@ -237,7 +237,7 @@ const themeSchema = object({
 const messageSchema = object({
   id: string,
   contentKey: { type: 'string', minLength: 1, maxLength: 123, pattern: '^[A-Za-z0-9_-]+$' },
-  role: { enum: ['user', 'assistant', 'tool_call', 'tool_result'] },
+  role: { enum: ['user', 'assistant', 'thinking', 'tool_call', 'tool_result'] },
   timestamp: {
     anyOf: [{ type: 'integer', minimum: 0, maximum: 9007199254740991 }, { type: 'null' }],
   },
@@ -429,7 +429,10 @@ export const timelineContract = component(
     older: object({}),
     newer: object({}),
     latest: object({}),
-    source: object({ sequence: { type: 'integer', minimum: 1 } }),
+    source: object({
+      sequence: { type: 'integer', minimum: 1 },
+      field: { enum: ['body', 'thinking'] },
+    }),
     toolSource: object({ sequence: { type: 'integer', minimum: 1 } }),
     viewImage: object({ sequence: { type: 'integer', minimum: 1 } }),
     sourceFirst: object({}),

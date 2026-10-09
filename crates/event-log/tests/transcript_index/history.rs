@@ -126,7 +126,7 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
     let mut pages = 0;
     loop {
         let page = log
-            .history_text("a", through, position, 16 * 1024, 8, 1024 * 1024)
+            .history_text("a", through, position, false, 16 * 1024, 8, 1024 * 1024)
             .await
             .unwrap();
         assert!(serde_json::to_vec(&page).unwrap().len() < 256 * 1024);
@@ -190,7 +190,7 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
         "JSON string values stay multiline; property names and non-text leaves are not searchable"
     );
     let Page::Ready { chunks, after, .. } = log
-        .history_text("a", old, Position::Start, 16 * 1024, 8, 1024 * 1024)
+        .history_text("a", old, Position::Start, false, 16 * 1024, 8, 1024 * 1024)
         .await
         .unwrap()
     else {
@@ -225,7 +225,7 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
     cache
         .execute(
             "INSERT INTO transcript_text
-         SELECT 'b', sequence, timestamp, role, CASE WHEN role IN ('user', 'assistant', 'tool_call', 'tool_result') THEN CAST('destination cache' AS BLOB) ELSE body END
+         SELECT 'b', sequence, field, timestamp, role, CASE WHEN role IN ('user', 'assistant', 'tool_call', 'tool_result') THEN CAST('destination cache' AS BLOB) ELSE body END
          FROM transcript_text WHERE session_id = 'a'",
             [],
         )
@@ -234,7 +234,7 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
         chunks: destination,
         ..
     } = log
-        .history_text("b", old, Position::Start, 16 * 1024, 8, 1024 * 1024)
+        .history_text("b", old, Position::Start, false, 16 * 1024, 8, 1024 * 1024)
         .await
         .unwrap()
     else {
@@ -247,7 +247,7 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
             .all(|chunk| chunk.text == "destination cache")
     );
     let Page::Ready { chunks: source, .. } = log
-        .history_text("a", old, Position::Start, 16 * 1024, 8, 1024 * 1024)
+        .history_text("a", old, Position::Start, false, 16 * 1024, 8, 1024 * 1024)
         .await
         .unwrap()
     else {
@@ -261,13 +261,13 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
         .execute("DELETE FROM transcript_text WHERE session_id = 'b'", [])
         .unwrap();
     let rebuilt = log
-        .history_text("b", old, Position::Start, 16 * 1024, 8, 1024 * 1024)
+        .history_text("b", old, Position::Start, false, 16 * 1024, 8, 1024 * 1024)
         .await
         .unwrap();
     assert_eq!(
         serde_json::to_value(rebuilt).unwrap(),
         serde_json::to_value(
-            log.history_text("a", old, Position::Start, 16 * 1024, 8, 1024 * 1024)
+            log.history_text("a", old, Position::Start, false, 16 * 1024, 8, 1024 * 1024)
                 .await
                 .unwrap()
         )
@@ -277,7 +277,15 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
     log.close().await.unwrap();
     let log = EventLog::open(&path).await.unwrap();
     let Page::Ready { chunks, .. } = log
-        .history_text("a", through, Position::Start, 16 * 1024, 8, 1024 * 1024)
+        .history_text(
+            "a",
+            through,
+            Position::Start,
+            false,
+            16 * 1024,
+            8,
+            1024 * 1024,
+        )
         .await
         .unwrap()
     else {
@@ -390,7 +398,15 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
         let through = end(&log, session, InvocationOutcome::Completed).await;
         assert!(log.prepare_transcript(session, through, 32).await.unwrap());
         let Page::Ready { chunks, .. } = log
-            .history_text(session, call_fence, Position::Start, 8192, 8, 64 * 1024)
+            .history_text(
+                session,
+                call_fence,
+                Position::Start,
+                false,
+                8192,
+                8,
+                64 * 1024,
+            )
             .await
             .unwrap()
         else {
@@ -417,7 +433,7 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
                     after,
                     ..
                 } = log
-                    .history_text(session, through, position, 8192, 1, 64 * 1024)
+                    .history_text(session, through, position, false, 8192, 1, 64 * 1024)
                     .await
                     .unwrap()
                 else {
@@ -535,7 +551,15 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
             .unwrap()
     );
     let Page::Ready { chunks, .. } = log
-        .history_text("numeric", through, Position::Tail, 8192, 8, 64 * 1024)
+        .history_text(
+            "numeric",
+            through,
+            Position::Tail,
+            false,
+            8192,
+            8,
+            64 * 1024,
+        )
         .await
         .unwrap()
     else {
@@ -613,7 +637,7 @@ async fn oversized_tool_metadata_returns_accepted_window_without_consuming_its_b
             after,
             ..
         } = log
-            .history_text("budget", through, position, 8192, 8, 1024)
+            .history_text("budget", through, position, false, 8192, 8, 1024)
             .await
             .unwrap()
         else {
@@ -635,13 +659,13 @@ async fn oversized_tool_metadata_returns_accepted_window_without_consuming_its_b
             Position::After { cursor }
         };
         assert!(
-            log.history_text("budget", through, position, 8192, 8, 1024)
+            log.history_text("budget", through, position, false, 8192, 8, 1024)
                 .await
                 .is_err(),
             "indivisible first tool metadata must fail without being consumed"
         );
         let Page::Ready { chunks, .. } = log
-            .history_text("budget", through, position, 8192, 1, 64 * 1024)
+            .history_text("budget", through, position, false, 8192, 1, 64 * 1024)
             .await
             .unwrap()
         else {
@@ -738,7 +762,7 @@ async fn bounded_history_windows_cover_sparse_rows_both_directions_and_validate_
                     after,
                     through: actual,
                 } = log
-                    .history_text("window", through, position, budget, 2, 1024 * 1024)
+                    .history_text("window", through, position, false, budget, 2, 1024 * 1024)
                     .await
                     .unwrap()
                 else {
@@ -805,6 +829,7 @@ async fn bounded_history_windows_cover_sparse_rows_both_directions_and_validate_
     for offset in 0..=text.len() {
         for reverse in [false, true] {
             let cursor = Cursor {
+                field: Default::default(),
                 sequence: first,
                 offset: offset as u64,
             };
@@ -817,6 +842,7 @@ async fn bounded_history_windows_cover_sparse_rows_both_directions_and_validate_
                     } else {
                         Position::After { cursor }
                     },
+                    false,
                     7,
                     2,
                     1024 * 1024,
@@ -831,14 +857,17 @@ async fn bounded_history_windows_cover_sparse_rows_both_directions_and_validate_
     }
     for cursor in [
         Cursor {
+            field: Default::default(),
             sequence: first + 1,
             offset: 0,
         },
         Cursor {
+            field: Default::default(),
             sequence: first,
             offset: text.len() as u64 + 1,
         },
         Cursor {
+            field: Default::default(),
             sequence: 0,
             offset: 0,
         },
@@ -848,6 +877,7 @@ async fn bounded_history_windows_cover_sparse_rows_both_directions_and_validate_
                 "window",
                 through,
                 Position::After { cursor },
+                false,
                 7,
                 2,
                 1024 * 1024
@@ -867,10 +897,12 @@ async fn bounded_history_windows_cover_sparse_rows_both_directions_and_validate_
             high,
             Position::After {
                 cursor: Cursor {
+                    field: Default::default(),
                     sequence: first,
                     offset: 0
                 }
             },
+            false,
             7,
             2,
             1024 * 1024
@@ -883,6 +915,7 @@ async fn bounded_history_windows_cover_sparse_rows_both_directions_and_validate_
             "window",
             through,
             Position::Event { sequence: through },
+            false,
             7,
             2,
             1024 * 1024,
@@ -911,14 +944,14 @@ async fn history_text_requires_the_actual_prepared_raw_fence() {
     let later = interrupt(&log, "a").await;
     assert!(later > through);
     assert!(
-        log.history_text("a", later, Position::Start, 16, 2, 1024 * 1024)
+        log.history_text("a", later, Position::Start, false, 16, 2, 1024 * 1024)
             .await
             .is_err(),
         "raw fence must not be compared directly with a prepared row watermark"
     );
     assert!(log.prepare_transcript("a", later, 32).await.unwrap());
     let Page::Ready { chunks, .. } = log
-        .history_text("a", later, Position::Tail, 16, 2, 1024 * 1024)
+        .history_text("a", later, Position::Tail, false, 16, 2, 1024 * 1024)
         .await
         .unwrap()
     else {
@@ -999,6 +1032,7 @@ async fn empty_projection_boundaries_obey_the_exact_json_window_budget() {
             "a",
             through,
             Position::Event { sequence: target },
+            false,
             4,
             1,
             1024 * 1024,
@@ -1009,18 +1043,35 @@ async fn empty_projection_boundaries_obey_the_exact_json_window_budget() {
         panic!("prepared");
     };
     let cursor = maka_plugins::session::history::Cursor {
+        field: Default::default(),
         sequence: chunks[0].sequence,
         offset: 0,
     };
     assert!(cursor.sequence < 10000);
     let baseline = log
-        .history_text("a", through, Position::After { cursor }, 32, 1, 1024 * 1024)
+        .history_text(
+            "a",
+            through,
+            Position::After { cursor },
+            false,
+            32,
+            1,
+            1024 * 1024,
+        )
         .await
         .unwrap();
     let budget = serde_json::to_vec(&baseline).unwrap().len();
     assert!(budget >= 1024);
     let page = log
-        .history_text("a", through, Position::After { cursor }, 32, 8, budget)
+        .history_text(
+            "a",
+            through,
+            Position::After { cursor },
+            false,
+            32,
+            8,
+            budget,
+        )
         .await
         .unwrap();
     assert_eq!(serde_json::to_vec(&page).unwrap().len(), budget);
@@ -1041,7 +1092,15 @@ async fn empty_projection_boundaries_obey_the_exact_json_window_budget() {
     let mut ended = false;
     for _ in 0..4 {
         let next = log
-            .history_text("a", through, Position::After { cursor }, 4, 8, budget)
+            .history_text(
+                "a",
+                through,
+                Position::After { cursor },
+                false,
+                4,
+                8,
+                budget,
+            )
             .await
             .unwrap();
         assert!(serde_json::to_vec(&next).unwrap().len() <= budget);
@@ -1131,7 +1190,7 @@ async fn message_material_labels_and_time_survive_exact_paging_and_text_cache_up
             .unwrap();
         assert!(log.prepare_transcript(session, through, 32).await.unwrap());
         let Page::Ready { chunks, .. } = log
-            .history_text(session, through, Position::Start, 8192, 1, 64 * 1024)
+            .history_text(session, through, Position::Start, false, 8192, 1, 64 * 1024)
             .await
             .unwrap()
         else {
@@ -1159,7 +1218,7 @@ async fn message_material_labels_and_time_survive_exact_paging_and_text_cache_up
                         after,
                         ..
                     } = log
-                        .history_text(session, through, position, budget, 1, 64 * 1024)
+                        .history_text(session, through, position, false, budget, 1, 64 * 1024)
                         .await
                         .unwrap()
                     else {
@@ -1254,7 +1313,7 @@ async fn message_material_labels_and_time_survive_exact_paging_and_text_cache_up
     );
     for (session, through, sequence, expected) in sources {
         let Page::Ready { chunks, .. } = log
-            .history_text(session, through, Position::Start, 8192, 1, 64 * 1024)
+            .history_text(session, through, Position::Start, false, 8192, 1, 64 * 1024)
             .await
             .unwrap()
         else {
@@ -1266,4 +1325,314 @@ async fn message_material_labels_and_time_survive_exact_paging_and_text_cache_up
     }
     drop(db);
     log.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn thinking_windows_preserve_field_order_bytes_and_explicit_body_only_reads() {
+    use maka_plugins::{
+        composition::Scope,
+        session::history::{Cursor, HistoryField},
+        storage::Namespace,
+    };
+    use maka_runtime::import::{Content, Record, Source};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("thinking.sqlite");
+    let log = EventLog::open(&path).await.unwrap();
+    let owner = maka_event_log::sessions::PluginSession {
+        session_id: "thinking".into(),
+        creator: Namespace::new("history.fixture", Scope::Profile).unwrap(),
+        fingerprint: "thinking-import".into(),
+        managed: false,
+        authority_session_id: None,
+    };
+    log.begin_session_import(
+        &owner,
+        &Source {
+            adapter: "fixture".into(),
+            session_id: "foreign".into(),
+        },
+        &serde_json::json!({}),
+        1,
+    )
+    .await
+    .unwrap();
+    let thinking = "reason 中😀\0\r\n".repeat(101);
+    let body = "answer é🦀\0tail".repeat(13);
+    let records = [
+        Content::User {
+            text: "question".into(),
+        },
+        Content::Assistant {
+            text: body.clone(),
+            thinking: Some(thinking.clone()),
+            model: None,
+        },
+        Content::Assistant {
+            text: String::new(),
+            thinking: Some("thinking only 🦀".into()),
+            model: None,
+        },
+        Content::Assistant {
+            text: "body with empty thinking".into(),
+            thinking: Some(String::new()),
+            model: None,
+        },
+        Content::Assistant {
+            text: "body without thinking".into(),
+            thinking: None,
+            model: None,
+        },
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, content)| Record {
+        source_message_id: format!("m{index}"),
+        source_turn_id: "turn".into(),
+        timestamp: Some(123),
+        content,
+    })
+    .collect();
+    log.append_session_import("thinking", 0, records)
+        .await
+        .unwrap();
+    log.publish_session_import("thinking", 5).await.unwrap();
+    let through = *log.subscribe_commits().borrow();
+    while !log
+        .prepare_transcript("thinking", through, 32)
+        .await
+        .unwrap()
+    {}
+    let expected = vec![
+        "question".to_owned(),
+        thinking.clone(),
+        body.clone(),
+        "thinking only 🦀".into(),
+        "body with empty thinking".into(),
+        "body without thinking".into(),
+    ];
+    let mut thinking_cursor = None;
+    for include in [false, true] {
+        for reverse in [false, true] {
+            for budget in [4, 13, 8192] {
+                let db = Connection::open(&path).unwrap();
+                db.execute("DELETE FROM transcript_text", []).unwrap();
+                drop(db);
+                let mut position = if reverse {
+                    Position::Tail
+                } else {
+                    Position::Start
+                };
+                let mut last = None;
+                let mut collected = BTreeMap::<(u64, u8), (u64, String)>::new();
+                let mut done = false;
+                for _ in 0..2048 {
+                    let page = log
+                        .history_text("thinking", through, position, include, budget, 2, 64 * 1024)
+                        .await
+                        .unwrap();
+                    assert!(serde_json::to_vec(&page).unwrap().len() <= 64 * 1024);
+                    let Page::Ready {
+                        chunks,
+                        before,
+                        after,
+                        ..
+                    } = page
+                    else {
+                        panic!("ready")
+                    };
+                    assert!(chunks.len() <= 2);
+                    assert!(chunks.iter().map(|c| c.text.len()).sum::<usize>() <= budget);
+                    let keys = chunks
+                        .iter()
+                        .map(|c| {
+                            (
+                                c.sequence,
+                                if c.field == HistoryField::Thinking {
+                                    0
+                                } else {
+                                    1
+                                },
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    assert!(keys.windows(2).all(|pair| pair[0] < pair[1]));
+                    for (chunk, key) in chunks.into_iter().zip(keys) {
+                        if chunk.field == HistoryField::Thinking {
+                            assert!(include);
+                            assert_eq!(chunk.role, Role::Assistant);
+                            assert!(chunk.tool.is_none() && chunk.attachments.is_empty());
+                            thinking_cursor.get_or_insert(Cursor {
+                                sequence: chunk.sequence,
+                                field: chunk.field,
+                                offset: 0,
+                            });
+                        }
+                        let entry = collected.entry(key).or_insert((
+                            if reverse { chunk.total_bytes } else { 0 },
+                            String::new(),
+                        ));
+                        if reverse {
+                            assert_eq!(chunk.offset + chunk.text.len() as u64, entry.0);
+                            entry.1.insert_str(0, &chunk.text);
+                            entry.0 = chunk.offset;
+                        } else {
+                            assert_eq!(chunk.offset, entry.0);
+                            entry.1.push_str(&chunk.text);
+                            entry.0 += chunk.text.len() as u64;
+                        }
+                    }
+                    let Some(cursor) = (if reverse { before } else { after }) else {
+                        done = true;
+                        break;
+                    };
+                    assert_ne!(last, Some(cursor), "every field boundary must advance");
+                    last = Some(cursor);
+                    position = if reverse {
+                        Position::Before { cursor }
+                    } else {
+                        Position::After { cursor }
+                    };
+                }
+                assert!(done);
+                let actual = collected
+                    .into_values()
+                    .map(|(_, text)| text)
+                    .collect::<Vec<_>>();
+                let wanted = if include {
+                    expected.clone()
+                } else {
+                    vec![
+                        expected[0].clone(),
+                        body.clone(),
+                        expected[4].clone(),
+                        expected[5].clone(),
+                    ]
+                };
+                assert_eq!(
+                    actual, wanted,
+                    "include={include} reverse={reverse} budget={budget}"
+                );
+            }
+        }
+    }
+    let cursor = thinking_cursor.unwrap();
+    assert!(
+        log.history_text(
+            "thinking",
+            through,
+            Position::After { cursor },
+            false,
+            8192,
+            2,
+            64 * 1024
+        )
+        .await
+        .is_err(),
+        "thinking cursor cannot silently change a body-only read"
+    );
+    let Page::Ready { chunks, .. } = log
+        .history_text(
+            "thinking",
+            through,
+            Position::After { cursor },
+            true,
+            8192,
+            2,
+            64 * 1024,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("ready")
+    };
+    assert_eq!(chunks[0].text, thinking);
+    assert_eq!(chunks[1].text, body);
+    let body_cursor = Cursor {
+        field: HistoryField::Body,
+        ..cursor
+    };
+    let Page::Ready { chunks, .. } = log
+        .history_text(
+            "thinking",
+            through,
+            Position::Before {
+                cursor: body_cursor,
+            },
+            true,
+            8192,
+            1,
+            64 * 1024,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("ready")
+    };
+    assert_eq!(chunks[0].field, HistoryField::Thinking);
+    assert_eq!(chunks[0].text, thinking);
+    let source = log
+        .history_source(
+            "thinking",
+            through,
+            cursor.sequence,
+            maka_plugins::session::history::SourceField::Thinking,
+            maka_plugins::session::history::SourcePosition::Start,
+            8192,
+            64 * 1024,
+        )
+        .await
+        .unwrap();
+    assert_eq!(source.text, thinking);
+    assert!(
+        log.history_text(
+            "thinking",
+            through,
+            Position::After {
+                cursor: Cursor {
+                    offset: 8,
+                    ..cursor
+                }
+            },
+            true,
+            8192,
+            2,
+            64 * 1024
+        )
+        .await
+        .is_err(),
+        "Thinking offsets must not split UTF-8"
+    );
+    log.close().await.unwrap();
+    // Reopen an actual pre-field cache shape. Migration may rebuild derived
+    // text, but must preserve canonical identities, fences and both fields.
+    let db = Connection::open(&path).unwrap();
+    db.execute_batch("ALTER TABLE transcript_text RENAME TO field_cache;
+        CREATE TABLE transcript_text AS SELECT session_id, sequence, timestamp, role, body FROM field_cache WHERE field = 'body';
+        DROP TABLE field_cache;
+        DELETE FROM _sqlx_migrations WHERE version = 10;").unwrap();
+    drop(db);
+    let reopened = EventLog::open(&path).await.unwrap();
+    let Page::Ready {
+        chunks,
+        through: restored_fence,
+        ..
+    } = reopened
+        .history_text(
+            "thinking",
+            through,
+            Position::After { cursor },
+            true,
+            8192,
+            2,
+            64 * 1024,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("ready")
+    };
+    assert_eq!(restored_fence, through);
+    assert_eq!(chunks[0].text, thinking);
+    assert_eq!(chunks[1].text, body);
+    reopened.close().await.unwrap();
 }
