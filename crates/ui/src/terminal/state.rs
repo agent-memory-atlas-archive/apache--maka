@@ -20,8 +20,13 @@
 //! Original bounded queue and canonical screen, independent of App and transport.
 use super::*;
 use crate::budget::{Kind, NativeBudget, Permit};
-use maka_runtime::terminal::{TerminalCursor, input::encoded_actions_byte_len};
+use maka_runtime::terminal::{
+    TerminalCursor,
+    input::{MAX_INPUT_ACTIONS, encoded_actions_byte_len},
+};
 use std::collections::VecDeque;
+
+const MAX_BATCH_BYTES: usize = 32 * 1024;
 
 pub struct Display {
     pub screen: String,
@@ -206,7 +211,8 @@ impl State {
         let bytes = serde_json::to_vec(&action)
             .expect("typed terminal input")
             .len();
-        if !encoded_actions_byte_len(std::slice::from_ref(&action)).is_ok_and(|n| n <= 32 * 1024)
+        if !encoded_actions_byte_len(std::slice::from_ref(&action))
+            .is_ok_and(|n| n <= MAX_BATCH_BYTES)
             || self.queued_bytes.saturating_add(bytes) > 64 * 1024
         {
             if self.observation.error != Some(TerminalViewError::InputFull) {
@@ -246,9 +252,24 @@ impl State {
         // A resize settles before any queued key or mouse action, as in the original View.
         let actions = if size.is_some() {
             vec![]
-        } else if let Some((action, bytes)) = self.queue.pop_front() {
-            self.pending_bytes = bytes;
-            vec![action]
+        } else if !self.queue.is_empty() {
+            // Drain already queued input within the service bounds. The batch
+            // stays immutable until its exact receipt; do not serialize a
+            // complete mutation round trip for each buffered character.
+            let mut actions = Vec::new();
+            let mut encoded_bytes = 0;
+            while let Some((action, _)) = self.queue.front() {
+                let bytes = encoded_actions_byte_len(std::slice::from_ref(action))
+                    .expect("validated queued input");
+                if actions.len() == MAX_INPUT_ACTIONS || encoded_bytes + bytes > MAX_BATCH_BYTES {
+                    break;
+                }
+                let (action, retained_bytes) = self.queue.pop_front().unwrap();
+                encoded_bytes += bytes;
+                self.pending_bytes += retained_bytes;
+                actions.push(action);
+            }
+            actions
         } else {
             return;
         };

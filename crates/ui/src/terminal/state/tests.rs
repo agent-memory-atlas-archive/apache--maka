@@ -37,6 +37,83 @@ fn acknowledge(state: &mut State, props: &mut TerminalViewProps, accepted: bool)
     state.apply(props);
 }
 #[test]
+fn queued_keys_share_a_bounded_receipt_without_changing_an_inflight_batch() {
+    let mut state = State::new(&NativeBudget::default());
+    let mut props = props();
+    state.apply(&props);
+    state.presentation(true);
+    state.capture(true);
+    state.resize(80, 24);
+    let resize = state.observation().batch.clone().unwrap();
+    let actions: Vec<_> = (0..MAX_INPUT_ACTIONS + 2)
+        .map(|n| InputAction::Text(format!("{n}")))
+        .collect();
+    for action in &actions {
+        state.write(action.clone());
+    }
+    assert_eq!(state.observation().batch.as_ref(), Some(&resize));
+    acknowledge(&mut state, &mut props, true);
+    let first = state.observation().batch.clone().unwrap();
+    assert_eq!(first.actions, actions[..MAX_INPUT_ACTIONS]);
+    assert_eq!(first.size, None);
+    state.write(InputAction::Paste("中文🙂\n".into()));
+    state.apply(&props); // The previous resize receipt cannot consume this batch.
+    assert_eq!(state.observation().batch.as_ref(), Some(&first));
+    acknowledge(&mut state, &mut props, true);
+    let second = state.observation().batch.as_ref().unwrap();
+    assert_eq!(second.sequence, first.sequence + 1);
+    assert_eq!(
+        second.actions,
+        [
+            actions[MAX_INPUT_ACTIONS].clone(),
+            actions[MAX_INPUT_ACTIONS + 1].clone(),
+            InputAction::Paste("中文🙂\n".into()),
+        ]
+    );
+    acknowledge(&mut state, &mut props, true);
+    assert!(state.observation().batch.is_none());
+    assert!(state.queue.is_empty());
+    assert_eq!(state.queued_bytes, 0);
+    assert_eq!(state.pending_bytes, 0);
+}
+#[test]
+fn batches_reserve_paste_framing_and_failed_receipts_never_advance_the_queue() {
+    let mut state = State::new(&NativeBudget::default());
+    let mut props = props();
+    state.apply(&props);
+    state.presentation(true);
+    state.capture(true);
+    state.resize(80, 24);
+    state.write(InputAction::Text("a".repeat(MAX_BATCH_BYTES - 16)));
+    state.paste("界"); // Three UTF-8 bytes plus twelve bracketed-paste bytes.
+    state.write(InputAction::Text("b".into()));
+    state.write(InputAction::Text("c".into()));
+    acknowledge(&mut state, &mut props, true);
+    let batch = state.observation().batch.as_ref().unwrap();
+    assert_eq!(batch.actions.len(), 3);
+    assert_eq!(
+        encoded_actions_byte_len(&batch.actions).unwrap(),
+        MAX_BATCH_BYTES
+    );
+    assert_eq!(
+        state.queue.front().unwrap().0,
+        InputAction::Text("c".into())
+    );
+    acknowledge(&mut state, &mut props, false);
+    assert!(state.observation().batch.is_none());
+    assert_eq!(
+        state.observation().error,
+        Some(TerminalViewError::InputFailed)
+    );
+    assert!(state.queue.is_empty());
+    assert_eq!(state.queued_bytes, 0);
+    assert_eq!(state.pending_bytes, 0);
+    state.apply(&props);
+    state.capture(true);
+    state.write(InputAction::Text("no replay".into()));
+    assert!(state.observation().batch.is_none());
+}
+#[test]
 fn resize_and_backpressure_preserve_exact_queued_input_until_its_own_receipt() {
     let mut state = State::new(&NativeBudget::default());
     let mut props = props();

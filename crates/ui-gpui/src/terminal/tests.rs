@@ -250,16 +250,21 @@ fn terminal_desktop_pointer_cells_and_font_resize_preserve_input_order(cx: &mut 
     assert!(resize.actions.is_empty());
     cx.simulate_input(window, "after resize");
     draw(cx, window);
-    assert_eq!(batch(cx, &owner), Some(resize));
+    assert_eq!(batch(cx, &owner), Some(resize.clone()));
     acknowledge(cx, window, &owner);
-    // GPUI simulates printable text as individual platform commits. Each keeps
-    // its position behind the resize and the preceding mutation receipt.
-    for ch in "after resize".chars() {
-        assert_eq!(
-            batch(cx, &owner).unwrap().actions,
-            vec![maka_ui::terminal::input::InputAction::Text(ch.to_string())]
-        );
-        acknowledge(cx, window, &owner);
-    }
+    // Individual platform commits retain their order behind the resize, but
+    // queued text does not require another round trip for each character.
+    let typed = batch(cx, &owner).unwrap();
+    assert_eq!(typed.controller, resize.controller);
+    assert_eq!(typed.sequence, resize.sequence + 1);
+    assert!(typed.size.is_none());
+    assert_eq!(
+        typed.actions,
+        "after resize"
+            .chars()
+            .map(|ch| maka_ui::terminal::input::InputAction::Text(ch.to_string()))
+            .collect::<Vec<_>>()
+    );
+    acknowledge(cx, window, &owner);
     assert!(batch(cx, &owner).is_none());
 }
