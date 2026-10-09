@@ -27,6 +27,7 @@ import type {
   Emission,
   Output,
   TerminalLayout,
+  TerminalResponsiveStack,
   Shortcut,
   FocusShortcut,
   TextAppearance,
@@ -46,6 +47,8 @@ interface BoxOptions {
   scroll?: 'none' | 'manual' | 'anchor' | 'follow_end';
   visible?: boolean;
   terminal?: TerminalLayout;
+  wide?: TerminalResponsiveStack;
+  background?: number;
   viewport?: boolean;
   focusGroup?: boolean;
   wheel?: { up: string; down: string };
@@ -176,7 +179,9 @@ function desktopPaint(theme: Theme): Painter<DesktopNode> {
         direction: options.row ? 'row' : 'column',
         gap: options.gap ?? 12,
         padding: options.padding ?? 0,
-        background: rgba(options.surface ? theme.surface : theme.background),
+        background: rgba(
+          options.background ?? (options.surface ? theme.surface : theme.background),
+        ),
         children,
         visible: options.visible ?? true,
         shortcuts: options.shortcuts ?? [],
@@ -258,9 +263,12 @@ function terminalPaint(theme: Theme): Painter<TerminalNode> {
       ui.terminal.stack({
         key,
         direction: options.row ? 'row' : 'column',
+        wide: options.wide ?? null,
         gap: options.gap ?? 1,
         padding: options.padding ?? 0,
-        background: rgba(options.surface ? theme.surface : theme.background),
+        background: rgba(
+          options.background ?? (options.surface ? theme.surface : theme.background),
+        ),
         children,
         visible: options.visible ?? true,
         shortcuts: options.shortcuts ?? [],

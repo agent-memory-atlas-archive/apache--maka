@@ -29,6 +29,7 @@ use std::{any::Any, cell::Cell, collections::BTreeMap, rc::Rc};
 pub(super) enum View {
     Scene(Value),
     ChangingScene(Rc<std::cell::RefCell<Value>>),
+    SourceScene(Rc<std::cell::RefCell<Value>>),
     InteractiveScene(Rc<std::cell::RefCell<Value>>),
     MetadataVisibility {
         scene: Rc<super::super::scene::Node>,
@@ -107,12 +108,12 @@ impl NativeComponent<dyn Widget> for Root {
                 source,
                 std::time::Instant::now() + std::time::Duration::from_secs(1),
             )?,
-            View::ChangingScene(source) | View::InteractiveScene(source) => {
-                super::super::scene::compile(
-                    &source.borrow(),
-                    std::time::Instant::now() + std::time::Duration::from_secs(1),
-                )?
-            }
+            View::ChangingScene(source)
+            | View::SourceScene(source)
+            | View::InteractiveScene(source) => super::super::scene::compile(
+                &source.borrow(),
+                std::time::Instant::now() + std::time::Duration::from_secs(1),
+            )?,
             View::MetadataVisibility { scene, visible } => NativeView::<dyn Widget>::new(
                 scene.clone(),
                 BTreeMap::from([("back".into(), json!(true))]),
@@ -246,6 +247,7 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
     if matches!(
         view,
         View::Reading(_)
+            | View::SourceScene(_)
             | View::ReadingSlot(_)
             | View::OmittedReadingSlot(_, _)
             | View::WrappedReadingSlot(_, _)

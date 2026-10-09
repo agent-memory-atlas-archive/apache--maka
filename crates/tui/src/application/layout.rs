@@ -24,6 +24,21 @@ pub(super) struct Flow {
     pub size: (u16, u32),
     pub children: Vec<CellRect>,
 }
+fn basis(layout: Layout, available: Option<u32>, intrinsic: u32) -> u32 {
+    if let Some(value) = layout.basis {
+        return u32::from(value);
+    }
+    if let Some(fraction) = layout.basis_fraction {
+        let value = available.map_or(intrinsic, |available| {
+            (u64::from(available) * u64::from(fraction.numerator) / u64::from(fraction.denominator))
+                as u32
+        });
+        return value
+            .max(u32::from(fraction.min))
+            .min(fraction.max.map_or(u32::MAX, u32::from));
+    }
+    intrinsic
+}
 /// Row width allocation precedes cross-axis measurement. Narrow basis/grow
 /// children and wrapped rows must report their height at the actual width.
 pub(super) fn measured<E>(
@@ -66,7 +81,8 @@ pub(super) fn flow(
         let mut rows: Vec<Vec<((u16, u32), Layout)>> = Vec::new();
         let mut occupied = 0u32;
         for &(size, mut layout) in children {
-            let basis = layout.basis.unwrap_or(size.0).min(width);
+            let basis = basis(layout, Some(u32::from(width)), u32::from(size.0))
+                .min(u32::from(width)) as u16;
             if rows.last().is_some_and(|row| !row.is_empty())
                 && occupied + u32::from(gap) + u32::from(basis) > u32::from(width)
             {
@@ -82,6 +98,7 @@ pub(super) fn flow(
             }
             occupied += u32::from(basis);
             layout.basis = Some(basis);
+            layout.basis_fraction = None;
             row.push((size, layout));
         }
         let (mut y, mut widest) = (0u32, 0u16);
@@ -112,16 +129,17 @@ pub(super) fn flow(
     let bases: Vec<u32> = children
         .iter()
         .map(|&(size, layout)| {
-            layout
-                .basis
-                .map(u32::from)
-                .unwrap_or(if layout.grow > 0 && available.is_some() {
+            basis(
+                layout,
+                available,
+                if layout.grow > 0 && available.is_some() {
                     0
                 } else if horizontal {
                     u32::from(size.0)
                 } else {
                     size.1
-                })
+                },
+            )
         })
         .collect();
     let spacing = u32::from(gap) * children.len().saturating_sub(1) as u32;
@@ -202,6 +220,77 @@ pub(super) fn flow(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fractional_bases_use_the_allocated_axis_and_clamp_before_growth() {
+        let list = Layout {
+            basis_fraction: Some(maka_ui::scene::terminal::FractionalBasis {
+                numerator: 1,
+                denominator: 3,
+                min: 1,
+                max: Some(6),
+            }),
+            ..Default::default()
+        };
+        let children = [
+            ((50, 100), list),
+            (
+                (1, 1),
+                Layout {
+                    basis: Some(1),
+                    ..Default::default()
+                },
+            ),
+            (
+                (50, 80),
+                Layout {
+                    grow: 1,
+                    basis: Some(0),
+                    ..Default::default()
+                },
+            ),
+        ];
+        for height in 2..40 {
+            let flow = flow(Direction::Column, 50, Some(height), 0, false, &children);
+            assert_eq!(flow.children[0].height, (height / 3).clamp(1, 6));
+            assert_eq!(
+                flow.children[2].height,
+                height - flow.children[0].height - 1
+            );
+        }
+        assert_eq!(
+            flow(Direction::Column, 50, None, 0, false, &children).children[0].height,
+            6
+        );
+        let mut wide = children;
+        wide[0].1.basis_fraction = Some(maka_ui::scene::terminal::FractionalBasis {
+            numerator: 34,
+            denominator: 100,
+            min: 0,
+            max: None,
+        });
+        for width in 100..200 {
+            let flow = flow(Direction::Row, width, Some(24), 0, false, &wide);
+            assert_eq!(flow.children[0].width, width * 34 / 100);
+            assert_eq!(flow.children[2].width, width - flow.children[0].width - 1);
+        }
+        let halves = [(
+            (90, 1),
+            Layout {
+                basis_fraction: Some(maka_ui::scene::terminal::FractionalBasis {
+                    numerator: 1,
+                    denominator: 2,
+                    min: 0,
+                    max: None,
+                }),
+                ..Default::default()
+            },
+        ); 2];
+        let wrapped = flow(Direction::Row, 100, None, 1, true, &halves);
+        assert_eq!(
+            wrapped.children,
+            [CellRect::new(0, 0, 50, 1), CellRect::new(0, 2, 50, 1)]
+        );
+    }
     #[test]
     fn shrinking_keeps_fixed_controls_and_distributes_every_cell() {
         let shrink = Layout {

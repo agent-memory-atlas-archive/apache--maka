@@ -9367,6 +9367,17 @@ test('history search follows empty batches, reads the exact selected field and b
     (node) => node.key === 'find-results-reading',
   );
   assert.deepEqual(results.props.content.wheel, { up: 'find-previous', down: 'find-next' });
+  const historyView = find.out.frame.view.children.find((node) => node.key === 'find-history');
+  assert.equal(historyView.wide.min_width, 100);
+  assert.equal(historyView.wide.direction, 'row');
+  assert.deepEqual(historyView.wide.children['find-results'].basis_fraction, {
+    numerator: 34,
+    denominator: 100,
+  });
+  assert.deepEqual(
+    historyView.children.find((node) => node.key === 'find-results').layout.basis_fraction,
+    { numerator: 1, denominator: 3, min: 1, max: 6 },
+  );
   const retained = modelSlots(find.out.frame.view).find((node) => node.key === 'text-tool-body');
   assert.deepEqual(retained, before);
   assert.equal(

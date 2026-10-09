@@ -93,6 +93,71 @@ fn close(presenter: &mut Presenter) {
     presenter.shutdown().unwrap();
 }
 #[test]
+fn responsive_reading_uses_inner_width_and_preserves_source_owners_and_scroll() {
+    let content = json!({"kind":"stack","key":"reading","direction":"column","gap":0,"padding":2,"background":0,
+        "wide":{"min_width":100,"direction":"row","children":{"list":{"basis_fraction":{"numerator":34,"denominator":100}}}},
+        "children":[
+            {"kind":"stack","key":"hidden","direction":"column","gap":0,"padding":0,"background":0,"visible":false,"children":[],"layout":{"basis":40}},
+            {"kind":"stack","key":"list","direction":"column","gap":0,"padding":0,"background":0,"scroll":"manual",
+                "layout":{"basis_fraction":{"numerator":1,"denominator":3,"min":1,"max":6}},"children":[source("results", &(0..60).map(|i| format!("result {i}")).collect::<Vec<_>>().join("\n"))]},
+            {"kind":"stack","key":"divider","direction":"column","gap":0,"padding":0,"background":0xffffff,"children":[],"layout":{"basis":1}},
+            {"kind":"stack","key":"preview","direction":"column","gap":0,"padding":0,"background":0,"scroll":"manual",
+                "layout":{"basis":0,"grow":1},"children":[source("document", "original preview source with wrapping bytes")]}]});
+    let (_runtime, mut presenter) = layout::native(
+        layout::View::SourceScene(Rc::new(RefCell::new(content))),
+        Rc::new(Cell::new(true)),
+    );
+    draw(&mut presenter, 103, 28);
+    let document = presenter
+        .application
+        .child_mount(&presenter.root, "document")
+        .unwrap()
+        .clone();
+    let owner = presenter.resources.owners[&document.id()].identity.clone();
+    mouse(&mut presenter, MouseEventKind::ScrollDown, 3, 3);
+    let offset = state(&presenter).scrolls["list"].offset;
+    assert!(offset > 0);
+    for (width, height) in [(104, 28), (103, 28), (104, 13), (103, 13), (140, 28)] {
+        draw(&mut presenter, width, height);
+        let list = state(&presenter).scrolls["list"]
+            .presented
+            .as_ref()
+            .unwrap()
+            .area;
+        let preview = state(&presenter).scrolls["preview"]
+            .presented
+            .as_ref()
+            .unwrap()
+            .area;
+        let inner_width = width - 4;
+        let inner_height = u32::from(height - 4);
+        if inner_width >= 100 {
+            assert_eq!(list.width, inner_width * 34 / 100);
+            assert_eq!(list.height, inner_height);
+            assert_eq!(preview.x, 3 + i64::from(list.width));
+            assert_eq!(preview.y, 2);
+        } else {
+            assert_eq!(list.width, inner_width);
+            assert_eq!(list.height, (inner_height / 3).clamp(1, 6));
+            assert_eq!(preview.x, 2);
+            assert_eq!(preview.y, 3 + i64::from(list.height));
+        }
+        assert_eq!(state(&presenter).scrolls["list"].offset, offset);
+        assert_eq!(
+            presenter
+                .application
+                .child_mount(&presenter.root, "document")
+                .unwrap(),
+            &document
+        );
+        assert!(Rc::ptr_eq(
+            &owner,
+            &presenter.resources.owners[&document.id()].identity
+        ));
+    }
+    close(&mut presenter);
+}
+#[test]
 fn wheel_commands_bubble_once_preserve_focus_and_require_presented_bindings() {
     let (_runtime, mut presenter, props) = native(vec![source("one", "one\ntwo\nthree\nfour")]);
     props.borrow_mut()["content"]["wheel"] = json!({"up":"previous","down":"next"});

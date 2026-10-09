@@ -561,6 +561,25 @@ export function components<N extends Node>(
                   [
                     ui.button('find-scope', search.history ? '∞' : '⌕'),
                     ui.box(
+                      'find-scope-label',
+                      [
+                        ui.item!(
+                          'find-scope-label-input',
+                          ui.text(
+                            'find-scope-text',
+                            search.history ? text.findHistory : text.findLocal,
+                            12,
+                            props.theme.muted,
+                            400,
+                            { truncate: true },
+                          ),
+                          false,
+                          false,
+                        ),
+                      ],
+                      { gap: 0, terminal: { basis: 0 } },
+                    ),
+                    ui.box(
                       'find-editor',
                       [
                         presentation.slot(
@@ -595,6 +614,7 @@ export function components<N extends Node>(
                   {
                     row: true,
                     gap: 1,
+                    wide: { min_width: 60, direction: 'row', children: { 'find-scope-label': {} } },
                     terminal: { basis: 1, shrink: false },
                     style: { width: fill, shrink: 0 },
                   },

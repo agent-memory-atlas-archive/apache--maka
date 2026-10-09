@@ -847,6 +847,7 @@ impl Presenter {
                     }
                     Node::Stack {
                         direction,
+                        wide,
                         gap,
                         padding,
                         border,
@@ -860,13 +861,20 @@ impl Presenter {
                             return Ok((inset.min(width), u32::from(inset)));
                         }
                         let available = width.saturating_sub(inset);
+                        let wide = wide.as_ref().filter(|wide| available >= wide.min_width);
                         let children = self.visible_children(mount, children)?;
                         let layouts: Vec<_> = children
                             .iter()
-                            .map(|child| self.node_layout(mount, child, measurements))
+                            .map(|child| {
+                                self.node_layout(mount, child, measurements).map(|layout| {
+                                    wide.and_then(|wide| wide.children.get(child.key()))
+                                        .copied()
+                                        .unwrap_or(layout)
+                                })
+                            })
                             .collect::<maka_ui::Result<Vec<_>>>()?;
                         let flow = super::layout::measured(
-                            *direction,
+                            wide.map_or(*direction, |wide| wide.direction),
                             available,
                             None,
                             *gap,
@@ -1168,6 +1176,7 @@ impl Presenter {
                 key,
                 scroll,
                 direction,
+                wide,
                 gap,
                 padding,
                 border,
@@ -1203,12 +1212,19 @@ impl Presenter {
                     panes: pass.panes,
                 };
                 let children = self.visible_children(mount, children)?;
+                let wide = wide.as_ref().filter(|wide| inner.width >= wide.min_width);
                 let layouts: Vec<_> = children
                     .iter()
-                    .map(|child| self.node_layout(mount, child, measurements))
+                    .map(|child| {
+                        self.node_layout(mount, child, measurements).map(|layout| {
+                            wide.and_then(|wide| wide.children.get(child.key()))
+                                .copied()
+                                .unwrap_or(layout)
+                        })
+                    })
                     .collect::<maka_ui::Result<Vec<_>>>()?;
                 let flow = super::layout::measured(
-                    *direction,
+                    wide.map_or(*direction, |wide| wide.direction),
                     inner.width,
                     if *scroll == super::scene::ScrollPolicy::None {
                         Some(inner.height)

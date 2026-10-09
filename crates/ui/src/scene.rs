@@ -26,6 +26,50 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::time::{Duration, Instant};
+    #[test]
+    fn responsive_stack_validates_fraction_bounds_and_direct_child_overrides() {
+        let base = json!({"kind":"stack","key":"root","direction":"column","gap":0,"padding":0,"background":0,
+            "wide":{"min_width":100,"direction":"row","children":{"list":{"basis_fraction":{"numerator":34,"denominator":100}}}},
+            "children":[{"kind":"text","key":"list","text":"x","color":0}]});
+        let validate = |value| {
+            serde_json::from_value::<terminal::Node>(value)
+                .unwrap()
+                .validate_root(Instant::now() + Duration::from_secs(1))
+        };
+        validate(base.clone()).unwrap();
+        for invalid in [
+            json!({"numerator":1,"denominator":0}),
+            json!({"numerator":2,"denominator":1}),
+            json!({"numerator":1,"denominator":3,"min":6,"max":5}),
+        ] {
+            let mut value = base.clone();
+            value["wide"]["children"]["list"]["basis_fraction"] = invalid.clone();
+            assert!(validate(value).is_err());
+            let mut value = base.clone();
+            value["layout"] = json!({"basis_fraction":invalid});
+            assert!(validate(value).is_err());
+        }
+        for (pointer, invalid) in [
+            ("/wide/min_width", json!(0)),
+            ("/wide/children", json!({"missing":{"basis":10}})),
+            (
+                "/wide/children/list",
+                json!({"basis":1,"basis_fraction":{"numerator":1,"denominator":2}}),
+            ),
+            ("/wide/children/list", json!({"grow":1025})),
+            ("/wide/children/list", json!({"wrap":true})),
+        ] {
+            let mut value = base.clone();
+            *value.pointer_mut(pointer).unwrap() = invalid;
+            assert!(validate(value).is_err());
+        }
+        let mut value = base;
+        value["scroll"] = json!("manual");
+        assert!(
+            validate(value).is_err(),
+            "a scrolling column cannot switch to a row"
+        );
+    }
 
     #[test]
     fn wheel_commands_require_a_viewport_and_share_the_original_input_contract() {

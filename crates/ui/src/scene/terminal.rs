@@ -48,8 +48,46 @@ pub struct Layout {
     #[schemars(range(max = 1024))]
     pub grow: u16,
     pub basis: Option<u16>,
+    pub basis_fraction: Option<FractionalBasis>,
     pub shrink: bool,
     pub wrap: bool,
+}
+/// Fraction of the allocated main axis, rounded down and clamped before growth
+/// or shrinking. An unbounded axis uses the intrinsic length with the same bounds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "TerminalFractionalBasis")]
+pub struct FractionalBasis {
+    pub numerator: u16,
+    #[schemars(range(min = 1))]
+    pub denominator: u16,
+    #[serde(default)]
+    pub min: u16,
+    #[serde(default)]
+    pub max: Option<u16>,
+}
+impl Layout {
+    fn valid(&self) -> bool {
+        self.grow <= 1024
+            && self.basis_fraction.is_none_or(|fraction| {
+                self.basis.is_none()
+                    && fraction.denominator > 0
+                    && fraction.numerator <= fraction.denominator
+                    && fraction.max.is_none_or(|max| max >= fraction.min)
+            })
+    }
+}
+/// Rearrange the same direct children at an allocated inner-width breakpoint.
+/// Child overrides affect allocation in this stack, not a child's own wrapping.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "TerminalResponsiveStack")]
+pub struct ResponsiveStack {
+    #[schemars(range(min = 1))]
+    pub min_width: u16,
+    pub direction: Direction,
+    #[serde(default)]
+    pub children: BTreeMap<String, Layout>,
 }
 /// Explicit wheel actions in an original scrolling viewport. Offsets remain native.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -239,6 +277,8 @@ pub enum Node {
     Stack {
         key: String,
         direction: Direction,
+        #[serde(default)]
+        wide: Option<ResponsiveStack>,
         gap: u16,
         padding: u16,
         background: u32,
@@ -416,6 +456,7 @@ impl Node {
                 children,
                 layout,
                 direction,
+                wide,
                 scroll,
                 wheel,
                 ..
@@ -430,9 +471,20 @@ impl Node {
                         "wheel commands require a scrolling viewport and valid input keys".into(),
                     );
                 }
-                if layout.grow > 1024
+                if !layout.valid()
                     || (layout.wrap && !matches!(direction, Direction::Row))
                     || (*scroll != ScrollPolicy::None && !matches!(direction, Direction::Column))
+                    || wide.as_ref().is_some_and(|wide| {
+                        wide.min_width == 0
+                            || (layout.wrap && wide.direction != Direction::Row)
+                            || (*scroll != ScrollPolicy::None
+                                && wide.direction != Direction::Column)
+                            || wide.children.iter().any(|(key, layout)| {
+                                !children.iter().any(|child| child.key() == key)
+                                    || !layout.valid()
+                                    || layout.wrap
+                            })
+                    })
                 {
                     return Err("invalid terminal layout".into());
                 }

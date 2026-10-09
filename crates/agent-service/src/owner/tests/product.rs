@@ -1299,10 +1299,40 @@ process.stdout.write(output.outputFiles[0].text);
             .unwrap();
         await_screen(&mut presenter, "[ › 1. Elegant response ]");
         await_screen(&mut presenter, "Message");
+        let wide = screen(&draw_at(&mut presenter, Rect::new(0, 0, 160, 32)));
+        assert!(
+            wide.lines()
+                .any(|line| line.contains("[ › 1.") && line.contains("Message")),
+            "{wide}"
+        );
+        assert!(
+            wide.lines()
+                .any(|line| line.contains("[ ∞ ]") && line.contains("History")),
+            "{wide}"
+        );
         let narrow = screen(&draw_at(&mut presenter, Rect::new(0, 0, 40, 16)));
         assert!(narrow.contains("1/1"), "{narrow}");
         assert!(narrow.contains("Elegant response"), "{narrow}");
+        assert!(
+            !narrow
+                .lines()
+                .any(|line| line.contains("[ ∞ ]") && line.contains("History")),
+            "{narrow}"
+        );
+        presenter.input(Event::Paste("x".into())).unwrap();
+        await_screen(&mut presenter, "No matches");
+        presenter
+            .input(Event::Key(KeyEvent::new(
+                KeyCode::Char('z'),
+                KeyModifiers::CONTROL,
+            )))
+            .unwrap();
+        await_screen(&mut presenter, "[ › 1. Elegant response ]");
         draw(&mut presenter);
+        click(&mut presenter, "History");
+        await_screen(&mut presenter, "Current content");
+        click(&mut presenter, "Current content");
+        await_screen(&mut presenter, "[ › 1. Elegant response ]");
         click(&mut presenter, "[ › 1. Elegant response ]");
         presenter.input(Event::Paste("x".into())).unwrap();
         await_screen(&mut presenter, "No matches");

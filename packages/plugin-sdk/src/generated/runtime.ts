@@ -427,6 +427,7 @@ export type TerminalScene =
   | {
       key: string;
       direction: TerminalDirection;
+      wide?: TerminalResponsiveStack | null;
       gap: number;
       padding: number;
       background: number;
@@ -2727,6 +2728,42 @@ export interface TerminalPaneCommand {
   op: TerminalPaneOperation;
 }
 /**
+ * Rearrange the same direct children at an allocated inner-width breakpoint.
+ * Child overrides affect allocation in this stack, not a child's own wrapping.
+ */
+export interface TerminalResponsiveStack {
+  min_width: number;
+  direction: TerminalDirection;
+  children?: {
+    [k: string]: TerminalLayout | undefined;
+  };
+}
+/**
+ * Native terminal cell constraints on a child in its parent's main axis.
+ * `grow` distributes remaining cells after fixed/intrinsic siblings; `basis`
+ * supplies an explicit base instead of intrinsic length. `shrink` allows that
+ * base to shrink proportionally when siblings exceed the available cells.
+ * Row wrap preserves
+ * source order and measures its rows before allocating the parent viewport.
+ */
+export interface TerminalLayout {
+  grow?: number;
+  basis?: number | null;
+  basis_fraction?: TerminalFractionalBasis | null;
+  shrink?: boolean;
+  wrap?: boolean;
+}
+/**
+ * Fraction of the allocated main axis, rounded down and clamped before growth
+ * or shrinking. An unbounded axis uses the intrinsic length with the same bounds.
+ */
+export interface TerminalFractionalBasis {
+  numerator: number;
+  denominator: number;
+  min?: number;
+  max?: number | null;
+}
+/**
  * A one-cell frame. Colors follow the same RGB convention as terminal text.
  * Focus color follows any focused native target inside this stack.
  */
@@ -2765,20 +2802,6 @@ export interface FocusShortcut {
   modifiers: Modifier[];
   child: string;
   enabled: boolean;
-}
-/**
- * Native terminal cell constraints on a child in its parent's main axis.
- * `grow` distributes remaining cells after fixed/intrinsic siblings; `basis`
- * supplies an explicit base instead of intrinsic length. `shrink` allows that
- * base to shrink proportionally when siblings exceed the available cells.
- * Row wrap preserves
- * source order and measures its rows before allocating the parent viewport.
- */
-export interface TerminalLayout {
-  grow?: number;
-  basis?: number | null;
-  shrink?: boolean;
-  wrap?: boolean;
 }
 /**
  * Desktop layout and appearance are a presenter ABI, never kernel policy.

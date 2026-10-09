@@ -199,7 +199,7 @@ export function searchEvent(
     return null;
   }
   if (input.kind === 'raw') {
-    if (input.key === 'find-scope') {
+    if (input.key === 'find-scope' || input.key === 'find-scope-label-input') {
       if (search.history) {
         search.history = null;
         find(state, 'first');
@@ -624,110 +624,140 @@ export function historyView<N extends Node>(
             { input: 'find-result-input' },
           ),
         ],
-        { terminal: { grow: 1, basis: 0 }, style: { width: fill, grow: 1, minHeight: 0 } },
+        {
+          terminal: {
+            basis_fraction: {
+              numerator: 1,
+              denominator: 3,
+              min: 1,
+              max: Math.max(1, Math.min(6, rows.length)),
+            },
+          },
+          style: { width: fill, grow: 1, minHeight: 0 },
+        },
       ),
-      ...(history.failed ? [ui.button('find-restart', text.findFailed)] : []),
-      ...(preview
-        ? [
-            ui.text(
-              'find-preview-label',
-              {
-                body: text.findFieldBody,
-                thinking: text.findFieldThinking,
-                tool_name: text.findFieldTool,
-                arguments: text.findFieldArguments,
-                result: text.findFieldResult,
-                failure_message: text.findFieldFailure,
-                error_class: text.findFieldError,
-              }[preview.hit.field],
-              13,
-              props.theme.muted,
-            ),
-            ui.text(
-              'find-preview-hit',
-              compactLabel(preview.hit.preview, 160),
-              13,
-              props.theme.muted,
-            ),
-            ui.box(
-              'find-preview',
-              [
-                presentation.reading(
-                  preview.key,
+      ui.box('find-divider', [], { background: props.theme.border, terminal: { basis: 1 } }),
+      ui.box(
+        'find-preview-pane',
+        [
+          ...(history.failed ? [ui.button('find-restart', text.findFailed)] : []),
+          ...(preview
+            ? [
+                ui.text(
+                  'find-preview-label',
                   {
-                    content: ui.box(
-                      'find-preview-document',
-                      source
-                        ? [
-                            presentation.slot(
-                              `find-preview-text-${source.sequence}-${source.field}-${source.offset}`,
-                              'source',
-                              {
-                                source: source.text,
-                                focusOnPointer: false,
-                                appearance:
-                                  source.format === 'text'
-                                    ? props.theme.markdown.body
-                                    : props.theme.markdown.code,
-                                selection: props.theme.markdown.selection,
-                                disabled: false,
-                              },
-                              {},
-                            ),
-                          ]
-                        : [
-                            ui.text(
-                              'find-preview-loading',
-                              preview.failed ? text.sourceFailed : text.loading,
-                              13,
-                              props.theme.muted,
-                            ),
-                          ],
-                      {
-                        scroll: 'anchor',
-                        gap: 0,
-                        terminal: { grow: 1, basis: 0 },
-                        style: { width: fill, height: fill },
-                      },
-                    ),
-                    command: preview.command,
-                  },
-                  { input: 'find-preview-input', observed: 'find-preview-observed' },
+                    body: text.findFieldBody,
+                    thinking: text.findFieldThinking,
+                    tool_name: text.findFieldTool,
+                    arguments: text.findFieldArguments,
+                    result: text.findFieldResult,
+                    failure_message: text.findFieldFailure,
+                    error_class: text.findFieldError,
+                  }[preview.hit.field],
+                  13,
+                  props.theme.muted,
                 ),
-              ],
-              { terminal: { grow: 2, basis: 0 }, style: { width: fill, grow: 2, minHeight: 0 } },
-            ),
-            ...((source &&
-              (source.offset > 0 || source.offset + utf8Bytes(source.text) < source.totalBytes)) ||
-            preview.failed
-              ? [
-                  ui.box(
-                    'find-source-controls',
-                    [
-                      ...(source && source.offset > 0
-                        ? [
-                            ui.button('find-source-first', text.sourceFirst, pending),
-                            ui.button('find-source-previous', text.sourcePrevious, pending),
-                          ]
-                        : []),
-                      ...(source && source.offset + utf8Bytes(source.text) < source.totalBytes
-                        ? [
-                            ui.button('find-source-next', text.sourceNext, pending),
-                            ui.button('find-source-last', text.sourceLast, pending),
-                          ]
-                        : []),
-                      ...(preview.failed
-                        ? [ui.button('find-source-retry', text.sourceRetry, pending)]
-                        : []),
-                    ],
-                    { row: true, gap: 1, terminal: { wrap: true } },
-                  ),
-                ]
-              : []),
-          ]
-        : []),
+                ui.text(
+                  'find-preview-hit',
+                  compactLabel(preview.hit.preview, 160),
+                  13,
+                  props.theme.muted,
+                ),
+                ui.box(
+                  'find-preview',
+                  [
+                    presentation.reading(
+                      preview.key,
+                      {
+                        content: ui.box(
+                          'find-preview-document',
+                          source
+                            ? [
+                                presentation.slot(
+                                  `find-preview-text-${source.sequence}-${source.field}-${source.offset}`,
+                                  'source',
+                                  {
+                                    source: source.text,
+                                    focusOnPointer: false,
+                                    appearance:
+                                      source.format === 'text'
+                                        ? props.theme.markdown.body
+                                        : props.theme.markdown.code,
+                                    selection: props.theme.markdown.selection,
+                                    disabled: false,
+                                  },
+                                  {},
+                                ),
+                              ]
+                            : [
+                                ui.text(
+                                  'find-preview-loading',
+                                  preview.failed ? text.sourceFailed : text.loading,
+                                  13,
+                                  props.theme.muted,
+                                ),
+                              ],
+                          {
+                            scroll: 'anchor',
+                            gap: 0,
+                            terminal: { grow: 1, basis: 0 },
+                            style: { width: fill, height: fill },
+                          },
+                        ),
+                        command: preview.command,
+                      },
+                      { input: 'find-preview-input', observed: 'find-preview-observed' },
+                    ),
+                  ],
+                  {
+                    terminal: { grow: 1, basis: 0 },
+                    style: { width: fill, grow: 1, minHeight: 0 },
+                  },
+                ),
+                ...((source &&
+                  (source.offset > 0 ||
+                    source.offset + utf8Bytes(source.text) < source.totalBytes)) ||
+                preview.failed
+                  ? [
+                      ui.box(
+                        'find-source-controls',
+                        [
+                          ...(source && source.offset > 0
+                            ? [
+                                ui.button('find-source-first', text.sourceFirst, pending),
+                                ui.button('find-source-previous', text.sourcePrevious, pending),
+                              ]
+                            : []),
+                          ...(source && source.offset + utf8Bytes(source.text) < source.totalBytes
+                            ? [
+                                ui.button('find-source-next', text.sourceNext, pending),
+                                ui.button('find-source-last', text.sourceLast, pending),
+                              ]
+                            : []),
+                          ...(preview.failed
+                            ? [ui.button('find-source-retry', text.sourceRetry, pending)]
+                            : []),
+                        ],
+                        { row: true, gap: 1, terminal: { wrap: true } },
+                      ),
+                    ]
+                  : []),
+              ]
+            : []),
+        ],
+        { gap: 0, terminal: { grow: 1, basis: 0 }, style: { width: fill, grow: 1, minHeight: 0 } },
+      ),
     ],
-    { gap: 0, terminal: { grow: 1, basis: 0 }, style: { width: fill, height: fill } },
+    {
+      gap: 0,
+      terminal: { grow: 1, basis: 0 },
+      wide: {
+        min_width: 100,
+        direction: 'row',
+        children: { 'find-results': { basis_fraction: { numerator: 34, denominator: 100 } } },
+      },
+      style: { width: fill, height: fill },
+    },
   );
 }
 export function searchCount(state: SearchReading) {
