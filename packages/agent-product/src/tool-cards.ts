@@ -18,6 +18,7 @@
  */
 
 import type { Message } from './contracts.js';
+import { sameValue } from './value.js';
 
 /** Merge only reciprocal Host references, retaining both native source bodies.
  * A counterpart outside this bounded window remains accessible by its reference.
@@ -62,7 +63,7 @@ export function toolCards(
       result.source! <= call.source ||
       result.tool?.toolUseId !== metadata.toolUseId ||
       result.tool.call?.sequence !== call.source ||
-      result.tool.call.name !== metadata.call.name ||
+      !sameValue(result.tool.call, metadata.call) ||
       result.tool.result?.sequence !== result.source ||
       result.tool.result.isError !== metadata.result.isError ||
       result.tool.result.image !== metadata.result.image

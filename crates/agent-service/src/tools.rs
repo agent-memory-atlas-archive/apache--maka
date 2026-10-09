@@ -86,6 +86,11 @@ pub(crate) fn catalog(
             if selection.description.trim().is_empty() {
                 return Err("agent_tool_description_invalid".to_owned());
             }
+            if let Some(title) = &selection.title {
+                title
+                    .validate()
+                    .map_err(|_| "agent_tool_title_invalid".to_owned())?;
+            }
             basis.push(SelectedTool {
                 selection: selection.clone(),
                 binding: binding.execution_basis().into(),
@@ -167,7 +172,8 @@ impl ToolPreparer for Service {
                 return Err(ToolRejection::Cancelled);
             }
             // No request or effect is admitted until the existing ToolJournal T1.
-            Ok(PreparedEffect::new(move |cancellation| {
+            let title = selection.title.clone();
+            let prepared = PreparedEffect::new(move |cancellation| {
                 Box::pin(async move {
                     if selection.confirmation == ToolConfirmation::Required {
                         approval::confirm(
@@ -296,7 +302,11 @@ impl ToolPreparer for Service {
                         (result, _) => result,
                     }
                 })
-            }))
+            });
+            Ok(match title {
+                Some(title) => prepared.titled(title),
+                None => prepared,
+            })
         })
     }
 }

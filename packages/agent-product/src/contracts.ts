@@ -167,6 +167,7 @@ export interface SourcePage {
   landing: 'start' | 'end';
 }
 export interface TimelineProps {
+  waitingTools: string[];
   theme: Theme;
   locale: string;
   messages: Message[];
@@ -385,6 +386,7 @@ export const imageViewerContract = component(
 export const timelineContract = component(
   'maka.agent.Timeline',
   object({
+    waitingTools: { type: 'array', maxItems: 16, items: string },
     theme: { $ref: '#/$defs/Theme' },
     locale,
     messages: { type: 'array', maxItems: 32, items: { $ref: '#/$defs/Message' } },

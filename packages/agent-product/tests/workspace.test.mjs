@@ -3047,7 +3047,7 @@ for (const target of ['desktop', 'tui']) {
             role: 'tool_call',
             tool: {
               toolUseId: uuid(901),
-              call: { sequence: 39, name: 'Count' },
+              call: { sequence: 39, name: 'Count', title: null, pending: false },
               result: { sequence: 40, isError: true, image: false },
             },
           }),
@@ -3056,7 +3056,7 @@ for (const target of ['desktop', 'tui']) {
             role: 'tool_result',
             tool: {
               toolUseId: uuid(901),
-              call: { sequence: 39, name: 'Count' },
+              call: { sequence: 39, name: 'Count', title: null, pending: false },
               result: { sequence: 40, isError: true, image: false },
             },
           }),
@@ -3226,6 +3226,7 @@ test('prepending history preserves the streamed message presentation identity', 
     newer: false,
     latest: false,
     landing: { sequence: 0, edge: 'end' },
+    waitingTools: [],
     live: true,
   };
   const initial = timeline.mount(props, {});
@@ -3275,6 +3276,7 @@ test('desktop scroll-to-end uses native painted facts and preserves its accepted
     newer: false,
     latest: false,
     landing: { sequence: 0, edge: 'end' },
+    waitingTools: [],
     live: true,
   };
   let result = timeline.mount(props, {});
@@ -4134,7 +4136,12 @@ for (const target of ['desktop', 'tui']) {
               role,
               tool: {
                 toolUseId: uuid(901),
-                call: { sequence: role === 'tool_call' ? 40 : 39, name: 'Draw' },
+                call: {
+                  sequence: role === 'tool_call' ? 40 : 39,
+                  name: 'Draw',
+                  title: null,
+                  pending: false,
+                },
                 result:
                   role === 'tool_result' ? { sequence: 40, isError: true, image: true } : null,
               },
@@ -4617,7 +4624,7 @@ for (const target of ['desktop', 'tui']) {
       const bytes = Buffer.from(body);
       const tool = {
         toolUseId: uuid(902),
-        call: { sequence: 400, name: 'Count' },
+        call: { sequence: 400, name: 'Count', title: null, pending: false },
         result: { sequence: 401, isError: false, image: false },
       };
       const client = new Client(module.component).start({
@@ -4956,7 +4963,7 @@ test('image semantic TUI has no pixel loader and Desktop back retains conversati
         role: 'tool_result',
         tool: {
           toolUseId: uuid(901),
-          call: { sequence: 39, name: 'Draw' },
+          call: { sequence: 39, name: 'Draw', title: null, pending: false },
           result: { sequence: 40, isError: false, image: true },
         },
       }),
@@ -4998,7 +5005,7 @@ test('returning from an image follows new canonical facts, including an in-fligh
           role: 'tool_result',
           tool: {
             toolUseId: uuid(901),
-            call: { sequence: 39, name: 'Draw' },
+            call: { sequence: 39, name: 'Draw', title: null, pending: false },
             result: { sequence: 40, isError: false, image: true },
           },
         }),
@@ -8599,7 +8606,13 @@ for (const target of ['tui', 'desktop']) {
           kind: 'interactions',
           pending: {
             revision: 3,
-            entries: [{ requestId: record.requestId, kind: record.request.kind }],
+            entries: [
+              {
+                requestId: record.requestId,
+                kind: record.request.kind,
+                toolUseId: record.request.toolUseId,
+              },
+            ],
           },
         },
       },
@@ -8639,8 +8652,12 @@ for (const target of ['tui', 'desktop']) {
           pending: {
             revision: 4,
             entries: [
-              { requestId: 'unsupported', kind: 'form' },
-              { requestId: approvalRecord.requestId, kind: 'service_approval' },
+              { requestId: 'unsupported', kind: 'form', toolUseId: 'unsupported-tool' },
+              {
+                requestId: approvalRecord.requestId,
+                kind: 'service_approval',
+                toolUseId: approvalRecord.request.toolUseId,
+              },
             ],
           },
         },
@@ -8679,7 +8696,13 @@ for (const target of ['tui', 'desktop']) {
           kind: 'interactions',
           pending: {
             revision: 4,
-            entries: [{ requestId: questionRecord.requestId, kind: 'question' }],
+            entries: [
+              {
+                requestId: questionRecord.requestId,
+                kind: 'question',
+                toolUseId: questionRecord.request.toolUseId,
+              },
+            ],
           },
         },
       },
@@ -9024,7 +9047,7 @@ for (const target of ['tui', 'desktop']) {
         text,
         tool: {
           toolUseId: 'original_tool',
-          call: { sequence: 100, name: 'Counter' },
+          call: { sequence: 100, name: 'Counter', title: null, pending: false },
           result: null,
         },
       },
@@ -9263,6 +9286,7 @@ async function conversationFinder() {
     newer: false,
     latest: false,
     landing: { sequence: 0, edge: 'end' },
+    waitingTools: [],
     live: true,
   };
   const finder = {
@@ -9683,7 +9707,7 @@ test('history preview loads one selected tool row, retains all field owners on c
     fields: ['tool_name', 'body', 'arguments'],
     tool: {
       toolUseId: 'original-tool',
-      call: { sequence: 257, name: 'Run command' },
+      call: { sequence: 257, name: 'Run command', title: null, pending: false },
       result: null,
     },
   };
@@ -10080,7 +10104,7 @@ for (const target of ['tui', 'desktop']) {
     );
     const tool = {
       toolUseId: uuid(902),
-      call: { sequence: 399, name: 'Write' },
+      call: { sequence: 399, name: 'Write', title: null, pending: false },
       result: { sequence: 400, isError: false, image: false },
     };
     const client = new Client(module.component).start({
@@ -10177,7 +10201,7 @@ for (const target of ['tui', 'desktop']) {
       );
       const tool = {
         toolUseId: uuid(901),
-        call: { sequence: 40, name: 'Write' },
+        call: { sequence: 40, name: 'Write', title: null, pending: false },
         result: { sequence: 41, isError: true, image: false },
       };
       const call = historyChunk('Save the requested file', {
@@ -10257,7 +10281,7 @@ for (const target of ['tui', 'desktop']) {
       module.activate({ locale: 'en' });
       const tool = {
         toolUseId: uuid(901),
-        call: { sequence: 40, name: 'Draw' },
+        call: { sequence: 40, name: 'Draw', title: null, pending: false },
         result: { sequence: 41, isError: false, image: true },
       };
       for (const role of ['tool_call', 'tool_result']) {
@@ -10323,7 +10347,7 @@ test('find in a paired result unfolds its call card and reveals the original sou
   const find = await conversationFinder();
   const tool = {
     toolUseId: 'call',
-    call: { sequence: 40, name: 'Write' },
+    call: { sequence: 40, name: 'Write', title: null, pending: false },
     result: { sequence: 41, isError: false, image: false },
   };
   const common = { timestamp: 1, continued: false, image: false, tool };
@@ -10375,3 +10399,126 @@ test('find in a paired result unfolds its call card and reveals the original sou
     find_sequence: sequence,
   });
 });
+
+for (const target of ['tui', 'desktop']) {
+  test(
+    target +
+      ' tool activity titles and waiting status follow canonical facts without replacing source',
+    async () => {
+      const module = await import(
+        pathToFileURL(resolve(root, 'dist/packages/workspace/' + target + '.js'))
+      );
+      module.activate({ locale: 'en' });
+      const { component: timeline } = await import(
+        pathToFileURL(resolve(root, 'dist/packages/timeline/' + target + '.js'))
+      );
+      const tool = {
+        toolUseId: uuid(901),
+        call: { sequence: 40, name: 'Alias', title: null, pending: true },
+        result: null,
+      };
+      const chunk = historyChunk('Call intent', {
+        sequence: 40,
+        messageId: uuid(901),
+        role: 'tool_call',
+        tool,
+      });
+      const client = new Client(module.component).start({
+        through: 100,
+        run: { invocationId: 'run', state: 'running' },
+        chunks: [chunk],
+      });
+      let rendered = timeline.mount(client.timeline, {});
+      const rows = () => rendered.frame.view.children[0].children[0].props.content.children;
+      const status = () =>
+        rows()[0].children.find((node) => node.key === 'tool-status-' + uuid(901))?.text;
+      const source = () => modelSlots(rows()[0]).find((node) => node.binding === 'source');
+      const original = source();
+      assert.equal(status(), 'Awaiting tool result');
+      rendered = timeline.event(
+        rendered.frame.state,
+        { kind: 'raw', key: 'toggle-' + uuid(901), event: {} },
+        client.timeline,
+        {},
+      );
+      const publish = (sequence, chunks) => {
+        client.page([fact(sequence, { kind: 'transcript_changed' })], sequence);
+        client.query('history', {
+          kind: 'ready',
+          through: sequence,
+          chunks,
+          before: null,
+          after: null,
+        });
+        client.component('tailReady');
+        rendered = timeline.update(rendered.frame.state, client.timeline, {});
+      };
+      tool.call.title = {
+        fallback: 'Inspect file',
+        translations: { 'zh-CN': '查看文件', zh: '檢查' },
+      };
+      publish(101, [chunk]);
+      assert.equal(rows()[0].children[0].children[0].text, 'Tool activity · Inspect file');
+      assert.deepEqual(
+        source(),
+        original,
+        'metadata refresh preserves original native source identity',
+      );
+      assert.equal(
+        rows()[0].children.find((node) => node.key.startsWith('details-')).visible,
+        true,
+      );
+      client.input({
+        kind: 'action',
+        key: client.state.watch.key,
+        event: {
+          status: 'updated',
+          value: {
+            kind: 'interactions',
+            pending: {
+              revision: 3,
+              entries: [
+                { requestId: 'unrelated', kind: 'question', toolUseId: 'other-tool' },
+                { requestId: 'permission', kind: 'permissions', toolUseId: null },
+                { requestId: 'approval', kind: 'service_approval', toolUseId: uuid(901) },
+              ],
+            },
+          },
+        },
+      });
+      assert.deepEqual(client.timeline.waitingTools, ['other-tool', uuid(901)]);
+      rendered = timeline.update(rendered.frame.state, client.timeline, {});
+      assert.equal(status(), 'Waiting for your input');
+      for (const [locale, title, waiting] of [
+        ['zh-CN', '查看文件', '等待你的输入'],
+        ['zh-HK', '檢查', '等待你的輸入'],
+      ]) {
+        rendered = timeline.update(rendered.frame.state, { ...client.timeline, locale }, {});
+        assert.ok(rows()[0].children[0].children[0].text.endsWith(title));
+        assert.equal(status(), waiting);
+      }
+      // A canonical result wins even while an older pending list remains visible.
+      tool.result = { sequence: 41, isError: false, image: false };
+      publish(102, [chunk, historyChunk('Done', { sequence: 41, role: 'tool_result', tool })]);
+      assert.equal(rows().length, 1);
+      assert.equal(status(), undefined);
+      assert.deepEqual(source(), original);
+      tool.result.isError = true;
+      publish(103, [
+        chunk,
+        historyChunk('Unknown effect', { sequence: 41, role: 'tool_result', tool }),
+      ]);
+      assert.equal(status(), undefined);
+      assert.ok(rows()[0].children.some((node) => node.key === 'tool-error-' + uuid(901)));
+      tool.result = null;
+      tool.call.pending = false;
+      publish(104, [chunk]);
+      assert.equal(
+        status(),
+        'No recorded result',
+        'closed or imported call does not remain waiting',
+      );
+      assert.equal(rendered.actions.length, 0, 'display facts never execute or retry a tool');
+    },
+  );
+}

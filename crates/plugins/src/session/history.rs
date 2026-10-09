@@ -222,6 +222,10 @@ pub struct ToolCall {
     #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
     pub sequence: u64,
     pub name: String,
+    #[schemars(with = "maka_runtime::schema::RequiredNullable<maka_runtime::display::Text>")]
+    pub title: Option<Box<maka_runtime::display::Text>>,
+    /// This native Turn is still open at the history fence; not execution authority.
+    pub pending: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

@@ -22,8 +22,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Presentation text is distinct from the stable identity used for navigation.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "DisplayText")]
 pub struct Text {
     pub fallback: String,
     #[serde(default)]

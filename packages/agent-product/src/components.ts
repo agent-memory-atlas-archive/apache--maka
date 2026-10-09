@@ -378,6 +378,7 @@ export function components<N extends Node>(
             );
       return messageView(presentation, target, props.theme, props.locale, {
         ...message,
+        waiting: !!message.tool && props.waitingTools.includes(message.tool.toolUseId),
         expanded,
         toggle: tool && (message.source !== null || message.text) ? 'toggle-' + message.id : null,
         text: result ? [message.text, result.text].filter(Boolean).join(' · ') : message.text,

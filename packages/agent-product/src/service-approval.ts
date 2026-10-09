@@ -136,6 +136,7 @@ export function serviceApproval<N extends Node>(
     const page = state.page,
       end = page ? page.offset + bytes(page.text) : 0;
     const source: TimelineProps = {
+      waitingTools: [],
       theme: props.theme,
       locale: props.locale,
       messages: [],

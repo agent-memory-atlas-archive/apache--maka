@@ -129,6 +129,7 @@ impl NativeOwner for Counter {
     }
 }
 pub(super) struct Setup {
+    title: Option<maka_runtime::display::Text>,
     counter: Option<Arc<Counter>>,
     granted: bool,
     query: bool,
@@ -139,12 +140,17 @@ pub(super) struct Setup {
     confirmation: contract::ToolConfirmation,
 }
 impl Setup {
+    pub(super) fn titled(mut self, title: maka_runtime::display::Text) -> Self {
+        self.title = Some(title);
+        self
+    }
     pub(super) fn require_confirmation(mut self) -> Self {
         self.confirmation = contract::ToolConfirmation::Required;
         self
     }
     fn javascript() -> Self {
         Self {
+            title: None,
             counter: None,
             granted: true,
             query: false,
@@ -157,6 +163,7 @@ impl Setup {
     }
     fn native(counter: Arc<Counter>, granted: bool) -> Self {
         Self {
+            title: None,
             counter: Some(counter),
             granted,
             query: false,
@@ -169,6 +176,7 @@ impl Setup {
     }
     pub(super) fn questions() -> Self {
         Self {
+            title: None,
             counter: None,
             granted: true,
             query: false,
@@ -211,6 +219,7 @@ impl Setup {
             ]
             .into_iter()
             .map(|(method, name)| contract::ServiceTool {
+                title: None,
                 name: name.into(),
                 method: method.into(),
                 ..self.selection()
@@ -263,6 +272,7 @@ impl Setup {
     }
     pub(super) fn selection(&self) -> contract::ServiceTool {
         contract::ServiceTool {
+            title: self.title.clone(),
             confirmation: self.confirmation,
             result: if self.files == Some("readImage")
                 || self.images.as_ref().is_some_and(|source| source.is_image())
@@ -528,7 +538,7 @@ async fn service_confirmation_reviews_exact_large_arguments_and_never_replaces_g
         for (granted, query, decision) in [(true, false, "allow"), (true, false, "deny"), (false, false, "allow"), (true, true, "allow")] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let counter = Counter::new(Behavior::Returned);
-            let mut setup = Setup::native(counter.clone(), granted);
+            let mut setup = Setup::native(counter.clone(), granted).titled(maka_runtime::display::Text::localized("Review counter", "审核计数器", "審核計數器"));
             setup.query = query;
             setup.confirmation = contract::ToolConfirmation::Required;
             let fixture = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None, Some(setup)).await;
@@ -543,7 +553,9 @@ async fn service_confirmation_reviews_exact_large_arguments_and_never_replaces_g
             assert_eq!(counter.entered.available_permits(), 0);
             let maka_runtime::interaction::InteractionRequest::ServiceApproval { through, ref tool_use_id, .. } = record.request else { unreachable!() };
             assert_eq!(fixture.query("observe", json!({"sessionId":session})).await.unwrap()["run"]["state"], "waiting_for_user");
-            assert_eq!(fixture.query("pendingInteractions", json!({"sessionId":session})).await.unwrap()["entries"][0]["kind"], "service_approval");
+            let pending = fixture.query("pendingInteractions", json!({"sessionId":session})).await.unwrap();
+            assert_eq!(pending["entries"][0]["kind"], "service_approval");
+            assert_eq!(pending["entries"][0]["toolUseId"], *tool_use_id);
             let mut position = json!({"kind":"start"});
             let mut complete = String::new();
             loop {
@@ -551,6 +563,9 @@ async fn service_confirmation_reviews_exact_large_arguments_and_never_replaces_g
                     "source":{"kind":"tool_use","toolUseId":tool_use_id},"field":"arguments","position":position})).await.unwrap();
                 if page["kind"] == "preparing" { continue; }
                 assert_eq!(page["source"]["tool"]["toolUseId"], *tool_use_id);
+                assert_eq!(page["source"]["tool"]["call"]["title"]["translations"]["zh-CN"], "审核计数器");
+                assert_eq!(page["source"]["tool"]["call"]["pending"], true);
+                assert!(page["source"]["tool"]["result"].is_null());
                 let text = page["source"]["text"].as_str().unwrap();
                 assert!(text.len() <= 8192);
                 complete.push_str(text);

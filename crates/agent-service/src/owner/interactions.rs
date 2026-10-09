@@ -40,6 +40,15 @@ impl Owner {
                 .into_iter()
                 .map(|record| InteractionSummary {
                     request_id: record.request_id,
+                    tool_use_id: match &record.request {
+                        InteractionRequest::Permissions { tool_use_id, .. } => tool_use_id.clone(),
+                        InteractionRequest::ServiceApproval { tool_use_id, .. }
+                        | InteractionRequest::Question { tool_use_id, .. }
+                        | InteractionRequest::Form { tool_use_id, .. }
+                        | InteractionRequest::ClientCapability { tool_use_id, .. } => {
+                            Some(tool_use_id.clone())
+                        }
+                    },
                     kind: match record.request {
                         InteractionRequest::ServiceApproval { .. } => {
                             InteractionKind::ServiceApproval

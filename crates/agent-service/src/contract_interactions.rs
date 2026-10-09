@@ -35,6 +35,8 @@ pub struct PendingInteractions {
 pub struct InteractionSummary {
     pub request_id: String,
     pub kind: InteractionKind,
+    #[schemars(with = "maka_runtime::schema::RequiredNullable<String>")]
+    pub tool_use_id: Option<String>,
 }
 #[derive(Serialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case")]

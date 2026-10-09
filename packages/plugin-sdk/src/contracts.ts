@@ -5393,9 +5393,43 @@ export const contracts = {
                   name: {
                     type: 'string',
                   },
+                  title: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/DisplayText',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  pending: {
+                    description:
+                      'This native Turn is still open at the history fence; not execution authority.',
+                    type: 'boolean',
+                  },
                 },
                 additionalProperties: false,
-                required: ['sequence', 'name'],
+                required: ['sequence', 'name', 'title', 'pending'],
+              },
+              DisplayText: {
+                description:
+                  'Presentation text is distinct from the stable identity used for navigation.',
+                type: 'object',
+                properties: {
+                  fallback: {
+                    type: 'string',
+                  },
+                  translations: {
+                    type: 'object',
+                    additionalProperties: {
+                      type: 'string',
+                    },
+                    default: {},
+                  },
+                },
+                additionalProperties: false,
+                required: ['fallback'],
               },
               HistoryToolResult: {
                 type: 'object',
@@ -7039,9 +7073,12 @@ export const contracts = {
                   kind: {
                     $ref: '#/$defs/AgentInteractionKind',
                   },
+                  toolUseId: {
+                    type: ['string', 'null'],
+                  },
                 },
                 additionalProperties: false,
-                required: ['requestId', 'kind'],
+                required: ['requestId', 'kind', 'toolUseId'],
               },
               AgentInteractionKind: {
                 type: 'string',
@@ -9017,9 +9054,43 @@ export const contracts = {
                   name: {
                     type: 'string',
                   },
+                  title: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/DisplayText',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  pending: {
+                    description:
+                      'This native Turn is still open at the history fence; not execution authority.',
+                    type: 'boolean',
+                  },
                 },
                 additionalProperties: false,
-                required: ['sequence', 'name'],
+                required: ['sequence', 'name', 'title', 'pending'],
+              },
+              DisplayText: {
+                description:
+                  'Presentation text is distinct from the stable identity used for navigation.',
+                type: 'object',
+                properties: {
+                  fallback: {
+                    type: 'string',
+                  },
+                  translations: {
+                    type: 'object',
+                    additionalProperties: {
+                      type: 'string',
+                    },
+                    default: {},
+                  },
+                },
+                additionalProperties: false,
+                required: ['fallback'],
               },
               HistoryToolResult: {
                 type: 'object',
@@ -9484,9 +9555,12 @@ export const contracts = {
                   kind: {
                     $ref: '#/$defs/AgentInteractionKind',
                   },
+                  toolUseId: {
+                    type: ['string', 'null'],
+                  },
                 },
                 additionalProperties: false,
-                required: ['requestId', 'kind'],
+                required: ['requestId', 'kind', 'toolUseId'],
               },
               AgentInteractionKind: {
                 type: 'string',

@@ -382,7 +382,13 @@ fn packaged_product(case: ProductCase) {
     } else if process_permissions {
         Some(super::service_tools::Setup::processes())
     } else if file_permissions {
-        Some(super::service_tools::Setup::files("write"))
+        Some(super::service_tools::Setup::files("write").titled(
+            maka_runtime::display::Text::localized(
+                "Save workspace file",
+                "保存工作区文件",
+                "儲存工作區檔案",
+            ),
+        ))
     } else {
         (!fail_labels_initialization)
             .then(|| super::service_tools::Setup::questions().require_confirmation())
@@ -1190,6 +1196,24 @@ process.stdout.write(output.outputFiles[0].text);
             .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
             .unwrap();
         await_screen(&mut presenter, "File background draft");
+        if !process_permissions {
+            let deadline = std::time::Instant::now() + Duration::from_secs(20);
+            loop {
+                let rendered = screen(&draw(&mut presenter));
+                let lines = rendered.lines().collect::<Vec<_>>();
+                if lines.windows(2).any(|rows| {
+                    rows[0].contains("Save workspace file")
+                        && rows[1].contains("Waiting for your input")
+                }) {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "tool-specific title and waiting status were not adjacent: {rendered}"
+                );
+                std::thread::yield_now();
+            }
+        }
         click(&mut presenter, "[ Ctrl G · Review request ]");
         await_screen(&mut presenter, "native-approved.txt");
         click(&mut presenter, "Deny this call");

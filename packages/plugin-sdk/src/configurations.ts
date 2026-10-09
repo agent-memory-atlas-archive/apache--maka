@@ -97,6 +97,19 @@ export const configurations = {
       AgentServiceTool: {
         type: 'object',
         properties: {
+          title: {
+            description:
+              'Display only; the selected name, contract and binding still identify execution.',
+            anyOf: [
+              {
+                $ref: '#/$defs/DisplayText',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
           result: {
             description:
               'Explicit model projection; JSON data never implicitly grants image access.',
@@ -130,6 +143,24 @@ export const configurations = {
         },
         additionalProperties: false,
         required: ['result', 'confirmation', 'name', 'description', 'import', 'method'],
+      },
+      DisplayText: {
+        description: 'Presentation text is distinct from the stable identity used for navigation.',
+        type: 'object',
+        properties: {
+          fallback: {
+            type: 'string',
+          },
+          translations: {
+            type: 'object',
+            additionalProperties: {
+              type: 'string',
+            },
+            default: {},
+          },
+        },
+        additionalProperties: false,
+        required: ['fallback'],
       },
       AgentToolResult: {
         type: 'string',

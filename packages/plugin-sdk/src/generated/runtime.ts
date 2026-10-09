@@ -3482,6 +3482,10 @@ export interface DirectoryRootSpec {
 }
 export interface AgentServiceTool {
   /**
+   * Display only; the selected name, contract and binding still identify execution.
+   */
+  title?: DisplayText | null;
+  /**
    * Explicit model projection; JSON data never implicitly grants image access.
    */
   result: AgentToolResult;
@@ -3493,6 +3497,15 @@ export interface AgentServiceTool {
   description: string;
   import: string;
   method: string;
+}
+/**
+ * Presentation text is distinct from the stable identity used for navigation.
+ */
+export interface DisplayText {
+  fallback: string;
+  translations?: {
+    [k: string]: string | undefined;
+  };
 }
 /**
  * Exact public selection observed by a caller, checked once at run admission.
@@ -4031,6 +4044,7 @@ export interface AgentPendingInteractions {
 export interface AgentInteractionSummary {
   requestId: string;
   kind: AgentInteractionKind;
+  toolUseId: string | null;
 }
 export interface AgentInteractionRead {
   sessionId: string;
@@ -4343,6 +4357,11 @@ export interface HistoryTool {
 export interface HistoryToolCall {
   sequence: number;
   name: string;
+  title: DisplayText | null;
+  /**
+   * This native Turn is still open at the history fence; not execution authority.
+   */
+  pending: boolean;
 }
 export interface HistoryToolResult {
   sequence: number;

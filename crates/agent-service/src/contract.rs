@@ -53,6 +53,9 @@ pub struct Configuration {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentServiceTool")]
 pub struct ServiceTool {
+    /// Display only; the selected name, contract and binding still identify execution.
+    #[serde(default)]
+    pub title: Option<maka_runtime::display::Text>,
     /// Explicit model projection; JSON data never implicitly grants image access.
     pub result: ToolResult,
     /// Additional user consent for this exact call; service grants remain independent.

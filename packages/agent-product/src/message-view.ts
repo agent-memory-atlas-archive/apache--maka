@@ -65,6 +65,7 @@ export function messageView<N extends Node>(
     tool: HistorySource['tool'];
     continued: boolean;
     expanded: boolean;
+    waiting?: boolean;
     toggle: string | null;
     body: N;
     actions: N[];
@@ -88,7 +89,20 @@ export function messageView<N extends Node>(
             : message.role === 'failure'
               ? text.findFieldFailure
               : text.toolOutput;
-  const name = tool && message.tool?.call?.name;
+  const title = tool && message.tool?.call?.title;
+  const name = title
+    ? (title.translations?.[locale] ??
+      title.translations?.[locale.split('-')[0]!] ??
+      title.fallback)
+    : tool && message.tool?.call?.name;
+  const status =
+    tool && !message.tool?.result
+      ? message.tool?.call?.pending
+        ? message.waiting
+          ? text.waiting
+          : text.toolPending
+        : text.toolMissing
+      : null;
   const time =
     message.role === 'user' || message.role === 'assistant' ? timeLabel(message.timestamp) : null;
   const label = name
@@ -122,6 +136,7 @@ export function messageView<N extends Node>(
             },
           )
         : role,
+      ...(status ? [ui.text('tool-status-' + message.id, status, 13, theme.muted)] : []),
       ...(message.continued
         ? [ui.text('continued-' + message.id, text.partial, 12, theme.muted)]
         : []),

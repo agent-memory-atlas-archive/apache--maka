@@ -31,7 +31,7 @@ const METADATA_SQL: &str = "WITH owner AS (
                 json_extract(payload, '$.isError') AS error,
                 json_extract(payload, '$.content.kind') IS 'image' AS image
             FROM transcript_rows WHERE session_id = ?1 AND sequence = ?2 AND sequence <= ?3
-        ), call AS (
+        ), call_row AS (
             SELECT row.sequence, json_extract(row.payload, '$.toolName') AS name,
                 json_extract(row.payload, '$.origin') AS origin,
                 json_extract(row.payload, '$.parentToolCallId') AS parent_call,
@@ -40,6 +40,23 @@ const METADATA_SQL: &str = "WITH owner AS (
                 AND row.message_id = owner.tool_id AND row.turn_id = owner.turn_id
             WHERE row.sequence <= ?3 AND json_extract(row.payload, '$.type') = 'tool_call'
                 AND json_type(row.payload, '$.args') IS NOT NULL
+        ), activity AS MATERIALIZED (
+            SELECT row.sequence, json_extract(row.payload, '$.toolName') AS name,
+                json_extract(row.payload, '$.title') AS title
+            FROM transcript_rows row JOIN owner ON row.session_id = owner.session_id
+                AND row.turn_id = owner.turn_id AND json_extract(row.payload, '$.toolUseId') = owner.tool_id
+            WHERE row.sequence <= ?3 AND json_extract(row.payload, '$.type') = 'tool_activity'
+            ORDER BY row.sequence LIMIT 2
+        ), call AS (
+            SELECT call_row.*, json_object('sequence', call_row.sequence, 'name', call_row.name,
+                'title', json((SELECT title FROM activity WHERE (SELECT count(*) FROM activity) = 1
+                    AND activity.sequence > call_row.sequence AND activity.name = call_row.name)),
+                'pending', json(CASE WHEN call_row.origin IN ('provider', 'host_sdk', 'code_mode')
+                    AND (SELECT json_extract(row.payload, '$.status') FROM transcript_rows row JOIN owner
+                        ON row.session_id = owner.session_id AND row.turn_id = owner.turn_id
+                        WHERE row.sequence <= ?3 AND json_extract(row.payload, '$.type') = 'turn_state'
+                        ORDER BY row.sequence DESC LIMIT 1) = 'running'
+                    THEN 'true' ELSE 'false' END)) AS reference FROM call_row
         ), results AS MATERIALIZED (
             SELECT row.sequence, json_extract(row.payload, '$.origin') AS origin,
                 json_extract(row.payload, '$.parentToolCallId') AS parent_call,
@@ -52,7 +69,7 @@ const METADATA_SQL: &str = "WITH owner AS (
             WHERE row.sequence <= ?3 AND json_extract(row.payload, '$.type') = 'tool_result'
             ORDER BY row.sequence LIMIT 2
         ), pair AS (
-            SELECT json_object('sequence', call.sequence, 'name', call.name) AS call_ref,
+            SELECT call.reference AS call_ref,
                 json_object('sequence', results.sequence,
                     'isError', json(CASE results.error WHEN 1 THEN 'true' ELSE 'false' END),
                     'image', json(CASE results.image WHEN 1 THEN 'true' ELSE 'false' END)) AS result_ref
@@ -65,7 +82,8 @@ const METADATA_SQL: &str = "WITH owner AS (
                 AND call.parent_operation IS results.parent_operation
         ), metadata AS (
             SELECT json_object('toolUseId', tool_id,
-                'call', json(CASE kind WHEN 'tool_call' THEN json_object('sequence', sequence, 'name', name)
+                'call', json(CASE kind WHEN 'tool_call' THEN COALESCE((SELECT reference FROM call),
+                    json_object('sequence', sequence, 'name', name, 'title', NULL, 'pending', json('false')))
                     ELSE (SELECT call_ref FROM pair) END),
                 'result', json(CASE kind WHEN 'tool_result' THEN json_object('sequence', sequence,
                     'isError', json(CASE error WHEN 1 THEN 'true' ELSE 'false' END),
@@ -98,9 +116,19 @@ pub(super) async fn read(
     if bytes as usize > budget {
         return Ok(None);
     }
-    Ok(Some(serde_json::from_str(&encoded.ok_or_else(|| {
-        StoreError::InvalidTransition("missing history tool metadata".into())
-    })?)?))
+    let mut tool: Tool =
+        serde_json::from_str(&encoded.ok_or_else(|| {
+            StoreError::InvalidTransition("missing history tool metadata".into())
+        })?)?;
+    if let Some(call) = &mut tool.call
+        && call
+            .title
+            .as_ref()
+            .is_some_and(|title| title.validate().is_err())
+    {
+        call.title = None;
+    }
+    Ok(Some(tool))
 }
 
 #[cfg(test)]
@@ -118,6 +146,10 @@ mod tests {
         .execute(&mut db)
         .await
         .unwrap();
+        sqlx::raw_sql(include_str!("../../migrations/0012_tool_activity.sql"))
+            .execute(&mut db)
+            .await
+            .unwrap();
         db
     }
     fn call() -> Value {
@@ -257,6 +289,173 @@ mod tests {
             assert!(result.call.is_none(), "case {case}");
             assert_eq!(call.call.unwrap().sequence, call_sequence as u64);
             assert_eq!(result.result.unwrap().sequence, result_sequence as u64);
+        }
+    }
+    #[tokio::test]
+    async fn activity_titles_and_open_turns_are_scoped_bounded_and_fenced() {
+        let mut db = database().await;
+        insert(
+            &mut db,
+            "a",
+            "turn",
+            1,
+            "start",
+            json!({"type":"turn_state","status":"running"}),
+        )
+        .await;
+        insert(&mut db, "a", "turn", 2, "call", call()).await;
+        let title = json!({"fallback":"Inspect file", "translations":{"zh-CN":"查看文件"}});
+        let activity =
+            json!({"type":"tool_activity","toolUseId":"call","toolName":"Read","title":title});
+        insert(&mut db, "a", "turn", 3, "activity", activity.clone()).await;
+        insert(&mut db, "a", "turn", 4, "result", result()).await;
+        insert(
+            &mut db,
+            "a",
+            "turn",
+            5,
+            "end",
+            json!({"type":"turn_state","status":"completed"}),
+        )
+        .await;
+        insert(
+            &mut db,
+            "a",
+            "other-turn",
+            6,
+            "other-end",
+            json!({"type":"turn_state","status":"running"}),
+        )
+        .await;
+        insert(
+            &mut db,
+            "other",
+            "turn",
+            6,
+            "other-end",
+            json!({"type":"turn_state","status":"running"}),
+        )
+        .await;
+        let before = read(&mut db, "a", 2, 2, 65536).await.unwrap().unwrap();
+        assert!(before.call.as_ref().unwrap().pending);
+        assert!(before.call.unwrap().title.is_none());
+        let open = read(&mut db, "a", 2, 3, 65536).await.unwrap().unwrap();
+        assert!(open.call.as_ref().unwrap().pending && open.result.is_none());
+        assert_eq!(
+            open.call
+                .as_ref()
+                .unwrap()
+                .title
+                .as_ref()
+                .unwrap()
+                .resolve("zh-CN"),
+            "查看文件"
+        );
+        assert_eq!(
+            Some(open.clone()),
+            read(&mut db, "a", 2, 3, serde_json::to_vec(&open).unwrap().len())
+                .await
+                .unwrap()
+        );
+        assert!(
+            read(
+                &mut db,
+                "a",
+                2,
+                3,
+                serde_json::to_vec(&open).unwrap().len() - 1
+            )
+            .await
+            .unwrap()
+            .is_none()
+        );
+        let closed = read(&mut db, "a", 2, 6, 65536).await.unwrap().unwrap();
+        assert!(!closed.call.as_ref().unwrap().pending);
+        assert_eq!(
+            closed,
+            read(&mut db, "a", 4, 6, 65536).await.unwrap().unwrap()
+        );
+        insert(&mut db, "a", "turn", 7, "duplicate", activity).await;
+        assert!(
+            read(&mut db, "a", 2, 7, 65536)
+                .await
+                .unwrap()
+                .unwrap()
+                .call
+                .unwrap()
+                .title
+                .is_none()
+        );
+        assert_eq!(
+            closed,
+            read(&mut db, "a", 2, 6, 65536).await.unwrap().unwrap()
+        );
+        let query = format!("EXPLAIN QUERY PLAN {METADATA_SQL}");
+        let plan = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
+            .bind("a")
+            .bind(2i64)
+            .bind(7i64)
+            .bind(65536i64)
+            .fetch_all(&mut db)
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| row.get::<String, _>(3))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for index in [
+            "transcript_tool_activity",
+            "transcript_turn_state",
+            "transcript_tool_results",
+        ] {
+            assert!(plan.contains(&format!("USING INDEX {index}")), "{plan}");
+        }
+    }
+
+    #[tokio::test]
+    async fn imported_missing_and_mismatched_activity_do_not_claim_active_execution() {
+        for case in 0..7 {
+            let mut db = database().await;
+            let mut call = call();
+            if case == 0 {
+                call["origin"] = json!("imported");
+            }
+            let mut title = json!({"fallback":"Inspect", "translations":{}});
+            if case == 5 {
+                title["fallback"] = json!("bad\ntext");
+            }
+            if case == 6 {
+                title["fallback"] = json!("x".repeat(257));
+            }
+            let activity = json!({"type":"tool_activity", "toolUseId":"call", "toolName": if case == 4 {"Other"} else {"Read"}, "title":title});
+            if case == 0 {
+                insert(
+                    &mut db,
+                    "a",
+                    "turn",
+                    1,
+                    "start",
+                    json!({"type":"turn_state","status":"running"}),
+                )
+                .await;
+            }
+            insert(&mut db, "a", "turn", 3, "call", call).await;
+            insert(
+                &mut db,
+                if case == 1 { "other" } else { "a" },
+                if case == 2 { "other" } else { "turn" },
+                if case == 3 { 2 } else { 4 },
+                "activity",
+                activity,
+            )
+            .await;
+            let tool = read(&mut db, "a", 3, 4, 65536).await.unwrap().unwrap();
+            let call = tool.call.unwrap();
+            assert!(!call.pending, "case {case}");
+            if case != 0 {
+                assert!(call.title.is_none(), "case {case}");
+            }
+            assert!(tool.result.is_none());
         }
     }
 }

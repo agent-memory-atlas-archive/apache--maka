@@ -1649,6 +1649,17 @@ function frame<N extends Node>(
               fragment.closedAt !== null && fragment.closedAt <= state.window!.page.through,
           )),
       landing: state.landing,
+      waitingTools: state.window?.latest
+        ? (state.interactions?.entries ?? [])
+            .filter(
+              (entry) =>
+                !(
+                  state.interaction?.record?.requestId === entry.requestId &&
+                  state.interaction.record.outcome
+                ),
+            )
+            .flatMap((entry) => (entry.toolUseId === null ? [] : [entry.toolUseId]))
+        : [],
       live: !!state.run && !!state.window?.latest,
     },
     {
