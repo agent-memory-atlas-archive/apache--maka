@@ -5087,6 +5087,7 @@ test('editor-local submission uses latest observation and the original send gate
       pathToFileURL(resolve(root, `dist/packages/composer/${target}.js`))
     );
     const props = {
+      context: 'session',
       theme: values.appearance[0],
       locale: 'en',
       enabled: true,
@@ -5118,7 +5119,13 @@ test('editor-local submission uses latest observation and the original send gate
     const submit = (observation, configuration = props) =>
       composer.event(
         result.frame.state,
-        { kind: 'component', name: 'submitted', key: 'submitted', event: observation },
+        {
+          kind: 'component',
+          child: 'draft',
+          name: 'submitted',
+          key: 'submitted',
+          event: observation,
+        },
         configuration,
         {},
       );
@@ -12172,3 +12179,245 @@ test('tui clipboard pending retains original insertion context and failure requi
   assert.equal(client.state.attachments.paste, null);
   assert.equal(composer().filePaste.context, 'another');
 });
+
+for (const target of ['desktop', 'tui']) {
+  test(`${target} session drafts retain original editors and route late captures and receipts by owner`, async () => {
+    const { component: composer } = await import(
+      pathToFileURL(resolve(root, `dist/packages/composer/${target}.js`))
+    );
+    let props = {
+      theme: values.appearance[0],
+      locale: 'en',
+      context: null,
+      enabled: true,
+      busy: false,
+      running: false,
+      command: null,
+      autoFocus: true,
+      hasAttachments: false,
+      filePaste: null,
+      fileCommand: null,
+    };
+    let result = composer.mount(props, {});
+    assert.equal(modelSlots(result.frame.view).length, 0);
+    const update = (changes) => {
+      props = { ...props, ...changes };
+      result = composer.update(result.frame.state, props, {});
+    };
+    const event = (child, name, value) => {
+      result = composer.event(
+        result.frame.state,
+        { kind: 'component', child, name, event: value },
+        props,
+        {},
+      );
+    };
+    const raw = () => {
+      result = composer.event(
+        result.frame.state,
+        { kind: 'raw', key: 'send', event: null },
+        props,
+        {},
+      );
+    };
+    const slots = () => modelSlots(result.frame.view);
+    update({ context: 'a', filePaste: { context: 'a', maxFiles: 8 } });
+    const first = slots()[0].key;
+    event(first, 'changed', draft);
+    update({ context: 'b', filePaste: { context: 'b', maxFiles: 8 } });
+    const second = slots().find((slot) => slot.key !== first).key;
+    assert.equal(slots().length, 2);
+    assert.equal(slots().find((slot) => slot.key === first).props.initialText, '');
+    assert.equal(slots().find((slot) => slot.key === first).props.autoFocus, false);
+    assert.deepEqual(
+      slots().find((slot) => slot.key === first).props.filePaste,
+      target === 'tui' ? { context: 'a', maxFiles: 0 } : null,
+    );
+    raw();
+    assert.deepEqual(result.events, [], 'another conversation must not submit the first draft');
+    event(first, 'submitted', draft);
+    assert.deepEqual(
+      result.events,
+      [],
+      'a late hidden submission cannot target the current session',
+    );
+    const other = {
+      ...draft,
+      snapshot: { ...draft.snapshot, text: { ...draft.snapshot.text, owner: 'second-editor' } },
+    };
+    event(second, 'changed', other);
+    raw();
+    assert.deepEqual(result.events, [{ name: 'send', value: other }]);
+    const capture = {
+      kind: 'at_revision',
+      owner: draft.snapshot.text.owner,
+      revision: draft.revision,
+    };
+    assert.deepEqual(composer.capture(result.frame.state, props, 'snapshot', capture), {
+      kind: 'forward',
+      source: { child: first, method: 'snapshot', input: capture },
+    });
+    const files = {
+      context: 'a',
+      selection: { owner: uuid(100), revision: 3, phase: 'ready', file: null, error: null },
+      remaining: 1,
+      retryable: true,
+    };
+    event(first, 'files', files);
+    assert.deepEqual(result.events, [{ name: 'files', value: files }]);
+    const file = { owner: files.selection.owner, revision: files.selection.revision };
+    assert.deepEqual(composer.capture(result.frame.state, props, 'file', file).source.child, first);
+    const command = {
+      owner: draft.snapshot.text.owner,
+      sequence: 2,
+      basedOn: draft.revision,
+      edit: { kind: 'reset', text: '' },
+    };
+    update({ command, fileCommand: { selection: file, action: 'next' } });
+    assert.deepEqual(slots().find((slot) => slot.key === first).props.command, command);
+    assert.equal(slots().find((slot) => slot.key === second).props.command, null);
+    assert.deepEqual(
+      slots().find((slot) => slot.key === first).props.fileCommand,
+      props.fileCommand,
+    );
+    assert.equal(slots().find((slot) => slot.key === second).props.fileCommand, null);
+    const receipt = {
+      ...draft,
+      receipt: {
+        owner: command.owner,
+        sequence: command.sequence,
+        revision: 5,
+        outcome: { status: 'conflict', reason: 'revision' },
+      },
+    };
+    event(first, 'changed', receipt);
+    assert.deepEqual(
+      result.events,
+      [{ name: 'changed', value: receipt }],
+      'hidden original receipts still reach Workspace',
+    );
+    update({ context: 'a', command: null, fileCommand: null });
+    assert.equal(slots().find((slot) => slot.props.autoFocus).key, first);
+    raw();
+    assert.deepEqual(result.events, [{ name: 'send', value: receipt }]);
+    assert.throws(
+      () =>
+        composer.capture(result.frame.state, props, 'snapshot', { ...capture, owner: 'missing' }),
+      /Original draft/,
+    );
+  });
+  test(`${target} draft capacity preserves dirty and unsettled editors and reuses only an observed empty mount`, async () => {
+    const { component: composer } = await import(
+      pathToFileURL(resolve(root, `dist/packages/composer/${target}.js`))
+    );
+    let props = {
+      theme: values.appearance[0],
+      locale: 'en',
+      context: null,
+      enabled: true,
+      busy: false,
+      running: false,
+      command: null,
+      autoFocus: true,
+      hasAttachments: false,
+      filePaste: null,
+      fileCommand: null,
+    };
+    let result = composer.mount(props, {});
+    const update = (changes) => {
+      props = { ...props, ...changes };
+      result = composer.update(result.frame.state, props, {});
+    };
+    const observe = (child, observation) => {
+      result = composer.event(
+        result.frame.state,
+        { kind: 'component', child, name: 'changed', event: observation },
+        props,
+        {},
+      );
+    };
+    for (let i = 0; i < 32; i++) {
+      update({ context: `session-${i}` });
+      const key = result.frame.state.entries.at(-1).key;
+      observe(key, {
+        ...draft,
+        snapshot: { ...draft.snapshot, text: { ...draft.snapshot.text, owner: `editor-${i}` } },
+      });
+    }
+    const original = result.frame.state.entries[0];
+    update({ context: 'overflow' });
+    assert.equal(modelSlots(result.frame.view).length, 32);
+    assert.ok(JSON.stringify(result.frame.view).includes('32 drafts are open'));
+    assert.equal(
+      result.frame.state.entries.some((entry) => entry.context === 'overflow'),
+      false,
+    );
+    const empty = {
+      ...original.observation,
+      snapshot: {
+        ...original.observation.snapshot,
+        text: { ...original.observation.snapshot.text, bytes: 0 },
+      },
+    };
+    update({ busy: true });
+    observe(original.key, empty);
+    assert.equal(
+      result.frame.state.entries[0].key,
+      original.key,
+      'an unsettled operation keeps even its empty original editor',
+    );
+    observe(original.key, {
+      ...empty,
+      snapshot: { ...empty.snapshot, marked: { start: 0, end: 0 } },
+    });
+    update({ busy: false });
+    assert.equal(result.frame.state.entries[0].key, original.key, 'IME is not an empty draft');
+    const files = {
+      context: original.context,
+      selection: { owner: uuid(101), revision: 1, phase: 'choosing', file: null, error: null },
+      remaining: 1,
+      retryable: false,
+    };
+    result = composer.event(
+      result.frame.state,
+      { kind: 'component', child: original.key, name: 'files', event: files },
+      props,
+      {},
+    );
+    observe(original.key, empty);
+    assert.equal(
+      result.frame.state.entries[0].key,
+      original.key,
+      'an original clipboard worker retains its empty editor',
+    );
+    result = composer.event(
+      result.frame.state,
+      {
+        kind: 'component',
+        child: original.key,
+        name: 'files',
+        event: {
+          ...files,
+          selection: { ...files.selection, revision: 2, phase: 'empty' },
+          remaining: 0,
+        },
+      },
+      props,
+      {},
+    );
+    assert.equal(modelSlots(result.frame.view).length, 32);
+    assert.equal(
+      result.frame.state.entries.some((entry) => entry.key === original.key),
+      false,
+    );
+    assert.equal(result.frame.state.entries.at(-1).context, 'overflow');
+    assert.notEqual(
+      result.frame.state.entries.at(-1).key,
+      original.key,
+      'new mounts cannot inherit old native events',
+    );
+    observe(original.key, draft);
+    assert.equal(result.frame.state.entries.at(-1).observation, null);
+    assert.ok(Buffer.byteLength(JSON.stringify(result)) < 1024 * 1024);
+  });
+}

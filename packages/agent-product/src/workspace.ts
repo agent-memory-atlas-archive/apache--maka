@@ -1859,6 +1859,7 @@ function frame<N extends Node>(
     'composer',
     'composer',
     {
+      context: state.selected?.id ?? null,
       theme,
       locale,
       busy:

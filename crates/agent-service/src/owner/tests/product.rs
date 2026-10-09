@@ -17,6 +17,8 @@
  * under the License.
  */
 
+#[path = "product/drafts.rs"]
+mod drafts;
 #[path = "product/message_details.rs"]
 mod message_details;
 #[path = "product/studio.rs"]
@@ -311,8 +313,14 @@ fn packaged_form_uses_original_native_editors_and_canonical_response() {
 fn packaged_attachment_uses_local_file_capture_and_empty_native_composer() {
     packaged_product(ProductCase::Attachment);
 }
+#[test]
+#[ignore = "opt-in product authoring build and original native session drafts"]
+fn packaged_session_drafts_retain_selection_undo_and_bounded_original_mounts() {
+    packaged_product(ProductCase::Drafts);
+}
 #[derive(Clone, Copy)]
 enum ProductCase {
+    Drafts,
     Attachment,
     Form,
     Full,
@@ -963,6 +971,13 @@ process.stdout.write(output.outputFiles[0].text);
         .unwrap();
     await_sidebar_closed(&mut presenter);
     await_screen(&mut presenter, "A place to think.");
+    // The welcome text also exists before asynchronous creation returns. Input
+    // belongs to the actual selected Session's native editor, not a spare buffer.
+    await_screen(&mut presenter, "What would you like to work on?");
+    if matches!(case, ProductCase::Drafts) {
+        drafts::exercise(&mut presenter, &fixture, &runtime);
+        server.abort();
+    }
     if attachment {
         let capture = |presenter: &mut maka_tui::application::Presenter, name: &str| {
             if let Some(directory) = std::env::var_os("MAKA_ATTACHMENT_EVIDENCE") {
@@ -1192,6 +1207,8 @@ process.stdout.write(output.outputFiles[0].text);
             4,
             "local draft removal must not delete durable artifacts"
         );
+    }
+    if attachment || matches!(case, ProductCase::Drafts) {
         presenter
             .surface_closed(&presenter.surface(), Ok(()))
             .unwrap();
@@ -3669,7 +3686,14 @@ process.stdout.write(output.outputFiles[0].text);
     );
     click(&mut reopened, "[ Toggle sidebar ]");
     await_screen(&mut reopened, "[ New conversation ]");
-    click(&mut reopened, "    New conversation");
+    assert!(
+        runtime
+            .block_on(fixture.owner.session(&session_id))
+            .unwrap()
+            .read_state
+            .has_unread
+    );
+    click(&mut reopened, "● New conversation");
     click(&mut reopened, "[ Hide sidebar ]");
     await_sidebar_closed(&mut reopened);
     assert!(screen(&draw(&mut reopened)).contains("What would you like to work on?"));

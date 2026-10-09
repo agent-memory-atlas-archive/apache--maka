@@ -29,6 +29,7 @@ import type {
   UiExport,
   Action,
   InputProps,
+  FilePasteObservation,
 } from '../../plugin-sdk/src/index.js';
 import {
   composerContract,
@@ -90,8 +91,15 @@ function sessionGroups(props: NavigationProps): SessionGroup[] {
 function groupOpen(state: Navigation, key: string) {
   return (key !== 'archived') !== state.toggled.includes(key);
 }
-interface Draft extends Revision {
+interface DraftEntry {
+  context: string;
+  key: string;
   observation: EditorObservation | null;
+  files: FilePasteObservation | null;
+}
+interface Draft extends Revision {
+  serial: number;
+  entries: DraftEntry[];
 }
 interface Reading extends Revision {
   search: ConversationSearch | null;
@@ -115,18 +123,43 @@ export function components<N extends Node>(
   ) => {
     const ui = presentation.paint(props.theme),
       text = copy(props.locale);
+    // Each session retains its original native mount, including selection and
+    // undo. Only observed empty, idle editors can make room at the original limit.
+    if (props.context && !state.entries.some((entry) => entry.context === props.context)) {
+      if (state.entries.length === 32 && !props.busy && !props.command) {
+        const empty = state.entries.findIndex(
+          (entry) =>
+            entry.observation?.snapshot.text.bytes === 0 &&
+            !entry.observation.snapshot.marked &&
+            (!entry.files || entry.files.selection.phase === 'empty'),
+        );
+        if (empty >= 0) state.entries.splice(empty, 1);
+      }
+      if (state.entries.length < 32)
+        state.entries.push({
+          context: props.context,
+          key: state.serial++ === 0 ? 'draft' : `draft-${state.serial}`,
+          observation: null,
+          files: null,
+        });
+    }
+    const current = state.entries.find((entry) => entry.context === props.context);
+    const observation = current?.observation;
     const pending =
       props.command !== null &&
-      (state.observation?.receipt?.owner !== props.command.owner ||
-        state.observation?.receipt?.sequence !== props.command.sequence);
+      !state.entries.some(
+        (entry) =>
+          entry.observation?.receipt?.owner === props.command!.owner &&
+          entry.observation?.receipt?.sequence === props.command!.sequence,
+      );
     const available =
       props.enabled &&
       !props.busy &&
       (target === 'tui' || !props.running) &&
       !pending &&
-      !!state.observation &&
-      !state.observation.snapshot.marked &&
-      (!!state.observation?.snapshot.text.bytes || props.hasAttachments);
+      !!observation &&
+      !observation.snapshot.marked &&
+      (!!observation.snapshot.text.bytes || props.hasAttachments);
     const textarea: TextareaProps = {
       appearance:
         target === 'tui' ? { ...props.theme.textarea, borderWidth: 0 } : props.theme.textarea,
@@ -157,19 +190,47 @@ export function components<N extends Node>(
       autoFocus: props.autoFocus,
       initialText: '',
       placeholder: text.placeholder,
-      command: props.command,
-      filePaste: props.filePaste ?? null,
-      fileCommand: props.fileCommand ?? null,
+      command: null,
+      filePaste: null,
+      fileCommand: null,
     };
     const editor = ui.box(
       'editor-area',
-      [
-        presentation.slot('draft', 'editor', textarea, {
-          changed: 'changed',
-          submitted: 'submitted',
-          files: 'files',
-        }),
-      ],
+      state.entries.map((entry) =>
+        ui.box(
+          `retained-${entry.key}`,
+          [
+            presentation.slot(
+              entry.key,
+              'editor',
+              {
+                ...textarea,
+                autoFocus: entry === current && props.autoFocus,
+                command:
+                  props.command?.owner === entry.observation?.snapshot.text.owner
+                    ? props.command
+                    : null,
+                filePaste:
+                  entry === current
+                    ? (props.filePaste ?? null)
+                    : target === 'tui'
+                      ? { context: entry.context, maxFiles: 0 }
+                      : null,
+                fileCommand:
+                  props.fileCommand?.selection.owner === entry.files?.selection.owner
+                    ? props.fileCommand
+                    : null,
+              },
+              { changed: 'changed', submitted: 'submitted', files: 'files' },
+            ),
+          ],
+          {
+            visible: entry === current,
+            style: { width: fill, height: fill },
+            terminal: { grow: 1, shrink: true },
+          },
+        ),
+      ),
       {
         style: { width: fill, height: pixels(112), shrink: 0 },
         terminal: { basis: 0, grow: 1, shrink: true },
@@ -182,11 +243,9 @@ export function components<N extends Node>(
         ...(props.running
           ? [
               ui.button('stop', text.stop, props.busy),
-              ...(target === 'tui'
-                ? [ui.button('send', text.send, !available || !state.observation, true)]
-                : []),
+              ...(target === 'tui' ? [ui.button('send', text.send, !available, true)] : []),
             ]
-          : [ui.button('send', text.send, !available || !state.observation, true)]),
+          : [ui.button('send', text.send, !available, true)]),
       ],
       {
         row: true,
@@ -196,13 +255,23 @@ export function components<N extends Node>(
     );
     return output(
       state,
-      ui.box('composer', [editor, controls], {
-        row: target === 'tui',
-        border: target === 'tui',
-        gap: target === 'tui' ? 0 : 12,
-        terminal: { shrink: true },
-        style: { width: fill },
-      }),
+      ui.box(
+        'composer',
+        [
+          ...(props.context && !current
+            ? [ui.text('draft-capacity', text.draftCapacity, 13, props.theme.muted)]
+            : []),
+          editor,
+          controls,
+        ],
+        {
+          row: target === 'tui',
+          border: target === 'tui',
+          gap: target === 'tui' ? 0 : 12,
+          terminal: { shrink: true },
+          style: { width: fill },
+        },
+      ),
       events,
     );
   };
@@ -800,41 +869,71 @@ export function components<N extends Node>(
   };
   return {
     composer: {
-      mount: (props) => composerFrame({ revision: 0, observation: null }, props),
-      update: (state, props) => composerFrame({ ...state, revision: state.revision + 1 }, props),
+      mount: (props) => composerFrame({ revision: 0, serial: 0, entries: [] }, props),
+      update: (state, props) =>
+        composerFrame(
+          { ...state, entries: [...state.entries], revision: state.revision + 1 },
+          props,
+        ),
       event(state, input, props) {
-        const next = { ...state, revision: state.revision + 1 };
-        if (input.kind === 'component' && input.child === 'draft' && input.name === 'files')
+        const next = {
+          ...state,
+          entries: state.entries.map((entry) => ({ ...entry })),
+          revision: state.revision + 1,
+        };
+        const source =
+          input.kind === 'component'
+            ? next.entries.find((entry) => entry.key === input.child)
+            : null;
+        if (input.kind === 'component' && !source) return composerFrame(next, props);
+        if (input.kind === 'component' && source && input.name === 'files') {
+          source.files = input.event as FilePasteObservation;
           return composerFrame(next, props, [{ name: 'files', value: input.event }]);
-        if (
-          input.kind === 'component' &&
-          (input.name === 'changed' || input.name === 'submitted')
-        ) {
-          next.observation = input.event as EditorObservation;
-          if (input.name === 'changed')
-            return composerFrame(next, props, [{ name: 'changed', value: next.observation }]);
         }
         if (
+          input.kind === 'component' &&
+          source &&
+          (input.name === 'changed' || input.name === 'submitted')
+        ) {
+          source.observation = input.event as EditorObservation;
+          if (input.name === 'changed')
+            return composerFrame(next, props, [{ name: 'changed', value: source.observation }]);
+        }
+        const current = next.entries.find((entry) => entry.context === props.context);
+        const observation = current?.observation;
+        if (
           ((input.kind === 'raw' && input.key === 'send') ||
-            (input.kind === 'component' && input.name === 'submitted')) &&
+            (input.kind === 'component' && source === current && input.name === 'submitted')) &&
           props.enabled &&
           !props.busy &&
           (target === 'tui' || !props.running) &&
-          next.observation &&
-          (next.observation.snapshot.text.bytes > 0 || props.hasAttachments) &&
-          !next.observation.snapshot.marked &&
+          observation &&
+          (observation.snapshot.text.bytes > 0 || props.hasAttachments) &&
+          !observation.snapshot.marked &&
           (!props.command ||
-            (next.observation.receipt?.owner === props.command.owner &&
-              next.observation.receipt.sequence === props.command.sequence))
+            next.entries.some(
+              (entry) =>
+                entry.observation?.receipt?.owner === props.command!.owner &&
+                entry.observation?.receipt?.sequence === props.command!.sequence,
+            ))
         ) {
-          return composerFrame(next, props, [{ name: 'send', value: next.observation }]);
+          return composerFrame(next, props, [{ name: 'send', value: observation }]);
         }
         if (input.kind === 'raw' && input.key === 'stop' && props.running && !props.busy)
           return composerFrame(next, props, [{ name: 'stop', value: {} }]);
         return composerFrame(next, props);
       },
-      capture(_state, _props, method, input) {
-        return { kind: 'forward', source: { child: 'draft', method, input } };
+      capture(state, props, method, input) {
+        const owner = (input as { owner?: string }).owner;
+        const entry = state.entries.find((entry) =>
+          method === 'file'
+            ? entry.files?.selection.owner === owner
+            : owner
+              ? entry.observation?.snapshot.text.owner === owner
+              : entry.context === props.context,
+        );
+        if (!entry) throw new Error('Original draft is unavailable');
+        return { kind: 'forward', source: { child: entry.key, method, input } };
       },
     },
     navigation: {

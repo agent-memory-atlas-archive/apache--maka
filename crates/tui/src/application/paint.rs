@@ -667,12 +667,14 @@ impl Presenter {
             .take()
             .filter(|target| self.resources.pointer_capture(target).unwrap_or(false))
             .and_then(|old| scene.targets.iter().find(|new| new.same(&old)).cloned());
+        // A newly revealed native input wins this presentation. Consume the
+        // modal return either way; it must not steal focus on a later frame.
+        let restored = self
+            .restore_focus
+            .take()
+            .and_then(|target| target.resolve(&scene.targets));
         self.focus = autofocus
-            .or_else(|| {
-                self.restore_focus
-                    .take()
-                    .and_then(|target| target.resolve(&scene.targets))
-            })
+            .or(restored)
             .or_else(|| {
                 self.focus
                     .take()

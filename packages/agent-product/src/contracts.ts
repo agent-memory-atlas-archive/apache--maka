@@ -214,6 +214,7 @@ export interface QueueEditorProps {
   command: EditorCommand | null;
 }
 export interface ComposerProps {
+  context: string | null;
   filePaste: FilePastePolicy | null;
   fileCommand: FilePasteCommand | null;
   hasAttachments: boolean;
@@ -633,6 +634,7 @@ export const permissionApprovalContract = component(
 export const composerContract = component(
   'maka.agent.Composer',
   object({
+    context: { anyOf: [{ type: 'string', minLength: 1, maxLength: 512 }, { type: 'null' }] },
     filePaste: editor.props.properties.filePaste,
     fileCommand: editor.props.properties.fileCommand,
     autoFocus: { type: 'boolean' },

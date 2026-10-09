@@ -670,8 +670,15 @@ fn reveal_focus_uses_committed_visibility_and_only_successful_native_presentatio
             child_revision,
             "ancestor reveal does not change original child props"
         );
+        tui.restore_focus = Some(crate::application::dialog::WeakTarget::new(&other));
         draw(&mut tui, 80, 24);
         assert_eq!(tui.focus.as_ref().unwrap().mount, mount);
+        draw(&mut tui, 80, 24);
+        assert_eq!(
+            tui.focus.as_ref().unwrap().mount,
+            mount,
+            "a modal return displaced by native reveal cannot steal focus next frame"
+        );
         assert!(Rc::ptr_eq(
             &identity,
             &tui.resources.owners[&mount.id()].identity

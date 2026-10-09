@@ -84,3 +84,9 @@ no temporary image file is created. Text uses its original insertion position an
 requires the same conversation and unchanged draft. Clipboard failures require a
 new physical paste; Retry only rereads an original selected file. Attachment draft
 restoration remains unfinished.
+
+Conversation navigation retains up to 32 original native draft editors, including
+selection and undo. Late captures and send acknowledgements still target their
+original owner/revision. At capacity, only an observed empty, idle draft can be
+reclaimed; otherwise send or clear an existing draft first. These drafts remain
+local to the current Composer mount; restart restoration is not implemented.
