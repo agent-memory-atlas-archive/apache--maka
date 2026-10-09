@@ -218,8 +218,13 @@ impl<T> Runtime<T> {
     }
 
     pub fn install(&mut self, plan: Plan) -> Vec<Activation> {
-        if self.desired.launch() != plan.launch() {
-            self.retire_launch_mounts();
+        for kind in [
+            crate::composition::RootKind::Launch,
+            crate::composition::RootKind::Recovery,
+        ] {
+            if self.desired.root(kind) != plan.root(kind) {
+                self.retire_root_mounts(kind);
+            }
         }
         let changed: Vec<_> = self
             .live

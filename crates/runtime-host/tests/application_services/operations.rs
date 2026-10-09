@@ -574,6 +574,7 @@ async fn original_receipt_survives_restart_and_new_composition_without_provider(
                 presentation: None,
             },
             instances: BTreeMap::from([("recovery-client".into(), replacement_node)]),
+            recovery: None,
             launch: None,
         };
         // Acceptance precedes committed withdrawal; new admission is revoked
@@ -1780,6 +1781,7 @@ async fn ui_caller_source(
             presentation: Some(maka_plugin_core::composition::PresentationTarget::Desktop),
         },
         instances: BTreeMap::from([("caller".into(), node)]),
+        recovery: None,
         launch: None,
     };
     let observed = maka_plugin_core::deployment::RemoteObservation {

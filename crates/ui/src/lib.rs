@@ -246,7 +246,7 @@ impl<V: ?Sized + 'static> Application<V> {
             render_depth_limit: native.render_depth_limit,
             scheduler: timer.clone(),
             update_owner: Uuid::new_v4(),
-            effective: source.clone(),
+            effective: None,
             source,
             store,
             origins: BTreeMap::new(),
@@ -282,11 +282,26 @@ impl<V: ?Sized + 'static> Application<V> {
                     app.pending.push(instance);
                     continue;
                 }
-                app.activate_instance(instance)?;
+                let identity = instance.identity.clone();
+                if let Err(error) = app.activate_instance(instance) {
+                    if app.runtime.desired().recovery().is_none() {
+                        return Err(error);
+                    }
+                    if let Some(activation) = app.activations.get(&identity) {
+                        app.runtime.retire(activation)?;
+                    }
+                    app.deployment_error.get_or_insert(error.to_string());
+                }
             }
             if app.pending.len() == before {
+                if app.runtime.desired().recovery().is_some() && app.deployment_error.is_some() {
+                    break;
+                }
                 return Err(Error::Invalid("UI dependencies are not ready".into()));
             }
+        }
+        if app.deployment_error.is_none() && !app.deployment_status().converging {
+            app.effective = app.source.clone();
         }
         Ok(app)
     }

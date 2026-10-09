@@ -438,6 +438,7 @@ async fn retired_native_initializer_keeps_original_store_until_actual_configurat
                         presentation: None,
                     },
                     instances: BTreeMap::new(),
+                    recovery: None,
                     launch: None,
                 },
                 vec![],

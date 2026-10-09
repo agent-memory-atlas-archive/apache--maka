@@ -123,6 +123,7 @@ pub(super) struct ReadSource {
 struct Report<'a> {
     instances: Vec<&'a maka_plugin_core::plan::Instance>,
     launch: Option<&'a maka_plugin_core::plan::Binding>,
+    recovery: Option<&'a maka_plugin_core::plan::Binding>,
 }
 
 impl Command {
@@ -306,6 +307,7 @@ impl Check {
         Ok(serde_json::to_string_pretty(&Report {
             instances: plan.instances().values().collect(),
             launch: plan.launch(),
+            recovery: plan.recovery(),
         })?)
     }
 }

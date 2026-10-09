@@ -1260,3 +1260,73 @@ fn held_native_work_waits_through_kind_handoff_and_original_surface_close() {
         tui.shutdown().unwrap();
     }
 }
+
+#[test]
+fn recovery_uses_independent_component_after_exact_original_surface_restoration() {
+    let (runtime, mut input, mut packages) = fixture("throw new Error('primary fault');");
+    support::add_recovery(&mut input, &mut packages);
+    let mut tui = Presenter::new(
+        &input,
+        packages,
+        runtime.handle().clone(),
+        registry(),
+        json!({}),
+    )
+    .unwrap();
+    draw(&mut tui, 30, 12);
+    let old = tui.surface();
+    tui.input(key(KeyCode::Enter)).unwrap();
+    assert!(tui.requires_surface_replacement());
+    assert!(tui.try_replace_surface(json!({})).is_err());
+    assert!(
+        tui.surface_closed(&old, Err("original Guard restoration failed".into()))
+            .is_err()
+    );
+    assert!(tui.try_replace_surface(json!({})).is_err());
+    assert_eq!(tui.surface(), old);
+    tui.surface_recovered(&old).unwrap();
+    assert!(tui.try_replace_surface(json!({})).unwrap());
+    assert_ne!(tui.surface(), old);
+    assert_eq!(
+        tui.application.root_kind(&tui.surface()).unwrap(),
+        RootKind::Recovery
+    );
+    assert!(tui.surface_closed(&old, Ok(())).is_err());
+    draw(&mut tui, 30, 12);
+    tui.input(key(KeyCode::Enter)).unwrap();
+    assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 1);
+    tui.surface_closed(&tui.surface(), Ok(())).unwrap();
+    assert!(tui.can_shutdown());
+    tui.shutdown().unwrap();
+}
+
+#[test]
+fn recovery_failure_does_not_recursively_replace_the_failed_recovery_root() {
+    let (runtime, mut input, mut packages) = fixture("throw new Error('root fault');");
+    support::add_recovery(&mut input, &mut packages);
+    input.instances.get_mut("recovery").unwrap().package = input.instances["app"].package.clone();
+    let mut tui = Presenter::new(
+        &input,
+        packages,
+        runtime.handle().clone(),
+        registry(),
+        json!({}),
+    )
+    .unwrap();
+    draw(&mut tui, 30, 12);
+    tui.input(key(KeyCode::Enter)).unwrap();
+    tui.surface_closed(&tui.surface(), Ok(())).unwrap();
+    assert!(tui.try_replace_surface(json!({})).unwrap());
+    let recovery = tui.surface();
+    assert_eq!(
+        tui.application.root_kind(&recovery).unwrap(),
+        RootKind::Recovery
+    );
+    draw(&mut tui, 30, 12);
+    assert!(tui.input(key(KeyCode::Enter)).is_err());
+    assert!(tui.application.is_retiring(&recovery));
+    assert!(!tui.requires_surface_replacement());
+    assert!(tui.try_replace_surface(json!({})).is_err());
+    tui.surface_closed(&recovery, Ok(())).unwrap();
+    tui.shutdown().unwrap();
+}

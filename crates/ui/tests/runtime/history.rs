@@ -133,13 +133,18 @@ fn fixture() -> (Input, Vec<Package>) {
                             },
                             configuration: json!({"type":"object","additionalProperties":false}),
                             imports: BTreeMap::new(),
-                            exports: BTreeMap::from([(
-                                "History".into(),
-                                Export {
-                                    contract: caller_history_contract(),
-                                    availability: Availability::Required,
-                                },
-                            )]),
+                            exports: ["History", "DeploymentHistory"]
+                                .into_iter()
+                                .map(|name| {
+                                    (
+                                        name.into(),
+                                        Export {
+                                            contract: caller_history_contract(),
+                                            availability: Availability::Required,
+                                        },
+                                    )
+                                })
+                                .collect(),
                         },
                     )
                 })
@@ -281,6 +286,65 @@ fn close(app: &mut Application, mount: &maka_plugin_core::runtime::Mount) {
         app.close(&mount, Ok(())).unwrap();
     }
     app.shutdown().unwrap();
+}
+
+#[test]
+fn explicit_deployment_history_reads_original_consumers_but_never_another_deployment() {
+    let timer = timer();
+    let (mut input, packages) = fixture();
+    input.instances.get_mut("app").unwrap().bindings.insert(
+        "history".into(),
+        vec![Target::Instance {
+            path: vec!["history".into()],
+            export: "DeploymentHistory".into(),
+        }],
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(&timer, dir.path(), true);
+    let deployment = Uuid::new_v4();
+    let original = timer
+        .block_on(store.commit_application(deployment, 0, input.clone(), vec![], packages.clone()))
+        .unwrap();
+    let other_deployment = timer
+        .block_on(store.commit_application(Uuid::new_v4(), 0, input, vec![], packages))
+        .unwrap();
+    let a = timer
+        .block_on(store.record_application_intent(original.clone(), identity(2), reference(0)))
+        .unwrap()
+        .intent()
+        .clone();
+    timer
+        .block_on(store.record_application_intent(other_deployment, identity(2), reference(0)))
+        .unwrap();
+    let b = timer
+        .block_on(store.record_application_intent(original, identity(4), reference(0)))
+        .unwrap()
+        .intent()
+        .clone();
+    let (mut app, mount) = start(
+        &timer,
+        store.clone(),
+        deployment,
+        PresentationTarget::Desktop,
+    );
+    let first = page(&timer, &mut app, &mount, 0, 1);
+    assert_eq!(
+        serde_json::from_value::<Vec<CallerIntent>>(first["value"].clone())
+            .unwrap()
+            .as_slice(),
+        std::slice::from_ref(&a)
+    );
+    let next = page(&timer, &mut app, &mount, a.cursor, 1);
+    assert_eq!(
+        serde_json::from_value::<Vec<CallerIntent>>(next["value"].clone())
+            .unwrap()
+            .as_slice(),
+        std::slice::from_ref(&b)
+    );
+    let end = page(&timer, &mut app, &mount, b.cursor, 128);
+    assert_eq!(end["value"], json!([]));
+    close(&mut app, &mount);
+    timer.block_on(store.shutdown()).unwrap();
 }
 
 #[test]

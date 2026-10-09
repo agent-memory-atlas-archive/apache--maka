@@ -131,6 +131,7 @@ async fn stored_source_and_lease_survive_abandoned_query_resources_and_native_cl
                 presentation: None,
             },
             instances: BTreeMap::new(),
+            recovery: None,
             launch: None,
         };
         store

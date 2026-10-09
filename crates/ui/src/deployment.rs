@@ -401,6 +401,7 @@ impl<V: ?Sized + 'static> Application<V> {
         }
         self.invalidate_pending_captures();
         self.sync_subscription_demand();
+        let mut failure = None;
         loop {
             let mut progressed = false;
             for id in self.modules.keys().cloned().collect::<Vec<_>>() {
@@ -421,7 +422,8 @@ impl<V: ?Sized + 'static> Application<V> {
                     )?;
                     if let Err(error) = result {
                         self.deployment_error.get_or_insert(error.to_string());
-                        return Err(error.into());
+                        failure.get_or_insert(Error::from(error));
+                        continue;
                     }
                     self.modules.remove(&id);
                     progressed = true;
@@ -444,6 +446,9 @@ impl<V: ?Sized + 'static> Application<V> {
                         progressed = true;
                     }
                     Err(maka_plugin_core::Error::CleanupPending) => {}
+                    Err(error @ maka_plugin_core::Error::CleanupFailed(_)) => {
+                        failure.get_or_insert(Error::from(error));
+                    }
                     Err(error) => return Err(error.into()),
                 }
             }
@@ -471,25 +476,22 @@ impl<V: ?Sized + 'static> Application<V> {
                     .insert(remote.target, remote.registration_epoch);
                 progressed = true;
             }
-            if self.deployment_error.is_none() {
-                for instance in std::mem::take(&mut self.pending) {
-                    if self.activations.contains_key(&instance.identity)
-                        || !self.dependencies_ready(&instance)
-                    {
-                        self.pending.push(instance);
-                        continue;
-                    }
-                    let id = instance.identity.clone();
-                    if let Err(error) = self.activate_instance(instance) {
-                        if let Some(activation) = self.activations.get(&id) {
-                            self.runtime.retire(activation)?;
-                        }
-                        self.deployment_error = Some(error.to_string());
-                        self.pending.clear();
-                        return Err(error);
-                    }
-                    progressed = true;
+            for instance in std::mem::take(&mut self.pending) {
+                if self.activations.contains_key(&instance.identity)
+                    || !self.dependencies_ready(&instance)
+                {
+                    self.pending.push(instance);
+                    continue;
                 }
+                let id = instance.identity.clone();
+                if let Err(error) = self.activate_instance(instance) {
+                    if let Some(activation) = self.activations.get(&id) {
+                        self.runtime.retire(activation)?;
+                    }
+                    self.deployment_error.get_or_insert(error.to_string());
+                    failure.get_or_insert(error);
+                }
+                progressed = true;
             }
             if !progressed {
                 break;
@@ -498,6 +500,6 @@ impl<V: ?Sized + 'static> Application<V> {
         if self.deployment_error.is_none() && !self.deployment_status().converging {
             self.effective = self.source.clone();
         }
-        Ok(())
+        failure.map_or(Ok(()), Err)
     }
 }

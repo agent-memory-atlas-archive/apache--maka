@@ -165,6 +165,7 @@ pub fn host() -> (Input, Vec<Package>) {
                 ("reader".into(), counter::node(&reader, 12)),
                 ("gateway".into(), gateway_node),
             ]),
+            recovery: None,
             launch: None,
         },
         vec![service, reader, gateway],

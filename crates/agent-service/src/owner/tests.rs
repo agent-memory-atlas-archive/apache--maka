@@ -258,6 +258,7 @@ fn input(settings: &Configuration) -> (Input, Vec<Package>) {
             ("a".into(), node(2, false)),
             ("b".into(), node(3, false)),
         ]),
+        recovery: None,
         launch: None,
     };
     input.instances.insert("receipts".into(), receipt_node);

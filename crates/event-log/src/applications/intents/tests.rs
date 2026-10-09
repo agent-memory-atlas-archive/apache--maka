@@ -84,6 +84,7 @@ async fn source(store: &EventLog, deployment: Uuid, expected: u64) -> Deployment
                         overrides: vec![],
                     },
                 )]),
+                recovery: None,
                 launch: None,
             },
             vec![],

@@ -29,6 +29,7 @@ import {
 } from '../../plugin-sdk/src/index.js';
 export const packageNames = [
   'workspace',
+  'recovery',
   'command-palette',
   'directory-picker',
   'session-details',
@@ -157,6 +158,27 @@ function settingsComposition(
   const ui: CompositionInput = {
     environment: { location: 'ui', presentation: configuration.presentation },
     instances: {
+      recovery: node(
+        'recovery',
+        { locale: configuration.locale },
+        {
+          deployment: [local('deployment', 'Deployment')],
+          history: [local('history', 'DeploymentHistory')],
+          receipts: [remote('receipts', 'Receipts')],
+          managementReceipts: [
+            {
+              kind: 'remote',
+              deployment: 'manager',
+              instance: [keys.receipts],
+              export: 'Receipts',
+            },
+          ],
+          appearance: [local('appearance', 'Appearance')],
+          reading: [local('reading-area', 'ReadingArea')],
+          surface: [local('surface', 'Surface')],
+        },
+      ),
+      'source-text': node('source-text'),
       deployment: node(
         'deployment',
         {},
@@ -239,9 +261,10 @@ function settingsComposition(
       editor: node('editor'),
       file: node('file'),
       reader: node('reader'),
-      'reading-area': node('reading-area'),
+      'reading-area': node('reading-area', {}, { source: [local('source-text', 'SourceText')] }),
       history: node('history'),
     },
+    recovery: local('recovery', 'Recovery'),
   };
   const remoteExports: RemoteObservation[] = [
     {
@@ -450,7 +473,6 @@ export function composition(configuration: CompositionConfiguration): Applicatio
     ),
     ...(configuration.presentation === 'desktop' ? { image: node('image') } : {}),
     timeline: node('timeline', {}, { reading: [local('reading-area', 'ReadingArea')] }),
-    'source-text': node('source-text'),
     'reading-area': node(
       'reading-area',
       {},

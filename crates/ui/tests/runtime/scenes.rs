@@ -345,6 +345,7 @@ fn value_only_guest_needs_no_scene_compiler_and_cannot_publish_components() {
                 presentation: Some(PresentationTarget::Desktop),
             },
             instances: BTreeMap::from([("value".into(), support::node(&package, 1))]),
+            recovery: None,
             launch: None,
         };
         let result = Application::<()>::new(

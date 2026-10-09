@@ -190,18 +190,46 @@ impl EventLog {
         limit: usize,
     ) -> Result<Vec<CallerIntent>, StoreError> {
         consumer_valid(&consumer)?;
+        self.application_intent_page(deployment, Some(consumer), after, limit)
+            .await
+    }
+
+    /// Trusted caller-deployment observation. The native capability adapter
+    /// separately grants this scope; returned references never authorize effects.
+    pub async fn application_deployment_intents(
+        &self,
+        deployment: Uuid,
+        after: u64,
+        limit: usize,
+    ) -> Result<Vec<CallerIntent>, StoreError> {
+        self.application_intent_page(deployment, None, after, limit)
+            .await
+    }
+
+    async fn application_intent_page(
+        &self,
+        deployment: Uuid,
+        consumer: Option<InstanceId>,
+        after: u64,
+        limit: usize,
+    ) -> Result<Vec<CallerIntent>, StoreError> {
         let domain = self.application_domain()?;
         if deployment.is_nil() || after > i64::MAX as u64 || !(1..=128).contains(&limit) {
             return Err(invalid("invalid caller intent page"));
         }
         self.connection.run(move |connection| Box::pin(async move {
             let mut tx = connection.begin().await?;
-            let operations: Vec<Option<String>> = sqlx::query_scalar("SELECT CASE WHEN length(CAST(operation AS BLOB)) = 36 THEN operation END FROM application_intents WHERE deployment=? AND consumer=? AND cursor>? ORDER BY cursor LIMIT ?")
-                .bind(deployment.to_string()).bind(encode(&consumer,4096)?).bind(after as i64).bind(limit as i64).fetch_all(&mut *tx).await?;
+            let mut query = sqlx::QueryBuilder::new("SELECT CASE WHEN length(CAST(operation AS BLOB)) = 36 THEN operation END AS operation, CASE WHEN length(CAST(consumer AS BLOB)) <= 4096 THEN consumer END AS consumer FROM application_intents WHERE deployment=");
+            query.push_bind(deployment.to_string());
+            if let Some(consumer) = &consumer { query.push(" AND consumer=").push_bind(encode(consumer,4096)?); }
+            query.push(" AND cursor>").push_bind(after as i64).push(" ORDER BY cursor LIMIT ").push_bind(limit as i64);
+            let operations = query.build().fetch_all(&mut *tx).await?;
             let mut intents = Vec::with_capacity(operations.len());
             let mut bytes = 2; // The complete array, including brackets and commas.
-            for operation in operations {
-                let operation = operation.ok_or_else(|| invalid("invalid caller operation"))?;
+            for row in operations {
+                let operation = row.try_get::<Option<String>, _>("operation")?.ok_or_else(|| invalid("invalid caller operation"))?;
+                let consumer: InstanceId = serde_json::from_str(&row.try_get::<Option<String>, _>("consumer")?.ok_or_else(|| invalid("invalid caller consumer"))?)?;
+                consumer_valid(&consumer)?;
                 let intent = read(&mut tx,&domain,deployment,&consumer,Uuid::parse_str(&operation).map_err(|_| invalid("invalid caller operation"))?).await?.ok_or_else(|| invalid("caller intent disappeared"))?;
                 let encoded = encode(&intent, MAX_PAGE)?;
                 let size = encoded.len() + usize::from(!intents.is_empty());

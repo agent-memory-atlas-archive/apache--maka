@@ -18,6 +18,13 @@
  */
 
 export const en = {
+  recoveryTitle: 'Recover application',
+  recoveryRefreshFailed: 'Could not refresh. The last observation has been kept.',
+  recoveryHelp:
+    'The main view is unavailable. Check original results or repair plugins. Changes may wait for earlier work to finish.',
+  recoveryOperations: 'Original operations',
+  recoveryUnknown: 'The original result is still unknown.',
+  recoveryEmpty: 'No operation references are recorded for this application.',
   terminalTitle: 'Terminals & tasks',
   terminalNew: 'New terminal',
   terminalCommand: 'Run command',
@@ -447,6 +454,12 @@ export const en = {
 } as const;
 export type Copy = { [K in keyof typeof en]: string };
 const zhCN: Copy = {
+  recoveryTitle: '恢复应用',
+  recoveryRefreshFailed: '刷新失败，已保留上次查询结果。',
+  recoveryHelp: '主界面暂不可用。可检查原操作结果或修复插件配置；变更可能需要等待先前工作结束。',
+  recoveryOperations: '原操作记录',
+  recoveryUnknown: '原操作结果仍未知。',
+  recoveryEmpty: '此应用尚无操作引用记录。',
   terminalTitle: '终端与任务',
   terminalNew: '新建终端',
   terminalCommand: '运行命令',
@@ -852,6 +865,13 @@ const zhCN: Copy = {
   connecting: '正在连接…',
 };
 const zhTW: Copy = {
+  recoveryTitle: '復原應用程式',
+  recoveryRefreshFailed: '重新整理失敗，已保留上次查詢結果。',
+  recoveryHelp:
+    '主介面暫時無法使用。可檢查原操作結果或修復外掛設定；變更可能需要等待先前工作結束。',
+  recoveryOperations: '原操作紀錄',
+  recoveryUnknown: '原操作結果仍未知。',
+  recoveryEmpty: '此應用程式尚無操作參照紀錄。',
   terminalTitle: '終端與任務',
   terminalNew: '新增終端',
   terminalCommand: '執行命令',

@@ -35,7 +35,7 @@ impl Mount {
 pub(super) struct Mounted<T> {
     capability: Capability<T>,
     parent: Option<Mount>,
-    launch: bool,
+    root: Option<crate::composition::RootKind>,
     phase: Phase,
     failure: Option<String>,
 }
@@ -53,10 +53,14 @@ impl<T> Runtime<T> {
     /// Bootstrap selects the ordinary component named by the checked launch
     /// binding. This supplies no additional business or surface capability.
     pub fn mount_launch(&mut self) -> Result<Mount, Error> {
+        self.mount_root(crate::composition::RootKind::Launch)
+    }
+
+    pub fn mount_root(&mut self, kind: crate::composition::RootKind) -> Result<Mount, Error> {
         let binding = self
             .desired
-            .launch()
-            .ok_or_else(|| Error::NotReady("launch component".into()))?;
+            .root(kind)
+            .ok_or_else(|| Error::NotReady("selected root component".into()))?;
         let Provider::Local { instance, .. } = &binding.provider else {
             return Err(Error::NotReady("remote launch component".into()));
         };
@@ -70,8 +74,12 @@ impl<T> Runtime<T> {
             .resolve(&provider, binding)?
             .ok_or_else(|| Error::NotReady("launch component".into()))?;
         let mount = self.mount_component(&capability, None)?;
-        self.mounts.get_mut(&mount.id).unwrap().launch = true;
+        self.mounts.get_mut(&mount.id).unwrap().root = Some(kind);
         Ok(mount)
+    }
+
+    pub fn root_kind(&self, mount: &Mount) -> Result<Option<crate::composition::RootKind>, Error> {
+        Ok(self.mounted(mount)?.root)
     }
 
     pub fn mount_component(
@@ -107,7 +115,7 @@ impl<T> Runtime<T> {
             Mounted {
                 capability: capability.clone(),
                 parent: parent.cloned(),
-                launch: false,
+                root: None,
                 phase: Phase::Loading,
                 failure: None,
             },
@@ -231,11 +239,11 @@ impl<T> Runtime<T> {
             &mounted.capability.provider == activation || &mounted.capability.consumer == activation
         })
     }
-    pub(super) fn retire_launch_mounts(&mut self) {
+    pub(super) fn retire_root_mounts(&mut self, kind: crate::composition::RootKind) {
         let mounts: Vec<_> = self
             .mounts
             .iter()
-            .filter(|(_, mounted)| mounted.launch)
+            .filter(|(_, mounted)| mounted.root == Some(kind))
             .map(|(id, _)| Mount {
                 kernel: self.identity,
                 id: *id,

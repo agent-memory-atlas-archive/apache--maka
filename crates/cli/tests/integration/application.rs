@@ -35,6 +35,7 @@ fn durable_application_commands_commit_read_cas_and_never_claim_readiness() {
             presentation: None,
         },
         instances: BTreeMap::new(),
+        recovery: None,
         launch: None,
     };
     let path = dir.path().join("input.json");

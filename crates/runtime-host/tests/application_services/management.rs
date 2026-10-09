@@ -91,6 +91,7 @@ fn sources_for(implementation: &str) -> (Input, Vec<Package>) {
                 ("provider".into(), node(&provider, 1, true)),
                 ("a".into(), consumer_node),
             ]),
+            recovery: None,
             launch: None,
         },
         vec![provider, consumer],
@@ -137,6 +138,7 @@ impl Fixture {
                             presentation: Some(presentation),
                         },
                         instances: BTreeMap::new(),
+                        recovery: None,
                         launch: None,
                     },
                     vec![],
@@ -1009,6 +1011,7 @@ async fn instance_pages_freeze_source_and_nested_enabled_intents_preserve_origin
                     presentation: Some(PresentationTarget::Desktop),
                 },
                 instances: BTreeMap::from([("product".into(), root)]),
+                recovery: None,
                 launch: None,
             },
             vec![],
@@ -1194,6 +1197,7 @@ async fn execution_basis_includes_cohost_manager_target_but_not_source_revision(
             presentation: Some(PresentationTarget::Tui),
         },
         instances: BTreeMap::new(),
+        recovery: None,
         launch: None,
     };
     let same = f

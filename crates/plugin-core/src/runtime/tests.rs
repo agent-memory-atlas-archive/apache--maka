@@ -136,6 +136,7 @@ impl Fixture {
                     ("a".into(), node("consumer", 2, false)),
                     ("b".into(), node("consumer", 3, false)),
                 ]),
+                recovery: None,
                 launch: None,
             },
         }
@@ -821,6 +822,53 @@ fn launch_changes_retire_existing_roots_without_retiring_unchanged_providers() {
     assert_eq!(runtime.status(&provider).unwrap().phase, Phase::Active);
     runtime.complete_mount(&root, Ok(())).unwrap();
     assert!(runtime.mount_launch().is_err());
+}
+
+#[test]
+fn recovery_root_remains_independent_of_failed_work_and_launch_selection() {
+    use crate::composition::RootKind;
+    let mut fixture = component_fixture();
+    fixture
+        .input
+        .instances
+        .insert("recovery".into(), node("provider", 4, true));
+    fixture.input.recovery = Some(target("recovery"));
+    let mut runtime = Runtime::new(fixture.plan());
+    let primary = fixture.activate(&mut runtime, "p", component_export());
+    let recovery = fixture.activate(&mut runtime, "recovery", component_export());
+    let root = runtime.mount_launch().unwrap();
+    runtime.publish_mount(&root).unwrap();
+    let work = runtime.admit_mount(&root).unwrap();
+    runtime
+        .settle(&work, Err("original cleanup unknown".into()))
+        .unwrap();
+    assert!(runtime.admit_mount(&root).is_err());
+    runtime.complete_mount(&root, Ok(())).unwrap();
+    let fallback = runtime.mount_root(RootKind::Recovery).unwrap();
+    runtime.publish_mount(&fallback).unwrap();
+    let input = runtime.admit_mount(&fallback).unwrap();
+    runtime.settle(&input, Ok(())).unwrap();
+    assert_eq!(
+        runtime.root_kind(&fallback).unwrap(),
+        Some(RootKind::Recovery)
+    );
+    assert!(matches!(
+        runtime.finish_cleanup(&primary),
+        Err(Error::CleanupFailed(_))
+    ));
+    assert_eq!(runtime.status(&primary).unwrap().calls, 1);
+    fixture.input.launch = None;
+    runtime.install(fixture.plan());
+    let input = runtime.admit_mount(&fallback).unwrap();
+    runtime.settle(&input, Ok(())).unwrap();
+    fixture.input.recovery = None;
+    runtime.install(fixture.plan());
+    assert!(runtime.admit_mount(&fallback).is_err());
+    assert_eq!(runtime.status(&recovery).unwrap().phase, Phase::Active);
+    assert!(matches!(
+        runtime.finish_cleanup(&primary),
+        Err(Error::CleanupFailed(_))
+    ));
 }
 
 fn remote_plan(optional: bool) -> (Fixture, RemoteCapability, Contract, Plan) {

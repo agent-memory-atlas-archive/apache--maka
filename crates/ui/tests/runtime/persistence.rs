@@ -285,3 +285,72 @@ fn unavailable_native_implementation_is_rejected_before_an_earlier_factory_execu
         .block_on(Arc::try_unwrap(store).ok().unwrap().close())
         .unwrap();
 }
+
+#[test]
+fn bootstrap_recovery_survives_primary_activation_or_mount_failure() {
+    for stage in ["activation", "mount"] {
+        let timer = timer();
+        let (mut input, mut packages) =
+            support::fixture("return frame({...state,revision:state.revision+1});");
+        let index = packages
+            .iter()
+            .position(|p| p.manifest().id == "dynamic.app")
+            .unwrap();
+        let original = packages.remove(index);
+        let source = std::str::from_utf8(original.file("index.mjs").unwrap()).unwrap();
+        let needle = if stage == "activation" {
+            "export function activate(configuration) {"
+        } else {
+            "mount(props){"
+        };
+        assert!(source.contains(needle));
+        let broken = support::package(
+            "dynamic.app",
+            original.manifest().application.clone().unwrap(),
+            Some(source.replace(
+                needle,
+                &format!("{needle}throw new Error('primary {stage} failure');"),
+            )),
+        );
+        input.instances.get_mut("app").unwrap().package = broken.application_ref().into();
+        packages.push(broken);
+        support::add_recovery(&mut input, &mut packages);
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(&timer, dir.path());
+        let id = Uuid::new_v4();
+        let committed = timer
+            .block_on(store.commit_application(id, 0, input, vec![], packages))
+            .unwrap();
+        let mut app = start(&timer, store.clone(), id);
+        assert_eq!(
+            app.deployment_status().effective,
+            if stage == "activation" {
+                None
+            } else {
+                Some(committed)
+            }
+        );
+        let root = app.mount_bootstrap(json!({})).unwrap();
+        assert_eq!(
+            app.root_kind(&root).unwrap(),
+            maka_plugin_core::composition::RootKind::Recovery
+        );
+        assert!(app.deployment_status().error.is_some());
+        assert!(
+            !app.can_recover(&root),
+            "failure in recovery must not recursively mount another root"
+        );
+        assert!(!app.can_resume_launch(&root));
+        app.dispatch(&root, 0, "inc", json!({})).unwrap();
+        assert_eq!(app.frame(&root).unwrap().state["count"], 1);
+        app.retire(&root).unwrap();
+        for mount in app.retiring_mounts() {
+            app.close(&mount, Ok(())).unwrap();
+        }
+        app.shutdown().unwrap();
+        drop(app);
+        timer
+            .block_on(Arc::try_unwrap(store).ok().unwrap().close())
+            .unwrap();
+    }
+}

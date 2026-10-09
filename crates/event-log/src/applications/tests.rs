@@ -29,6 +29,7 @@ pub(super) fn input() -> Input {
             presentation: None,
         },
         instances: BTreeMap::new(),
+        recovery: None,
         launch: None,
     }
 }

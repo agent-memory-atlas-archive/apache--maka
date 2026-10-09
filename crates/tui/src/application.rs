@@ -46,7 +46,7 @@ use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, 
 use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
 pub use geometry::{CellRect, Placement};
 use maka_plugin_core::{
-    composition::{Input, PresentationTarget},
+    composition::{Input, PresentationTarget, RootKind},
     runtime::Mount,
 };
 use maka_plugins::package::Package;
@@ -214,7 +214,7 @@ type Job = Pin<Box<dyn Future<Output = (Uuid, TaskCompletion)> + Send>>;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Retirement {
     Exit,
-    Replace,
+    Replace(RootKind),
 }
 enum SurfaceState {
     Live,
@@ -234,10 +234,10 @@ impl SurfaceState {
         matches!(
             self,
             Self::Retiring {
-                cause: Retirement::Replace,
+                cause: Retirement::Replace(_),
                 ..
             } | Self::Closed {
-                cause: Retirement::Replace
+                cause: Retirement::Replace(_)
             }
         )
     }
@@ -330,10 +330,13 @@ impl Presenter {
         registrations: Vec<maka_ui::actions::RemoteService>,
     ) -> maka_ui::Result<()> {
         let was_live = self.surface.is_live() && !self.application.is_retiring(&self.root);
+        let kind = was_live
+            .then(|| self.application.root_kind(&self.root))
+            .transpose()?;
         self.application.adopt_prepared(update, registrations)?;
         if was_live && self.application.is_retiring(&self.root) {
             // Capture the install's effect now, not a later, unrelated realm fault.
-            self.retire_surface(Retirement::Replace)?;
+            self.retire_surface(Retirement::Replace(kind.expect("live root")))?;
         }
         self.resources.deactivate(&self.application);
         Ok(())
@@ -350,25 +353,19 @@ impl Presenter {
     /// Resume the same application after actual old-surface cleanup. Pending
     /// original service work and its observers remain with this presenter.
     pub fn try_replace_surface(&mut self, props: Value) -> maka_ui::Result<bool> {
-        if !matches!(
-            self.surface,
+        let kind = match self.surface {
             SurfaceState::Closed {
-                cause: Retirement::Replace
+                cause: Retirement::Replace(kind),
+            } => kind,
+            _ => {
+                return Err(Error::Invalid(
+                    "original terminal cleanup not confirmed for replacement".into(),
+                ));
             }
-        ) {
-            return Err(Error::Invalid(
-                "original terminal cleanup not confirmed for replacement".into(),
-            ));
-        }
-        self.application.advance_deployment()?;
-        let status = self.application.deployment_status();
-        if let Some(error) = status.error {
-            return Err(Error::Invalid(error));
-        }
-        if status.converging {
+        };
+        let Some(root) = self.application.mount_replacement_root(kind, props)? else {
             return Ok(false);
-        }
-        let root = self.application.mount_launch(props)?;
+        };
         self.root = root;
         self.surface = SurfaceState::Live;
         self.sync_native()?;
@@ -376,7 +373,7 @@ impl Presenter {
     }
 
     fn mount(mut application: Application<dyn Widget>, props: Value) -> maka_ui::Result<Self> {
-        let root = match application.mount_launch(props) {
+        let root = match application.mount_bootstrap(props) {
             Ok(root) => root,
             Err(error) => {
                 // This presenter has not created a terminal or renderer resources.
@@ -471,6 +468,10 @@ impl Presenter {
     /// scene. Crossterm supplies no screen epoch; never re-resolve a captured key.
     /// 输入立即绑定到最后成功输出的场景和真实 mount/revision。
     pub fn input(&mut self, event: Event) -> maka_ui::Result<()> {
+        let result = self.input_inner(event);
+        self.recover_result(result)
+    }
+    fn input_inner(&mut self, event: Event) -> maka_ui::Result<()> {
         if matches!(
             event,
             Event::Key(_) | Event::Paste(_) | Event::FocusLost | Event::Resize(..)
@@ -850,6 +851,29 @@ impl Presenter {
         }
     }
     pub fn pump(&mut self) -> maka_ui::Result<()> {
+        let result = self.pump_inner();
+        self.recover_result(result)
+    }
+    fn recover_result(&mut self, result: maka_ui::Result<()>) -> maka_ui::Result<()> {
+        if self.surface.is_live()
+            && self.application.is_retiring(&self.root)
+            && self.application.can_recover(&self.root)
+        {
+            if let Err(error) = &result {
+                self.report(error);
+            }
+            self.retire_surface(Retirement::Replace(RootKind::Recovery))?;
+            return Ok(());
+        }
+        if result.is_ok()
+            && self.surface.is_live()
+            && self.application.can_resume_launch(&self.root)
+        {
+            self.retire_surface(Retirement::Replace(RootKind::Launch))?;
+        }
+        result
+    }
+    fn pump_inner(&mut self) -> maka_ui::Result<()> {
         let advancement = if self.surface.is_live() && !self.application.is_retiring(&self.root) {
             self.application.advance_deployment()
         } else {

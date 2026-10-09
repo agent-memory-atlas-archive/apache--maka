@@ -146,6 +146,7 @@ fn fixture() -> (Input, Packages) {
                 node(2, package("product", 1), PackageUse::Composition),
             ),
         ]),
+        recovery: None,
         launch: Some(local(&["a"], "App")),
     };
     (input, packages)

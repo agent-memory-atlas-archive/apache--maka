@@ -16260,6 +16260,18 @@ export const contracts = {
                       },
                     ],
                   },
+                  recovery: {
+                    description:
+                      'Explicit ordinary fallback. Selection grants no extra capabilities.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Target',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                 },
                 additionalProperties: false,
                 required: ['environment', 'instances'],

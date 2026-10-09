@@ -373,3 +373,97 @@ fn replacement_preserves_original_snapshot_work_and_only_waits_for_its_provider(
             .unwrap();
     }
 }
+
+#[gpui::test]
+fn recovery_root_waits_for_original_editor_release_and_keeps_independent_input(
+    cx: &mut TestAppContext,
+) {
+    let timer = timer();
+    let (mut input, mut packages) = support::editor_fixture();
+    let index = packages
+        .iter()
+        .position(|p| p.manifest().id == "dynamic.app")
+        .unwrap();
+    let old_package = packages.remove(index);
+    let source = std::str::from_utf8(old_package.file("index.mjs").unwrap()).unwrap();
+    let changed = source.replace("const next={...state,revision:state.revision+1};", "throw new Error('primary handler failed');const next={...state,revision:state.revision+1};");
+    assert_ne!(source, changed);
+    let package = support::package(
+        "dynamic.app",
+        old_package.manifest().application.clone().unwrap(),
+        Some(changed),
+    );
+    input.instances.get_mut("app").unwrap().package = package.application_ref().into();
+    packages.push(package);
+    support::add_recovery(&mut input, &mut packages);
+    let mut app = Application::new(
+        &input,
+        packages,
+        timer.handle().clone(),
+        Default::default(),
+        widgets::registry(),
+        Default::default(),
+    )
+    .unwrap();
+    let root = app.mount_bootstrap(serde_json::json!({})).unwrap();
+    let app = Rc::new(RefCell::new(app));
+    let owner = cx.update(|cx| {
+        gpui_kit::init(cx);
+        let owner = actions::own(app.clone(), None, None, cx).unwrap();
+        owner.open_launch(root, serde_json::json!({}), cx).unwrap();
+        owner
+    });
+    let old = Scene::from_launch(&owner, cx);
+    old.draw(cx);
+    let native = old.owner();
+    let engine = cx.update(|cx| native.read(cx).state.clone());
+    cx.update_window(old.window, |_, window, cx| {
+        let revision = app.borrow().frame(&old.root).unwrap().revision;
+        assert!(
+            app.borrow_mut()
+                .dispatch(&old.root, revision, "parent", serde_json::json!({}))
+                .is_err()
+        );
+        old.surface
+            .update(cx, |s, cx| s.sync_native(window, cx))
+            .unwrap();
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(owner.replacing());
+    assert!(owner.current_launch().is_none());
+    assert!(!old.resources.borrow().surface_closed);
+    assert!(!cx.update(|cx| owner.resume_launch(cx).unwrap()));
+    cx.update(|_| {
+        drop(engine);
+        drop(native);
+    });
+    cx.run_until_parked();
+    assert!(old.resources.borrow().surface_closed);
+    assert!(app.borrow().frame(&old.root).is_err());
+    let (fresh, window, surface) = owner.current_launch().expect("ordinary recovery root");
+    assert_ne!(fresh, old.root);
+    assert_ne!(window.window_id(), old.window.window_id());
+    assert_eq!(
+        app.borrow().root_kind(&fresh).unwrap(),
+        maka_plugin_core::composition::RootKind::Recovery
+    );
+    cx.update_window(window, |_, window, cx| {
+        let revision = app.borrow().frame(&fresh).unwrap().revision;
+        app.borrow_mut()
+            .dispatch(&fresh, revision, "inc", serde_json::json!({}))
+            .unwrap();
+        surface
+            .update(cx, |s, cx| s.sync_native(window, cx))
+            .unwrap()
+            .unwrap();
+        window.draw(cx).clear(cx);
+    })
+    .unwrap();
+    assert_eq!(app.borrow().frame(&fresh).unwrap().state["count"], 1);
+    cx.update_window(window, |_, window, _| window.remove_window())
+        .unwrap();
+    cx.run_until_parked();
+    assert!(app.borrow().can_shutdown());
+    app.borrow_mut().shutdown().unwrap();
+}

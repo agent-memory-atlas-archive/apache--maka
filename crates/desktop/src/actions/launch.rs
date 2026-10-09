@@ -23,6 +23,7 @@ use gpui_kit::{
     AnyWindowHandle, App, AppContext, Bounds, TitlebarOptions, WeakEntity, WindowBounds,
     WindowOptions, px, size,
 };
+use maka_plugin_core::composition::RootKind;
 #[cfg(test)]
 use maka_plugin_core::deployment::DeploymentRef;
 use maka_plugin_core::runtime::Mount;
@@ -50,6 +51,7 @@ pub(super) enum State {
     Replacing {
         mount: Mount,
         props: Value,
+        kind: RootKind,
         cleanup: Cleanup,
     },
     Failed {
@@ -57,6 +59,50 @@ pub(super) enum State {
     },
 }
 impl Owner {
+    /// Called against the actual current window, before its removal. Original
+    /// window/resource receipts still gate mounting the independent root.
+    pub(crate) fn recover_launch(
+        &self,
+        mount: &Mount,
+        window: &mut gpui_kit::Window,
+    ) -> Result<bool> {
+        if self.0.quitting.get() || self.0.draining.get() {
+            return Ok(false);
+        }
+        let kind = {
+            let application = self.0.application.borrow();
+            if application.is_retiring(mount) && application.can_recover(mount) {
+                RootKind::Recovery
+            } else if application.can_resume_launch(mount) {
+                RootKind::Launch
+            } else {
+                return Ok(false);
+            }
+        };
+        let props = match &*self.0.launch.borrow() {
+            Some(State::Live {
+                mount: current,
+                window: original,
+                props,
+                ..
+            }) if current == mount
+                && original.window_id() == window.window_handle().window_id() =>
+            {
+                props.clone()
+            }
+            _ => return Ok(false),
+        };
+        self.0.application.borrow_mut().retire(mount)?;
+        *self.0.launch.borrow_mut() = Some(State::Replacing {
+            mount: mount.clone(),
+            props,
+            kind,
+            cleanup: Cleanup::Pending,
+        });
+        window.remove_window();
+        Ok(true)
+    }
+
     #[cfg(test)]
     pub(crate) fn current_launch(&self) -> Option<(Mount, AnyWindowHandle, WeakEntity<Surface>)> {
         match &*self.0.launch.borrow() {
@@ -123,6 +169,7 @@ impl Owner {
                 surface.clone(),
                 props.clone(),
                 !self.0.application.borrow().is_retiring(mount),
+                self.0.application.borrow().root_kind(mount)?,
             )),
             _ => None,
         };
@@ -130,12 +177,13 @@ impl Owner {
             .application
             .borrow_mut()
             .adopt_prepared(update, registrations)?;
-        if let Some((mount, window, surface, props, was_live)) = live {
+        if let Some((mount, window, surface, props, was_live, kind)) = live {
             let replacing = was_live && self.0.application.borrow().is_retiring(&mount);
             if replacing {
                 *self.0.launch.borrow_mut() = Some(State::Replacing {
                     mount: mount.clone(),
                     props,
+                    kind,
                     cleanup: Cleanup::Pending,
                 });
             }
@@ -162,27 +210,23 @@ impl Owner {
         if self.0.quitting.get() || self.0.draining.get() {
             return Ok(false);
         }
-        let props = match &*self.0.launch.borrow() {
+        let (props, kind) = match &*self.0.launch.borrow() {
             Some(State::Replacing {
                 cleanup: Cleanup::Confirmed,
                 props,
+                kind,
                 ..
-            }) => props.clone(),
+            }) => (props.clone(), *kind),
             _ => return Ok(false),
         };
-        self.0.application.borrow_mut().advance_deployment()?;
-        let status = self.0.application.borrow().deployment_status();
-        if let Some(error) = status.error {
-            return Err(Error::Invalid(error));
-        }
-        if status.converging {
-            return Ok(false);
-        }
-        let mount = self
+        let Some(mount) = self
             .0
             .application
             .borrow_mut()
-            .mount_launch(props.clone())?;
+            .mount_replacement_root(kind, props.clone())?
+        else {
+            return Ok(false);
+        };
         self.open_launch(mount, props, cx)?;
         Ok(true)
     }

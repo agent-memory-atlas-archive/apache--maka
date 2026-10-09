@@ -78,6 +78,7 @@ impl NativeOwner for CloseWrites {
                             presentation: None,
                         },
                         instances: BTreeMap::new(),
+                        recovery: None,
                         launch: None,
                     },
                     vec![],

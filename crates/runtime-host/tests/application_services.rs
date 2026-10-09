@@ -163,6 +163,7 @@ fn input(provider: &Package, consumer: &Package) -> Input {
             ("a".into(), node(consumer, 2, false)),
             ("b".into(), node(consumer, 3, false)),
         ]),
+        recovery: None,
         launch: None,
     }
 }

@@ -80,6 +80,7 @@ pub struct Instance {
 pub struct Plan {
     instances: BTreeMap<InstanceId, Instance>,
     launch: Option<Binding>,
+    recovery: Option<Binding>,
 }
 
 impl Plan {
@@ -90,8 +91,8 @@ impl Plan {
     ) -> Result<Self, Error> {
         let target = input.environment.entry_target()?;
         composition::validate_nodes(&input.instances)?;
-        if let Some(launch) = &input.launch {
-            launch.validate()?;
+        for root in [&input.launch, &input.recovery].into_iter().flatten() {
+            root.validate()?;
         }
         let mut builder = Builder {
             packages,
@@ -136,30 +137,30 @@ impl Plan {
             instance.exports = exports;
             instances.insert(id.clone(), instance);
         }
-        let launch = input
-            .launch
-            .as_ref()
-            .map(|target| {
-                let bindings = resolver.target(target, &[], None, &mut BTreeSet::new())?;
-                let [binding] = bindings.as_slice() else {
-                    return Err(Error::Composition(
-                        "launch must select one component".into(),
-                    ));
-                };
-                if !matches!(
-                    binding.declaration.contract.interface,
-                    Interface::Component { .. }
-                ) || binding.declaration.availability != Availability::Required
-                {
-                    return Err(Error::Contract(
-                        "launch requires an available component declaration".into(),
-                    ));
-                }
-                Ok(binding.clone())
-            })
-            .transpose()?;
+        let resolve_root = |target: &composition::Target| {
+            let bindings = resolver.target(target, &[], None, &mut BTreeSet::new())?;
+            let [binding] = bindings.as_slice() else {
+                return Err(Error::Composition("root must select one component".into()));
+            };
+            if !matches!(
+                binding.declaration.contract.interface,
+                Interface::Component { .. }
+            ) || binding.declaration.availability != Availability::Required
+            {
+                return Err(Error::Contract(
+                    "root requires an available component declaration".into(),
+                ));
+            }
+            Ok(binding.clone())
+        };
+        let launch = input.launch.as_ref().map(resolve_root).transpose()?;
+        let recovery = input.recovery.as_ref().map(resolve_root).transpose()?;
         validate_dependencies(&instances)?;
-        Ok(Self { instances, launch })
+        Ok(Self {
+            instances,
+            launch,
+            recovery,
+        })
     }
 
     pub fn instances(&self) -> &BTreeMap<InstanceId, Instance> {
@@ -168,6 +169,17 @@ impl Plan {
 
     pub fn launch(&self) -> Option<&Binding> {
         self.launch.as_ref()
+    }
+
+    pub fn recovery(&self) -> Option<&Binding> {
+        self.recovery.as_ref()
+    }
+
+    pub fn root(&self, kind: composition::RootKind) -> Option<&Binding> {
+        match kind {
+            composition::RootKind::Launch => self.launch(),
+            composition::RootKind::Recovery => self.recovery(),
+        }
     }
 }
 

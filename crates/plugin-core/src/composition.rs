@@ -88,6 +88,15 @@ pub struct Input {
     pub instances: BTreeMap<String, Node>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch: Option<Target>,
+    /// Explicit ordinary fallback. Selection grants no extra capabilities.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<Target>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RootKind {
+    Launch,
+    Recovery,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

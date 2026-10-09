@@ -253,23 +253,13 @@ pub(super) fn lost_reply(
     loss.arm("start");
     click(presenter, "[ New terminal ]");
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
-    loop {
-        match presenter.pump() {
-            Err(maka_ui::Error::Core(maka_plugin_core::Error::CleanupFailed(_))) => break,
-            Err(error) => panic!("unexpected completion failure: {error}"),
-            Ok(()) => {
-                let area = Rect::new(0, 0, 80, 24);
-                let mut buffer = Buffer::empty(area);
-                let scene = presenter.paint(area, &mut buffer).unwrap();
-                presenter.present(scene);
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "no dropped-reply cleanup failure: {}",
-                    screen(&buffer)
-                );
-                std::thread::yield_now();
-            }
-        }
+    while !presenter.requires_surface_replacement() {
+        presenter.pump().unwrap();
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no recovery transition after dropped reply"
+        );
+        std::thread::yield_now();
     }
     let intercepted = loss
         .take()
@@ -321,8 +311,70 @@ pub(super) fn lost_reply(
         .unwrap();
     assert_eq!(task.result.mode, ShellMode::Pty);
     assert_eq!(task.result.status, ShellStatus::Running);
-    // The durable business result cannot stand in for the lost physical close
-    // receipt. The original owner must remain fenced even after this lookup.
+    // The old terminal must physically close before the independent ordinary
+    // recovery root can present or dispatch input in this same Application.
+    let original_surface = presenter.surface();
+    assert!(
+        presenter
+            .try_replace_surface(serde_json::json!({}))
+            .is_err()
+    );
+    presenter.surface_closed(&original_surface, Ok(())).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while !presenter
+        .try_replace_surface(serde_json::json!({}))
+        .unwrap()
+    {
+        presenter.pump().unwrap();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert_ne!(presenter.surface(), original_surface);
+    await_screen(presenter, "Recover application");
+    // Read the actual deployment-wide caller history through painted controls;
+    // earlier workspace operations may precede this exact Terminal.start.
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        wait_for_target(presenter, "[ Refresh operations ]", 0);
+        let rendered = screen(&draw(presenter));
+        if let Some(at) = rendered.find("maka.workspace.Terminal / start") {
+            let index = rendered[..at].matches("[ Check result ]").count();
+            click_nth(presenter, "[ Check result ]", index);
+            break;
+        }
+        if rendered.contains("[ Check result ]") {
+            click(presenter, "[ Next operations ]");
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "original terminal intent missing: {rendered}"
+        );
+        std::thread::yield_now();
+    }
+    await_screen(presenter, "Original result recorded.");
+    // The native SourceText must show the original Host's actual PTY receipt,
+    // not just a success label or a second synthetic query fixture.
+    let rendered = screen(&draw_at(presenter, Rect::new(0, 0, 120, 100)));
+    assert!(
+        rendered
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+            .contains(value["value"]["result"]["ref"].as_str().unwrap()),
+        "{rendered}"
+    );
+    assert!(rendered.contains("confirmed"), "{rendered}");
+    click(presenter, "[ Check result ]");
+    await_screen(presenter, "Original result recorded.");
+    let observed = runtime
+        .block_on(fixture.store.query_shell_resources(session, None, 0))
+        .unwrap();
+    assert_eq!(
+        observed.total,
+        before.total + 1,
+        "receipt reads must never replay start"
+    );
+    // A recorded business outcome cannot acknowledge the lost physical close.
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();

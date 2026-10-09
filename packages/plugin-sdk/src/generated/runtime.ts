@@ -2161,6 +2161,10 @@ export interface CompositionInput {
     [k: string]: CompositionNode | undefined;
   };
   launch?: Target | null;
+  /**
+   * Explicit ordinary fallback. Selection grants no extra capabilities.
+   */
+  recovery?: Target | null;
 }
 export interface Environment {
   location: ExecutionLocation;

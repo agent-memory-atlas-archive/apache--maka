@@ -123,6 +123,11 @@ impl Surface {
                         ) {
                             eprintln!("component input deactivation failed: {cleanup}");
                         }
+                        if let Some(owner) = cx.try_global::<actions::Owner>().cloned()
+                            && let Err(cleanup) = owner.recover_launch(&view.mount, window)
+                        {
+                            eprintln!("recovery surface transition failed: {cleanup}");
+                        }
                         cx.notify();
                         return Err(error);
                     }
@@ -295,6 +300,14 @@ impl Surface {
             eprintln!("deployment convergence failed: {error}");
         }
         if self.application.borrow().is_retiring(&self.mount) {
+            if let Some(owner) = cx.try_global::<actions::Owner>().cloned() {
+                owner.recover_launch(&self.mount, window)?;
+            }
+            return Ok(());
+        }
+        if let Some(owner) = cx.try_global::<actions::Owner>().cloned()
+            && owner.recover_launch(&self.mount, window)?
+        {
             return Ok(());
         }
         actions::pump(
@@ -599,7 +612,7 @@ impl Launcher {
                 return Err(error.into());
             }
         };
-        let mount = match application.mount_launch(serde_json::json!({})) {
+        let mount = match application.mount_bootstrap(serde_json::json!({})) {
             Ok(mount) => mount,
             Err(error) => {
                 drain_ui(&mut application, &timer, true);

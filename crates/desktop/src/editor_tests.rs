@@ -1454,6 +1454,7 @@ async fn host_service_fixture(
             presentation: None,
         },
         instances: nodes,
+        recovery: None,
         launch: None,
     };
     let mut native = NativeRegistry::default();

@@ -207,8 +207,94 @@ impl<V: ?Sized> Update<V> {
 }
 
 impl<V: ?Sized + 'static> Application<V> {
+    pub fn root_kind(&self, mount: &Mount) -> Result<maka_plugin_core::composition::RootKind> {
+        self.runtime
+            .root_kind(mount)?
+            .ok_or_else(|| Error::Invalid("bootstrap root required".into()))
+    }
+
+    pub fn can_recover(&self, mount: &Mount) -> bool {
+        self.runtime
+            .root_kind(mount)
+            .is_ok_and(|kind| kind == Some(maka_plugin_core::composition::RootKind::Launch))
+            && self.runtime.desired().recovery().is_some()
+    }
+
+    pub fn can_resume_launch(&self, mount: &Mount) -> bool {
+        let status = self.deployment_status();
+        self.root_kind(mount)
+            .is_ok_and(|kind| kind == maka_plugin_core::composition::RootKind::Recovery)
+            && !status.closing
+            && !status.converging
+            && status.error.is_none()
+    }
+
+    /// Bootstrap fallback uses the same ordinary mount transaction. Original
+    /// failed mounts and execution resources remain owned by this Application.
+    pub fn mount_bootstrap(&mut self, props: Value) -> Result<Mount> {
+        match self.mount_launch(props.clone()) {
+            Ok(root) => Ok(root),
+            Err(error) if self.runtime.desired().recovery().is_some() => {
+                self.deployment_error.get_or_insert(error.to_string());
+                self.mount_selected_root(maka_plugin_core::composition::RootKind::Recovery, props)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Reconcile after the adapter confirms the old physical surface closed.
+    /// A failed replacement may enter ordinary recovery without clearing the
+    /// original failure. Pending activation alone still waits for readiness.
+    pub fn mount_replacement_root(
+        &mut self,
+        mut kind: maka_plugin_core::composition::RootKind,
+        props: Value,
+    ) -> Result<Option<Mount>> {
+        use maka_plugin_core::composition::RootKind;
+        if let Err(error) = self.advance_deployment() {
+            if self.runtime.desired().recovery().is_none() {
+                return Err(error);
+            }
+            self.deployment_error.get_or_insert(error.to_string());
+            kind = RootKind::Recovery;
+        }
+        if kind == RootKind::Launch {
+            let status = self.deployment_status();
+            if let Some(error) = status.error {
+                if self.runtime.desired().recovery().is_none() {
+                    return Err(Error::Invalid(error));
+                }
+                kind = RootKind::Recovery;
+            } else if status.converging {
+                return Ok(None);
+            }
+        }
+        let mounted = match kind {
+            RootKind::Launch => self.mount_bootstrap(props),
+            RootKind::Recovery => self.mount_selected_root(kind, props),
+        };
+        match mounted {
+            Err(Error::Core(maka_plugin_core::Error::NotReady(_)))
+                if kind == RootKind::Recovery =>
+            {
+                Ok(None)
+            }
+            result => result.map(Some),
+        }
+    }
+
     pub fn mount_launch(&mut self, props: Value) -> Result<Mount> {
-        let mount = self.runtime.mount_launch()?;
+        self.mount_selected_root(maka_plugin_core::composition::RootKind::Launch, props)
+    }
+
+    /// Recovery is an ordinary explicitly selected root, with its own bindings.
+    /// Mounting it never settles work retained by the failed original root.
+    pub fn mount_selected_root(
+        &mut self,
+        kind: maka_plugin_core::composition::RootKind,
+        props: Value,
+    ) -> Result<Mount> {
+        let mount = self.runtime.mount_root(kind)?;
         let mut update = Update::new(self.slice);
         update.created.push(mount.clone());
         let result = (|| {

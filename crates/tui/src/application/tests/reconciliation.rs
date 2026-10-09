@@ -514,3 +514,244 @@ fn actual_guard_restores_original_tty_before_reentering_for_fresh_root() {
         .block_on(Arc::try_unwrap(store).ok().unwrap().close())
         .unwrap();
 }
+
+#[test]
+fn committed_repair_returns_from_recovery_only_after_its_original_surface_closes() {
+    let (runtime, mut input, mut packages) = fixture("throw new Error('primary fault');");
+    support::add_recovery(&mut input, &mut packages);
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(&runtime, dir.path());
+    let deployment = Uuid::new_v4();
+    let original = runtime
+        .block_on(store.commit_application(deployment, 0, input.clone(), vec![], packages.clone()))
+        .unwrap();
+    let mut tui = runtime
+        .block_on(Presenter::start_from_store(
+            store.clone(),
+            original,
+            runtime.handle().clone(),
+            registry(),
+            json!({}),
+            vec![],
+        ))
+        .unwrap();
+    draw(&mut tui, 30, 12);
+    tui.input(key(KeyCode::Enter)).unwrap();
+    assert!(tui.requires_surface_replacement());
+    tui.surface_closed(&tui.surface(), Ok(())).unwrap();
+    assert!(tui.try_replace_surface(json!({})).unwrap());
+    let recovery = tui.surface();
+    draw(&mut tui, 30, 12);
+    tui.input(key(KeyCode::Enter)).unwrap();
+    assert_eq!(tui.application.frame(&recovery).unwrap().state["count"], 1);
+    let index = packages
+        .iter()
+        .position(|p| p.manifest().id == "dynamic.app")
+        .unwrap();
+    let broken = packages.remove(index);
+    let mut files = broken.files().clone();
+    for name in ["index.mjs", "terminal.mjs"] {
+        let source = std::str::from_utf8(&files[name]).unwrap().replace(
+            "throw new Error('primary fault');",
+            "return frame({count:state.count+1,revision:state.revision+1});",
+        );
+        files.insert(name.into(), source.into_bytes());
+    }
+    let fixed = Package::new(files).unwrap();
+    input.instances.get_mut("app").unwrap().package = fixed.application_ref().into();
+    if !packages
+        .iter()
+        .any(|p| p.application_ref() == fixed.application_ref())
+    {
+        packages.push(fixed);
+    }
+    let repaired = runtime
+        .block_on(store.commit_application(deployment, 1, input, vec![], packages))
+        .unwrap();
+    let update = runtime
+        .block_on(tui.load_committed_update(repaired.clone()).unwrap())
+        .unwrap();
+    tui.adopt_update(update, vec![]).unwrap();
+    assert_eq!(tui.surface(), recovery);
+    assert!(
+        !tui.requires_surface_replacement(),
+        "unchanged recovery must survive the input commit"
+    );
+    tui.pump().unwrap();
+    assert_eq!(tui.deployment_status().effective, Some(repaired));
+    assert!(tui.requires_surface_replacement());
+    assert!(tui.try_replace_surface(json!({})).is_err());
+    tui.surface_closed(&recovery, Ok(())).unwrap();
+    assert!(tui.try_replace_surface(json!({})).unwrap());
+    assert_eq!(
+        tui.application.root_kind(&tui.surface()).unwrap(),
+        RootKind::Launch
+    );
+    assert_ne!(tui.surface(), recovery);
+    draw(&mut tui, 30, 12);
+    tui.input(key(KeyCode::Enter)).unwrap();
+    assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 1);
+    tui.surface_closed(&tui.surface(), Ok(())).unwrap();
+    tui.shutdown().unwrap();
+    drop(tui);
+    runtime
+        .block_on(Arc::try_unwrap(store).ok().unwrap().close())
+        .unwrap();
+}
+
+#[test]
+fn failed_committed_launch_replacement_can_mount_ordinary_recovery() {
+    for stage in ["activation", "mount"] {
+        let (runtime, mut input, mut packages) =
+            fixture("return frame({count:state.count+1,revision:state.revision+1});");
+        support::add_recovery(&mut input, &mut packages);
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(&runtime, dir.path());
+        let deployment = Uuid::new_v4();
+        let original = runtime
+            .block_on(store.commit_application(
+                deployment,
+                0,
+                input.clone(),
+                vec![],
+                packages.clone(),
+            ))
+            .unwrap();
+        let mut tui = runtime
+            .block_on(Presenter::start_from_store(
+                store.clone(),
+                original.clone(),
+                runtime.handle().clone(),
+                registry(),
+                json!({}),
+                vec![],
+            ))
+            .unwrap();
+        draw(&mut tui, 30, 12);
+        let old = tui.surface();
+        let index = packages
+            .iter()
+            .position(|p| p.manifest().id == "dynamic.app")
+            .unwrap();
+        let mut files = packages[index].files().clone();
+        let needle = if stage == "activation" {
+            "export function activate(configuration) {"
+        } else {
+            "mount(props){"
+        };
+        for name in ["index.mjs", "terminal.mjs"] {
+            let source = std::str::from_utf8(&files[name]).unwrap();
+            assert!(source.contains(needle));
+            let source = source.replace(
+                needle,
+                &format!("{needle}throw new Error('replacement {stage} fault');"),
+            );
+            files.insert(name.into(), source.into_bytes());
+        }
+        let broken = Package::new(files).unwrap();
+        input.instances.get_mut("app").unwrap().package = broken.application_ref().into();
+        packages.push(broken);
+        let next = runtime
+            .block_on(store.commit_application(deployment, 1, input, vec![], packages))
+            .unwrap();
+        let update = runtime
+            .block_on(tui.load_committed_update(next.clone()).unwrap())
+            .unwrap();
+        tui.adopt_update(update, vec![]).unwrap();
+        assert!(tui.requires_surface_replacement());
+        assert!(tui.try_replace_surface(json!({})).is_err());
+        tui.surface_closed(&old, Ok(())).unwrap();
+        assert!(tui.try_replace_surface(json!({})).unwrap());
+        assert_eq!(
+            tui.application.root_kind(&tui.surface()).unwrap(),
+            RootKind::Recovery
+        );
+        assert_eq!(tui.deployment_status().desired, Some(next.clone()));
+        assert_eq!(
+            tui.deployment_status().effective,
+            Some(if stage == "activation" {
+                original
+            } else {
+                next
+            })
+        );
+        assert!(tui.deployment_status().error.is_some());
+        draw(&mut tui, 30, 12);
+        tui.input(key(KeyCode::Enter)).unwrap();
+        assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 1);
+        tui.surface_closed(&tui.surface(), Ok(())).unwrap();
+        tui.shutdown().unwrap();
+        drop(tui);
+        runtime
+            .block_on(Arc::try_unwrap(store).ok().unwrap().close())
+            .unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "requires an actual interactive PTY; run alone with --nocapture"]
+fn actual_guard_restores_failed_launch_before_entering_ordinary_recovery() {
+    use std::io::IsTerminal;
+    assert!(std::io::stdin().is_terminal() && std::io::stdout().is_terminal());
+    fn flags() -> libc::tcflag_t {
+        let mut value = std::mem::MaybeUninit::<libc::termios>::uninit();
+        assert_eq!(
+            unsafe { libc::tcgetattr(libc::STDIN_FILENO, value.as_mut_ptr()) },
+            0
+        );
+        unsafe { value.assume_init().c_lflag & !libc::PENDIN }
+    }
+    fn paint(tui: &mut Presenter, screen: &mut crate::terminal::Screen) {
+        let mut published = None;
+        crate::terminal::draw(screen, |frame| {
+            published = Some(tui.paint(frame.area(), frame.buffer_mut()).unwrap())
+        })
+        .unwrap();
+        tui.present(published.unwrap());
+        assert!(!tui.scene.is_empty());
+    }
+    let initial = flags();
+    assert_ne!(initial & libc::ICANON, 0);
+    let (runtime, mut input, mut packages) = fixture("throw new Error('primary fault');");
+    support::add_recovery(&mut input, &mut packages);
+    let mut tui = Presenter::new(
+        &input,
+        packages,
+        runtime.handle().clone(),
+        registry(),
+        json!({}),
+    )
+    .unwrap();
+    let mut guard = crate::terminal::Guard::new();
+    let mut screen = guard.setup("actual recovery PTY required").unwrap();
+    assert_eq!(flags() & libc::ICANON, 0);
+    paint(&mut tui, &mut screen);
+    let original = tui.surface();
+    tui.input(key(KeyCode::Enter)).unwrap();
+    assert!(tui.requires_surface_replacement());
+    assert!(tui.try_replace_surface(json!({})).is_err());
+    drop(screen);
+    let receipt = guard.finish().map_err(|e| e.to_string());
+    assert!(receipt.is_ok());
+    assert_eq!(flags(), initial);
+    tui.surface_closed(&original, receipt).unwrap();
+    assert!(tui.try_replace_surface(json!({})).unwrap());
+    assert_eq!(
+        tui.application.root_kind(&tui.surface()).unwrap(),
+        RootKind::Recovery
+    );
+    assert_ne!(tui.surface(), original);
+    let mut screen = guard.setup("actual recovery PTY required").unwrap();
+    assert_eq!(flags() & libc::ICANON, 0);
+    paint(&mut tui, &mut screen);
+    tui.input(key(KeyCode::Enter)).unwrap();
+    paint(&mut tui, &mut screen);
+    assert_eq!(tui.application.frame(&tui.root).unwrap().state["count"], 1);
+    drop(screen);
+    let receipt = guard.finish().map_err(|e| e.to_string());
+    assert!(receipt.is_ok());
+    assert_eq!(flags(), initial);
+    tui.surface_closed(&tui.surface(), receipt).unwrap();
+    tui.shutdown().unwrap();
+}

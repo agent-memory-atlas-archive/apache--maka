@@ -344,6 +344,7 @@ export const terminalPanelContract = component(
   { closed: object({}) },
 );
 export const studioContract = component('maka.studio.Workbench', object({}));
+export const recoveryContract = component('maka.agent.Recovery', object({}));
 export const navigationContract = component(
   'maka.agent.Navigation',
   object({

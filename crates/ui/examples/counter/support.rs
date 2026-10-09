@@ -153,6 +153,7 @@ pub fn fixture(handler: &str) -> (Input, Vec<Package>) {
                 ("surface".into(), node(&provider, 1)),
                 ("app".into(), root),
             ]),
+            recovery: None,
             launch: Some(Target::Instance {
                 path: vec!["app".into()],
                 export: "App".into(),
@@ -858,4 +859,26 @@ pub(crate) fn canvas_fixture() -> (Input, Vec<Package>) {
     input.instances.get_mut("app").unwrap().package = app.application_ref().into();
     packages.push(app);
     (input, packages)
+}
+
+/// Ordinary independent component used by both native bootstrap fixtures.
+#[allow(dead_code)]
+pub fn add_recovery(input: &mut Input, packages: &mut Vec<Package>) {
+    let (source, recovery_packages) =
+        dual_fixture("return frame({count:state.count+1,revision:state.revision+1});");
+    let mut root = source.instances["app"].clone();
+    root.key = Uuid::from_u128(99);
+    input.instances.insert("recovery".into(), root);
+    input.recovery = Some(Target::Instance {
+        path: vec!["recovery".into()],
+        export: "App".into(),
+    });
+    for package in recovery_packages {
+        if !packages
+            .iter()
+            .any(|existing| existing.application_ref() == package.application_ref())
+        {
+            packages.push(package);
+        }
+    }
 }

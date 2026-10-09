@@ -32,6 +32,12 @@ use std::{collections::BTreeMap, sync::Arc};
 /// Available only in a persisted UI application; composition selects instances.
 pub const CALLER_HISTORY: &str = "maka.operations.history";
 
+#[derive(Clone, Copy)]
+enum Scope {
+    Consumer,
+    Deployment,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CallerHistoryPage {
@@ -65,11 +71,13 @@ pub fn caller_history_contract() -> Contract {
 struct History {
     source: DeploymentRef,
     store: Arc<EventLog>,
+    scope: Scope,
 }
 impl NativeService for History {
     fn call(&self, request: ServiceRequest) -> ServiceFuture {
         let source = self.source.clone();
         let store = self.store.clone();
+        let scope = self.scope;
         Box::pin(async move {
             let result = async {
                 if request.method != "page"
@@ -83,15 +91,28 @@ impl NativeService for History {
                 }
                 let page: CallerHistoryPage =
                     serde_json::from_value(request.input).map_err(|error| error.to_string())?;
-                let intents = store
-                    .application_intents(
-                        source.deployment,
-                        request.source.consumer().instance().clone(),
-                        page.after,
-                        page.limit,
-                    )
-                    .await
-                    .map_err(|error| error.to_string())?;
+                let intents = match scope {
+                    Scope::Consumer => {
+                        store
+                            .application_intents(
+                                source.deployment,
+                                request.source.consumer().instance().clone(),
+                                page.after,
+                                page.limit,
+                            )
+                            .await
+                    }
+                    Scope::Deployment => {
+                        store
+                            .application_deployment_intents(
+                                source.deployment,
+                                page.after,
+                                page.limit,
+                            )
+                            .await
+                    }
+                }
+                .map_err(|error| error.to_string())?;
                 let value = serde_json::to_value(intents).map_err(|error| error.to_string())?;
                 maka_js_runtime::plugin::check_json_delivery(&value, 1024 * 1024)
                     .map_err(|error| error.to_string())?;
@@ -121,15 +142,25 @@ pub(crate) fn provide<V: ?Sized + 'static>(
     native.register(CALLER_HISTORY, move |configuration: &Value, _values| {
         serde_json::from_value::<Configuration>(configuration.clone())
             .map_err(|error| crate::Error::Invalid(error.to_string()))?;
-        Ok(BTreeMap::from([(
-            "History".into(),
-            NativeExport {
-                contract: caller_history_contract(),
-                value: NativeCapability::Service(Arc::new(History {
-                    source: source.clone(),
-                    store: store.clone(),
-                })),
-            },
-        )]))
+        // Scope is selected by the explicit export binding, never call input.
+        Ok([
+            ("History", Scope::Consumer),
+            ("DeploymentHistory", Scope::Deployment),
+        ]
+        .into_iter()
+        .map(|(name, scope)| {
+            (
+                name.into(),
+                NativeExport {
+                    contract: caller_history_contract(),
+                    value: NativeCapability::Service(Arc::new(History {
+                        source: source.clone(),
+                        store: store.clone(),
+                        scope,
+                    })),
+                },
+            )
+        })
+        .collect())
     })
 }

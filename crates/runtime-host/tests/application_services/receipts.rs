@@ -93,6 +93,7 @@ fn reader_source(configuration: Value) -> (Input, Vec<Package>) {
                 ("forwarder".into(), forwarder),
                 ("observer".into(), observer_node),
             ]),
+            recovery: None,
             launch: None,
         },
         vec![reader, forwarding, observer],

@@ -226,13 +226,18 @@ async fn recovery_source(
                     },
                     configuration: json!({"type":"object","additionalProperties":false}),
                     imports: BTreeMap::new(),
-                    exports: BTreeMap::from([(
-                        "History".into(),
-                        Export {
-                            contract: caller_history_contract(),
-                            availability: Availability::Required,
-                        },
-                    )]),
+                    exports: ["History", "DeploymentHistory"]
+                        .into_iter()
+                        .map(|name| {
+                            (
+                                name.into(),
+                                Export {
+                                    contract: caller_history_contract(),
+                                    availability: Availability::Required,
+                                },
+                            )
+                        })
+                        .collect(),
                 },
             )]),
             composition: None,

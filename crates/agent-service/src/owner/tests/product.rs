@@ -462,6 +462,7 @@ fn packaged_product(case: ProductCase) {
     let directory = repository.join("packages/agent-product/dist/packages");
     let names = [
         "workspace",
+        "recovery",
         "command-palette",
         "directory-picker",
         "session-details",

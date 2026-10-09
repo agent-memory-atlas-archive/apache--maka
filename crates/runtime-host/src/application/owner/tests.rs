@@ -151,6 +151,7 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
                 presentation: None,
             },
             instances: nodes,
+            recovery: None,
             launch: None,
         };
         let plan = Plan::prepare(&input, &packages, &RemoteExports::new()).unwrap();
@@ -416,6 +417,7 @@ async fn retained_old_head_after_new_explicit_adoption_does_not_poison_readiness
             presentation: None,
         },
         instances: BTreeMap::new(),
+        recovery: None,
         launch: None,
     };
     let id = Uuid::new_v4();

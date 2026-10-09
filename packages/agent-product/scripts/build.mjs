@@ -71,6 +71,20 @@ const native = (implementation, exports, configuration = empty) => ({
   exports,
 });
 const specifications = {
+  recovery: {
+    contract: own.recoveryContract,
+    export: 'Recovery',
+    module: 'recovery',
+    imports: {
+      deployment: one(own.deploymentContract),
+      history: one(sdk.contracts.callerHistory),
+      receipts: one(sdk.contracts.receiptReader),
+      managementReceipts: one(sdk.contracts.receiptReader),
+      reading: one(sdk.contracts.readingArea),
+      appearance: one(own.themeContract),
+    },
+    configuration: own.object({ locale: own.locale }),
+  },
   studio: {
     id: 'maka.studio.workbench',
     contract: own.studioContract,
@@ -310,8 +324,8 @@ for (const [name, spec] of Object.entries(specifications)) {
       contents = `export {activate} from '${resolve(root, 'src/theme.ts')}';`;
     else if (name === 'workspace')
       contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace(presentations.${target},configuration.locale,configuration.terminals === true);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
-    else if (name === 'studio')
-      contents = `import {studio,activate as exports} from '${resolve(root, 'src/studio.ts')}';export let component;export function activate(configuration){component=studio(presentations.${target},configuration.locale);return exports();}`;
+    else if (name === 'studio' || name === 'recovery')
+      contents = `import {${name},activate as exports} from '${resolve(root, 'src/' + name + '.ts')}';export let component;export function activate(configuration){component=${name}(presentations.${target},configuration.locale);return exports();}`;
     else if (name === 'connection-form')
       contents = `import {connectionForm,activate} from '${resolve(root, 'src/connection-form.ts')}';import * as validation from '${validationPath}';export const component=connectionForm(presentations.${target},validation);export {activate};`;
     else if (spec.module === 'components')
@@ -352,7 +366,7 @@ for (const [name, spec] of Object.entries(specifications)) {
     for (const target of ['desktop', 'tui'])
       entries[target].imports.reading = one(sdk.contracts.readingArea);
   // A surface is an explicit capability in the root's checked plan.
-  if (name === 'workspace' || name === 'studio')
+  if (name === 'workspace' || name === 'studio' || name === 'recovery')
     for (const target of ['desktop', 'tui'])
       entries[target].imports.surface = one(
         target === 'desktop' ? sdk.contracts.desktopSurface : sdk.contracts.terminalSurface,
@@ -465,7 +479,10 @@ const mechanical = {
     entries: Object.fromEntries(
       ['desktop', 'tui'].map((target) => [
         target,
-        native('maka.operations.history', { History: required(sdk.contracts.callerHistory) }),
+        native('maka.operations.history', {
+          History: required(sdk.contracts.callerHistory),
+          DeploymentHistory: required(sdk.contracts.callerHistory),
+        }),
       ]),
     ),
   },
