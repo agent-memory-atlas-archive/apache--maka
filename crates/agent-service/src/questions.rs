@@ -19,7 +19,6 @@
 
 //! Explicitly bound question producer. Canonical records belong to the Run;
 //! the original admitted Host call owns waiting and durable withdrawal.
-use crate::interaction_wait::{wait, withdraw};
 use futures_util::future::BoxFuture;
 use maka_event_log::EventLog;
 use maka_plugin_core::contract::{Contract, Interface, Method, MethodMode, Transport};
@@ -170,47 +169,12 @@ impl Handler for Questions {
                 request,
                 outcome: None,
             };
-            let mut ticket = context
-                .scope()
-                .resources
-                .reserve()
-                .map_err(|error| error.to_string())?;
-            ticket.start();
-            let result = async {
-                let committed = store
-                    .establish_run_interaction(&invocation, &record)
-                    .await
-                    .map_err(|_| "question_publication_unavailable")?;
-                if !committed.matches {
-                    return Err("question_identity_conflict");
-                }
-                wait(&store, &record.request_id, &context.scope().cancellation).await
-            }
-            .await;
-            // On every failure, reconcile the exact original request before
-            // acknowledging cleanup. A failed SQL read/closure fails its original
-            // resource ticket, including a possibly committed publication.
-            let result = match result {
-                Ok(outcome) => {
-                    ticket.complete(Ok(()));
-                    outcome
-                }
-                Err(error) => match withdraw(&store, &record).await {
-                    Ok(Some(outcome)) => {
-                        ticket.complete(Ok(()));
-                        outcome
-                    }
-                    Ok(None) => {
-                        ticket.complete(Ok(()));
-                        return encode(Answer::Rejected {
-                            reason: Rejection::Unavailable,
-                        });
-                    }
-                    Err(cleanup) => {
-                        ticket.complete(Err(cleanup.into()));
-                        return Err(error.into());
-                    }
-                },
+            let Some(result) =
+                crate::interaction_wait::publish(&store, &context, &invocation, &record).await?
+            else {
+                return encode(Answer::Rejected {
+                    reason: Rejection::Unavailable,
+                });
             };
             let answer = match result {
                 InteractionOutcome::QuestionAnswer { answers, .. } => Answer::Answered {

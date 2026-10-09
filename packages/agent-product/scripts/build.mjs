@@ -128,6 +128,7 @@ const specifications = {
       details: one(own.sessionDetailsContract),
       terminals: one(own.terminalPanelContract),
       queueEditor: one(own.queueEditorContract),
+      formEditor: one(own.formEditorContract),
       questionEditor: one(own.questionEditorContract),
       serviceApproval: one(own.serviceApprovalContract),
       permissionApproval: one(own.permissionApprovalContract),
@@ -230,6 +231,12 @@ specifications['queue-editor'] = {
   export: 'QueueEditor',
   module: 'queue-editor',
   imports: { editor: one(sdk.contracts.textarea) },
+};
+specifications['form-editor'] = {
+  contract: own.formEditorContract,
+  export: 'FormEditor',
+  module: 'form-editor',
+  imports: { editor: one(sdk.contracts.textarea), reader: one(sdk.contracts.textReader) },
 };
 specifications['question-editor'] = {
   contract: own.questionEditorContract,
@@ -541,6 +548,7 @@ const mechanical = {
           sdk.configurations.agent,
         ),
         imports: {
+          forms: { contract: sdk.contracts.forms, cardinality: { kind: 'optional' } },
           questions: { contract: sdk.contracts.questions, cardinality: { kind: 'optional' } },
           files: { contract: sdk.contracts.workspaceFiles, cardinality: { kind: 'optional' } },
           processes: {
@@ -567,6 +575,9 @@ const mechanical = {
     entries: {
       host: native('maka.workspace.files', { files: required(sdk.contracts.workspaceFiles) }),
     },
+  },
+  forms: {
+    entries: { host: native('maka.interactions.forms', { forms: required(sdk.contracts.forms) }) },
   },
   questions: {
     entries: {

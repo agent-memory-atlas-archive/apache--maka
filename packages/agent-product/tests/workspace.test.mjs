@@ -765,6 +765,15 @@ test('both product compositions use actual immutable package refs and check in t
           hostDeployment: uuid(80),
           managementDeployment: uuid(81),
         };
+        if (questionsEnabled)
+          configuration.agent.tools.push({
+            name: 'AskUserForm',
+            result: 'json',
+            confirmation: 'preapproved',
+            description: 'Collect typed input.',
+            import: 'forms',
+            method: 'ask',
+          });
         if (filesEnabled) {
           configuration.processes = {
             filesystem: { default: 'read', rules: [], denyGlobs: [] },
@@ -833,12 +842,24 @@ test('both product compositions use actual immutable package refs and check in t
         ]);
         assert.equal('agent' in business.imports, productName === 'agent');
         assert.equal('questions' in host.instances, questionsEnabled);
+        assert.equal('forms' in host.instances, questionsEnabled);
         if (questionsEnabled) {
           assert.equal(host.instances.questions.key, keys.questions);
+          assert.deepEqual(host.instances.agent.bindings.forms, [
+            { kind: 'instance', path: ['forms'], export: 'forms' },
+          ]);
           assert.deepEqual(host.instances.agent.bindings.questions, [
             { kind: 'instance', path: ['questions'], export: 'questions' },
           ]);
           assert.deepEqual(business.native, [
+            {
+              origin: [keys.agent],
+              consumer: [keys.agent],
+              provider: [keys.forms],
+              export: 'forms',
+              methods: ['ask'],
+              recovery: true,
+            },
             {
               origin: [keys.agent],
               consumer: [keys.agent],
@@ -8627,18 +8648,73 @@ for (const target of ['tui', 'desktop']) {
     assert.deepEqual(client.state.watch, watch);
     assert.equal(client.state.epoch, epoch);
     client.raw(
-      (record.request.kind === 'question' ? 'question-open-' : 'approval-open-') + record.requestId,
+      (['question', 'form'].includes(record.request.kind) ? 'question-open-' : 'approval-open-') +
+        record.requestId,
     );
     client.query('interaction', structuredClone(record));
     client.interaction = (name, event = {}) =>
       client.input({
         kind: 'component',
-        child: `${record.request.kind === 'question' ? 'question-form' : record.request.kind === 'permissions' ? 'permission-approval' : 'service-approval'}-${client.state.interaction.attempt}`,
+        child: `${['question', 'form'].includes(record.request.kind) ? 'question-form' : record.request.kind === 'permissions' ? 'permission-approval' : 'service-approval'}-${client.state.interaction.attempt}`,
         name,
         event,
       });
     return client;
   }
+  test(`${target} form response keeps the original receipt and canonical winner`, async () => {
+    const record = {
+      ...questionRecord,
+      requestId: 'form-original',
+      request: {
+        kind: 'form',
+        toolUseId: 'form-call',
+        message: 'Delivery',
+        requester: { name: 'Agent' },
+        fields: [],
+      },
+    };
+    const client = await interactionClient(record);
+    assert.ok(modelSlots(client.output.frame.view).some((n) => n.binding === 'formEditor'));
+    const event = {
+      requestId: record.requestId,
+      answer: { kind: 'form', action: 'accept', values: {} },
+    };
+    client.interaction('submit', { ...event, requestId: 'successor' });
+    assert.equal(client.output.actions.length, 0);
+    client.interaction('submit', event);
+    const response = client.find('respond');
+    assert.deepEqual(response.input, { sessionId: 'session', ...event });
+    const original = { ...reference, method: 'respond' };
+    client.complete(response, {
+      status: 'operation',
+      reply: { reference: original, receipt: { kind: 'unavailable', diagnostic: 'disconnect' } },
+    });
+    client.interaction('closed');
+    client.raw('interaction-open');
+    assert.equal(client.state.dialog, 'question');
+    client.interaction('submit', event);
+    assert.equal(client.output.actions.length, 0);
+    client.interaction('check');
+    assert.ok(client.output.actions.every((a) => a.method !== 'respond'));
+    assert.deepEqual(client.find('read').input, original);
+    const resolved = {
+      ...record,
+      outcome: { kind: 'form_answer', action: 'decline', committedAt: 5 },
+    };
+    client.query('interaction', resolved);
+    assert.ok(client.state.uncertain);
+    client.query('read', {
+      reference: original,
+      receipt: {
+        kind: 'recorded',
+        outcome: { kind: 'returned', value: { kind: 'recorded', record: resolved } },
+        cleanup: { kind: 'confirmed' },
+      },
+    });
+    assert.equal(client.state.uncertain, null);
+    assert.deepEqual(client.state.interaction.record, resolved);
+    assert.equal(client.state.command, null);
+  });
   test(`${target} review entry follows pending requests and respects the current route`, async () => {
     const client = await interactionClient();
     client.interaction('closed');
@@ -8659,7 +8735,11 @@ for (const target of ['tui', 'desktop']) {
           pending: {
             revision: 4,
             entries: [
-              { requestId: 'unsupported', kind: 'form', toolUseId: 'unsupported-tool' },
+              {
+                requestId: 'unsupported',
+                kind: 'client_capability',
+                toolUseId: 'unsupported-tool',
+              },
               {
                 requestId: approvalRecord.requestId,
                 kind: 'service_approval',
@@ -11260,3 +11340,238 @@ test('conversation find unfolds the owning structured card for an exact nested n
     find_sequence: sequence,
   });
 });
+
+for (const target of ['tui', 'desktop']) {
+  async function formClient(fields) {
+    const { component } = await import(
+      pathToFileURL(resolve(root, `dist/packages/form-editor/${target}.js`))
+    );
+    const client = {
+      props: {
+        theme: values.appearance[0],
+        locale: 'en',
+        open: true,
+        busy: false,
+        checking: false,
+        status: '',
+        record: {
+          ...questionRecord,
+          requestId: 'form',
+          request: {
+            kind: 'form',
+            toolUseId: 'call',
+            requester: { name: 'Agent' },
+            message: 'Delivery',
+            fields,
+          },
+        },
+      },
+      component,
+    };
+    client.output = component.mount(client.props, {});
+    client.input = (input) => {
+      client.output = component.event(
+        structuredClone(client.output.frame.state),
+        input,
+        client.props,
+        {},
+      );
+    };
+    client.raw = (key) => client.input({ kind: 'raw', key, event: {} });
+    client.update = (props) => {
+      client.props = { ...client.props, ...props };
+      client.output = component.update(
+        structuredClone(client.output.frame.state),
+        client.props,
+        {},
+      );
+    };
+    client.text = (index, text, marked = false) => {
+      const observation = structuredClone(draft);
+      observation.snapshot.text = {
+        ...observation.snapshot.text,
+        owner: `field-${index}`,
+        bytes: Buffer.byteLength(text),
+      };
+      observation.snapshot.marked = marked ? { start: 0, end: 1 } : null;
+      client.input({
+        kind: 'component',
+        child: `field-${index}`,
+        name: 'changed',
+        event: observation,
+      });
+      return observation;
+    };
+    client.read = (action, text, metadata) =>
+      client.input({
+        kind: 'action',
+        key: action.key,
+        event: {
+          status: 'succeeded',
+          value: {
+            text,
+            metadata:
+              metadata ?? client.output.frame.state.pending[action.key].captured.snapshot.text,
+          },
+        },
+      });
+    return client;
+  }
+  test(`${target} typed form captures exact native text and preserves optional omission and defaults`, async () => {
+    const fields = [
+      {
+        name: 'note',
+        label: 'Note',
+        required: true,
+        kind: 'string',
+        minLength: 1,
+        maxLength: 32,
+        default: 'initial',
+      },
+      { name: 'copies', label: 'Copies', required: true, kind: 'integer', minimum: 1, maximum: 3 },
+      { name: 'number', label: 'Number', required: true, kind: 'number', minimum: 0, maximum: 2 },
+      { name: 'confirmed', label: 'Confirmed', required: true, kind: 'boolean' },
+      {
+        name: 'format',
+        label: 'Format',
+        required: true,
+        kind: 'single_select',
+        default: 'brief',
+        options: [{ value: 'brief', label: 'Brief' }],
+      },
+      {
+        name: 'extras',
+        label: 'Extras',
+        required: true,
+        kind: 'multi_select',
+        minItems: 1,
+        maxItems: 2,
+        options: [
+          { value: 'a', label: 'A' },
+          { value: 'b', label: 'B' },
+        ],
+      },
+      { name: 'optional', label: 'Optional', required: false, kind: 'string' },
+      { name: '__proto__', label: 'Literal key', required: false, kind: 'string' },
+    ];
+    const client = await formClient(fields);
+    const slots = () => modelSlots(client.output.frame.view).filter((n) => n.binding === 'editor');
+    assert.equal(slots()[0].props.initialText, 'initial');
+    client.raw('submit');
+    assert.equal(client.output.actions.length, 0);
+    client.text(0, '送达😀');
+    client.text(1, '2');
+    client.text(2, '1.5');
+    client.text(7, 'literal');
+    client.raw('boolean-3-false');
+    client.raw('option-5-0');
+    client.raw('option-5-1');
+    client.raw('include-7');
+    const identities = slots().map((n) => n.key);
+    client.update({ open: false });
+    client.update({ open: true });
+    assert.deepEqual(
+      slots().map((n) => n.key),
+      identities,
+    );
+    client.raw('submit');
+    const actions = client.output.actions;
+    assert.equal(actions.length, 1);
+    assert.deepEqual(actions[0].resources.text.input, {
+      kind: 'at_revision',
+      owner: 'field-0',
+      revision: draft.snapshot.text.revision,
+    });
+    for (const text of ['送达😀', '2', '1.5', 'literal'])
+      client.read(client.output.actions[0], text);
+    assert.deepEqual(client.output.events, [
+      {
+        name: 'submit',
+        value: {
+          requestId: 'form',
+          answer: {
+            kind: 'form',
+            action: 'accept',
+            values: JSON.parse(
+              '{"note":"送达😀","copies":2,"number":1.5,"confirmed":false,"format":"brief","extras":["a","b"],"__proto__":"literal"}',
+            ),
+          },
+        },
+      },
+    ]);
+  });
+  test(`${target} form with 32 text fields stays within the native action budget`, async () => {
+    const client = await formClient(
+      Array.from({ length: 32 }, (_, index) => ({
+        name: `f${index}`,
+        label: `Field ${index}`,
+        required: true,
+        kind: 'string',
+        maxLength: 1,
+      })),
+    );
+    for (let index = 0; index < 32; index++) client.text(index, 'x');
+    client.raw('submit');
+    for (let index = 0; index < 32; index++) {
+      assert.equal(client.output.actions.length, 1);
+      assert.equal(client.output.actions[0].resources.text.child, `field-${index}`);
+      client.read(client.output.actions[0], 'x');
+    }
+    assert.equal(client.output.actions.length, 0);
+    assert.equal(Object.keys(client.output.events[0].value.answer.values).length, 32);
+  });
+  test(`${target} form rejects stale native captures and stops late submission on close or canonical completion`, async () => {
+    const client = await formClient([
+      { name: 'note', label: 'Note', required: true, kind: 'string', maxLength: 32 },
+    ]);
+    client.text(0, 'Hello', true);
+    client.raw('submit');
+    assert.equal(client.output.actions.length, 0);
+    client.text(0, 'Hello');
+    client.raw('submit');
+    const stale = client.output.actions[0];
+    client.read(stale, 'Hello', { ...draft.snapshot.text, owner: 'wrong' });
+    assert.equal(client.output.frame.state.notice, 'formReadFailed');
+    assert.deepEqual(client.output.events, []);
+    client.raw('submit');
+    const closed = client.output.actions[0];
+    client.raw('close');
+    client.update({ open: false });
+    client.read(closed, 'Hello', draft.snapshot.text);
+    assert.deepEqual(client.output.events, []);
+    client.update({ open: true });
+    client.raw('submit');
+    const completed = client.output.actions[0];
+    client.update({
+      record: {
+        ...client.props.record,
+        outcome: { kind: 'form_answer', action: 'decline', committedAt: 1 },
+      },
+    });
+    client.read(completed, 'Hello', draft.snapshot.text);
+    client.raw('cancel');
+    assert.deepEqual(client.output.events, []);
+  });
+  test(`${target} form distinguishes decline and cancel and validates integers without coercion`, async () => {
+    const client = await formClient([
+      { name: 'count', label: 'Count', required: true, kind: 'integer', minimum: 1, maximum: 3 },
+    ]);
+    for (const invalid of ['', 'true', '0x2', '1.5', '4']) {
+      client.text(0, invalid);
+      client.raw('submit');
+      client.read(client.output.actions[0], invalid);
+      assert.equal(client.output.frame.state.notice, 'formInvalid');
+      assert.deepEqual(client.output.events, []);
+    }
+    for (const action of ['decline', 'cancel']) {
+      client.raw(action);
+      assert.deepEqual(client.output.events, [
+        { name: 'submit', value: { requestId: 'form', answer: { kind: 'form', action } } },
+      ]);
+      assert.deepEqual(client.output.actions, []);
+    }
+    client.update({ busy: true });
+    client.raw('decline');
+    assert.deepEqual(client.output.events, []);
+  });
+}

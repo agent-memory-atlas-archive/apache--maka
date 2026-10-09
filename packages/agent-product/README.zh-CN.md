@@ -103,7 +103,10 @@ owner/revision 对应的不可变字节，以观察到的来源版本交给 Host
 
 普通 `help` 插件提供两端的键盘帮助。F1 在当前页面上打开帮助，Esc 或关闭按钮返回原页面和原生草稿；命令面板也提供帮助入口。它只导入 ReadingArea，主题和翻译由产品维护。正文独立滚动，页脚在窄终端中仍可关闭。
 
-可选 Questions 服务沿用原有 canonical 交互记录。要启用模型提问，在 `agent.tools` 中加入 `{ "result": "json", "confirmation": "preapproved", "name": "AskUserQuestion", "description": "询问继续任务所需的 1–3 个有界问题。", "import": "questions", "method": "ask" }`。组合生成器显式选择原生提供者及其调用授权；`tools: []` 仍为纯文字组合。待回答问题显示在会话中，普通 QuestionEditor 支持选项、原生文字草稿和逐题跳过，提交复用 Workspace 的原操作回执与历史恢复。关闭弹窗保留草稿。权限、表单与客户端能力授权流程仍待单独接入。
+可选 Questions 服务沿用原有 canonical 交互记录。要启用模型提问，在 `agent.tools` 中加入 `{ "result": "json", "confirmation": "preapproved", "name": "AskUserQuestion", "description": "询问继续任务所需的 1–3 个有界问题。", "import": "questions", "method": "ask" }`。组合生成器显式选择原生提供者及其调用授权；`tools: []` 仍为纯文字组合。待回答问题显示在会话中，普通 QuestionEditor 支持选项、原生文字草稿和逐题跳过，提交复用 Workspace 的原操作回执与历史恢复。关闭弹窗保留草稿。权限审批已接入；客户端能力授权仍待接入。
+
+类型化表单使用可选 `forms` 导入、`ask` 方法及 `result: "json"`（工具可命名为 `AskUserForm`）。只有显式选择的工具才安装原生 Forms 提供者并获得调用授权。Host 提供请求方身份并校验字段、类型、格式和字节上限。两端支持文字、数字、整数、布尔、单选、多选、可选字段及默认值；关闭保留原生草稿，提交、拒绝填写与取消分别记录原规范回答。未知结果须检查原响应回执后才能再次响应。旧外部表单生产端及客户端能力授权仍需接入。
+
 
 每个已选工具须显式声明 `confirmation: "required"` 或 `"preapproved"`。需要确认时，界面展示原绑定服务，并复用分页源码查看器读取完整原参数。默认选择拒绝；允许仅放行本次调用，仍须通过原服务授权与存活绑定检查。关闭弹窗保留待处理请求，停止会关闭请求且不调用服务；未知响应沿原操作回执恢复。这不替代文件／进程的沙箱权限策略。
 

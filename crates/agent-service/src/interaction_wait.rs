@@ -81,3 +81,49 @@ pub(crate) async fn withdraw(
     };
     Ok(record.outcome)
 }
+
+/// The admitted call retains custody until publication or withdrawal is reconciled.
+pub(crate) async fn publish(
+    store: &EventLog,
+    context: &maka_runtime_host::application::Context,
+    invocation: &maka_runtime::event::Invocation,
+    record: &InteractionRecord,
+) -> Result<Option<InteractionOutcome>, String> {
+    let mut ticket = context
+        .scope()
+        .resources
+        .reserve()
+        .map_err(|e| e.to_string())?;
+    ticket.start();
+    let result = async {
+        let committed = store
+            .establish_run_interaction(invocation, record)
+            .await
+            .map_err(|_| "interaction_publication_unavailable")?;
+        if !committed.matches {
+            return Err("interaction_identity_conflict");
+        }
+        wait(store, &record.request_id, &context.scope().cancellation).await
+    }
+    .await;
+    match result {
+        Ok(outcome) => {
+            ticket.complete(Ok(()));
+            Ok(Some(outcome))
+        }
+        Err(error) => match withdraw(store, record).await {
+            Ok(Some(outcome)) => {
+                ticket.complete(Ok(()));
+                Ok(Some(outcome))
+            }
+            Ok(None) => {
+                ticket.complete(Ok(()));
+                Ok(None)
+            }
+            Err(cleanup) => {
+                ticket.complete(Err(cleanup.into()));
+                Err(error.into())
+            }
+        },
+    }
+}

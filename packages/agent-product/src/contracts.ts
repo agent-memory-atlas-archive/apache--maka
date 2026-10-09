@@ -222,6 +222,7 @@ export interface ComposerProps {
 const editor = native.textarea.interface;
 const session = native.agent.interface.methods.list.output;
 const defs = {
+  ...native.agent.interface.methods.respond.input.$defs,
   ...native.agent.interface.methods.directories.output.$defs,
   ...editor.props.$defs,
   ...editor.events.changed.$defs,
@@ -557,6 +558,23 @@ export const questionEditorContract = component(
         }),
       ),
     },
+  },
+);
+export const formEditorContract = component(
+  'maka.agent.FormEditor',
+  object({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    busy: { type: 'boolean' },
+    checking: { type: 'boolean' },
+    status: string,
+    record: { $ref: '#/$defs/InteractionRecord' },
+  }),
+  {
+    closed: object({}),
+    check: object({}),
+    submit: withDefs(object({ requestId: string, answer: { $ref: '#/$defs/InteractionAnswer' } })),
   },
 );
 export const serviceApprovalContract = component(

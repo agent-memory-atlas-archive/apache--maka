@@ -133,6 +133,8 @@ pub(super) fn catalog() -> Value {
         root::<maka_agent_service::contract::InteractionRespond>(&mut g),
         root::<maka_agent_service::contract::InteractionResult>(&mut g),
         root::<maka_agent_service::questions::Ask>(&mut g),
+        root::<maka_agent_service::forms::Ask>(&mut g),
+        root::<maka_agent_service::forms::Answer>(&mut g),
         root::<maka_agent_service::processes::Configuration>(&mut g),
         root::<maka_agent_service::processes::terminal::List>(&mut g),
         root::<maka_agent_service::processes::terminal::Target>(&mut g),
@@ -235,6 +237,7 @@ pub(super) fn catalog() -> Value {
             // Bundled availability is data, never an activated service or grant.
             "agent": maka_agent_service::contract(),
             "questions": maka_agent_service::questions::contract(),
+            "forms": maka_agent_service::forms::contract(),
             "workspaceFiles": maka_agent_service::files::contract(),
             "workspaceProcesses": maka_agent_service::processes::contract(),
             "terminal": maka_agent_service::processes::terminal::contract(),

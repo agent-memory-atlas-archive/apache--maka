@@ -35,6 +35,8 @@ export const packageNames = [
   'session-details',
   'queue-editor',
   'question-editor',
+  'form-editor',
+  'forms',
   'service-approval',
   'permission-approval',
   'questions',
@@ -328,6 +330,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
   const { keys } = configuration;
   const { host, managementHost, ui, remoteExports, connections, local, remote, node } =
     settingsComposition(configuration, 'gateway');
+  const asksForms = configuration.agent.tools.some((tool) => tool.import === 'forms');
   const asksQuestions = configuration.agent.tools.some((tool) => tool.import === 'questions');
   const fileMethods = [
     ...new Set(
@@ -362,11 +365,13 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       ),
     },
     {
+      ...(asksForms ? { forms: [local('forms', 'forms')] } : {}),
       ...(asksQuestions ? { questions: [local('questions', 'questions')] } : {}),
       ...(fileMethods.length ? { files: [local('workspace-files', 'files')] } : {}),
       ...(processMethods.length ? { processes: [local('workspace-processes', 'processes')] } : {}),
     },
   );
+  if (asksForms) host.instances.forms = node('forms');
   if (asksQuestions) host.instances.questions = node('questions');
   if (fileMethods.length) host.instances['workspace-files'] = node('workspace-files');
   if (configuration.processes)
@@ -393,6 +398,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         details: [local('session-details', 'SessionDetails')],
         terminals: [local('terminal-panel', 'TerminalPanel')],
         queueEditor: [local('queue-editor', 'QueueEditor')],
+        formEditor: [local('form-editor', 'FormEditor')],
         questionEditor: [local('question-editor', 'QuestionEditor')],
         serviceApproval: [local('service-approval', 'ServiceApproval')],
         permissionApproval: [local('permission-approval', 'PermissionApproval')],
@@ -458,6 +464,11 @@ export function composition(configuration: CompositionConfiguration): Applicatio
     ),
     help: node('help', {}, { reading: [local('reading-area', 'ReadingArea')] }),
     'queue-editor': node('queue-editor', {}, { editor: [local('editor', 'Textarea')] }),
+    'form-editor': node(
+      'form-editor',
+      {},
+      { editor: [local('editor', 'Textarea')], reader: [local('reader', 'Reader')] },
+    ),
     'question-editor': node('question-editor', {}, { editor: [local('editor', 'Textarea')] }),
     'permission-approval': node(
       'permission-approval',
@@ -541,9 +552,21 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       terminal: { methods: Object.keys(contracts.terminal.interface.methods), recovery: true },
     });
   }
-  if (asksQuestions || fileMethods.length || processMethods.length)
+  if (asksForms || asksQuestions || fileMethods.length || processMethods.length)
     Object.assign(connections.hosts.find((host) => host.name === 'local')!, {
       native: [
+        ...(asksForms
+          ? [
+              {
+                origin: [keys.agent],
+                consumer: [keys.agent],
+                provider: [keys.forms],
+                export: 'forms',
+                methods: ['ask'],
+                recovery: true,
+              },
+            ]
+          : []),
         ...(asksQuestions
           ? [
               {

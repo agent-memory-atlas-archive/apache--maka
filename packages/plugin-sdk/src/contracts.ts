@@ -10024,6 +10024,346 @@ export const contracts = {
       },
     },
   },
+  forms: {
+    name: 'maka.interactions.Forms',
+    version: 1,
+    transport: 'remote',
+    interface: {
+      kind: 'service',
+      methods: {
+        ask: {
+          mode: 'mutation',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              message: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 2048,
+              },
+              fields: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/FormField',
+                },
+                maxItems: 32,
+              },
+            },
+            required: ['message', 'fields'],
+            title: 'FormAsk',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              FormField: {
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  label: {
+                    type: 'string',
+                  },
+                  required: {
+                    type: 'boolean',
+                  },
+                  description: {
+                    type: ['string', 'null'],
+                  },
+                },
+                required: ['name', 'label', 'required'],
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      default: {
+                        type: ['string', 'null'],
+                      },
+                      minLength: {
+                        type: ['integer', 'null'],
+                        format: 'uint',
+                        minimum: 0,
+                      },
+                      maxLength: {
+                        type: ['integer', 'null'],
+                        format: 'uint',
+                        minimum: 0,
+                      },
+                      format: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/FormFormat',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'string',
+                      },
+                    },
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      default: {
+                        type: ['number', 'null'],
+                        format: 'double',
+                      },
+                      minimum: {
+                        type: ['number', 'null'],
+                        format: 'double',
+                      },
+                      maximum: {
+                        type: ['number', 'null'],
+                        format: 'double',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'number',
+                      },
+                    },
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      default: {
+                        type: ['number', 'null'],
+                        format: 'double',
+                      },
+                      minimum: {
+                        type: ['number', 'null'],
+                        format: 'double',
+                      },
+                      maximum: {
+                        type: ['number', 'null'],
+                        format: 'double',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'integer',
+                      },
+                    },
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      default: {
+                        type: ['boolean', 'null'],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'boolean',
+                      },
+                    },
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      options: {
+                        type: 'array',
+                        items: {
+                          $ref: '#/$defs/FormOption',
+                        },
+                      },
+                      default: {
+                        type: ['string', 'null'],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'single_select',
+                      },
+                    },
+                    required: ['kind', 'options'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      options: {
+                        type: 'array',
+                        items: {
+                          $ref: '#/$defs/FormOption',
+                        },
+                      },
+                      default: {
+                        type: ['array', 'null'],
+                        items: {
+                          type: 'string',
+                        },
+                      },
+                      minItems: {
+                        type: ['integer', 'null'],
+                        format: 'uint',
+                        minimum: 0,
+                      },
+                      maxItems: {
+                        type: ['integer', 'null'],
+                        format: 'uint',
+                        minimum: 0,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'multi_select',
+                      },
+                    },
+                    required: ['kind', 'options'],
+                  },
+                ],
+              },
+              FormFormat: {
+                type: 'string',
+                enum: ['email', 'uri', 'date', 'date-time'],
+              },
+              FormOption: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: {
+                    type: 'string',
+                  },
+                  label: {
+                    type: 'string',
+                  },
+                },
+                required: ['value', 'label'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  result: {
+                    $ref: '#/$defs/FormResult',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'answered',
+                  },
+                },
+                required: ['kind', 'result'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/ClosureReason',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'closed',
+                  },
+                },
+                required: ['kind', 'reason'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/QuestionRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                required: ['kind', 'reason'],
+              },
+            ],
+            title: 'FormResponse',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              FormResult: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      values: {
+                        type: 'object',
+                        additionalProperties: {
+                          $ref: '#/$defs/FormValue',
+                        },
+                      },
+                      action: {
+                        type: 'string',
+                        const: 'accept',
+                      },
+                    },
+                    required: ['action', 'values'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      action: {
+                        type: 'string',
+                        const: 'decline',
+                      },
+                    },
+                    required: ['action'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      action: {
+                        type: 'string',
+                        const: 'cancel',
+                      },
+                    },
+                    required: ['action'],
+                  },
+                ],
+              },
+              FormValue: {
+                anyOf: [
+                  {
+                    type: 'string',
+                  },
+                  {
+                    type: 'number',
+                    format: 'double',
+                  },
+                  {
+                    type: 'boolean',
+                  },
+                  {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                ],
+              },
+              ClosureReason: {
+                type: 'string',
+                enum: [
+                  'turn_stopped',
+                  'turn_terminal',
+                  'producer_cancelled',
+                  'timed_out',
+                  'host_restarted',
+                  'provider_disconnected',
+                ],
+              },
+              QuestionRejection: {
+                type: 'string',
+                enum: ['invalid_input', 'unavailable'],
+              },
+            },
+          },
+          resources: {},
+        },
+      },
+    },
+  },
   workspaceFiles: {
     name: 'maka.workspace.Files',
     version: 1,

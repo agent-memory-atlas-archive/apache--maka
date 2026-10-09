@@ -301,8 +301,14 @@ fn packaged_workspace_image_opens_original_viewer_and_preserves_native_draft() {
     packaged_product(ProductCase::Image);
 }
 
+#[test]
+#[ignore = "opt-in product authoring build and actual native form editors"]
+fn packaged_form_uses_original_native_editors_and_canonical_response() {
+    packaged_product(ProductCase::Form);
+}
 #[derive(Clone, Copy)]
 enum ProductCase {
+    Form,
     Full,
     MetadataConflict,
     FilePermissions,
@@ -327,6 +333,7 @@ fn packaged_product(case: ProductCase) {
     let loss = terminal_loss.then(|| Arc::new(wire_loss::Loss::default()));
     let file_permissions = matches!(case, ProductCase::FilePermissions) || process_permissions;
     let image = matches!(case, ProductCase::Image);
+    let form = matches!(case, ProductCase::Form);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -350,6 +357,17 @@ fn packaged_product(case: ProductCase) {
     let mut respond = Some(respond);
     let mut server = runtime.spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
+        if form {
+            request_with_key(&mut socket, "private-fixture-key").await;
+            response_ready.await.unwrap();
+            super::interactions::form_response(&mut socket).await;
+            let (mut next, _) = listener.accept().await.unwrap();
+            let resumed = request_with_key(&mut next, "private-fixture-key").await;
+            let result = resumed["messages"].as_array().unwrap().iter().find(|message| message["role"] == "tool").unwrap();
+            assert_eq!(serde_json::from_str::<Value>(result["content"].as_str().unwrap()).unwrap(), json!({"kind":"answered","result":{"action":"accept","values":{"note":"Native delivery","count":2,"confirm":false,"format":"brief"}}}));
+            response(&mut next).await;
+            return;
+        }
         if image {
             request_with_key(&mut socket, "private-fixture-key").await;
             response_ready.await.unwrap();
@@ -397,7 +415,9 @@ fn packaged_product(case: ProductCase) {
         ]}));
         response(&mut next).await;
     });
-    let tooling = if image {
+    let tooling = if form {
+        Some(super::service_tools::Setup::forms())
+    } else if image {
         Some(super::service_tools::Setup::files("readImage"))
     } else if process_permissions {
         Some(super::service_tools::Setup::processes())
@@ -496,6 +516,7 @@ fn packaged_product(case: ProductCase) {
         "session-details",
         "queue-editor",
         "question-editor",
+        "form-editor",
         "service-approval",
         "permission-approval",
         "help",
@@ -1119,6 +1140,61 @@ process.stdout.write(output.outputFiles[0].text);
         .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
         .unwrap();
     await_screen(&mut presenter, "Hello product");
+    if form {
+        click(&mut presenter, "[ Choose model ]");
+        await_screen(&mut presenter, "fixture-model-00");
+        click(&mut presenter, "fixture-model-00");
+        click(&mut presenter, "[ Apply ]");
+        await_models_closed(&mut presenter);
+        click(&mut presenter, "[ Send ]");
+        await_screen(&mut presenter, "What would you like to work on?");
+        click(&mut presenter, "What would you like to work on?");
+        presenter
+            .input(Event::Paste("Form background draft".into()))
+            .unwrap();
+        respond
+            .take()
+            .unwrap()
+            .send(fixture.workspace.clone())
+            .unwrap();
+        await_screen(&mut presenter, "[ Ctrl G · Review request ]");
+        click(&mut presenter, "[ Ctrl G · Review request ]");
+        await_screen(&mut presenter, "Delivery note");
+        click_nth(&mut presenter, "Delivery note", 1);
+        presenter
+            .input(Event::Paste("Native delivery".into()))
+            .unwrap();
+        await_screen(&mut presenter, "Native delivery");
+        presenter
+            .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+            .unwrap();
+        await_screen(&mut presenter, "Form background draft");
+        click(&mut presenter, "[ Ctrl G · Review request ]");
+        await_screen(&mut presenter, "Native delivery");
+        click(&mut presenter, "[ 2 ]");
+        click_nth(&mut presenter, "Copies", 1);
+        presenter.input(Event::Paste("2".into())).unwrap();
+        click(&mut presenter, "[ 3 ]");
+        click(&mut presenter, "○ No");
+        click(&mut presenter, "[ 4 ]");
+        click(&mut presenter, "○ Brief");
+        click(&mut presenter, "[ Submit form ]");
+        await_screen(&mut presenter, "Answers recorded");
+        let record = runtime
+            .block_on(
+                fixture
+                    .store
+                    .session_projection::<SessionConfiguration>(&session_id),
+            )
+            .unwrap()
+            .unwrap();
+        assert!(record.pending_interactions.is_empty());
+        click(&mut presenter, "[ Close ]");
+        await_screen(&mut presenter, "Form background draft");
+        await_screen(&mut presenter, "Elegant response");
+        runtime.block_on(&mut server).unwrap();
+        runtime.block_on(fixture.drained());
+    }
     if image {
         click(&mut presenter, "[ Choose model ]");
         await_screen(&mut presenter, "fixture-model-00");
@@ -1681,7 +1757,7 @@ process.stdout.write(output.outputFiles[0].text);
     if process_permissions {
         terminal::run(&mut presenter, &runtime, &fixture, &session_id);
     }
-    if fail_labels_initialization || file_permissions || image {
+    if fail_labels_initialization || file_permissions || image || form {
         if matches!(case, ProductCase::FilePermissions) {
             message_details::run(&mut presenter, &runtime, &fixture, &session_id);
         }

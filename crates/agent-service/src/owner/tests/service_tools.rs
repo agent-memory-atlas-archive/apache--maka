@@ -134,6 +134,7 @@ pub(super) struct Setup {
     granted: bool,
     query: bool,
     questions: bool,
+    forms: bool,
     files: Option<&'static str>,
     processes: bool,
     images: Option<images::Source>,
@@ -155,6 +156,7 @@ impl Setup {
             granted: true,
             query: false,
             questions: false,
+            forms: false,
             files: None,
             processes: false,
             images: None,
@@ -168,10 +170,17 @@ impl Setup {
             granted,
             query: false,
             questions: false,
+            forms: false,
             files: None,
             processes: false,
             images: None,
             confirmation: contract::ToolConfirmation::Preapproved,
+        }
+    }
+    pub(super) fn forms() -> Self {
+        Self {
+            forms: true,
+            ..Self::javascript()
         }
     }
     pub(super) fn questions() -> Self {
@@ -181,6 +190,7 @@ impl Setup {
             granted: true,
             query: false,
             questions: true,
+            forms: false,
             files: None,
             processes: false,
             images: None,
@@ -236,6 +246,8 @@ impl Setup {
             crate::processes::contract()
         } else if self.files.is_some() {
             crate::files::contract()
+        } else if self.forms {
+            crate::forms::contract()
         } else if self.questions {
             crate::questions::contract()
         } else {
@@ -249,6 +261,8 @@ impl Setup {
             crate::processes::EXPORT
         } else if self.files.is_some() {
             crate::files::EXPORT
+        } else if self.forms {
+            crate::forms::EXPORT
         } else if self.questions {
             crate::questions::EXPORT
         } else {
@@ -262,7 +276,7 @@ impl Setup {
             "execute"
         } else if let Some(method) = self.files {
             method
-        } else if self.questions {
+        } else if self.questions || self.forms {
             "ask"
         } else if self.query {
             "read"
@@ -287,6 +301,8 @@ impl Setup {
             },
             name: if self.files.is_some() || self.images.is_some() {
                 "WorkspaceFile"
+            } else if self.forms {
+                "AskUserForm"
             } else if self.questions {
                 "AskUserQuestion"
             } else {
@@ -347,6 +363,8 @@ impl Setup {
             json!({"kind":"native","implementation":crate::processes::IMPLEMENTATION})
         } else if self.files.is_some() {
             json!({"kind":"native","implementation":crate::files::IMPLEMENTATION})
+        } else if self.forms {
+            json!({"kind":"native","implementation":crate::forms::IMPLEMENTATION})
         } else if self.questions {
             json!({"kind":"native","implementation":crate::questions::IMPLEMENTATION})
         } else if self.counter.is_some() {
@@ -366,6 +384,7 @@ impl Setup {
                 files.insert("images.mjs".into(), code.into_bytes());
             }
         } else if self.counter.is_none()
+            && !self.forms
             && !self.questions
             && self.files.is_none()
             && !self.processes
@@ -435,6 +454,9 @@ impl Setup {
         }
         if self.files.is_some() {
             crate::files::provide(registry).unwrap();
+        }
+        if self.forms {
+            crate::forms::provide(registry).unwrap();
         }
         if self.questions {
             crate::questions::provide(registry).unwrap();

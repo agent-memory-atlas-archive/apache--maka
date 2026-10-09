@@ -112,6 +112,8 @@ export type RuntimeProtocol =
   | AgentInteractionRespond
   | AgentInteractionResult
   | QuestionAsk
+  | FormAsk
+  | FormResponse
   | WorkspaceProcessConfiguration
   | TerminalList
   | TerminalTarget
@@ -1798,6 +1800,36 @@ export type ClosureReason =
   | 'host_restarted'
   | 'provider_disconnected';
 export type AgentInteractionRejection = 'closed' | 'unavailable' | 'invalid_answer' | 'unsupported';
+export type FormResponse =
+  | {
+      result: FormResult;
+      kind: 'answered';
+    }
+  | {
+      reason: ClosureReason;
+      kind: 'closed';
+    }
+  | {
+      reason: QuestionRejection;
+      kind: 'rejected';
+    };
+export type FormResult =
+  | {
+      values: {
+        [k: string]: FormValue | undefined;
+      };
+      action: 'accept';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      action: 'decline';
+      [k: string]: unknown | undefined;
+    }
+  | {
+      action: 'cancel';
+      [k: string]: unknown | undefined;
+    };
+export type QuestionRejection = 'invalid_input' | 'unavailable';
 export type Ownership =
   | {
       kind: 'local';
@@ -1888,7 +1920,6 @@ export type QuestionResult =
       reason: QuestionRejection;
       kind: 'rejected';
     };
-export type QuestionRejection = 'invalid_input' | 'unavailable';
 export type AgentSendResult =
   | {
       sessionId: string;
@@ -4204,6 +4235,13 @@ export interface QuestionAsk {
     | [InteractionQuestion]
     | [InteractionQuestion, InteractionQuestion]
     | [InteractionQuestion, InteractionQuestion, InteractionQuestion];
+}
+export interface FormAsk {
+  message: string;
+  /**
+   * @maxItems 32
+   */
+  fields: FormField[];
 }
 /**
  * Immutable installation ceiling selected by trusted native composition.

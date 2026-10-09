@@ -545,7 +545,7 @@ function reviewTarget(state: State) {
     };
   const entry = state.interactions?.entries.find(
     (entry) =>
-      ['question', 'service_approval', 'permissions'].includes(entry.kind) &&
+      ['question', 'form', 'service_approval', 'permissions'].includes(entry.kind) &&
       !(
         retained?.sessionId === state.selected?.id &&
         retained?.requestId === entry.requestId &&
@@ -567,7 +567,7 @@ function openInteraction(state: State, actions: Action[], requestId: string, kin
       record: null,
       notice: null,
     };
-  state.dialog = kind === 'question' ? 'question' : 'approval';
+  state.dialog = kind === 'question' || kind === 'form' ? 'question' : 'approval';
   readInteraction(state, actions);
 }
 function rootCommands(
@@ -976,7 +976,13 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
       ) {
         question.record = result.record;
         question.notice = null;
-      } else question.notice = 'interactionChanged';
+      } else
+        question.notice =
+          result.kind === 'rejected' &&
+          result.reason === 'invalid_answer' &&
+          question.record?.request.kind === 'form'
+            ? 'formInvalid'
+            : 'interactionChanged';
     }
     if (state.selected?.id === request.sessionId) observe(state, actions);
   } else if (request.kind === 'send') {
@@ -1067,7 +1073,7 @@ function querySucceeded(state: State, actions: Action[], request: Request, value
       if (
         record.sessionId !== request.sessionId ||
         record.requestId !== request.requestId ||
-        !['question', 'service_approval', 'permissions'].includes(record.request.kind) ||
+        !['question', 'form', 'service_approval', 'permissions'].includes(record.request.kind) ||
         (question.record && !sameValue(question.record.request, record.request))
       ) {
         question.notice = 'interactionUnavailable';
@@ -1856,12 +1862,12 @@ function frame<N extends Node>(
               ]),
           ...((target === 'desktop' ? state.interactions?.entries : [])
             ?.filter((entry) =>
-              ['question', 'service_approval', 'permissions'].includes(entry.kind),
+              ['question', 'form', 'service_approval', 'permissions'].includes(entry.kind),
             )
             .map((entry, index) =>
               ui.button(
-                `${entry.kind === 'question' ? 'question' : 'approval'}-open-${entry.requestId}`,
-                `${entry.kind === 'question' ? text.questionsTitle : entry.kind === 'permissions' ? text.permissionApprovalTitle : text.approvalTitle} ${index + 1}`,
+                `${entry.kind === 'question' || entry.kind === 'form' ? 'question' : 'approval'}-open-${entry.requestId}`,
+                `${entry.kind === 'form' ? text.formTitle : entry.kind === 'question' ? text.questionsTitle : entry.kind === 'permissions' ? text.permissionApprovalTitle : text.approvalTitle} ${index + 1}`,
                 !state.selected || state.selected.archived || mutationPending(state),
               ),
             ) ?? []),
@@ -2100,7 +2106,9 @@ function frame<N extends Node>(
       state.dialog === 'terminal'
         ? text.terminalTitle
         : state.dialog === 'question'
-          ? text.questionsTitle
+          ? state.interaction?.record?.request.kind === 'form'
+            ? text.formTitle
+            : text.questionsTitle
           : state.dialog === 'approval'
             ? state.interaction?.record?.request.kind === 'permissions'
               ? text.permissionApprovalTitle
@@ -2154,7 +2162,9 @@ function frame<N extends Node>(
               ? [
                   presentation.slot(
                     questionChild(state),
-                    'questionEditor',
+                    state.interaction.record.request.kind === 'form'
+                      ? 'formEditor'
+                      : 'questionEditor',
                     {
                       theme,
                       locale,
@@ -2497,7 +2507,14 @@ export function workspace<N extends Node>(
           if (state.dialog === 'question') {
             if (input.name === 'closed') closeDialog(state);
             else if (input.name === 'check') checkInteraction(state, actions);
-            else if (input.name === 'submit')
+            else if (
+              input.name === 'submit' &&
+              state.interaction?.record?.request.kind === 'form'
+            ) {
+              const event = input.event as { requestId: string; answer: InteractionAnswer };
+              if (event.requestId === state.interaction.requestId && event.answer.kind === 'form')
+                respondInteraction(state, actions, event.answer);
+            } else if (input.name === 'submit')
               submitQuestion(
                 state,
                 actions,
@@ -2894,7 +2911,7 @@ export function workspace<N extends Node>(
             (entry) => entry.requestId === requestId,
           )?.kind;
           if (
-            (input.key.startsWith('question-') && kind === 'question') ||
+            (input.key.startsWith('question-') && (kind === 'question' || kind === 'form')) ||
             (input.key.startsWith('approval-') &&
               (kind === 'service_approval' || kind === 'permissions'))
           ) {

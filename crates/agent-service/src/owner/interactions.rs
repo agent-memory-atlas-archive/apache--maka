@@ -106,6 +106,7 @@ impl Owner {
             InteractionRequest::Question { .. }
                 | InteractionRequest::ServiceApproval { .. }
                 | InteractionRequest::Permissions { .. }
+                | InteractionRequest::Form { .. }
         ) {
             return reject(InteractionRejection::Unsupported);
         }
@@ -114,6 +115,7 @@ impl Owner {
             InteractionAnswer::Question { .. }
                 | InteractionAnswer::ServiceApproval { .. }
                 | InteractionAnswer::Permissions { .. }
+                | InteractionAnswer::Form { .. }
         ) || input.answer.validate_for_request(&record.request).is_err()
         {
             return reject(InteractionRejection::InvalidAnswer);

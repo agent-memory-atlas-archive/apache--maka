@@ -22,6 +22,7 @@
 /// Public wire types and generated contracts. 公开协议类型与生成契约。
 pub mod contract;
 pub mod files;
+pub mod forms;
 mod interaction_wait;
 mod model;
 mod owner;
@@ -46,6 +47,7 @@ pub fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
     files::provide(registry)?;
     processes::provide(registry)?;
     questions::provide(registry)?;
+    forms::provide(registry)?;
     registry.insert(
         IMPLEMENTATION.into(),
         Arc::new(|context, configuration| {
