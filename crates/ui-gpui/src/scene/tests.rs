@@ -268,6 +268,53 @@ fn replace(
     .unwrap();
 }
 #[gpui::test]
+fn copy_button_default_action_requires_success_and_original_live_owner(cx: &mut TestAppContext) {
+    let (entity, window, _) = harness(cx);
+    let mode = Rc::new(Cell::new(0));
+    let current = mode.clone();
+    cx.update_window(window, |_, _, cx| {
+        entity.update(cx, |h, _| {
+            let live = h.state().input.0.clone();
+            h.slots.input = Input(Rc::new(move |_, _, _, _| {
+                if current.get() == 2 {
+                    return Err(maka_ui::Error::Invalid("rejected click".into()));
+                }
+                if current.get() == 3 {
+                    *live.borrow_mut() = None;
+                }
+                Ok(maka_ui::InputDecision {
+                    prevent_default: current.get() == 1,
+                    stop_propagation: false,
+                })
+            }));
+        });
+    })
+    .unwrap();
+    replace(
+        cx,
+        window,
+        &entity,
+        json!({"kind":"button","key":"copy","label":"Copy","copy_text":"原文\nexact","style":{"width":{"unit":"pixels","value":100},"height":{"unit":"pixels","value":40}}}),
+    );
+    draw(cx, window);
+    for next in [0, 1, 2, 3] {
+        mode.set(next);
+        cx.update(|cx| {
+            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("sentinel".into()))
+        });
+        VisualTestContext::from_window(window, cx)
+            .simulate_click(point(px(10.), px(10.)), Modifiers::default());
+        assert_eq!(
+            cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap()),
+            if next == 0 {
+                "原文\nexact"
+            } else {
+                "sentinel"
+            }
+        );
+    }
+}
+#[gpui::test]
 #[ignore = "opt-in packaged navigation build and native Desktop scene ABI"]
 fn packaged_session_navigation_renders_bounded_pages_and_keeps_controls_accessible(
     cx: &mut TestAppContext,

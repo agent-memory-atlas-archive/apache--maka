@@ -67,6 +67,58 @@ fn mouse(kind: MouseEventKind, x: u16, y: u16, modifiers: KeyModifiers) -> Event
     })
 }
 #[test]
+fn terminal_resize_uses_allocated_rows_below_controls_in_a_short_surface() {
+    let (_runtime, mut p, _scene) = fixture();
+    for _ in 0..3 {
+        draw(&mut p, 40, 4);
+    }
+    let target = p.scene.iter().find(|t| t.key == "observe").unwrap();
+    assert_eq!(target.area.height, 3);
+    assert_eq!(target.area.visible().height, 3);
+    assert_eq!(observed(&p)["batch"]["size"], json!({"cols":40,"rows":3}));
+    p.surface_closed(&p.surface(), Ok(())).unwrap();
+    p.shutdown().unwrap();
+}
+#[test]
+fn copy_button_requires_original_physical_activation_and_successful_dispatch() {
+    let scene = Rc::new(RefCell::new(
+        json!({"kind":"button","key":"copy","label":"Copy","copy_text":"原文\nexact"}),
+    ));
+    let accept = Rc::new(Cell::new(true));
+    let (_runtime, mut p) =
+        layout::native(layout::View::ChangingScene(scene.clone()), accept.clone());
+    draw(&mut p, 40, 4);
+    let revision = p.application.frame(&p.root).unwrap().revision;
+    p.application
+        .dispatch(&p.root, revision, "copy", json!({"kind":"click"}))
+        .unwrap();
+    let mut copied = Vec::new();
+    assert!(!p.flush_clipboard(&mut copied).unwrap());
+    draw(&mut p, 40, 4);
+    p.input(key(KeyCode::Enter)).unwrap();
+    assert!(p.flush_clipboard(&mut copied).unwrap());
+    let mut expected = Vec::new();
+    crate::terminal::copy(&mut expected, "原文\nexact").unwrap();
+    assert_eq!(copied, expected);
+    assert!(!p.flush_clipboard(&mut copied).unwrap());
+    draw(&mut p, 40, 4);
+    accept.set(false);
+    assert!(p.input(key(KeyCode::Enter)).is_err());
+    assert!(!p.flush_clipboard(&mut copied).unwrap());
+    accept.set(true);
+    scene.borrow_mut()["disabled"] = json!(true);
+    let revision = p.application.frame(&p.root).unwrap().revision;
+    p.application
+        .dispatch(&p.root, revision, "copy", json!({"kind":"click"}))
+        .unwrap();
+    draw(&mut p, 40, 4);
+    p.input(key(KeyCode::Enter)).unwrap();
+    assert!(!p.flush_clipboard(&mut copied).unwrap());
+    assert_eq!(copied, expected);
+    p.surface_closed(&p.surface(), Ok(())).unwrap();
+    p.shutdown().unwrap();
+}
+#[test]
 fn terminal_native_focus_owns_control_c_tab_escape_and_returns_with_original_release_key() {
     let (_runtime, mut p, scene) = fixture();
     settle(&mut p);

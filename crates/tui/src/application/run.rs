@@ -146,6 +146,9 @@ pub fn run(
                     return Ok(true);
                 }
                 presenter.input(input).map_err(|e| e.to_string())?;
+                if let Err(error) = presenter.flush_clipboard(&mut std::io::stdout().lock()) {
+                    report(&mut reported, &error.to_string());
+                }
             }
             Ok(false)
         })();

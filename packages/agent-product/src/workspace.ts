@@ -162,7 +162,17 @@ export interface State {
   settingsOpen: boolean;
   deploymentOpen: boolean;
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
-  dialog: 'palette' | 'directories' | 'details' | 'help' | 'queue' | 'question' | 'approval' | null;
+  terminals: boolean;
+  dialog:
+    | 'terminal'
+    | 'palette'
+    | 'directories'
+    | 'details'
+    | 'help'
+    | 'queue'
+    | 'question'
+    | 'approval'
+    | null;
   window: { page: Extract<AgentHistoryPage, { kind: 'ready' }>; latest: boolean } | null;
   navigation: number;
   image: { sessionId: string; through: number; sequence: number } | null;
@@ -485,6 +495,7 @@ function executionPending(state: State) {
 type RootCommand =
   | 'help-open'
   | 'create'
+  | 'terminal-open'
   | 'details-open'
   | 'create-workspace'
   | 'navigation-toggle'
@@ -520,6 +531,13 @@ function rootCommands(state: State, locale: string): (PaletteCommand & { kind: R
       label: text.newWorkspace,
       hint: '',
       disabled: !route || mutationPending(state) || catalogPending(state),
+    },
+    {
+      kind: 'terminal-open',
+      id: 'terminal-open',
+      label: text.terminalTitle,
+      hint: '',
+      disabled: !route || !state.selected || state.loading,
     },
     {
       kind: 'details-open',
@@ -596,6 +614,7 @@ function rootCommand(state: State, actions: Action[], locale: string, kind: Root
   if (kind === 'help-open') state.dialog = 'help';
   else if (kind === 'create') createSession(state, actions, locale);
   else if (kind === 'create-workspace') state.dialog = 'directories';
+  else if (kind === 'terminal-open') state.dialog = 'terminal';
   else if (kind === 'details-open') state.dialog = 'details';
   else if (kind === 'navigation-toggle') controlSidebar(state, 'toggle');
   else if (kind === 'settings') {
@@ -1694,6 +1713,11 @@ function frame<N extends Node>(
                         (command) => command.kind === 'details-open' && !command.disabled,
                       ),
                     ),
+                    ui.button(
+                      'terminal-open',
+                      text.terminalTitle,
+                      !state.selected || state.loading,
+                    ),
                     ui.button('settings', text.settings),
                     ui.button('deployment-open', text.deploymentTitle),
                   ],
@@ -1713,6 +1737,11 @@ function frame<N extends Node>(
                       !rootCommands(state, locale).some(
                         (command) => command.kind === 'details-open' && !command.disabled,
                       ),
+                    ),
+                    ui.button(
+                      'terminal-open',
+                      text.terminalTitle,
+                      !state.selected || state.loading,
                     ),
                     ui.button('settings', text.settings),
                     ui.button('deployment-open', text.deploymentTitle),
@@ -1935,21 +1964,23 @@ function frame<N extends Node>(
     state,
     ui.dialog(
       'workspace-dialog',
-      state.dialog === 'question'
-        ? text.questionsTitle
-        : state.dialog === 'approval'
-          ? state.interaction?.record?.request.kind === 'permissions'
-            ? text.permissionApprovalTitle
-            : text.approvalTitle
-          : state.dialog === 'directories'
-            ? text.directoryTitle
-            : state.dialog === 'details'
-              ? text.detailsTitle
-              : state.dialog === 'queue'
-                ? text.queueEdit
-                : state.dialog === 'help'
-                  ? text.helpTitle
-                  : text.paletteTitle,
+      state.dialog === 'terminal'
+        ? text.terminalTitle
+        : state.dialog === 'question'
+          ? text.questionsTitle
+          : state.dialog === 'approval'
+            ? state.interaction?.record?.request.kind === 'permissions'
+              ? text.permissionApprovalTitle
+              : text.approvalTitle
+            : state.dialog === 'directories'
+              ? text.directoryTitle
+              : state.dialog === 'details'
+                ? text.detailsTitle
+                : state.dialog === 'queue'
+                  ? text.queueEdit
+                  : state.dialog === 'help'
+                    ? text.helpTitle
+                    : text.paletteTitle,
       background,
       ui.box(
         'dialog-content',
@@ -2071,6 +2102,19 @@ function frame<N extends Node>(
             { closed: 'closed' },
           ),
           presentation.slot(
+            'terminal-panel',
+            'terminals',
+            {
+              theme,
+              locale,
+              open: state.dialog === 'terminal',
+              enabled: state.terminals,
+              busy: mutationPending(state),
+              session: state.selected,
+            },
+            { closed: 'closed' },
+          ),
+          presentation.slot(
             'session-details',
             'details',
             {
@@ -2153,6 +2197,7 @@ function frame<N extends Node>(
 export function workspace<N extends Node>(
   presentation: Presentation<N>,
   locale: string,
+  terminals = false,
 ): Component<State, Record<string, never>, N> {
   const target = presentation.target;
   return {
@@ -2173,6 +2218,7 @@ export function workspace<N extends Node>(
         settingsOpen: false,
         deploymentOpen: false,
         sidebar: target === 'desktop' ? { open: true } : { command: null },
+        terminals,
         dialog: null,
         image: null,
         window: null,
@@ -2395,6 +2441,10 @@ export function workspace<N extends Node>(
         }
         if (input.child === 'help') {
           if (input.name === 'closed' && state.dialog === 'help') state.dialog = null;
+          return frame(presentation, locale, state, values, actions);
+        }
+        if (input.child === 'terminal-panel') {
+          if (input.name === 'closed' && state.dialog === 'terminal') state.dialog = null;
           return frame(presentation, locale, state, values, actions);
         }
         if (input.child === 'session-details') {

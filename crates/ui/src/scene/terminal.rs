@@ -271,6 +271,10 @@ pub enum Node {
         /// Enter a declared child's native focus target instead of emitting a click.
         #[serde(default)]
         focus_child: Option<String>,
+        /// Copy this committed text as the physical button's default action.
+        /// No clipboard access occurs from a synthetic component dispatch.
+        #[serde(default)]
+        copy_text: Option<String>,
         #[serde(default)]
         disabled: bool,
         /// Absent foreground uses the terminal's default text color.
@@ -427,8 +431,20 @@ impl Node {
                     return Err("invalid text".into());
                 }
             }
-            Self::Button { label, color, .. } => {
-                if label.len() > 4096 || color.is_some_and(|color| color > 0xffffff) {
+            Self::Button {
+                label,
+                color,
+                copy_text,
+                focus_child,
+                ..
+            } => {
+                if label.len() > 4096
+                    || color.is_some_and(|color| color > 0xffffff)
+                    || copy_text
+                        .as_ref()
+                        .is_some_and(|text| text.is_empty() || text.len() > 64 * 1024)
+                    || (copy_text.is_some() && focus_child.is_some())
+                {
                     return Err("invalid button".into());
                 }
             }

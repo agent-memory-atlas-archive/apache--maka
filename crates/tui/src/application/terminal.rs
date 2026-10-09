@@ -143,6 +143,14 @@ impl Widget for Recipe {
     fn measure(&self, _: &Slots<'_>, width: u16) -> maka_ui::Result<(u16, u32)> {
         Ok((width, u32::from(self.0.rows)))
     }
+    fn layout(&self, _: &Slots<'_>) -> maka_ui::Result<super::TerminalLayout> {
+        // Resize the actual terminal viewport when controls leave less space;
+        // clipping a larger screen would hide the shell's newest output.
+        Ok(super::TerminalLayout {
+            shrink: true,
+            ..Default::default()
+        })
+    }
     fn paint(
         &self,
         slots: &mut Slots<'_>,

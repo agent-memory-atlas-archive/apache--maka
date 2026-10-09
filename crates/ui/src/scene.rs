@@ -20,3 +20,49 @@
 //! Pure presentation protocols shared by schema generation and native renderers.
 pub mod desktop;
 pub mod terminal;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn copy_button_text_has_a_byte_budget_and_no_conflicting_native_default() {
+        for text in ["".to_owned(), "界".repeat(24 * 1024)] {
+            let value = json!({"kind":"button","key":"copy","label":"Copy","copy_text":text});
+            let deadline = Instant::now() + Duration::from_secs(1);
+            assert!(
+                serde_json::from_value::<terminal::Node>(value.clone())
+                    .unwrap()
+                    .validate_root(deadline)
+                    .is_err()
+            );
+            assert!(
+                serde_json::from_value::<desktop::Node>(value)
+                    .unwrap()
+                    .validate_root(deadline)
+                    .is_err()
+            );
+        }
+        let value =
+            json!({"kind":"button","key":"copy","label":"Copy","copy_text":"x".repeat(64 * 1024)});
+        let deadline = Instant::now() + Duration::from_secs(1);
+        serde_json::from_value::<terminal::Node>(value.clone())
+            .unwrap()
+            .validate_root(deadline)
+            .unwrap();
+        serde_json::from_value::<desktop::Node>(value.clone())
+            .unwrap()
+            .validate_root(deadline)
+            .unwrap();
+        let mut conflict = value;
+        conflict["focus_child"] = json!("editor");
+        assert!(
+            serde_json::from_value::<terminal::Node>(conflict)
+                .unwrap()
+                .validate_root(deadline)
+                .is_err()
+        );
+    }
+}

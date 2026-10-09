@@ -53,6 +53,7 @@ export const packageNames = [
   'markdown',
   'source-text',
   'terminal-view',
+  'terminal-panel',
   'reading-area',
   'rows',
   'appearance',
@@ -103,7 +104,10 @@ function settingsComposition(
     path: [name],
     export: exportName,
   });
-  const remote = (name: 'agent' | 'settings' | 'receipts', exportName: string): BindingTarget => ({
+  const remote = (
+    name: 'agent' | 'settings' | 'receipts' | 'workspace-processes',
+    exportName: string,
+  ): BindingTarget => ({
     kind: 'remote',
     deployment: 'local',
     instance: [keys[name]],
@@ -329,15 +333,18 @@ export function composition(configuration: CompositionConfiguration): Applicatio
   );
   if (asksQuestions) host.instances.questions = node('questions');
   if (fileMethods.length) host.instances['workspace-files'] = node('workspace-files');
-  if (processMethods.length)
+  if (configuration.processes)
     host.instances['workspace-processes'] = node('workspace-processes', {
       ...configuration.processes,
+      sessionOwner: [keys.agent],
     });
   host.instances.gateway!.bindings!.agent = [local('agent', 'agent')];
+  if (configuration.processes)
+    host.instances.gateway!.bindings!.terminal = [local('workspace-processes', 'terminal')];
   Object.assign(ui.instances, {
     workspace: node(
       'workspace',
-      { locale: configuration.locale },
+      { locale: configuration.locale, terminals: !!configuration.processes },
       {
         agent: [remote('agent', 'agent')],
         receipts: [remote('receipts', 'Receipts')],
@@ -348,6 +355,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         palette: [local('command-palette', 'CommandPalette')],
         directories: [local('directory-picker', 'DirectoryPicker')],
         details: [local('session-details', 'SessionDetails')],
+        terminals: [local('terminal-panel', 'TerminalPanel')],
         queueEditor: [local('queue-editor', 'QueueEditor')],
         questionEditor: [local('question-editor', 'QuestionEditor')],
         serviceApproval: [local('service-approval', 'ServiceApproval')],
@@ -390,6 +398,22 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         agent: [remote('agent', 'agent')],
         input: [local('input', 'TextInput')],
         editor: [local('editor', 'Textarea')],
+        reader: [local('reader', 'Reader')],
+        reading: [local('reading-area', 'ReadingArea')],
+        receipts: [remote('receipts', 'Receipts')],
+        history: [local('history', 'History')],
+      },
+    ),
+    'terminal-view': node('terminal-view'),
+    'terminal-panel': node(
+      'terminal-panel',
+      {},
+      {
+        ...(configuration.processes
+          ? { terminal: [remote('workspace-processes', 'terminal')] }
+          : {}),
+        view: [local('terminal-view', 'TerminalView')],
+        input: [local('input', 'TextInput')],
         reader: [local('reader', 'Reader')],
         reading: [local('reading-area', 'ReadingArea')],
         receipts: [remote('receipts', 'Receipts')],
@@ -447,6 +471,19 @@ export function composition(configuration: CompositionConfiguration): Applicatio
   Object.assign(connections.hosts.find((host) => host.name === 'local')!.imports, {
     agent: { methods: Object.keys(contracts.agent.interface.methods), recovery: true },
   });
+  if (configuration.processes) {
+    remoteExports.push({
+      capability: {
+        deployment: 'local',
+        instance: [keys['workspace-processes']],
+        export: 'terminal',
+      },
+      declaration: { contract: contracts.terminal, availability: 'required' },
+    });
+    Object.assign(connections.hosts.find((host) => host.name === 'local')!.imports, {
+      terminal: { methods: Object.keys(contracts.terminal.interface.methods), recovery: true },
+    });
+  }
   if (asksQuestions || fileMethods.length || processMethods.length)
     Object.assign(connections.hosts.find((host) => host.name === 'local')!, {
       native: [

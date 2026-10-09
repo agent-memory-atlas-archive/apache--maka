@@ -643,6 +643,7 @@ impl NodePresentation for Node {
             Self::Button {
                 key,
                 label,
+                copy_text,
                 style,
                 hover,
                 active,
@@ -668,7 +669,9 @@ impl NodePresentation for Node {
                 let a11y = admission.clone();
                 let click_admission = admission.clone();
                 let click_alive = alive.clone();
-                let click = slots.input.bind(key.clone(), |_| json!({"kind":"click"}));
+                let click_input = slots.input.clone();
+                let click_key = key.clone();
+                let copy_text = copy_text.clone();
                 let enabled = button.admitted.get() && alive.0.borrow().is_some();
                 let handle = button.focus.clone();
                 let focus_action = handle.clone();
@@ -717,9 +720,35 @@ impl NodePresentation for Node {
                     .active(move |s| active.apply(s))
                     .focus_visible(move |s| focus.apply(s))
                     .child(SharedString::from(label.clone()))
-                    .on_click(move |event, window, cx| {
+                    .on_click(move |_, window, cx| {
                         if click_admission.get() && click_alive.0.borrow().is_some() {
-                            click(event, window, cx);
+                            let decision = match (click_input.0)(
+                                &click_key,
+                                json!({"kind":"click"}),
+                                window,
+                                cx,
+                            ) {
+                                Ok(decision) => decision,
+                                Err(error) => {
+                                    eprintln!("component input rejected: {error}");
+                                    window.prevent_default();
+                                    cx.stop_propagation();
+                                    return;
+                                }
+                            };
+                            if decision.prevent_default {
+                                window.prevent_default();
+                            } else if let Some(text) = &copy_text
+                                && click_admission.get()
+                                && click_alive.0.borrow().is_some()
+                            {
+                                cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(
+                                    text.clone(),
+                                ));
+                            }
+                            if decision.stop_propagation {
+                                cx.stop_propagation();
+                            }
                         }
                     })
                     .into_any_element()

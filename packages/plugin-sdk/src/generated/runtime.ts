@@ -473,6 +473,11 @@ export type TerminalScene =
        * Enter a declared child's native focus target instead of emitting a click.
        */
       focus_child?: string | null;
+      /**
+       * Copy this committed text as the physical button's default action.
+       * No clipboard access occurs from a synthetic component dispatch.
+       */
+      copy_text?: string | null;
       disabled?: boolean;
       /**
        * Absent foreground uses the terminal's default text color.
@@ -552,6 +557,11 @@ export type DesktopScene =
   | {
       key: string;
       label: string;
+      /**
+       * Physical native activation copies this frozen text after an accepted
+       * click whose default action was not prevented.
+       */
+      copy_text?: string | null;
       style?: DesktopStyle;
       hover?: DesktopStyle;
       active?: DesktopStyle;

@@ -120,6 +120,9 @@ export interface SessionDetailsProps {
   busy: boolean;
   session: AgentSession | null;
 }
+export interface TerminalPanelProps extends SessionDetailsProps {
+  enabled: boolean;
+}
 export type QuestionDraft =
   | { kind: 'option'; index: number }
   | { kind: 'skip' }
@@ -327,6 +330,18 @@ export const sessionDetailsContract = component(
     session: { anyOf: [{ $ref: '#/$defs/AgentSession' }, { type: 'null' }] },
   }),
   { changed: object({ sessionId: string }), closed: object({}) },
+);
+export const terminalPanelContract = component(
+  'maka.agent.TerminalPanel',
+  object({
+    theme: { $ref: '#/$defs/Theme' },
+    locale,
+    open: { type: 'boolean' },
+    busy: { type: 'boolean' },
+    enabled: { type: 'boolean' },
+    session: { anyOf: [{ $ref: '#/$defs/AgentSession' }, { type: 'null' }] },
+  }),
+  { closed: object({}) },
 );
 export const studioContract = component('maka.studio.Workbench', object({}));
 export const navigationContract = component(

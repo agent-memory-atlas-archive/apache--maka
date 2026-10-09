@@ -104,6 +104,10 @@ pub enum Node {
     Button {
         key: String,
         label: String,
+        /// Physical native activation copies this frozen text after an accepted
+        /// click whose default action was not prevented.
+        #[serde(default)]
+        copy_text: Option<String>,
         #[serde(default)]
         style: Style,
         #[serde(default)]
@@ -259,8 +263,14 @@ impl Node {
                     return Err("invalid text".into());
                 }
             }
-            Self::Button { label, .. } => {
-                if label.len() > 4096 {
+            Self::Button {
+                label, copy_text, ..
+            } => {
+                if label.len() > 4096
+                    || copy_text
+                        .as_ref()
+                        .is_some_and(|text| text.is_empty() || text.len() > 64 * 1024)
+                {
                     return Err("invalid button label".into());
                 }
             }

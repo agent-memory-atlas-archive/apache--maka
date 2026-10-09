@@ -19,6 +19,9 @@
 
 #[path = "product/studio.rs"]
 mod studio;
+#[cfg(target_os = "macos")]
+#[path = "product/terminal.rs"]
+mod terminal;
 
 use super::*;
 use crossterm::event::{
@@ -456,6 +459,8 @@ fn packaged_product(case: ProductCase) {
         "reading-area",
         "rows",
         "source-text",
+        "terminal-view",
+        "terminal-panel",
         "appearance",
         "surface",
         "editor",
@@ -530,7 +535,7 @@ process.stdout.write(output.outputFiles[0].text);
         .collect::<BTreeMap<_, _>>();
     // The authoring function accepts actual Rust-computed package refs. Do not
     // duplicate package hashing or native manifest schemas in a fixture.
-    let script = r#"const {composition,packageNames}=await import(process.argv[1]);const refs=JSON.parse(process.argv[2]);const keys=Object.fromEntries(packageNames.map((name,i)=>[name,'00000000-0000-0000-0000-'+String(i+20).padStart(12,'0')]));keys.agent='00000000-0000-0000-0000-000000000001';keys.receipts='00000000-0000-0000-0000-000000000004';keys.settings='00000000-0000-0000-0000-000000000005';for(const name of packageNames)refs[name]??={id:'unused.'+name,revision:'sha256-'+ 'a'.repeat(64)};const result=composition({presentation:'tui',locale:'en',scheme:'light',packages:refs,keys,agent:{workspaceRoots:[{label:"Fixture",path:"/fixture-workspace"}],maxActiveRuns:1, permissions: { access: 'workspace_write', requestPermissions: true },maxSteps:1,tools:[]},hostRoot:'/fixture',hostDeployment:'00000000-0000-0000-0000-000000000080',managementDeployment:'00000000-0000-0000-0000-000000000081'});console.log(JSON.stringify({input:result.ui,observations:result.remoteExports,managementHost:result.managementHost,managementConfiguration:result.connections.hosts.find(h=>h.name==='manager')}));"#;
+    let script = r#"const {composition,packageNames}=await import(process.argv[1]);const refs=JSON.parse(process.argv[2]);const keys=Object.fromEntries(packageNames.map((name,i)=>[name,'00000000-0000-0000-0000-'+String(i+20).padStart(12,'0')]));keys.agent='00000000-0000-0000-0000-000000000001';keys.receipts='00000000-0000-0000-0000-000000000004';keys.settings='00000000-0000-0000-0000-000000000005';keys['workspace-processes']='00000000-0000-0000-0000-000000000021';for(const name of packageNames)refs[name]??={id:'unused.'+name,revision:'sha256-'+ 'a'.repeat(64)};const result=composition({presentation:'tui',locale:'en',scheme:'light',packages:refs,keys,...(process.argv[3]==='true'?{processes:{filesystem:{default:'write',rules:[],denyGlobs:[]},network:'allowed',helper:null}}:{}),agent:{workspaceRoots:[{label:"Fixture",path:"/fixture-workspace"}],maxActiveRuns:1, permissions: { access: 'workspace_write', requestPermissions: true },maxSteps:1,tools:[]},hostRoot:'/fixture',hostDeployment:'00000000-0000-0000-0000-000000000080',managementDeployment:'00000000-0000-0000-0000-000000000081'});console.log(JSON.stringify({input:result.ui,observations:result.remoteExports,managementHost:result.managementHost,managementConfiguration:result.connections.hosts.find(h=>h.name==='manager')}));"#;
     let authored = Command::new("node")
         .arg("--input-type=module")
         .arg("-e")
@@ -542,6 +547,7 @@ process.stdout.write(output.outputFiles[0].text);
                 .display()
         ))
         .arg(serde_json::to_string(&refs).unwrap())
+        .arg(process_permissions.to_string())
         .output()
         .unwrap();
     assert!(
@@ -600,11 +606,22 @@ process.stdout.write(output.outputFiles[0].text);
         ))
         .unwrap()
         .remove(0);
-    let bindings = [
+    let mut bindings = vec![
         runtime.block_on(fixture.binding(2)),
         receipt_binding,
         settings_binding,
     ];
+    if process_permissions {
+        bindings.push(
+            runtime
+                .block_on(fixture.app.client().bind(
+                    fixture.app.client().activation(&id(2)).unwrap(),
+                    "terminal".into(),
+                ))
+                .unwrap()
+                .remove(0),
+        );
+    }
     use maka_application_bridge::transport::{
         Endpoint, Peer, Peers, Server,
         native::{Connection, Service},
@@ -626,7 +643,7 @@ process.stdout.write(output.outputFiles[0].text);
                     binding.clone(),
                     maka_application_bridge::Grant {
                         methods: methods.keys().cloned().collect(),
-                        recovery: index == 1,
+                        recovery: index == 1 || index == 3,
                     },
                 )
                 .unwrap(),
@@ -731,7 +748,11 @@ process.stdout.write(output.outputFiles[0].text);
                         &wire_server,
                         &connection,
                         &callers,
-                        format!("service-{index}"),
+                        if observation.capability.export == "terminal" {
+                            "service-3".into()
+                        } else {
+                            format!("service-{index}")
+                        },
                     )
                 };
             let selected = server.catalogue().select(&alias).unwrap();
@@ -1227,6 +1248,10 @@ process.stdout.write(output.outputFiles[0].text);
         presenter
             .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
             .unwrap();
+    }
+    #[cfg(target_os = "macos")]
+    if process_permissions {
+        terminal::run(&mut presenter, &runtime, &fixture, &session_id);
     }
     if fail_labels_initialization || file_permissions || image {
         if fail_labels_initialization {

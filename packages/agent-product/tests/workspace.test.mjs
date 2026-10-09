@@ -867,10 +867,10 @@ test('both product compositions use actual immutable package refs and check in t
               recovery: true,
             },
           ]);
-          assert.deepEqual(
-            host.instances['workspace-processes'].configuration.values,
-            configuration.processes,
-          );
+          assert.deepEqual(host.instances['workspace-processes'].configuration.values, {
+            ...configuration.processes,
+            sessionOwner: [keys.agent],
+          });
           assert.deepEqual(host.instances.agent.bindings.processes, [
             { kind: 'instance', path: ['workspace-processes'], export: 'processes' },
           ]);

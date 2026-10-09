@@ -260,6 +260,8 @@ pub struct Presenter {
     jobs: FuturesUnordered<Job>,
     surface: SurfaceState,
     reported: std::collections::BTreeSet<String>,
+    /// One bounded physical clipboard intent, flushed before the next OS event.
+    clipboard: Option<std::rc::Rc<str>>,
 }
 impl Presenter {
     pub fn new(
@@ -415,6 +417,7 @@ impl Presenter {
             jobs: FuturesUnordered::new(),
             surface: SurfaceState::Live,
             reported: Default::default(),
+            clipboard: None,
         };
         if let Err(error) = presenter.sync_native() {
             // No terminal was created. Native initialization may still have
@@ -689,7 +692,7 @@ impl Presenter {
             }
             if !matches!(
                 target.kind,
-                paint::TargetKind::Action
+                paint::TargetKind::Action { .. }
                     | paint::TargetKind::Focus(_)
                     | paint::TargetKind::Item { .. }
             ) {
@@ -733,6 +736,15 @@ impl Presenter {
                 json!({"kind":kind}),
             )?;
             if !decision.prevent_default {
+                if let paint::TargetKind::Action {
+                    copy_text: Some(text),
+                } = &target.kind
+                    && !self.application.is_retiring(&target.mount)
+                    && self.resources.admits(&target)
+                    && self.target_admitted(&target)
+                {
+                    self.clipboard = Some(text.clone());
+                }
                 self.focus = Some(target);
             }
             self.sync_native()?;
@@ -816,6 +828,16 @@ impl Presenter {
             return Ok(false);
         }
         let Some(text) = self.resources.copy(&target)? else {
+            return Ok(false);
+        };
+        crate::terminal::copy(writer, &text).map_err(|error| Error::Invalid(error.to_string()))?;
+        Ok(true)
+    }
+    /// Complete the last accepted physical copy button's default action. The
+    /// runner calls this immediately after input, before reading another event.
+    /// OSC52 delivery does not prove that the terminal accepted the clipboard.
+    pub fn flush_clipboard(&mut self, writer: &mut impl std::io::Write) -> maka_ui::Result<bool> {
+        let Some(text) = self.clipboard.take() else {
             return Ok(false);
         };
         crate::terminal::copy(writer, &text).map_err(|error| Error::Invalid(error.to_string()))?;

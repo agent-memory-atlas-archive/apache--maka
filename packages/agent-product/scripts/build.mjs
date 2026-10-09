@@ -112,6 +112,7 @@ const specifications = {
       palette: one(own.paletteContract),
       directories: one(own.directoryPickerContract),
       details: one(own.sessionDetailsContract),
+      terminals: one(own.terminalPanelContract),
       queueEditor: one(own.queueEditorContract),
       questionEditor: one(own.questionEditorContract),
       serviceApproval: one(own.serviceApprovalContract),
@@ -122,7 +123,21 @@ const specifications = {
       imageViewer: one(own.imageViewerContract),
       appearance: one(own.themeContract),
     },
-    configuration: own.object({ locale: own.locale }),
+    configuration: own.object({ locale: own.locale, terminals: { type: 'boolean' } }, ['locale']),
+  },
+  'terminal-panel': {
+    contract: own.terminalPanelContract,
+    export: 'TerminalPanel',
+    module: 'terminal-panel',
+    imports: {
+      terminal: { contract: sdk.contracts.terminal, cardinality: { kind: 'optional' } },
+      view: one(sdk.contracts.terminalView),
+      input: one(sdk.contracts.textInput),
+      reader: one(sdk.contracts.textReader),
+      reading: one(sdk.contracts.readingArea),
+      receipts: one(sdk.contracts.receiptReader),
+      history: one(sdk.contracts.callerHistory),
+    },
   },
   'image-viewer': {
     contract: own.imageViewerContract,
@@ -294,7 +309,7 @@ for (const [name, spec] of Object.entries(specifications)) {
     if (name === 'appearance')
       contents = `export {activate} from '${resolve(root, 'src/theme.ts')}';`;
     else if (name === 'workspace')
-      contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace(presentations.${target},configuration.locale);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
+      contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace(presentations.${target},configuration.locale,configuration.terminals === true);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
     else if (name === 'studio')
       contents = `import {studio,activate as exports} from '${resolve(root, 'src/studio.ts')}';export let component;export function activate(configuration){component=studio(presentations.${target},configuration.locale);return exports();}`;
     else if (name === 'connection-form')
@@ -534,6 +549,7 @@ const mechanical = {
         ...native('maka.application.gateway', {}),
         imports: {
           agent: one(sdk.contracts.agent),
+          terminal: { contract: sdk.contracts.terminal, cardinality: { kind: 'optional' } },
           settings: one(sdk.contracts.settings),
           receipts: one(sdk.contracts.receiptReader),
         },

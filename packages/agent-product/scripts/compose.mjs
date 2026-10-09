@@ -58,7 +58,9 @@ const output = resolve(values.output);
 await mkdir(output, { recursive: true });
 const write = async (name, value) => {
   const path = resolve(output, name + '.json');
-  await writeFile(path, JSON.stringify(value, null, 2) + '\n');
+  // These are checked machine inputs. Repeated schema indentation must not
+  // consume the CLI's bounded input allowance as more services are composed.
+  await writeFile(path, JSON.stringify(value) + '\n');
   return path;
 };
 const host = await write('host', result.host);

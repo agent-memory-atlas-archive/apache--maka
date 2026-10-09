@@ -1226,6 +1226,7 @@ fn delayed_hidden_metadata_cannot_replace_same_native_recipe_foreground() {
         key: "back".into(),
         label: "Continue".into(),
         focus_child: None,
+        copy_text: None,
         disabled: false,
         color: None,
     });
@@ -1300,6 +1301,7 @@ impl Widget for ConditionalSlots {
                 key: "back".into(),
                 label: "Back".into(),
                 focus_child: None,
+                copy_text: None,
                 disabled: false,
                 color: None,
             };

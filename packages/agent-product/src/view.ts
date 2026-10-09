@@ -67,6 +67,7 @@ interface Painter<N extends Node> {
     disabled?: boolean,
     primary?: boolean,
     style?: DesktopStyle,
+    copyText?: string,
   ): N;
   choice?(
     key: string,
@@ -122,11 +123,12 @@ function desktopPaint(theme: Theme): Painter<DesktopNode> {
         color: rgba(color),
         style: { text: font(theme, size, weight, color), ...style },
       }),
-    button: (key, label, disabled = false, primary = false, style = {}) =>
+    button: (key, label, disabled = false, primary = false, style = {}, copyText) =>
       ui.desktop.button({
         key,
         label,
         disabled,
+        copy_text: copyText,
         style: {
           text: font(
             theme,
@@ -222,11 +224,12 @@ function terminalPaint(theme: Theme): Painter<TerminalNode> {
       ui.terminal.button({ key, label, focus_child: child, color: rgba(theme.muted) }),
     text: (key, text, _size = 15, color = theme.text, _weight = 400, style = {}) =>
       ui.terminal.text({ key, text, color: rgba(color), truncate: style.truncate ?? false }),
-    button: (key, label, disabled = false) =>
+    button: (key, label, disabled = false, _primary = false, _style = {}, copyText) =>
       ui.terminal.button({
         key,
         label,
         disabled,
+        copy_text: copyText,
         color: rgba(disabled ? theme.muted : theme.accent),
       }),
     dialog: (key, label, background, content, open) =>

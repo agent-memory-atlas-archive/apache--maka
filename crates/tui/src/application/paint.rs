@@ -125,7 +125,9 @@ pub(super) fn text(text: &str, area: Placement, buffer: &mut Buffer, style: Styl
 }
 #[derive(Clone)]
 pub(super) enum TargetKind {
-    Action,
+    Action {
+        copy_text: Option<std::rc::Rc<str>>,
+    },
     Item {
         current: bool,
         follow_focus: bool,
@@ -1071,6 +1073,7 @@ impl Presenter {
                 key,
                 label,
                 focus_child,
+                copy_text,
                 disabled,
                 color: foreground,
             } => {
@@ -1094,7 +1097,9 @@ impl Presenter {
                 let target = Target {
                     kind: match focus_child {
                         Some(child) => TargetKind::Focus(self.freeze_focus_child(mount, child)?),
-                        None => TargetKind::Action,
+                        None => TargetKind::Action {
+                            copy_text: copy_text.as_deref().map(Into::into),
+                        },
                     },
                     ancestors: scene.ancestry.clone(),
                     revision: self.application.frame(mount)?.revision,
