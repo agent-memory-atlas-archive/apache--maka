@@ -1120,6 +1120,15 @@ process.stdout.write(output.outputFiles[0].text);
         wait_for_target(&mut presenter, "[ Attachments (3) ]", 0);
         await_screen(&mut presenter, "What would you like to work on?");
         capture(&mut presenter, "native-pasted.txt");
+        presenter
+            .input(Event::Key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE)))
+            .unwrap();
+        await_screen(&mut presenter, "Paste local clipboard files, image or text");
+        capture(&mut presenter, "native-clipboard-help.txt");
+        presenter
+            .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+            .unwrap();
+        wait_for_target(&mut presenter, "[ Attachments (3) ]", 0);
         let artifacts = runtime
             .block_on(fixture.store.list_artifacts(&session, 0, 10))
             .unwrap()

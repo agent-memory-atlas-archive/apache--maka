@@ -11995,7 +11995,7 @@ test('tui file paste advances exact captures only after the original upload rece
       kind: 'component',
       child: 'composer',
       name: 'files',
-      event: { context, selection, remaining },
+      event: { context, selection, remaining, retryable: true },
     });
   const identity = { owner: file.owner, revision: file.revision };
   observe();
@@ -12091,7 +12091,7 @@ test('tui file paste retries reads, skips failed items, cancels, and observes dr
       kind: 'component',
       child: 'composer',
       name: 'files',
-      event: { context: session.id, selection, remaining },
+      event: { context: session.id, selection, remaining, retryable: true },
     });
   observe(file);
   assert.equal(client.output.actions.length, 0);
@@ -12130,6 +12130,45 @@ test('tui file paste retries reads, skips failed items, cancels, and observes dr
   );
   assert.equal(client.output.actions.length, 0);
   assert.equal(client.state.notice, 'attachmentLimit');
+  assert.equal(
+    modelSlots(client.output.frame.view).find((node) => node.key === 'composer').props.filePaste
+      .maxFiles,
+    0,
+    'a full attachment draft still admits plain clipboard text',
+  );
   client.raw('file-paste-cancel');
   assert.equal(client.state.attachments.paste.command.action, 'cancel');
+});
+
+test('tui clipboard pending retains original insertion context and failure requires a new gesture', async () => {
+  const { component } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js'))
+  );
+  const client = new Client(component).start();
+  const selection = { owner: uuid(96), revision: 1, phase: 'choosing', file: null, error: null };
+  const observe = (file, remaining = 1) =>
+    client.input({
+      kind: 'component',
+      child: 'composer',
+      name: 'files',
+      event: { context: session.id, selection: file, remaining, retryable: false },
+    });
+  observe(selection);
+  const composer = () =>
+    modelSlots(client.output.frame.view).find((node) => node.key === 'composer').props;
+  assert.equal(composer().busy, true);
+  assert.equal(composer().filePaste.context, session.id);
+  assert.equal(client.output.actions.length, 0);
+  client.state.selected = { ...session, id: 'another' };
+  client.raw('ignored');
+  assert.equal(composer().filePaste, null, 'a late text result cannot target another conversation');
+  observe({ ...selection, revision: 2, phase: 'failed', error: 'paste_rejected' });
+  assert.equal(modelButtons(client.output.frame.view).includes('file-paste-retry'), false);
+  client.raw('file-paste-retry');
+  assert.equal(client.state.attachments.paste.command, null, 'Retry cannot read a newer clipboard');
+  client.raw('file-paste-cancel');
+  assert.equal(client.state.attachments.paste.command.action, 'cancel');
+  observe({ ...selection, revision: 3, phase: 'empty' }, 0);
+  assert.equal(client.state.attachments.paste, null);
+  assert.equal(composer().filePaste.context, 'another');
 });

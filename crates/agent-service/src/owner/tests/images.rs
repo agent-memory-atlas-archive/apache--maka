@@ -265,8 +265,9 @@ pub(super) fn model_images(sent: &Value) -> Vec<Vec<u8>> {
             let url = part["image_url"]["url"].as_str().unwrap();
             STANDARD
                 .decode(
-                    url.strip_prefix("data:image/gif;base64,")
-                        .expect("actual GIF model input"),
+                    url.strip_prefix("data:image/")
+                        .and_then(|image| image.split_once(";base64,").map(|(_, data)| data))
+                        .expect("actual image model input"),
                 )
                 .unwrap()
         })

@@ -163,14 +163,31 @@ async fn attachment_payload_validation_and_image_read_use_actual_bytes() {
         let uploaded = upload(&f, &session, "misleading.txt", &bytes, Uuid::new_v4()).await.unwrap();
         let attachment = &uploaded["attachment"];
         assert_eq!(attachment["mimeType"], "image/gif", "signature takes precedence over the filename");
-        f.mutation(2, "send", json!({"sessionId":session,"message":"","attachments":[attachment["id"]],"model":f.selection().await}), Uuid::new_v4()).await.unwrap();
+        // A clipboard encoder has no local file: its original budgeted chunks
+        // cross the same actual Host mutation and canonical model projection.
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        use maka_plugins::call::ReadResource;
+        use std::io::Write;
+        let png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMQNE5uAAACKAEoAfdvjgAAAABJRU5ErkJggg==";
+        let png = STANDARD.decode(png_base64).unwrap();
+        let budget = maka_ui::budget::NativeBudget::default();
+        let mut writer = maka_ui::file::FileSnapshotWriter::new("clipboard.png", budget.clone()).unwrap();
+        writer.write_all(&png).unwrap();
+        let snapshot = writer.finish().unwrap();
+        let descriptor = snapshot.metadata();
+        let clipboard = f.mutation_with(2, "uploadAttachment", json!({"sessionId":session,"name":descriptor["name"],"bytes":descriptor["bytes"],"digest":descriptor["digest"]}), Uuid::new_v4(),
+            BTreeMap::from([("file".into(), snapshot as Arc<dyn ReadResource>)])).await.unwrap();
+        assert_eq!(clipboard["attachment"]["mimeType"], "image/png");
+        assert_eq!(budget.usage(), (0, 0, 0));
+        assert!(!f._dir.path().join("clipboard.png").exists());
+        f.mutation(2, "send", json!({"sessionId":session,"message":"","attachments":[attachment["id"],clipboard["attachment"]["id"]],"model":f.selection().await}), Uuid::new_v4()).await.unwrap();
         let (mut socket, _) = listener.accept().await.unwrap();
         let first = request(&mut socket).await;
-        assert_eq!(images::model_images(&first), vec![bytes.clone()]);
+        assert_eq!(images::model_images(&first), vec![bytes.clone(), png.clone()]);
         files::tool_response(&mut socket, json!({"path":format!("attachment:{}", attachment["id"].as_str().unwrap())})).await;
         let (mut socket, _) = listener.accept().await.unwrap();
         let second = request(&mut socket).await;
-        assert_eq!(images::model_images(&second), vec![bytes.clone(), bytes]);
+        assert_eq!(images::model_images(&second), vec![bytes.clone(), png, bytes]);
         response(&mut socket).await;
         f.drained().await;
         f.app.shutdown().await.unwrap();

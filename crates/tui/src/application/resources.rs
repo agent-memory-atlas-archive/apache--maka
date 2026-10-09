@@ -34,7 +34,8 @@ pub(super) struct Owner {
     revision: Option<u64>,
     pub live: bool,
     presented: bool,
-    pending: Option<NativeInput>,
+    // Independent native observation channels must not overwrite each other.
+    pending: BTreeMap<String, NativeInput>,
 }
 struct OwnerWitness {
     identity: std::rc::Weak<()>,
@@ -104,7 +105,7 @@ impl Resources {
                             revision: None,
                             live: true,
                             presented: false,
-                            pending: None,
+                            pending: BTreeMap::new(),
                         });
                     }
                     Err(_) => {
@@ -176,13 +177,15 @@ impl Resources {
                 };
                 owner.revision = Some(frame.revision);
                 if let Some(observed) = observed {
-                    owner.pending = Some(observed);
+                    owner.pending.insert(observed.key.clone(), observed);
                 }
             }
             match catch_unwind(AssertUnwindSafe(|| {
                 owner.recipe.observe(owner.state.as_mut())
             })) {
-                Ok(Some(observed)) => owner.pending = Some(observed),
+                Ok(Some(observed)) => {
+                    owner.pending.insert(observed.key.clone(), observed);
+                }
                 Ok(None) => {}
                 Err(_) => {
                     owner.live = false;
@@ -191,8 +194,8 @@ impl Resources {
                     return Err(Error::Invalid(error));
                 }
             }
-            if let Some(observed) = &owner.pending {
-                observations.push((mount, observed.clone()));
+            for observed in owner.pending.values() {
+                observations.push((mount.clone(), observed.clone()));
             }
         }
         Ok(observations)
@@ -255,14 +258,14 @@ impl Resources {
     }
     pub fn observe(&mut self, mount: &Mount, observed: NativeInput) {
         if let Some(owner) = self.owners.get_mut(&mount.id()) {
-            owner.pending = Some(observed);
+            owner.pending.insert(observed.key.clone(), observed);
         }
     }
     fn published(&mut self, mount: &Mount, observed: &NativeInput) {
         if let Some(owner) = self.owners.get_mut(&mount.id())
-            && owner.pending.as_ref() == Some(observed)
+            && owner.pending.get(&observed.key) == Some(observed)
         {
-            owner.pending = None;
+            owner.pending.remove(&observed.key);
         }
     }
     /// Identity for an original published logical keyboard target. Pixel/native
@@ -430,7 +433,9 @@ impl Resources {
         match catch_unwind(AssertUnwindSafe(|| {
             owner.recipe.present(owner.state.as_mut(), geometry)
         })) {
-            Ok(Some(observed)) => owner.pending = Some(observed),
+            Ok(Some(observed)) => {
+                owner.pending.insert(observed.key.clone(), observed);
+            }
             Ok(None) => {}
             Err(_) => {
                 owner.live = false;

@@ -1345,3 +1345,72 @@ fn committed_addition_preserves_native_draft_selection_focus_and_undo() {
         .block_on(Arc::try_unwrap(store).ok().unwrap().close())
         .unwrap();
 }
+
+#[test]
+fn native_clipboard_gesture_uses_the_original_textarea_commit_and_observation() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 20);
+    dispatch(
+        &mut tui,
+        "configure",
+        json!({"submit":"enter", "filePaste":{"context":"original", "maxFiles":8}}),
+    );
+    draw(&mut tui, 50, 20);
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    tui.input(Event::Paste("before".into())).unwrap();
+    let mount = draft(&tui);
+    super::super::textarea::clipboard_text(
+        &mut *tui.resources.owners.get_mut(&mount.id()).unwrap().state,
+        "中文\nnext".into(),
+    );
+    tui.input(Event::Key(KeyEvent::new(
+        KeyCode::Char('v'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        tui.pump().unwrap();
+        draw(&mut tui, 50, 20);
+        if editor_owner(&*tui.resources.owners[&mount.id()].state)
+            .editor
+            .text()
+            == "before中文\nnext"
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "native clipboard did not publish"
+        );
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        observation(&tui)["snapshot"]["text"]["bytes"],
+        "before中文\nnext".len()
+    );
+    assert!(tui.application.frame(&tui.root).unwrap().state["submissions"].is_null());
+    let observed = editor_owner(&*tui.resources.owners[&mount.id()].state).observation();
+    let files = NativeInput {
+        key: "file_observe".into(),
+        value: json!({"context":"original","selection":{"owner":"native-file","revision":2,"phase":"empty","file":null,"error":null},"remaining":0,"retryable":false}),
+    };
+    tui.resources.observe(&mount, files.clone());
+    tui.resources.observe(&mount, observed.clone());
+    let pending = tui.resources.commit(&tui.application, &tui.root).unwrap();
+    assert!(
+        pending
+            .iter()
+            .any(|(owner, input)| owner == &mount && input == &files)
+    );
+    assert!(
+        pending
+            .iter()
+            .any(|(owner, input)| owner == &mount && input == &observed)
+    );
+    close(&mut tui);
+}

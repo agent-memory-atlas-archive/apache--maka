@@ -78,4 +78,9 @@ The Composer also accepts a whole paste of absolute local file paths, including
 quoted names and `file://localhost` URLs. One batch holds at most eight distinct
 paths and reads one file at a time. Retry, Skip file and Cancel act on the original
 batch; ordinary prose remains text. Enter cannot submit while a batch is pending.
-Native clipboard files/images and attachment draft restoration remain unfinished.
+Ctrl+V reads the local OS clipboard once, preferring files, then an image, then text.
+Images are limited to 33,554,432 pixels and encoded directly into immutable PNG chunks;
+no temporary image file is created. Text uses its original insertion position and
+requires the same conversation and unchanged draft. Clipboard failures require a
+new physical paste; Retry only rereads an original selected file. Attachment draft
+restoration remains unfinished.

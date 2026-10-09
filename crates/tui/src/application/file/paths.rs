@@ -20,7 +20,7 @@
 //! Original whole-paste local path grammar; no filesystem access or shell evaluation.
 use std::path::{Path, PathBuf};
 
-pub(super) fn valid(path: &Path) -> bool {
+pub(in crate::application) fn valid(path: &Path) -> bool {
     path.is_absolute()
         && path
             .to_str()
@@ -89,7 +89,7 @@ fn path_words(text: &str, windows: bool) -> Option<Vec<String>> {
     }
     quote.is_none().then_some(words)
 }
-fn local_path(text: &str) -> Option<PathBuf> {
+pub(in crate::application) fn local_path(text: &str) -> Option<PathBuf> {
     let path = if text.starts_with("file://") {
         if text.chars().any(char::is_whitespace) {
             return None;

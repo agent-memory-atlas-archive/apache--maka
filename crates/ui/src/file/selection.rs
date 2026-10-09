@@ -38,6 +38,87 @@ pub struct FileSnapshot {
     chunks: Vec<Chunk>,
     descriptor: FileDescriptor,
 }
+
+/// Bounded native byte producer. Encoders write directly into the same immutable
+/// chunks as a selected file, without a second buffer or temporary file owner.
+pub struct FileSnapshotWriter {
+    budget: NativeBudget,
+    name: String,
+    chunks: Vec<Chunk>,
+    bytes: usize,
+    hash: Sha256,
+    error: Option<FileError>,
+}
+impl FileSnapshotWriter {
+    pub fn new(name: &str, budget: NativeBudget) -> Result<Self, FileError> {
+        if name.is_empty() || name.len() > 512 || name.chars().any(char::is_control) {
+            return Err(FileError::InvalidFile);
+        }
+        Ok(Self {
+            budget,
+            name: name.into(),
+            chunks: Vec::new(),
+            bytes: 0,
+            hash: Sha256::new(),
+            error: None,
+        })
+    }
+    pub fn finish(self) -> Result<Arc<FileSnapshot>, FileError> {
+        if let Some(error) = self.error {
+            return Err(error);
+        }
+        Ok(Arc::new(FileSnapshot {
+            chunks: self.chunks,
+            descriptor: FileDescriptor {
+                name: self.name,
+                bytes: self.bytes,
+                digest: format!("sha256:{:x}", self.hash.finalize()),
+            },
+        }))
+    }
+    fn write_bytes(&mut self, mut bytes: &[u8]) -> Result<(), FileError> {
+        if let Some(error) = self.error {
+            return Err(error);
+        }
+        if bytes.len() > MAX_FILE_BYTES - self.bytes {
+            return Err(FileError::LimitExceeded);
+        }
+        while !bytes.is_empty() {
+            if self
+                .chunks
+                .last()
+                .is_none_or(|chunk| chunk.bytes.len() == CHUNK)
+            {
+                let permit = self.budget.reserve(Kind::Encoded, CHUNK)?;
+                self.chunks.push(Chunk {
+                    bytes: Vec::with_capacity(CHUNK),
+                    _permit: permit,
+                });
+            }
+            let chunk = self.chunks.last_mut().unwrap();
+            let count = (CHUNK - chunk.bytes.len()).min(bytes.len());
+            chunk.bytes.extend_from_slice(&bytes[..count]);
+            self.hash.update(&bytes[..count]);
+            self.bytes += count;
+            bytes = &bytes[count..];
+        }
+        Ok(())
+    }
+}
+impl std::io::Write for FileSnapshotWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        match self.write_bytes(bytes) {
+            Ok(()) => Ok(bytes.len()),
+            Err(error) => {
+                self.error = Some(error);
+                Err(std::io::Error::other(error))
+            }
+        }
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 impl ReadResource for FileSnapshot {
     fn resource_type(&self) -> maka_plugin_core::contract::ResourceType {
         binary_resource_type()

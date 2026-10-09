@@ -40,6 +40,7 @@ export function help<N extends Node>(
       ['Ctrl/⌘ G', text.reviewRequest],
       ...(terminal
         ? [
+            ['Ctrl V', text.helpClipboard],
             ['Ctrl F', text.findConversation],
             ['Alt F', text.findHistory],
             ['Enter / F3 · Shift', text.findNavigate],

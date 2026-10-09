@@ -1875,9 +1875,8 @@ function frame<N extends Node>(
         !state.source &&
         !state.image &&
         !state.loading &&
-        !busy &&
-        !state.attachments.paste &&
-        attachmentCapacity(state.attachments, state.selected.id)
+        (!busy || !!state.attachments.paste) &&
+        (!state.attachments.paste || state.attachments.paste.observed.context === state.selected.id)
           ? {
               context: state.selected.id,
               maxFiles: Math.min(8 - attached.length, 64 - state.attachments.files.length),
@@ -3182,7 +3181,7 @@ export function workspace<N extends Node>(
           else if (input.key === 'file-paste-skip' && ['ready', 'failed'].includes(file.phase))
             paste.command = { selection: selectedFile(file), action: 'next' };
           else if (input.key === 'file-paste-retry') {
-            if (file.phase === 'failed')
+            if (file.phase === 'failed' && paste.observed.retryable)
               paste.command = { selection: selectedFile(file), action: 'retry' };
             else if (file.phase === 'ready') paste.attempted = null;
           }

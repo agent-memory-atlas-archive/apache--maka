@@ -73,18 +73,27 @@ export function pasteView<N extends Node>(
     file = paste.observed.selection;
   const failed = file.phase === 'failed';
   const stopped = failed || (file.phase === 'ready' && !busy && !paste.command);
+  const retryable = (failed && paste.observed.retryable) || (stopped && !failed);
+  const status =
+    file.error === 'paste_rejected'
+      ? text.clipboardPasteRejected
+      : file.error === 'clipboard_unavailable'
+        ? text.clipboardUnavailable
+        : stopped
+          ? text.attachmentFailed
+          : text.attachmentPasting;
   return ui.box(
     'file-paste',
     [
       ui.text(
         'file-paste-status',
-        `${stopped ? text.attachmentFailed : text.attachmentPasting} (${paste.observed.remaining})${file.file ? ` · ${file.file.name}` : ''}`,
+        `${status} (${paste.observed.remaining})${file.file ? ` · ${file.file.name}` : ''}`,
         13,
         theme.muted,
         400,
         { truncate: true },
       ),
-      ...(stopped
+      ...(retryable
         ? [ui.button('file-paste-retry', text.sourceRetry, busy || !!paste.command)]
         : []),
       ...(['ready', 'failed'].includes(file.phase)

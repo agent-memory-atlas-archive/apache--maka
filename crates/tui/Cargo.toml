@@ -47,6 +47,13 @@ libc.workspace = true
 unicode-segmentation.workspace = true
 unicode-width.workspace = true
 url = "2.5.8"
+image = { version = "0.25", default-features = false, features = ["png", "tiff", "bmp"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
+clipboard-rs = { version = "0.3.5", features = ["wayland"] }
+
+[target.'cfg(windows)'.dependencies]
+clipboard-win = "5.4.1"
 
 [dev-dependencies]
 tempfile.workspace = true

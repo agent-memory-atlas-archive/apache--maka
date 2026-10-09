@@ -114,3 +114,24 @@ impl Drop for Permit {
             .expect("original native budget reservation");
     }
 }
+
+impl Permit {
+    /// Return unused capacity after a native API reports its actual allocation.
+    pub fn shrink_to(&mut self, bytes: usize) {
+        assert!(
+            bytes <= self.bytes,
+            "native permit cannot grow without admission"
+        );
+        let released = self.bytes - bytes;
+        let mut usage = self.budget.0.lock().expect("native budget lock");
+        let used = match self.kind {
+            Kind::Encoded => &mut usage.encoded,
+            Kind::Pixels => &mut usage.pixels,
+            Kind::Job => &mut usage.jobs,
+        };
+        *used = used
+            .checked_sub(released)
+            .expect("original native reservation");
+        self.bytes = bytes;
+    }
+}

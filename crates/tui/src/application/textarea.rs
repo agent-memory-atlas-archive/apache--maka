@@ -19,6 +19,7 @@
 
 use super::Placement;
 use super::editor::Owner as EditorOwner;
+mod clipboard;
 mod paste;
 struct Owner {
     edit: EditorOwner,
@@ -28,6 +29,14 @@ struct Owner {
 #[cfg(test)]
 pub(super) fn editor_owner(state: &dyn std::any::Any) -> &EditorOwner {
     &state.downcast_ref::<Owner>().unwrap().edit
+}
+#[cfg(test)]
+pub(super) fn clipboard_text(state: &mut dyn std::any::Any, text: String) {
+    state
+        .downcast_mut::<Owner>()
+        .unwrap()
+        .files
+        .set_clipboard_text(text);
 }
 use super::{NativeInput, Slots, Widget, WidgetInput};
 use crate::editor::{Editor, Geometry};
@@ -95,7 +104,15 @@ impl Widget for Recipe {
         if changed {
             owner.edit.apply(self.props.command.as_ref().unwrap());
         }
-        if changed || !owner.edit.announced {
+        owner.files.poll(
+            &mut owner.edit.editor,
+            self.props
+                .file_paste
+                .as_ref()
+                .map(|policy| policy.context.as_str()),
+        );
+        let edited = owner.edit.refresh();
+        if changed || edited || !owner.edit.announced {
             owner.edit.announced = true;
             Ok(Some(owner.edit.observation()))
         } else {
@@ -103,7 +120,19 @@ impl Widget for Recipe {
         }
     }
     fn observe(&self, state: &mut dyn Any) -> Option<NativeInput> {
-        state.downcast_mut::<Owner>().unwrap().files.observe()
+        let owner = state.downcast_mut::<Owner>().unwrap();
+        owner.files.poll(
+            &mut owner.edit.editor,
+            self.props
+                .file_paste
+                .as_ref()
+                .map(|policy| policy.context.as_str()),
+        );
+        if owner.edit.refresh() {
+            Some(owner.edit.observation())
+        } else {
+            owner.files.observe()
+        }
     }
     fn present_focus(&self, state: &mut dyn Any) -> bool {
         state
@@ -128,6 +157,22 @@ impl Widget for Recipe {
         if self.props.disabled {
             return Ok(if matches!(event, Event::Key(_)) {
                 WidgetInput::Unhandled
+            } else {
+                WidgetInput::Consumed(None)
+            });
+        }
+        if !self.props.read_only
+            && owner.visible
+            && let Event::Key(key) = event
+            && key.code == KeyCode::Char('v')
+            && key.modifiers == KeyModifiers::CONTROL
+            && let Some(policy) = &self.props.file_paste
+        {
+            return Ok(if key.kind == KeyEventKind::Press {
+                owner
+                    .files
+                    .stage_clipboard(&owner.edit.editor, policy)
+                    .map_or(WidgetInput::Consumed(None), WidgetInput::Emitted)
             } else {
                 WidgetInput::Consumed(None)
             });

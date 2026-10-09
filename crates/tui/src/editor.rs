@@ -40,6 +40,13 @@ struct Selection {
     upstream: bool,
 }
 
+/// Local insertion target for an admitted asynchronous native paste.
+#[derive(Clone, Copy)]
+pub(crate) struct PasteTarget {
+    revision: u64,
+    selection: Selection,
+}
+
 const MAX_TEXT_BYTES: usize = 256 * 1024;
 const MAX_HISTORY_BYTES: usize = 1024 * 1024;
 const MAX_HISTORY_EDITS: usize = 128;
@@ -146,6 +153,26 @@ impl Editor {
     }
     pub(crate) fn revision(&self) -> u64 {
         self.revision
+    }
+    pub(crate) fn paste_target(&self) -> PasteTarget {
+        PasteTarget {
+            revision: self.revision,
+            selection: self.selection,
+        }
+    }
+    pub(crate) fn paste_at(&mut self, target: PasteTarget, text: &str) -> bool {
+        if self.revision != target.revision || text.len() > self.byte_limit {
+            return false;
+        }
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        if !self.accepts_text(&text)
+            || self.text.len() - target.selection.range().len() + text.len() > self.byte_limit
+        {
+            return false;
+        }
+        self.selection = target.selection;
+        self.insert(&text);
+        true
     }
     pub(crate) fn selection_range(&self) -> Range<usize> {
         self.selection.range()

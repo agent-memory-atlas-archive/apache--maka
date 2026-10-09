@@ -19,26 +19,44 @@
 
 //! One physically admitted batch, read serially through the original file custody.
 use super::super::{NativeContext, NativeInput, file::paths};
+use super::clipboard::{self, Content, Paths};
+use crate::editor::{Editor, PasteTarget};
 use maka_ui::{
     budget::{Kind, Permit},
     file::{FileCapture, FileError, FilePhase, FileSelection, FileSnapshot, read_selected},
     textarea::{FilePasteAction, FilePasteCommand, FilePasteObservation, FilePastePolicy},
 };
-use std::{
-    collections::VecDeque,
-    path::PathBuf,
-    sync::{Arc, mpsc},
-};
+use std::sync::{Arc, mpsc};
 
+enum Source {
+    Paths(Paths),
+    Clipboard { maximum: usize, target: PasteTarget },
+    Snapshot,
+    Failed,
+    Empty,
+}
+impl Source {
+    fn remaining(&self) -> usize {
+        match self {
+            Self::Paths(paths) => paths.items.len(),
+            Self::Empty => 0,
+            _ => 1,
+        }
+    }
+}
 struct Batch {
     context: String,
-    paths: VecDeque<PathBuf>,
+    source: Source,
     staged: bool,
     _memory: Permit,
 }
+enum Output {
+    File(Arc<FileSnapshot>),
+    Clipboard(Content),
+}
 struct Read {
     revision: u64,
-    receiver: mpsc::Receiver<Result<Arc<FileSnapshot>, FileError>>,
+    receiver: mpsc::Receiver<Result<Output, FileError>>,
 }
 pub(super) struct Paste {
     context: NativeContext,
@@ -46,6 +64,8 @@ pub(super) struct Paste {
     batch: Option<Batch>,
     read: Option<Read>,
     dirty: bool,
+    #[cfg(test)]
+    clipboard: Option<String>,
 }
 impl Paste {
     pub fn pending(&self) -> bool {
@@ -58,40 +78,63 @@ impl Paste {
             batch: None,
             read: None,
             dirty: false,
+            #[cfg(test)]
+            clipboard: None,
         }
+    }
+    #[cfg(test)]
+    pub fn set_clipboard_text(&mut self, text: String) {
+        self.clipboard = Some(text);
     }
     /// The whole paste must classify as local paths. Otherwise native text keeps it.
     pub fn stage(&mut self, text: &str, policy: &FilePastePolicy) -> Option<NativeInput> {
-        if self.batch.is_some() || self.read.is_some() {
+        if self.pending() {
             return None;
         }
-        let paths = paths::parse(text)?;
-        let mut unique = VecDeque::new();
-        for path in paths {
-            if !unique.contains(&path) {
-                if unique.len() == policy.max_files {
-                    return None;
-                }
-                unique.push_back(path);
-            }
-        }
-        if unique.is_empty() || unique.len() > policy.max_files {
+        let paths =
+            clipboard::admit_paths(paths::parse(text)?, policy.max_files, &self.context.budget)
+                .ok()?;
+        self.stage_source(Source::Paths(paths), policy)
+    }
+    pub fn stage_clipboard(
+        &mut self,
+        editor: &Editor,
+        policy: &FilePastePolicy,
+    ) -> Option<NativeInput> {
+        self.stage_source(
+            Source::Clipboard {
+                maximum: policy.max_files,
+                target: editor.paste_target(),
+            },
+            policy,
+        )
+    }
+    fn stage_source(&mut self, source: Source, policy: &FilePastePolicy) -> Option<NativeInput> {
+        let replace_failed = matches!(source, Source::Clipboard { .. })
+            && self.read.is_none()
+            && self
+                .batch
+                .as_ref()
+                .is_some_and(|batch| matches!(batch.source, Source::Failed));
+        if self.pending() && !replace_failed {
             return None;
         }
         let memory = self
             .context
             .budget
-            .reserve(
-                Kind::Encoded,
-                unique.capacity() * std::mem::size_of::<PathBuf>()
-                    + unique.iter().map(PathBuf::capacity).sum::<usize>()
-                    + policy.context.len(),
-            )
+            .reserve(Kind::Encoded, policy.context.len())
             .ok()?;
+        if replace_failed {
+            // Preserve the old failure if new admission cannot reserve memory.
+            // Only a physical gesture can replace the failed clipboard read.
+            self.selection.clear();
+            self.batch = None;
+            self.dirty = false;
+        }
         let choose = self.selection.stage()?;
         self.batch = Some(Batch {
             context: policy.context.clone(),
-            paths: unique,
+            source,
             staged: true,
             _memory: memory,
         });
@@ -125,55 +168,90 @@ impl Paste {
         }
         let Some(command) = command else { return };
         let observation = self.selection.observation();
-        if self.batch.is_none()
-            || command.selection.owner != observation.owner
+        let Some(batch) = self.batch.as_mut() else {
+            return;
+        };
+        if command.selection.owner != observation.owner
             || command.selection.revision != observation.revision
         {
             return;
         }
         match command.action {
             FilePasteAction::Cancel => {
-                self.batch.as_mut().unwrap().paths.clear();
+                batch.source = Source::Empty;
                 self.selection.clear();
             }
             FilePasteAction::Next
                 if matches!(observation.phase, FilePhase::Ready | FilePhase::Failed) =>
             {
-                self.batch.as_mut().unwrap().paths.pop_front();
+                match &mut batch.source {
+                    Source::Paths(paths) => {
+                        paths.items.pop_front();
+                    }
+                    _ => batch.source = Source::Empty,
+                }
                 self.selection.clear();
-                if !self.batch.as_ref().unwrap().paths.is_empty() {
+                if batch.source.remaining() != 0 {
                     self.advance();
                 }
             }
-            FilePasteAction::Retry if observation.phase == FilePhase::Failed => self.advance(),
+            FilePasteAction::Retry
+                if observation.phase == FilePhase::Failed
+                    && matches!(batch.source, Source::Paths(_)) =>
+            {
+                self.advance()
+            }
             _ => return,
         }
         self.dirty = true;
     }
     fn advance(&mut self) {
-        // A committed disposition can only continue paths from the original
-        // physical batch. No guest command can supply or substitute a path.
+        // Guest dispositions can continue original paths, never reread a clipboard.
         let choose = self.selection.stage().expect("settled file selection");
         assert!(self.selection.accept(Some(&choose.request)));
         self.start();
     }
     fn start(&mut self) {
-        let path = self.batch.as_ref().unwrap().paths.front().unwrap().clone();
+        let budget = self.context.budget.clone();
+        let source = &self.batch.as_ref().unwrap().source;
+        let read: Box<dyn FnOnce() -> Result<Output, FileError> + Send> = match source {
+            Source::Paths(paths) => {
+                let path = paths.items.front().unwrap().clone();
+                Box::new(move || read_selected(&path, &budget).map(Output::File))
+            }
+            Source::Clipboard { maximum, .. } => {
+                let maximum = *maximum;
+                #[cfg(test)]
+                if let Some(value) = self.clipboard.take() {
+                    return self.spawn(Box::new(move || {
+                        let memory = budget.reserve(Kind::Encoded, value.capacity())?;
+                        Ok(Output::Clipboard(Content::Text(clipboard::Text {
+                            value,
+                            _memory: memory,
+                        })))
+                    }));
+                }
+                Box::new(move || clipboard::read(maximum, &budget).map(Output::Clipboard))
+            }
+            _ => return,
+        };
+        self.spawn(read);
+    }
+    fn spawn(&mut self, read: Box<dyn FnOnce() -> Result<Output, FileError> + Send>) {
         let job = match self.context.budget.reserve(Kind::Job, 1) {
             Ok(job) => job,
             Err(error) => {
-                self.selection.settle(Err(error.into()));
+                self.fail(error.into());
                 return;
             }
         };
         let mut ticket = match self.context.resources.reserve() {
             Ok(ticket) => ticket,
             Err(_) => {
-                self.selection.settle(Err(FileError::WorkerFailed));
+                self.fail(FileError::WorkerFailed);
                 return;
             }
         };
-        let budget = self.context.budget.clone();
         let revision = self.selection.observation().revision;
         let (sender, receiver) = mpsc::sync_channel(1);
         match std::thread::Builder::new()
@@ -181,13 +259,11 @@ impl Paste {
             .spawn(move || {
                 ticket.start();
                 let (result, cleanup) =
-                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        read_selected(&path, &budget)
-                    })) {
+                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(read)) {
                         Ok(result) => (result, Ok(())),
                         Err(_) => (
                             Err(FileError::WorkerFailed),
-                            Err("native file paste worker panicked".into()),
+                            Err("native paste worker panicked".into()),
                         ),
                     };
                 drop(job);
@@ -195,25 +271,64 @@ impl Paste {
                 ticket.complete(cleanup);
             }) {
             Ok(_) => self.read = Some(Read { revision, receiver }),
-            Err(_) => self.selection.settle(Err(FileError::WorkerFailed)),
+            Err(_) => self.fail(FileError::WorkerFailed),
         }
     }
-    pub fn observe(&mut self) -> Option<NativeInput> {
-        if let Some(read) = &self.read {
-            let result = match read.receiver.try_recv() {
-                Ok(result) => Some(result),
-                Err(mpsc::TryRecvError::Disconnected) => Some(Err(FileError::WorkerFailed)),
-                Err(mpsc::TryRecvError::Empty) => None,
-            };
-            if let Some(result) = result {
-                let revision = read.revision;
-                self.read = None;
-                if self.selection.observation().revision == revision {
-                    self.selection.settle(result.map(Some));
-                    self.dirty = true;
+    fn fail(&mut self, error: FileError) {
+        if let Some(batch) = &mut self.batch
+            && matches!(batch.source, Source::Clipboard { .. })
+        {
+            batch.source = Source::Failed;
+        }
+        self.selection.settle(Err(error));
+        self.dirty = true;
+    }
+    pub fn poll(&mut self, editor: &mut Editor, current_context: Option<&str>) {
+        let Some(read) = &self.read else { return };
+        let result = match read.receiver.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Disconnected) => Err(FileError::WorkerFailed),
+            Err(mpsc::TryRecvError::Empty) => return,
+        };
+        let revision = read.revision;
+        self.read = None;
+        if self.selection.observation().revision != revision {
+            return;
+        }
+        let batch = self.batch.as_mut().expect("original admitted batch");
+        match result {
+            Err(error) => self.fail(error),
+            Ok(Output::File(file)) => self.selection.settle(Ok(Some(file))),
+            Ok(Output::Clipboard(Content::Image(file))) => {
+                batch.source = Source::Snapshot;
+                self.selection.settle(Ok(Some(file)));
+            }
+            Ok(Output::Clipboard(Content::Files(paths))) => {
+                batch.source = Source::Paths(paths);
+                self.start();
+            }
+            Ok(Output::Clipboard(Content::Text(text))) => {
+                let Source::Clipboard { maximum, target } = batch.source else {
+                    unreachable!()
+                };
+                if let Some(paths) = paths::parse(&text.value).and_then(|paths| {
+                    clipboard::admit_paths(paths, maximum, &self.context.budget).ok()
+                }) {
+                    batch.source = Source::Paths(paths);
+                    self.start();
+                } else if current_context == Some(batch.context.as_str())
+                    && editor.paste_at(target, &text.value)
+                {
+                    batch.source = Source::Empty;
+                    self.selection.clear();
+                } else {
+                    self.fail(FileError::PasteRejected);
                 }
             }
         }
+        self.dirty = true;
+    }
+    pub fn observe(&mut self) -> Option<NativeInput> {
         let batch = self.batch.as_ref()?;
         if !self.dirty || batch.staged {
             return None;
@@ -221,10 +336,11 @@ impl Paste {
         let observation = FilePasteObservation {
             context: batch.context.clone(),
             selection: self.selection.observation(),
-            remaining: batch.paths.len(),
+            remaining: batch.source.remaining(),
+            retryable: matches!(batch.source, Source::Paths(_)),
         };
         self.dirty = false;
-        if batch.paths.is_empty() {
+        if observation.remaining == 0 {
             self.batch = None;
         }
         Some(NativeInput {
@@ -249,6 +365,7 @@ mod tests {
     fn settled(paste: &mut Paste) -> FilePasteObservation {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
+            paste.poll(&mut Editor::default(), Some("original-session"));
             if let Some(input) = paste.observe() {
                 let observed: FilePasteObservation = serde_json::from_value(input.value).unwrap();
                 if observed.selection.phase != FilePhase::Choosing {
@@ -394,6 +511,7 @@ mod tests {
             context: "session".into(),
             selection: paste.selection.observation(),
             remaining: 1,
+            retryable: true,
         };
         paste.commit(
             None,
@@ -407,10 +525,181 @@ mod tests {
             .unwrap()
             .block_on(resources.finish())
             .unwrap();
+        paste.poll(&mut Editor::default(), Some("session"));
         assert!(
             paste.observe().is_none(),
             "late worker cannot restore a cancelled batch"
         );
+        assert_eq!(budget.usage(), (0, 0, 0));
+    }
+    fn clipboard_text(value: &str, budget: &maka_ui::budget::NativeBudget) -> Content {
+        let value = value.to_owned();
+        let memory = budget.reserve(Kind::Encoded, value.capacity()).unwrap();
+        Content::Text(clipboard::Text {
+            value,
+            _memory: memory,
+        })
+    }
+    #[test]
+    fn clipboard_text_uses_original_selection_and_rejects_changed_draft_or_context() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        for change in ["cursor", "draft", "context", "full"] {
+            let resources = Arc::new(maka_plugins::call::Resources::default());
+            let budget = maka_ui::budget::NativeBudget::default();
+            let mut paste = Paste::new(NativeContext {
+                resources: resources.clone(),
+                budget: budget.clone(),
+            });
+            let mut editor = Editor::default();
+            editor.insert("beforeafter");
+            for _ in 0..5 {
+                editor.key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+            }
+            let policy = FilePastePolicy {
+                context: "original".into(),
+                max_files: if change == "full" { 0 } else { 8 },
+            };
+            let staged = paste.stage_clipboard(&editor, &policy).unwrap();
+            // Admit the same private marker, substituting only the OS response.
+            assert!(paste.selection.accept(staged.value["request"].as_str()));
+            paste.batch.as_mut().unwrap().staged = false;
+            let content = clipboard_text(
+                if change == "full" {
+                    "/tmp/clipboard.txt"
+                } else {
+                    "中\r\n"
+                },
+                &budget,
+            );
+            paste.spawn(Box::new(move || Ok(Output::Clipboard(content))));
+            editor.key(KeyEvent::new(KeyCode::Home, KeyModifiers::CONTROL));
+            if change == "draft" {
+                editor.insert("new-");
+            }
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(resources.finish())
+                .unwrap();
+            paste.poll(
+                &mut editor,
+                Some(if change == "context" {
+                    "other"
+                } else {
+                    "original"
+                }),
+            );
+            let observed: FilePasteObservation =
+                serde_json::from_value(paste.observe().unwrap().value).unwrap();
+            if matches!(change, "cursor" | "full") {
+                assert_eq!(
+                    editor.text(),
+                    if change == "full" {
+                        "before/tmp/clipboard.txtafter"
+                    } else {
+                        "before中\nafter"
+                    }
+                );
+                assert_eq!(observed.remaining, 0);
+                assert_eq!(budget.usage(), (0, 0, 0));
+            } else {
+                assert_eq!(
+                    editor.text(),
+                    if change == "draft" {
+                        "new-beforeafter"
+                    } else {
+                        "beforeafter"
+                    }
+                );
+                assert_eq!(observed.selection.error, Some(FileError::PasteRejected));
+                assert!(!observed.retryable);
+                paste.commit(
+                    None,
+                    Some(&command(&observed, FilePasteAction::Retry)),
+                    true,
+                );
+                assert!(
+                    paste.read.is_none(),
+                    "guest Retry cannot reread the clipboard"
+                );
+                let pressure = budget
+                    .reserve(Kind::Encoded, 64 * 1024 * 1024 - budget.usage().0)
+                    .unwrap();
+                assert!(paste.stage_clipboard(&editor, &policy).is_none());
+                assert_eq!(
+                    paste.selection.observation(),
+                    observed.selection,
+                    "failed replacement admission preserves the original failure"
+                );
+                drop(pressure);
+                assert!(
+                    paste.stage_clipboard(&editor, &policy).is_some(),
+                    "a new physical paste may replace the failed clipboard read"
+                );
+                paste.suspend();
+                assert_eq!(budget.usage(), (0, 0, 0));
+            }
+        }
+    }
+    #[test]
+    fn cancelled_clipboard_worker_keeps_its_original_ticket_and_drops_late_content() {
+        let resources = Arc::new(maka_plugins::call::Resources::default());
+        let budget = maka_ui::budget::NativeBudget::default();
+        let mut paste = Paste::new(NativeContext {
+            resources: resources.clone(),
+            budget: budget.clone(),
+        });
+        let mut editor = Editor::default();
+        let staged = paste
+            .stage_clipboard(
+                &editor,
+                &FilePastePolicy {
+                    context: "original".into(),
+                    max_files: 1,
+                },
+            )
+            .unwrap();
+        assert!(paste.selection.accept(staged.value["request"].as_str()));
+        paste.batch.as_mut().unwrap().staged = false;
+        let (entered, wait) = mpsc::sync_channel(1);
+        let (release, held) = mpsc::sync_channel(1);
+        let original = budget.clone();
+        paste.spawn(Box::new(move || {
+            let text = clipboard_text("late", &original);
+            entered.send(()).unwrap();
+            held.recv().unwrap();
+            Ok(Output::Clipboard(text))
+        }));
+        wait.recv().unwrap();
+        let choosing = FilePasteObservation {
+            context: "original".into(),
+            selection: paste.selection.observation(),
+            remaining: 1,
+            retryable: false,
+        };
+        paste.commit(
+            None,
+            Some(&command(&choosing, FilePasteAction::Cancel)),
+            true,
+        );
+        assert_eq!(settled(&mut paste).remaining, 0);
+        assert_eq!(budget.usage(), (4, 0, 1));
+        assert!(
+            paste.pending(),
+            "physical clipboard work still owns the input admission"
+        );
+        release.send(()).unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(resources.finish())
+            .unwrap();
+        paste.poll(&mut editor, Some("original"));
+        assert!(editor.text().is_empty());
+        assert!(paste.observe().is_none());
+        assert!(!paste.pending());
         assert_eq!(budget.usage(), (0, 0, 0));
     }
 }

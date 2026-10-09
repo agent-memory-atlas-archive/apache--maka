@@ -797,7 +797,9 @@ export type FileError =
   | 'read_failed'
   | 'limit_exceeded'
   | 'budget_exhausted'
-  | 'worker_failed';
+  | 'worker_failed'
+  | 'clipboard_unavailable'
+  | 'paste_rejected';
 /**
  * Complete bounded comparisons and structured patches reuse native parsers.
  */
@@ -3136,6 +3138,9 @@ export interface EditorCommand {
 }
 export interface FilePastePolicy {
   context: string;
+  /**
+   * Zero still permits clipboard text, but no new file attachments.
+   */
   maxFiles: number;
 }
 export interface FilePasteCommand {
@@ -3153,6 +3158,10 @@ export interface FilePasteObservation {
    * Includes the currently reading, ready or failed item.
    */
   remaining: number;
+  /**
+   * A failed original path can be reread. Clipboard reads require a new gesture.
+   */
+  retryable: boolean;
 }
 export interface FileObservation {
   owner: string;

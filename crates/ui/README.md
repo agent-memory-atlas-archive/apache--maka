@@ -431,7 +431,7 @@ observations never expose local paths or directory contents.
 TextInput, SecretInput and Textarea accept optional `autoFocus` (default false). A structurally visible, enabled input offers its original native focus once on reveal. Stable updates and viewport clipping do not repeat the offer. Hidden or disabled inputs cancel it; showing or enabling them can offer again. Actual native presentation admits the first eligible offer and consumes the other painted offers. Desktop keeps active native composition in its original editor. These props do not replace native text, selection or undo ownership.
 
 Textarea can opt into terminal file-path paste with `filePaste: {context, maxFiles}`
-(`maxFiles` is 1–8). A physical whole-path paste stages a native intent; committed
+(`maxFiles` is 0–8; zero permits only clipboard text). A physical whole-path paste stages a native intent; committed
 admission starts serial reads under the existing file budget and resource owner.
 `files` returns the original context and current selection metadata; `file` captures
 the exact owner/revision as immutable bytes. `fileCommand` accepts only `next`,
@@ -439,3 +439,14 @@ the exact owner/revision as immutable bytes. `fileCommand` accepts only `next`,
 original contract. An admitted batch retains its context across navigation; hiding
 the editor cancels only an uncommitted intent. Desktop rejects these optional props
 until it implements the same capability.
+
+Opted-in terminal Textarea also admits Ctrl+V through the same physical marker.
+`FilePasteObservation.retryable` distinguishes original paths from a one-shot
+clipboard read; guest commands cannot reread a clipboard. Text completion requires
+the original context and text revision, preserving the captured selection even if
+the caret moved. Clipboard images use `FileSnapshotWriter`: its chunk permits follow
+the immutable capture and Host upload, with no temporary-file custody. Decode checks
+dimensions/33,554,432-pixel and 128-MiB pixel limits before allocating output pixels.
+Native clipboard API responses are size-checked after the platform getter returns.
+Independent native observation keys retain their latest pending values separately,
+so an editor update and file progress cannot overwrite one another before publication.

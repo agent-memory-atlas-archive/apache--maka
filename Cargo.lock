@@ -9078,8 +9078,11 @@ version = "0.2.0"
 dependencies = [
  "apply-patch",
  "base64 0.22.1",
+ "clipboard-rs",
+ "clipboard-win",
  "crossterm",
  "futures-util",
+ "image",
  "libc",
  "maka-application-bridge",
  "maka-event-log",

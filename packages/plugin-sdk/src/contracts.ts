@@ -972,6 +972,8 @@ export const contracts = {
                 'limit_exceeded',
                 'budget_exhausted',
                 'worker_failed',
+                'clipboard_unavailable',
+                'paste_rejected',
               ],
             },
           },
@@ -3212,9 +3214,10 @@ export const contracts = {
                 maxLength: 512,
               },
               maxFiles: {
+                description: 'Zero still permits clipboard text, but no new file attachments.',
                 type: 'integer',
                 format: 'uint',
-                minimum: 1,
+                minimum: 0,
                 maximum: 8,
               },
             },
@@ -3443,9 +3446,14 @@ export const contracts = {
               minimum: 0,
               maximum: 8,
             },
+            retryable: {
+              description:
+                'A failed original path can be reread. Clipboard reads require a new gesture.',
+              type: 'boolean',
+            },
           },
           additionalProperties: false,
-          required: ['context', 'selection', 'remaining'],
+          required: ['context', 'selection', 'remaining', 'retryable'],
           $defs: {
             FileObservation: {
               type: 'object',
@@ -3520,6 +3528,8 @@ export const contracts = {
                 'limit_exceeded',
                 'budget_exhausted',
                 'worker_failed',
+                'clipboard_unavailable',
+                'paste_rejected',
               ],
             },
           },

@@ -24,7 +24,7 @@ use maka_plugin_core::contract::{
     Capture, CaptureOutput, Contract, Interface, Transport, binary_resource_type,
 };
 use schemars::JsonSchema;
-pub use selection::{FileSelection, FileSnapshot, read_selected};
+pub use selection::{FileSelection, FileSnapshot, FileSnapshotWriter, read_selected};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -85,6 +85,10 @@ pub enum FileError {
     BudgetExhausted,
     #[error("native file worker failed")]
     WorkerFailed,
+    #[error("native clipboard has no supported content or is unavailable")]
+    ClipboardUnavailable,
+    #[error("clipboard text cannot be inserted into the original draft")]
+    PasteRejected,
 }
 impl From<crate::budget::BudgetExhausted> for FileError {
     fn from(_: crate::budget::BudgetExhausted) -> Self {

@@ -82,7 +82,8 @@ pub struct TextareaProps {
 pub struct FilePastePolicy {
     #[schemars(length(min = 1, max = 512))]
     pub context: String,
-    #[schemars(range(min = 1, max = 8))]
+    /// Zero still permits clipboard text, but no new file attachments.
+    #[schemars(range(max = 8))]
     pub max_files: usize,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -94,6 +95,8 @@ pub struct FilePasteObservation {
     /// Includes the currently reading, ready or failed item.
     #[schemars(range(max = 8))]
     pub remaining: usize,
+    /// A failed original path can be reread. Clipboard reads require a new gesture.
+    pub retryable: bool,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
