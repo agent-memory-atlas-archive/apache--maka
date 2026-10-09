@@ -124,10 +124,7 @@ fn intrinsic_dialog_editor_grows_shrinks_and_keeps_the_real_caret_and_controls_v
             .area
     };
     let editor = |tui: &Presenter| {
-        let owner = tui.resources.owners[&mount.id()]
-            .state
-            .downcast_ref::<super::super::editor::Owner>()
-            .unwrap();
+        let owner = editor_owner(&*tui.resources.owners[&mount.id()].state);
         (
             owner.editor.text().to_owned(),
             owner.editor.cursor_position(),
@@ -263,10 +260,7 @@ fn viewport_row_cap_uses_each_paint_without_replacing_the_native_draft_or_focus(
                 .collect::<String>()
                 .contains("line-19")
         );
-        let caret = tui.resources.owners[&mount.id()]
-            .state
-            .downcast_ref::<super::super::editor::Owner>()
-            .unwrap()
+        let caret = editor_owner(&*tui.resources.owners[&mount.id()].state)
             .editor
             .cursor_position()
             .unwrap();
@@ -286,10 +280,7 @@ fn viewport_row_cap_uses_each_paint_without_replacing_the_native_draft_or_focus(
         .unwrap();
         tui.input(Event::Paste("!".into())).unwrap();
         assert!(
-            tui.resources.owners[&mount.id()]
-                .state
-                .downcast_ref::<super::super::editor::Owner>()
-                .unwrap()
+            editor_owner(&*tui.resources.owners[&mount.id()].state)
                 .editor
                 .text()
                 .ends_with('!')
@@ -408,10 +399,7 @@ fn composer_boundary_shares_focus_and_keeps_the_borderless_editor_at_its_actual_
                 .collect::<String>()
                 .contains("line-19")
         );
-        let caret = tui.resources.owners[&focus.mount.id()]
-            .state
-            .downcast_ref::<super::super::editor::Owner>()
-            .unwrap()
+        let caret = editor_owner(&*tui.resources.owners[&focus.mount.id()].state)
             .editor
             .cursor_position()
             .unwrap();
@@ -430,10 +418,7 @@ fn composer_boundary_shares_focus_and_keeps_the_borderless_editor_at_its_actual_
         }
         tui.input(Event::Paste("!".into())).unwrap();
         assert!(
-            tui.resources.owners[&focus.mount.id()]
-                .state
-                .downcast_ref::<super::super::editor::Owner>()
-                .unwrap()
+            editor_owner(&*tui.resources.owners[&focus.mount.id()].state)
                 .editor
                 .text()
                 .ends_with('!')
@@ -556,10 +541,7 @@ fn session_viewport_uses_remaining_body_without_leaking_to_siblings_or_cached_me
     );
     tui.input(Event::Paste("!".into())).unwrap();
     assert!(
-        tui.resources.owners[&focus.mount.id()]
-            .state
-            .downcast_ref::<super::super::editor::Owner>()
-            .unwrap()
+        editor_owner(&*tui.resources.owners[&focus.mount.id()].state)
             .editor
             .text()
             .ends_with("line-19!")
@@ -1154,6 +1136,22 @@ fn terminal_enter_submit_keeps_shift_enter_control_j_and_paste_in_the_original_d
         crossterm::event::KeyEventKind::Repeat,
     )))
     .unwrap();
+    assert_eq!(observation(&tui), draft);
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["submissions"],
+        1
+    );
+    dispatch(
+        &mut tui,
+        "configure",
+        json!({"submit":"enter","filePaste":{"context":"original-session","maxFiles":2}}),
+    );
+    draw(&mut tui, 50, 20);
+    tui.input(Event::Paste("/missing-maka-paste-test.txt".into()))
+        .unwrap();
+    // A physical file paste blocks even an immediate submit, before another
+    // paint or a parent files observation can disable the product's Send.
+    tui.input(key(KeyCode::Enter)).unwrap();
     assert_eq!(observation(&tui), draft);
     assert_eq!(
         tui.application.frame(&tui.root).unwrap().state["submissions"],

@@ -33,6 +33,8 @@ import {
   type MenuAppearance,
   type EditorCommand,
   type EditorObservation,
+  type FilePasteCommand,
+  type FilePastePolicy,
   type Role,
   type AgentHistoryChunk,
   type SourceField,
@@ -212,6 +214,8 @@ export interface QueueEditorProps {
   command: EditorCommand | null;
 }
 export interface ComposerProps {
+  filePaste: FilePastePolicy | null;
+  fileCommand: FilePasteCommand | null;
   hasAttachments: boolean;
   autoFocus: boolean;
   theme: Theme;
@@ -229,6 +233,7 @@ const defs = {
   ...native.agent.interface.methods.directories.output.$defs,
   ...editor.props.$defs,
   ...editor.events.changed.$defs,
+  ...editor.events.files.$defs,
   ...native.markdown.interface.props.$defs,
   ...native.secretInput.interface.props.$defs,
   ...session.$defs,
@@ -628,6 +633,8 @@ export const permissionApprovalContract = component(
 export const composerContract = component(
   'maka.agent.Composer',
   object({
+    filePaste: editor.props.properties.filePaste,
+    fileCommand: editor.props.properties.fileCommand,
     autoFocus: { type: 'boolean' },
     hasAttachments: { type: 'boolean' },
     theme: { $ref: '#/$defs/Theme' },
@@ -637,7 +644,12 @@ export const composerContract = component(
     enabled: { type: 'boolean' },
     command: editor.props.properties.command,
   }),
-  { send: editor.events.changed, changed: editor.events.changed, stop: object({}) },
+  {
+    send: editor.events.changed,
+    changed: editor.events.changed,
+    files: editor.events.files,
+    stop: object({}),
+  },
   editor.captures,
 );
 export const themeContract: Contract = {

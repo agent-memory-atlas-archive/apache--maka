@@ -1330,3 +1330,9 @@ fn recovery_failure_does_not_recursively_replace_the_failed_recovery_root() {
     tui.surface_closed(&recovery, Ok(())).unwrap();
     tui.shutdown().unwrap();
 }
+
+fn editor_owner(state: &dyn std::any::Any) -> &super::editor::Owner {
+    state
+        .downcast_ref::<super::editor::Owner>()
+        .unwrap_or_else(|| super::textarea::editor_owner(state))
+}

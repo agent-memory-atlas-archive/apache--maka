@@ -19,6 +19,7 @@
 
 //! Native path input and original asynchronous selected-file custody.
 mod browser;
+pub(super) mod paths;
 use super::{NativeContext, NativeInput, Placement, Slots, Widget, WidgetInput};
 use crate::editor::{Editor, Geometry};
 use crossterm::event::{Event, KeyCode, MouseButton, MouseEventKind};

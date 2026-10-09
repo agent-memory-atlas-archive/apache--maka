@@ -158,6 +158,8 @@ export function components<N extends Node>(
       initialText: '',
       placeholder: text.placeholder,
       command: props.command,
+      filePaste: props.filePaste ?? null,
+      fileCommand: props.fileCommand ?? null,
     };
     const editor = ui.box(
       'editor-area',
@@ -165,6 +167,7 @@ export function components<N extends Node>(
         presentation.slot('draft', 'editor', textarea, {
           changed: 'changed',
           submitted: 'submitted',
+          files: 'files',
         }),
       ],
       {
@@ -801,6 +804,8 @@ export function components<N extends Node>(
       update: (state, props) => composerFrame({ ...state, revision: state.revision + 1 }, props),
       event(state, input, props) {
         const next = { ...state, revision: state.revision + 1 };
+        if (input.kind === 'component' && input.child === 'draft' && input.name === 'files')
+          return composerFrame(next, props, [{ name: 'files', value: input.event }]);
         if (
           input.kind === 'component' &&
           (input.name === 'changed' || input.name === 'submitted')

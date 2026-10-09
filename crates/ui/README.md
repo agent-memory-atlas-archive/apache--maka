@@ -429,3 +429,13 @@ visible rows. Props supply localized browse, parent, empty and truncation labels
 observations never expose local paths or directory contents.
 
 TextInput, SecretInput and Textarea accept optional `autoFocus` (default false). A structurally visible, enabled input offers its original native focus once on reveal. Stable updates and viewport clipping do not repeat the offer. Hidden or disabled inputs cancel it; showing or enabling them can offer again. Actual native presentation admits the first eligible offer and consumes the other painted offers. Desktop keeps active native composition in its original editor. These props do not replace native text, selection or undo ownership.
+
+Textarea can opt into terminal file-path paste with `filePaste: {context, maxFiles}`
+(`maxFiles` is 1–8). A physical whole-path paste stages a native intent; committed
+admission starts serial reads under the existing file budget and resource owner.
+`files` returns the original context and current selection metadata; `file` captures
+the exact owner/revision as immutable bytes. `fileCommand` accepts only `next`,
+`retry` or `cancel` for that selection, never a path. Text snapshots keep their
+original contract. An admitted batch retains its context across navigation; hiding
+the editor cancels only an uncommitted intent. Desktop rejects these optional props
+until it implements the same capability.

@@ -152,17 +152,11 @@ fn input_border_appearance_changes_geometry_without_replacing_text_or_focus() {
             }
             tui.input(Event::Paste("x".into())).unwrap();
             draw(&mut tui, 50, 24);
-            let owner = tui.resources.owners[&focus.mount.id()]
-                .state
-                .downcast_ref::<super::super::editor::Owner>()
-                .unwrap();
+            let owner = editor_owner(&*tui.resources.owners[&focus.mount.id()].state);
             assert!(area.contains(owner.editor.cursor_position().unwrap()));
         }
         assert_eq!(
-            tui.resources.owners[&focus.mount.id()]
-                .state
-                .downcast_ref::<super::super::editor::Owner>()
-                .unwrap()
+            editor_owner(&*tui.resources.owners[&focus.mount.id()].state)
                 .editor
                 .text(),
             "xxx"
@@ -247,20 +241,14 @@ fn retained_presentation_preserves_input_custody_and_only_successful_flush_hides
         let mut buffer = Buffer::empty(area);
         let pending = tui.paint(area, &mut buffer).unwrap();
         assert!(
-            tui.resources.owners[&mount.id()]
-                .state
-                .downcast_ref::<super::super::editor::Owner>()
-                .unwrap()
+            editor_owner(&*tui.resources.owners[&mount.id()].state)
                 .presented
                 .is_some(),
             "unflushed hiding cannot revoke the last presented geometry"
         );
         tui.present(pending);
         assert!(
-            tui.resources.owners[&mount.id()]
-                .state
-                .downcast_ref::<super::super::editor::Owner>()
-                .unwrap()
+            editor_owner(&*tui.resources.owners[&mount.id()].state)
                 .presented
                 .is_none()
         );
@@ -808,10 +796,7 @@ fn dialog_js_composition_keeps_original_editor_and_routes_first_text_paste_submi
         .unwrap()
         .clone();
     let text = |tui: &Presenter, mount: &Mount| {
-        tui.resources.owners[&mount.id()]
-            .state
-            .downcast_ref::<super::super::editor::Owner>()
-            .unwrap()
+        editor_owner(&*tui.resources.owners[&mount.id()].state)
             .editor
             .text()
             .to_owned()
@@ -870,10 +855,7 @@ fn bounded_query_paste_uses_one_native_edit_and_capacity_survives_commands_and_u
     let original = observed["snapshot"]["text"]["owner"].clone();
     let native = tui.focus.as_ref().unwrap().mount.clone();
     let text = |tui: &Presenter| {
-        tui.resources.owners[&native.id()]
-            .state
-            .downcast_ref::<super::super::editor::Owner>()
-            .unwrap()
+        editor_owner(&*tui.resources.owners[&native.id()].state)
             .editor
             .text()
             .to_owned()

@@ -54,6 +54,7 @@ export type RuntimeProtocol =
   | CallerIntent
   | LabelProps
   | TextareaProps
+  | FilePasteObservation
   | MarkdownProps
   | DiffProps
   | MarkdownLink
@@ -789,6 +790,14 @@ export type EditorEdit =
       text: string;
       kind: 'append';
     };
+export type FilePasteAction = 'next' | 'retry' | 'cancel';
+export type FilePhase = 'empty' | 'choosing' | 'ready' | 'failed';
+export type FileError =
+  | 'invalid_file'
+  | 'read_failed'
+  | 'limit_exceeded'
+  | 'budget_exhausted'
+  | 'worker_failed';
 /**
  * Complete bounded comparisons and structured patches reuse native parsers.
  */
@@ -815,13 +824,6 @@ export type DiffContent =
     };
 export type DiffKind = 'removed' | 'added' | 'context' | 'content';
 export type DiffPatch = 'create' | 'update';
-export type FilePhase = 'empty' | 'choosing' | 'ready' | 'failed';
-export type FileError =
-  | 'invalid_file'
-  | 'read_failed'
-  | 'limit_exceeded'
-  | 'budget_exhausted'
-  | 'worker_failed';
 export type ImageFit = 'contain' | 'cover';
 export type ImagePhase = 'empty' | 'receiving' | 'decoding' | 'ready' | 'failed';
 export type ImageError =
@@ -3038,6 +3040,12 @@ export interface TextareaProps {
    * its matching receipt commits. Clearing props is not cancellation.
    */
   command?: EditorCommand | null;
+  /**
+   * Opt-in local file-path paste. The context is returned unchanged; it is
+   * correlation, never a filesystem path or an authorization grant.
+   */
+  filePaste?: FilePastePolicy | null;
+  fileCommand?: FilePasteCommand | null;
 }
 export interface TextareaAppearance {
   text: TextAppearance;
@@ -3125,6 +3133,38 @@ export interface EditorCommand {
   sequence: number;
   basedOn: number;
   edit: EditorEdit;
+}
+export interface FilePastePolicy {
+  context: string;
+  maxFiles: number;
+}
+export interface FilePasteCommand {
+  selection: FileCapture;
+  action: FilePasteAction;
+}
+export interface FileCapture {
+  owner: string;
+  revision: number;
+}
+export interface FilePasteObservation {
+  context: string;
+  selection: FileObservation;
+  /**
+   * Includes the currently reading, ready or failed item.
+   */
+  remaining: number;
+}
+export interface FileObservation {
+  owner: string;
+  revision: number;
+  phase: FilePhase;
+  file?: FileDescriptor | null;
+  error?: FileError | null;
+}
+export interface FileDescriptor {
+  name: string;
+  bytes: number;
+  digest: string;
 }
 export interface MarkdownProps {
   source: string;
@@ -3218,22 +3258,6 @@ export interface InputAppearance {
   borderWidth: number;
   radius: number;
   padding: Insets;
-}
-export interface FileObservation {
-  owner: string;
-  revision: number;
-  phase: FilePhase;
-  file?: FileDescriptor | null;
-  error?: FileError | null;
-}
-export interface FileDescriptor {
-  name: string;
-  bytes: number;
-  digest: string;
-}
-export interface FileCapture {
-  owner: string;
-  revision: number;
 }
 export interface ImageProps {
   source?: ImageDescriptor | null;

@@ -31,7 +31,6 @@ use std::{
 };
 
 const MAX_ENTRIES: usize = 2048;
-const MAX_PATH: usize = 4096;
 
 pub(super) struct Request {
     pub path: PathBuf,
@@ -56,12 +55,6 @@ pub(super) struct Directory {
     truncated: bool,
     _memory: Permit,
 }
-fn valid_path(path: &Path) -> bool {
-    path.is_absolute()
-        && path
-            .to_str()
-            .is_some_and(|text| text.len() <= MAX_PATH && !text.chars().any(char::is_control))
-}
 /// Only an admitted physical gesture can call this, in its original worker.
 pub(super) fn select(request: Request, budget: &NativeBudget) -> Result<Selected, FileError> {
     let mut path = if request.path.as_os_str().is_empty() {
@@ -69,7 +62,7 @@ pub(super) fn select(request: Request, budget: &NativeBudget) -> Result<Selected
     } else {
         request.path
     };
-    if !valid_path(&path) {
+    if !super::paths::valid(&path) {
         return Err(FileError::InvalidFile);
     }
     let metadata = std::fs::symlink_metadata(&path).map_err(|_| FileError::ReadFailed)?;
@@ -100,7 +93,7 @@ pub(super) fn select(request: Request, budget: &NativeBudget) -> Result<Selected
         let entry = entry.map_err(|_| FileError::ReadFailed)?;
         let kind = entry.file_type().map_err(|_| FileError::ReadFailed)?;
         let path = entry.path();
-        if !valid_path(&path) || !(kind.is_dir() || kind.is_file()) {
+        if !super::paths::valid(&path) || !(kind.is_dir() || kind.is_file()) {
             continue;
         }
         let metadata = entry.metadata().map_err(|_| FileError::ReadFailed)?;

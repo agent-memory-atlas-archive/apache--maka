@@ -362,14 +362,15 @@ fn packaged_product(case: ProductCase) {
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
     let (respond, response_ready) = tokio::sync::oneshot::channel::<PathBuf>();
     let mut respond = Some(respond);
-    let (attachment_id, attachment_ready) = tokio::sync::oneshot::channel::<String>();
+    let (attachment_id, attachment_ready) = tokio::sync::oneshot::channel::<Vec<String>>();
     let mut server = runtime.spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
         if attachment {
             let sent = request_with_key(&mut socket, "private-fixture-key").await;
             assert!(sent.to_string().contains("local-attachment.md"));
-            let id = attachment_ready.await.unwrap();
-            assert!(sent.to_string().contains(&format!("{}{id}", maka_runtime::attachment::ATTACHMENT_RESOURCE_PREFIX)));
+            for id in attachment_ready.await.unwrap() {
+                assert!(sent.to_string().contains(&format!("{}{id}", maka_runtime::attachment::ATTACHMENT_RESOURCE_PREFIX)));
+            }
             assert!(!sent.to_string().contains("locally selected contents"));
             response_ready.await.unwrap();
             response(&mut socket).await;
@@ -1073,7 +1074,63 @@ process.stdout.write(output.outputFiles[0].text);
             .records;
         assert_eq!(artifacts.len(), 1);
         assert_eq!(artifacts[0].name, "local-attachment.md");
-        attachment_id.send(artifacts[0].id.clone()).unwrap();
+        // Whole-path paste shares the native composer without inserting path
+        // text. Its second item is intentionally absent until an explicit retry.
+        click(&mut presenter, "What would you like to work on?");
+        presenter
+            .input(Event::Paste("Explain /tmp/file.txt".into()))
+            .unwrap();
+        await_screen(&mut presenter, "Explain /tmp/file.txt");
+        presenter
+            .input(Event::Key(KeyEvent::new(
+                KeyCode::Char('a'),
+                KeyModifiers::CONTROL,
+            )))
+            .unwrap();
+        presenter
+            .input(Event::Key(KeyEvent::new(
+                KeyCode::Backspace,
+                KeyModifiers::NONE,
+            )))
+            .unwrap();
+        let pasted = nested.join("pasted 中文.md");
+        let later = nested.join("pasted-two.md");
+        std::fs::write(&pasted, b"pasted first").unwrap();
+        presenter
+            .input(Event::Paste(format!(
+                "\"{}\"\nfile://{}",
+                pasted.display(),
+                later.display()
+            )))
+            .unwrap();
+        await_screen(&mut presenter, "[ Retry ]");
+        capture(&mut presenter, "native-paste-failed.txt");
+        let artifacts = runtime
+            .block_on(fixture.store.list_artifacts(&session, 0, 10))
+            .unwrap()
+            .records;
+        assert_eq!(
+            artifacts.len(),
+            2,
+            "only the first pasted file was uploaded"
+        );
+        assert!(artifacts.iter().any(|item| item.name == "pasted 中文.md"));
+        std::fs::write(&later, b"pasted after retry").unwrap();
+        click(&mut presenter, "[ Retry ]");
+        wait_for_target(&mut presenter, "[ Attachments (3) ]", 0);
+        await_screen(&mut presenter, "What would you like to work on?");
+        capture(&mut presenter, "native-pasted.txt");
+        let artifacts = runtime
+            .block_on(fixture.store.list_artifacts(&session, 0, 10))
+            .unwrap()
+            .records;
+        assert_eq!(artifacts.len(), 3);
+        assert!(artifacts.iter().any(|item| item.name == "pasted-two.md"));
+        attachment_id
+            .send(artifacts.iter().map(|item| item.id.clone()).collect())
+            .unwrap();
+        std::fs::remove_file(&pasted).unwrap();
+        std::fs::remove_file(&later).unwrap();
         // Removing the path proves send consumes the admitted immutable artifact.
         std::fs::remove_file(&path).unwrap();
         click(&mut presenter, "[ Choose model ]");
@@ -1123,7 +1180,7 @@ process.stdout.write(output.outputFiles[0].text);
                 .unwrap()
                 .records
                 .len(),
-            2,
+            4,
             "local draft removal must not delete durable artifacts"
         );
         presenter

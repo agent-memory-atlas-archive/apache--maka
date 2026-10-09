@@ -2662,6 +2662,30 @@ export const contracts = {
             ],
             default: null,
           },
+          filePaste: {
+            description:
+              'Opt-in local file-path paste. The context is returned unchanged; it is\ncorrelation, never a filesystem path or an authorization grant.',
+            anyOf: [
+              {
+                $ref: '#/$defs/FilePastePolicy',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
+          fileCommand: {
+            anyOf: [
+              {
+                $ref: '#/$defs/FilePasteCommand',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
         },
         additionalProperties: false,
         required: [
@@ -3179,6 +3203,75 @@ export const contracts = {
               },
             ],
           },
+          FilePastePolicy: {
+            type: 'object',
+            properties: {
+              context: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              maxFiles: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 1,
+                maximum: 8,
+              },
+            },
+            additionalProperties: false,
+            required: ['context', 'maxFiles'],
+          },
+          FilePasteCommand: {
+            type: 'object',
+            properties: {
+              selection: {
+                $ref: '#/$defs/FileCapture',
+              },
+              action: {
+                $ref: '#/$defs/FilePasteAction',
+              },
+            },
+            additionalProperties: false,
+            required: ['selection', 'action'],
+          },
+          FileCapture: {
+            type: 'object',
+            properties: {
+              owner: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              revision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['owner', 'revision'],
+          },
+          FilePasteAction: {
+            oneOf: [
+              {
+                description:
+                  'Release this ready/failed item and continue the original physical paste.',
+                type: 'string',
+                const: 'next',
+              },
+              {
+                description: 'Retry the original failed path, without a new path from the guest.',
+                type: 'string',
+                const: 'retry',
+              },
+              {
+                description:
+                  'Discard this batch; already captured resources retain their own custody.',
+                type: 'string',
+                const: 'cancel',
+              },
+            ],
+          },
         },
       },
       events: {
@@ -3327,6 +3420,107 @@ export const contracts = {
             EditorConflict: {
               type: 'string',
               enum: ['owner', 'representation', 'revision', 'composition', 'sequence'],
+            },
+          },
+        },
+        files: {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          title: 'FilePasteObservation',
+          type: 'object',
+          properties: {
+            context: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 512,
+            },
+            selection: {
+              $ref: '#/$defs/FileObservation',
+            },
+            remaining: {
+              description: 'Includes the currently reading, ready or failed item.',
+              type: 'integer',
+              format: 'uint',
+              minimum: 0,
+              maximum: 8,
+            },
+          },
+          additionalProperties: false,
+          required: ['context', 'selection', 'remaining'],
+          $defs: {
+            FileObservation: {
+              type: 'object',
+              properties: {
+                owner: {
+                  type: 'string',
+                  minLength: 1,
+                  maxLength: 128,
+                },
+                revision: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                phase: {
+                  $ref: '#/$defs/FilePhase',
+                },
+                file: {
+                  anyOf: [
+                    {
+                      $ref: '#/$defs/FileDescriptor',
+                    },
+                    {
+                      type: 'null',
+                    },
+                  ],
+                },
+                error: {
+                  anyOf: [
+                    {
+                      $ref: '#/$defs/FileError',
+                    },
+                    {
+                      type: 'null',
+                    },
+                  ],
+                },
+              },
+              additionalProperties: false,
+              required: ['owner', 'revision', 'phase'],
+            },
+            FilePhase: {
+              type: 'string',
+              enum: ['empty', 'choosing', 'ready', 'failed'],
+            },
+            FileDescriptor: {
+              type: 'object',
+              properties: {
+                name: {
+                  type: 'string',
+                  maxLength: 512,
+                },
+                bytes: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+                digest: {
+                  type: 'string',
+                  minLength: 71,
+                  maxLength: 71,
+                },
+              },
+              additionalProperties: false,
+              required: ['name', 'bytes', 'digest'],
+            },
+            FileError: {
+              type: 'string',
+              enum: [
+                'invalid_file',
+                'read_failed',
+                'limit_exceeded',
+                'budget_exhausted',
+                'worker_failed',
+              ],
             },
           },
         },
@@ -3480,6 +3674,34 @@ export const contracts = {
         },
       },
       captures: {
+        file: {
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'FileCapture',
+            type: 'object',
+            properties: {
+              owner: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              revision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['owner', 'revision'],
+          },
+          output: {
+            kind: 'resource',
+            resource: {
+              name: 'maka.bytes',
+              version: 1,
+            },
+          },
+        },
         snapshot: {
           input: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',

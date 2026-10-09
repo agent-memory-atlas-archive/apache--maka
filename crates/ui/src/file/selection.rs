@@ -162,6 +162,15 @@ impl Default for FileSelection {
     }
 }
 impl FileSelection {
+    /// Release the local selection without invalidating already captured bytes.
+    pub fn clear(&mut self) {
+        self.cancel_intent();
+        self.snapshot = None;
+        self.observation.revision += 1;
+        self.observation.phase = FilePhase::Empty;
+        self.observation.file = None;
+        self.observation.error = None;
+    }
     pub fn observation(&self) -> FileObservation {
         self.observation.clone()
     }

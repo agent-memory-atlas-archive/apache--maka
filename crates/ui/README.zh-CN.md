@@ -294,3 +294,10 @@ TUI 目录浏览复用该已提交原生意图和 worker，最多读取 2,048 �
 裁剪和缩放后按实际可见行数显露选中项。props 提供浏览、上级、空列表和截断文案。
 
 TextInput、SecretInput 与 Textarea 支持可选 `autoFocus`，默认 false。输入框在结构可见且启用时提供一次原生聚焦机会；普通更新与视口裁剪不会重复触发。隐藏或禁用会取消机会，重新显露或启用可以再次提供。实际原生呈现选择第一个合格机会，并消费其余已绘制的机会；Desktop 保留当前输入法组合所在原编辑器的焦点。不替换原生文本、选区或撤销历史的所有权。
+
+Textarea 可通过 `filePaste: {context, maxFiles}` 开启 TUI 文件路径粘贴，
+`maxFiles` 为 1–8。实际整段路径粘贴先产生原生意图，提交后才在原文件预算与资源
+owner 下依次读取。`files` 返回原 context 与当前选择元数据；`file` 按精确
+owner/revision 捕获不可变字节。`fileCommand` 只接受该选择的 `next`、`retry`、
+`cancel`，不能提供路径。文本快照契约不变；已接纳批次跨导航保留原 context，
+隐藏编辑器只取消未提交意图。Desktop 尚未实现此能力，会显式拒绝这些可选 props。

@@ -19,6 +19,7 @@
 
 //! Native editor protocol. Snapshots are observations, never writable buffers.
 use crate::editor::*;
+use crate::file::{FileCapture, FileChoose, FileObservation};
 /// Maximum retained editable buffer; individual commands remain at 64 KiB.
 pub const MAX_BUFFER_BYTES: usize = 1024 * 1024;
 use maka_plugin_core::contract::{Capture, Contract, Interface, Transport};
@@ -68,6 +69,56 @@ pub struct TextareaProps {
     /// None issues no new command; an accepted command remains pending until
     /// its matching receipt commits. Clearing props is not cancellation.
     pub command: Option<EditorCommand>,
+    /// Opt-in local file-path paste. The context is returned unchanged; it is
+    /// correlation, never a filesystem path or an authorization grant.
+    #[serde(default)]
+    pub file_paste: Option<FilePastePolicy>,
+    #[serde(default)]
+    pub file_command: Option<FilePasteCommand>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FilePastePolicy {
+    #[schemars(length(min = 1, max = 512))]
+    pub context: String,
+    #[schemars(range(min = 1, max = 8))]
+    pub max_files: usize,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FilePasteObservation {
+    #[schemars(length(min = 1, max = 512))]
+    pub context: String,
+    pub selection: FileObservation,
+    /// Includes the currently reading, ready or failed item.
+    #[schemars(range(max = 8))]
+    pub remaining: usize,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FilePasteCommand {
+    pub selection: FileCapture,
+    pub action: FilePasteAction,
+}
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FilePasteAction {
+    /// Release this ready/failed item and continue the original physical paste.
+    Next,
+    /// Retry the original failed path, without a new path from the guest.
+    Retry,
+    /// Discard this batch; already captured resources retain their own custody.
+    Cancel,
+}
+#[derive(Clone)]
+pub struct TextareaView {
+    pub props: TextareaProps,
+    pub file_request: Option<String>,
+}
+pub fn file_paste_schema() -> serde_json::Value {
+    serde_json::to_value(schemars::schema_for!(FilePasteObservation))
+        .expect("file paste observation")
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
@@ -134,8 +185,44 @@ pub enum SubmitKey {
 /// no text read and adds no second buffer or command owner.
 pub fn reduce(
     call: crate::ComponentCall<'_>,
-) -> crate::Result<crate::ComponentOutput<TextareaProps>> {
+) -> crate::Result<crate::ComponentOutput<TextareaView>> {
     let submitted = matches!(&call, crate::ComponentCall::Event { key, .. } if *key == "submit");
+    let mut file_request: Option<String> = match &call {
+        crate::ComponentCall::Mount { .. } => None,
+        crate::ComponentCall::Update { state, .. } | crate::ComponentCall::Event { state, .. } => {
+            serde_json::from_value(state["fileRequest"].clone()).expect("native file paste request")
+        }
+    };
+    let mut files = None;
+    let call = match call {
+        crate::ComponentCall::Event {
+            state,
+            props,
+            key,
+            input,
+            origin,
+        } if matches!(key, "file_choose" | "file_observe") => {
+            if !matches!(origin, crate::EventOrigin::Raw) {
+                return Err(crate::Error::Invalid(
+                    "file paste requires native origin".into(),
+                ));
+            }
+            if key == "file_choose" {
+                let typed: TextareaProps = serde_json::from_value(props.clone())
+                    .map_err(|error| crate::Error::Invalid(error.to_string()))?;
+                if typed.disabled || typed.read_only || typed.file_paste.is_none() {
+                    return Err(crate::Error::Invalid("file paste disabled".into()));
+                }
+                let choose: FileChoose = serde_json::from_value(input.clone())
+                    .map_err(|error| crate::Error::Invalid(error.to_string()))?;
+                file_request = Some(choose.request);
+            } else {
+                files = Some(input.clone());
+            }
+            crate::ComponentCall::Update { state, props }
+        }
+        other => other,
+    };
     let mut output = crate::editor::reduce::<TextareaProps>(call)?;
     let rows = output.frame.view.terminal_rows;
     if rows.min == 0
@@ -153,7 +240,17 @@ pub fn reduce(
             event.name = "submitted".into();
         }
     }
-    Ok(output)
+    output.frame.state["fileRequest"] = serde_json::json!(file_request);
+    if let Some(value) = files {
+        output.events.push(crate::Emission {
+            name: "files".into(),
+            value,
+        });
+    }
+    Ok(output.map_view(|props| TextareaView {
+        props,
+        file_request,
+    }))
 }
 
 pub fn textarea_contract() -> Contract {
@@ -167,17 +264,30 @@ pub fn textarea_contract() -> Contract {
             events: BTreeMap::from([
                 ("changed".into(), observation_schema()),
                 ("submitted".into(), observation_schema()),
+                ("files".into(), file_paste_schema()),
             ]),
-            captures: BTreeMap::from([(
-                "snapshot".into(),
-                Capture {
-                    input: serde_json::to_value(schemars::schema_for!(EditorCapture))
-                        .expect("capture schema"),
-                    output: maka_plugin_core::contract::CaptureOutput::Resource {
-                        resource: text_resource_type(),
+            captures: BTreeMap::from([
+                (
+                    "snapshot".into(),
+                    Capture {
+                        input: serde_json::to_value(schemars::schema_for!(EditorCapture))
+                            .expect("capture schema"),
+                        output: maka_plugin_core::contract::CaptureOutput::Resource {
+                            resource: text_resource_type(),
+                        },
                     },
-                },
-            )]),
+                ),
+                (
+                    "file".into(),
+                    Capture {
+                        input: serde_json::to_value(schemars::schema_for!(FileCapture))
+                            .expect("file paste capture"),
+                        output: maka_plugin_core::contract::CaptureOutput::Resource {
+                            resource: maka_plugin_core::contract::binary_resource_type(),
+                        },
+                    },
+                ),
+            ]),
         },
     }
 }

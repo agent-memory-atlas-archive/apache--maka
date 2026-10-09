@@ -18,7 +18,17 @@
  */
 
 use super::Placement;
-use super::editor::Owner;
+use super::editor::Owner as EditorOwner;
+mod paste;
+struct Owner {
+    edit: EditorOwner,
+    files: paste::Paste,
+    visible: bool,
+}
+#[cfg(test)]
+pub(super) fn editor_owner(state: &dyn std::any::Any) -> &EditorOwner {
+    &state.downcast_ref::<Owner>().unwrap().edit
+}
 use super::{NativeInput, Slots, Widget, WidgetInput};
 use crate::editor::{Editor, Geometry};
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -44,44 +54,62 @@ fn color(color: maka_ui::appearance::Color) -> Color {
 }
 struct Recipe {
     props: TextareaProps,
+    file_request: Option<String>,
 }
 impl Widget for Recipe {
     fn cancel_pointer(&self, state: &mut dyn Any) {
         state
             .downcast_mut::<Owner>()
             .unwrap()
+            .edit
             .editor
             .cancel_pointer();
     }
-    fn create(&self, _: super::NativeContext) -> Box<dyn Any> {
-        Box::new(Owner::new(
-            Editor::bounded(maka_ui::textarea::MAX_BUFFER_BYTES, "composer-too-large"),
-            &self.props.initial_text,
-        ))
+    fn create(&self, context: super::NativeContext) -> Box<dyn Any> {
+        Box::new(Owner {
+            edit: EditorOwner::new(
+                Editor::bounded(maka_ui::textarea::MAX_BUFFER_BYTES, "composer-too-large"),
+                &self.props.initial_text,
+            ),
+            files: paste::Paste::new(context),
+            visible: true,
+        })
     }
     fn commit(&self, state: &mut dyn Any) -> maka_ui::Result<Option<NativeInput>> {
         let owner = state
             .downcast_mut::<Owner>()
             .expect("terminal editor owner");
+        owner.files.commit(
+            self.file_request.as_deref(),
+            self.props.file_command.as_ref(),
+            owner.visible
+                && !self.props.disabled
+                && !self.props.read_only
+                && self.props.file_paste.is_some(),
+        );
         let changed = self
             .props
             .command
             .as_ref()
-            .is_some_and(|command| owner.last_request.as_ref() != Some(command));
+            .is_some_and(|command| owner.edit.last_request.as_ref() != Some(command));
         if changed {
-            owner.apply(self.props.command.as_ref().unwrap());
+            owner.edit.apply(self.props.command.as_ref().unwrap());
         }
-        if changed || !owner.announced {
-            owner.announced = true;
-            Ok(Some(owner.observation()))
+        if changed || !owner.edit.announced {
+            owner.edit.announced = true;
+            Ok(Some(owner.edit.observation()))
         } else {
-            Ok(None)
+            Ok(owner.files.observe())
         }
+    }
+    fn observe(&self, state: &mut dyn Any) -> Option<NativeInput> {
+        state.downcast_mut::<Owner>().unwrap().files.observe()
     }
     fn present_focus(&self, state: &mut dyn Any) -> bool {
         state
             .downcast_mut::<Owner>()
             .expect("terminal editor owner")
+            .edit
             .focus
             .presented()
     }
@@ -89,6 +117,7 @@ impl Widget for Recipe {
         state
             .downcast_mut::<Owner>()
             .expect("terminal editor owner")
+            .edit
             .focus
             .reconcile(visible && !self.props.disabled && self.props.auto_focus);
     }
@@ -105,7 +134,7 @@ impl Widget for Recipe {
         }
         // An empty editor yields upward navigation to its declared scope.
         // Nonempty text, including a cursor on the first line, stays in Editor.
-        if owner.editor.text().is_empty()
+        if owner.edit.editor.text().is_empty()
             && matches!(event, Event::Key(key) if key.code == KeyCode::Up && key.modifiers.is_empty())
         {
             return Ok(WidgetInput::Navigate);
@@ -121,11 +150,11 @@ impl Widget for Recipe {
                 None => false,
             }
         {
-            if key.kind != KeyEventKind::Press {
+            if key.kind != KeyEventKind::Press || owner.files.pending() {
                 return Ok(WidgetInput::Consumed(None));
             }
-            owner.refresh();
-            let mut observation = owner.observation();
+            owner.edit.refresh();
+            let mut observation = owner.edit.observation();
             observation.key = "submit".into();
             return Ok(WidgetInput::Emitted(observation));
         }
@@ -144,35 +173,53 @@ impl Widget for Recipe {
                 if self.props.read_only && !navigation {
                     false
                 } else {
-                    owner.editor.key(*key)
+                    owner.edit.editor.key(*key)
                 }
             }
-            Event::Paste(text) if !self.props.read_only => owner.editor.insert(text),
+            Event::Paste(text) if !self.props.read_only => {
+                if owner.visible
+                    && let Some(policy) = &self.props.file_paste
+                    && let Some(input) = owner.files.stage(text, policy)
+                {
+                    return Ok(WidgetInput::Emitted(input));
+                }
+                owner.edit.editor.insert(text)
+            }
             Event::Mouse(mouse) => owner
+                .edit
                 .presented
                 .as_ref()
-                .is_some_and(|geometry| owner.editor.mouse_presented(*mouse, geometry)),
+                .is_some_and(|geometry| owner.edit.editor.mouse_presented(*mouse, geometry)),
             _ => false,
         };
-        let observed = handled && owner.refresh();
+        let observed = handled && owner.edit.refresh();
         Ok(if handled {
-            WidgetInput::Consumed(observed.then(|| owner.observation()))
+            WidgetInput::Consumed(observed.then(|| owner.edit.observation()))
         } else {
             WidgetInput::Unhandled
         })
     }
     fn pointer_capture(&self, state: &dyn Any) -> bool {
-        state.downcast_ref::<Owner>().unwrap().editor.dragging()
+        state
+            .downcast_ref::<Owner>()
+            .unwrap()
+            .edit
+            .editor
+            .dragging()
     }
     fn capture(
         &self,
         state: &dyn Any,
         target: &maka_ui::actions::CaptureTarget,
     ) -> maka_ui::Result<Arc<dyn maka_plugins::call::ReadResource>> {
-        state
+        let owner = state
             .downcast_ref::<Owner>()
-            .expect("terminal editor owner")
-            .capture(target)
+            .expect("terminal editor owner");
+        if target.method() == "file" {
+            owner.files.capture(target.input())
+        } else {
+            owner.edit.capture(target)
+        }
     }
 
     fn layout(&self, _: &Slots<'_>) -> maka_ui::Result<super::TerminalLayout> {
@@ -197,6 +244,7 @@ impl Widget for Recipe {
         Ok((
             width,
             owner
+                .edit
                 .editor
                 .rows(width.saturating_sub(inset))
                 .clamp(rows.min, maximum)
@@ -241,7 +289,7 @@ impl Widget for Recipe {
         } else {
             area
         };
-        let geometry = owner.editor.paint_prepared(
+        let geometry = owner.edit.editor.paint_prepared(
             inner,
             buffer,
             focused,
@@ -253,7 +301,7 @@ impl Widget for Recipe {
                 .fg(color(appearance.text.foreground)),
             Style::default().add_modifier(Modifier::REVERSED),
         );
-        if owner.editor.text().is_empty() {
+        if owner.edit.editor.text().is_empty() {
             super::paint::text(
                 &self.props.placeholder,
                 inner,
@@ -261,7 +309,7 @@ impl Widget for Recipe {
                 Style::default().fg(color(appearance.muted_foreground)),
             );
         }
-        let autofocus = owner.focus.pending();
+        let autofocus = owner.edit.focus.pending();
         slots.native_geometry(Box::new(geometry))?;
         if !self.props.disabled {
             slots.native_target("observe", area, self.props.tab_index, autofocus)?;
@@ -273,22 +321,19 @@ impl Widget for Recipe {
             .downcast_mut::<Owner>()
             .expect("terminal editor owner");
         let geometry = *geometry.downcast::<Geometry>().expect("editor geometry");
-        owner.editor.present_geometry(geometry.clone());
-        owner.presented = Some(geometry);
+        owner.edit.editor.present_geometry(geometry.clone());
+        owner.edit.presented = Some(geometry);
         None
     }
     fn deactivate(&self, state: &mut dyn Any) {
-        let owner = state
-            .downcast_mut::<Owner>()
-            .expect("terminal editor owner");
-        owner.invalidate_geometry();
+        self.presentation(state, false);
     }
     fn presentation(&self, state: &mut dyn Any, visible: bool) {
+        let owner = state.downcast_mut::<Owner>().unwrap();
+        owner.visible = visible;
         if !visible {
-            state
-                .downcast_mut::<Owner>()
-                .expect("terminal editor owner")
-                .invalidate_geometry();
+            owner.edit.invalidate_geometry();
+            owner.files.suspend();
         }
     }
 }
@@ -306,7 +351,8 @@ impl NativeComponent<dyn Widget> for Component {
         _: &maka_ui::abi::ValueBindings,
     ) -> maka_ui::Result<ComponentOutput<NativeView<dyn Widget>>> {
         let output = maka_ui::textarea::reduce(call)?;
-        let props = output.frame.view.clone();
+        let props = output.frame.view.props.clone();
+        let file_request = output.frame.view.file_request.clone();
         if !props.soft_wrap {
             return Err(maka_ui::Error::Invalid(
                 "terminal editor requires soft wrapping".into(),
@@ -318,10 +364,15 @@ impl NativeComponent<dyn Widget> for Component {
             ));
         }
         let view = NativeView::<dyn Widget>::new(
-            Rc::new(Recipe { props }),
+            Rc::new(Recipe {
+                props,
+                file_request,
+            }),
             BTreeMap::from([
                 ("observe".into(), observation_schema()),
                 ("submit".into(), observation_schema()),
+                ("file_choose".into(), maka_ui::file::choose_schema()),
+                ("file_observe".into(), file_paste_schema()),
             ]),
             vec![],
         )?;

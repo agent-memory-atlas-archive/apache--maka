@@ -4072,7 +4072,7 @@ test('TUI reader declares a flexible body and retained adaptive pane without a v
   assert.equal(composer.visible, false);
   assert.deepEqual(
     modelSlots(composer).find((node) => node.binding === 'composer'),
-    originalDraft,
+    { ...originalDraft, props: { ...originalDraft.props, filePaste: null } },
   );
   const originalSource = structuredClone(client.state.source);
   client.raw('navigation-toggle');
@@ -6556,11 +6556,17 @@ for (const target of ['desktop', 'tui']) {
   test(`${target} Root Dialog preserves original product and routes only conversation commands`, () => {
     const client = new Client(rootModule.component).start();
     const background = structuredClone(client.output.frame.view.background);
+    const modalBackground = structuredClone(background);
+    if (target === 'tui') {
+      const composer = modelSlots(modalBackground).find((node) => node.binding === 'composer');
+      assert.deepEqual(composer.props.filePaste, { context: session.id, maxFiles: 8 });
+      composer.props.filePaste = null;
+    }
     const watch = structuredClone(client.output.subscriptions);
     assert.equal(client.output.frame.view.open, false);
     open(client);
     assert.equal(client.output.frame.view.open, true);
-    assert.deepEqual(client.output.frame.view.background, background);
+    assert.deepEqual(client.output.frame.view.background, modalBackground);
     assert.deepEqual(client.output.subscriptions, watch);
     assert.equal(
       modelSlots(client.output.frame.view.content).find((node) => node.key === 'command-palette')
@@ -6569,6 +6575,7 @@ for (const target of ['desktop', 'tui']) {
     );
     choose(client, 'closed', {});
     assert.equal(client.state.dialog, null);
+    assert.deepEqual(client.output.frame.view.background, background);
     client.raw('settings');
     client.raw('palette-open');
     assert.equal(client.state.dialog, null);
@@ -11968,4 +11975,161 @@ test('attachment-only queue edits require canonical attachment evidence', async 
     );
     if (hasAttachments) assert.equal(client.find('editQueue').input.edit.message, '');
   }
+});
+
+test('tui file paste advances exact captures only after the original upload receipt', async () => {
+  const { component } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js'))
+  );
+  const client = new Client(component).start();
+  const original = { ...reference, method: 'uploadAttachment' };
+  const file = {
+    owner: uuid(98),
+    revision: 2,
+    phase: 'ready',
+    file: { name: 'paste.txt', bytes: 5, digest: 'sha256:' + 'c'.repeat(64) },
+    error: null,
+  };
+  const observe = (selection = file, remaining = 2, context = session.id) =>
+    client.input({
+      kind: 'component',
+      child: 'composer',
+      name: 'files',
+      event: { context, selection, remaining },
+    });
+  const identity = { owner: file.owner, revision: file.revision };
+  observe();
+  const action = client.find('uploadAttachment');
+  assert.deepEqual(action.resources, {
+    file: { child: 'composer', method: 'file', input: identity },
+  });
+  assert.equal(action.input.sessionId, session.id);
+  assert.equal(
+    modelSlots(client.output.frame.view).find((n) => n.key === 'composer').props.busy,
+    true,
+  );
+  client.component('send', draft);
+  assert.equal(client.output.actions.length, 0);
+  observe();
+  assert.equal(
+    client.output.actions.length,
+    0,
+    'repeated native observation cannot duplicate an upload',
+  );
+  client.complete(action, {
+    status: 'operation',
+    reply: { reference: original, receipt: { kind: 'unknown' } },
+  });
+  client.raw('file-paste-retry');
+  client.raw('file-paste-skip');
+  client.raw('file-paste-cancel');
+  assert.equal(
+    client.state.attachments.paste.command,
+    null,
+    'unknown upload must retain its current native file',
+  );
+  assert.equal(client.output.actions.length, 0);
+  client.state.selected = { ...session, id: 'other' };
+  client.raw('check');
+  assert.deepEqual(client.find('read').input, original);
+  const attachment = {
+    id: 'pasted',
+    sessionId: session.id,
+    name: 'paste.txt',
+    bytes: 5,
+    mimeType: 'text/plain',
+  };
+  client.query('read', {
+    reference: original,
+    receipt: {
+      kind: 'recorded',
+      outcome: { kind: 'returned', value: { kind: 'uploaded', attachment } },
+      cleanup: { kind: 'confirmed' },
+    },
+  });
+  assert.deepEqual(client.state.attachments.files, [attachment]);
+  assert.deepEqual(client.state.attachments.paste.command, { selection: identity, action: 'next' });
+  observe();
+  assert.deepEqual(
+    client.state.attachments.paste.command,
+    { selection: identity, action: 'next' },
+    'old observation cannot undo disposition',
+  );
+  observe({ ...file, revision: 5, file: { ...file.file, name: 'second.txt' } }, 1);
+  const second = client.find('uploadAttachment');
+  assert.equal(
+    second.input.sessionId,
+    session.id,
+    'remaining batch belongs to its original conversation',
+  );
+  assert.equal(second.resources.file.input.revision, 5);
+  client.complete(second, {
+    status: 'operation',
+    reply: {
+      reference: { ...original, operation: uuid(91) },
+      receipt: {
+        kind: 'recorded',
+        outcome: { kind: 'returned', value: { kind: 'rejected', reason: 'busy' } },
+        cleanup: { kind: 'confirmed' },
+      },
+    },
+  });
+  observe({ ...file, revision: 5, file: { ...file.file, name: 'second.txt' } }, 1);
+  assert.equal(client.output.actions.length, 0, 'known failure waits for explicit retry');
+  client.raw('file-paste-retry');
+  assert.equal(client.output.actions.filter((a) => a.method === 'uploadAttachment').length, 1);
+});
+
+test('tui file paste retries reads, skips failed items, cancels, and observes draft capacity', async () => {
+  const { component } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js'))
+  );
+  const client = new Client(component).start();
+  const file = { owner: uuid(97), revision: 2, phase: 'failed', file: null, error: 'read_failed' };
+  const observe = (selection, remaining = 2) =>
+    client.input({
+      kind: 'component',
+      child: 'composer',
+      name: 'files',
+      event: { context: session.id, selection, remaining },
+    });
+  observe(file);
+  assert.equal(client.output.actions.length, 0);
+  client.raw('file-paste-retry');
+  assert.deepEqual(client.state.attachments.paste.command, {
+    selection: { owner: file.owner, revision: 2 },
+    action: 'retry',
+  });
+  observe({ ...file, revision: 4 });
+  client.raw('file-paste-skip');
+  assert.equal(client.state.attachments.paste.command.action, 'next');
+  observe({ ...file, revision: 6, phase: 'choosing', error: null }, 1);
+  client.raw('file-paste-cancel');
+  assert.deepEqual(client.state.attachments.paste.command, {
+    selection: { owner: file.owner, revision: 6 },
+    action: 'cancel',
+  });
+  observe({ ...file, revision: 7, phase: 'empty', error: null }, 0);
+  assert.equal(client.state.attachments.paste, null);
+  client.state.attachments.files = Array.from({ length: 8 }, (_, i) => ({
+    id: `full-${i}`,
+    sessionId: session.id,
+    name: 'prior',
+    bytes: 1,
+    mimeType: 'text/plain',
+  }));
+  observe(
+    {
+      ...file,
+      revision: 9,
+      phase: 'ready',
+      error: null,
+      file: { name: 'extra', bytes: 1, digest: 'sha256:' + 'd'.repeat(64) },
+    },
+    1,
+  );
+  assert.equal(client.output.actions.length, 0);
+  assert.equal(client.state.notice, 'attachmentLimit');
+  client.raw('file-paste-cancel');
+  assert.equal(client.state.attachments.paste.command.action, 'cancel');
 });

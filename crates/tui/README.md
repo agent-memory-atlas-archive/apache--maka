@@ -73,3 +73,9 @@ PageUp/PageDown, the wheel and scrollbar support bounded long directories; a
 resize keeps the focused selection visible. Directory reads use the same native
 commit/worker lifecycle as file capture; plugins receive only selected-file
 metadata and immutable bytes.
+
+The Composer also accepts a whole paste of absolute local file paths, including
+quoted names and `file://localhost` URLs. One batch holds at most eight distinct
+paths and reads one file at a time. Retry, Skip file and Cancel act on the original
+batch; ordinary prose remains text. Enter cannot submit while a batch is pending.
+Native clipboard files/images and attachment draft restoration remain unfinished.

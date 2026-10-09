@@ -50,6 +50,8 @@ import type {
   AgentSendResult,
   AgentAttachmentUploadResult,
   FileObservation,
+  FileCapture,
+  FilePasteObservation,
   AgentQueueMutationResult,
   AgentQueueAction,
   RowsProps,
@@ -83,6 +85,10 @@ import {
   attachmentCapacity,
   attachmentChild,
   attachmentView,
+  pastedFiles,
+  pasteView,
+  sameFile,
+  selectedFile,
   type AttachmentDrafts,
 } from './attachments.js';
 
@@ -128,7 +134,7 @@ type Request =
       model: ModelSelection;
       thinkingLevel: ThinkingLevel | null;
     }
-  | { kind: 'uploadAttachment'; sessionId: string; attempt: number }
+  | { kind: 'uploadAttachment'; sessionId: string; attempt: number; pasted?: FileCapture }
   | { kind: 'markRead'; sessionId: string }
   | { kind: 'stop'; sessionId: string }
   | { kind: 'queue'; sessionId: string; saved?: { attempt: number; draft: EditorObservation } }
@@ -523,6 +529,45 @@ function mutationPending(state: State) {
         'receipt',
       ].includes(request.kind),
     )
+  );
+}
+function uploadPastedFile(state: State, actions: Action[]) {
+  const paste = state.attachments.paste,
+    observed = paste?.observed,
+    file = observed?.selection;
+  if (
+    !paste ||
+    !observed ||
+    !file ||
+    file.phase !== 'ready' ||
+    !file.file ||
+    paste.command ||
+    mutationPending(state) ||
+    sameFile(paste.attempted, file)
+  )
+    return;
+  if (state.selected?.id === observed.context && state.selected.archived) return;
+  if (!attachmentCapacity(state.attachments, observed.context)) {
+    state.notice = 'attachmentLimit';
+    return;
+  }
+  paste.attempted = selectedFile(file);
+  state.notice = null;
+  intent(
+    state,
+    actions,
+    {
+      kind: 'uploadAttachment',
+      sessionId: observed.context,
+      attempt: ++state.serial,
+      pasted: paste.attempted,
+    },
+    'agent',
+    'uploadAttachment',
+    { sessionId: observed.context, ...file.file },
+    {
+      file: { child: 'composer', method: 'file', input: paste.attempted },
+    },
   );
 }
 function executionPending(state: State) {
@@ -1040,7 +1085,14 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
         )
       )
         state.attachments.files.push(result.attachment);
-      if (state.attachments.selection?.attempt === request.attempt) {
+      if (
+        request.pasted &&
+        state.attachments.paste &&
+        sameFile(request.pasted, state.attachments.paste.observed.selection)
+      ) {
+        state.attachments.paste.command = { selection: request.pasted, action: 'next' };
+      }
+      if (!request.pasted && state.attachments.selection?.attempt === request.attempt) {
         if (state.dialog === 'attachments') state.dialog = null;
         state.attachments.selection = null;
       }
@@ -1606,6 +1658,7 @@ function frame<N extends Node>(
   actions: Action[] = [],
 ) {
   const target = presentation.target;
+  uploadPastedFile(state, actions);
   if (!conversationRoute(state) || state.source || state.image || !state.selected)
     state.searchOpen = false;
   const theme = values.appearance?.[0] as Theme;
@@ -1800,7 +1853,7 @@ function frame<N extends Node>(
   const attachmentsButton = ui.button(
     'attachments-open',
     `${text.attachmentTitle}${attached.length ? ` (${attached.length})` : ''}`,
-    !state.selected || busy || state.loading,
+    !state.selected || busy || state.loading || !!state.attachments.paste,
   );
   const composer = presentation.slot(
     'composer',
@@ -1808,7 +1861,29 @@ function frame<N extends Node>(
     {
       theme,
       locale,
-      busy: busy || executionPending(state) || (target === 'tui' && !!state.run && !state.queue),
+      busy:
+        busy ||
+        !!state.attachments.paste ||
+        executionPending(state) ||
+        (target === 'tui' && !!state.run && !state.queue),
+      filePaste:
+        target === 'tui' &&
+        state.selected &&
+        !state.selected.archived &&
+        conversationRoute(state) &&
+        !state.dialog &&
+        !state.source &&
+        !state.image &&
+        !state.loading &&
+        !busy &&
+        !state.attachments.paste &&
+        attachmentCapacity(state.attachments, state.selected.id)
+          ? {
+              context: state.selected.id,
+              maxFiles: Math.min(8 - attached.length, 64 - state.attachments.files.length),
+            }
+          : null,
+      fileCommand: state.attachments.paste?.command ?? null,
       running: !!state.run,
       enabled:
         !!state.selected &&
@@ -1821,7 +1896,7 @@ function frame<N extends Node>(
       autoFocus: !state.searchOpen,
       hasAttachments: attached.length > 0,
     },
-    { send: 'send', stop: 'stop', changed: 'draft' },
+    { send: 'send', stop: 'stop', changed: 'draft', files: 'files' },
   );
   const queueProps: RowsProps = {
     entry: state.queue?.entries.at(-1)?.messageId ?? null,
@@ -1997,6 +2072,9 @@ function frame<N extends Node>(
       ),
       ...(state.selected?.archived && attached.length && !state.source && !state.image
         ? [ui.box('archived-attachments', [attachmentsButton], { row: true })]
+        : []),
+      ...(state.attachments.paste
+        ? [pasteView(presentation, theme, locale, state.attachments.paste, busy)]
         : []),
       ...(target === 'desktop'
         ? [
@@ -2482,7 +2560,7 @@ export function workspace<N extends Node>(
     mount(_props, values) {
       const state: State = {
         revision: 0,
-        attachments: { files: [], selection: null },
+        attachments: { files: [], selection: null, paste: null },
         serial: 0,
         epoch: 0,
         catalog: null,
@@ -2593,6 +2671,10 @@ export function workspace<N extends Node>(
           }
         }
       } else if (input.kind === 'component') {
+        if (input.child === 'composer' && input.name === 'files' && target === 'tui') {
+          pastedFiles(state.attachments, input.event as FilePasteObservation);
+          return frame(presentation, locale, state, values, actions);
+        }
         if (input.child === attachmentChild(state.attachments) && input.name === 'changed') {
           if (
             state.dialog === 'attachments' &&
@@ -2871,6 +2953,7 @@ export function workspace<N extends Node>(
         } else if (
           input.child === 'composer' &&
           input.name === 'send' &&
+          !state.attachments.paste &&
           conversationRoute(state) &&
           !state.dialog &&
           !state.image &&
@@ -3087,7 +3170,26 @@ export function workspace<N extends Node>(
         }
       } else if (input.kind === 'raw') {
         if (
+          input.key.startsWith('file-paste-') &&
+          state.attachments.paste &&
+          !mutationPending(state) &&
+          !state.attachments.paste.command
+        ) {
+          const paste = state.attachments.paste,
+            file = paste.observed.selection;
+          if (input.key === 'file-paste-cancel')
+            paste.command = { selection: selectedFile(file), action: 'cancel' };
+          else if (input.key === 'file-paste-skip' && ['ready', 'failed'].includes(file.phase))
+            paste.command = { selection: selectedFile(file), action: 'next' };
+          else if (input.key === 'file-paste-retry') {
+            if (file.phase === 'failed')
+              paste.command = { selection: selectedFile(file), action: 'retry' };
+            else if (file.phase === 'ready') paste.attempted = null;
+          }
+        }
+        if (
           input.key === 'attachments-open' &&
+          !state.attachments.paste &&
           conversationRoute(state) &&
           !state.dialog &&
           state.selected &&

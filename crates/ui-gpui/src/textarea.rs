@@ -902,9 +902,16 @@ impl NativeComponent<dyn Widget> for TextareaComponent {
         _values: &maka_ui::abi::ValueBindings,
     ) -> maka_ui::Result<ComponentOutput<NativeView<dyn Widget>>> {
         let output = maka_ui::textarea::reduce(call)?;
+        if output.frame.view.props.file_paste.is_some()
+            || output.frame.view.props.file_command.is_some()
+        {
+            return Err(maka_ui::Error::Invalid(
+                "native file paste is not available in this presentation".into(),
+            ));
+        }
         let view = NativeView::<dyn Widget>::new(
             Rc::new(TextareaRecipe {
-                props: output.frame.view.clone(),
+                props: output.frame.view.props.clone(),
             }),
             BTreeMap::from([
                 ("observe".into(), observation_schema()),

@@ -217,10 +217,7 @@ fn adaptive_editor_undo_and_directory_scroll_survive_inline_and_modal_layouts() 
         p.focus.as_ref().unwrap().key
     );
     let text = |p: &Presenter| {
-        p.resources.owners[&editor_mount.id()]
-            .state
-            .downcast_ref::<super::super::editor::Owner>()
-            .unwrap()
+        editor_owner(&*p.resources.owners[&editor_mount.id()].state)
             .editor
             .text()
             .to_owned()

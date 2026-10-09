@@ -75,6 +75,7 @@ pub(super) fn catalog() -> Value {
         root::<maka_event_log::applications::intents::CallerIntent>(&mut g),
         root::<maka_ui::LabelProps>(&mut g),
         root::<textarea::TextareaProps>(&mut g),
+        root::<textarea::FilePasteObservation>(&mut g),
         root::<markdown::MarkdownProps>(&mut g),
         root::<maka_ui::diff::DiffProps>(&mut g),
         root::<markdown::MarkdownLink>(&mut g),

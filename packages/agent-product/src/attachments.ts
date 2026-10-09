@@ -17,7 +17,13 @@
  * under the License.
  */
 
-import type { AgentAttachment, FileObservation } from '../../plugin-sdk/src/index.js';
+import type {
+  AgentAttachment,
+  FileCapture,
+  FileObservation,
+  FilePasteCommand,
+  FilePasteObservation,
+} from '../../plugin-sdk/src/index.js';
 import type { Theme } from './contracts.js';
 import { copy } from './locale.js';
 import { fill, type Node, type Presentation } from './view.js';
@@ -25,6 +31,69 @@ import { fill, type Node, type Presentation } from './view.js';
 export interface AttachmentDrafts {
   files: AgentAttachment[];
   selection: { attempt: number; sessionId: string; file: FileObservation | null } | null;
+  paste: {
+    observed: FilePasteObservation;
+    attempted: FileCapture | null;
+    command: FilePasteCommand | null;
+  } | null;
+}
+export const selectedFile = (file: FileObservation): FileCapture => ({
+  owner: file.owner,
+  revision: file.revision,
+});
+export const sameFile = (a: FileCapture | null, b: FileCapture) =>
+  a?.owner === b.owner && a.revision === b.revision;
+export function pastedFiles(drafts: AttachmentDrafts, observed: FilePasteObservation) {
+  const prior = drafts.paste;
+  if (
+    prior &&
+    prior.observed.selection.owner === observed.selection.owner &&
+    prior.observed.selection.revision >= observed.selection.revision
+  )
+    return;
+  if (observed.remaining === 0) {
+    if (!prior || prior.observed.selection.owner === observed.selection.owner) drafts.paste = null;
+    return;
+  }
+  drafts.paste = {
+    observed,
+    attempted: prior?.attempted ?? null,
+    command: null,
+  };
+}
+export function pasteView<N extends Node>(
+  presentation: Presentation<N>,
+  theme: Theme,
+  locale: string,
+  paste: NonNullable<AttachmentDrafts['paste']>,
+  busy: boolean,
+) {
+  const ui = presentation.paint(theme),
+    text = copy(locale),
+    file = paste.observed.selection;
+  const failed = file.phase === 'failed';
+  const stopped = failed || (file.phase === 'ready' && !busy && !paste.command);
+  return ui.box(
+    'file-paste',
+    [
+      ui.text(
+        'file-paste-status',
+        `${stopped ? text.attachmentFailed : text.attachmentPasting} (${paste.observed.remaining})${file.file ? ` · ${file.file.name}` : ''}`,
+        13,
+        theme.muted,
+        400,
+        { truncate: true },
+      ),
+      ...(stopped
+        ? [ui.button('file-paste-retry', text.sourceRetry, busy || !!paste.command)]
+        : []),
+      ...(['ready', 'failed'].includes(file.phase)
+        ? [ui.button('file-paste-skip', text.attachmentSkip, busy || !!paste.command)]
+        : []),
+      ui.button('file-paste-cancel', text.cancel, busy || !!paste.command),
+    ],
+    { row: true, terminal: { wrap: true }, style: { width: fill, wrap: true } },
+  );
 }
 export const attachmentFiles = (drafts: AttachmentDrafts, sessionId: string | undefined) =>
   drafts.files.filter((file) => file.sessionId === sessionId);
