@@ -170,26 +170,36 @@ impl Layout {
             }
         }
     }
-    pub fn vertical(&self, row: usize, forward: bool, column: usize) -> usize {
+    pub fn adjacent_row(&self, row: usize, forward: bool) -> Option<usize> {
+        let count = match self {
+            Self::Literal(layout) => layout.rows.len(),
+            Self::Markdown { lines, .. } => lines.len(),
+        };
+        let readable = |row: &usize| match self {
+            Self::Literal(_) => true,
+            Self::Markdown { lines, .. } => !lines[*row].mapping.is_empty(),
+        };
+        if forward {
+            (row + 1..count).find(readable)
+        } else {
+            (0..row).rev().find(readable)
+        }
+    }
+    pub fn edge_row(&self, first: bool) -> usize {
         match self {
-            Self::Literal(layout) => layout.byte_at(
-                if forward {
-                    row + 1
+            Self::Literal(layout) => {
+                if first {
+                    0
                 } else {
-                    row.saturating_sub(1)
-                },
-                column,
-            ),
-            Self::Markdown { lines, .. } => {
-                let target = if forward {
-                    (row + 1..lines.len()).find(|index| !lines[*index].mapping.is_empty())
-                } else {
-                    (0..row)
-                        .rev()
-                        .find(|index| !lines[*index].mapping.is_empty())
-                };
-                self.byte_at(target.unwrap_or(row), column)
+                    layout.rows.len().saturating_sub(1)
+                }
             }
+            Self::Markdown { lines, .. } => if first {
+                lines.iter().position(|line| !line.mapping.is_empty())
+            } else {
+                lines.iter().rposition(|line| !line.mapping.is_empty())
+            }
+            .unwrap_or(0),
         }
     }
     pub fn previous(&self, byte: usize) -> usize {

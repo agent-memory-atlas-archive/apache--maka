@@ -1886,6 +1886,41 @@ process.stdout.write(output.outputFiles[0].text);
                 "[ Copy file path ]",
                 &fixture.workspace.join("native-approved.txt"),
             );
+            // Exercise terminal-owned Alt extension and the original visual
+            // line endpoint through the actual mounted file content owner.
+            let (x, y) = wait_for_target(&mut presenter, "native file contents", 0);
+            click(&mut presenter, "native file contents");
+            presenter
+                .input(Event::Mouse(MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    column: x + 6,
+                    row: y,
+                    modifiers: KeyModifiers::ALT,
+                }))
+                .unwrap();
+            presenter
+                .input(Event::Mouse(MouseEvent {
+                    kind: MouseEventKind::Up(MouseButton::Left),
+                    column: x + 6,
+                    row: y,
+                    modifiers: KeyModifiers::ALT,
+                }))
+                .unwrap();
+            presenter
+                .input(Event::Key(KeyEvent::new(KeyCode::End, KeyModifiers::SHIFT)))
+                .unwrap();
+            capture(&mut presenter, "native-reading-range.txt");
+            let mut range = Vec::new();
+            assert!(presenter.copy(&mut range).unwrap());
+            {
+                use base64::Engine as _;
+                assert_eq!(
+                    base64::engine::general_purpose::STANDARD
+                        .decode(&range[7..range.len() - 1])
+                        .unwrap(),
+                    b"native file contents"
+                );
+            }
             // Both original native selection and first-visible fallback must
             // survive the modal and copy with one Enter in the native query.
             for (selected, name) in [

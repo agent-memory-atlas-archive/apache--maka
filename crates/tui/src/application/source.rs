@@ -67,6 +67,9 @@ impl Owner {
             }
         }
         let mut doc = self.document.borrow_mut();
+        if doc.source.as_ref() != props.source || format_changed {
+            doc.geometry_revision += 1;
+        }
         if changed || format_changed {
             doc.glyphs = None;
         }
@@ -90,6 +93,7 @@ impl Widget for Recipe {
         Box::new(Owner {
             document: Rc::new(std::cell::RefCell::new(Document {
                 source: Arc::from(self.0.source.as_str()),
+                geometry_revision: 0,
                 markdown: self.1.clone(),
                 disabled: self.0.disabled,
                 alive: true,
@@ -220,7 +224,7 @@ impl Widget for Recipe {
         }
         let document = slots.native_state::<Owner>()?.document.clone();
         let parent = if self.2 && !self.0.disabled {
-            slots.participant(&document)
+            slots.participant(&document, area)
         } else {
             None
         };
@@ -336,10 +340,10 @@ impl Widget for Recipe {
             }
         }
         if slots.focused() && range.is_empty() {
-            let (row, column) = layout.cursor(
-                scope.as_ref().map_or(0, |scope| scope.cursor(&document)),
-                false,
-            );
+            let (byte, trailing) = scope
+                .as_ref()
+                .map_or((0, false), |scope| scope.cursor(&document));
+            let (row, column) = layout.cursor(byte, trailing);
             if let Some(point) = area.point(column, row) {
                 buffer[(point.x, point.y)].set_style(normal.add_modifier(Modifier::UNDERLINED));
             }
@@ -389,7 +393,7 @@ impl Recipe {
         use unicode_segmentation::UnicodeSegmentation;
         let document = slots.native_state::<Owner>()?.document.clone();
         let parent = if self.2 && !self.0.disabled {
-            slots.participant(&document)
+            slots.participant(&document, area)
         } else {
             None
         };
@@ -506,10 +510,10 @@ impl Recipe {
             }
         }
         if slots.focused() && range.is_empty() {
-            let (row, column) = layout.cursor(
-                scope.as_ref().map_or(0, |scope| scope.cursor(&document)),
-                false,
-            );
+            let (byte, trailing) = scope
+                .as_ref()
+                .map_or((0, false), |scope| scope.cursor(&document));
+            let (row, column) = layout.cursor(byte, trailing);
             if let Some(point) = area.point(column, row) {
                 buffer[(point.x, point.y)].set_style(normal.add_modifier(Modifier::UNDERLINED));
             }

@@ -195,6 +195,11 @@ safely, and copies through Ctrl+Shift+C; Copy is a bounded OSC52 write, not an O
 Prefix append preserves existing byte endpoints; replacement/disabled revokes the old selection.
 TUI ReadingArea shares one selection across logical SourceText participants, including clipped
 source in Select All. Selection and active pointer gestures invalidate automatic tail replacement.
+Shift-click or Alt/Option-click extends the range. Shift+arrows and Shift+Home/End
+use native visual rows, including soft-wrap affinity and a retained vertical column;
+Shift+PageUp/PageDown extends by the visible viewport minus one row. Movement crosses
+SourceText, Markdown and Diff and reveals its endpoint only after a successful flush.
+A new focus or pointer action cancels pending reveal without discarding the range.
 Copy rejects a selection over 64 KiB before allocating or writing, preserving its original range.
 Actual whole-reader OS acceptance remains unfinished.
 

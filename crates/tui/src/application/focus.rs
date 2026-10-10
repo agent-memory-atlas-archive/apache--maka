@@ -334,3 +334,74 @@ impl Presenter {
         Ok(true)
     }
 }
+
+impl Presenter {
+    /// Keep a keyboard range on its original reading scope as its head crosses
+    /// sources and scrolling removes the old source from the physical viewport.
+    pub(super) fn reading_selection_focus(
+        &self,
+        targets: &[super::paint::Target],
+    ) -> Option<super::paint::Target> {
+        use super::{selection::SelectionScope, source::Owner};
+        use std::rc::Rc;
+        let old = self.focus.as_ref()?;
+        let owner = self.resources.owners.get(&old.mount.id())?;
+        if !owner.live || !Rc::ptr_eq(&owner.identity, &old.owner) {
+            return None;
+        }
+        let source = owner.state.downcast_ref::<Owner>()?;
+        let scope = SelectionScope::active(&source.document)?;
+        let head = scope.keyboard_focus()?;
+        let candidates = targets.iter().filter_map(|target| {
+            let owner = self.resources.owners.get(&target.mount.id())?;
+            if !self.target_admitted(target) || !self.resources.admits(target) {
+                return None;
+            }
+            let source = owner.state.downcast_ref::<Owner>()?;
+            let doc = source.document.borrow();
+            (doc.alive && !doc.disabled && doc.binding.ptr_eq(&Rc::downgrade(&scope.0)))
+                .then_some((target, head.ptr_eq(&Rc::downgrade(&source.document))))
+        });
+        let next = candidates.max_by_key(|(_, head)| *head);
+        if next.as_ref().is_some_and(|(_, head)| *head) {
+            scope.focus_revealed();
+        }
+        next.map(|(target, _)| target.clone())
+            .or_else(|| Some(old.clone()))
+    }
+}
+
+impl Presenter {
+    pub(super) fn cancel_reading_keyboard_reveal(&self, event: &crossterm::event::Event) {
+        use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
+        let supersedes = match event {
+            Event::Key(key) if key.kind != KeyEventKind::Release => {
+                !(key.modifiers == KeyModifiers::SHIFT
+                    && matches!(
+                        key.code,
+                        KeyCode::Left
+                            | KeyCode::Right
+                            | KeyCode::Up
+                            | KeyCode::Down
+                            | KeyCode::Home
+                            | KeyCode::End
+                            | KeyCode::PageUp
+                            | KeyCode::PageDown
+                    ))
+            }
+            Event::Mouse(mouse) => {
+                !matches!(mouse.kind, MouseEventKind::Moved | MouseEventKind::Up(_))
+            }
+            Event::Paste(_) | Event::FocusLost => true,
+            _ => false,
+        };
+        if supersedes
+            && let Some(focus) = &self.focus
+            && let Some(owner) = self.resources.owners.get(&focus.mount.id())
+            && let Some(source) = owner.state.downcast_ref::<super::source::Owner>()
+            && let Some(scope) = super::selection::SelectionScope::active(&source.document)
+        {
+            scope.cancel_keyboard_reveal();
+        }
+    }
+}

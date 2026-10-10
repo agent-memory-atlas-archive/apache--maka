@@ -441,6 +441,7 @@ impl Slots<'_> {
     pub(super) fn participant(
         &mut self,
         document: &super::selection::DocumentRef,
+        area: Placement,
     ) -> Option<super::selection::SelectionScope> {
         self.scene
             .as_mut()
@@ -449,6 +450,7 @@ impl Slots<'_> {
                 scope.documents.push(super::selection::Participant {
                     document: std::rc::Rc::downgrade(document),
                     child: scope.child.clone(),
+                    geometry: Some((area, document.borrow().geometry_revision)),
                 });
                 scope.scope.clone()
             })
@@ -676,8 +678,12 @@ impl Presenter {
             .restore_focus
             .take()
             .and_then(|target| target.resolve(&scene.targets));
+        let reading_focus = frames_current
+            .then(|| self.reading_selection_focus(&scene.targets))
+            .flatten();
         self.focus = autofocus
             .or(restored)
+            .or(reading_focus)
             .or_else(|| {
                 self.focus
                     .take()

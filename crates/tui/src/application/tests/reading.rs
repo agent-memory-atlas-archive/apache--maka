@@ -820,3 +820,6 @@ mod find;
 
 #[path = "reading/markdown.rs"]
 mod markdown;
+
+#[path = "reading/keyboard.rs"]
+mod keyboard;

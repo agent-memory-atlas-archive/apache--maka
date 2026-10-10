@@ -391,6 +391,25 @@ impl Widget for Reading {
             }
         }
         reading.scope.present(paint.documents, paint.area);
+        if current
+            && let Some(row) = reading.scope.take_reveal_row()
+            && let Some(scroll) = state.scrolls.get_mut(&reading.root_key)
+            && let Some(viewport) = &scroll.presented
+        {
+            let visible = viewport.area.visible();
+            let delta = if row < i64::from(visible.y) {
+                row - i64::from(visible.y)
+            } else {
+                (row - i64::from(visible.bottom().saturating_sub(1))).max(0)
+            };
+            let offset =
+                (i64::from(viewport.offset) + delta).clamp(0, i64::from(viewport.end())) as u32;
+            if offset != viewport.offset {
+                scroll.offset = offset;
+                scroll.intent += 1;
+                reading.scope.0.borrow_mut().revision += 1;
+            }
+        }
         reading.observe()
     }
     fn presentation(&self, state: &mut dyn Any, visible: bool) {

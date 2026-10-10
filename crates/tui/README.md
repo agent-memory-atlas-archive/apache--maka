@@ -38,6 +38,12 @@ Unicode editors retain their text, selections and undo history across compatible
 component updates and hidden routes. Product-supplied appearance controls their
 styles. Terminal scenes support flexible viewports and native scroll policies;
 SourceText/ReadingArea provide bounded literal selection and Copy.
+Shift-click or Alt/Option-click extends the original range. Shift+arrows and
+Shift+Home/End follow visual lines; Shift+PageUp/PageDown extends by a viewport.
+Ranges cross SourceText, Markdown and Diff within one ReadingArea, retain their
+column through short lines, and reveal the moving endpoint after a successful
+flush. Tab, a new pointer action or opening a dialog cancels pending reveal;
+the original selection remains available for Ctrl+Shift+C.
 The native `maka.ui.diff` implementation exports `Diff` (`maka.ui.Diff` v1).
 Its tagged content supports annotated source ranges, bounded before/after line
 comparison and structured create/update patches. Comparisons reuse the original

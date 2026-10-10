@@ -396,3 +396,45 @@ fn native_comparison_and_patch_share_reading_copy_find_and_resize() {
         close(&mut presenter);
     }
 }
+
+#[test]
+fn keyboard_range_crosses_markdown_decorations_into_clipped_literal_and_back() {
+    let (_runtime, mut presenter, _) = native(vec![
+        markdown("md", "before\n\n```\ncode\n```"),
+        source("literal", "tail"),
+    ]);
+    let buffer = settle(&mut presenter, 30, 8);
+    let (x, y) = point(&buffer, "code");
+    mouse(
+        &mut presenter,
+        MouseEventKind::Down(MouseButton::Left),
+        x,
+        y,
+    );
+    mouse(&mut presenter, MouseEventKind::Up(MouseButton::Left), x, y);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Down,
+            KeyModifiers::SHIFT,
+        )))
+        .unwrap();
+    settle(&mut presenter, 30, 3);
+    settle(&mut presenter, 30, 3);
+    // The original code row has a one-cell gutter; vertical movement keeps
+    // that visual column when entering the literal document.
+    assert_eq!(copied(&mut presenter).unwrap(), b"code\nt");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Right,
+            KeyModifiers::SHIFT,
+        )))
+        .unwrap();
+    assert_eq!(copied(&mut presenter).unwrap(), b"code\nta");
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT)))
+        .unwrap();
+    settle(&mut presenter, 30, 3);
+    settle(&mut presenter, 30, 3);
+    assert_eq!(copied(&mut presenter).unwrap(), b"c");
+    close(&mut presenter);
+}

@@ -20,8 +20,8 @@
 //! One native selection authority per reading boundary; logical participants are
 //! weak references to original Source documents, never a registry or copied range.
 use super::Placement;
+mod keyboard;
 mod layout;
-use crate::editor::layout::Layout as LiteralLayout;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 pub(super) use layout::Layout;
 use ratatui::layout::Position;
@@ -38,6 +38,7 @@ pub(super) type DocumentWeak = Weak<RefCell<Document>>;
 pub(super) struct Participant {
     pub document: DocumentWeak,
     pub child: Option<String>,
+    pub geometry: Option<(Placement, u64)>,
 }
 impl std::ops::Deref for Participant {
     type Target = DocumentWeak;
@@ -50,6 +51,7 @@ impl From<DocumentWeak> for Participant {
         Self {
             document,
             child: None,
+            geometry: None,
         }
     }
 }
@@ -61,6 +63,7 @@ pub(super) struct Glyphs {
 }
 pub(super) struct Document {
     pub source: Arc<str>,
+    pub geometry_revision: u64,
     pub markdown: Option<Arc<crate::markdown::prepared::Document>>,
     pub disabled: bool,
     pub alive: bool,
@@ -73,6 +76,7 @@ pub(super) struct Document {
 struct Endpoint {
     document: DocumentWeak,
     byte: usize,
+    trailing: bool,
 }
 #[derive(Default)]
 pub(super) struct Scope {
@@ -83,6 +87,9 @@ pub(super) struct Scope {
     intent: u64,
     pub enabled: bool,
     area: Option<Placement>,
+    column: Option<usize>,
+    keyboard_focus_pending: bool,
+    reveal: bool,
 }
 #[derive(Clone, Default)]
 pub(super) struct SelectionScope(pub Rc<RefCell<Scope>>);
@@ -98,17 +105,24 @@ impl SelectionScope {
         let mut scope = self.0.borrow_mut();
         scope.revision += 1;
         scope.intent += 1;
+        scope.keyboard_focus_pending = false;
+        scope.reveal = false;
     }
     pub fn suspend(&self) {
         let mut scope = self.0.borrow_mut();
         scope.enabled = false;
         scope.drag = None;
+        scope.keyboard_focus_pending = false;
+        scope.reveal = false;
     }
     pub fn close(&self) {
         let mut scope = self.0.borrow_mut();
         scope.enabled = false;
         scope.drag = None;
         scope.selection = None;
+        scope.column = None;
+        scope.keyboard_focus_pending = false;
+        scope.reveal = false;
         scope.documents.clear();
     }
     pub fn release_pointer(&self, document: &DocumentRef) {
@@ -155,6 +169,9 @@ impl SelectionScope {
         });
         if selected {
             scope.selection = None;
+            scope.column = None;
+            scope.keyboard_focus_pending = false;
+            scope.reveal = false;
             scope.revision += 1;
         }
         if scope
@@ -202,6 +219,9 @@ impl SelectionScope {
             };
             if !unchanged {
                 scope.selection = None;
+                scope.column = None;
+                scope.keyboard_focus_pending = false;
+                scope.reveal = false;
                 scope.drag = None;
                 scope.revision += 1;
             }
@@ -224,6 +244,9 @@ impl SelectionScope {
                 || !scope.documents.iter().any(|doc| doc.ptr_eq(&b.document)))
         {
             scope.selection = None;
+            scope.column = None;
+            scope.keyboard_focus_pending = false;
+            scope.reveal = false;
             scope.drag = None;
             scope.revision += 1;
         }
@@ -231,7 +254,15 @@ impl SelectionScope {
     pub fn standalone(document: &DocumentRef, area: Placement) {
         let existing = document.borrow().standalone.clone();
         let scope = existing.unwrap_or_default();
-        scope.present(vec![Rc::downgrade(document).into()], area);
+        let geometry = (area, document.borrow().geometry_revision);
+        scope.present(
+            vec![Participant {
+                document: Rc::downgrade(document),
+                child: None,
+                geometry: Some(geometry),
+            }],
+            area,
+        );
         document.borrow_mut().standalone = Some(scope);
     }
     fn endpoints(&self) -> Option<(usize, usize, usize, usize)> {
@@ -270,13 +301,13 @@ impl SelectionScope {
             (if i == a { start } else { 0 })..(if i == b { end } else { len })
         }
     }
-    pub fn cursor(&self, document: &DocumentRef) -> usize {
+    pub fn cursor(&self, document: &DocumentRef) -> (usize, bool) {
         self.0
             .borrow()
             .selection
             .as_ref()
             .filter(|(_, cursor)| cursor.document.ptr_eq(&Rc::downgrade(document)))
-            .map_or(0, |(_, cursor)| cursor.byte)
+            .map_or((0, false), |(_, cursor)| (cursor.byte, cursor.trailing))
     }
     /// The native focus endpoint, including a collapsed caret. Suspension by a
     /// modal retains context; retirement or transfer of the document withdraws it.
@@ -406,9 +437,11 @@ impl SelectionScope {
             // Match physical hit order when overlapping; only gaps use nearest glyphs.
             if d <= distance {
                 distance = d;
+                let (byte, trailing) = glyphs.layout.pointer(glyphs.area, 0, point);
                 nearest = Some(Endpoint {
                     document: weak.document.clone(),
-                    byte: glyphs.layout.pointer(glyphs.area, 0, point).0,
+                    byte,
+                    trailing,
                 });
             }
         }
@@ -435,14 +468,19 @@ impl SelectionScope {
                     {
                         return false;
                     }
+                    let (byte, trailing) =
+                        glyphs
+                            .layout
+                            .pointer(glyphs.area, 0, (mouse.column, mouse.row).into());
                     let cursor = Endpoint {
                         document: id.clone(),
-                        byte: glyphs
-                            .layout
-                            .pointer(glyphs.area, 0, (mouse.column, mouse.row).into())
-                            .0,
+                        byte,
+                        trailing,
                     };
-                    let anchor = if mouse.modifiers.contains(KeyModifiers::SHIFT) {
+                    let anchor = if mouse
+                        .modifiers
+                        .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT)
+                    {
                         self.0
                             .borrow()
                             .selection
@@ -451,6 +489,7 @@ impl SelectionScope {
                             .unwrap_or(Endpoint {
                                 document: id.clone(),
                                 byte: 0,
+                                trailing: false,
                             })
                     } else {
                         cursor.clone()
@@ -490,10 +529,12 @@ impl SelectionScope {
                         Endpoint {
                             document: first.document.clone(),
                             byte: 0,
+                            trailing: false,
                         },
                         Endpoint {
                             document: last.document.clone(),
                             byte: last_doc.borrow().source.len(),
+                            trailing: false,
                         },
                     ));
                     self.0.borrow_mut().drag = None;
@@ -503,90 +544,8 @@ impl SelectionScope {
                     }
                     self.0.borrow_mut().selection = None;
                     self.0.borrow_mut().drag = None;
-                } else if key.modifiers.contains(KeyModifiers::SHIFT) {
-                    let cursor = self
-                        .0
-                        .borrow()
-                        .selection
-                        .as_ref()
-                        .map(|(_, cursor)| cursor.clone())
-                        .unwrap_or(Endpoint {
-                            document: id.clone(),
-                            byte: 0,
-                        });
-                    let Some(current) = cursor.document.upgrade() else {
-                        return false;
-                    };
-                    let doc = current.borrow();
-                    let width = match &doc.glyphs {
-                        Some(glyphs) => glyphs.area.width,
-                        None if matches!(key.code, KeyCode::Left | KeyCode::Right) => 1,
-                        None => return false,
-                    };
-                    let layout = match &doc.markdown {
-                        Some(document) => match Layout::markdown(document, width) {
-                            Ok(layout) => layout,
-                            Err(_) => return false,
-                        },
-                        None => LiteralLayout::literal(&doc.source, width).into(),
-                    };
-                    let (row, column) = layout.cursor(cursor.byte, false);
-                    let mut target = cursor.document.clone();
-                    let byte = match key.code {
-                        KeyCode::Left if cursor.byte == 0 => {
-                            let scope = self.0.borrow();
-                            let i = scope
-                                .documents
-                                .iter()
-                                .position(|doc| doc.ptr_eq(&cursor.document))
-                                .unwrap();
-                            if i > 0 {
-                                target = scope.documents[i - 1].document.clone();
-                                let Some(previous) = target.upgrade() else {
-                                    return false;
-                                };
-                                previous.borrow().source.len()
-                            } else {
-                                0
-                            }
-                        }
-                        KeyCode::Right if cursor.byte == doc.source.len() => {
-                            let scope = self.0.borrow();
-                            let i = scope
-                                .documents
-                                .iter()
-                                .position(|doc| doc.ptr_eq(&cursor.document))
-                                .unwrap();
-                            if let Some(next) = scope.documents.get(i + 1) {
-                                target = next.document.clone();
-                                0
-                            } else {
-                                cursor.byte
-                            }
-                        }
-                        KeyCode::Left => layout.previous(cursor.byte),
-                        KeyCode::Right => layout.next(cursor.byte),
-                        KeyCode::Up => layout.vertical(row, false, column),
-                        KeyCode::Down => layout.vertical(row, true, column),
-                        KeyCode::Home => layout.row_start(row),
-                        KeyCode::End => layout.row_end(row),
-                        _ => return false,
-                    };
-                    let anchor = self
-                        .0
-                        .borrow()
-                        .selection
-                        .as_ref()
-                        .map(|(anchor, _)| anchor.clone())
-                        .unwrap_or(cursor.clone());
-                    pair = Some((
-                        anchor,
-                        Endpoint {
-                            document: target,
-                            byte,
-                        },
-                    ));
-                    self.0.borrow_mut().drag = None;
+                } else if key.modifiers == KeyModifiers::SHIFT {
+                    return self.extend_keyboard(document, key.code);
                 } else {
                     return false;
                 }
@@ -597,6 +556,9 @@ impl SelectionScope {
         if let Some(pair) = pair {
             scope.selection = Some(pair);
         }
+        scope.column = None;
+        scope.keyboard_focus_pending = false;
+        scope.reveal = false;
         scope.revision += 1;
         scope.intent += 1;
         true
@@ -615,6 +577,7 @@ pub(super) struct ScopePaint {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::editor::layout::Layout as LiteralLayout;
     use crossterm::event::KeyEvent;
     use ratatui::layout::Rect;
     #[test]
@@ -622,6 +585,7 @@ mod tests {
         let area: Placement = Rect::new(0, 0, 12, 2).into();
         let document = Rc::new(RefCell::new(Document {
             source: Arc::from("original"),
+            geometry_revision: 0,
             markdown: None,
             disabled: false,
             alive: true,
@@ -666,5 +630,45 @@ mod tests {
             &Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)),
         );
         assert_eq!(new.copy().unwrap().as_deref(), Some("original"));
+    }
+    #[test]
+    fn stale_child_geometry_cannot_reveal_an_appended_document_until_its_new_flush() {
+        use ratatui::layout::Rect;
+        let area: Placement = Rect::new(0, 0, 3, 2).into();
+        let document = Rc::new(RefCell::new(Document {
+            source: Arc::from("abcdef"),
+            geometry_revision: 0,
+            markdown: None,
+            disabled: false,
+            alive: true,
+            physical: true,
+            glyphs: None,
+            binding: Weak::new(),
+            standalone: None,
+        }));
+        SelectionScope::standalone(&document, area);
+        let scope = SelectionScope::active(&document).unwrap();
+        assert!(scope.input(
+            &document,
+            &Event::Key(KeyEvent::new(KeyCode::End, KeyModifiers::SHIFT))
+        ));
+        let painted = scope.0.borrow().documents.clone();
+        // An independently updated descendant may append without a new parent
+        // Reading frame. Its old placement cannot stand in for the new layout.
+        document.borrow_mut().source = Arc::from("abcdefgh");
+        document.borrow_mut().geometry_revision += 1;
+        scope.present(painted, area);
+        assert_eq!(scope.take_reveal_row(), None);
+        assert_eq!(scope.copy().unwrap().as_deref(), Some("abc"));
+        scope.present(
+            vec![Participant {
+                document: Rc::downgrade(&document),
+                child: None,
+                geometry: Some((area, 1)),
+            }],
+            area,
+        );
+        assert_eq!(scope.take_reveal_row(), Some(0));
+        assert_eq!(scope.take_reveal_row(), None);
     }
 }

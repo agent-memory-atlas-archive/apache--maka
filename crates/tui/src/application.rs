@@ -492,6 +492,7 @@ impl Presenter {
             self.clear_hover()?;
             return Ok(());
         }
+        self.cancel_reading_keyboard_reveal(&event);
         let raw_pointer_target = if let Event::Mouse(mouse) = &event {
             let target = self
                 .scene

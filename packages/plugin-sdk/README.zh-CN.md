@@ -159,6 +159,10 @@ TUI 提供同契约、同实现名的原生 `SourceText`。选区保留原始 UT
 不表示操作系统已确认写入。追加文本保留原端点，替换/禁用撤销旧选区。TUI ReadingArea
 将逻辑 SourceText 纳入同一个选区，包含被裁剪原文的全选。选区和正在进行的鼠标选择
 阻止自动 tail 替换；超过 64 KiB 的 Copy 在分配或输出前拒绝并保留原选区。
+Shift 或 Alt/Option 点击延伸原选区；Shift+方向键及 Shift+Home/End 沿原生视觉行移动，
+保留软折行行尾归属及纵向列位置。Shift+PageUp/PageDown 延伸可见视口减一行，
+可跨 SourceText、Markdown 和 Diff；成功 flush 后才显露移动端点。
+新的焦点或指针操作取消待显露请求，保留原选区。
 完整阅读器的真实 OS 验收仍待完成。
 
 持久 UI component 通过普通 `actions` 提交 mutation（可携带声明的原捕获资源）；内核生成 operation
