@@ -201,9 +201,7 @@ fn authored(
     (result[0].clone(), result[1].clone(), enabled)
 }
 
-#[test]
-#[ignore = "opt-in ordinary product build, native file input and actual foreground PTY"]
-fn agent_installs_studio_and_production_launcher_replaces_the_surface_and_backend() {
+fn built_packages() -> (std::path::PathBuf, BTreeMap<String, Package>) {
     let repository = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let output = Command::new("node")
         .arg(repository.join("packages/agent-product/scripts/build.mjs"))
@@ -223,10 +221,22 @@ fn agent_installs_studio_and_production_launcher_replaces_the_surface_and_backen
         .map(|name| {
             (
                 name.clone(),
-                Package::read_from(&dist.join("packages").join(name)).unwrap(),
+                Package::read_from(&dist.join("packages").join(name)).unwrap_or_else(|error| {
+                    panic!(
+                        "package {}: {error}",
+                        dist.join("packages").join(name).display()
+                    )
+                }),
             )
         })
         .collect();
+    (dist, packages)
+}
+
+#[test]
+#[ignore = "opt-in ordinary product build, native file input and actual foreground PTY"]
+fn agent_installs_studio_and_production_launcher_replaces_the_surface_and_backend() {
+    let (dist, packages) = built_packages();
     let refs = packages
         .iter()
         .map(|(name, package)| (name.clone(), package.application_ref()))
@@ -443,4 +453,169 @@ fn agent_installs_studio_and_production_launcher_replaces_the_surface_and_backen
         );
         store.shutdown().await.unwrap();
     });
+}
+
+#[test]
+#[ignore = "opt-in ordinary skill library, actual Host and foreground PTY"]
+fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_product() {
+    let (dist, packages) = built_packages();
+    let refs = packages
+        .iter()
+        .map(|(name, package)| (name.clone(), package.application_ref()))
+        .collect();
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("ui");
+    let host_root = directory.path().join("host");
+    let workspace = directory.path().join("workspace");
+    let source = directory.path().join("skills");
+    std::fs::create_dir(&workspace).unwrap();
+    for index in 0..40 {
+        let skill = source.join(format!("skill-{index:02}"));
+        std::fs::create_dir_all(&skill).unwrap();
+        let body = if index == 0 {
+            format!(
+                "FIRST PAGE\n{}\nLAST PAGE",
+                "A skill instruction line.\n".repeat(164)
+            )
+        } else {
+            format!("Instructions for skill-{index:02}")
+        };
+        std::fs::write(
+            skill.join("SKILL.md"),
+            format!(
+                "---\nname: skill-{index:02}\ndescription: Library entry {index:02}\n---\n{body}"
+            ),
+        )
+        .unwrap();
+    }
+    let deployment = Uuid::new_v4();
+    let host_id = Uuid::new_v4();
+    let manager_id = Uuid::new_v4();
+    let (agent, _, accent) = authored(
+        &dist.join("authoring/agent-product/src/composition.mjs"),
+        json!({
+            "presentation":"tui", "locale":"en", "scheme":"light",
+            "hostRoot":host_root, "hostDeployment":host_id, "managementDeployment":manager_id,
+            "studioRoot":directory.path().join("unused"), "studioDeployment":Uuid::new_v4(),
+            "workspaceRoots":[{"label":"Workspace", "path":workspace}],
+            "skills":{"sources":[{"id":"local", "label":"Test collection", "path":source}]},
+        }),
+        &refs,
+    );
+    let connections = directory.path().join("connections.json");
+    std::fs::write(
+        &connections,
+        serde_json::to_vec(&agent["connections"]).unwrap(),
+    )
+    .unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let ns = RootNamespaces::for_current_account().unwrap();
+    runtime.block_on(async {
+        for (path, instances) in [
+            (&host_root, vec![(host_id, "host", false)]),
+            (
+                &root,
+                vec![
+                    (manager_id, "managementHost", false),
+                    (deployment, "ui", true),
+                ],
+            ),
+        ] {
+            let owner = Arc::new(RootOwner::create(path, &ns).unwrap());
+            let store = EventLog::for_root(owner).await.unwrap();
+            for (id, name, remote) in instances {
+                store
+                    .commit_application(
+                        id,
+                        0,
+                        serde_json::from_value(agent[name].clone()).unwrap(),
+                        if remote {
+                            serde_json::from_value(agent["remoteExports"].clone()).unwrap()
+                        } else {
+                            vec![]
+                        },
+                        packages.values().cloned().collect(),
+                    )
+                    .await
+                    .unwrap();
+            }
+            store.shutdown().await.unwrap();
+        }
+    });
+    let mut tui = Pty::spawn(&[
+        "application",
+        "run",
+        "--root",
+        root.to_str().unwrap(),
+        "--deployment",
+        &deployment.to_string(),
+        "--connections",
+        connections.to_str().unwrap(),
+    ]);
+    tui.wait_until_with_timeout(|screen| screen.contains("Plugins"), Duration::from_secs(30));
+    tui.send(b"\x0b");
+    tui.wait_for("Commands");
+    paste(&mut tui, "Skills");
+    click(&mut tui, "[ Skills ]", accent);
+    tui.wait_for("Library entry 00");
+    // First page and next page are real bounded Host queries.
+    click(&mut tui, "[ Next page ]", accent);
+    tui.wait_for("Library entry 32");
+    click(&mut tui, "[ Previous page ]", accent);
+    tui.wait_for("Library entry 00");
+    click(&mut tui, "skill-00", accent);
+    tui.wait_for("FIRST PAGE");
+    click(&mut tui, "[ Next excerpt ]", accent);
+    tui.wait_for("LAST PAGE");
+    click(&mut tui, "[ Previous excerpt ]", accent);
+    tui.wait_for("FIRST PAGE");
+    // A changed file cannot be joined to the retained body page.
+    std::fs::write(
+        source.join("skill-00/SKILL.md"),
+        "---\nname: skill-00\ndescription: Updated description\n---\nUPDATED BODY",
+    )
+    .unwrap();
+    click(&mut tui, "[ Next excerpt ]", accent);
+    tui.wait_for("Skills changed.");
+    assert!(tui.screen.snapshot().unwrap().screen.contains("FIRST PAGE"));
+    click(&mut tui, "[ Refresh ]", accent);
+    tui.wait_for("Updated description");
+    // Search uses a captured native editor revision, then the complete Host catalog.
+    click(&mut tui, "Search skills", accent);
+    paste(&mut tui, "skill-39");
+    tui.send(b"\r");
+    tui.wait_until(|screen| {
+        screen.contains("Library entry 39") && !screen.contains("Updated description")
+    });
+    // Native list entry accepts keyboard navigation without opening on focus.
+    tui.send(b"\t\t");
+    tui.wait_for("Library entry 39");
+    assert!(
+        !tui.screen
+            .snapshot()
+            .unwrap()
+            .screen
+            .contains("Instructions for skill-39")
+    );
+    tui.send(b"\r");
+    tui.wait_for("Instructions for skill-39");
+    tui.send(b"\x1b");
+    tui.wait_until(|screen| !screen.contains("╭Skills"));
+    tui.send(b"\x0b");
+    tui.wait_for("› Skills");
+    tui.send(b"\r");
+    tui.wait_for("Library entry 39");
+    assert!(tui.screen.snapshot().unwrap().screen.contains("skill-39"));
+    tui.send(b"\x1b");
+    tui.wait_until(|screen| !screen.contains("╭Skills"));
+    tui.send(b"\x11");
+    tui.finish();
+    assert!(!tui.screen.snapshot().unwrap().alternate_screen);
+    for path in [&root, &host_root] {
+        drop(RootOwner::open(path, &ns).unwrap());
+    }
 }

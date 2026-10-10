@@ -686,6 +686,10 @@ test('both product compositions use actual immutable package refs and check in t
           hostDeployment: uuid(80),
           managementDeployment: uuid(81),
         };
+        if (productName === 'agent')
+          configuration.skills = {
+            sources: [{ id: 'local', label: 'Local', path: '/private/product-skills' }],
+          };
         if (questionsEnabled)
           configuration.agent.tools.push({
             name: 'AskUserForm',

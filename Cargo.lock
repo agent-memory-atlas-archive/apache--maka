@@ -8210,6 +8210,7 @@ dependencies = [
  "maka-runtime-host",
  "maka-sandbox",
  "maka-settings-service",
+ "maka-skills",
  "maka-tools",
  "maka-tui",
  "maka-ui",

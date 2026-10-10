@@ -30,6 +30,7 @@ mod permissions;
 pub mod processes;
 pub mod questions;
 mod service;
+pub mod skills;
 mod source_path;
 mod tools;
 mod workspace;
@@ -45,6 +46,7 @@ pub const EXPORT: &str = "agent";
 
 pub fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
     files::provide(registry)?;
+    skills::provide(registry)?;
     processes::provide(registry)?;
     questions::provide(registry)?;
     forms::provide(registry)?;

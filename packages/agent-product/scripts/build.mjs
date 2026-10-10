@@ -132,6 +132,7 @@ const specifications = {
       directories: one(own.directoryPickerContract),
       details: one(own.sessionDetailsContract),
       terminals: one(own.terminalPanelContract),
+      skills: { contract: own.skillLibraryContract, cardinality: { kind: 'optional' } },
       queueEditor: one(own.queueEditorContract),
       formEditor: one(own.formEditorContract),
       questionEditor: one(own.questionEditorContract),
@@ -148,10 +149,23 @@ const specifications = {
       {
         locale: own.locale,
         terminals: { type: 'boolean' },
+        skills: { type: 'boolean' },
         place: { type: 'string', maxLength: 4096 },
       },
       ['locale'],
     ),
+  },
+  'skill-library': {
+    contract: own.skillLibraryContract,
+    export: 'SkillLibrary',
+    module: 'skill-library',
+    imports: {
+      skills: one(sdk.contracts.skillLibrary),
+      input: one(sdk.contracts.textInput),
+      reader: one(sdk.contracts.textReader),
+      source: one(sdk.contracts.sourceText),
+      reading: one(sdk.contracts.readingArea),
+    },
   },
   'terminal-panel': {
     contract: own.terminalPanelContract,
@@ -351,7 +365,7 @@ for (const [name, spec] of Object.entries(specifications)) {
     if (name === 'appearance')
       contents = `import {activate as appearance} from '${resolve(root, 'src/theme.ts')}';export function activate(configuration){return appearance(configuration,${target === 'tui'});}`;
     else if (name === 'workspace')
-      contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace(presentations.${target},configuration.locale,configuration.terminals === true, configuration.place ?? '');return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
+      contents = `import {workspace} from '${resolve(root, 'src/workspace.ts')}';import {workspaceContract} from '${resolve(root, 'src/contracts.ts')}';export let component;export function activate(configuration){component=workspace(presentations.${target},configuration.locale,configuration.terminals === true, configuration.place ?? '', configuration.skills === true);return {Workspace:{kind:'component',contract:workspaceContract,component:['component']}};}`;
     else if (name === 'studio' || name === 'recovery')
       contents = `import {${name},activate as exports} from '${resolve(root, 'src/' + name + '.ts')}';export let component;export function activate(configuration){component=${name}(presentations.${target},configuration.locale);return exports();}`;
     else if (name === 'connection-form')
@@ -640,6 +654,15 @@ const mechanical = {
       ),
     },
   },
+  skills: {
+    entries: {
+      host: native(
+        'maka.skills.library',
+        { skills: required(sdk.contracts.skillLibrary) },
+        sdk.configurations.skillLibrary,
+      ),
+    },
+  },
   'workspace-files': {
     entries: {
       host: native('maka.workspace.files', { files: required(sdk.contracts.workspaceFiles) }),
@@ -665,6 +688,7 @@ const mechanical = {
         imports: {
           agent: one(sdk.contracts.agent),
           terminal: { contract: sdk.contracts.terminal, cardinality: { kind: 'optional' } },
+          skills: { contract: sdk.contracts.skillLibrary, cardinality: { kind: 'optional' } },
           settings: one(sdk.contracts.settings),
           receipts: one(sdk.contracts.receiptReader),
         },

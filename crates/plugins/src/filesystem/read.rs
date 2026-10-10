@@ -19,6 +19,8 @@
 
 //! Read-only input capabilities; never execution authority.
 mod file;
+#[cfg(test)]
+mod scoped;
 use super::directory::Directory;
 use crate::{
     Error,
@@ -170,8 +172,20 @@ impl ReadRoot {
         ReadDirectory {
             root: self.directory.clone(),
             files: self.files.clone(),
-            owner,
+            owner: ReadOwner::Instance(owner),
             cancellation,
+            authorization: None,
+            open_files: self.open_files.clone(),
+        }
+    }
+    /// Bind an already authorized root to the original application call. The
+    /// scope supplies cancellation and worker custody, never filesystem access.
+    pub fn bind_scope(&self, scope: &crate::call::Scope) -> ReadDirectory {
+        ReadDirectory {
+            root: self.directory.clone(),
+            files: self.files.clone(),
+            owner: ReadOwner::Call(scope.clone()),
+            cancellation: scope.cancellation.clone(),
             authorization: None,
             open_files: self.open_files.clone(),
         }
@@ -217,10 +231,77 @@ impl ReadInputs {
 pub struct ReadDirectory {
     root: Directory,
     files: Option<Arc<BTreeSet<String>>>,
-    owner: Context,
+    owner: ReadOwner,
     cancellation: CancellationToken,
     authorization: Option<Arc<dyn ReadAuthorization>>,
     open_files: Arc<tokio::sync::Semaphore>,
+}
+#[derive(Clone)]
+enum ReadOwner {
+    Instance(Context),
+    Call(crate::call::Scope),
+}
+enum ReadLease {
+    Instance(crate::fiber::CallGuard),
+    Call(crate::call::Ticket),
+}
+impl ReadLease {
+    fn start(&mut self) {
+        if let Self::Call(ticket) = self {
+            ticket.start();
+        }
+    }
+    fn complete(self) {
+        match self {
+            Self::Instance(guard) => drop(guard),
+            Self::Call(ticket) => ticket.complete(Ok(())),
+        }
+    }
+}
+impl ReadOwner {
+    fn admit(&self) -> Result<ReadLease, ReadError> {
+        match self {
+            Self::Instance(owner) => owner
+                .resource_call()
+                .map(ReadLease::Instance)
+                .map_err(|_| ReadError::Retired),
+            Self::Call(scope) => scope
+                .resources
+                .reserve()
+                .map(ReadLease::Call)
+                .map_err(|_| ReadError::Retired),
+        }
+    }
+    fn spawn_resource<F>(
+        &self,
+        label: &str,
+        task: impl FnOnce(CancellationToken) -> F,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<(), String>>, ReadError>
+    where
+        F: Future<Output = Result<(), String>> + Send + 'static,
+    {
+        match self {
+            Self::Instance(owner) => owner
+                .spawn_resource(label, task)
+                .map_err(|_| ReadError::Retired),
+            Self::Call(scope) => {
+                use futures_util::FutureExt;
+                let mut ticket = scope.resources.reserve().map_err(|_| ReadError::Retired)?;
+                let future = task(scope.cancellation.clone());
+                let (send, receive) = tokio::sync::oneshot::channel();
+                ticket.start();
+                tokio::spawn(async move {
+                    let result = std::panic::AssertUnwindSafe(future)
+                        .catch_unwind()
+                        .await
+                        .unwrap_or_else(|_| Err("read resource worker panicked".into()));
+                    ticket.complete(result.clone());
+                    let _ = send.send(result);
+                });
+                Ok(receive)
+            }
+        }
+    }
 }
 impl ReadDirectory {
     /// Display location only. It never grants authority to reopen the pathname.
@@ -237,7 +318,7 @@ impl ReadDirectory {
         if self.cancellation.is_cancelled() {
             return Err(ReadError::Retired);
         }
-        let lease = self.owner.resource_call().map_err(|_| ReadError::Retired)?;
+        let mut lease = self.owner.admit()?;
         let mut ticket = if let Some(authorization) = &self.authorization {
             tokio::select! {
                 biased;
@@ -249,12 +330,12 @@ impl ReadDirectory {
         };
         let view = self.clone();
         tokio::task::spawn_blocking(move || {
-            let _lease = lease;
             let reader = Reader {
                 view: &view,
                 visited: Cell::new(0),
             };
             reader.check()?;
+            lease.start();
             if let Some(ticket) = &mut ticket {
                 ticket.start();
             }
@@ -262,6 +343,7 @@ impl ReadDirectory {
             if let Some(ticket) = ticket {
                 ticket.complete(Ok(()));
             }
+            lease.complete();
             Ok(result)
         })
         .await

@@ -161,6 +161,7 @@ export interface HelpProps {
   locale: string;
   open: boolean;
 }
+export interface SkillLibraryProps extends HelpProps {}
 export interface DirectoryPickerProps {
   theme: Theme;
   locale: string;
@@ -416,6 +417,11 @@ export const paletteContract = component(
 );
 export const helpContract = component(
   'maka.agent.Help',
+  object({ theme: { $ref: '#/$defs/Theme' }, locale, open: { type: 'boolean' } }),
+  { closed: object({}) },
+);
+export const skillLibraryContract = component(
+  'maka.agent.SkillLibrary',
   object({ theme: { $ref: '#/$defs/Theme' }, locale, open: { type: 'boolean' } }),
   { closed: object({}) },
 );

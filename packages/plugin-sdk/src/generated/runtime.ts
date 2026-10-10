@@ -105,6 +105,11 @@ export type RuntimeProtocol =
   | CredentialMutationResult
   | SetDefaultConnectionTargetInput
   | CatalogMutationResult
+  | SkillLibraryConfiguration
+  | SkillLibraryList
+  | SkillLibraryPage
+  | SkillLibraryRead
+  | SkillLibraryDocument
   | AgentList
   | AgentCreate
   | AgentCreated
@@ -1648,6 +1653,34 @@ export type CatalogMutationResult =
   | {
       target: ConnectionTarget;
       kind: 'invalid_default_target';
+    };
+export type SkillLibraryPage =
+  | {
+      revision: string;
+      entries: SkillLibraryEntry[];
+      after?: SkillLibraryCursor | null;
+      diagnostics: string[];
+      kind: 'page';
+    }
+  | {
+      kind: 'changed';
+    };
+export type SkillLibraryDocument =
+  | {
+      entry: SkillLibraryEntry;
+      revision: string;
+      text: string;
+      offset: number;
+      before?: number | null;
+      after?: number | null;
+      totalBytes: number;
+      kind: 'page';
+    }
+  | {
+      kind: 'changed';
+    }
+  | {
+      kind: 'unavailable';
     };
 export type AgentSessionFilter = 'all' | 'needs_you';
 export type AgentSessionPosition =
@@ -4313,6 +4346,89 @@ export interface DeleteCredentialInput {
 export interface SetDefaultConnectionTargetInput {
   expectedCatalogRevision: number;
   target: ConnectionTarget | null;
+}
+/**
+ * Installation-selected skill collections. No ambient home or workspace scan.
+ */
+export interface SkillLibraryConfiguration {
+  /**
+   * @maxItems 8
+   */
+  sources:
+    | []
+    | [SkillLibrarySource]
+    | [SkillLibrarySource, SkillLibrarySource]
+    | [SkillLibrarySource, SkillLibrarySource, SkillLibrarySource]
+    | [SkillLibrarySource, SkillLibrarySource, SkillLibrarySource, SkillLibrarySource]
+    | [
+        SkillLibrarySource,
+        SkillLibrarySource,
+        SkillLibrarySource,
+        SkillLibrarySource,
+        SkillLibrarySource,
+      ]
+    | [
+        SkillLibrarySource,
+        SkillLibrarySource,
+        SkillLibrarySource,
+        SkillLibrarySource,
+        SkillLibrarySource,
+        SkillLibrarySource,
+      ]
+    | [
+        SkillLibrarySource,
+        SkillLibrarySource,
+        SkillLibrarySource,
+        SkillLibrarySource,
+        SkillLibrarySource,
+        SkillLibrarySource,
+        SkillLibrarySource,
+      ]
+    | [
+        SkillLibrarySource,
+        SkillLibrarySource,
+        SkillLibrarySource,
+        SkillLibrarySource,
+        SkillLibrarySource,
+        SkillLibrarySource,
+        SkillLibrarySource,
+        SkillLibrarySource,
+      ];
+}
+export interface SkillLibrarySource {
+  id: string;
+  label: string;
+  /**
+   * Absolute directory containing skill directories. Captured at activation.
+   */
+  path: string;
+}
+export interface SkillLibraryList {
+  query: string;
+  cursor?: SkillLibraryCursor | null;
+}
+export interface SkillLibraryCursor {
+  revision: string;
+  query: string;
+  offset: number;
+}
+export interface SkillLibraryEntry {
+  reference: string;
+  source: string;
+  name: string;
+  description: string;
+  valid: boolean;
+  shadowedBy?: string | null;
+  metadataTruncated: boolean;
+  issues: string[];
+}
+export interface SkillLibraryRead {
+  reference: string;
+  /**
+   * Complete catalog revision from the list/read response.
+   */
+  revision: string;
+  offset: number;
 }
 export interface AgentList {
   filter: AgentSessionFilter;

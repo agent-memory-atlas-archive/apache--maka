@@ -229,10 +229,12 @@ export interface State {
   deploymentOpen: boolean;
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
   terminals: boolean;
+  skills: boolean;
   place: string;
   dialog:
     | 'attachments'
     | 'terminal'
+    | 'skills'
     | 'palette'
     | 'directories'
     | 'details'
@@ -731,6 +733,7 @@ type RootCommand =
   | 'appearance-open'
   | 'model-setup'
   | 'terminal-open'
+  | 'skills-open'
   | 'details-open'
   | 'create-workspace'
   | 'navigation-toggle'
@@ -927,6 +930,17 @@ function rootCommands(
       hint: '',
       disabled: !route || mutationPending(state) || catalogPending(state),
     },
+    ...(state.skills
+      ? [
+          {
+            kind: 'skills-open' as const,
+            id: 'skills-open',
+            label: text.skillsTitle,
+            hint: '',
+            disabled: !route,
+          },
+        ]
+      : []),
     {
       kind: 'terminal-open',
       id: 'terminal-open',
@@ -1052,6 +1066,7 @@ function rootCommand(
     else state.dialog = 'directories';
     if (target === 'tui') controlSidebar(state, 'dismiss_transient');
   } else if (kind === 'terminal-open') state.dialog = 'terminal';
+  else if (kind === 'skills-open') state.dialog = 'skills';
   else if (kind === 'details-open') state.dialog = 'details';
   else if (kind === 'navigation-toggle') controlSidebar(state, 'toggle');
   else if (kind === 'settings') {
@@ -3035,25 +3050,27 @@ function frame<N extends Node>(
         ? target === 'tui' && state.attachments.selection?.browse
           ? tuiText(locale, 'attachments-local-files')
           : text.attachmentTitle
-        : state.dialog === 'terminal'
-          ? text.terminalTitle
-          : state.dialog === 'question'
-            ? state.interaction?.record?.request.kind === 'form'
-              ? text.formTitle
-              : text.questionsTitle
-            : state.dialog === 'approval'
-              ? state.interaction?.record?.request.kind === 'permissions'
-                ? text.permissionApprovalTitle
-                : text.approvalTitle
-              : state.dialog === 'directories'
-                ? text.directoryTitle
-                : state.dialog === 'details'
-                  ? text.detailsTitle
-                  : state.dialog === 'queue'
-                    ? text.queueEdit
-                    : state.dialog === 'help'
-                      ? text.helpTitle
-                      : text.paletteTitle,
+        : state.dialog === 'skills'
+          ? text.skillsTitle
+          : state.dialog === 'terminal'
+            ? text.terminalTitle
+            : state.dialog === 'question'
+              ? state.interaction?.record?.request.kind === 'form'
+                ? text.formTitle
+                : text.questionsTitle
+              : state.dialog === 'approval'
+                ? state.interaction?.record?.request.kind === 'permissions'
+                  ? text.permissionApprovalTitle
+                  : text.approvalTitle
+                : state.dialog === 'directories'
+                  ? text.directoryTitle
+                  : state.dialog === 'details'
+                    ? text.detailsTitle
+                    : state.dialog === 'queue'
+                      ? text.queueEdit
+                      : state.dialog === 'help'
+                        ? text.helpTitle
+                        : text.paletteTitle,
       background,
       ui.box(
         'dialog-content',
@@ -3192,6 +3209,16 @@ function frame<N extends Node>(
               check: 'check',
             },
           ),
+          ...(state.skills
+            ? [
+                presentation.slot(
+                  'skill-library',
+                  'skills',
+                  { theme, locale, open: state.dialog === 'skills' },
+                  { closed: 'closed' },
+                ),
+              ]
+            : []),
           presentation.slot(
             'help',
             'help',
@@ -3316,6 +3343,7 @@ export function workspace<N extends Node>(
   locale: string,
   terminals = false,
   place = '',
+  skills = false,
 ): Component<State, Record<string, never>, N> {
   const target = presentation.target;
   const configuredLocale = locale;
@@ -3346,6 +3374,7 @@ export function workspace<N extends Node>(
         browse: null,
         sidebar: target === 'desktop' ? { open: true } : { command: null },
         terminals,
+        skills,
         dialog: null,
         image: null,
         window: null,
@@ -3625,6 +3654,10 @@ export function workspace<N extends Node>(
               }
             }
           }
+          return frame(presentation, configuredLocale, state, values, actions);
+        }
+        if (input.child === 'skill-library') {
+          if (input.name === 'closed' && state.dialog === 'skills') state.dialog = null;
           return frame(presentation, configuredLocale, state, values, actions);
         }
         if (input.child === 'help') {

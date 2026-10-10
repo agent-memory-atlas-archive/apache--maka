@@ -303,6 +303,47 @@ export const configurations = {
       },
     },
   },
+  skillLibrary: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      sources: {
+        type: 'array',
+        items: {
+          $ref: '#/$defs/SkillLibrarySource',
+        },
+        maxItems: 8,
+      },
+    },
+    required: ['sources'],
+    description: 'Installation-selected skill collections. No ambient home or workspace scan.',
+    title: 'SkillLibraryConfiguration',
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    $defs: {
+      SkillLibrarySource: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          id: {
+            type: 'string',
+            pattern: '^[a-z0-9][a-z0-9_-]{0,63}$',
+          },
+          label: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+          },
+          path: {
+            type: 'string',
+            description: 'Absolute directory containing skill directories. Captured at activation.',
+            minLength: 1,
+            maxLength: 4096,
+          },
+        },
+        required: ['id', 'label', 'path'],
+      },
+    },
+  },
   workspaceProcesses: {
     type: 'object',
     additionalProperties: false,

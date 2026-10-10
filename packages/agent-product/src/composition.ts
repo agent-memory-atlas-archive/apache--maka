@@ -20,6 +20,7 @@
 import {
   contracts,
   type AgentConfiguration,
+  type SkillLibraryConfiguration,
   type WorkspaceProcessConfiguration,
   type CompositionInput,
   type CompositionNode,
@@ -33,6 +34,8 @@ export const packageNames = [
   'recovery',
   'command-palette',
   'directory-picker',
+  'skill-library',
+  'skills',
   'session-details',
   'queue-editor',
   'question-editor',
@@ -98,6 +101,7 @@ export interface CompositionConfiguration {
   keys: Record<PackageName, string>;
   agent: AgentConfiguration;
   processes?: WorkspaceProcessConfiguration;
+  skills?: SkillLibraryConfiguration;
   hostRoot: string;
   hostDeployment: string;
   managementDeployment: string;
@@ -121,7 +125,7 @@ function settingsComposition(
     export: exportName,
   });
   const remote = (
-    name: 'agent' | 'settings' | 'receipts' | 'workspace-processes',
+    name: 'agent' | 'settings' | 'receipts' | 'workspace-processes' | 'skills',
     exportName: string,
   ): BindingTarget => ({
     kind: 'remote',
@@ -403,12 +407,35 @@ export function composition(configuration: CompositionConfiguration): Applicatio
   host.instances.gateway!.bindings!.agent = [local('agent', 'agent')];
   if (configuration.processes)
     host.instances.gateway!.bindings!.terminal = [local('workspace-processes', 'terminal')];
+  if (configuration.skills) {
+    host.instances.skills = node('skills', { ...configuration.skills });
+    host.instances.gateway!.bindings!.skills = [local('skills', 'skills')];
+    ui.instances['skill-library'] = node(
+      'skill-library',
+      {},
+      {
+        skills: [remote('skills', 'skills')],
+        reading: [local('reading-area', 'ReadingArea')],
+        source: [local('source-text', 'SourceText')],
+        input: [local('input', 'TextInput')],
+        reader: [local('reader', 'Reader')],
+      },
+    );
+    remoteExports.push({
+      capability: { deployment: 'local', instance: [keys.skills], export: 'skills' },
+      declaration: { contract: contracts.skillLibrary, availability: 'required' },
+    });
+    Object.assign(connections.hosts.find((host) => host.name === 'local')!.imports, {
+      skills: { methods: ['list', 'read'], recovery: false },
+    });
+  }
   Object.assign(ui.instances, {
     workspace: node(
       'workspace',
       {
         locale: configuration.locale,
         terminals: !!configuration.processes,
+        skills: !!configuration.skills,
         place: configuration.agent.workspaceRoots[0].path,
       },
       {
@@ -432,6 +459,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
         directories: [local('directory-picker', 'DirectoryPicker')],
         details: [local('session-details', 'SessionDetails')],
         terminals: [local('terminal-panel', 'TerminalPanel')],
+        ...(configuration.skills ? { skills: [local('skill-library', 'SkillLibrary')] } : {}),
         queueEditor: [local('queue-editor', 'QueueEditor')],
         formEditor: [local('form-editor', 'FormEditor')],
         questionEditor: [local('question-editor', 'QuestionEditor')],

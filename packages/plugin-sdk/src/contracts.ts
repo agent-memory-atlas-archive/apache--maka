@@ -13346,6 +13346,328 @@ export const contracts = {
       },
     },
   },
+  skillLibrary: {
+    name: 'maka.skills.Library',
+    version: 1,
+    transport: 'remote',
+    interface: {
+      kind: 'service',
+      methods: {
+        list: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              query: {
+                type: 'string',
+                maxLength: 256,
+              },
+              cursor: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/SkillLibraryCursor',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            required: ['query'],
+            title: 'SkillLibraryList',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              SkillLibraryCursor: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  revision: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  query: {
+                    type: 'string',
+                    maxLength: 256,
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                    maximum: 16384,
+                  },
+                },
+                required: ['revision', 'query', 'offset'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  revision: {
+                    type: 'string',
+                  },
+                  entries: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/SkillLibraryEntry',
+                    },
+                  },
+                  after: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/SkillLibraryCursor',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  diagnostics: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'page',
+                  },
+                },
+                required: ['kind', 'revision', 'entries', 'diagnostics'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            title: 'SkillLibraryPage',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              SkillLibraryEntry: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  reference: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                  description: {
+                    type: 'string',
+                  },
+                  valid: {
+                    type: 'boolean',
+                  },
+                  shadowedBy: {
+                    type: ['string', 'null'],
+                  },
+                  metadataTruncated: {
+                    type: 'boolean',
+                  },
+                  issues: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                },
+                required: [
+                  'reference',
+                  'source',
+                  'name',
+                  'description',
+                  'valid',
+                  'metadataTruncated',
+                  'issues',
+                ],
+              },
+              SkillLibraryCursor: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  revision: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  query: {
+                    type: 'string',
+                    maxLength: 256,
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                    maximum: 16384,
+                  },
+                },
+                required: ['revision', 'query', 'offset'],
+              },
+            },
+          },
+          resources: {},
+        },
+        read: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              reference: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              revision: {
+                type: 'string',
+                description: 'Complete catalog revision from the list/read response.',
+                minLength: 1,
+                maxLength: 128,
+              },
+              offset: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+                maximum: 16777216,
+              },
+            },
+            required: ['reference', 'revision', 'offset'],
+            title: 'SkillLibraryRead',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  entry: {
+                    $ref: '#/$defs/SkillLibraryEntry',
+                  },
+                  revision: {
+                    type: 'string',
+                  },
+                  text: {
+                    type: 'string',
+                  },
+                  offset: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                  },
+                  before: {
+                    type: ['integer', 'null'],
+                    format: 'uint',
+                    minimum: 0,
+                  },
+                  after: {
+                    type: ['integer', 'null'],
+                    format: 'uint',
+                    minimum: 0,
+                  },
+                  totalBytes: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'page',
+                  },
+                },
+                required: ['kind', 'entry', 'revision', 'text', 'offset', 'totalBytes'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'unavailable',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            title: 'SkillLibraryDocument',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              SkillLibraryEntry: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  reference: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                  description: {
+                    type: 'string',
+                  },
+                  valid: {
+                    type: 'boolean',
+                  },
+                  shadowedBy: {
+                    type: ['string', 'null'],
+                  },
+                  metadataTruncated: {
+                    type: 'boolean',
+                  },
+                  issues: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                },
+                required: [
+                  'reference',
+                  'source',
+                  'name',
+                  'description',
+                  'valid',
+                  'metadataTruncated',
+                  'issues',
+                ],
+              },
+            },
+          },
+          resources: {},
+        },
+      },
+    },
+  },
   workspaceFiles: {
     name: 'maka.workspace.Files',
     version: 1,
