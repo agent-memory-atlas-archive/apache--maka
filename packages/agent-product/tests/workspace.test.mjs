@@ -12257,6 +12257,18 @@ test('TUI message browse uses native header items, retains draft focus intent, a
   assert.equal(focus.kind, 'item');
   assert.equal(focus.follow_focus, true);
   assert.equal(modelSlots(focus).length, 0, 'body selection is outside the header highlight');
+  props = { ...props, older: true, newer: true };
+  out = timeline.update(structuredClone(out.frame.state), props, {});
+  const beforePage = structuredClone(reading().props.command);
+  raw('browse-previous');
+  assert.deepEqual(
+    out.events.filter((event) => event.name === 'older'),
+    [{ name: 'older', value: {} }],
+  );
+  assert.deepEqual(reading().props.command, beforePage, 'requesting a page preserves focus');
+  props = { ...props, older: false };
+  raw('browse-previous');
+  assert.ok(!out.events.some((event) => event.name === 'older'));
   raw('browse-' + uuid(991), 'submit');
   assert.deepEqual(out.frame.state.expanded, [], 'submit does not fold an ordinary user message');
   raw('browse-' + uuid(992));
@@ -12273,6 +12285,19 @@ test('TUI message browse uses native header items, retains draft focus intent, a
   raw('browse-expand');
   assert.deepEqual(out.frame.state.expanded, [uuid(992)]);
   raw('browse-next');
+  assert.deepEqual(reading().props.command.target, {
+    kind: 'focus_item',
+    key: 'browse-' + uuid(993),
+  });
+  assert.ok(!out.events.some((event) => event.name === 'newer'), 'interior arrows only move focus');
+  raw('browse-next');
+  assert.deepEqual(
+    out.events.filter((event) => event.name === 'newer'),
+    [{ name: 'newer', value: {} }],
+  );
+  props = { ...props, landing: { sequence: props.landing.sequence + 1, edge: 'end' } };
+  out = timeline.update(structuredClone(out.frame.state), props, {});
+  assert.equal(out.frame.state.browse.request, request);
   assert.deepEqual(reading().props.command.target, {
     kind: 'focus_item',
     key: 'browse-' + uuid(993),

@@ -65,7 +65,7 @@
     "packages/agent-product/scripts/build.mjs": "d49a90328fe7a5aa04d185015cd2e23048ca61b1788e52a26c0dd002086cef15",
     "packages/agent-product/src/appearance-editor.ts": "bf82df69d9d056df899804da8caa4621c56adb70d8993e414f44564f2a73b2dc",
     "packages/agent-product/src/attachments.ts": "b90fc503c13549364e011bca21206ea81148973e96471f1f6c1115298ace411a",
-    "packages/agent-product/src/components.ts": "429d6c38824a9332400a0d297c4b4f173624d8955cd9478c7f13d10cf265532c",
+    "packages/agent-product/src/components.ts": "305074a63fb67da92442738bce6e3832feeac07c3ab3015f1d1735c39ff9da8e",
     "packages/agent-product/src/composition.ts": "05a2515d9aa9ce169b5d47d3bbf06811c7be11e27e5d0a47e8ed910e8c764b66",
     "packages/agent-product/src/connection-form.ts": "90007887df13c69d33d912fb0efaab03d99f09eb520c0ca656b18fde546b4311",
     "packages/agent-product/src/connections.ts": "2523706d4e4e54d1c02f3e3b0ea6650385725fe0797ca8c7882ce389e9ed25cc",

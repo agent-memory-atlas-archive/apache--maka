@@ -417,7 +417,13 @@ impl Presenter {
             KeyCode::Home => 0,
             _ => peers.len() - 1,
         };
-        self.focus_item(peers[next].clone())?;
+        let target = peers[next].clone();
+        // At an item-group edge, let its declared action request another page.
+        // Interior navigation and undeclared boundaries retain native behavior.
+        if next == at && self.dispatch_focused_shortcut(event)? {
+            return Ok(true);
+        }
+        self.focus_item(target)?;
         Ok(true)
     }
 }

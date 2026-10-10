@@ -1415,6 +1415,16 @@ export function components<N extends Node>(
           landing: props.landing,
           observation: state.landing.sequence === props.landing.sequence ? state.observation : null,
         };
+        if (state.browse && state.browse.request === props.browse && !next.browse) {
+          // A page split within one message replaces the bounded window. Follow
+          // its existing landing edge instead of restarting at the first row.
+          const rows = toolCards(props.messages);
+          const row = props.landing.edge === 'end' ? rows.at(-1) : rows[0];
+          if (row) {
+            next.browse = { ...state.browse };
+            focusMessage(next, row.message.id);
+          }
+        }
         syncSearch(next, target === 'tui' ? props.search : null);
         return timelineFrame(next, props, messageCopyObservation(state));
       },
@@ -1460,10 +1470,19 @@ export function components<N extends Node>(
             // The original Item distinguishes focus-following activation from Enter.
             toggle = (input.event as { kind?: string }).kind === 'submit';
           } else if (input.key === 'browse-previous' || input.key === 'browse-next') {
-            const row =
-              rows[
-                Math.max(0, Math.min(rows.length - 1, at + (input.key === 'browse-next' ? 1 : -1)))
-              ];
+            const forward = input.key === 'browse-next';
+            if (
+              at >= 0 &&
+              (forward ? at === rows.length - 1 && props.newer : at === 0 && props.older)
+            ) {
+              // Extend the original bounded history window without moving focus
+              // on an asynchronous reply. The next arrow enters the added rows.
+              const out = timelineFrame(next, props, messageCopyObservation(state));
+              out.events.push({ name: forward ? 'newer' : 'older', value: {} });
+              out.decision = { preventDefault: true, stopPropagation: true };
+              return out;
+            }
+            const row = rows[Math.max(0, Math.min(rows.length - 1, at + (forward ? 1 : -1)))];
             if (row) focusMessage(next, row.id);
           }
           const row = rows.find((message) => message.id === next.browse!.id);

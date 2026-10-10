@@ -217,6 +217,11 @@ History landing and source changes clear stale context. Paths do not grant file
 access or open a local path. The remaining TUI presentation and default-launcher
 migration are still pending; Desktop product design follows the team branch.
 
+In TUI Browse messages, an arrow at the loaded history boundary requests the
+adjacent page at the original history fence. Focus stays on the current message;
+the next arrow enters the added records. A page split follows its existing landing
+edge. Escape returns to the preserved Composer draft.
+
 The TUI palette supplies Copy message and Copy message source for the original
 native selection, browsed header, or first visible message. It reads the complete
 canonical field at the retained session/history fence, even when the timeline

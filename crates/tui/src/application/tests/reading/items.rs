@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use super::dialog::column;
+use super::dialog::{column, root_count};
 use super::*;
 
 fn item(index: usize) -> Value {
@@ -50,7 +50,11 @@ fn plain() -> (tokio::runtime::Runtime, Presenter, Rc<RefCell<Value>>) {
 }
 #[test]
 fn grouped_items_reuse_two_line_content_and_reveal_offscreen_keyboard_targets() {
-    let (_runtime, mut p, _) = plain();
+    let (_runtime, mut p, source) = plain();
+    source.borrow_mut()["shortcuts"] = json!([
+        {"key":"up","modifiers":[],"input":"before","enabled":true},
+        {"key":"down","modifiers":[],"input":"after","enabled":true}
+    ]);
     draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "before");
     assert_eq!(p.tab_stops().len(), 3);
@@ -80,12 +84,30 @@ fn grouped_items_reuse_two_line_content_and_reveal_offscreen_keyboard_targets() 
     assert_eq!(p.focus.as_ref().unwrap().key, "item-11");
     assert_eq!(p.focus.as_ref().unwrap().area.visible().height, 2);
     assert_eq!(observation(&p), json!({"kind":"activate"}));
+    let count = root_count(&p);
+    p.input(key(KeyCode::Down)).unwrap();
+    assert_eq!(root_count(&p), count + 1);
+    assert_eq!(
+        p.application.frame(&p.root).unwrap().state["last_input"],
+        json!({"key":"after","value":{"kind":"click"}})
+    );
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-11");
+    draw(&mut p, 24, 6);
     p.input(key(KeyCode::Enter)).unwrap();
     draw(&mut p, 24, 6);
     assert_eq!(observation(&p), json!({"kind":"submit"}));
     p.input(key(KeyCode::Home)).unwrap();
     draw(&mut p, 24, 6);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
+    let count = root_count(&p);
+    p.input(key(KeyCode::Up)).unwrap();
+    assert_eq!(root_count(&p), count + 1);
+    assert_eq!(
+        p.application.frame(&p.root).unwrap().state["last_input"],
+        json!({"key":"before","value":{"kind":"click"}})
+    );
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
+    draw(&mut p, 24, 6);
     p.input(key(KeyCode::Tab)).unwrap();
     assert_eq!(p.focus.as_ref().unwrap().key, "after");
     close(&mut p);
