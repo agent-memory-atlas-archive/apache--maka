@@ -30,6 +30,7 @@ const entry = {
   description: 'Review a change',
   valid: true,
   installed: false,
+  bundled: false,
   preference: { enabled: true, pinned: false },
   shadowedBy: null,
   metadataTruncated: false,
@@ -134,6 +135,41 @@ async function client(target, writable = true, preferencesWritable = false) {
   return c;
 }
 for (const target of ['tui', 'desktop']) {
+  test(`${target} built-in instructions show their origin and permit only preference changes`, async () => {
+    const c = await client(target, true, true);
+    const builtin = { ...entry, bundled: true, reference: 'bundled:review', source: 'Built-in' };
+    c.reply(c.action('list'), {
+      kind: 'page',
+      writable: true,
+      preferencesWritable: true,
+      preferenceRevision: 7,
+      revision: digest,
+      entries: [builtin],
+      after: null,
+      diagnostics: [],
+    });
+    assert.match(JSON.stringify(c.out), /Built-in/);
+    c.raw(`${c.state.pageKey}-row-0`);
+    c.reply(c.action('read'), {
+      kind: 'page',
+      writable: false,
+      preferencesWritable: true,
+      preferenceRevision: 7,
+      revision: digest,
+      entry: builtin,
+      text: 'Built-in instructions',
+      offset: 0,
+      before: null,
+      after: null,
+      totalBytes: 21,
+    });
+    for (const action of ['install-skill', 'update-skill', 'delete-skill']) {
+      c.raw(action);
+      assert.equal(c.out.actions.length, 0);
+    }
+    c.raw('toggle-enabled');
+    assert.equal(c.action('setPreference').input.reference, 'bundled:review');
+  });
   test(`${target} skill changes require writable access and current explicit confirmation`, async () => {
     const readonly = (await client(target, false)).open();
     readonly.raw('install-skill');

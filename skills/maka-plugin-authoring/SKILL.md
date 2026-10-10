@@ -1,6 +1,6 @@
 ---
 name: maka-plugin-authoring
-description: Create, extend, debug, test, or package Maka plugins for the Rust Runtime Host, including tools, input providers, model providers/adapters, executors, background services, and declarative TUI apps. Use for Maka plugin development and SDK integration.
+description: Build, extend, debug, or package Maka application plugins with Host services, native TUI or Desktop components, and explicit product compositions. Use for Maka plugin development and SDK integration.
 license: Apache-2.0
 ---
 <!--
@@ -22,64 +22,38 @@ license: Apache-2.0
   under the License.
 -->
 
-# Maka plugin authoring
+# Maka application plugin authoring
 
-Build against the actual Host SDK, keeping plugin policy in the plugin and execution,
-permissions, credentials and durable receipts with their Host owners. Prefer an
-installable JavaScript package for an external plugin; use native Rust when changing
-a compiled-in feature in a Maka source checkout.
+Use the application runtime described by `@maka-agent/plugin-sdk` and the schemas
+from the actual `maka application schema` command. The package declaration,
+composition, execution grants and runtime activation each describe different facts.
 
-## Read the right material
+Start with [Quickstart](references/quickstart.md) for a runnable Host/TUI/Desktop
+package. For existing work, inspect its declared entry, imports and exports before
+changing code. Keep instance UUIDs stable when changing configuration; changing an
+identity replaces its state owner.
 
-Load this skill with `Skill({name: "maka-plugin-authoring"})`. Read a linked file with:
+Read only the relevant guide:
 
-```json
-{"name":"maka-plugin-authoring","resource":{"path":"references/quickstart.md"}}
-```
+- [Services and model tools](references/tools-and-input.md): HostService, requests,
+  mutations, subscriptions and explicitly selected Agent tools.
+- [State and authority](references/state-and-authority.md): ownership, cancellation,
+  receipt recovery and retained resources.
+- [Native presentations](references/terminal-apps.md): Component callbacks, platform
+  scenes, native editors and input routing.
+- [Models and execution](references/models-and-execution.md): existing Agent/model
+  contracts and where native execution extensions belong.
+- [Native Rust](references/native-rust.md): compiled factories and actual Call custody.
+- [Testing and shipping](references/testing-and-shipping.md): meaningful validation,
+  immutable package references and installation.
+- [API map](references/api-map.md): exact source contracts included in this build.
 
-Resources are relative to this skill, not the workspace. If `page.next` is non-null,
-pass that entire object to **Skill** unchanged. Use `offset`/`limit` for a relevant
-line range. Resources include exact SDK source contracts shipped with this Host;
-they are not fetched from an unversioned website. Read only what the task needs.
-In a source checkout, the same guides are ordinary relative files; the SDK source
-lives at `packages/plugin-sdk/src/` and is embedded as `references/sdk/` when built.
+When reading through Maka's selected skill loader, use the exact skill reference
+and catalog revision from its current search or preparation result. Read a relative
+resource with `resource: { path: "references/quickstart.md" }`; copy each returned
+`next` object unchanged. Use the configured tool name shown in the current metadata.
+In a checkout these are ordinary files; `references/sdk/` is embedded from
+`packages/plugin-sdk/src/` during the build.
 
-| Task | Read |
-| --- | --- |
-| First plugin, manifest, ESM bundle, local installation | [Quickstart](references/quickstart.md) |
-| Tool declarations, Code Mode, prompts, prepared input and resource discovery | [Tools and input](references/tools-and-input.md) |
-| Permissions, call scopes, storage, credentials, cancellation and background work | [State and authority](references/state-and-authority.md) |
-| TUI pages, settings, inspector/status panels, forms, streams and recovery | [Terminal apps](references/terminal-apps.md) |
-| Model connections/adapters, executors and Session orchestration | [Models and execution](references/models-and-execution.md) |
-| Exact method signatures and owning modules | [API map](references/api-map.md) |
-| Rust built-ins and contribution ownership | [Native Rust](references/native-rust.md) |
-| Validation, upgrades, debugging, package export | [Testing and shipping](references/testing-and-shipping.md) |
-
-## Deliver the requested plugin
-
-1. Identify its contribution and entry scope. Read the relevant guide and SDK module
-   before writing calls; the SDK map covers the complete shipped public JS surface.
-2. Adapt the runnable starter in `assets/starter/`. Give package, entry, tool and
-   view identifiers stable names. Choose only the capabilities the feature needs.
-3. Keep effectful business logic in the Host activation/backend. Use the issued
-   call context for files, network, processes, models and executions. UI factories
-   describe views; they do not retain business authority.
-4. Build a complete package, exercise its actual registration and consumer in a
-   disposable Host, and test the failure/restart paths that its effects require.
-   Confirm live activation, not just successful package installation.
-5. Deliver the package and the tested install/update steps. Report any unsupported
-   capability directly; do not substitute private Host access or invent SDK methods.
-
-## Contracts that affect every implementation
-
-- `schemaVersion: 1`, `runtime.sdkVersion: 3`; `HostPlugin(ctx, config)` is the default
-  export. Each runtime/UI entry is a self-contained ESM module: no unresolved imports
-  or top-level await. Await work inside activation or callbacks.
-- The VM provides Host SDK capabilities, not Node APIs. Type-only SDK imports are
-  erased when bundling. The SDK workspace is private, not an assumed npm release.
-- A contribution, name, Session ID or stored grant ID is not permission. Use the
-  context of the actual Agent/Remote/background call and respect retirement.
-- Preserve operation IDs and receipts for accepted work. An uncertain response
-  requires inspection/recovery; it is not evidence that an effect did not occur.
-- Runtime definitions and per-step captures must remain deterministic. Physical
-  request retries retain their frozen inputs and implementation binding.
+Deliver the package or change with evidence from its actual declared runtime.
+A valid manifest alone does not prove the service, native scene or recovery behavior.

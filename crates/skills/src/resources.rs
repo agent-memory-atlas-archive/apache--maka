@@ -59,6 +59,39 @@ pub struct Resources {
     incomplete: bool,
 }
 impl Resources {
+    pub(crate) fn embedded(
+        files: &[(&str, &[u8])],
+        budget: &mut Budget,
+    ) -> Result<Self, ScanError> {
+        let mut result = Self::default();
+        for (index, (path, bytes)) in files.iter().enumerate() {
+            if index == MAX_FILES || budget.entries == 0 || budget.bytes == 0 {
+                result.incomplete = true;
+                break;
+            }
+            budget.entries -= 1;
+            if !valid_path(path) || path.split('/').count() > 9 {
+                return Err(ScanError::Unavailable);
+            }
+            let limit = MAX_FILE.min(budget.bytes);
+            budget.bytes = budget.bytes.saturating_sub(bytes.len().min(limit));
+            let resource = if bytes.len() > limit {
+                Resource::Unavailable(DiscoveryFailure::SourceTooLarge)
+            } else {
+                match std::str::from_utf8(bytes) {
+                    Ok(content) => Resource::Text {
+                        content: content.into(),
+                        hash: maka_runtime::artifact::content_digest(bytes),
+                    },
+                    Err(_) => Resource::Unavailable(DiscoveryFailure::ReadFailed),
+                }
+            };
+            if result.files.insert((*path).into(), resource).is_some() {
+                return Err(ScanError::Unavailable);
+            }
+        }
+        Ok(result)
+    }
     pub(crate) fn capture(
         reader: &Reader<'_>,
         directory: &Path,
@@ -279,4 +312,62 @@ fn valid_path(path: &str) -> bool {
         && path
             .split('/')
             .all(|part| !part.is_empty() && !part.starts_with('.'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn embedded_resources_enforce_paths_and_shared_capture_limits() {
+        for path in [
+            "../secret",
+            "/secret",
+            "a//b",
+            "a/./b",
+            "a\\b",
+            "a:b",
+            "a/.hidden",
+            "a/b/c/d/e/f/g/h/i/j",
+        ] {
+            assert!(Resources::embedded(&[(path, b"text")], &mut Budget::default()).is_err());
+        }
+        assert!(
+            Resources::embedded(&[("same", b"a"), ("same", b"b")], &mut Budget::default()).is_err()
+        );
+        let mut budget = Budget {
+            bytes: 5,
+            entries: 3,
+        };
+        let resources = Resources::embedded(
+            &[
+                ("binary", &[255]),
+                ("large", b"oversized"),
+                ("absent", b"x"),
+            ],
+            &mut budget,
+        )
+        .unwrap();
+        assert_eq!(budget.bytes, 0);
+        let read = |path: &str| {
+            resources.page(
+                "bundled:test",
+                &ReadInput {
+                    path: path.into(),
+                    offset: None,
+                    limit: None,
+                },
+            )
+        };
+        assert!(read("binary").unwrap_err().contains("UTF-8"));
+        assert!(read("large").unwrap_err().contains("limit"));
+        assert!(read("absent").unwrap_err().contains("incomplete"));
+        let mut budget = Budget {
+            bytes: 10,
+            entries: 1,
+        };
+        let resources = Resources::embedded(&[("one", b"1"), ("two", b"2")], &mut budget).unwrap();
+        assert_eq!(budget.entries, 0);
+        assert!(resources.incomplete);
+        assert_eq!(resources.files.len(), 1);
+    }
 }

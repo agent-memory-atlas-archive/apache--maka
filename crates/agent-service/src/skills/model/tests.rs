@@ -98,6 +98,7 @@ async fn model_resolution_uses_original_eligibility_preferences_and_identity_bef
     std::fs::write(a.join("invalid/SKILL.md"), "invalid").unwrap();
     let library = Library::open(
         Configuration {
+            bundled: false,
             manage: false,
             preferences: true,
             sources: vec![source("a", &a), source("b", &b)],
@@ -337,6 +338,7 @@ async fn model_resources_keep_original_root_and_revision_and_do_not_mix_changed_
     std::os::unix::fs::symlink(&outside, root.join("review/escape")).unwrap();
     let library = Library::open(
         Configuration {
+            bundled: false,
             manage: false,
             preferences: false,
             sources: vec![source("local", &root)],
@@ -447,6 +449,7 @@ async fn instruction_delivery_bounds_keep_utf8_and_report_truncation_in_the_orig
     write(&root, "large", &"大段说明🦀\"\n".repeat(20_000));
     let library = Library::open(
         Configuration {
+            bundled: false,
             manage: false,
             preferences: false,
             sources: vec![source("local", &root)],
@@ -496,5 +499,159 @@ async fn instruction_delivery_bounds_keep_utf8_and_report_truncation_in_the_orig
     contradictory["success"] = json!(false);
     assert!(!validator.is_valid(&contradictory));
     assert!(serde_json::from_value::<SkillInvocationReceipt>(contradictory).is_err());
+    call.finish().await.unwrap();
+}
+
+#[tokio::test]
+async fn bundled_skills_share_model_eligibility_preparation_and_exact_resource_pages() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut library = Library::open(
+        Configuration {
+            bundled: true,
+            manage: false,
+            preferences: true,
+            sources: vec![],
+        },
+        dir.path().join("private"),
+        preferences(dir.path()).await,
+    )
+    .unwrap();
+    let call = scope();
+    let tools = json!(["Skill", "SkillSearch"]);
+    let search_all = |tools: Value| json!({"tools":tools,"input":{"query":"","limit":8}});
+    let result = library
+        .model("search", search_all(tools.clone()), &call)
+        .await
+        .unwrap();
+    schema("search", &result);
+    assert_eq!(result["totalEligible"], 1);
+    let revision = &result["revision"];
+    assert_eq!(
+        load(
+            &library,
+            &call,
+            tools.clone(),
+            revision,
+            "maka-cua",
+            Value::Null
+        )
+        .await["reason"],
+        "host_incompatible"
+    );
+    let with_cua = library
+        .model(
+            "search",
+            search_all(json!(["Skill", "SkillSearch", "cua_repl"])),
+            &call,
+        )
+        .await
+        .unwrap();
+    assert_eq!(with_cua["totalEligible"], 2);
+    let mut page = load(
+        &library,
+        &call,
+        tools.clone(),
+        revision,
+        "maka-plugin-authoring",
+        json!({"path":"references/sdk/ui.ts"}),
+    )
+    .await;
+    let next = page["next"].clone();
+    assert!(!next.is_null());
+    let mut all = String::new();
+    loop {
+        schema("load", &page);
+        assert_eq!(page["kind"], "resource");
+        all.push_str(page["content"].as_str().unwrap());
+        if page["next"].is_null() {
+            break;
+        }
+        let resource: maka_runtime::read::ReadInput =
+            serde_json::from_value(page["next"]["resource"].clone()).unwrap();
+        let position: usize = resource
+            .path
+            .split("?at=")
+            .nth(1)
+            .unwrap()
+            .split('&')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        if position > all.encode_utf16().count() {
+            all.push('\n');
+        }
+        page = library
+            .model("load", json!({"tools":tools,"input":page["next"]}), &call)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        all,
+        include_str!("../../../../../packages/plugin-sdk/src/ui.ts")
+    );
+    for path in ["../secret", "/secret", "references/../../secret"] {
+        assert_eq!(
+            load(
+                &library,
+                &call,
+                tools.clone(),
+                revision,
+                "maka-plugin-authoring",
+                json!({"path":path})
+            )
+            .await["kind"],
+            "resource_unavailable"
+        );
+    }
+    let prepared = library.model("prepare", json!({"tools":tools,"input":{"message":"/skill:maka-plugin-authoring","loadTool":"Skill","searchTool":"SkillSearch"}}), &call).await.unwrap();
+    schema("prepare", &prepared);
+    assert_eq!(prepared["kind"], "ready");
+    assert_eq!(prepared["record"]["revision"], *revision);
+    assert!(prepared["text"].as_str().unwrap().contains("HostService"));
+    assert!(matches!(
+        library
+            .preferences
+            .set(
+                SetPreference {
+                    reference: "bundled:maka-plugin-authoring".into(),
+                    revision: 0,
+                    preference: maka_skills::Preference {
+                        enabled: false,
+                        pinned: true
+                    }
+                },
+                &call
+            )
+            .await
+            .unwrap(),
+        PreferenceResult::Applied { .. }
+    ));
+    assert_eq!(
+        library
+            .model("load", json!({"tools":tools,"input":next}), &call)
+            .await
+            .unwrap()["kind"],
+        "changed"
+    );
+    let fresh = library
+        .model("search", search_all(tools.clone()), &call)
+        .await
+        .unwrap();
+    assert_eq!(fresh["totalEligible"], 0);
+    assert_eq!(
+        load(
+            &library,
+            &call,
+            tools.clone(),
+            &fresh["revision"],
+            "maka-plugin-authoring",
+            Value::Null
+        )
+        .await["reason"],
+        "disabled"
+    );
+    library.bundled = false;
+    assert!(library.snapshot(&call).await.unwrap().entries.is_empty());
     call.finish().await.unwrap();
 }

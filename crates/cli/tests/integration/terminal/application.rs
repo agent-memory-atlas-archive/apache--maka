@@ -319,3 +319,75 @@ fn check_terminal_connections(unrelated_failure: bool) {
     assert!(!snapshot.alternate_screen);
     assert!(snapshot.cursor.visible);
 }
+
+#[test]
+fn bundled_authoring_starter_generates_checked_presenters_and_runs_native_counter() {
+    let directory = tempfile::tempdir().unwrap();
+    let starter = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../skills/maka-plugin-authoring/assets/starter/create.mjs");
+    for target in ["host", "tui", "desktop"] {
+        let output = Command::new("node")
+            .arg(&starter)
+            .arg("--output")
+            .arg(directory.path().join(target))
+            .args(["--target", target, "--maka", env!("CARGO_BIN_EXE_maka")])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let output = Command::new("python3")
+        .arg(starter.with_file_name("verify-host.py"))
+        .args(["--maka", env!("CARGO_BIN_EXE_maka")])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let root = directory.path().join("root");
+    let ns = maka_event_log::root::RootNamespaces::for_current_account().unwrap();
+    drop(maka_event_log::root::RootOwner::create(&root, &ns).unwrap());
+    let deployment = uuid::Uuid::new_v4().to_string();
+    let output = Command::new(env!("CARGO_BIN_EXE_maka"))
+        .args(["application", "commit", "--root"])
+        .arg(&root)
+        .args([
+            "--deployment",
+            &deployment,
+            "--expected-revision",
+            "0",
+            "--input",
+        ])
+        .arg(directory.path().join("tui/composition.json"))
+        .arg("--package")
+        .arg(directory.path().join("tui/plugin"))
+        .arg("--package")
+        .arg(directory.path().join("tui/surface"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut tui = Pty::spawn(&[
+        "application",
+        "run",
+        "--root",
+        root.to_str().unwrap(),
+        "--deployment",
+        &deployment,
+    ]);
+    tui.wait_for("Count 0");
+    tui.send(b"\r");
+    tui.wait_for("Count 1");
+    tui.send(b"\r");
+    tui.wait_for("Count 2");
+    tui.send(b"\x03");
+    tui.finish();
+}

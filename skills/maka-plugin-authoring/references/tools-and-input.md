@@ -17,92 +17,44 @@
   under the License.
 -->
 
-# Tools, prompts and input preparation
+# Services and explicit model tools
 
-Exact contracts: read `references/sdk/host.ts` for ToolDefinition, tools, prompt,
-behaviors and input; `references/sdk/input-resources.ts` for composer discovery.
+A JavaScript Host entry exports `activate(configuration)`. For each declared
+service export it returns `{ contract, service: ["exportedObject"] }`. The exported
+object maps method names to handlers `(input, observation, context)`. Declare
+`query`, `mutation` or `subscription` and exact input/output/resource schemas in the
+service contract. Validate unknown responses before consuming them.
 
-## Model tools
+`RequestContext.invoke` sends a request over the current entry's captured imports:
 
-```js
-await ctx.tools.register({
-  name: 'ExampleEcho',
-  description: 'Return the supplied text unchanged.',
-  inputSchema: {
-    type: 'object', properties: {text: {type: 'string'}},
-    required: ['text'], additionalProperties: false,
-  },
-  semantics: 'parallel',
-}, ({text}, call) => {
-  call.signal.throwIfAborted();
-  return {text};
+```ts
+const result = await context.invoke({
+  operation: 'call', import: 'echo', provider: 0, method: 'echo', input: 'hello',
 });
+if (typeof result !== 'string') throw Error('Invalid Echo result');
 ```
 
-Tool names must be stable and avoid collisions. The input schema is the model's
-contract; validate domain values too. Return JSON. Use call.files for typed file
-operations, call.http for transport, call.clients for granted client tools, and
-other scoped services from ResourceContext. Returned tool text is data; plugin
-output cannot grant more capability.
+The import and its provider index are declared bindings. A JSON target, identity or
+path supplies no capability. Request-local resource attachments map outgoing slots
+to existing incoming slot names. They are not arbitrary bytes or reusable handles.
+Retaining `context` after the handler ends does not keep the request alive.
 
-Definitions may specify `outputSchema`, `alwaysVisible`, `directOnly`, `semantics`
-and a provider descriptor. Ordinary tools are discoverable through `tool_search`.
-`alwaysVisible` includes a tool without search; reserve it for a tool that needs
-that visibility. `directOnly` excludes it from nested Code Mode invocation.
-Loading a description does not grant permission. Direct/Code Mode visibility and
-nested callability are distinct; use declared semantics rather than serializing
-all tools in a new plugin-wide mutex.
+Subscriptions publish with `await context.invoke({ operation: 'emit', value })`;
+await each emission to honor backpressure. Mutations supply the original
+`operationId` and inspect the returned `OperationReply`, including cleanup.
+[State and authority](state-and-authority.md) covers unknown results and recovery.
 
-`parallel` permits concurrent effects; the implementation must support its own
-concurrency. `exclusive_step` is exclusive in a step. `finish_turn` declares a
-terminal tool. Choose semantics to reflect actual effects, not presentation.
-Keep names, schemas and ordering stable across turns when capabilities are unchanged.
+To expose a service method to Maka's Agent, explicitly configure `agent.tools` with
+its `name`, `description`, `import`, `method`, `result` (`json` or an available
+specialized projection) and `confirmation` (`required` or `preapproved`). Bind that
+import to the service and provide the corresponding Host NativeGrant. Confirmation
+is an additional user decision, never a substitute for method authorization.
+Use the actual generated `AgentConfiguration` and `AgentServiceTool` types to check
+fields. A declaration does not add a global tool or confer filesystem/process access.
 
-## Per-step bindings
-
-Use `ctx.tools.bind(definitions, capture)` when a group needs one frozen handler,
-model-dependent availability or supporting context. Capture sees invocation,
-behavior, cwd, available tool names, model capabilities and a read-only workspace.
-Return `{invoke, context?, providerTools?}`, or null to omit the group. Capture is
-observation, not execution: read-only workspace handles expire when it returns.
-Tools returned in that model step use the captured closure, including physical
-retries. Keep current side-effect authority in the later `call` argument.
-
-`providerTools` maps only this group's declared names to provider-executed
-identifiers/arguments. A provider-only binding can omit invoke. Check the model's
-advertised provider-tool protocol; these tools run in the primary model request,
-not through the local handler. Mixed unsupported capabilities should be absent,
-not silently emulated with another provider's protocol or errors.
-
-Closing a registration withdraws that exact generation. It cannot revoke a newer
-replacement. Await registration calls during activation so the batch publishes
-atomically; a half-failed activation must not appear successful.
-
-## Prompts
-
-`ctx.prompt.section`, `.variable`, and `.context` register prompt contributions.
-Sections/context default to templates; `format: 'plain'` is for already resolved
-or user-authored text. Text callbacks receive a tagged Session or model-step
-request and read-only workspace, not tool authority. A complete section replaces
-other prompt contributions; explicit Session/child instructions remain intact.
-Dynamic observations belong in context, not unpredictable changes to tool schemas.
-
-## Prepared input and slash resources
-
-`ctx.input.prepare(name, callback, options?)` runs before admission. It receives
-original content, selected resources, prior providers' receipts, workspace, tools
-and cancellation. Return `unchanged`, `ready` with content and receipt, or `blocked`
-with message and receipt. Keep preparation read-only. Accepted content and its
-receipt freeze together; later code must not re-read different input implicitly.
-
-For mutable domain state, capture a `ctx.revision()` basis before reading it and
-return the basis with preparation. Order domain writes through that revision's
-`invalidate(update)`; it controls admission consistency, not your storage transaction.
-Close/re-register a provider when its source changes to retire stale preparations.
-
-The resources option exposes bounded, read-only selector discovery to the composer.
-Selections are canonical source identities; display labels are not execution
-permission. Read the exact InputResources search/preview and pagination types
-before implementing a resource picker. UI slash commands are different: a page
-app's `commands` metadata merely opens a route, and invokes no business callback
-while the user is typing.
+Skills use the ordinary Library contract, actual registered tool names and independent
+`search`, `load` and `prepare` grants. `agent.skillLibrary` explicitly selects input
+preparation. Prepared inputs and receipts remain in the original message record;
+queued execution must not reread mutable inputs. A general custom input-preparation
+hook is not currently a public application ABI: implement the required capability
+and its Agent integration explicitly instead of assuming a global registry.

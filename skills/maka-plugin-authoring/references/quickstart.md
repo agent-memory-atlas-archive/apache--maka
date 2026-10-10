@@ -17,104 +17,43 @@
   under the License.
 -->
 
-# Start an installable plugin
+# A checked application package
 
-The three separate versions are package manifest schema **1**, Host SDK **3**, and
-terminal View **9**. Maka's application/npm version does not select the SDK API.
-A package is immutable installed bytes; an instance is an entry in the composition
-tree; an activation is a live generation of that entry. Installing files alone need
-not produce a running instance.
+The starter contains an Echo Host service and independent TUI/Desktop counters.
+The authoring helper reads native Surface contracts from the actual CLI, writes a
+new directory, obtains package digests from `inspect-package`, and checks the graph.
+It creates no State Root, commits no deployment and starts no execution.
 
-## Runnable starter
-
-Read/copy these skill resources into an empty project directory:
-
-- `assets/starter/maka.extension.json`
-- `assets/starter/composition.json`
-- `assets/starter/host.mjs`
-- `assets/starter/panel.mjs`
-
-The starter registers `ExampleEcho` and a read-only TUI page. It needs no Node imports,
-secrets, network, ambient files or build step. Rename `example.plugin` and the entry,
-tool and app names together before creating a separately installed product.
-The included composition patch activates its instance in the Profile root.
-
-Minimal manifest without a default instance:
-
-```json
-{
-  "schemaVersion": 1,
-  "id": "example.plugin",
-  "displayName": "Example plugin",
-  "description": "Echo a value and show an example page.",
-  "runtime": {"entry": "host.mjs", "sdkVersion": 3, "vm": "shared"}
-}
-```
-
-Manifest fields are `schemaVersion`, `id`, `displayName`, `description`,
-`dependencies: [{id}]`, `configuration`, `runtime`, `client`, and `composition`.
-Unknown fields are rejected. `runtime` or `client` is required. Runtime/client
-entries have `entry` and `sdkVersion`; runtime also has `vm: shared | dedicated`.
-Use runtime plus `ctx.tui.app` for the native TUI: the optional `client` entry is a
-separate client extension contract, not the terminal view factory.
-
-`dependencies` names packages that must be present. Optional
-`composition: {patch: "composition.json", structuralDependencies: [...]}` points
-to a JSON/YAML operation array; the structural dependencies declare tree dependencies.
-They are not npm imports. Required packages must have active entries in the same
-composition root. Instance options belong in the entry's `config`, passed as the
-second argument to `HostPlugin`; validate that JSON during activation. Manifest
-`configuration` is not the currently active instance configuration.
-
-Paths are relative package paths, not absolute paths,
-`..`, links, or case-colliding names. Entries named by the manifest must exist.
-
-## TypeScript and dependencies
-
-Author TS against `@maka-agent/plugin-sdk/host`; use `import type` for HostPlugin,
-HostContext, CallContext and data interfaces. In a Maka checkout build/typecheck
-the existing workspace package. Outside it, use a matching local SDK checkout or
-the complete shipped `references/sdk/*.ts` source set; do not assume the private
-workspace package can be installed from npm. Preserve sibling module paths.
-The full API is indexed in `references/api-map.md`.
-
-Bundle each entry with a compatible bundler, for example after installing/pinning
-esbuild in the plugin's development project:
+Copy `assets/starter/create.mjs`, `host.mjs`, `tui.mjs` and `desktop.mjs` together to
+an authoring directory. Then run:
 
 ```sh
-npx esbuild src/host.ts --bundle --format=esm --platform=neutral --target=es2022 --outfile=dist/host.mjs
-npx esbuild src/panel.ts --bundle --format=esm --platform=neutral --target=es2022 --outfile=dist/panel.mjs
+node create.mjs --output /tmp/my-plugin --target tui --maka /path/to/maka
 ```
 
-Keep the runtime default export; bundling must remove imports, including dependency
-imports. Await belongs inside exported functions. Dependencies using `node:fs`,
-`process`, `fetch`, worker threads or ambient timers must be replaced with an
-appropriate Host capability, not hidden behind a polyfill. Ship only the package
-files referenced by the manifest and app declarations, not node_modules.
-`dedicated` separates the package generation's VM from shared business VMs; it is
-not a hostile-code sandbox and does not grant extra services.
+`--target host` creates a service graph; `--target desktop` creates the Desktop
+counter graph. The output directory must not already exist. Use the emitted
+`input` and `packages` paths in subsequent CLI commands. Edit the generated files
+for the requested product, then obtain new package references after each byte change.
+Retain existing instance keys when updating an installed graph.
 
-## Install and activate
+The generated `plugin/maka.extension.json` has `schemaVersion: 2` and
+`application.entries`. Entries select `host`, `tui` or `desktop`, declare configuration
+schemas and full import/export contracts, and choose a bundled JavaScript module
+with `realm: "dedicated"`. Component entries additionally declare the native scene
+language. The package exports named `activate` functions; service/component paths
+refer to exports in the same module.
 
-In the connected Host's plugin management page choose **Install package**, enter
-the package directory on that Host, preview, then install. The immutable copy is
-used afterward: editing your development directory does not hot-reload it.
-Use the composition tree to add/enable/configure an instance if the package has no
-default patch. Observe live activation status and any validation error.
+`composition.json` selects exact package references through
+`{ source: "pinned", package: { id, revision } }`, stable instance UUIDs,
+`usePackage: "entry"`, explicit bindings and the UI launch export. The helper
+writes compositions outside the package so their digests cannot refer to themselves.
+A package may instead publish a composition template; use the generated
+`PackageDeclaration` and `CompositionInput` types for that larger product graph.
 
-The public protocol operations, for an authenticated client or integration test,
-are `plugin.package.preview`, `plugin.package.install`, and
-`plugin.composition.apply`. They are protocol names, not `maka plugin ...` CLI
-commands. A minimal install input is `{sourcePath: absoluteHostDirectory}`.
-A minimal explicit composition input is:
+For TypeScript, author against the SDK root import and bundle the entry with
+`packages/plugin-sdk/scripts/bundle.mjs`. Runtime bundles contain their dependencies,
+with no unresolved imports or top-level await. Native implementations are supplied
+by the executable, rather than loaded from JavaScript package bytes.
 
-```json
-{"operations":[{"type":"insert","rootId":"profile","entry":{"id":"example-plugin","packageId":"example.plugin"}}]}
-```
-
-Scope roots are `profile`, `desktop-ui`, and `session:<id>`. Entries carry `id`,
-`packageId`, `config`, `disabled`, `inject`, `isolate`, `intercept`, `children`.
-Profile and Session composition are distinct; use Session scope for an intentional
-Session-specific instance, not as a way to acquire that Session's authority.
-Use the public preview/editor for nontrivial composition rather than inventing
-patch fields. Package installation may activate/restart entries automatically.
+See [Testing and shipping](testing-and-shipping.md) before installing or running it.

@@ -17,38 +17,28 @@
  * under the License.
  */
 
-export default async function activate(ctx) {
-  await ctx.tools.register(
-    {
-      name: 'ExampleEcho',
-      description: 'Return the supplied text unchanged.',
-      inputSchema: {
-        type: 'object',
-        properties: { text: { type: 'string', maxLength: 4096 } },
-        required: ['text'],
-        additionalProperties: false,
-      },
-      semantics: 'parallel',
-    },
-    ({ text }, call) => {
-      call.signal.throwIfAborted();
-      if (typeof text !== 'string' || text.length > 4096)
-        throw new Error('text must be at most 4096 characters');
-      return { text };
-    },
-  );
-  await ctx.tui.app(
-    'overview',
-    {
-      entry: 'panel.mjs',
-      async backend(request) {
-        if (request.kind === 'read') return { message: 'ExampleEcho is ready.' };
-        return { kind: 'rejected', message: 'This example is read-only.' };
+const contract = {
+  name: 'example.Echo',
+  version: 1,
+  transport: 'remote',
+  interface: {
+    kind: 'service',
+    methods: {
+      echo: {
+        mode: 'query',
+        input: { type: 'string', maxLength: 4096 },
+        output: { type: 'string', maxLength: 4096 },
+        resources: {},
       },
     },
-    {
-      title: { fallback: 'Plugin example', translations: { 'zh-CN': '插件示例' } },
-      context: 'application',
-    },
-  );
+  },
+};
+export function activate() {
+  return { Echo: { contract, service: ['echo'] } };
 }
+export const echo = {
+  echo(input) {
+    if (typeof input !== 'string' || [...input].length > 4096) throw Error('Invalid echo input');
+    return input;
+  },
+};

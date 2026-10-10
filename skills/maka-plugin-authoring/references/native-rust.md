@@ -17,49 +17,32 @@
   under the License.
 -->
 
-# Native Rust plugins in the Maka source tree
+# Native Rust extensions
 
-External packages use the JavaScript Host SDK. A native built-in is compiled into
-Maka; it is not a dynamic Rust library placed in an extension directory.
+Native extensions are compiled into the Host or presenter and selected by an explicit
+`implementation` name in a package entry. JavaScript packages cannot supply arbitrary
+Rust factories. Register Host factories through `NativeRegistry`; publish exact
+contracts and handlers in `NativeActivation` with the actual `NativeOwner`.
 
-Implement `maka_plugins::kernel::Plugin`: supports_scope, validate, and activate.
-Activation receives PluginContext and configuration and returns a complete Staged
-contribution batch. Use context.host capabilities and context.data when provided,
-and context.lifecycle for admissions, tasks, cleanup and retirement. Missing
-required capabilities are activation failures, not opportunities to open private
-Host paths or retain a Host object.
+`NativeContext` supplies the actual activation, package, persistence and captured
+imports. Stable persistence belongs to the Root domain, deployment UUID and instance
+identity; source revision and activation epoch do not create new data owners.
+A factory that fails after acquiring resources must return an owner that can settle
+them; an initializer error does not prove cleanup.
 
-Register a Definition (ID, revision, dependencies, injection and plugin) and its
-composition Entry through `crates/runtime-host/src/plugins/`. Follow the existing
-owning module instead of introducing a second registry. Profile and Session capture
-overlay typed contributions; publication is separate from desired composition.
+Service calls receive the original `Context.scope()`. Native I/O keeps a resource
+ticket until physical completion. Use the scope's cancellation for child work and
+finish the real request before reporting cleanup. A task tracker or retained ticket
+must outlive a lost observation. `NativeOwner.close` confirms actual settlement;
+returning success without joining owned workers breaks retirement and capacity.
 
-| Feature | Owning contracts / implementation example |
-| --- | --- |
-| Kernel, lifetime, tree and service lookup | `crates/plugins/src/kernel.rs`, `fiber.rs`, `composition/`, `services.rs`; Host `plugins/owner.rs` |
-| Host capability issuance | `crates/plugins/src/host.rs`; Host `plugins/authority.rs` |
-| Tools and per-step bindings | `maka_tool_catalog::plugins::PluginTool`, BindingProvider; `crates/web/src/plugin.rs` |
-| Input preparation and revisions | `maka_plugins::input`, `revision`; `crates/skills/src/plugin.rs` |
-| Managed behavior | `maka_plugins::session::SessionBehavior`; `crates/graph/src/plugin.rs` |
-| Model protocols and providers | `maka_plugins::model`, `provider`; `crates/model/src/adapters.rs`, `crates/providers/src/` |
-| Executors | `maka_plugins::executor`; `crates/external-agent/src/` |
-| Remote endpoints | `maka_plugins::remote::Endpoint`; `crates/goal/src/plugin/remote.rs` |
-| Background ownership | `maka_plugins::background::BackgroundWork`; `crates/scheduler/src/plugin.rs` |
-| Terminal apps | `maka_plugins::terminal_ui`; owning crate `plugin/terminal.rs` |
+`NativeServices` captures original imports and adds private native-origin evidence;
+every call still passes Host policy. Public `Identity` is observation, not permission.
+`execution_basis` may attest only immutable facts that fully identify equivalent
+execution semantics. Leave opaque owners activation-specific when that cannot be
+proven; do not override it to force a recovery test to pass.
 
-ToolPreparer parses/approves without admitting the effect. Return PreparedEffect
-for the journal-owned execution after durable dispatch. Retain exact call/owner
-identity through settlement; retirement rejects new starts but drains accepted
-resources. Plugin domain state and stable receipts must survive reactivation when
-the feature claims recovery. Prompt capture and CUA/REPL lifetimes remain separate
-from description-loading state.
-
-Use `Endpoint::standalone` for Remote and declare host-path access when accepting
-raw Host paths. Backend observations must be checked through the supplied read or
-execution view. A terminal node's target and an opaque registration token never
-substitute for domain authorization.
-
-Inspect the actual source consumer before extending a public contract. Update the
-public TS contract and bridge only when JS consumers need the same capability;
-add a real consumer test. Run the affected crate tests/Clippy and relevant SDK
-contracts. Do not copy a stale trait signature from a guide instead of the owner.
+Relevant examples: `crates/agent-service/src/skills.rs`, `owner/skills.rs`, `tools.rs`
+and `crates/runtime-host/src/application/native_context.rs`. Native UI objects remain
+in their presenter owner/main-thread lifecycle; the plugin kernel owns descriptions,
+checked bindings and teardown coordination, not framework objects.

@@ -325,6 +325,12 @@ export const configurations = {
     type: 'object',
     additionalProperties: false,
     properties: {
+      bundled: {
+        type: 'boolean',
+        description:
+          'Include the immutable skill instructions and resources shipped with this build.',
+        default: false,
+      },
       manage: {
         type: 'boolean',
         description: "Enable installation into this instance's own private collection.",

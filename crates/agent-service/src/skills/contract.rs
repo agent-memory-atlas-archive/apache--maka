@@ -33,6 +33,9 @@ pub use preparation::*;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "SkillLibraryConfiguration")]
 pub struct Configuration {
+    /// Include the immutable skill instructions and resources shipped with this build.
+    #[serde(default)]
+    pub bundled: bool,
     /// Enable installation into this instance's own private collection.
     #[serde(default)]
     pub manage: bool,
@@ -77,6 +80,7 @@ pub struct List {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "SkillLibraryEntry")]
 pub struct Entry {
+    pub bundled: bool,
     pub installed: bool,
     pub preference: maka_skills::Preference,
     pub reference: String,

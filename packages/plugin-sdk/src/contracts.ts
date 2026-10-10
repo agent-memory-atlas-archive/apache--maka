@@ -13795,6 +13795,9 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  bundled: {
+                    type: 'boolean',
+                  },
                   installed: {
                     type: 'boolean',
                   },
@@ -13830,6 +13833,7 @@ export const contracts = {
                   },
                 },
                 required: [
+                  'bundled',
                   'installed',
                   'preference',
                   'reference',
@@ -14945,6 +14949,9 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  bundled: {
+                    type: 'boolean',
+                  },
                   installed: {
                     type: 'boolean',
                   },
@@ -14980,6 +14987,7 @@ export const contracts = {
                   },
                 },
                 required: [
+                  'bundled',
                   'installed',
                   'preference',
                   'reference',

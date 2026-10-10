@@ -103,6 +103,7 @@ async fn activate(context: NativeContext, configuration: Value) -> NativeActivat
 }
 #[derive(Clone)]
 struct Library {
+    bundled: bool,
     sources: Vec<(Source, ReadRoot)>,
     preferences: preferences::Store,
     preferences_writable: bool,
@@ -151,6 +152,7 @@ impl Library {
             sources.push((source, root));
         }
         Ok(Self {
+            bundled: configuration.bundled,
             sources,
             preferences,
             preferences_writable: configuration.preferences,
@@ -187,14 +189,20 @@ impl Library {
                 },
             );
         }
-        maka_skills::scan(&sources, &scope.cancellation)
-            .await
-            .map_err(|_| "skills_discovery_unavailable".into())
+        let snapshot = if self.bundled {
+            maka_skills::scan_with_bundled(&sources, &scope.cancellation).await
+        } else {
+            maka_skills::scan(&sources, &scope.cancellation).await
+        };
+        snapshot.map_err(|_| "skills_discovery_unavailable".into())
     }
     async fn snapshot(&self, scope: &Scope) -> Result<Snapshot, String> {
         let discovery = self.discover(scope).await?;
         let preferences = self.preferences.read(scope).await?;
         let label = |reference: &str| {
+            if reference.starts_with("bundled:") {
+                return "Built-in";
+            }
             if reference.starts_with("installed:") {
                 return "Installed";
             }
@@ -313,6 +321,7 @@ fn entry(
     let short_name = bound(name, 256);
     let short_description = bound(description, 2048);
     Entry {
+        bundled: reference.starts_with("bundled:"),
         installed: reference.starts_with("installed:"),
         preference: Default::default(),
         reference: reference.into(),
@@ -426,7 +435,7 @@ impl Snapshot {
             before += 1;
         }
         Ok(Document::Page {
-            writable: self.writable,
+            writable: self.writable && !entry.bundled,
             preferences_writable: self.preferences_writable,
             preference_revision: self.preference_revision,
             entry: Box::new(entry),

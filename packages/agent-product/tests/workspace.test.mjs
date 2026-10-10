@@ -688,6 +688,7 @@ test('both product compositions use actual immutable package refs and check in t
         };
         if (productName === 'agent')
           configuration.skills = {
+            bundled: true,
             preferences: presentation === 'tui',
             sources: [{ id: 'local', label: 'Local', path: '/private/product-skills' }],
           };
@@ -768,6 +769,7 @@ test('both product compositions use actual immutable package refs and check in t
         const business = connections.hosts.find((host) => host.name === 'local');
         const manager = connections.hosts.find((host) => host.name === 'manager');
         if (productName === 'agent') {
+          assert.equal(host.instances.skills.configuration.values.bundled, true);
           assert.deepEqual(
             business.endpoints.skills.grant.methods,
             presentation === 'tui' ? ['list', 'read', 'setPreference'] : ['list', 'read'],

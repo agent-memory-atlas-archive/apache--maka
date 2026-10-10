@@ -1,7 +1,0 @@
-[
-  {
-    "type": "insert",
-    "rootId": "profile",
-    "entry": { "id": "example-plugin", "packageId": "example.plugin" }
-  }
-]

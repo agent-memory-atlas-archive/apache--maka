@@ -38,7 +38,7 @@ pub use discovery::{
     BundledSource, DiscoveredSkill, DiscoveryDiagnostic, DiscoveryFailure, DiscoverySnapshot,
     Origin, OriginFailure, OriginStatus, QuerySnapshot, RejectedSkill, ScanError, SkillLocation,
     Source, SourceCatalog, SourceCatalogError, governance_catalog, safe_source_id, scan,
-    source_catalog,
+    scan_with_bundled, source_catalog,
 };
 pub use document::{InvalidDocument, SkillDocument, parse};
 pub use fields::{Issue, IssueCode, Manifest, PartialManifest, Severity, SkillAttributes};

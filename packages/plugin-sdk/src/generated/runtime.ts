@@ -4532,6 +4532,10 @@ export interface SetDefaultConnectionTargetInput {
  */
 export interface SkillLibraryConfiguration {
   /**
+   * Include the immutable skill instructions and resources shipped with this build.
+   */
+  bundled?: boolean;
+  /**
    * Enable installation into this instance's own private collection.
    */
   manage?: boolean;
@@ -4601,6 +4605,7 @@ export interface SkillLibraryCursor {
   offset: number;
 }
 export interface SkillLibraryEntry {
+  bundled: boolean;
   installed: boolean;
   preference: SkillPreference;
   reference: string;

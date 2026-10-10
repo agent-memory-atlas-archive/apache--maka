@@ -188,7 +188,7 @@ async fn scan_with_origins(
     cancellation: &CancellationToken,
 ) -> Result<QuerySnapshot, ScanError> {
     let mut query = QuerySnapshot::default();
-    query.discovery = scan_impl(sources, cancellation, Some(&mut query)).await?;
+    query.discovery = scan_impl(sources, cancellation, Some(&mut query), false).await?;
     Ok(query)
 }
 
@@ -198,13 +198,23 @@ pub async fn scan(
     sources: &[Source],
     cancellation: &CancellationToken,
 ) -> Result<DiscoverySnapshot, ScanError> {
-    scan_impl(sources, cancellation, None).await
+    scan_impl(sources, cancellation, None, false).await
+}
+
+/// Include the immutable assets from this build after the selected filesystem sources.
+/// Their paths are logical resource names; no filesystem capability is created.
+pub async fn scan_with_bundled(
+    sources: &[Source],
+    cancellation: &CancellationToken,
+) -> Result<DiscoverySnapshot, ScanError> {
+    scan_impl(sources, cancellation, None, true).await
 }
 
 async fn scan_impl(
     sources: &[Source],
     cancellation: &CancellationToken,
     query: Option<&mut QuerySnapshot>,
+    bundled: bool,
 ) -> Result<DiscoverySnapshot, ScanError> {
     if sources.len() > 32 {
         return Err(ScanError::LimitExceeded);
@@ -233,6 +243,32 @@ async fn scan_impl(
             })??;
     }
     check_cancelled(cancellation)?;
+    if bundled {
+        for source in sources::bundled().map_err(|_| ScanError::Unavailable)? {
+            check_cancelled(cancellation)?;
+            if state.remaining_entries == 0 || source.content.len() > state.remaining_bytes {
+                return Err(ScanError::LimitExceeded);
+            }
+            state.remaining_entries -= 1;
+            state.remaining_bytes -= source.content.len();
+            let root = PathBuf::from("bundled");
+            state.snapshot.inventory.push(DiscoveredSkill {
+                location: SkillLocation {
+                    reference: format!("bundled:{}", source.id),
+                    id: source.id.into(),
+                    path: root.join(source.id),
+                    discovery_root: root,
+                    scope: SkillScope::Custom,
+                    source: SkillSource::Maka,
+                    precedence: sources.len(),
+                },
+                document: source.document,
+                content_sha256: source.content_sha256,
+                shadowed_by: None,
+                resources: crate::Resources::embedded(source.files, &mut state.resource_budget)?,
+            });
+        }
+    }
     state.snapshot.resolve_precedence();
     if let (Some(destination), Some(updated)) = (query, state.query) {
         *destination = updated;

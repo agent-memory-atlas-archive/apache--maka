@@ -54,6 +54,7 @@ async fn review(library: &Library, kind: ChangeKind, reference: &str, scope: &Sc
 async fn library(root: Arc<RootOwner>, source: &std::path::Path, namespace: &str) -> Library {
     let mut library = Library::open(
         Configuration {
+            bundled: false,
             manage: true,
             preferences: false,
             sources: vec![Source {
@@ -341,3 +342,108 @@ fn deletion_review_keeps_exact_paths_and_marks_bounded_path_excerpts() {
 }
 
 mod recovery;
+
+#[tokio::test]
+async fn bundled_files_are_read_only_and_installed_overrides_can_be_removed() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("sources");
+    super::super::tests::write(&source, "maka-plugin-authoring", "custom instructions");
+    let root = Arc::new(
+        RootOwner::create(
+            &dir.path().join("host"),
+            &RootNamespaces {
+                ownership: dir.path().join("owners"),
+                control: dir.path().join("control"),
+            },
+        )
+        .unwrap(),
+    );
+    let mut library = library(root, &source, "bundles").await;
+    library.bundled = true;
+    library.preferences_writable = true;
+    let call = scope();
+    let snapshot = library.snapshot(&call).await.unwrap();
+    let entry = snapshot
+        .entries
+        .iter()
+        .find(|(e, _, _)| e.bundled && e.name == "maka-plugin-authoring")
+        .unwrap();
+    assert_eq!(
+        entry.0.shadowed_by.as_deref(),
+        Some("source:local:maka-plugin-authoring")
+    );
+    let revision = snapshot.revision.clone();
+    let super::super::Document::Page {
+        writable,
+        preferences_writable,
+        ..
+    } = snapshot
+        .read(super::super::Read {
+            reference: "bundled:maka-plugin-authoring".into(),
+            revision: revision.clone(),
+            offset: 0,
+        })
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(!writable);
+    assert!(preferences_writable);
+    for kind in [ChangeKind::Install, ChangeKind::Update, ChangeKind::Delete] {
+        assert!(matches!(
+            library
+                .preview(
+                    Change {
+                        kind,
+                        reference: "bundled:maka-plugin-authoring".into(),
+                        revision: revision.clone()
+                    },
+                    &call
+                )
+                .await
+                .unwrap(),
+            Preview::Rejected { .. }
+        ));
+    }
+    let install = review(
+        &library,
+        ChangeKind::Install,
+        "source:local:maka-plugin-authoring",
+        &call,
+    )
+    .await;
+    assert!(matches!(
+        library
+            .apply_operation(install.clone(), &operation(&install), &call)
+            .await
+            .unwrap(),
+        ChangeResult::Applied { .. }
+    ));
+    let snapshot = library.snapshot(&call).await.unwrap();
+    assert!(snapshot.entries.iter().any(|(e, _, _)| e.bundled
+        && e.shadowed_by.as_deref() == Some("installed:maka-plugin-authoring")));
+    std::fs::remove_dir_all(source.join("maka-plugin-authoring")).unwrap();
+    let delete = review(
+        &library,
+        ChangeKind::Delete,
+        "installed:maka-plugin-authoring",
+        &call,
+    )
+    .await;
+    assert!(matches!(
+        library
+            .apply_operation(delete.clone(), &operation(&delete), &call)
+            .await
+            .unwrap(),
+        ChangeResult::Applied { .. }
+    ));
+    let snapshot = library.snapshot(&call).await.unwrap();
+    assert_eq!(snapshot.entries.len(), 2);
+    assert!(
+        snapshot
+            .entries
+            .iter()
+            .all(|(e, _, _)| e.bundled && !e.installed && e.shadowed_by.is_none())
+    );
+    call.finish().await.unwrap();
+}

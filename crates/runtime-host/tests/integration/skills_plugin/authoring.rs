@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn bundled_authoring_installs_complete_resources_and_runs_its_starter() {
+async fn bundled_authoring_restores_complete_resources_and_preferences() {
     tokio::time::timeout(Duration::from_secs(45), scenario())
         .await
         .unwrap();
@@ -60,21 +60,13 @@ async fn scenario() {
         std::fs::read(&sdk).unwrap(),
         include_bytes!("../../../../../packages/plugin-sdk/src/host.ts")
     );
-    let installed = peer
-        .rpc(
-            "plugin.package.install",
-            json!({"sourcePath":directory.join("assets/starter")}),
-        )
-        .await;
-    assert_eq!(installed["ok"], true, "{installed}");
-    converged(&mut peer).await;
     let created = peer.rpc("session.create", json!({
         "sessionId":"authoring", "workspace":{"kind":"host_path","path":fixture.workspace},
         "modelTarget":{"kind":"explicit","connectionId":model.connection_id,"connectionSlug":model.connection_slug,"model":model.model},
         "sandboxMode":"workspace-write", "mode":"bot"
     })).await;
     assert_eq!(created["ok"], true, "{created}");
-    let started = peer.rpc("turn.start", json!({"sessionId":"authoring", "turnId":"read-skill", "content":{"text":"Inspect the plugin authoring resources and run the starter."}, "maxSteps":8})).await;
+    let started = peer.rpc("turn.start", json!({"sessionId":"authoring", "turnId":"read-skill", "content":{"text":"Inspect the plugin authoring resources."}, "maxSteps":8})).await;
     assert_eq!(started["ok"], true, "{started}");
     let request = requests.recv().await.unwrap();
     assert!(request.body.to_string().contains("maka-plugin-authoring"));
@@ -110,24 +102,6 @@ async fn scenario() {
     let request = requests.recv().await.unwrap();
     let result: Value = serde_json::from_str(last_tool(&request.body)).unwrap();
     assert_eq!(result["page"]["content"], "Changed resource contract");
-    request
-        .reply
-        .send(call("tool_search", json!({"query":"ExampleEcho"})))
-        .unwrap();
-    let request = requests.recv().await.unwrap();
-    assert!(
-        request.body["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|tool| tool["function"]["name"] == "ExampleEcho")
-    );
-    request
-        .reply
-        .send(call("ExampleEcho", json!({"text":"skill-starter-proof"})))
-        .unwrap();
-    let request = requests.recv().await.unwrap();
-    assert!(last_tool(&request.body).contains("skill-starter-proof"));
     request
         .reply
         .send(json!({"index":0,"delta":{"content":"done"},"finish_reason":"stop"}))

@@ -138,3 +138,37 @@ async fn selected_skill_tools_use_actual_agent_context_and_original_grants_over_
         f.config.shutdown().await.unwrap();
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn bundled_authoring_resources_reach_the_actual_model_without_added_authority() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let dir = tempfile::tempdir().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let setup = service_tools::Setup::skills(dir.path().to_owned()).with_bundled_skills();
+        let f = Fixture::with_services(&format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None, Some(setup)).await;
+        let session = f.create("Built-in authoring").await;
+        f.send(&session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let sent = request(&mut socket).await;
+        assert_eq!(sent["tools"].as_array().unwrap().len(), 2);
+        tool(&mut socket, "SkillSearch", json!({"query":"plugin"})).await;
+        let (mut socket, catalog) = next(&listener).await;
+        assert_eq!(catalog["totalEligible"], 1, "{catalog}");
+        assert_eq!(catalog["matches"][0]["ref"], "bundled:maka-plugin-authoring");
+        tool(&mut socket, "Skill", json!({"name":"maka-plugin-authoring","revision":catalog["revision"],"resource":{"path":"references/sdk/ui.ts"}})).await;
+        let (mut socket, resource) = next(&listener).await;
+        assert_eq!(resource["kind"], "resource", "{resource}");
+        assert!(!resource["next"].is_null());
+        tool(&mut socket, "Skill", resource["next"].clone()).await;
+        let (mut socket, continued) = next(&listener).await;
+        assert_eq!(continued["kind"], "resource", "{continued}");
+        assert_eq!(continued["revision"], catalog["revision"]);
+        tool(&mut socket, "Skill", json!({"name":"maka-cua","revision":catalog["revision"]})).await;
+        let (mut socket, unavailable) = next(&listener).await;
+        assert_eq!(unavailable["reason"], "host_incompatible");
+        response(&mut socket).await;
+        f.drained().await;
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}

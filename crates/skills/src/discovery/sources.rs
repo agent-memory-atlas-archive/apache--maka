@@ -99,6 +99,23 @@ struct Bundled {
 }
 include!(concat!(env!("OUT_DIR"), "/bundled.rs"));
 
+pub(super) fn bundled() -> Result<Vec<BundledSource>, SourceCatalogError> {
+    BUNDLED
+        .iter()
+        .map(|source| {
+            let Bundled { id, content, files } = source;
+            Ok(BundledSource {
+                id,
+                content,
+                document: crate::parse(content)
+                    .map_err(|_| SourceCatalogError::InvalidBundledMetadata)?,
+                content_sha256: maka_runtime::artifact::content_digest(content.as_bytes()),
+                files,
+            })
+        })
+        .collect::<Result<Vec<_>, SourceCatalogError>>()
+}
+
 pub async fn source_catalog(
     root: &ReadDirectory,
     home: Option<&ReadDirectory>,
@@ -145,20 +162,7 @@ async fn catalog(
     home: Option<&ReadDirectory>,
     cancellation: &CancellationToken,
 ) -> Result<SourceCatalog, SourceCatalogError> {
-    let bundled = BUNDLED
-        .iter()
-        .map(|source| {
-            let Bundled { id, content, files } = source;
-            Ok(BundledSource {
-                id,
-                content,
-                document: crate::parse(content)
-                    .map_err(|_| SourceCatalogError::InvalidBundledMetadata)?,
-                content_sha256: maka_runtime::artifact::content_digest(content.as_bytes()),
-                files,
-            })
-        })
-        .collect::<Result<Vec<_>, SourceCatalogError>>()?;
+    let bundled = bundled()?;
     let managed = if let Some(home) = home {
         // The library is its own containment root; aliases may not reach other
         // home content. SKILL.md retains the ordinary nofollow/regular-file gate.

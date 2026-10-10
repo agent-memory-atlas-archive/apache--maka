@@ -138,6 +138,7 @@ pub(super) struct Setup {
     files: Option<&'static str>,
     processes: bool,
     skills: Option<std::path::PathBuf>,
+    bundled_skills: bool,
     prepare_skills: bool,
     skill_tools: bool,
     preparation: Option<Arc<PreparationProbe>>,
@@ -160,6 +161,7 @@ impl Setup {
             files: None,
             processes: false,
             skills: None,
+            bundled_skills: false,
             prepare_skills: false,
             skill_tools: true,
             preparation: None,
@@ -178,6 +180,7 @@ impl Setup {
             files: None,
             processes: false,
             skills: None,
+            bundled_skills: false,
             prepare_skills: false,
             skill_tools: true,
             preparation: None,
@@ -202,6 +205,7 @@ impl Setup {
             files: None,
             processes: false,
             skills: None,
+            bundled_skills: false,
             prepare_skills: false,
             skill_tools: true,
             preparation: None,
@@ -220,6 +224,10 @@ impl Setup {
             skills: Some(path),
             ..Self::javascript()
         }
+    }
+    pub(super) fn with_bundled_skills(mut self) -> Self {
+        self.bundled_skills = true;
+        self
     }
     pub(super) fn skill_preparation(path: std::path::PathBuf, tools: bool) -> Self {
         Self {
@@ -463,7 +471,7 @@ impl Setup {
                 use_package: PackageUse::Entry,
                 configuration: if let Some(path) = &self.skills {
                     NodeConfiguration { values: serde_json::from_value(json!({
-                        "sources":[{"id":"fixture","label":"Fixture","path":path}], "manage":false, "preferences":false
+                        "bundled":self.bundled_skills, "sources":[{"id":"fixture","label":"Fixture","path":path}], "manage":false, "preferences":false
                     })).unwrap(), parameters: BTreeMap::new() }
                 } else if self.processes {
                     NodeConfiguration { values: serde_json::from_value(json!({

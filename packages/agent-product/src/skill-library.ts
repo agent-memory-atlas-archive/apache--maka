@@ -317,7 +317,7 @@ function frame<N extends Node>(
       ui.text('skill-name', entry.name, 17, props.theme.text, 550),
       ui.text(
         'skill-source',
-        entry.installed ? text.skillsInstalled : entry.source,
+        entry.bundled ? text.skillsBundled : entry.installed ? text.skillsInstalled : entry.source,
         13,
         props.theme.muted,
       ),
@@ -358,7 +358,7 @@ function frame<N extends Node>(
       const key = rowKey(state, at);
       const label = compactLabel(entry.name, tui ? 100 : 200);
       const summary = compactLabel(
-        `${entry.installed ? text.skillsInstalled : entry.source} · ${entry.description}`,
+        `${entry.bundled ? text.skillsBundled : entry.installed ? text.skillsInstalled : entry.source} · ${entry.description}`,
         tui ? 160 : 240,
       );
       content.push(

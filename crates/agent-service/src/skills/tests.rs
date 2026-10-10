@@ -82,6 +82,7 @@ async fn original_discovery_paging_and_exact_body_reads_reject_stale_or_repurpos
     std::fs::write(b.join("broken/SKILL.md"), "missing frontmatter").unwrap();
     let library = Library::open(
         Configuration {
+            bundled: false,
             manage: false,
             preferences: true,
             sources: vec![source("a", &a), source("b", &b)],
@@ -214,6 +215,7 @@ async fn selected_directory_handles_and_private_root_ceiling_remain_authoritativ
     std::os::unix::fs::symlink(outside.join("unselected"), selected.join("link")).unwrap();
     let library = Library::open(
         Configuration {
+            bundled: false,
             manage: false,
             preferences: true,
             sources: vec![source("selected", &selected), source("private", &private)],
@@ -284,6 +286,7 @@ async fn cancellation_never_turns_discovery_failure_into_an_empty_catalog() {
     write(dir.path(), "one", "content");
     let library = Library::open(
         Configuration {
+            bundled: false,
             manage: false,
             preferences: true,
             sources: vec![source("local", dir.path())],
@@ -299,6 +302,7 @@ async fn cancellation_never_turns_discovery_failure_into_an_empty_catalog() {
     assert!(
         Library::open(
             Configuration {
+                bundled: false,
                 manage: false,
                 preferences: true,
                 sources: vec![source("same", dir.path()), source("same", dir.path())]
@@ -317,6 +321,7 @@ async fn escaped_instruction_pages_remain_within_the_remote_delivery_budget() {
     write(dir.path(), "escaped", &body);
     let library = Library::open(
         Configuration {
+            bundled: false,
             manage: false,
             preferences: true,
             sources: vec![source("local", dir.path())],
