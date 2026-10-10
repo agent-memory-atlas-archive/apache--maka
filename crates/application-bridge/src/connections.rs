@@ -125,7 +125,8 @@ impl Configuration {
         configuration.validate()?;
         Ok(configuration)
     }
-    fn validate(&self) -> Result<()> {
+    /// Check trusted launcher input without starting a Host or opening a Root.
+    pub fn validate(&self) -> Result<()> {
         if self.hosts.len() > 16 {
             return Err("maximum 16 local Hosts".into());
         }

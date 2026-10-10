@@ -20,6 +20,7 @@
 #![cfg(unix)]
 
 mod application;
+mod bundled_product;
 mod frames;
 mod product;
 
@@ -55,6 +56,13 @@ impl Pty {
         Self::spawn_with_keyboard(args, false)
     }
     fn spawn_with_keyboard(args: &[&str], enhanced_keyboard: bool) -> Self {
+        Self::spawn_with(args, enhanced_keyboard, |_| {})
+    }
+    fn spawn_with(
+        args: &[&str],
+        enhanced_keyboard: bool,
+        configure: impl FnOnce(&mut Command),
+    ) -> Self {
         let mut master = -1;
         let mut slave = -1;
         let mut size = libc::winsize {
@@ -93,6 +101,7 @@ impl Pty {
             .stdin(slave.try_clone().unwrap())
             .stdout(slave.try_clone().unwrap())
             .stderr(slave.try_clone().unwrap());
+        configure(&mut command);
         unsafe {
             command.pre_exec(|| {
                 if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) < 0 {

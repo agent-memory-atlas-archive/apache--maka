@@ -36,17 +36,22 @@
 旧界面实际清理；新根不继承旧产品的原生草稿。切换 Host 位置还需明确修改可信连接
 配置，来源中的声明本身不授权访问另一 Host。
 
-在仓库根执行 `npm --workspace @maka-agent/product run build`，再运行：
+原生 CLI 已携带普通产品包与原组合代码，生成时无需 Node、源码目录或网络：
 
 ```sh
-node packages/agent-product/scripts/compose.mjs \
-  --configuration installation.json --output product-source \
-  --maka /absolute/path/to/maka
+maka application compose --configuration installation.json --output product-source
 ```
+
+输出必须是新目录。Cargo 使用同一构建器写入各自 OUT_DIR，开发时仍可通过
+`npm --workspace @maka-agent/product run build` 在 `dist` 检查生成包。
+命令用原 Package 实现计算精确 revision，在纯 JS VM 中执行原组合函数，
+再用原 Rust 来源校验器检查三个部署。除了来源和连接 JSON，输出还包含
+`packages/NAME.maka-plugin`，可直接用于原 `application commit --package`。
+生成不会初始化 Root、提交部署或启动服务。
 
 TUI 外观页提供 Maka、Dusk、Paper、Terminal 与自定义配色，支持英文、简中、繁中、ASCII 符号与减少动画。自动语言依次跟随原生进程的 `LC_ALL`、`LC_MESSAGES`、`LANG` 与系统语言；已保存的显式语言优先，选择“自动”可恢复跟随环境，即使组合配置了固定语言。自定义名称、基底和语义/语法色即时预览；保存沿原实例 checkpoint 持久化 UI 偏好，关闭未保存的编辑会恢复已保存外观，并保留会话草稿。安装配置可用绝对路径 `themeFile` 开启主题文件的重新读取与保存（16 KiB 以内的 UTF-8 自定义主题 JSON）。重新读取只改变预览，保存到文件只导出自定义主题；当前偏好仍需“保存并应用”。编辑器显示文件路径，外部修改后必须重新读取才能导出。完整原 TUI 体验对齐仍未完成。
 
-安装配置包含 `presentation`（`desktop`/`tui`）、完整 `locale`（或 `auto`）、`scheme`（`light`/`dark`）、`hostRoot`、`hostDeployment`、`managementDeployment`、SDK 生成的 `AgentConfiguration` 对应 `agent`，以及 `keys`。连接凭据和 endpoint 属于选中的 Host Root，不进入产品组合。
+安装配置包含 `presentation`（`desktop`/`tui`）、完整 `locale`（或 `auto`）、`scheme`（`light`/`dark`）、`hostRoot` 与 SDK 生成的 `AgentConfiguration` 对应 `agent`。可提供原安装的 `hostDeployment`、`managementDeployment` 和完整 `keys`；缺省身份只分配一次，保存在输出的 `installation.json`，后续生成应复用该文件以保留 namespace。连接凭据和 endpoint 属于选中的 Host Root，不进入产品组合。
 
 `keys` 为 `src/composition.ts` 导出的 `instanceNames` 中所有实例名分配稳定非零 UUID；安装时生成一次并保存，构建新 revision 时沿用。部署 UUID 同样属于安装身份，不能每次构建重建业务 namespace。具体字段、包名和配置约束见英文文档。
 

@@ -36,6 +36,8 @@ Each native package also contains the GPUI frontend: `maka desktop --root PATH -
 
 The supported preview set is macOS arm64, Linux x64 with glibc, and Windows x64. WSL uses the Linux executable and can obtain the matching Windows helper through the native distribution layer.
 
+The native CLI also embeds the ordinary Agent/Studio product packages. `maka application compose --configuration installation.json --output product-source` authors checked Host/UI inputs and installable packages without a source checkout or runtime Node. See the [product configuration and installation guide](../agent-product/README.md).
+
 ## Build and publish
 
 Create a committed source candidate with `just source <version>`. Each platform runs:

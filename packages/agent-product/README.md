@@ -47,25 +47,26 @@ not grant access to a different Host.
 
 ## Build and author
 
-From the repository root:
+The native CLI carries the ordinary product packages and their original authoring
+code. No Node installation, source checkout or network access is needed to author:
 
 ```sh
-just setup
-npm --workspace @maka-agent/product run build
-node packages/agent-product/scripts/compose.mjs \
-  --configuration installation.json --output product-source \
-  --maka /absolute/path/to/maka
+maka application compose --configuration installation.json --output product-source
 ```
+
+`--output` must name a new directory. Cargo builds these assets into its own output
+directory from the same product builder; source development can still use
+`npm --workspace @maka-agent/product run build` to inspect the packages in `dist`.
 
 The TUI Appearance page provides Maka, Dusk, Paper, Terminal and custom palettes, English/Simplified Chinese/Traditional Chinese, ASCII symbols and reduced motion. Automatic language follows the native process environment (`LC_ALL`, `LC_MESSAGES`, `LANG`, then the platform locale); an explicit saved language overrides it. Selecting Auto restores this behavior even when the composition configures a fixed language. Custom names, base palettes and semantic/syntax colors preview immediately. Save persists UI preferences through the original instance checkpoint; closing an unsaved edit restores the saved appearance without replacing conversation drafts. An optional absolute `themeFile` installation path enables Reload file and Save to file for a bounded 16 KiB UTF-8 custom-theme JSON file. Reload only changes the preview; Save to file exports the custom theme without applying preferences. The file path is shown in the editor. External file changes require a reload before export. Complete legacy TUI parity remains unfinished.
 
-`installation.json` supplies `presentation` (`desktop` or `tui`), the full `locale` tag (or `auto`), `scheme` (`light` or `dark`), `hostRoot`, `hostDeployment`, `managementDeployment`, `agent` and `keys`. `agent` is the SDK's generated `AgentConfiguration`: explicit `workspaceRoots` (`[{ label, path }]`, absolute directories), finite `maxActiveRuns`/`maxSteps`, initial `permissions` (`{ "access": "read_only", "requestPermissions": true }` or `workspace_write`) and explicit `tools` (use `[]` for a text-only composition). Credentials and endpoint settings belong to that Host Root; they do not belong in the product source.
+`installation.json` supplies `presentation` (`desktop` or `tui`), the full `locale` tag (or `auto`), `scheme` (`light` or `dark`), `hostRoot` and `agent`. Stable `hostDeployment`, `managementDeployment` and `keys` may be supplied for an existing installation. `agent` is the SDK's generated `AgentConfiguration`: explicit `workspaceRoots` (`[{ label, path }]`, absolute directories), finite `maxActiveRuns`/`maxSteps`, initial `permissions` (`{ "access": "read_only", "requestPermissions": true }` or `workspace_write`) and explicit `tools` (use `[]` for a text-only composition). Credentials and endpoint settings belong to that Host Root; they do not belong in the product source.
 
-`keys` maps every name in `instanceNames` exported by `src/composition.ts` to a nonnil UUID. Allocate these once for an installation and keep them across rebuilds. `managementDeployment` is a stable Host UUID in the UI Root, distinct from the UI and business Host deployment. New package revisions do not imply new data namespaces.
+`keys` maps every name in `instanceNames` exported by `src/composition.ts` to a nonnil UUID. Omitted identities are generated once and saved in the output `installation.json`; use that file for subsequent authoring to preserve namespaces. Explicit identity maps are preserved without filling missing keys. `managementDeployment` is a stable Host UUID in the UI Root, distinct from the UI and business Host deployment. New package revisions do not imply new data namespaces.
 
-The authoring command asks the actual Rust CLI to validate every package and compute its pinned reference. It writes and checks `host.json`, `management-host.json`, `ui.json`, `remote-exports.json`, `connections.json` and `packages.json`. It does not initialize a Root, commit a deployment or start execution. `connections.json` is trusted launcher configuration; inspect its explicit method and recovery grants before use.
+The authoring command validates the embedded package bytes and computes their pinned references using the runtime package implementation. A pure JS VM evaluates the original composition; the Rust source validator checks all three deployments. It writes `host.json`, `management-host.json`, `ui.json`, `remote-exports.json`, `connections.json`, `packages.json`, the resolved `installation.json` and the exact installable bundles under `packages/`. It does not initialize a Root, commit a deployment or start execution. `connections.json` is trusted launcher configuration; inspect its explicit method and recovery grants before use.
 
-For installation, initialize separate owned Host/UI Roots with `maka host init --root PATH`, then commit each source with `maka application commit`. Supply the selected deployment UUID, the current `--expected-revision`, and each built directory with `--package PATH`; UI also takes `--remote-exports product-source/remote-exports.json`. A first commit uses expected revision zero. Commit `management-host.json` into the **same UI Root**, using `managementDeployment`; it contains the explicitly selected UI manager, receipt service and gateway. Its connection is a cohost, so it borrows that launcher's original Store. The business Host remains a separate owned Root. Launch the committed UI with:
+For installation, initialize separate owned Host/UI Roots with `maka host init --root PATH`, then commit each source with `maka application commit`. Supply the selected deployment UUID, the current `--expected-revision`, and each exported bundle with `--package product-source/packages/NAME.maka-plugin`; UI also takes `--remote-exports product-source/remote-exports.json`. A first commit uses expected revision zero. Commit `management-host.json` into the **same UI Root**, using `managementDeployment`; it contains the explicitly selected UI manager, receipt service and gateway. Its connection is a cohost, so it borrows that launcher's original Store. The business Host remains a separate owned Root. Launch the committed UI with:
 
 ```sh
 maka application run --root UI_ROOT --deployment UI_DEPLOYMENT \

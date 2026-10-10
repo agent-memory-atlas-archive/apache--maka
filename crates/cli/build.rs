@@ -16,7 +16,11 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+#[path = "build/product.rs"]
+mod product;
+
 fn main() {
+    product::bundle();
     println!("cargo:rerun-if-env-changed=MAKA_NATIVE_PACKAGE_VERSION");
     if let Ok(version) = std::env::var("MAKA_NATIVE_PACKAGE_VERSION") {
         assert!(

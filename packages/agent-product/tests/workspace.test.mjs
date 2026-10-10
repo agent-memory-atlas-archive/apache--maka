@@ -20,7 +20,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -625,7 +625,7 @@ test('live display is bounded and marks its truncated Unicode excerpt', () => {
   assert.ok(message.text.isWellFormed());
   assert.ok(JSON.stringify(client.output).length < 200000);
 });
-test('both product compositions use actual immutable package refs and check in the real CLI', {
+test('bundled products author without Node and export exact checked sources for both native targets', {
   skip: !process.env.MAKA_PRODUCT_CLI_CHECK,
 }, async () => {
   const binary = resolve(root, '../..', process.env.CARGO_TARGET_DIR ?? 'target', 'debug/maka');
@@ -635,12 +635,20 @@ test('both product compositions use actual immutable package refs and check in t
   const keys = Object.fromEntries(instanceNames.map((name, index) => [name, uuid(index + 1)]));
   const directory = mkdtempSync(resolve(tmpdir(), 'maka-product-composition-'));
   try {
+    const environment = Object.fromEntries(
+      Object.entries(process.env).filter(
+        ([key]) => !['PATH', 'NODE_PATH'].includes(key.toUpperCase()),
+      ),
+    );
+    environment.PATH = directory;
     const sourcePackage = resolve(root, 'dist/packages/appearance');
     const bundle = resolve(directory, 'appearance.maka-plugin');
     const invoke = (args) =>
       execFileSync(binary, ['application', ...args], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
+        cwd: directory,
+        env: environment,
       });
     const originalRef = JSON.parse(invoke(['inspect-package', '--package', sourcePackage]));
     assert.deepEqual(
@@ -705,7 +713,7 @@ test('both product compositions use actual immutable package refs and check in t
                   ]
                 : [],
           },
-          hostRoot: '/private/product-fixture',
+          hostRoot: resolve(directory, 'unopened-host'),
           hostDeployment: uuid(80),
           managementDeployment: uuid(81),
         };
@@ -757,21 +765,71 @@ test('both product compositions use actual immutable package refs and check in t
         const configurationFile = resolve(directory, 'installation.json');
         const output = resolve(directory, productName + '-' + presentation);
         writeFileSync(configurationFile, JSON.stringify(configuration));
-        execFileSync(
-          process.execPath,
-          [
-            resolve(root, 'scripts/compose.mjs'),
+        const compose = () =>
+          invoke([
+            'compose',
             '--configuration',
             configurationFile,
             '--output',
             output,
-            '--maka',
-            binary,
             '--product',
             productName,
-          ],
-          { encoding: 'utf8', maxBuffer: 1024 * 1024 },
+          ]);
+        compose();
+        assert.equal(existsSync(configuration.hostRoot), false);
+        const before = readFileSync(resolve(output, 'host.json'));
+        assert.throws(compose);
+        assert.deepEqual(readFileSync(resolve(output, 'host.json')), before);
+        const bundles = readdirSync(resolve(output, 'packages')).flatMap((name) => [
+          '--package',
+          resolve(output, 'packages', name),
+        ]);
+        for (const name of ['host', 'management-host', 'ui'])
+          execFileSync(
+            binary,
+            [
+              'application',
+              'check',
+              '--input',
+              resolve(output, name + '.json'),
+              ...(name === 'ui'
+                ? ['--remote-exports', resolve(output, 'remote-exports.json')]
+                : []),
+              ...bundles,
+            ],
+            { cwd: directory, env: environment, stdio: ['ignore', 'ignore', 'pipe'] },
+          );
+        assert.deepEqual(
+          JSON.parse(
+            invoke([
+              'inspect-package',
+              '--package',
+              resolve(output, 'packages/connection-form.maka-plugin'),
+            ]),
+          ),
+          JSON.parse(
+            invoke([
+              'inspect-package',
+              '--package',
+              resolve(root, 'dist/packages/connection-form'),
+            ]),
+          ),
+          'isolated Cargo and checkout builds must have the same package bytes',
         );
+        const invalidOutput = resolve(directory, productName + '-' + presentation + '-invalid');
+        writeFileSync(configurationFile, JSON.stringify({ ...configuration, keys: {} }));
+        assert.throws(() =>
+          invoke([
+            'compose',
+            '--configuration',
+            configurationFile,
+            '--output',
+            invalidOutput,
+            '--product',
+            productName,
+          ]),
+        );
+        assert.equal(existsSync(invalidOutput), false);
         const ui = JSON.parse(readFileSync(resolve(output, 'ui.json'), 'utf8'));
         const host = JSON.parse(readFileSync(resolve(output, 'host.json'), 'utf8'));
         const connections = JSON.parse(readFileSync(resolve(output, 'connections.json'), 'utf8'));
@@ -979,6 +1037,51 @@ test('both product compositions use actual immutable package refs and check in t
           'settings',
         ]);
       }
+    const initial = resolve(directory, 'initial.json');
+    writeFileSync(
+      initial,
+      JSON.stringify({
+        presentation: 'tui',
+        locale: 'en',
+        scheme: 'dark',
+        hostRoot: resolve(directory, 'unopened-auto'),
+        agent: {
+          workspaceRoots: [{ label: 'Projects', path: directory }],
+          maxActiveRuns: 1,
+          maxSteps: 1,
+          tools: [],
+          permissions: { access: 'read_only', requestPermissions: true },
+        },
+      }),
+    );
+    const first = resolve(directory, 'first');
+    invoke(['compose', '--configuration', initial, '--output', first]);
+    const installation = resolve(first, 'installation.json');
+    const resolved = JSON.parse(readFileSync(installation));
+    assert.deepEqual(Object.keys(resolved.keys).sort(), [...instanceNames].sort());
+    const ids = [
+      resolved.hostDeployment,
+      resolved.managementDeployment,
+      ...Object.values(resolved.keys),
+    ];
+    assert.equal(new Set(ids).size, ids.length);
+    assert.equal('packages' in resolved, false);
+    const second = resolve(directory, 'second');
+    invoke(['compose', '--configuration', installation, '--output', second]);
+    for (const name of [
+      'host',
+      'management-host',
+      'ui',
+      'connections',
+      'remote-exports',
+      'packages',
+      'installation',
+    ])
+      assert.deepEqual(
+        readFileSync(resolve(first, name + '.json')),
+        readFileSync(resolve(second, name + '.json')),
+      );
+    assert.equal(existsSync(resolved.hostRoot), false);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

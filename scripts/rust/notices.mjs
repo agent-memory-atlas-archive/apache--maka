@@ -43,6 +43,8 @@ async function inputs(root) {
     'scripts/rust/bundle-providers.mjs',
     'packages/agent-product/scripts/build.mjs',
     'packages/agent-product/package.json',
+    'crates/cli/build.rs',
+    'crates/cli/build/product.rs',
     'scripts/rust/notices-sources.json',
     'crates/computer-use/THIRD_PARTY_NOTICES',
     'scripts/rust/v8-source.json',

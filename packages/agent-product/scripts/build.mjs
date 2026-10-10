@@ -17,16 +17,29 @@
  * under the License.
  */
 
-import { build } from 'esbuild';
 import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import Ajv from 'ajv/dist/2020.js';
-import addFormats from 'ajv-formats';
-import standalone from 'ajv/dist/standalone/index.js';
+import { createRequire } from 'node:module';
+import { parseArgs } from 'node:util';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const destination = resolve(root, 'dist');
+const dependencyRoot = process.env.MAKA_JS_DEPS || resolve(root, '../..');
+const require = createRequire(resolve(dependencyRoot, 'package.json'));
+const { build } = require('esbuild');
+const Ajv = require('ajv/dist/2020.js').default;
+const addFormats = require('ajv-formats').default;
+const standalone = require('ajv/dist/standalone/index.js').default;
+const lock = JSON.parse(await readFile(resolve(root, '../../package-lock.json'), 'utf8'));
+for (const name of ['esbuild', 'ajv', 'ajv-formats'])
+  if (require(`${name}/package.json`).version !== lock.packages[`node_modules/${name}`]?.version)
+    throw new Error(`Product build dependency does not match repository lockfile: ${name}`);
+// Cargo builds and source-checkout tests must never share mutable output files.
+const direct = process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+const output = direct
+  ? parseArgs({ options: { output: { type: 'string' } } }).values.output
+  : undefined;
+const destination = output ? resolve(output) : resolve(root, 'dist');
 await rm(destination, { recursive: true, force: true });
 await mkdir(destination, { recursive: true });
 // These authoring modules use the real generated runtime contracts. No second
@@ -40,6 +53,7 @@ const authoring = await build({
   ],
   outdir: resolve(destination, 'authoring'),
   bundle: true,
+  nodePaths: [resolve(dependencyRoot, 'node_modules')],
   platform: 'node',
   format: 'esm',
   outExtension: { '.js': '.mjs' },
@@ -68,8 +82,7 @@ const validator = new Ajv({
 addFormats(validator);
 for (const method of ['create', 'update'])
   validator.addSchema(sdk.contracts.settings.interface.methods[method].input, method);
-const validationPath = resolve(destination, 'settings-validation.mjs');
-await writeFile(validationPath, standalone(validator, { create: 'create', update: 'update' }));
+const settingsValidation = standalone(validator, { create: 'create', update: 'update' });
 const required = (contract) => ({ contract, availability: 'required' });
 const one = (contract) => ({ contract, cardinality: { kind: 'one' } });
 const empty = own.object({});
@@ -384,7 +397,7 @@ for (const [name, spec] of Object.entries(specifications)) {
     else if (name === 'studio' || name === 'recovery')
       contents = `import {${name},activate as exports} from '${resolve(root, 'src/' + name + '.ts')}';export let component;export function activate(configuration){component=${name}(presentations.${target},configuration.locale);return exports();}`;
     else if (name === 'connection-form')
-      contents = `import {connectionForm,activate} from '${resolve(root, 'src/connection-form.ts')}';import * as validation from '${validationPath}';export const component=connectionForm(presentations.${target},validation);export {activate};`;
+      contents = `import {connectionForm,activate} from '${resolve(root, 'src/connection-form.ts')}';import * as validation from 'maka:settings-validation';export const component=connectionForm(presentations.${target},validation);export {activate};`;
     else if (spec.module === 'components')
       contents = `import {components,exports} from '${resolve(root, 'src/components.ts')}';export const component=components(presentations.${target}).${name};export function activate(){const declaration=exports().${spec.export};return {${spec.export}:{...declaration,component:['component']}};}`;
     else {
@@ -398,6 +411,7 @@ for (const [name, spec] of Object.entries(specifications)) {
       stdin: { contents, resolveDir: root, sourcefile: `${name}-${target}.ts`, loader: 'ts' },
       outfile: resolve(directory, module),
       bundle: true,
+      nodePaths: [resolve(dependencyRoot, 'node_modules')],
       format: 'esm',
       platform: 'neutral',
       target: 'es2022',
@@ -407,6 +421,17 @@ for (const [name, spec] of Object.entries(specifications)) {
         {
           name: 'product-contract-literals',
           setup(builder) {
+            // The generated validator has a stable module identity, independent
+            // of Cargo OUT_DIR or the source-checkout output directory.
+            builder.onResolve({ filter: /^maka:settings-validation$/ }, () => ({
+              path: 'settings-validation',
+              namespace: 'product-generated',
+            }));
+            builder.onLoad({ filter: /.*/, namespace: 'product-generated' }, () => ({
+              contents: settingsValidation,
+              loader: 'js',
+              resolveDir: root,
+            }));
             builder.onLoad({ filter: /\/contracts\.ts$/ }, (args) =>
               args.path === resolve(root, 'src/contracts.ts')
                 ? { contents: guestContracts, loader: 'js' }
@@ -420,7 +445,8 @@ for (const [name, spec] of Object.entries(specifications)) {
       },
     });
     for (const input of Object.keys(bundled.metafile.inputs))
-      if (!input.startsWith('<')) bundleInputs.add(resolve(root, input));
+      if (!input.startsWith('<') && !input.startsWith('product-generated:'))
+        bundleInputs.add(resolve(root, input));
     entries[target] = {
       implementation: { kind: 'javascript', module, realm: 'dedicated' },
       configuration: spec.configuration ?? empty,

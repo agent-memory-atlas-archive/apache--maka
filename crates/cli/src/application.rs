@@ -17,6 +17,7 @@
  * under the License.
  */
 
+mod product;
 mod schema;
 mod serve;
 
@@ -39,6 +40,8 @@ use serde::Serialize;
 
 #[derive(Subcommand)]
 pub(super) enum Command {
+    /// Author an ordinary bundled product without Node or a source checkout.
+    Compose(product::Compose),
     /// Check exact package revisions, template overrides, variants and capability bindings.
     Check(Check),
     /// Emit authoring schemas from the actual runtime wire types.
@@ -135,6 +138,7 @@ impl Command {
 
     async fn run_inner(self) -> Result<(), HostError> {
         match self {
+            Self::Compose(args) => args.run().await?,
             Self::Serve(args) => serve::run(args).await?,
             Self::Schema => println!("{}", serde_json::to_string_pretty(&schema::catalog())?),
             Self::InspectPackage(args) => {

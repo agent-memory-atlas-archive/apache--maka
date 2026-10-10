@@ -36,6 +36,9 @@ npm install --global @maka-agent/cli@rust-preview
 
 预览分发支持 macOS arm64、使用 glibc 的 Linux x64 和 Windows x64。WSL 使用 Linux 可执行文件，并由原生分发层获取匹配的 Windows 辅助程序。
 
+
+原生 CLI 同时携带普通 Agent/Studio 产品包。`maka application compose --configuration installation.json --output product-source` 可生成已校验的 Host/UI 输入及可安装包，无需源码目录或运行时 Node。配置与安装步骤见[产品说明](../agent-product/README.zh-CN.md)。
+
 ## 构建与发布
 
 通过 `just source <version>` 从已提交代码生成源码候选包。各平台分别运行：
