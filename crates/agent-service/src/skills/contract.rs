@@ -188,6 +188,14 @@ pub enum ChangeResult {
     Changed,
     Rejected { reason: String },
 }
+/// Canonical publication evidence alongside the unmodified original Host facts.
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "SkillLibraryOutcome")]
+pub struct Outcome {
+    pub original: maka_plugin_core::operation::OperationReply,
+    pub published: Option<ChangeResult>,
+}
 pub fn configuration_schema() -> Value {
     schemars::schema_for!(Configuration).into()
 }
@@ -198,6 +206,16 @@ pub fn contract() -> Contract {
         transport: Transport::Remote,
         interface: Interface::Service {
             methods: BTreeMap::from([
+                (
+                    "outcome".into(),
+                    Method {
+                        mode: MethodMode::Query,
+                        input: schemars::schema_for!(maka_plugin_core::operation::RecoveryRef)
+                            .into(),
+                        output: schemars::schema_for!(Outcome).into(),
+                        resources: BTreeMap::new(),
+                    },
+                ),
                 (
                     "preview".into(),
                     Method {

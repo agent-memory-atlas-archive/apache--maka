@@ -429,7 +429,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
     Object.assign(connections.hosts.find((host) => host.name === 'local')!.imports, {
       skills: {
         methods: configuration.skills.manage
-          ? ['list', 'read', 'preview', 'apply']
+          ? ['list', 'read', 'preview', 'apply', 'outcome']
           : ['list', 'read'],
         recovery: !!configuration.skills.manage,
       },

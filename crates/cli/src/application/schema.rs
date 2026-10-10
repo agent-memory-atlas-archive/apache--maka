@@ -135,6 +135,7 @@ pub(super) fn catalog() -> Value {
         root::<maka_agent_service::skills::contract::Review>(&mut g),
         root::<maka_agent_service::skills::contract::Preview>(&mut g),
         root::<maka_agent_service::skills::contract::ChangeResult>(&mut g),
+        root::<maka_agent_service::skills::contract::Outcome>(&mut g),
         root::<maka_agent_service::contract::List>(&mut g),
         root::<maka_agent_service::contract::Create>(&mut g),
         root::<maka_agent_service::contract::Created>(&mut g),

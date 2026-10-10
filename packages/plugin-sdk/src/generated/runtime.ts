@@ -114,6 +114,7 @@ export type RuntimeProtocol =
   | SkillLibraryReview
   | SkillLibraryPreview
   | SkillLibraryChangeResult
+  | SkillLibraryOutcome
   | AgentList
   | AgentCreate
   | AgentCreated
@@ -4479,6 +4480,13 @@ export interface SkillLibraryChange {
 export interface SkillLibraryReview {
   change: SkillLibraryChange;
   digest: string;
+}
+/**
+ * Canonical publication evidence alongside the unmodified original Host facts.
+ */
+export interface SkillLibraryOutcome {
+  original: OperationReply;
+  published?: SkillLibraryChangeResult | null;
 }
 export interface AgentList {
   filter: AgentSessionFilter;

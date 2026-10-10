@@ -13622,6 +13622,731 @@ export const contracts = {
           },
           resources: {},
         },
+        outcome: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              source: {
+                $ref: '#/$defs/DeploymentRef',
+              },
+              namespace: {
+                $ref: '#/$defs/InstanceId',
+              },
+              export: {
+                type: 'string',
+              },
+              method: {
+                type: 'string',
+              },
+              operation: {
+                type: 'string',
+                format: 'uuid',
+              },
+              fingerprint: {
+                type: 'string',
+              },
+              contract: {
+                $ref: '#/$defs/Contract',
+              },
+              recovery: {
+                $ref: '#/$defs/RecoveryProtocol',
+              },
+            },
+            required: [
+              'source',
+              'namespace',
+              'export',
+              'method',
+              'operation',
+              'fingerprint',
+              'contract',
+              'recovery',
+            ],
+            title: 'RecoveryRef',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              DeploymentRef: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                required: ['stateDomain', 'deployment', 'revision'],
+              },
+              InstanceId: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+              },
+              Contract: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  version: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                  transport: {
+                    $ref: '#/$defs/Transport',
+                  },
+                  interface: {
+                    $ref: '#/$defs/Interface',
+                  },
+                },
+                required: ['name', 'version', 'transport', 'interface'],
+                description:
+                  'Public contract definitions are package data, not live registration records.',
+              },
+              Transport: {
+                type: 'string',
+                enum: ['local', 'remote'],
+              },
+              Interface: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      methods: {
+                        type: 'object',
+                        additionalProperties: {
+                          $ref: '#/$defs/Method',
+                        },
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'service',
+                      },
+                    },
+                    required: ['kind', 'methods'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      props: true,
+                      events: {
+                        type: 'object',
+                        additionalProperties: true,
+                      },
+                      captures: {
+                        type: 'object',
+                        additionalProperties: {
+                          $ref: '#/$defs/Capture',
+                        },
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'component',
+                      },
+                    },
+                    required: ['kind', 'props', 'events', 'captures'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      schema: true,
+                      kind: {
+                        type: 'string',
+                        const: 'value',
+                      },
+                    },
+                    required: ['kind', 'schema'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      resource: {
+                        type: 'string',
+                      },
+                      schema: true,
+                      kind: {
+                        type: 'string',
+                        const: 'resource',
+                      },
+                    },
+                    required: ['kind', 'resource', 'schema'],
+                  },
+                ],
+              },
+              Method: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  mode: {
+                    $ref: '#/$defs/MethodMode',
+                  },
+                  input: true,
+                  output: true,
+                  resources: {
+                    type: 'object',
+                    additionalProperties: {
+                      $ref: '#/$defs/ResourceType',
+                    },
+                  },
+                },
+                required: ['mode', 'input', 'output', 'resources'],
+              },
+              MethodMode: {
+                type: 'string',
+                enum: ['query', 'mutation', 'subscription'],
+              },
+              ResourceType: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  version: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                },
+                required: ['name', 'version'],
+                description:
+                  'Nominal read-only resource shape, not a resource id or authorization token.',
+              },
+              Capture: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  input: true,
+                  output: {
+                    $ref: '#/$defs/CaptureOutput',
+                  },
+                },
+                required: ['input', 'output'],
+              },
+              CaptureOutput: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      resource: {
+                        $ref: '#/$defs/ResourceType',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'resource',
+                      },
+                    },
+                    required: ['kind', 'resource'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'continuation',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                ],
+                description:
+                  'Resource captures enter checked service slots; continuations remain in the\noriginal presentation owner and only decide admission of query feedback.',
+              },
+              RecoveryProtocol: {
+                type: 'string',
+                enum: ['journal_v1'],
+              },
+            },
+          },
+          output: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              original: {
+                $ref: '#/$defs/OperationReply',
+              },
+              published: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/SkillLibraryChangeResult',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            required: ['original'],
+            description:
+              'Canonical publication evidence alongside the unmodified original Host facts.',
+            title: 'SkillLibraryOutcome',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              OperationReply: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  reference: {
+                    $ref: '#/$defs/RecoveryRef',
+                  },
+                  receipt: {
+                    $ref: '#/$defs/Receipt',
+                  },
+                },
+                required: ['reference', 'receipt'],
+              },
+              RecoveryRef: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  source: {
+                    $ref: '#/$defs/DeploymentRef',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                  export: {
+                    type: 'string',
+                  },
+                  method: {
+                    type: 'string',
+                  },
+                  operation: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  fingerprint: {
+                    type: 'string',
+                  },
+                  contract: {
+                    $ref: '#/$defs/Contract',
+                  },
+                  recovery: {
+                    $ref: '#/$defs/RecoveryProtocol',
+                  },
+                },
+                required: [
+                  'source',
+                  'namespace',
+                  'export',
+                  'method',
+                  'operation',
+                  'fingerprint',
+                  'contract',
+                  'recovery',
+                ],
+              },
+              DeploymentRef: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                required: ['stateDomain', 'deployment', 'revision'],
+              },
+              InstanceId: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+              },
+              Contract: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  version: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                  transport: {
+                    $ref: '#/$defs/Transport',
+                  },
+                  interface: {
+                    $ref: '#/$defs/Interface',
+                  },
+                },
+                required: ['name', 'version', 'transport', 'interface'],
+                description:
+                  'Public contract definitions are package data, not live registration records.',
+              },
+              Transport: {
+                type: 'string',
+                enum: ['local', 'remote'],
+              },
+              Interface: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      methods: {
+                        type: 'object',
+                        additionalProperties: {
+                          $ref: '#/$defs/Method',
+                        },
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'service',
+                      },
+                    },
+                    required: ['kind', 'methods'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      props: true,
+                      events: {
+                        type: 'object',
+                        additionalProperties: true,
+                      },
+                      captures: {
+                        type: 'object',
+                        additionalProperties: {
+                          $ref: '#/$defs/Capture',
+                        },
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'component',
+                      },
+                    },
+                    required: ['kind', 'props', 'events', 'captures'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      schema: true,
+                      kind: {
+                        type: 'string',
+                        const: 'value',
+                      },
+                    },
+                    required: ['kind', 'schema'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      resource: {
+                        type: 'string',
+                      },
+                      schema: true,
+                      kind: {
+                        type: 'string',
+                        const: 'resource',
+                      },
+                    },
+                    required: ['kind', 'resource', 'schema'],
+                  },
+                ],
+              },
+              Method: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  mode: {
+                    $ref: '#/$defs/MethodMode',
+                  },
+                  input: true,
+                  output: true,
+                  resources: {
+                    type: 'object',
+                    additionalProperties: {
+                      $ref: '#/$defs/ResourceType',
+                    },
+                  },
+                },
+                required: ['mode', 'input', 'output', 'resources'],
+              },
+              MethodMode: {
+                type: 'string',
+                enum: ['query', 'mutation', 'subscription'],
+              },
+              ResourceType: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  version: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                },
+                required: ['name', 'version'],
+                description:
+                  'Nominal read-only resource shape, not a resource id or authorization token.',
+              },
+              Capture: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  input: true,
+                  output: {
+                    $ref: '#/$defs/CaptureOutput',
+                  },
+                },
+                required: ['input', 'output'],
+              },
+              CaptureOutput: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      resource: {
+                        $ref: '#/$defs/ResourceType',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'resource',
+                      },
+                    },
+                    required: ['kind', 'resource'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'continuation',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                ],
+                description:
+                  'Resource captures enter checked service slots; continuations remain in the\noriginal presentation owner and only decide admission of query feedback.',
+              },
+              RecoveryProtocol: {
+                type: 'string',
+                enum: ['journal_v1'],
+              },
+              Receipt: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'not_recorded',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                    description:
+                      'An authorized lookup found no row at the exact original reference.',
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      outcome: {
+                        $ref: '#/$defs/OperationOutcome',
+                      },
+                      cleanup: {
+                        $ref: '#/$defs/OperationCleanup',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'recorded',
+                      },
+                    },
+                    required: ['kind', 'outcome', 'cleanup'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      diagnostic: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'unavailable',
+                      },
+                    },
+                    required: ['kind', 'diagnostic'],
+                  },
+                ],
+                description:
+                  "A caller's receipt observation, never an execution grant. Unavailable makes\nno claim about the journal's contents or physical cleanup.",
+              },
+              OperationOutcome: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'unresolved',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      value: true,
+                      kind: {
+                        type: 'string',
+                        const: 'returned',
+                      },
+                    },
+                    required: ['kind', 'value'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      diagnostic: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'unknown',
+                      },
+                    },
+                    required: ['kind', 'diagnostic'],
+                  },
+                ],
+                description:
+                  'Unresolved means no durable result is known, including after process loss.',
+              },
+              OperationCleanup: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'unconfirmed',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'confirmed',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      diagnostic: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'failed',
+                      },
+                    },
+                    required: ['kind', 'diagnostic'],
+                  },
+                ],
+              },
+              SkillLibraryChangeResult: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      reference: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'applied',
+                      },
+                    },
+                    required: ['kind', 'reference'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'changed',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      reason: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'rejected',
+                      },
+                    },
+                    required: ['kind', 'reason'],
+                  },
+                ],
+              },
+            },
+          },
+          resources: {},
+        },
         preview: {
           mode: 'query',
           input: {

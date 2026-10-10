@@ -337,3 +337,5 @@ fn deletion_review_keeps_exact_paths_and_marks_bounded_path_excerpts() {
     assert!(*paths_truncated);
     assert!(encode(preview).is_ok());
 }
+
+mod recovery;

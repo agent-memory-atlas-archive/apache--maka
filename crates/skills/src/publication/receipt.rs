@@ -92,6 +92,14 @@ pub(super) async fn reserve(
         }
         Err(error) => return Err(error),
     }
+    read(receipts, operation).await
+}
+pub(super) async fn read(
+    receipts: &Directory,
+    operation: &Operation,
+) -> Result<Option<Outcome>, Error> {
+    operation.validate()?;
+    let name = format!("{}.json", operation.id);
     match receipts.read(&name, 16 * 1024).await {
         Ok((bytes, _)) => {
             let record: Record = serde_json::from_slice(&bytes)?;

@@ -182,4 +182,99 @@ for (const target of ['tui', 'desktop']) {
     assert.ok(c.action('list'));
     assert.ok(!c.action('apply'), 'receipt observation must not replay installation');
   });
+  test(`${target} canonical skill outcomes preserve original cleanup and never replay a lost mutation`, async () => {
+    const c = (await client(target)).open().preview().raw('confirm-change');
+    c.operation(c.action('apply'), { kind: 'unavailable', diagnostic: 'Host disconnected' });
+    const receipt = {
+      kind: 'recorded',
+      outcome: { kind: 'unresolved' },
+      cleanup: { kind: 'unconfirmed' },
+    };
+    c.raw('check-change');
+    c.reply(c.action('read'), { reference, receipt });
+    let query = c.action('outcome');
+    assert.equal(query.binding, 'skills');
+    assert.deepEqual(query.input, reference);
+    c.reply(query, { original: { reference, receipt }, published: null });
+    assert.deepEqual(c.state.current.reference, reference);
+    assert.equal(c.state.notice, 'skillsUnknown');
+    assert.equal(c.out.actions.length, 0, 'missing publication evidence cannot authorize a retry');
+    c.raw('check-change');
+    c.reply(c.action('read'), { reference, receipt });
+    query = c.action('outcome');
+    c.reply(query, {
+      original: {
+        reference: { ...reference, operation: '00000000-0000-0000-0000-000000000009' },
+        receipt,
+      },
+      published: { kind: 'applied', reference: 'installed:review' },
+    });
+    assert.deepEqual(
+      c.state.current.reference,
+      reference,
+      'a replacement cannot settle the original operation',
+    );
+    c.raw('check-change');
+    c.reply(c.action('read'), { reference, receipt });
+    query = c.action('outcome');
+    c.raw('close').update({ open: false });
+    c.reply(query, {
+      original: { reference, receipt },
+      published: { kind: 'applied', reference: 'installed:review' },
+    });
+    assert.equal(c.state.current, null);
+    assert.equal(c.state.cleanupUnconfirmed, true);
+    assert.equal(
+      c.out.actions.length,
+      0,
+      'closed library consumes the result without replay or background refresh',
+    );
+  });
+  test(`${target} unavailable original receipts and denied domain reads retain the original skill operation`, async () => {
+    const c = (await client(target)).open().preview().raw('confirm-change');
+    c.operation(c.action('apply'), { kind: 'unavailable', diagnostic: 'Host disconnected' });
+    for (const receipt of [
+      { kind: 'not_recorded' },
+      { kind: 'unavailable', diagnostic: 'unreachable' },
+    ]) {
+      c.raw('check-change');
+      c.reply(c.action('read'), { reference, receipt });
+      assert.deepEqual(c.state.current.reference, reference);
+      assert.equal(c.out.actions.length, 0);
+    }
+    c.raw('check-change');
+    c.reply(c.action('read'), {
+      reference,
+      receipt: {
+        kind: 'recorded',
+        outcome: { kind: 'unknown', diagnostic: 'reply lost' },
+        cleanup: { kind: 'confirmed' },
+      },
+    });
+    const query = c.action('outcome');
+    c.event({
+      kind: 'action',
+      key: query.key,
+      event: { status: 'failed', error: 'recovery denied' },
+    });
+    assert.deepEqual(c.state.current.reference, reference);
+    assert.equal(c.state.notice, 'skillsUnknown');
+    assert.equal(c.out.actions.length, 0);
+  });
+  test(`${target} rejected skill results retain cleanup uncertainty separately from the rejection`, async () => {
+    const c = (await client(target)).open().preview().raw('confirm-change');
+    c.operation(c.action('apply'), {
+      kind: 'recorded',
+      outcome: { kind: 'returned', value: { kind: 'changed' } },
+      cleanup: { kind: 'failed', diagnostic: 'resource settlement failed' },
+    });
+    assert.equal(c.state.current, null);
+    assert.equal(c.state.notice, 'skillsChanged');
+    assert.equal(c.state.cleanupUnconfirmed, true);
+    assert.ok(
+      JSON.stringify(c.out).includes(
+        'The operation result is known, but resource cleanup is not confirmed.',
+      ),
+    );
+  });
 }

@@ -26,7 +26,7 @@ pub use contract::{configuration_schema, contract};
 use futures_util::future::BoxFuture;
 use maka_plugins::{call::Scope, filesystem::ReadRoot};
 use maka_runtime_host::application::{
-    Context, Handler, NativeActivation, NativeOwner, NativeRegistry,
+    Context, Handler, NativeActivation, NativeContext, NativeOwner, NativeRegistry,
 };
 use maka_sandbox::filesystem::{Access, Policy, Rule};
 use serde::Serialize;
@@ -45,55 +45,54 @@ const TEXT_BYTES: usize = 4096;
 pub(crate) fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
     registry.insert(
         IMPLEMENTATION.into(),
-        Arc::new(|context, configuration| {
-            Box::pin(async move {
-                let opened = async {
-                    let persistence = context.persistence().ok_or("skills_require_persistence")?;
-                    let root = persistence
-                        .store()
-                        .owned_root()
-                        .map_err(|_| "skills_root_unavailable")?;
-                    let managed = root.canonical_path().to_owned();
-                    let configuration: Configuration = serde_json::from_value(configuration)
-                        .map_err(|_| "skills_configuration_invalid")?;
-                    let manage = configuration.manage;
-                    let namespace = crate::owner::namespace(
-                        &persistence.source().state_domain,
-                        persistence.source().deployment,
-                        context.activation().instance(),
-                    );
-                    let mut library =
-                        tokio::task::spawn_blocking(move || Library::open(configuration, managed))
-                            .await
-                            .map_err(|_| "skills_open_failed")??;
-                    if manage {
-                        library.managed = Some(management::Managed::open(root, namespace).await?);
-                    }
-                    Ok::<_, String>(library)
-                }
-                .await;
-                match opened {
-                    Ok(owner) => {
-                        let owner = Arc::new(owner);
-                        NativeActivation {
-                            exports: Ok(BTreeMap::from([(
-                                EXPORT.into(),
-                                maka_plugin_core::runtime::Published {
-                                    contract: contract(),
-                                    value: owner.clone() as Arc<dyn Handler>,
-                                },
-                            )])),
-                            owner,
-                        }
-                    }
-                    Err(error) => NativeActivation {
-                        exports: Err(error),
-                        owner: Arc::new(crate::Uninitialized),
-                    },
-                }
-            })
-        }),
+        Arc::new(|context, configuration| Box::pin(activate(context, configuration))),
     )
+}
+async fn activate(context: NativeContext, configuration: Value) -> NativeActivation {
+    let opened = async {
+        let persistence = context.persistence().ok_or("skills_require_persistence")?;
+        let root = persistence
+            .store()
+            .owned_root()
+            .map_err(|_| "skills_root_unavailable")?;
+        let managed = root.canonical_path().to_owned();
+        let configuration: Configuration =
+            serde_json::from_value(configuration).map_err(|_| "skills_configuration_invalid")?;
+        let manage = configuration.manage;
+        let namespace = crate::owner::namespace(
+            &persistence.source().state_domain,
+            persistence.source().deployment,
+            context.activation().instance(),
+        );
+        let mut library =
+            tokio::task::spawn_blocking(move || Library::open(configuration, managed))
+                .await
+                .map_err(|_| "skills_open_failed")??;
+        if manage {
+            library.managed = Some(management::Managed::open(root, namespace).await?);
+        }
+        Ok::<_, String>(library)
+    }
+    .await;
+    match opened {
+        Ok(owner) => {
+            let owner = Arc::new(owner);
+            NativeActivation {
+                exports: Ok(BTreeMap::from([(
+                    EXPORT.into(),
+                    maka_plugin_core::runtime::Published {
+                        contract: contract(),
+                        value: owner.clone() as Arc<dyn Handler>,
+                    },
+                )])),
+                owner,
+            }
+        }
+        Err(error) => NativeActivation {
+            exports: Err(error),
+            owner: Arc::new(crate::Uninitialized),
+        },
+    }
 }
 #[derive(Clone)]
 struct Library {
@@ -437,6 +436,14 @@ impl Handler for Library {
                         serde_json::from_value(input).map_err(|_| "skills_change_invalid")?;
                     let operation = context.operation().ok_or("skills_mutation_required")?;
                     encode(library.apply(input, operation, context.scope()).await?)
+                }
+                "outcome" => {
+                    let reference =
+                        serde_json::from_value(input).map_err(|_| "skills_recovery_invalid")?;
+                    // Original receipts use the Host's 1 MiB delivery ceiling;
+                    // their diagnostics need not fit a 48 KiB catalog page.
+                    serde_json::to_value(library.outcome(reference, &context).await?)
+                        .map_err(|_| "skills_encoding_failed".into())
                 }
                 _ => Err("skills_method_unavailable".into()),
             }

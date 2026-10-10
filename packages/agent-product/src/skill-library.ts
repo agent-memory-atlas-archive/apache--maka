@@ -30,7 +30,9 @@ import type {
   SkillLibraryChangeKind,
   SkillLibraryPreview,
   SkillLibraryChangeResult,
+  SkillLibraryOutcome,
   OperationReply,
+  OperationCleanup,
   RecoveryRef,
   SkillLibraryDocument,
   SkillLibraryPage,
@@ -52,7 +54,7 @@ type Request =
       history: number[];
     }
   | { kind: 'read'; key: string }
-  | { kind: 'preview' | 'mutate' | 'receipt'; key: string };
+  | { kind: 'preview' | 'mutate' | 'receipt' | 'outcome'; key: string };
 interface State {
   revision: number;
   serial: number;
@@ -67,6 +69,7 @@ interface State {
   document: Document | null;
   pending: Request | null;
   notice: keyof Copy | null;
+  cleanupUnconfirmed: boolean;
   preview: Extract<SkillLibraryPreview, { kind: 'ready' }> | null;
   current: { reference: RecoveryRef | null } | null;
   active: number;
@@ -182,7 +185,12 @@ function rejection(reason: string): keyof Copy {
       ? 'skillsNotInstalled'
       : 'skillsChangeRejected';
 }
-function settle(state: State, props: SkillLibraryProps, reply: OperationReply): Action[] {
+function settle(
+  state: State,
+  props: SkillLibraryProps,
+  reply: OperationReply,
+  readPublished = false,
+): Action[] {
   if (
     !state.current ||
     (state.current.reference && !sameValue(state.current.reference, reply.reference)) ||
@@ -193,14 +201,41 @@ function settle(state: State, props: SkillLibraryProps, reply: OperationReply): 
   state.current.reference = reply.reference;
   if (reply.receipt.kind !== 'recorded' || reply.receipt.outcome.kind !== 'returned') {
     state.notice = 'skillsUnknown';
+    if (readPublished && reply.receipt.kind === 'recorded') {
+      const key = `skills-${++state.serial}`;
+      state.pending = { kind: 'outcome', key };
+      return [
+        {
+          key,
+          binding: 'skills',
+          member: 0,
+          method: 'outcome',
+          resources: {},
+          input: reply.reference,
+        },
+      ];
+    }
     return [];
   }
-  const result = reply.receipt.outcome.value as SkillLibraryChangeResult;
+  return settledResult(
+    state,
+    props,
+    reply.receipt.outcome.value as SkillLibraryChangeResult,
+    reply.receipt.cleanup,
+  );
+}
+function settledResult(
+  state: State,
+  props: SkillLibraryProps,
+  result: SkillLibraryChangeResult,
+  cleanup: OperationCleanup,
+): Action[] {
   state.current = null;
+  state.cleanupUnconfirmed = cleanup.kind !== 'confirmed';
   if (result.kind === 'applied') {
     state.document = null;
     const actions = state.open && props.open ? list(state) : [];
-    state.notice = reply.receipt.cleanup.kind === 'confirmed' ? null : 'skillsCleanupUnknown';
+    state.notice = null;
     return actions;
   }
   state.notice = result.kind === 'changed' ? 'skillsChanged' : rejection(result.reason);
@@ -373,6 +408,9 @@ function frame<N extends Node>(
       ...(state.notice
         ? [ui.text('skills-notice', text[state.notice], 13, props.theme.muted)]
         : []),
+      ...(state.cleanupUnconfirmed
+        ? [ui.text('skills-cleanup', text.skillsCleanupUnknown, 13, props.theme.muted)]
+        : []),
       presentation.reading(
         'skills-reading',
         {
@@ -469,6 +507,7 @@ export function skillLibrary<N extends Node>(
         document: null,
         pending: null,
         notice: null,
+        cleanupUnconfirmed: false,
         preview: null,
         current: null,
         active: 0,
@@ -482,7 +521,11 @@ export function skillLibrary<N extends Node>(
       if (!props.open) {
         state.open = false;
         state.preview = null;
-        if (state.pending?.kind !== 'mutate' && state.pending?.kind !== 'receipt')
+        if (
+          state.pending?.kind !== 'mutate' &&
+          state.pending?.kind !== 'receipt' &&
+          state.pending?.kind !== 'outcome'
+        )
           state.pending = null;
       } else if (!state.open) {
         state.open = true;
@@ -502,7 +545,9 @@ export function skillLibrary<N extends Node>(
         !(
           input.kind === 'action' &&
           input.key === state.pending?.key &&
-          (state.pending.kind === 'mutate' || state.pending.kind === 'receipt')
+          (state.pending.kind === 'mutate' ||
+            state.pending.kind === 'receipt' ||
+            state.pending.kind === 'outcome')
         )
       )
         return frame(presentation, state, props);
@@ -525,8 +570,26 @@ export function skillLibrary<N extends Node>(
           } else state.notice = 'skillsUnknown';
         } else if (request.kind === 'receipt') {
           if (result.status === 'succeeded')
-            actions = settle(state, props, result.value as OperationReply);
+            actions = settle(state, props, result.value as OperationReply, true);
           else state.notice = 'skillsUnknown';
+        } else if (request.kind === 'outcome') {
+          if (result.status === 'succeeded') {
+            const outcome = result.value as SkillLibraryOutcome;
+            if (sameValue(state.current?.reference, outcome.original.reference)) {
+              actions = settle(state, props, outcome.original);
+              if (
+                state.current &&
+                outcome.published &&
+                outcome.original.receipt.kind === 'recorded'
+              )
+                actions = settledResult(
+                  state,
+                  props,
+                  outcome.published,
+                  outcome.original.receipt.cleanup,
+                );
+            }
+          } else state.notice = 'skillsUnknown';
         } else if (result.status !== 'succeeded') state.notice = 'skillsFailed';
         else if (request.kind === 'preview') {
           const preview = result.value as SkillLibraryPreview;
@@ -573,7 +636,11 @@ export function skillLibrary<N extends Node>(
           if (state.preview) state.preview = null;
           else {
             state.open = false;
-            if (state.pending?.kind !== 'mutate' && state.pending?.kind !== 'receipt')
+            if (
+              state.pending?.kind !== 'mutate' &&
+              state.pending?.kind !== 'receipt' &&
+              state.pending?.kind !== 'outcome'
+            )
               state.pending = null;
             events.push({ name: 'closed', value: {} });
           }
@@ -584,6 +651,7 @@ export function skillLibrary<N extends Node>(
             const key = `skills-${++state.serial}`;
             state.pending = { kind: 'mutate', key };
             state.current = { reference: null };
+            state.cleanupUnconfirmed = false;
             actions = [
               {
                 key,
