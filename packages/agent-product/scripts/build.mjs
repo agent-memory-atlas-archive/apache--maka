@@ -381,6 +381,7 @@ for (const [name, spec] of Object.entries(specifications)) {
     for (const target of ['desktop', 'tui'])
       entries[target].imports.reading = one(sdk.contracts.readingArea);
     Object.assign(entries.tui.imports, {
+      formatter: one(sdk.contracts.markdownText),
       input: one(sdk.contracts.textInput),
       reader: one(sdk.contracts.textReader),
       agent: one(sdk.contracts.agent),
@@ -489,6 +490,11 @@ const mechanical = {
     entries: {
       desktop: native('maka.ui.source', { SourceText: required(sdk.contracts.sourceText) }),
       tui: native('maka.ui.source', { SourceText: required(sdk.contracts.sourceText) }),
+    },
+  },
+  'markdown-text': {
+    entries: {
+      tui: native('maka.text.markdown.tui', { MarkdownText: required(sdk.contracts.markdownText) }),
     },
   },
   markdown: {

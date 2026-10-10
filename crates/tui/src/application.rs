@@ -29,6 +29,7 @@ mod focus;
 mod geometry;
 mod input;
 mod layout;
+mod markdown_text;
 mod native;
 mod paint;
 mod pointer;

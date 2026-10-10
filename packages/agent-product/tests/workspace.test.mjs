@@ -6693,6 +6693,12 @@ for (const target of ['desktop', 'tui']) {
     assert.equal(client.output.frame.view.open, false);
     open(client);
     assert.equal(client.output.frame.view.open, true);
+    if (target === 'tui') {
+      const timeline = modelSlots(modalBackground).find((node) => node.binding === 'timeline');
+      assert.equal(timeline.props.copyRequest, null);
+      assert.ok(client.state.copyRequest > 0);
+      timeline.props.copyRequest = client.state.copyRequest;
+    }
     assert.deepEqual(client.output.frame.view.background, modalBackground);
     assert.deepEqual(client.output.subscriptions, watch);
     assert.equal(
@@ -13330,4 +13336,299 @@ test('TUI browse waits for native find cleanup and rejects a retained request in
   props = { ...props, loading: true };
   out = timeline.update(structuredClone(out.frame.state), props, {});
   assert.equal(out.frame.state.browse, null);
+});
+
+test('TUI whole-message copy reads the fixed original source across UTF-8 pages and publishes only physical copy declarations', async () => {
+  const mod = await import(pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js')));
+  mod.activate({ locale: 'en' });
+  const { component: timeline } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/timeline/tui.js'))
+  );
+  const id = uuid(971),
+    source = '**完整** café 😀\n\n' + 'outside preview '.repeat(1500);
+  const client = new Client(mod.component).start({
+    through: 100,
+    chunks: [
+      historyChunk('preview only', {
+        sequence: 40,
+        messageId: id,
+        totalBytes: Buffer.byteLength(source),
+      }),
+    ],
+  });
+  client.raw('palette-open');
+  let props = client.timeline,
+    out = timeline.mount(props, {});
+  const emit = () => {
+    for (const e of out.events.filter((e) => e.name === 'messageCopy'))
+      client.input({ kind: 'component', child: 'timeline', name: e.name, event: e.value });
+  };
+  const input = (value) => {
+    out = timeline.event(structuredClone(out.frame.state), value, props, {});
+    emit();
+  };
+  const commands = () =>
+    modelSlots(client.output.frame.view).find((n) => n.key === 'command-palette').props.commands;
+  input({
+    kind: 'component',
+    child: 'reading',
+    name: 'observed',
+    event: { selectedChildKey: 'message-' + id },
+  });
+  let pending = out.actions[0];
+  assert.deepEqual(pending.input, {
+    sessionId: session.id,
+    through: 100,
+    source: { kind: 'sequence', sequence: 40 },
+    field: 'body',
+    position: { kind: 'start' },
+  });
+  assert.equal(commands().find((c) => c.id === 'copy-source').disabled, true);
+  const respond = (text, offset) =>
+    input({
+      kind: 'action',
+      key: pending.key,
+      event: {
+        status: 'succeeded',
+        value: {
+          kind: 'ready',
+          through: 100,
+          source: {
+            sequence: 40,
+            field: 'body',
+            fields: ['body'],
+            path: null,
+            format: 'text',
+            offset,
+            totalBytes: Buffer.byteLength(source),
+            text,
+          },
+        },
+      },
+    });
+  const first = '**完整** café 😀\n\n';
+  respond(first, 0);
+  pending = out.actions[0];
+  assert.deepEqual(pending.input.position, { kind: 'after', offset: Buffer.byteLength(first) });
+  respond(source.slice(first.length), Buffer.byteLength(first));
+  assert.equal(commands().find((c) => c.id === 'copy-source').copyText, source);
+  assert.equal(commands().find((c) => c.id === 'copy-message').disabled, true);
+  const format = out.actions[0];
+  assert.equal(format.binding, 'formatter');
+  assert.deepEqual(format.input, { source });
+  const readable = '完整 café 😀\n\n' + 'outside preview '.repeat(1500);
+  input({
+    kind: 'action',
+    key: format.key,
+    event: { status: 'succeeded', value: { kind: 'ready', text: readable } },
+  });
+  assert.equal(commands().find((c) => c.id === 'copy-message').copyText, readable);
+  assert.equal(client.timeline.messages[0].text, 'preview only');
+  assert.deepEqual(out.actions, []);
+  assert.equal(out.events[0].name, 'messageCopy');
+  const previous = structuredClone(client.state.messageCopy);
+  client.input({
+    kind: 'component',
+    child: 'command-palette',
+    name: 'invoked',
+    event: { id: 'copy-message' },
+  });
+  assert.equal(client.state.dialog, null);
+  assert.equal(client.state.messageCopy, null);
+  client.raw('palette-open');
+  client.input({ kind: 'component', child: 'timeline', name: 'messageCopy', event: previous });
+  assert.equal(client.state.messageCopy, null, 'old response cannot supply a new physical command');
+  props = { ...props, copyRequest: null };
+  out = timeline.update(structuredClone(out.frame.state), props, {});
+  input({
+    kind: 'action',
+    key: format.key,
+    event: { status: 'succeeded', value: { kind: 'ready', text: 'late' } },
+  });
+  assert.equal(out.frame.state.copy, null);
+  assert.deepEqual(out.actions, []);
+});
+
+test('TUI full copy rejects inconsistent source pages, preserves raw on format failure, and bounds oversized/streaming reads', async () => {
+  const mod = await import(pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js')));
+  const { component: timeline } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/timeline/tui.js'))
+  );
+  const id = uuid(972);
+  const client = new Client(mod.component).start({
+    through: 100,
+    chunks: [historyChunk('preview', { sequence: 40, messageId: id })],
+  });
+  const props = { ...client.timeline, copyRequest: 1 };
+  const start = (p = props) =>
+    timeline.event(
+      timeline.mount(p, {}).frame.state,
+      {
+        kind: 'component',
+        child: 'reading',
+        name: 'observed',
+        event: { selectedChildKey: 'message-' + id },
+      },
+      p,
+      {},
+    );
+  const answer = (out, value, p = props) =>
+    timeline.event(
+      structuredClone(out.frame.state),
+      { kind: 'action', key: out.actions[0].key, event: { status: 'succeeded', value } },
+      p,
+      {},
+    );
+  const page = {
+    kind: 'ready',
+    through: 100,
+    source: {
+      sequence: 40,
+      field: 'body',
+      fields: ['body'],
+      path: null,
+      format: 'text',
+      offset: 0,
+      totalBytes: 6,
+      text: '**a**b',
+    },
+  };
+  for (const value of [
+    { ...page, through: 101 },
+    ...[
+      { sequence: 41 },
+      { field: 'thinking' },
+      { path: ['x'] },
+      { fields: [] },
+      { offset: 1 },
+      { totalBytes: 5 },
+      { text: '' },
+    ].map((change) => ({ ...page, source: { ...page.source, ...change } })),
+  ]) {
+    const out = answer(start(), value);
+    assert.equal(out.frame.state.copy.status, 'unavailable');
+    assert.equal(out.frame.state.copy.raw, null);
+    assert.deepEqual(out.actions, []);
+  }
+  let out = answer(start(), { ...page, source: { ...page.source, totalBytes: 65537 } });
+  assert.equal(out.frame.state.copy.status, 'too_large');
+  assert.deepEqual(out.actions, []);
+  for (const [text, expected] of [
+    ['x'.repeat(65536), 'loading'],
+    ['\0'.repeat(21846), 'too_large'],
+  ]) {
+    out = answer(start(), {
+      ...page,
+      source: { ...page.source, text, totalBytes: Buffer.byteLength(text) },
+    });
+    assert.equal(out.frame.state.copy.status, expected);
+    assert.ok(Buffer.byteLength(JSON.stringify([out.frame.state, props])) < 1024 * 1024);
+  }
+  for (const change of [{ totalBytes: 7 }, { format: 'json' }]) {
+    out = answer(start(), { ...page, source: { ...page.source, text: '**a' } });
+    out = answer(out, { ...page, source: { ...page.source, offset: 3, text: '**b', ...change } });
+    assert.equal(out.frame.state.copy.status, 'unavailable');
+    assert.deepEqual(out.actions, []);
+  }
+  out = answer(start(), page);
+  out = answer(out, { kind: 'too_large' });
+  assert.equal(out.frame.state.copy.raw, '**a**b');
+  assert.equal(out.frame.state.copy.rendered, null);
+  const streaming = { ...props, messages: [{ ...props.messages[0], source: null }] };
+  out = start(streaming);
+  assert.equal(out.frame.state.copy.status, 'streaming');
+  assert.deepEqual(out.actions, []);
+  out = start();
+  const stale = out.actions[0];
+  const replacement = {
+    ...props,
+    toolContext: { ...props.toolContext, through: 101 },
+    landing: { sequence: props.landing.sequence + 1, edge: 'end' },
+  };
+  out = timeline.update(structuredClone(out.frame.state), replacement, {});
+  out = timeline.event(
+    structuredClone(out.frame.state),
+    { kind: 'action', key: stale.key, event: { status: 'succeeded', value: page } },
+    replacement,
+    {},
+  );
+  assert.equal(out.frame.state.copy, null, 'new landing waits for original native visibility');
+  assert.deepEqual(out.actions, []);
+});
+
+test('TUI copy names and reads the canonical tool result or arguments', async () => {
+  const mod = await import(pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js')));
+  const { component: timeline } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/timeline/tui.js'))
+  );
+  const detail = await detailClient('tui', 'readText', false, session.id);
+  for (const kind of ['result', 'arguments']) {
+    const tool = { ...detail.props.tool, ...(kind === 'arguments' ? { result: null } : {}) };
+    const id = tool.toolUseId;
+    const client = new Client(mod.component).start({
+      through: 100,
+      chunks: [
+        historyChunk('preview', {
+          sequence: 40,
+          messageId: uuid(973),
+          role: 'tool_call',
+          tool,
+        }),
+      ],
+    });
+    client.raw('palette-open');
+    const props = client.timeline;
+    let out = timeline.event(
+      timeline.mount(props, {}).frame.state,
+      {
+        kind: 'component',
+        child: 'reading',
+        name: 'observed',
+        event: { selectedChildKey: 'message-' + id },
+      },
+      props,
+      {},
+    );
+    const action = out.actions[0];
+    assert.equal(action.input.field, kind);
+    assert.equal(action.input.source.sequence, kind === 'result' ? tool.result.sequence : 40);
+    const text = '{"完整":true}';
+    out = timeline.event(
+      structuredClone(out.frame.state),
+      {
+        kind: 'action',
+        key: action.key,
+        event: {
+          status: 'succeeded',
+          value: {
+            kind: 'ready',
+            through: 100,
+            source: {
+              sequence: action.input.source.sequence,
+              field: kind,
+              fields: [kind],
+              path: null,
+              format: 'json',
+              offset: 0,
+              totalBytes: Buffer.byteLength(text),
+              text,
+            },
+          },
+        },
+      },
+      props,
+      {},
+    );
+    for (const e of out.events.filter((e) => e.name === 'messageCopy'))
+      client.input({ kind: 'component', child: 'timeline', name: e.name, event: e.value });
+    const commands = modelSlots(client.output.frame.view).find((n) => n.key === 'command-palette')
+      .props.commands;
+    assert.equal(commands.find((c) => c.id === 'copy-message').copyText, text);
+    assert.equal(commands.find((c) => c.id === 'copy-source').copyText, text);
+    assert.equal(
+      commands.find((c) => c.id === 'copy-message').label,
+      kind === 'result' ? 'Copy tool result' : 'Copy tool arguments',
+    );
+    assert.deepEqual(out.actions, []);
+  }
 });

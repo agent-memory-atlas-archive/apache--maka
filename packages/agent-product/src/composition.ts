@@ -56,6 +56,7 @@ export const packageNames = [
   'tool-details',
   'diff',
   'markdown',
+  'markdown-text',
   'source-text',
   'terminal-view',
   'terminal-panel',
@@ -508,6 +509,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
               input: [local('input', 'TextInput')],
               reader: [local('reader', 'Reader')],
               agent: [remote('agent', 'agent')],
+              formatter: [local('markdown-text', 'MarkdownText')],
             }
           : {}),
       },
@@ -523,6 +525,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       },
     ),
     markdown: node('markdown'),
+    ...(configuration.presentation === 'tui' ? { 'markdown-text': node('markdown-text') } : {}),
     label: node('label'),
     'tool-details': node(
       'tool-details',

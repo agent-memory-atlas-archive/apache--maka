@@ -19,6 +19,8 @@
 
 #[path = "product/drafts.rs"]
 mod drafts;
+#[path = "product/message_copy.rs"]
+mod message_copy;
 #[path = "product/message_details.rs"]
 mod message_details;
 #[path = "product/studio.rs"]
@@ -584,6 +586,7 @@ fn packaged_product(case: ProductCase) {
         "rows",
         "source-text",
         "markdown",
+        "markdown-text",
         "terminal-view",
         "terminal-panel",
         "appearance",
@@ -2336,6 +2339,7 @@ process.stdout.write(output.outputFiles[0].text);
     if fail_labels_initialization || file_permissions || image || form {
         if matches!(case, ProductCase::FilePermissions) {
             message_details::run(&mut presenter, &runtime, &fixture, &session_id, &capture);
+            message_copy::run(&mut presenter, &runtime, &fixture, &session_id, &capture);
         }
         if fail_labels_initialization {
             // Saved notice, retained old fields, an actual different selected

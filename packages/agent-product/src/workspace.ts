@@ -77,6 +77,7 @@ import type {
   SelectedModel,
   TimelineProps,
   TimelineFileContext,
+  MessageCopyObservation,
 } from './contracts.js';
 import { sameValue } from './value.js';
 import { copy, type Copy } from './locale.js';
@@ -242,6 +243,8 @@ export interface State {
   landing: { sequence: number; edge: 'start' | 'end' };
   tailReceipt: { landing: number; readingRevision: number } | null;
   fileContext: TimelineFileContext | null;
+  copyRequest: number | null;
+  messageCopy: MessageCopyObservation | null;
   followAttempt: { through: number; landing: number; readingRevision: number } | null;
   parts: DisplayPart[];
   run: AgentRun | null;
@@ -667,6 +670,8 @@ function executionPending(state: State) {
 type RootCommand =
   | 'browse'
   | 'copy-file-path'
+  | 'copy-message'
+  | 'copy-source'
   | 'search-open'
   | 'help-open'
   | 'interaction-open'
@@ -748,6 +753,20 @@ function rootCommands(
     !state.searchOpen
       ? file.path
       : null;
+  const copied = state.messageCopy;
+  const readyCopy =
+    copied &&
+    state.dialog === 'palette' &&
+    copied.request === state.copyRequest &&
+    copied.sessionId === state.selected?.id &&
+    copied.through === state.window?.page.through &&
+    copied.landing === state.landing.sequence &&
+    !state.loading &&
+    !state.source &&
+    !state.image &&
+    !state.searchOpen
+      ? copied
+      : null;
   const commands: (PaletteCommand & { kind: RootCommand })[] = [
     ...(target === 'tui'
       ? [
@@ -771,6 +790,40 @@ function rootCommands(
             hint: 'Ctrl F',
             disabled: !route || !state.selected || state.loading || !!state.source || !!state.image,
           },
+          ...(['copy-message', 'copy-source'] as const).map((kind) => {
+            const value = kind === 'copy-message' ? readyCopy?.message : readyCopy?.source;
+            const result = readyCopy?.field === 'result',
+              args = readyCopy?.field === 'arguments';
+            return {
+              kind,
+              id: kind,
+              label:
+                kind === 'copy-message'
+                  ? result
+                    ? text.copyToolResult
+                    : args
+                      ? text.copyToolArguments
+                      : text.copyMessage
+                  : result
+                    ? text.copyToolResultSource
+                    : args
+                      ? text.copyToolArgumentsSource
+                      : text.copySource,
+              hint: value
+                ? ''
+                : readyCopy?.status === 'loading'
+                  ? text.copyLoading
+                  : readyCopy?.status === 'too_large'
+                    ? text.copyTooLarge
+                    : readyCopy?.status === 'empty'
+                      ? text.copyEmpty
+                      : readyCopy?.status === 'streaming'
+                        ? text.copyStreaming
+                        : text.copyUnavailable,
+              disabled: !route || !value,
+              ...(value ? { copyText: value } : {}),
+            };
+          }),
           {
             kind: 'copy-file-path' as const,
             id: 'copy-file-path',
@@ -1808,6 +1861,10 @@ function frame<N extends Node>(
   actions: Action[] = [],
 ) {
   const target = presentation.target;
+  if (state.dialog !== 'palette') {
+    state.copyRequest = null;
+    state.messageCopy = null;
+  }
   retainSelectedDraft(state.drafts, state.selected);
   if (
     !Object.values(state.pending).some(
@@ -1931,6 +1988,7 @@ function frame<N extends Node>(
       locale,
       messages: timelineMessages,
       timings: turnTimings(state, timelineMessages),
+      copyRequest: target === 'tui' && !state.image ? state.copyRequest : null,
       browse: state.browse,
       markReadEnabled:
         !!state.selected?.hasUnread &&
@@ -2009,6 +2067,7 @@ function frame<N extends Node>(
       source: 'source',
       toolSource: 'tool-source',
       fileContext: 'fileContext',
+      messageCopy: 'messageCopy',
       viewImage: 'view-image',
       sourceFirst: 'source-first',
       sourcePrevious: 'source-previous',
@@ -2792,6 +2851,8 @@ export function workspace<N extends Node>(
         landing: { sequence: 0, edge: 'end' },
         tailReceipt: null,
         fileContext: null,
+        copyRequest: null,
+        messageCopy: null,
         followAttempt: null,
         parts: [],
         run: null,
@@ -3141,6 +3202,17 @@ export function workspace<N extends Node>(
                 { sessionId: state.selected.id, expectedRevision: event.revision, edit },
               );
           }
+        } else if (input.child === 'timeline' && input.name === 'messageCopy') {
+          const copied = input.event as MessageCopyObservation | null;
+          if (
+            !copied ||
+            (state.dialog === 'palette' &&
+              copied.request === state.copyRequest &&
+              copied.sessionId === state.selected?.id &&
+              copied.through === state.window?.page.through &&
+              copied.landing === state.landing.sequence)
+          )
+            state.messageCopy = copied;
         } else if (input.child === 'timeline' && input.name === 'fileContext') {
           const context = input.event as TimelineFileContext | null;
           if (
@@ -3559,9 +3631,11 @@ export function workspace<N extends Node>(
           input.key === 'palette-open' &&
           conversationRoute(state) &&
           state.dialog === null
-        )
+        ) {
           state.dialog = 'palette';
-        else if (input.key === 'help-open') {
+          state.copyRequest = ++state.serial;
+          state.messageCopy = null;
+        } else if (input.key === 'help-open') {
           if (state.dialog === null) rootCommand(state, actions, locale, 'help-open', target);
         } else if (input.key === 'workspace-dialog') closeDialog(state);
         else if (input.key === 'navigation-back' && state.dialog === null) {

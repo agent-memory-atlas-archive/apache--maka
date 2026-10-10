@@ -79,3 +79,41 @@ pub fn markdown_contract() -> Contract {
         },
     }
 }
+
+/// Bounded source-to-readable-text conversion using the presenter's Markdown semantics.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MarkdownTextInput {
+    #[schemars(length(max = 65536))]
+    pub source: String,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MarkdownTextResult {
+    Ready {
+        #[schemars(length(max = 65536))]
+        text: String,
+    },
+    TooLarge,
+}
+pub fn text_contract() -> Contract {
+    use maka_plugin_core::contract::{Method, MethodMode};
+    Contract {
+        name: "maka.text.Markdown".into(),
+        version: 1,
+        transport: Transport::Local,
+        interface: Interface::Service {
+            methods: BTreeMap::from([(
+                "plain".into(),
+                Method {
+                    mode: MethodMode::Query,
+                    input: serde_json::to_value(schemars::schema_for!(MarkdownTextInput))
+                        .expect("Markdown text input"),
+                    output: serde_json::to_value(schemars::schema_for!(MarkdownTextResult))
+                        .expect("Markdown text output"),
+                    resources: BTreeMap::new(),
+                },
+            )]),
+        },
+    }
+}

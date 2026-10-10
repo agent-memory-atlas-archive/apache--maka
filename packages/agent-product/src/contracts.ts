@@ -110,6 +110,16 @@ export interface TimelineFileContext {
   landing: number;
   path: string | null;
 }
+export interface MessageCopyObservation {
+  request: number;
+  sessionId: string;
+  through: number;
+  landing: number;
+  field: SourceField;
+  status: 'loading' | 'ready' | 'too_large' | 'empty' | 'unavailable' | 'streaming';
+  source: string | null;
+  message: string | null;
+}
 export interface PaletteCommand {
   id: string;
   label: string;
@@ -197,6 +207,7 @@ export interface ToolDetailsProps {
   focusOnPointer: boolean;
 }
 export interface TimelineProps {
+  copyRequest: number | null;
   browse: number | null;
   timings: (HistoryTurnTiming & { turnId: string; afterMessageId: string })[];
   markReadEnabled: boolean;
@@ -460,6 +471,7 @@ export const toolDetailsContract = component(
 export const timelineContract = component(
   'maka.agent.Timeline',
   object({
+    copyRequest: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
     browse: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
     timings: {
       type: 'array',
@@ -554,6 +566,21 @@ export const timelineContract = component(
     sourceField: withDefs(object({ field: { $ref: '#/$defs/SourceField' } })),
     searchClosed: object({}),
     browseClosed: object({ request: { type: 'integer', minimum: 1 } }),
+    messageCopy: withDefs({
+      anyOf: [
+        object({
+          request: { type: 'integer', minimum: 1 },
+          sessionId: string,
+          through: { type: 'integer', minimum: 1 },
+          landing: { type: 'integer', minimum: 0 },
+          field: { $ref: '#/$defs/SourceField' },
+          status: { enum: ['loading', 'ready', 'too_large', 'empty', 'unavailable', 'streaming'] },
+          source: { anyOf: [{ type: 'string', maxLength: 65536 }, { type: 'null' }] },
+          message: { anyOf: [{ type: 'string', maxLength: 65536 }, { type: 'null' }] },
+        }),
+        { type: 'null' },
+      ],
+    }),
     fileContext: {
       anyOf: [
         object({

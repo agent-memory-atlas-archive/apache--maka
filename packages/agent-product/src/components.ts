@@ -49,6 +49,12 @@ import {
   searchCount,
   type ConversationSearch,
 } from './conversation-search.js';
+import {
+  syncMessageCopy,
+  messageCopyEvent,
+  messageCopyObservation,
+  type MessageCopy,
+} from './message-copy.js';
 import { copy } from './locale.js';
 import { toolCards } from './tool-cards.js';
 import { toolPresentation } from './tool-details.js';
@@ -110,6 +116,7 @@ interface Draft extends Revision {
   entries: DraftEntry[];
 }
 interface Reading extends Revision {
+  copy: MessageCopy | null;
   browse: { request: number; id: string } | null;
   search: ConversationSearch | null;
   expanded: string[];
@@ -518,7 +525,11 @@ export function components<N extends Node>(
     state.browse = { request: props.browse, id: row.message.id };
     focusMessage(state, row.message.id);
   };
-  const timelineFrame = (state: Reading, props: TimelineProps) => {
+  const timelineFrame = (
+    state: Reading,
+    props: TimelineProps,
+    previousCopy: ReturnType<typeof messageCopyObservation> = null,
+  ) => {
     const ui = presentation.paint(props.theme),
       text = copy(props.locale);
     const search = state.search?.closing ? null : state.search;
@@ -1077,6 +1088,11 @@ export function components<N extends Node>(
       state.fileContext = context;
       out.events.push({ name: 'fileContext', value: context });
     }
+    syncMessageCopy(state, props, target === 'tui' ? (row?.message ?? null) : null, out.actions);
+    const copied = messageCopyObservation(state);
+    if (!sameValue(previousCopy, copied)) {
+      out.events.push({ name: 'messageCopy', value: copied });
+    }
     return out;
   };
   return {
@@ -1218,6 +1234,7 @@ export function components<N extends Node>(
     timeline: {
       mount: (props) => {
         const initial: Reading = {
+          copy: null,
           revision: 0,
           browse: null,
           search: null,
@@ -1259,7 +1276,7 @@ export function components<N extends Node>(
           observation: state.landing.sequence === props.landing.sequence ? state.observation : null,
         };
         syncSearch(next, target === 'tui' ? props.search : null);
-        return timelineFrame(next, props);
+        return timelineFrame(next, props, messageCopyObservation(state));
       },
       event(state, input, props) {
         const next = {
@@ -1324,16 +1341,21 @@ export function components<N extends Node>(
           }
           if (input.key === 'browse-close') {
             const request = next.browse.request;
-            const out = timelineFrame(next, props);
+            const out = timelineFrame(next, props, messageCopyObservation(state));
             out.events.push({ name: 'browseClosed', value: { request } });
             out.decision = { preventDefault: true, stopPropagation: true };
             return out;
           }
         }
         const actions: Action[] = [];
+        if (messageCopyEvent(next, input, actions)) {
+          const out = timelineFrame(next, props, messageCopyObservation(state));
+          out.actions.push(...actions.filter((action) => action.key === next.copy?.pending?.key));
+          return out;
+        }
         const handled = searchEvent(next, input, props, actions);
         if (handled) {
-          const out = timelineFrame(next, props);
+          const out = timelineFrame(next, props, messageCopyObservation(state));
           out.actions.push(...actions);
           if (handled === 'closed') out.events.push({ name: 'searchClosed', value: {} });
           if (input.kind === 'raw') out.decision = { preventDefault: true, stopPropagation: true };
@@ -1361,7 +1383,7 @@ export function components<N extends Node>(
               ? next.expanded.filter((id) => id !== tool.id)
               : [...next.expanded, tool.id];
         }
-        const out = timelineFrame(next, props);
+        const out = timelineFrame(next, props, messageCopyObservation(state));
         if (
           !props.source &&
           !props.browse &&

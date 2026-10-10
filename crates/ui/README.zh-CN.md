@@ -291,7 +291,13 @@ renderer 工作，内核不解释布局，也不允许 guest 决定配额。
 
 `maka.ui.Markdown` 是本地只读组件契约；source、可选择/禁用状态及排版颜色均显式提供。
 链接事件进入原同步组件批次，已提交的输入决定控制原生默认行为。图片地址不授予资源
-读取权。Desktop 提供实现；其他呈现端声明自己的实现或显式组合替代组件。
+读取权。Desktop 和 TUI 提供原生实现；其他呈现端声明自己的实现或显式组合替代组件。
+
+`maka.text.Markdown` 是无副作用的本地服务。`plain({source})` 返回
+`ready {text}` 或 `too_large`；TUI 内置 `maka.text.markdown.tui` 复用原
+prepared Markdown 文档及其链接／代码语义。输入与输出均限制为 64 KiB UTF-8，
+原解析器容量错误只使该次 query 失败。不新建组件、选区、资源授权、剪贴板效果或
+持久文档 owner；当前普通 Desktop 组合没有此 formatter 实现。
 
 `file::file_picker_contract()` 提供内置 `maka.ui.FilePicker`，Desktop 与 TUI
 共享公开契约。props 只有样式与文案，没有路径或程序化打开命令。实际原生选择

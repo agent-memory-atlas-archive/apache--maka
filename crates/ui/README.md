@@ -443,8 +443,16 @@ interprets layout nor lets guest code choose its budget.
 disabled state and complete typography/color inputs are explicit. Link events
 participate in the original synchronous component batch; their committed input
 decision controls native defaults. Literal image URLs grant no resource access.
-Desktop provides this implementation; other presentations declare their own
-implementation or compose an explicit alternative.
+Desktop and TUI provide native implementations; other presentations declare
+their own implementation or compose an explicit alternative.
+
+`maka.text.Markdown` is an effect-free local service. Its `plain({source})`
+query returns `ready {text}` or `too_large`. The bundled TUI implementation
+`maka.text.markdown.tui` reuses the original prepared Markdown document, including
+its link and code semantics. Both input and result are limited to 64 KiB UTF-8;
+original parser capacity errors fail only this query. It creates no component,
+selection, resource grant, clipboard effect or retained document owner. Desktop
+has no formatter implementation in the current ordinary composition.
 
 `file::file_picker_contract()` supplies a bundled `maka.ui.FilePicker` component
 with the same public contract on Desktop and TUI. Props contain appearance and

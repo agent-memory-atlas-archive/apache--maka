@@ -171,7 +171,9 @@ export type RuntimeProtocol =
   | HostObservation
   | OperationObservation
   | OperationReply
-  | ResourceMetadata;
+  | ResourceMetadata
+  | MarkdownTextInput
+  | MarkdownTextResult;
 export type ExecutionLocation = 'host' | 'ui';
 export type PresentationTarget = 'tui' | 'desktop';
 /**
@@ -2476,6 +2478,14 @@ export type Identity2 =
  * an unrevoked Host record and the issuing principal's current authorization.
  */
 export type Id = string;
+export type MarkdownTextResult =
+  | {
+      text: string;
+      kind: 'ready';
+    }
+  | {
+      kind: 'too_large';
+    };
 
 /**
  * Durable deployment input. Plans are derived and never persisted as overrides.
@@ -5112,4 +5122,10 @@ export interface ResourceMetadata {
   type: ResourceType;
   bytes: number;
   metadata: unknown;
+}
+/**
+ * Bounded source-to-readable-text conversion using the presenter's Markdown semantics.
+ */
+export interface MarkdownTextInput {
+  source: string;
 }

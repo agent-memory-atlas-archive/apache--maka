@@ -107,6 +107,7 @@ pub fn registry() -> NativeRegistry<dyn Widget> {
     super::input::register(&mut registry);
     super::file::register(&mut registry);
     super::source::register(&mut registry);
+    super::markdown_text::register(&mut registry);
     super::reading::register(&mut registry);
     registry
 }

@@ -196,6 +196,67 @@ export const contracts = {
       captures: {},
     },
   },
+  markdownText: {
+    name: 'maka.text.Markdown',
+    version: 1,
+    transport: 'local',
+    interface: {
+      kind: 'service',
+      methods: {
+        plain: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'MarkdownTextInput',
+            description:
+              "Bounded source-to-readable-text conversion using the presenter's Markdown semantics.",
+            type: 'object',
+            properties: {
+              source: {
+                type: 'string',
+                maxLength: 65536,
+              },
+            },
+            additionalProperties: false,
+            required: ['source'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'MarkdownTextResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  text: {
+                    type: 'string',
+                    maxLength: 65536,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'ready',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'text'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'too_large',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+          },
+          resources: {},
+        },
+      },
+    },
+  },
   diff: {
     name: 'maka.ui.Diff',
     version: 1,

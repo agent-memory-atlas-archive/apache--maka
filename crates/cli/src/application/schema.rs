@@ -217,6 +217,8 @@ pub(super) fn catalog() -> Value {
         root::<maka_plugin_core::operation::OperationObservation>(&mut g),
         root::<maka_plugin_core::operation::OperationReply>(&mut g),
         root::<ResourceMetadata>(&mut g),
+        root::<markdown::MarkdownTextInput>(&mut g),
+        root::<markdown::MarkdownTextResult>(&mut g),
     ];
     // The union makes actual ABI types reachable to the generator. It is not
     // an additional message format or admission contract.
@@ -231,6 +233,7 @@ pub(super) fn catalog() -> Value {
         },
         "contracts": {
             "markdown": markdown::markdown_contract(),
+            "markdownText": markdown::text_contract(),
             "diff": maka_ui::diff::diff_contract(),
             "image": maka_ui::image::image_contract(),
             "filePicker": maka_ui::file::file_picker_contract(),
