@@ -136,10 +136,11 @@ function frame<N extends Node>(
               theme,
               locale,
               catalogEpoch: state.catalogEpoch,
+              openRequest: null,
               selection: state.selection,
               busy: false,
             },
-            { selected: 'model-selected' },
+            { selected: 'model-selected', connections: 'model-connections' },
           ),
         ]),
         page('deployment', [
@@ -195,6 +196,7 @@ export function studio<N extends Node>(
         if (event.child === 'connections' && event.name === 'changed') state.catalogEpoch++;
         if (event.child === 'models' && event.name === 'selected')
           state.selection = event.event as SettingsModelChoice;
+        if (event.child === 'models' && event.name === 'connections') state.route = 'connections';
       }
       return frame(presentation, locale, state, values);
     },

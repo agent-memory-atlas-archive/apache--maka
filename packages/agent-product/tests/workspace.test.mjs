@@ -1087,6 +1087,7 @@ const modelProps = {
   selection: null,
   busy: true,
   catalogEpoch: 0,
+  openRequest: null,
 };
 const modelGuest = await import(new URL('dist/packages/models/tui.js', modelRoot));
 modelGuest.activate();
@@ -1136,7 +1137,7 @@ test('TUI native model viewport holds the complete bounded page and retains late
       next: null,
     },
   });
-  assert.deepEqual(out.events, []);
+  assert.deepEqual(out.events, [{ name: 'setup', value: { catalogEpoch: 0, kind: 'choose' } }]);
   out = modelGuest.component.update(out.frame.state, { ...modelProps, busy: false }, {});
   assert.equal(out.events[0].value.choice.selection.modelId, 'model-0');
   const enabled = { ...modelProps, busy: false, selection: selectedModel(modelChoices[0]) };
@@ -2003,6 +2004,7 @@ test('desktop model trigger retains its full label for native measurement and ac
     }),
     busy: false,
     catalogEpoch: 0,
+    openRequest: null,
   });
   assert.equal(output.frame.view.trigger.label, label);
   assert.equal(output.frame.view.trigger.style.truncate, true);
@@ -2022,6 +2024,7 @@ test('changed settings discard late model query and old default before selecting
     }),
     busy: false,
     catalogEpoch: 0,
+    openRequest: null,
   });
   const old = form.find('models');
   form.update({ catalogEpoch: 1 });
@@ -2151,6 +2154,7 @@ test('a refreshed catalog never replaces a chosen nondefault model with an unrel
     selection: selectedModel(chosen),
     busy: false,
     catalogEpoch: 0,
+    openRequest: null,
   });
   form.query('models', {
     kind: 'ready',
@@ -2174,7 +2178,9 @@ test('a refreshed catalog never replaces a chosen nondefault model with an unrel
     defaultModel: { kind: 'ready', choice: other },
     next: null,
   });
-  assert.deepEqual(form.output.events, []);
+  assert.deepEqual(form.output.events, [
+    { name: 'setup', value: { catalogEpoch: 1, kind: 'choose' } },
+  ]);
   assert.equal(form.state.staleSelection, true);
   form.update({ busy: false });
   assert.deepEqual(form.output.events, []);
@@ -3193,7 +3199,10 @@ for (const target of ['desktop', 'tui']) {
       defaultModel: { kind: 'ready', choice: late },
       next: { query: '', connection: 0, model: 16 },
     });
-    assert.deepEqual(form.output.events, [{ name: 'selected', value: selectedModel(late) }]);
+    assert.deepEqual(form.output.events, [
+      { name: 'selected', value: selectedModel(late) },
+      { name: 'setup', value: { catalogEpoch: 0, kind: 'choose' } },
+    ]);
   });
   test(
     target +
@@ -3240,7 +3249,9 @@ for (const target of ['desktop', 'tui']) {
           next: null,
         },
       });
-      assert.deepEqual(form.output.events, []);
+      assert.deepEqual(form.output.events, [
+        { name: 'setup', value: { catalogEpoch: 0, kind: 'choose' } },
+      ]);
       assert.equal(form.state.staleSelection, false);
       assert.deepEqual(form.props.selection, selectedModel(defaultChoice));
       form.raw('toggle');
@@ -6100,6 +6111,13 @@ test('first creation captures a published directory and guards the complete prep
     before: null,
     after: null,
   });
+  client.input({
+    kind: 'component',
+    key: 'model',
+    child: 'models',
+    name: 'selected',
+    event: selectedModel(modelChoices[0]),
+  });
   client.raw('create');
   const query = client.find('directories');
   assert.deepEqual(query.input, { kind: 'roots' });
@@ -8233,6 +8251,7 @@ for (const target of ['tui', 'desktop']) {
     form.query('models', { ...modelPage(renewed), revision: 6 });
     assert.deepEqual(form.output.events, [
       { name: 'selected', value: selectedModel(renewed[5], 'high') },
+      { name: 'setup', value: { catalogEpoch: 1, kind: 'choose' } },
     ]);
     form.update({ selection: selectedModel(renewed[5], 'high'), catalogEpoch: 2 });
     form.query('models', {
@@ -8245,7 +8264,9 @@ for (const target of ['tui', 'desktop']) {
       ),
       revision: 7,
     });
-    assert.deepEqual(form.output.events, []);
+    assert.deepEqual(form.output.events, [
+      { name: 'setup', value: { catalogEpoch: 2, kind: 'choose' } },
+    ]);
     assert.equal(form.state.staleSelection, true);
     assert.equal(form.props.selection.thinkingLevel, 'high');
   });
@@ -13913,3 +13934,154 @@ test('TUI tool copy retains the complete card when a canonical text result is em
   assert.equal(c.commands.find((x) => x.id === 'copy-source').disabled, true);
   assert.equal(c.out.frame.state.copy.status, 'ready');
 });
+
+for (const target of ['tui', 'desktop']) {
+  test(`${target} missing-model setup uses catalog evidence and never creates an unusable session`, async () => {
+    const { component } = await import(new URL(`dist/packages/workspace/${target}.js`, modelRoot));
+    const client = new Client(component).start();
+    const original = structuredClone({
+      selected: client.state.selected,
+      window: client.state.window,
+    });
+    client.state.model = null;
+    const setup = (kind, catalogEpoch = client.state.catalogEpoch) =>
+      client.input({
+        kind: 'component',
+        key: 'setup',
+        child: 'models',
+        name: 'setup',
+        event: { kind, catalogEpoch },
+      });
+    setup('connect');
+    client.raw('create');
+    assert.equal(client.state.settingsOpen, true);
+    assert.equal(
+      client.output.actions.some((action) => ['create', 'directories'].includes(action.method)),
+      false,
+    );
+    assert.deepEqual({ selected: client.state.selected, window: client.state.window }, original);
+    client.input({
+      kind: 'component',
+      key: 'closed',
+      child: 'connections',
+      name: 'closed',
+      event: null,
+    });
+    client.input({
+      kind: 'component',
+      key: 'changed',
+      child: 'connections',
+      name: 'changed',
+      event: null,
+    });
+    setup('connect', 0);
+    assert.equal(
+      client.state.modelSetup,
+      'loading',
+      'an old catalog cannot redirect current setup',
+    );
+    setup('choose');
+    client.raw('create-workspace');
+    assert.equal(client.state.settingsOpen, false);
+    assert.equal(client.state.dialog, null);
+    const request = client.state.modelOpenRequest;
+    assert.equal(typeof request, 'number');
+    assert.equal(client.output.actions.length, 0);
+    assert.equal(
+      modelSlots(client.output.frame.view).find((slot) => slot.binding === 'models').props
+        .openRequest,
+      request,
+    );
+    client.input({
+      kind: 'component',
+      key: 'model',
+      child: 'models',
+      name: 'selected',
+      event: selectedModel(modelChoices[0]),
+    });
+    client.raw('create');
+    assert.equal(client.find('create').input.workspace.sessionId, original.selected.id);
+    assert.equal(client.state.modelOpenRequest, request, 'a usable choice resumes normal creation');
+  });
+
+  test(`${target} model setup distinguishes an empty catalog from empty search and opens once`, async () => {
+    const { component } = await import(new URL(`dist/packages/models/${target}.js`, modelRoot));
+    let props = { ...modelProps, busy: false };
+    let out = component.mount(props, {});
+    const input = (input) => {
+      out = component.event(structuredClone(out.frame.state), input, props, {});
+    };
+    const finish = (choices, extra = {}) =>
+      input({
+        kind: 'action',
+        key: out.actions[0].key,
+        event: {
+          status: 'succeeded',
+          value: {
+            kind: 'ready',
+            revision: 1,
+            choices,
+            defaultModel: { kind: 'none' },
+            next: null,
+            ...extra,
+          },
+        },
+      });
+    assert.deepEqual(out.events, [{ name: 'setup', value: { catalogEpoch: 0, kind: 'loading' } }]);
+    finish([]);
+    assert.deepEqual(out.events, [{ name: 'setup', value: { catalogEpoch: 0, kind: 'connect' } }]);
+    props = { ...props, openRequest: 1, busy: true };
+    out = component.update(out.frame.state, props, {});
+    assert.equal(out.frame.state.open, false);
+    props = { ...props, busy: false };
+    out = component.update(out.frame.state, props, {});
+    assert.equal(out.frame.state.open, true, 'busy input defers the original open request');
+    input({ kind: 'raw', key: 'connections', event: {} });
+    assert.deepEqual(out.events, [{ name: 'connections', value: null }]);
+    out = component.update(out.frame.state, props, {});
+    assert.equal(out.frame.state.open, false, 'unchanged request cannot reopen a closed chooser');
+    props = { ...props, catalogEpoch: 1 };
+    out = component.update(out.frame.state, props, {});
+    finish(modelChoices);
+    assert.deepEqual(out.events, [{ name: 'setup', value: { catalogEpoch: 1, kind: 'choose' } }]);
+    // Search results have their own scope; no matching rows cannot mean no models.
+    out.frame.state.query = 'no match';
+    props = { ...props, openRequest: 2 };
+    out = component.update(out.frame.state, props, {});
+    finish([]);
+    assert.equal(out.frame.state.setup, 'choose');
+    assert.equal(
+      out.events.some((event) => event.name === 'setup'),
+      false,
+    );
+    input({ kind: 'raw', key: 'close', event: {} });
+    input({ kind: 'raw', key: 'connections', event: {} });
+    assert.deepEqual(out.events, [], 'a hidden setup action cannot navigate');
+    out.frame.state.query = '';
+    props = { ...props, catalogEpoch: 2 };
+    out = component.update(out.frame.state, props, {});
+    const obsolete = out.actions[0].key;
+    props = { ...props, catalogEpoch: 3 };
+    out = component.update(out.frame.state, props, {});
+    const current = out.actions[0].key;
+    input({
+      kind: 'action',
+      key: obsolete,
+      event: {
+        status: 'succeeded',
+        value: {
+          kind: 'ready',
+          revision: 1,
+          choices: [],
+          defaultModel: { kind: 'none' },
+          next: null,
+        },
+      },
+    });
+    assert.deepEqual(out.events, [], 'an obsolete request cannot publish setup facts');
+    input({ kind: 'action', key: current, event: { status: 'failed', error: 'unavailable' } });
+    assert.deepEqual(out.events, [
+      { name: 'setup', value: { catalogEpoch: 3, kind: 'unavailable' } },
+    ]);
+  });
+}

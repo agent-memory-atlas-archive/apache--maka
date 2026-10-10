@@ -75,6 +75,7 @@ import type {
   QuestionEditorProps,
   ServiceApprovalProps,
   SelectedModel,
+  ModelSetup,
   TimelineProps,
   TimelineFileContext,
   MessageCopyObservation,
@@ -205,6 +206,8 @@ export interface State {
   catalogFailed: boolean;
   selected: AgentSession | null;
   model: SelectedModel | null;
+  modelSetup: ModelSetup['kind'];
+  modelOpenRequest: number | null;
   catalogEpoch: number;
   modelRefreshing: boolean;
   searchOpen: boolean;
@@ -451,6 +454,10 @@ function intent(
 }
 function createSession(state: State, actions: Action[], locale: string) {
   if (mutationPending(state) || catalogPending(state)) return;
+  if (!state.model || state.modelRefreshing) {
+    openModelSetup(state);
+    return;
+  }
   const title = copy(locale).new;
   if (state.selected?.archived) state.dialog = 'directories';
   else if (state.selected)
@@ -463,6 +470,12 @@ function createSession(state: State, actions: Action[], locale: string) {
     intent(state, actions, { kind: 'createDirectory', title }, 'agent', 'directories', {
       kind: 'roots',
     });
+}
+function openModelSetup(state: State) {
+  if (state.modelSetup === 'connect') {
+    state.settingsOpen = true;
+    state.deploymentOpen = false;
+  } else state.modelOpenRequest = ++state.serial;
 }
 function catalogPending(state: State): boolean {
   return state.catalogWatch?.loading ?? false;
@@ -676,6 +689,7 @@ type RootCommand =
   | 'help-open'
   | 'interaction-open'
   | 'create'
+  | 'model-setup'
   | 'terminal-open'
   | 'details-open'
   | 'create-workspace'
@@ -853,6 +867,13 @@ function rootCommands(
         (mutationPending(state) && !review.retained),
     },
     {
+      kind: 'model-setup',
+      id: 'model-setup',
+      label: state.modelSetup === 'connect' ? text.configureModels : text.chooseModel,
+      hint: '',
+      disabled: !route || mutationPending(state) || executionPending(state),
+    },
+    {
       kind: 'create',
       id: 'create',
       label: text.new,
@@ -967,8 +988,11 @@ function rootCommand(
     const review = reviewTarget(state)!;
     openInteraction(state, actions, review.requestId, review.kind);
   } else if (kind === 'create') createSession(state, actions, locale);
-  else if (kind === 'create-workspace') state.dialog = 'directories';
-  else if (kind === 'terminal-open') state.dialog = 'terminal';
+  else if (kind === 'model-setup') openModelSetup(state);
+  else if (kind === 'create-workspace') {
+    if (!state.model || state.modelRefreshing) openModelSetup(state);
+    else state.dialog = 'directories';
+  } else if (kind === 'terminal-open') state.dialog = 'terminal';
   else if (kind === 'details-open') state.dialog = 'details';
   else if (kind === 'navigation-toggle') controlSidebar(state, 'toggle');
   else if (kind === 'settings') {
@@ -2226,9 +2250,10 @@ function frame<N extends Node>(
       locale,
       selection: state.model,
       catalogEpoch: state.catalogEpoch,
+      openRequest: state.modelOpenRequest,
       busy: busy || executionPending(state) || (target === 'tui' && !!state.run && !state.queue),
     },
-    { selected: 'model' },
+    { selected: 'model', setup: 'model-setup', connections: 'model-connections' },
   );
 
   const main = ui.box(
@@ -2306,6 +2331,25 @@ function frame<N extends Node>(
                 !state.selected || state.selected.archived || mutationPending(state),
               ),
             ) ?? []),
+          ...(!state.model || state.modelRefreshing
+            ? [
+                ui.text(
+                  'model-setup-hint',
+                  state.modelSetup === 'loading'
+                    ? text.loadingModels
+                    : state.modelSetup === 'unavailable'
+                      ? text.modelsUnavailable
+                      : state.modelSetup === 'connect'
+                        ? text.setupConnectionHint
+                        : text.setupModelHint,
+                  13,
+                  theme.muted,
+                ),
+                ...(state.modelSetup === 'connect'
+                  ? [ui.button('model-setup', text.configureModels, busy)]
+                  : []),
+              ]
+            : []),
           ...(status ? [ui.text('status', status, 13, theme.muted)] : []),
           ...(state.uncertain
             ? [
@@ -2831,6 +2875,8 @@ export function workspace<N extends Node>(
         catalogFailed: false,
         selected: null,
         model: null,
+        modelSetup: 'loading',
+        modelOpenRequest: null,
         catalogEpoch: 0,
         modelRefreshing: false,
         settingsOpen: false,
@@ -3234,6 +3280,7 @@ export function workspace<N extends Node>(
           state.settingsOpen = false;
         else if (input.child === 'connections' && input.name === 'changed') {
           state.catalogEpoch++;
+          state.modelSetup = 'loading';
           state.modelRefreshing = !!state.model;
         } else if (input.child === 'composer' && input.name === 'changed') {
           const observation = input.event as EditorObservation;
@@ -3302,6 +3349,17 @@ export function workspace<N extends Node>(
             );
         } else if (input.child === 'composer' && input.name === 'stop') {
           rootCommand(state, actions, locale, 'stop', target);
+        } else if (input.child === 'models' && input.name === 'setup') {
+          const setup = input.event as ModelSetup;
+          if (setup.catalogEpoch === state.catalogEpoch) state.modelSetup = setup.kind;
+        } else if (
+          input.child === 'models' &&
+          input.name === 'connections' &&
+          conversationRoute(state) &&
+          !state.dialog
+        ) {
+          state.settingsOpen = true;
+          state.deploymentOpen = false;
         } else if (
           input.child === 'models' &&
           input.name === 'selected' &&

@@ -33,15 +33,18 @@ import type {
   ThinkingLevel,
   ReadingCommand,
 } from '../../plugin-sdk/src/index.js';
-import type { ModelsProps, SelectedModel } from './contracts.js';
+import type { ModelsProps, SelectedModel, ModelSetup } from './contracts.js';
 import { modelsContract } from './contracts.js';
 import { copy, type Copy } from './locale.js';
 import { fill, output, pixels, type Presentation, type Node } from './view.js';
 type Request =
-  | { kind: 'page'; key: string; query: string }
+  | { kind: 'page'; key: string; query: string; first: boolean }
   | { kind: 'text'; key: string; basis: EditorTextRef; choice: SelectedModel | null };
 interface State {
   catalogEpoch: number;
+  openRequest: number | null;
+  setup: ModelSetup['kind'];
+  publishedSetup: ModelSetup['kind'] | null;
   defaultModel: SettingsDefaultModel | null;
   defaultsOpen: boolean;
   staleSelection: boolean;
@@ -203,7 +206,7 @@ function read(state: State, more = false): Action[] {
 function readPage(state: State, more = false): Action[] {
   if (state.pending) return [];
   const key = `models-${++state.serial}`;
-  state.pending = { kind: 'page', key, query: state.query };
+  state.pending = { kind: 'page', key, query: state.query, first: !more };
   state.failed = false;
   return [
     {
@@ -235,6 +238,10 @@ function frame<N extends Node>(
   const target = presentation.target;
   const ui = presentation.paint(props.theme);
   const text = copy(props.locale);
+  if (state.publishedSetup !== state.setup) {
+    events.push({ name: 'setup', value: { catalogEpoch: state.catalogEpoch, kind: state.setup } });
+    state.publishedSetup = state.setup;
+  }
   const chosen = state.staleSelection ? null : props.selection?.choice;
   const trigger = ui.button('toggle', chosen ? chosen.label : text.chooseModel, props.busy, false, {
     width: fill,
@@ -454,6 +461,7 @@ function frame<N extends Node>(
                   13,
                   props.theme.muted,
                 ),
+                ui.button('connections', text.configureModels, props.busy),
               ]
             : []),
           ...(state.draft && state.active < 0
@@ -545,6 +553,9 @@ export function models<N extends Node>(
       const state: State = {
         revision: 0,
         catalogEpoch: props.catalogEpoch,
+        openRequest: props.openRequest,
+        setup: 'loading',
+        publishedSetup: null,
         defaultModel: null,
         defaultsOpen: false,
         staleSelection: false,
@@ -569,11 +580,19 @@ export function models<N extends Node>(
       return frame(presentation, state, props, read(state));
     },
     update(previous, props) {
+      const requested = props.openRequest !== previous.openRequest && props.openRequest !== null;
+      previous = {
+        ...previous,
+        openRequest: requested && props.busy ? previous.openRequest : props.openRequest,
+      };
+      if (requested && !props.busy) open(previous, props);
       if (previous.catalogEpoch !== props.catalogEpoch) {
         const state = {
           ...previous,
           revision: previous.revision + 1,
           catalogEpoch: props.catalogEpoch,
+          setup: 'loading' as const,
+          publishedSetup: null,
           staleSelection: true,
           thinkingOpen: false,
           suggestDefault: false,
@@ -649,6 +668,7 @@ export function models<N extends Node>(
           }
         } else if (result.status !== 'succeeded') {
           state.failed = request.query === state.query;
+          if (request.first && !request.query) state.setup = 'unavailable';
           actions.push(...resume(state, props));
         } else {
           const page = result.value as SettingsModelsPage;
@@ -658,11 +678,20 @@ export function models<N extends Node>(
             state.pageQuery = null;
             state.catalogRevision = null;
             state.defaultModel = null;
+            state.setup = 'loading';
             if (interactive(state, props)) actions.push(...read(state));
             else if (defaultsInteractive(state, props)) actions.push(...readPage(state));
           } else {
             state.catalogRevision = page.revision;
             state.defaultModel = page.defaultModel;
+            // Only an unfiltered first page can prove that no enabled chat
+            // models exist. An empty search or final page is not that fact.
+            if (request.first && !request.query)
+              state.setup =
+                page.choices.length || page.next || page.defaultModel.kind === 'ready'
+                  ? 'choose'
+                  : 'connect';
+            else if (state.setup === 'loading') state.setup = 'choose';
             // A page's choices and cursor always travel with its original
             // revision, even while the native search input has newer metadata.
             const current = request.query === state.query;
@@ -735,7 +764,14 @@ export function models<N extends Node>(
           state.defaultsOpen = false;
           actions.push(...resume(state, props));
         } else if (!props.busy) {
-          if (input.key === 'toggle') {
+          if (
+            input.key === 'connections' &&
+            editableChoices(state, props) &&
+            !state.choices.length
+          ) {
+            close(state);
+            events.push({ name: 'connections', value: null });
+          } else if (input.key === 'toggle') {
             if (state.open) close(state);
             else {
               open(state, props);

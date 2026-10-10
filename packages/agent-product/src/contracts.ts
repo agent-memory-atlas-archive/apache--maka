@@ -90,10 +90,15 @@ export interface SelectedModel {
 }
 export interface ModelsProps {
   catalogEpoch: number;
+  openRequest: number | null;
   theme: Theme;
   locale: string;
   selection: SelectedModel | null;
   busy: boolean;
+}
+export interface ModelSetup {
+  catalogEpoch: number;
+  kind: 'loading' | 'unavailable' | 'connect' | 'choose';
 }
 export interface ToolFileContext {
   sessionId: string;
@@ -803,6 +808,7 @@ export const modelsContract: Contract = {
       ...withDefs(
         object({
           catalogEpoch: { type: 'integer', minimum: 0 },
+          openRequest: { anyOf: [{ type: 'integer', minimum: 0 }, { type: 'null' }] },
           theme: { $ref: '#/$defs/Theme' },
           locale,
           selection: { anyOf: [selectedModel, { type: 'null' }] },
@@ -811,7 +817,14 @@ export const modelsContract: Contract = {
         modelDefs,
       ),
     },
-    events: { selected: { ...selectedModel, $defs: modelDefs } },
+    events: {
+      selected: { ...selectedModel, $defs: modelDefs },
+      setup: object({
+        catalogEpoch: { type: 'integer', minimum: 0 },
+        kind: { enum: ['loading', 'unavailable', 'connect', 'choose'] },
+      }),
+      connections: { type: 'null' },
+    },
     captures: {},
   },
 };
