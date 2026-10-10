@@ -133,6 +133,10 @@ export type RuntimeProtocol =
   | AgentMetadataResult
   | AgentSend
   | AgentStop
+  | AgentExecutionRead
+  | AgentExecutionResult
+  | AgentResume
+  | AgentResumeResult
   | AgentUploadAttachment
   | AgentAttachment
   | AgentAttachmentUploadResult
@@ -1962,6 +1966,43 @@ export type AgentMetadataResult =
       reason: AgentRejection;
       kind: 'rejected';
     };
+export type AgentExecutionResult =
+  | {
+      kind: 'missing';
+    }
+  | {
+      execution: AgentExecution;
+      kind: 'found';
+    };
+export type AgentExecutionState =
+  | 'admitted'
+  | 'running'
+  | 'waiting'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+export type AgentResumeResult =
+  | {
+      execution: AgentExecution;
+      kind: 'started';
+    }
+  | {
+      reason: AgentResumeParkReason;
+      kind: 'parked';
+    };
+export type AgentResumeParkReason =
+  | 'closed'
+  | 'archived'
+  | 'busy'
+  | 'capacity'
+  | 'source_missing'
+  | 'source_changed'
+  | 'source_not_resumable'
+  | 'source_unreadable'
+  | 'already_continued'
+  | 'workspace_changed'
+  | 'safety_check_failed';
 export type AgentAttachmentUploadResult =
   | {
       attachment: AgentAttachment;
@@ -4893,6 +4934,37 @@ export interface AgentSend {
 export interface AgentStop {
   sessionId: string;
   invocationId: string;
+}
+export interface AgentExecutionRead {
+  sessionId: string;
+  invocationId: string;
+}
+/**
+ * Canonical physical execution receipt, independent of the current Session tip.
+ */
+export interface AgentExecution {
+  sessionId: string;
+  turnId: string;
+  runId: string;
+  invocationId: string;
+  /**
+   * Run-local event count, not the root-global transcript cursor.
+   */
+  highWater: number;
+  state: AgentExecutionState;
+}
+export interface AgentResume {
+  sessionId: string;
+  sourceInvocationId: string;
+  /**
+   * Exact Run-local count returned by execution.
+   */
+  sourceHighWater: number;
+  /**
+   * Explicit model selection for this new continuation; original input is replayed.
+   */
+  model: ModelSelection;
+  thinkingLevel?: ThinkingLevel | null;
 }
 export interface AgentUploadAttachment {
   sessionId: string;

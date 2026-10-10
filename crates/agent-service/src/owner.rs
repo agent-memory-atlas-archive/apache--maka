@@ -24,6 +24,7 @@ use futures_util::future::BoxFuture;
 use maka_agent::{Engine, RunError, RunInput, RunWork};
 
 mod attachments;
+mod execution;
 mod interactions;
 mod queue;
 mod skills;

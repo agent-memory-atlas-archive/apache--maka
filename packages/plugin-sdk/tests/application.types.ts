@@ -23,6 +23,8 @@ import type {
   InputProps,
   ModelSelection,
   AgentSend,
+  AgentResume,
+  AgentExecutionResult,
   AgentHistoryPage,
   AgentSessionPage,
   AgentList,
@@ -281,6 +283,16 @@ const explicitSend: AgentSend = {
   message: 'Hello',
   model: selectedModel,
 };
+const resumeOriginal: AgentResume = {
+  sessionId: 'conversation',
+  sourceInvocationId: 'original-invocation',
+  sourceHighWater: 12,
+  model: selectedModel,
+};
+function resumeReceipt(value: AgentExecutionResult) {
+  return value.kind === 'found' ? value.execution.invocationId : null;
+}
+void [resumeOriginal, resumeReceipt];
 const clearDefault: SetDefaultConnectionTargetInput = { expectedCatalogRevision: 5, target: null };
 // @ts-expect-error Absence is not an explicit clear.
 const missingDefault: SetDefaultConnectionTargetInput = { expectedCatalogRevision: 5 };

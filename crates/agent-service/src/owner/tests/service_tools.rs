@@ -1585,3 +1585,58 @@ async fn skill_preparation_parent_scope_owns_work_after_observer_loss_and_cleanu
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn resume_replays_original_settlements_without_redispatching_effects() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        for behavior in [Behavior::Returned, Behavior::Unknown] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let counter = Counter::new(behavior);
+            let fixture = Fixture::with_services(
+                &format!("http://{}/v1", listener.local_addr().unwrap()), 1, None, None,
+                Some(Setup::native(counter.clone(), true)),
+            ).await;
+            let session = fixture.create("Resume settled tool").await;
+            let sent = fixture.send(&session).await.unwrap();
+            let (mut first, _) = listener.accept().await.unwrap();
+            request(&mut first).await;
+            tool_response(&mut first).await;
+            let (mut next, _) = listener.accept().await.unwrap();
+            request(&mut next).await;
+            assert_eq!(counter.effects.load(Ordering::SeqCst), 1);
+            fixture.mutation(2, "stop", json!({"sessionId":session,"invocationId":sent["invocationId"]}), Uuid::new_v4()).await.unwrap();
+            fixture.drained().await;
+            let source = fixture.query("execution", json!({"sessionId":session,"invocationId":sent["invocationId"]})).await.unwrap();
+            assert_eq!(source["execution"]["state"], "cancelled");
+            let resumed = fixture.mutation(2, "resume", json!({
+                "sessionId":session, "sourceInvocationId":sent["invocationId"],
+                "sourceHighWater":source["execution"]["highWater"], "model":fixture.selection().await
+            }), Uuid::new_v4()).await.unwrap();
+            assert_eq!(resumed["kind"], "started", "{resumed}");
+            let (mut replay, _) = listener.accept().await.unwrap();
+            let prompt = request(&mut replay).await;
+            let result = prompt["messages"].as_array().unwrap().iter().find(|message| message["role"] == "tool").unwrap();
+            if matches!(behavior, Behavior::Returned) {
+                assert_eq!(serde_json::from_str::<Value>(result["content"].as_str().unwrap()).unwrap()["effects"], 1);
+            } else {
+                assert!(result["content"].as_str().unwrap().contains("result is unknown"));
+            }
+            response(&mut replay).await;
+            fixture.drained().await;
+            let observed = facts(&fixture, &session).await;
+            assert_eq!(observed.iter().filter(|fact| matches!(fact, Fact::ToolDispatched { .. })).count(), 1);
+            if matches!(behavior, Behavior::Unknown) {
+                let reference = observed.iter().find_map(|fact| match fact {
+                    Fact::ToolSettled { outcome: ToolOutcome::Unknown { operation: Some(operation), .. }, .. } => Some(&operation.reference),
+                    _ => None,
+                }).unwrap();
+                let receipt = fixture.store.operation_observation(reference).await.unwrap().unwrap();
+                assert!(matches!(receipt.outcome, OperationOutcome::Unknown { .. }));
+            }
+            assert_eq!(counter.effects.load(Ordering::SeqCst), 1, "replay never redispatches original service mutation");
+            assert_eq!(fixture.owner.permits.available_permits(), 1);
+            fixture.app.shutdown().await.unwrap();
+            fixture.config.shutdown().await.unwrap();
+        }
+    }).await.unwrap();
+}

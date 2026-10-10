@@ -45,6 +45,9 @@ mod catalog;
 #[path = "tests/history_search.rs"]
 mod history_search;
 
+#[path = "tests/execution.rs"]
+mod execution;
+
 #[path = "tests/queue.rs"]
 mod queue;
 

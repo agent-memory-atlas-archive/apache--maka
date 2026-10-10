@@ -25,6 +25,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+#[path = "contract_execution.rs"]
+mod execution;
+pub use execution::*;
+
 #[path = "contract_interactions.rs"]
 mod interaction;
 pub use interaction::*;
@@ -977,6 +981,14 @@ pub fn contract() -> Contract {
                         )]),
                         ..method::<UploadAttachment, AttachmentUploadResult>(MethodMode::Mutation)
                     },
+                ),
+                (
+                    "execution".into(),
+                    method::<ExecutionRead, ExecutionResult>(MethodMode::Query),
+                ),
+                (
+                    "resume".into(),
+                    method::<Resume, ResumeResult>(MethodMode::Mutation),
                 ),
                 ("stop".into(), method::<Stop, Stopped>(MethodMode::Mutation)),
                 (

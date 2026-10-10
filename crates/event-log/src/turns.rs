@@ -112,6 +112,51 @@ impl EventLog {
             })
             .await
     }
+    /// Exact physical invocation and Run-local event count in one snapshot.
+    /// Never substitutes the Session tip or a root-global stream position.
+    pub async fn invocation_boundary(
+        &self,
+        session_id: &str,
+        invocation_id: &str,
+    ) -> Result<Option<(TurnBoundary, u64)>, StoreError> {
+        self.validate_root()?;
+        sessions::validate_id(session_id)?;
+        sessions::validate_id(invocation_id)?;
+        let session = session_id.to_owned();
+        let invocation = invocation_id.to_owned();
+        self.connection
+            .run(move |connection| {
+                Box::pin(async move {
+                    let mut tx = connection.begin().await?;
+                    let opening: Option<String> = sqlx::query_scalar(
+                        "SELECT event_json FROM runtime_events WHERE invocation_id = ?1
+                 AND kind = 'invocation_opened'
+                 AND json_extract(event_json, '$.invocation.session_id') = ?2",
+                    )
+                    .bind(invocation)
+                    .bind(session)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+                    let result = match opening {
+                        Some(opening) => {
+                            let boundary =
+                                project(&mut tx, serde_json::from_str(&opening)?).await?;
+                            let high_water: i64 = sqlx::query_scalar(
+                                "SELECT COUNT(*) FROM runtime_events WHERE invocation_id = ?",
+                            )
+                            .bind(&boundary.invocation.invocation_id)
+                            .fetch_one(&mut *tx)
+                            .await?;
+                            Some((boundary, high_water as u64))
+                        }
+                        None => None,
+                    };
+                    tx.commit().await?;
+                    Ok(result)
+                })
+            })
+            .await
+    }
     pub async fn latest_turn_boundary(
         &self,
         session_id: &str,

@@ -35,6 +35,21 @@ Required confirmation publishes a canonical service approval for that exact tool
 
 Session IDs belong to the actual Root/deployment/plugin instance, independent of package revision and activation epoch. Sessions retain conversation metadata; each canonical invocation records its actual selected binding. A later send in the same conversation may choose another model. The run freezes provider identity, stored configuration and resolved execution parameters; name, testing, catalog descriptions and other models do not interrupt it. Endpoint, protocol, budget or selected membership changes reject subsequent steps. Credentials, headers and network policy continue through their original configuration owner. Original operation references derive domain IDs; journal UUID conflicts remain fail-closed. Retiring the service cancels and drains its original workers and configuration SQL owner. Unconfirmed physical cleanup retains its permit and reports failed native close so the application keeps its Root fence.
 
+`execution` reads an exact `sessionId` / `invocationId` receipt, including its
+physical run, state and Run-local `highWater` event count. It never follows the
+Session's latest turn. `resume` names that original invocation and count, and
+explicitly selects its model, with an optional thinking override. Only sealed failed/cancelled
+runs can continue. The original Engine verifies bounded lineage, workspace
+identity, replay and current tools; unsettled dispatches remain blocked. Recorded
+unknown service results retain their original operation references and remain
+unknown. Original
+prepared input and settled tool results are replayed without redispatching those
+calls. The new continuation uses the existing worker/capacity owner, live service
+permissions and canonical opening receipt. Busy, stale, archived and unsafe
+requests return `parked`; querying a receipt grants no execution authority.
+Lost replies still recover through the original operation reference. No product
+resume button or WorkHub orchestration is installed by exposing these methods.
+
 `history` pins a committed raw-event `through` fence on its first window. Preparation is bounded; retries keep the same position and returned fence. `start` scans forward and `tail` reads the end; `before` ends exclusively and `after` starts inclusively at a real sparse transcript row and UTF-8 byte offset. Both cursor positions require the original explicit fence. Ready windows always return `before` and `after`; only `null` means that direction has ended. Windows retain ascending source order, including backward reads, with at most two fragments and 8192 UTF-8 bytes in total. The complete serialized response is checked against 64 KiB; attachments and provider payloads are excluded. `event` locates an inclusive raw event-log sequence for execution bookmarks, without fabricating a transcript cursor. Active parts include original start sequences, allowing clients to replay text prefixes without reading hidden thinking as answers. Canonical transcript changes have explicit delivery invalidations. Every window rechecks the selected session namespace. Public Rust wire types feed the generated plugin SDK directly.
 
 A selected service tool may declare an optional `presentation` key (at most 128 ASCII letters, digits, or `._-:/@`). Agent freezes it alongside the tool before dispatch; the runtime carries it as display metadata and does not use it for execution or authorization. The ordinary product recognizes `maka.workspace.Files@1/readText`, `/write`, `/edit`, and `/applyPatch` for their corresponding Files v1 result shapes. Missing and unknown keys retain the generic original-field reader. Historical display never consults current tool aliases or bindings.

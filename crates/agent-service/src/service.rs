@@ -400,6 +400,11 @@ impl Handler for Agent {
                     let operation = context.operation().ok_or("agent_mutation_required")?;
                     encode(owner.send(input, operation, context.scope()).await?)
                 }
+                "execution" => encode(owner.execution(decode(input)?).await?),
+                "resume" => {
+                    let operation = context.operation().ok_or("agent_mutation_required")?;
+                    encode(owner.resume(decode(input)?, operation).await?)
+                }
                 "stop" => {
                     let input: Stop = decode(input)?;
                     let operation = context.operation().ok_or("agent_mutation_required")?;
