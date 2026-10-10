@@ -43,13 +43,21 @@ async fn publication_replaces_complete_directories_preserves_resources_and_rejec
     let root = tempfile::tempdir().unwrap();
     let data =
         cap_std::fs::Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
-    let publisher = Publisher::open(&data, &CancellationToken::new()).unwrap();
+    let cancellation = CancellationToken::new();
+    let scope = maka_plugins::call::Issuer::default()
+        .issue(
+            maka_plugins::call::Identity::Remote {
+                request_id: uuid::Uuid::new_v4(),
+            },
+            cancellation.clone(),
+        )
+        .unwrap();
+    let publisher = Publisher::open_scoped(&data, &scope).unwrap();
     assert!(
         matches!(Publisher::open(&data, &CancellationToken::new()),
         Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::WouldBlock),
         "another Entry must not recover or publish the same namespace concurrently"
     );
-    let cancellation = CancellationToken::new();
     let original = tree("old instructions");
     let operation = Operation {
         id: uuid::Uuid::new_v4(),
@@ -184,6 +192,11 @@ async fn publication_replaces_complete_directories_preserves_resources_and_rejec
             .count(),
         0
     );
+    scope.finish().await.unwrap();
+    assert!(matches!(
+        publisher.capture("review", &CancellationToken::new()).await,
+        Err(Error::Cancelled)
+    ));
 }
 
 fn manifest(body: &str) -> Value {
@@ -345,5 +358,91 @@ async fn recovery_finishes_each_publication_cut_and_preserves_edits_after_commit
         );
         assert_eq!(std::fs::read_dir(transactions).unwrap().count(), 0);
         publisher.recover().await.unwrap();
+    }
+}
+
+#[test]
+fn abandoned_publication_reads_keep_the_lock_and_original_call_until_workers_return() {
+    for scoped in [false, true] {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let data =
+                cap_std::fs::Dir::open_ambient_dir(root.path(), cap_std::ambient_authority())
+                    .unwrap();
+            let scope = maka_plugins::call::Issuer::default()
+                .issue(
+                    maka_plugins::call::Identity::Remote {
+                        request_id: uuid::Uuid::new_v4(),
+                    },
+                    CancellationToken::new(),
+                )
+                .unwrap();
+            let publisher = if scoped {
+                Publisher::open_scoped(&data, &scope)
+            } else {
+                Publisher::open(&data, &scope.cancellation)
+            }
+            .unwrap();
+            // Occupy the only blocking thread so the read is deterministically
+            // accepted but cannot complete before its observer disappears.
+            let (release, wait) = std::sync::mpsc::channel();
+            let (started, ready) = std::sync::mpsc::channel();
+            let blocker = tokio::task::spawn_blocking(move || {
+                started.send(()).unwrap();
+                wait.recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+            });
+            ready
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            let mut read = Box::pin(publisher.capture("review", &scope.cancellation));
+            assert!(futures_util::poll!(&mut read).is_pending());
+            drop(read);
+            drop(publisher);
+            assert!(matches!(Publisher::open(&data, &CancellationToken::new()),
+                Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::WouldBlock));
+            if scoped {
+                assert!(!scope.resources.seal().unwrap());
+            }
+            scope.cancellation.cancel();
+            release.send(()).unwrap();
+            blocker.await.unwrap();
+            // With one worker this sentinel also joins the abandoned file job.
+            tokio::task::spawn_blocking(|| ()).await.unwrap();
+            scope.finish().await.unwrap();
+            Publisher::open(&data, &CancellationToken::new()).unwrap();
+        });
+    }
+}
+
+#[tokio::test]
+async fn scoped_publication_refuses_closed_calls_before_creating_files() {
+    for cancelled in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let data =
+            cap_std::fs::Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        let scope = maka_plugins::call::Issuer::default()
+            .issue(
+                maka_plugins::call::Identity::Remote {
+                    request_id: uuid::Uuid::new_v4(),
+                },
+                CancellationToken::new(),
+            )
+            .unwrap();
+        if cancelled {
+            scope.cancellation.cancel();
+        } else {
+            assert!(scope.resources.seal().unwrap());
+        }
+        assert!(matches!(
+            Publisher::open_scoped(&data, &scope),
+            Err(Error::Cancelled)
+        ));
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
 }

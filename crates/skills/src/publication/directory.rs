@@ -38,6 +38,10 @@ enum Root {
     Private {
         directory: cap_std::fs::Dir,
         cancellation: tokio_util::sync::CancellationToken,
+        resources: Option<Arc<maka_plugins::call::Resources>>,
+        // Every queued/active worker must exclude another publisher, even when
+        // the Publisher and the future awaiting this operation have been dropped.
+        _lock: Arc<super::io::PublicationLock>,
     },
     Granted {
         files: Arc<dyn filesystem::Files>,
@@ -48,11 +52,15 @@ impl Directory {
     pub fn private(
         directory: cap_std::fs::Dir,
         cancellation: tokio_util::sync::CancellationToken,
+        resources: Option<Arc<maka_plugins::call::Resources>>,
+        lock: Arc<super::io::PublicationLock>,
     ) -> Self {
         Self {
             root: Arc::new(Root::Private {
                 directory,
                 cancellation,
+                resources,
+                _lock: lock,
             }),
             prefix: String::new(),
         }
@@ -78,17 +86,37 @@ impl Directory {
     }
     async fn invoke(&self, operation: Operation) -> Result<Output, Error> {
         match self.root.as_ref() {
-            Root::Private { .. } => {
+            Root::Private {
+                cancellation,
+                resources,
+                ..
+            } => {
+                if cancellation.is_cancelled() {
+                    return Err(Error::Cancelled);
+                }
+                let mut ticket = resources
+                    .as_ref()
+                    .map(|resources| resources.reserve().map_err(|_| Error::Cancelled))
+                    .transpose()?;
                 let root = self.root.clone();
                 tokio::task::spawn_blocking(move || {
                     let Root::Private {
                         directory,
                         cancellation,
+                        ..
                     } = root.as_ref()
                     else {
                         unreachable!()
                     };
-                    entries::execute(directory, operation, cancellation, None)
+                    if let Some(ticket) = &mut ticket {
+                        ticket.start();
+                    }
+                    let result = entries::execute(directory, operation, cancellation, None);
+                    drop(root);
+                    if let Some(ticket) = ticket {
+                        ticket.complete(Ok(()));
+                    }
+                    result
                 })
                 .await
                 .map_err(|e| Error::OutcomeUnknown(e.to_string()))?

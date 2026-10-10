@@ -61,12 +61,39 @@ impl Publisher {
         data: &Dir,
         cancellation: &tokio_util::sync::CancellationToken,
     ) -> Result<Self, Error> {
+        Self::open_owned(data, cancellation, None)
+    }
+
+    /// The directory supplies authority; the original call supplies cancellation
+    /// and custody of blocking workers, including after their observer disappears.
+    /// Like `open`, this performs filesystem work and belongs off the async executor.
+    pub fn open_scoped(data: &Dir, scope: &maka_plugins::call::Scope) -> Result<Self, Error> {
+        if scope.cancellation.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        let mut ticket = scope.resources.reserve().map_err(|_| Error::Cancelled)?;
+        ticket.start();
+        let result = Self::open_owned(data, &scope.cancellation, Some(scope.resources.clone()));
+        ticket.complete(Ok(()));
+        result
+    }
+
+    fn open_owned(
+        data: &Dir,
+        cancellation: &CancellationToken,
+        resources: Option<std::sync::Arc<maka_plugins::call::Resources>>,
+    ) -> Result<Self, Error> {
         let lock = std::sync::Arc::new(io::lock(data)?);
         io::child(data, "skills")?;
         io::child(data, "transactions")?;
         io::child(data, "operations")?;
         io::child(data, "receipts")?;
-        let root = Directory::private(data.try_clone()?, cancellation.clone());
+        let root = Directory::private(
+            data.try_clone()?,
+            cancellation.clone(),
+            resources,
+            lock.clone(),
+        );
         Ok(Self {
             skills: root.at("skills"),
             transactions: root.at("transactions"),
