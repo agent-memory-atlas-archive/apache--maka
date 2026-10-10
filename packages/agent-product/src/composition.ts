@@ -199,6 +199,7 @@ function settingsComposition(
         'deployment',
         {},
         {
+          reading: [local('reading-area', 'ReadingArea')],
           editor: [local('editor', 'Textarea')],
           file: [local('file', 'FilePicker')],
           management: [

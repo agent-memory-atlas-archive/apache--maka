@@ -235,6 +235,20 @@ export function importView<N extends Node>(
     ],
     {
       visible: importer.open,
+      autoFocus: true,
+      shortcuts:
+        target === 'tui'
+          ? [
+              {
+                key: 'escape',
+                modifiers: [],
+                input: !!importer.confirmation
+                  ? 'deployment-import-cancel'
+                  : 'deployment-import-back',
+                enabled: true,
+              },
+            ]
+          : [],
       style: { width: fill, height: fill },
       terminal: { grow: 1 },
       gap: target === 'desktop' ? 16 : 1,

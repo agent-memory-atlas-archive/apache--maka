@@ -158,6 +158,8 @@ in durable caller history. Closing this page retains its native editor. Source d
 are limited to 1 MiB; the committed input and remote observations still share their
 512 KiB limit. Full product/runtime acceptance remains required.
 
+The TUI plugin list uses native ReadingArea/Item rows. Arrow keys select; Enter or the row menu opens enable/disable confirmation. Confirmation and operation history use native Dialog with scrolling content and fixed actions; Escape returns one level. Import and advanced editing request focus when revealed, and Escape cancels confirmation before returning to the list. Product tests and actual CLI checks pass; OS keyboard and mouse acceptance for this change remains pending.
+
 The Plugins page installs `.maka-plugin` files through a retained native FilePicker.
 One confirmation captures immutable selected bytes at the observed owner/revision
 and submits the saved source revision to Host validation. Installing stores the

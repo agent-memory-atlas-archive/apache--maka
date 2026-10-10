@@ -21,6 +21,8 @@ import type {
   Action,
   ActionOutcome,
   Component,
+  ComponentInput,
+  ReadingCommand,
   Emission,
   DeploymentRef,
   DeploymentInstances,
@@ -38,7 +40,7 @@ import type {
 import { deploymentContract, type ConnectionsProps } from './contracts.js';
 import { copy, type Copy } from './locale.js';
 import { sameValue } from './value.js';
-import { compactLabel, fill, output, pixels, type Presentation, type Node } from './view.js';
+import { fill, output, type Presentation, type Node } from './view.js';
 import {
   acceptDocumentChunk,
   canSaveDocument,
@@ -74,6 +76,8 @@ interface State {
   serial: number;
   pending: { key: string; request: Request | DocumentRequest } | null;
   page: ManagedInstancesPage | null;
+  selected: ManagedInstance['instance'] | null;
+  focus: ReadingCommand | null;
   after: ManagedInstancesPage['next'];
   previous: ManagedInstancesPage['next'][];
   confirmation: Intent | null;
@@ -192,7 +196,7 @@ function frame<N extends Node>(
   const entries = state.page?.instances ?? [];
   const current = state.confirmation;
   const history = state.historyOpen;
-  const body = current
+  const confirmationBody = current
     ? [
         ui.text(
           'deployment-question',
@@ -205,92 +209,116 @@ function frame<N extends Node>(
         ui.text('deployment-confirm-package', current.instance.package.id, 13, props.theme.muted),
         ui.text('deployment-confirm-help', text.deploymentChangeHelp, 13, props.theme.muted),
       ]
-    : history
-      ? [
-          ui.text('deployment-history-help', text.deploymentHistoryHelp, 13, props.theme.muted),
-          ...state.earlier.map((entry, at) =>
-            ui.box(
-              'deployment-earlier-' + at,
-              [
-                ui.text(
-                  'deployment-earlier-status-' + at,
-                  entry.reply?.receipt.kind === 'recorded' &&
-                    entry.reply.receipt.outcome.kind === 'returned'
-                    ? text.deploymentRecorded
-                    : text.deploymentUnknown,
-                  13,
-                ),
-                ui.button('deployment-earlier-check-' + at, text.check, !!state.pending),
-              ],
-              { gap: 0 },
-            ),
+    : [];
+  const historyBody = [
+    ...(target === 'tui' && state.notice
+      ? [ui.text('deployment-history-notice', text[state.notice], 13, props.theme.muted)]
+      : []),
+    ...(target === 'tui' && state.pending
+      ? [ui.text('deployment-history-loading', text.connecting, 13, props.theme.muted)]
+      : []),
+    ui.text('deployment-history-help', text.deploymentHistoryHelp, 13, props.theme.muted),
+    ...state.earlier.map((entry, at) =>
+      ui.box(
+        'deployment-earlier-' + at,
+        [
+          ui.text(
+            'deployment-earlier-status-' + at,
+            entry.reply?.receipt.kind === 'recorded' &&
+              entry.reply.receipt.outcome.kind === 'returned'
+              ? text.deploymentRecorded
+              : text.deploymentUnknown,
+            13,
           ),
-        ]
-      : entries.map((entry, at) =>
+          ui.button('deployment-earlier-check-' + at, text.check, !!state.pending),
+        ],
+        { gap: 0 },
+      ),
+    ),
+  ];
+  const rows = entries.map((entry, at) => {
+    const status = entry.parentDisabled
+      ? text.deploymentParentDisabled
+      : entry.disabled
+        ? text.connectionDisabled
+        : text.connectionEnabled;
+    const toggle = ui.button(
+      'deployment-toggle-' + at,
+      entry.disabled ? text.deploymentEnable : text.deploymentDisable,
+      busy || state.conflict || (entry.disabled && entry.parentDisabled),
+    );
+    if (ui.item) {
+      const selected = sameValue(state.selected, entry.instance);
+      return ui.contextMenu!(
+        'deployment-instance-' + at,
+        text.deploymentTitle,
+        ui.item(
+          'deployment-select-' + at,
           ui.box(
-            'deployment-instance-' + at,
+            'deployment-summary-' + at,
             [
-              ui.box(
-                'deployment-identity-' + at,
-                [
-                  ui.text(
-                    'deployment-path-' + at,
-                    target === 'desktop'
-                      ? entry.path.join(' / ')
-                      : compactLabel(entry.path.join(' / '), 36),
-                    15,
-                    props.theme.text,
-                    550,
-                  ),
-                  ui.text(
-                    'deployment-package-' + at,
-                    target === 'desktop' ? entry.package.id : compactLabel(entry.package.id, 36),
-                    13,
-                    props.theme.muted,
-                  ),
-                ],
-                {
-                  gap: target === 'desktop' ? 4 : 0,
-                  surface: target === 'desktop',
-                  style: { grow: 1, minWidth: 0 },
-                },
+              ui.text(
+                'deployment-path-' + at,
+                `${selected ? (props.theme.ascii ? '>' : '›') : ' '} ${entry.path.join(' / ')}`,
+                14,
+                props.theme.text,
+                400,
+                { truncate: true },
               ),
-              ui.box(
-                'deployment-row-' + at,
-                [
-                  ui.text(
-                    'deployment-state-' + at,
-                    entry.parentDisabled
-                      ? text.deploymentParentDisabled
-                      : entry.disabled
-                        ? text.connectionDisabled
-                        : text.connectionEnabled,
-                    13,
-                    props.theme.muted,
-                  ),
-                  ui.button(
-                    'deployment-toggle-' + at,
-                    entry.disabled ? text.deploymentEnable : text.deploymentDisable,
-                    busy || state.conflict || (entry.disabled && entry.parentDisabled),
-                  ),
-                ],
-                {
-                  row: target === 'desktop',
-                  gap: 0,
-                  surface: target === 'desktop',
-                  style: { wrap: true, align: 'center', shrink: 0 },
-                },
+              ui.text(
+                'deployment-detail-' + at,
+                `  ${status} · ${entry.package.id}`,
+                13,
+                props.theme.muted,
+                400,
+                { truncate: true },
               ),
             ],
-            {
-              row: target === 'desktop',
-              gap: target === 'desktop' ? 16 : 1,
-              padding: target === 'desktop' ? 12 : 1,
-              surface: target === 'desktop',
-              style: { width: fill, wrap: true, shrink: 0, radius: 10, align: 'center' },
-            },
+            { gap: 0 },
           ),
-        );
+          selected,
+          busy,
+          { followFocus: true, submit: true },
+        ),
+        [toggle],
+      );
+    }
+    return ui.box(
+      'deployment-instance-' + at,
+      [
+        ui.box(
+          'deployment-identity-' + at,
+          [
+            ui.text('deployment-path-' + at, entry.path.join(' / '), 15, props.theme.text, 550),
+            ui.text('deployment-package-' + at, entry.package.id, 13, props.theme.muted),
+          ],
+          {
+            gap: target === 'desktop' ? 4 : 0,
+            surface: target === 'desktop',
+            style: { grow: 1, minWidth: 0 },
+          },
+        ),
+        ui.box(
+          'deployment-row-' + at,
+          [ui.text('deployment-state-' + at, status, 13, props.theme.muted), toggle],
+          {
+            row: target === 'desktop',
+            gap: 0,
+            surface: target === 'desktop',
+            style: { wrap: true, align: 'center', shrink: 0 },
+          },
+        ),
+      ],
+      {
+        row: target === 'desktop',
+        gap: target === 'desktop' ? 16 : 1,
+        padding: target === 'desktop' ? 12 : 1,
+        surface: target === 'desktop',
+        style: { width: fill, wrap: true, shrink: 0, radius: 10, align: 'center' },
+      },
+    );
+  });
+  const body = target === 'tui' ? rows : current ? confirmationBody : history ? historyBody : rows;
   const header = ui.box(
     'deployment-header',
     [
@@ -308,7 +336,7 @@ function frame<N extends Node>(
         ],
         { row: true, gap: target === 'desktop' ? 8 : 1, terminal: { wrap: true } },
       ),
-      ...(!current && !history
+      ...(target === 'tui' || (!current && !history)
         ? [ui.text('deployment-help', text.deploymentHelp, 13, props.theme.muted)]
         : []),
       ...(state.notice
@@ -322,26 +350,20 @@ function frame<N extends Node>(
   );
   const footer = ui.box(
     'deployment-controls',
-    current
+    target === 'desktop' && current
       ? [
           ui.button('deployment-confirm', text.confirmDefault, busy),
           ui.button('deployment-cancel', text.cancel, busy),
         ]
-      : history
+      : target === 'desktop' && history
         ? [
-            ui.button(
-              'deployment-history-back',
-              text.back,
-              false,
-              false,
-              target === 'tui' ? { background: 0, align: 'start' } : {},
-            ),
+            ui.button('deployment-history-back', text.back, false, false, {}),
             ui.button(
               'deployment-history-refresh',
-              target === 'tui' ? (props.theme.ascii ? 'r' : '↻') : text.refreshDefaultOperations,
+              text.refreshDefaultOperations,
               !!state.pending,
               false,
-              target === 'tui' ? { background: 0 } : {},
+              {},
               undefined,
               text.refreshDefaultOperations,
             ),
@@ -383,17 +405,25 @@ function frame<N extends Node>(
       'deployment-panel',
       [
         header,
-        ui.box(
-          'deployment-body',
-          body.length
-            ? body
-            : [ui.text('deployment-empty', text.deploymentEmpty, 14, props.theme.muted)],
+        presentation.reading(
+          'deployment-list',
           {
-            scroll: 'manual',
-            terminal: { grow: 1 },
-            style: { width: fill, height: pixels(0), grow: 1, shrink: 1, minHeight: 0 },
-            gap: target === 'desktop' ? 16 : 1,
+            command: state.focus,
+            content: ui.box(
+              'deployment-body',
+              body.length
+                ? body
+                : [ui.text('deployment-empty', text.deploymentEmpty, 14, props.theme.muted)],
+              {
+                scroll: 'manual',
+                focusGroup: target === 'tui',
+                terminal: { grow: 1, basis: 0 },
+                style: { width: fill, height: fill, minHeight: 0 },
+                gap: target === 'desktop' ? 16 : 1,
+              },
+            ),
           },
+          { input: 'deployment-input' },
         ),
         footer,
       ],
@@ -401,11 +431,68 @@ function frame<N extends Node>(
         style: { width: fill, height: fill },
         visible: !state.documentOpen && !state.importer.open,
         terminal: { grow: 1 },
+        autoFocus: true,
+        shortcuts:
+          target === 'tui'
+            ? [{ key: 'escape', modifiers: [], input: 'deployment-back', enabled: true }]
+            : [],
         gap: target === 'desktop' ? 16 : 1,
       },
     ),
     events,
   );
+  if (target === 'tui') {
+    const modalBody = current ? confirmationBody : historyBody;
+    out.frame.view = ui.dialog(
+      'deployment-dialog',
+      current ? text.deploymentTitle : text.deploymentHistory,
+      out.frame.view,
+      ui.box(
+        'deployment-dialog-content',
+        [
+          ...(current || history
+            ? [
+                ui.box('deployment-dialog-body', modalBody, {
+                  scroll: 'manual',
+                  terminal: { grow: 1 },
+                  gap: 1,
+                }),
+              ]
+            : []),
+          ui.box(
+            'deployment-dialog-actions',
+            current
+              ? [
+                  ui.button('deployment-cancel', text.cancel, busy),
+                  ui.button('deployment-confirm', text.confirmDefault, busy, true),
+                ]
+              : [
+                  ui.button('deployment-history-back', text.back),
+                  ui.button(
+                    'deployment-history-refresh',
+                    props.theme.ascii ? 'r' : '↻',
+                    !!state.pending,
+                    false,
+                    { background: 0 },
+                    undefined,
+                    text.refreshDefaultOperations,
+                  ),
+                  ...(state.historyNext !== null
+                    ? [ui.button('deployment-history-more', text.moreOperations, !!state.pending)]
+                    : []),
+                ],
+            { row: true, gap: 1, terminal: { wrap: true } },
+          ),
+        ],
+        {
+          terminal: { grow: 1 },
+        },
+      ),
+      !!current || history,
+      undefined,
+      { width: 64, height: history ? 18 : 14 },
+    );
+  }
   out.frame.view = ui.box(
     'deployment-pages',
     [
@@ -461,6 +548,8 @@ export function deployment<N extends Node>(
         serial: 0,
         pending: null,
         page: null,
+        selected: null,
+        focus: null,
         after: null,
         previous: [],
         confirmation: null,
@@ -485,6 +574,8 @@ export function deployment<N extends Node>(
     },
     event(state, input, props) {
       state.revision++;
+      if (input.kind === 'component' && input.child === 'deployment-list' && input.name === 'input')
+        input = input.event as ComponentInput;
       const actions: Action[] = [],
         events: Emission[] = [];
       if (
@@ -559,6 +650,20 @@ export function deployment<N extends Node>(
                 state.after = state.previous.pop()!;
               }
               state.page = value;
+              if (!value.instances.some((entry) => sameValue(entry.instance, state.selected)))
+                state.selected = value.instances[0]?.instance ?? null;
+              if (presentation.target === 'tui' && state.selected)
+                state.focus = {
+                  sequence: (state.focus?.sequence ?? 0) + 1,
+                  target: {
+                    kind: 'focus_item',
+                    key:
+                      'deployment-select-' +
+                      value.instances.findIndex((entry) =>
+                        sameValue(entry.instance, state.selected),
+                      ),
+                  },
+                };
               if (
                 state.importer.confirmation &&
                 !sameValue(state.importer.confirmation.source, value.source)
@@ -604,6 +709,17 @@ export function deployment<N extends Node>(
         )
           return frame(presentation, state, props);
         let key = input.key;
+        if (key === 'deployment-dialog')
+          key = state.confirmation ? 'deployment-cancel' : 'deployment-history-back';
+        if (/^deployment-select-(0|[1-9][0-9]*)$/.test(key) && !state.pending && !state.current) {
+          const at = Number(key.slice('deployment-select-'.length));
+          const entry = state.page?.instances[at];
+          if (entry) {
+            state.selected = entry.instance;
+            if ((input.event as { kind?: string } | null)?.kind === 'submit')
+              key = 'deployment-toggle-' + at;
+          }
+        }
         if (key === 'deployment-import-check') key = 'deployment-check';
         if (key === 'deployment-import-refresh') key = 'deployment-refresh';
         if (key === 'deployment-import-advanced') key = 'deployment-advanced';

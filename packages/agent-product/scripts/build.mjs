@@ -105,6 +105,7 @@ const specifications = {
     export: 'Deployment',
     module: 'deployment',
     imports: {
+      reading: one(sdk.contracts.readingArea),
       management: one(sdk.contracts.deploymentManager),
       receipts: one(sdk.contracts.receiptReader),
       history: one(sdk.contracts.callerHistory),

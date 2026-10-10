@@ -327,6 +327,18 @@ export function documentView<N extends Node>(
     ],
     {
       visible: open,
+      autoFocus: true,
+      shortcuts:
+        target === 'tui'
+          ? [
+              {
+                key: 'escape',
+                modifiers: [],
+                input: confirming ? 'deployment-document-cancel' : 'deployment-document-back',
+                enabled: true,
+              },
+            ]
+          : [],
       gap: target === 'desktop' ? 16 : 1,
       terminal: { grow: 1 },
       style: { width: fill, height: fill },

@@ -4559,7 +4559,7 @@ for (const target of ['desktop', 'tui']) {
     const props = { theme: values.appearance[0], locale: 'en' };
     const source = { stateDomain: 'a'.repeat(64), deployment: uuid(80), revision: 7 };
     const instance = {
-      instance: [uuid(1)],
+      instance: [uuid(1), uuid(2), uuid(3), uuid(4)],
       path: ['optional'],
       package: { id: 'optional', revision: 'sha256-' + 'b'.repeat(64) },
       structural: false,
@@ -4579,6 +4579,33 @@ for (const target of ['desktop', 'tui']) {
     const press = (key) =>
       (result = component.event(result.frame.state, { kind: 'raw', key, event: null }, props, {}));
     complete({ status: 'succeeded', value: { source, instances: [instance], next: null } });
+    if (target === 'tui') {
+      const select = (kind) =>
+        (result = component.event(
+          result.frame.state,
+          {
+            kind: 'component',
+            child: 'deployment-list',
+            name: 'input',
+            event: {
+              kind: 'raw',
+              key: 'deployment-select-0',
+              event: { kind },
+            },
+          },
+          props,
+          {},
+        ));
+      select('select');
+      assert.equal(result.actions.length, 0);
+      assert.equal(result.frame.state.confirmation, null);
+      select('submit');
+      assert.equal(result.actions.length, 0);
+      assert.deepEqual(result.frame.state.confirmation, { source, instance, enabled: false });
+      press('deployment-dialog');
+      assert.equal(result.frame.state.confirmation, null);
+      assert.deepEqual(result.events, []);
+    }
     press('deployment-toggle-0');
     assert.equal(result.actions.length, 0);
     press('deployment-cancel');
