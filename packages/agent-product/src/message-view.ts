@@ -59,6 +59,7 @@ export function messageView<N extends Node>(
   theme: Theme,
   locale: string,
   message: {
+    browse?: { key: string; current: boolean };
     id: string;
     role: HistorySource['role'] | 'thinking';
     timestamp: number | null;
@@ -140,27 +141,33 @@ export function messageView<N extends Node>(
     theme.muted,
     550,
   );
+  const heading = tool
+    ? ui.box(
+        'tool-heading-' + message.id,
+        [
+          role,
+          ...(message.toggle
+            ? [ui.button(message.toggle!, expanded ? text.collapseTool : text.expandTool)]
+            : []),
+        ],
+        {
+          row: true,
+          gap: target === 'desktop' ? 12 : 1,
+          surface: true,
+          terminal: { wrap: true },
+          style: { width: fill, wrap: true, align: 'center' },
+        },
+      )
+    : role;
   return ui.box(
     'message-' + message.id,
     [
-      tool
-        ? ui.box(
-            'tool-heading-' + message.id,
-            [
-              role,
-              ...(message.toggle
-                ? [ui.button(message.toggle!, expanded ? text.collapseTool : text.expandTool)]
-                : []),
-            ],
-            {
-              row: true,
-              gap: target === 'desktop' ? 12 : 1,
-              surface: true,
-              terminal: { wrap: true },
-              style: { width: fill, wrap: true, align: 'center' },
-            },
-          )
-        : role,
+      message.browse && ui.item
+        ? ui.item(message.browse.key, heading, message.browse.current, false, {
+            followFocus: true,
+            submit: true,
+          })
+        : heading,
       ...(status ? [ui.text('tool-status-' + message.id, status, 13, theme.muted)] : []),
       ...(message.continued
         ? [ui.text('continued-' + message.id, text.partial, 12, theme.muted)]

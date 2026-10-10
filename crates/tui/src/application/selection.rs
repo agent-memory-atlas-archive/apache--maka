@@ -108,6 +108,13 @@ impl SelectionScope {
         scope.keyboard_focus_pending = false;
         scope.reveal = false;
     }
+    pub fn clear(&self) {
+        self.touch();
+        let mut scope = self.0.borrow_mut();
+        scope.selection = None;
+        scope.drag = None;
+        scope.column = None;
+    }
     pub fn suspend(&self) {
         let mut scope = self.0.borrow_mut();
         scope.enabled = false;

@@ -197,6 +197,7 @@ export interface ToolDetailsProps {
   focusOnPointer: boolean;
 }
 export interface TimelineProps {
+  browse: number | null;
   timings: (HistoryTurnTiming & { turnId: string; afterMessageId: string })[];
   markReadEnabled: boolean;
   toolContext: ToolDetailsProps['context'] | null;
@@ -459,6 +460,7 @@ export const toolDetailsContract = component(
 export const timelineContract = component(
   'maka.agent.Timeline',
   object({
+    browse: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
     timings: {
       type: 'array',
       maxItems: 8,
@@ -551,6 +553,7 @@ export const timelineContract = component(
     sourceRetry: object({}),
     sourceField: withDefs(object({ field: { $ref: '#/$defs/SourceField' } })),
     searchClosed: object({}),
+    browseClosed: object({ request: { type: 'integer', minimum: 1 } }),
     fileContext: {
       anyOf: [
         object({

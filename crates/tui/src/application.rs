@@ -492,6 +492,7 @@ impl Presenter {
             self.clear_hover()?;
             return Ok(());
         }
+        self.cancel_reading_focus_requests(&event);
         self.cancel_reading_keyboard_reveal(&event);
         let raw_pointer_target = if let Event::Mouse(mouse) = &event {
             let target = self
@@ -756,6 +757,7 @@ impl Presenter {
             {
                 return Ok(());
             }
+            self.clear_item_selection(&target);
             let kind = match target.kind {
                 paint::TargetKind::Item { submit: true, .. } if matches!(event, Event::Key(key) if key.code == KeyCode::Enter) => {
                     "submit"

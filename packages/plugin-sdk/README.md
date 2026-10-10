@@ -167,6 +167,13 @@ selection owners retain geometry and selection; plugins receive `observed` facts
 and `input` events, never pixel offsets. Numbered `start`, `end`, and `reveal_child`
 commands settle as `applied`, `cancelled`, or `rejected`; omission does not replay
 an accepted command. Observations retain only the current command and latest receipt.
+TUI also accepts `focus_item` with the key of an enabled Item in this ReadingArea's
+scene. It minimally reveals the item, waits for successful presentation, then
+focuses it and emits its declared follow-focus activation without submitting it.
+A newer physical input, structural hiding or retirement cancels a pending request;
+missing/disabled items are rejected. Desktop currently rejects this TUI command.
+Focusing a reading Item clears that reading scope's native text selection; a modal
+Item cannot clear a background scope's selection.
 TUI additionally reports `selectedChildKey`, the direct content child containing
 the original native selection focus (including a collapsed caret). Geometry binds
 only after successful output; modal suspension retains context, while document

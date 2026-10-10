@@ -13149,3 +13149,185 @@ test('TUI file command follows original native message focus, falls back to firs
   });
   assert.equal(client.state.fileContext.path, '/remote/file.rs');
 });
+
+test('TUI message browse uses native header items, retains draft focus intent, and fences late close events', async () => {
+  const rootModule = await import(pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js')));
+  rootModule.activate({ locale: 'en' });
+  const { component: timeline } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/timeline/tui.js'))
+  );
+  const client = new Client(rootModule.component).start({
+    through: 100,
+    chunks: [
+      historyChunk('first', { sequence: 40, messageId: uuid(991), role: 'user' }),
+      historyChunk('tool body', { sequence: 50, messageId: uuid(992), role: 'tool_call' }),
+      historyChunk('last', { sequence: 60, messageId: uuid(993), role: 'assistant' }),
+    ],
+  });
+  const invoke = () => {
+    client.raw('palette-open');
+    client.input({
+      kind: 'component',
+      child: 'command-palette',
+      name: 'invoked',
+      event: { id: 'browse' },
+    });
+  };
+  invoke();
+  let props = client.timeline;
+  const request = props.browse;
+  assert.ok(request > 0);
+  assert.equal(client.state.dialog, null);
+  assert.equal(
+    modelSlots(client.output.frame.view).find((node) => node.binding === 'composer').props
+      .autoFocus,
+    false,
+  );
+  let out = timeline.mount(props, {});
+  const reading = () => modelSlots(out.frame.view).find((node) => node.key === 'reading');
+  const raw = (key, kind = 'activate') => {
+    out = timeline.event(
+      structuredClone(out.frame.state),
+      {
+        kind: 'component',
+        child: 'reading',
+        name: 'input',
+        event: { kind: 'raw', key, event: { kind } },
+      },
+      props,
+      {},
+    );
+  };
+  assert.equal(reading().props.content.focus_group, true);
+  assert.equal(reading().props.content.scroll, 'anchor');
+  assert.deepEqual(reading().props.command.target, {
+    kind: 'focus_item',
+    key: 'browse-' + uuid(991),
+  });
+  const first = reading().props.content.children.find(
+    (node) => node.key === 'message-' + uuid(991),
+  );
+  assert.equal(first.children[0].kind, 'item');
+  assert.equal(first.children[0].follow_focus, true);
+  assert.notEqual(first.children[1].kind, 'item', 'body selection is outside the header highlight');
+  raw('browse-' + uuid(992));
+  assert.deepEqual(out.frame.state.expanded, [], 'focus does not submit a tool');
+  raw('browse-' + uuid(992), 'submit');
+  assert.deepEqual(out.frame.state.expanded, [uuid(992)]);
+  raw('browse-collapse');
+  assert.deepEqual(out.frame.state.expanded, []);
+  raw('browse-expand');
+  assert.deepEqual(out.frame.state.expanded, [uuid(992)]);
+  raw('browse-next');
+  assert.deepEqual(reading().props.command.target, {
+    kind: 'focus_item',
+    key: 'browse-' + uuid(993),
+  });
+  raw('browse-close');
+  assert.deepEqual(out.events.find((event) => event.name === 'browseClosed').value, { request });
+  invoke();
+  client.input({ kind: 'component', child: 'timeline', name: 'browseClosed', event: { request } });
+  assert.notEqual(client.state.browse, null, 'an old close cannot end a new request');
+  client.input({
+    kind: 'component',
+    child: 'timeline',
+    name: 'browseClosed',
+    event: { request: client.state.browse },
+  });
+  assert.equal(client.state.browse, null);
+  assert.equal(
+    modelSlots(client.output.frame.view).find((node) => node.binding === 'composer').props
+      .autoFocus,
+    true,
+  );
+  props = { ...props, browse: null };
+  out = timeline.update(structuredClone(out.frame.state), props, {});
+  assert.equal(out.frame.state.browse, null);
+  assert.equal(reading().props.content.children[0].children[0].kind, 'text');
+});
+
+test('TUI browse waits for native find cleanup and rejects a retained request in loading views', async () => {
+  const rootModule = await import(pathToFileURL(resolve(root, 'dist/packages/workspace/tui.js')));
+  rootModule.activate({ locale: 'en' });
+  const { component: timeline } = await import(
+    pathToFileURL(resolve(root, 'dist/packages/timeline/tui.js'))
+  );
+  const client = new Client(rootModule.component).start({
+    through: 100,
+    chunks: [historyChunk('first', { sequence: 40, messageId: uuid(994), role: 'assistant' })],
+  });
+  let props = { ...client.timeline, search: { sessionId: session.id, epoch: 1, through: 100 } };
+  let out = timeline.mount(props, {});
+  props = { ...props, search: null, browse: 70 };
+  out = timeline.update(structuredClone(out.frame.state), props, {});
+  const clear = out.frame.state.command;
+  assert.equal(clear.target.kind, 'clear_find');
+  assert.equal(out.frame.state.browse, null);
+  const cancelled = timeline.event(
+    structuredClone(out.frame.state),
+    {
+      kind: 'component',
+      child: 'reading',
+      name: 'observed',
+      event: {
+        readingRevision: 3,
+        viewport: null,
+        selectedChildKey: null,
+        receipt: { sequence: clear.sequence, status: 'cancelled' },
+        pendingCommand: null,
+        find: null,
+      },
+    },
+    props,
+    {},
+  );
+  assert.equal(cancelled.frame.state.command.target.kind, 'clear_find');
+  assert.deepEqual(cancelled.events.find((event) => event.name === 'browseClosed').value, {
+    request: 70,
+  });
+  out = timeline.event(
+    structuredClone(out.frame.state),
+    {
+      kind: 'component',
+      child: 'reading',
+      name: 'observed',
+      event: {
+        readingRevision: 3,
+        viewport: null,
+        selectedChildKey: null,
+        receipt: { sequence: clear.sequence, status: 'applied' },
+        pendingCommand: null,
+        find: null,
+      },
+    },
+    props,
+    {},
+  );
+  assert.equal(out.frame.state.browse.request, 70);
+  assert.equal(out.frame.state.command.target.kind, 'focus_item');
+  const focus = out.frame.state.command.sequence;
+  out = timeline.event(
+    structuredClone(out.frame.state),
+    {
+      kind: 'component',
+      child: 'reading',
+      name: 'observed',
+      event: {
+        readingRevision: 4,
+        viewport: null,
+        selectedChildKey: null,
+        receipt: { sequence: focus, status: 'cancelled' },
+        pendingCommand: null,
+        find: null,
+      },
+    },
+    props,
+    {},
+  );
+  assert.deepEqual(out.events.find((event) => event.name === 'browseClosed').value, {
+    request: 70,
+  });
+  props = { ...props, loading: true };
+  out = timeline.update(structuredClone(out.frame.state), props, {});
+  assert.equal(out.frame.state.browse, null);
+});

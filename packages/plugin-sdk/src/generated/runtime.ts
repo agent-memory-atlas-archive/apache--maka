@@ -931,6 +931,10 @@ export type ReadingTarget =
     }
   | {
       key: string;
+      kind: 'focus_item';
+    }
+  | {
+      key: string;
       kind: 'reveal_child';
     };
 export type FindStep = 'first' | 'next' | 'previous';

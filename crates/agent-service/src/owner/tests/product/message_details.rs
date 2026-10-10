@@ -29,6 +29,7 @@ pub(super) fn run(
     runtime: &tokio::runtime::Runtime,
     fixture: &Fixture,
     session: &str,
+    capture: &impl Fn(&mut maka_tui::application::Presenter, &str),
 ) {
     // Canonical historical facts enter through the real store. No invented
     // UI/source response, file read, upload or model invocation is introduced.
@@ -132,6 +133,65 @@ pub(super) fn run(
         .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
         .unwrap();
     await_screen(presenter, "File background draft");
+    // Enter browsing through the ordinary palette after closing native Find.
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('k'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    wait_for_target(presenter, "[ Close commands ]", 0);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    presenter
+        .input(Event::Paste("Browse messages".into()))
+        .unwrap();
+    wait_for_target(presenter, "[ › Browse messages", 0);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    await_screen(presenter, "messages ·");
+    draw(presenter);
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE)))
+        .unwrap();
+    let (column, row) = wait_for_target(presenter, "You · 2000-", 0);
+    let buffer = draw(presenter);
+    assert!(
+        buffer[(column, row)]
+            .modifier
+            .contains(ratatui::style::Modifier::UNDERLINED)
+    );
+    capture(presenter, "native-message-browse.txt");
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)))
+        .unwrap();
+    draw(presenter);
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))
+        .unwrap();
+    let (column, row) = wait_for_target(presenter, "You · 2000-", 0);
+    assert!(
+        draw(presenter)[(column, row)]
+            .modifier
+            .contains(ratatui::style::Modifier::UNDERLINED)
+    );
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+        .unwrap();
+    await_screen(presenter, "File background draft");
+    presenter
+        .input(Event::Paste(" browse returned".into()))
+        .unwrap();
+    await_screen(presenter, "File background draft browse returned");
+    capture(presenter, "native-browse-return.txt");
     assert!(!fixture.workspace.join("not-opened.txt").exists());
 }
 

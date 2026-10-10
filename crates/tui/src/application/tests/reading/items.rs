@@ -365,3 +365,214 @@ fn horizontal_group_uses_its_published_axis_and_preserves_explicit_activation() 
     assert_eq!(p.focus.as_ref().unwrap().key, "after");
     close(&mut p);
 }
+
+fn focus_command(p: &mut Presenter, props: &Rc<RefCell<Value>>, sequence: u64, key: &str) {
+    props.borrow_mut()["command"] =
+        json!({"sequence":sequence,"target":{"kind":"focus_item","key":key}});
+    refresh(p);
+}
+#[test]
+fn reading_focus_command_waits_for_actual_reveal_and_only_queues_follow_focus() {
+    let (_runtime, mut p, props) = native((0..12).map(item).collect());
+    props.borrow_mut()["content"]["focus_group"] = json!(true);
+    refresh(&mut p);
+    draw(&mut p, 24, 4);
+    focus_command(&mut p, &props, 1, "item-10");
+    let area = Rect::new(0, 0, 24, 4);
+    let mut buffer = Buffer::empty(area);
+    let candidate = p.paint(area, &mut buffer).unwrap();
+    let before = p.application.frame(&p.root).unwrap().revision;
+    assert_ne!(p.focus.as_ref().unwrap().key, "item-10");
+    drop(candidate);
+    assert_eq!(state(&p).scrolls["reading"].offset, 0);
+    draw(&mut p, 24, 4);
+    assert!(state(&p).reading.as_ref().unwrap().pending.is_some());
+    assert_ne!(p.focus.as_ref().unwrap().key, "item-10");
+    // A current flushed item is revealed before the command can own focus.
+    let candidate = p.paint(area, &mut buffer).unwrap();
+    let revision = p.application.frame(&p.root).unwrap().revision;
+    p.present(candidate);
+    assert_eq!(p.application.frame(&p.root).unwrap().revision, revision);
+    assert!(revision >= before);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-10");
+    assert_eq!(p.focus.as_ref().unwrap().area.visible().height, 2);
+    assert!(state(&p).reading.as_ref().unwrap().pending.is_none());
+    p.sync_native().unwrap();
+    assert!(p.application.frame(&p.root).unwrap().revision > revision);
+    draw(&mut p, 24, 4);
+    p.input(key(KeyCode::Down)).unwrap();
+    draw(&mut p, 24, 4);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-11");
+    close(&mut p);
+}
+#[test]
+fn reading_focus_request_rejects_disabled_or_nonitem_keys_and_new_input_cancels_it() {
+    let (_runtime, mut p, props) = native((0..12).map(item).collect());
+    props.borrow_mut()["content"]["children"][1]["disabled"] = json!(true);
+    refresh(&mut p);
+    draw(&mut p, 24, 4);
+    for (sequence, target) in [(1, "item-1"), (2, "title-0"), (3, "missing")] {
+        focus_command(&mut p, &props, sequence, target);
+        draw(&mut p, 24, 4);
+        p.sync_native().unwrap();
+        assert_eq!(
+            observation(&p)["receipt"],
+            json!({"sequence":sequence,"status":"rejected"})
+        );
+        assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
+    }
+    focus_command(&mut p, &props, 4, "item-10");
+    draw(&mut p, 24, 4);
+    p.input(key(KeyCode::Tab)).unwrap();
+    for _ in 0..3 {
+        draw(&mut p, 24, 4);
+    }
+    p.sync_native().unwrap();
+    assert_ne!(p.focus.as_ref().unwrap().key, "item-10");
+    assert!(state(&p).reading.as_ref().unwrap().pending.is_none());
+    for (sequence, kind) in [
+        (5, MouseEventKind::ScrollRight),
+        (6, MouseEventKind::Drag(MouseButton::Left)),
+    ] {
+        focus_command(&mut p, &props, sequence, "item-10");
+        mouse(&mut p, kind, 1, 1);
+        for _ in 0..3 {
+            draw(&mut p, 24, 4);
+        }
+        p.sync_native().unwrap();
+        assert!(state(&p).reading.as_ref().unwrap().pending.is_none());
+        assert_eq!(
+            observation(&p)["receipt"],
+            json!({"sequence":sequence,"status":"cancelled"})
+        );
+    }
+    close(&mut p);
+}
+#[test]
+fn reading_focus_request_cannot_replay_after_an_unflushed_hide_or_owner_retirement() {
+    let (_runtime, mut p, props) = native((0..4).map(item).collect());
+    draw(&mut p, 24, 4);
+    focus_command(&mut p, &props, 1, "item-3");
+    let area = Rect::new(0, 0, 24, 4);
+    let mut buffer = Buffer::empty(area);
+    let old = p.paint(area, &mut buffer).unwrap();
+    props.borrow_mut()["content"]["visible"] = json!(false);
+    refresh(&mut p);
+    p.present(old);
+    draw(&mut p, 24, 4);
+    assert!(p.focus.is_none());
+    props.borrow_mut()["content"]["visible"] = json!(true);
+    refresh(&mut p);
+    draw(&mut p, 24, 4);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
+    assert!(state(&p).reading.as_ref().unwrap().pending.is_none());
+    focus_command(&mut p, &props, 2, "item-3");
+    let old = p.paint(area, &mut buffer).unwrap();
+    close(&mut p);
+    p.present(old);
+    assert!(p.focus.is_none());
+}
+#[test]
+fn reading_item_arrows_skip_embedded_text_sources_and_buttons() {
+    let mut children = vec![item(0), source("body-0", "first source")];
+    children.push(json!({"kind":"button","key":"detail","label":"Details"}));
+    children.push(item(1));
+    children.push(source("body-1", "second source"));
+    let (_runtime, mut p, props) = native(children);
+    props.borrow_mut()["content"]["focus_group"] = json!(true);
+    refresh(&mut p);
+    draw(&mut p, 24, 8);
+    p.input(key(KeyCode::Down)).unwrap();
+    draw(&mut p, 24, 8);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-1");
+    p.input(key(KeyCode::Up)).unwrap();
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
+    close(&mut p);
+}
+
+#[test]
+fn item_focus_clears_the_original_reading_selection() {
+    let (_runtime, mut p, props) = native(vec![item(0), source("body", "selectable"), item(1)]);
+    draw(&mut p, 24, 8);
+    mouse(&mut p, MouseEventKind::Down(MouseButton::Left), 0, 2);
+    mouse(&mut p, MouseEventKind::Drag(MouseButton::Left), 4, 2);
+    mouse(&mut p, MouseEventKind::Up(MouseButton::Left), 4, 2);
+    assert_eq!(copied(&mut p).unwrap(), b"sele");
+    focus_command(&mut p, &props, 1, "item-1");
+    draw(&mut p, 24, 8);
+    p.sync_native().unwrap();
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-1");
+    assert!(observation(&p)["selectedChildKey"].is_null());
+    assert!(copied(&mut p).is_none());
+    close(&mut p);
+}
+
+#[test]
+fn focus_command_created_under_hidden_parent_is_rejected_before_reveal() {
+    let props = Rc::new(RefCell::new(props(vec![item(0), item(1)])));
+    let visible = Rc::new(Cell::new(false));
+    props.borrow_mut()["command"] =
+        json!({"sequence":1,"target":{"kind":"focus_item","key":"item-1"}});
+    let (_runtime, mut p) = layout::native(
+        layout::View::HiddenReadingSlot(props, visible.clone()),
+        Rc::new(Cell::new(true)),
+    );
+    draw(&mut p, 24, 8);
+    let child = p
+        .application
+        .child_mount(&p.root, "reader")
+        .unwrap()
+        .clone();
+    let state = p.resources.owners[&child.id()]
+        .state
+        .downcast_ref::<super::super::super::scroll::SceneState>()
+        .unwrap();
+    assert!(state.reading.as_ref().unwrap().pending.is_none());
+    assert_eq!(
+        observation(&p)["receipt"],
+        json!({"sequence":1,"status":"rejected"})
+    );
+    visible.set(true);
+    let root = p.root.clone();
+    let revision = p.application.frame(&root).unwrap().revision;
+    p.application
+        .dispatch(&root, revision, "back", json!({"kind":"click"}))
+        .unwrap();
+    p.sync_native().unwrap();
+    draw(&mut p, 24, 8);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
+    close(&mut p);
+}
+
+#[test]
+fn foreground_item_focus_does_not_clear_background_reading_selection() {
+    let mut items = column("choices", vec![item(0), item(1)]);
+    items["focus_group"] = json!(true);
+    let (_runtime, mut p, props) = native(vec![dialog::dialog(
+        "modal",
+        false,
+        source("bg", "retained selection"),
+        items,
+    )]);
+    draw(&mut p, 40, 12);
+    all(&mut p);
+    let scope = state(&p).reading.as_ref().unwrap().scope.clone();
+    assert_eq!(scope.copy().unwrap().unwrap(), "retained selection");
+    props.borrow_mut()["content"]["children"][0]["open"] = json!(true);
+    refresh(&mut p);
+    draw(&mut p, 40, 12);
+    p.input(key(KeyCode::Down)).unwrap();
+    draw(&mut p, 40, 12);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-1");
+    assert_eq!(scope.copy().unwrap().unwrap(), "retained selection");
+    focus_command(&mut p, &props, 1, "item-0");
+    draw(&mut p, 40, 12);
+    p.sync_native().unwrap();
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-1");
+    assert_eq!(
+        observation(&p)["receipt"],
+        json!({"sequence":1,"status":"rejected"})
+    );
+    assert_eq!(scope.copy().unwrap().unwrap(), "retained selection");
+    close(&mut p);
+}

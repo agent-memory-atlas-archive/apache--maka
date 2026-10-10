@@ -1009,7 +1009,7 @@ process.stdout.write(output.outputFiles[0].text);
                 let buffer = &buffer;
                 (0..buffer.area.width).map(move |x| {
                     let cell = &buffer[(x, y)];
-                    json!({"x":x,"y":y,"text":cell.symbol(),"fg":format!("{:?}",cell.fg),"bg":format!("{:?}",cell.bg),"bold":cell.modifier.contains(ratatui::style::Modifier::BOLD)})
+                    json!({"x":x,"y":y,"text":cell.symbol(),"fg":format!("{:?}",cell.fg),"bg":format!("{:?}",cell.bg),"bold":cell.modifier.contains(ratatui::style::Modifier::BOLD),"underline":cell.modifier.contains(ratatui::style::Modifier::UNDERLINED)})
                 })
             }).collect();
             std::fs::write(
@@ -2335,7 +2335,7 @@ process.stdout.write(output.outputFiles[0].text);
     }
     if fail_labels_initialization || file_permissions || image || form {
         if matches!(case, ProductCase::FilePermissions) {
-            message_details::run(&mut presenter, &runtime, &fixture, &session_id);
+            message_details::run(&mut presenter, &runtime, &fixture, &session_id, &capture);
         }
         if fail_labels_initialization {
             // Saved notice, retained old fields, an actual different selected

@@ -207,6 +207,7 @@ export interface State {
   catalogEpoch: number;
   modelRefreshing: boolean;
   searchOpen: boolean;
+  browse: number | null;
   settingsOpen: boolean;
   deploymentOpen: boolean;
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
@@ -509,6 +510,7 @@ function follow(state: State, actions: Action[]) {
     receipt?.landing === state.landing.sequence &&
     !state.source &&
     !state.searchOpen &&
+    state.browse === null &&
     !state.image &&
     !state.loading &&
     state.window?.latest &&
@@ -534,6 +536,7 @@ function follow(state: State, actions: Action[]) {
 }
 function select(state: State, actions: Action[], session: AgentSession) {
   state.searchOpen = false;
+  state.browse = null;
   state.selected = session;
   state.epoch++;
   state.window = null;
@@ -662,6 +665,7 @@ function executionPending(state: State) {
 }
 
 type RootCommand =
+  | 'browse'
   | 'copy-file-path'
   | 'search-open'
   | 'help-open'
@@ -747,6 +751,19 @@ function rootCommands(
   const commands: (PaletteCommand & { kind: RootCommand })[] = [
     ...(target === 'tui'
       ? [
+          {
+            kind: 'browse' as const,
+            id: 'browse',
+            label: text.browseMessages,
+            hint: '',
+            disabled:
+              !route ||
+              !state.selected ||
+              state.loading ||
+              !!state.source ||
+              !!state.image ||
+              !messages(state).length,
+          },
           {
             kind: 'search-open' as const,
             id: 'search-open',
@@ -889,8 +906,14 @@ function rootCommand(
     )
   )
     return false;
-  if (kind === 'search-open') state.searchOpen = true;
-  else if (kind === 'help-open') state.dialog = 'help';
+  if (kind === 'browse') {
+    state.searchOpen = false;
+    state.browse = ++state.serial;
+    state.tailReceipt = null;
+  } else if (kind === 'search-open') {
+    state.searchOpen = true;
+    state.browse = null;
+  } else if (kind === 'help-open') state.dialog = 'help';
   else if (kind === 'interaction-open') {
     const review = reviewTarget(state)!;
     openInteraction(state, actions, review.requestId, review.kind);
@@ -1803,8 +1826,10 @@ function frame<N extends Node>(
       );
   }
   uploadPastedFile(state, actions);
-  if (!conversationRoute(state) || state.source || state.image || !state.selected)
+  if (!conversationRoute(state) || state.source || state.image || !state.selected) {
     state.searchOpen = false;
+    state.browse = null;
+  }
   const theme = values.appearance?.[0] as Theme;
   const text = copy(locale),
     ui = presentation.paint(theme),
@@ -1906,6 +1931,7 @@ function frame<N extends Node>(
       locale,
       messages: timelineMessages,
       timings: turnTimings(state, timelineMessages),
+      browse: state.browse,
       markReadEnabled:
         !!state.selected?.hasUnread &&
         !state.selected.archived &&
@@ -1993,6 +2019,7 @@ function frame<N extends Node>(
       sourceField: 'source-field',
       tailReady: 'tail-ready',
       searchClosed: 'search-closed',
+      browseClosed: 'browse-closed',
     },
   );
   const imageViewer = presentation.slot(
@@ -2063,7 +2090,7 @@ function frame<N extends Node>(
         !state.loading &&
         state.notice !== 'unavailable',
       command: state.command,
-      autoFocus: !state.searchOpen,
+      autoFocus: !state.searchOpen && state.browse === null,
       hasAttachments: attached.length > 0,
     },
     {
@@ -2754,6 +2781,7 @@ export function workspace<N extends Node>(
         settingsOpen: false,
         deploymentOpen: false,
         searchOpen: false,
+        browse: null,
         sidebar: target === 'desktop' ? { open: true } : { command: null },
         terminals,
         dialog: null,
@@ -3122,6 +3150,8 @@ export function workspace<N extends Node>(
               context.landing === state.landing.sequence)
           )
             state.fileContext = context;
+        } else if (input.child === 'timeline' && input.name === 'browseClosed') {
+          if ((input.event as { request: number }).request === state.browse) state.browse = null;
         } else if (input.child === 'timeline' && input.name === 'searchClosed') {
           state.searchOpen = false;
         } else if (input.child === 'timeline' && input.name === 'tailReady') {

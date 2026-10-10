@@ -251,21 +251,8 @@ impl Presenter {
             return Ok(());
         }
         let changed = !self.focus.as_ref().is_some_and(|old| old.same(&target));
-        let mut bounds = target.area.bounds;
-        for ancestor in target.ancestors.iter().rev() {
-            if self.target_admitted(ancestor)
-                && self.resources.owns(ancestor)
-                && self.application.frame(&ancestor.mount)?.revision == ancestor.revision
-                && let Some(viewport) = &ancestor.scroll
-                && let Some(state) = self
-                    .resources
-                    .owners
-                    .get_mut(&ancestor.mount.id())
-                    .and_then(|owner| owner.state.downcast_mut::<super::scroll::SceneState>())
-            {
-                state.reveal(&ancestor.key, viewport, &mut bounds);
-            }
-        }
+        self.reveal_focus_target(&target, true)?;
+        self.clear_item_selection(&target);
         self.focus = Some(target.clone());
         if let TargetKind::Item {
             current,
@@ -283,6 +270,49 @@ impl Presenter {
             self.sync_native()?;
         }
         self.track_focus_return()
+    }
+    pub(super) fn clear_item_selection(&self, target: &super::paint::Target) {
+        if matches!(target.kind, super::paint::TargetKind::Item { .. }) {
+            for ancestor in target.ancestors.iter().rev() {
+                if !self.target_admitted(ancestor) || !self.resources.owns(ancestor) {
+                    continue;
+                }
+                if let Some(reading) = self
+                    .resources
+                    .owners
+                    .get(&ancestor.mount.id())
+                    .and_then(|owner| owner.state.downcast_ref::<super::scroll::SceneState>())
+                    .and_then(|state| state.reading.as_ref())
+                    .filter(|reading| reading.root_key == ancestor.key)
+                {
+                    reading.scope.clear();
+                    break;
+                }
+            }
+        }
+    }
+    pub(super) fn reveal_focus_target(
+        &mut self,
+        target: &super::paint::Target,
+        physical: bool,
+    ) -> maka_ui::Result<bool> {
+        let mut changed = false;
+        let mut bounds = target.area.bounds;
+        for ancestor in target.ancestors.iter().rev() {
+            if self.target_admitted(ancestor)
+                && self.resources.owns(ancestor)
+                && self.application.frame(&ancestor.mount)?.revision == ancestor.revision
+                && let Some(viewport) = &ancestor.scroll
+                && let Some(state) = self
+                    .resources
+                    .owners
+                    .get_mut(&ancestor.mount.id())
+                    .and_then(|owner| owner.state.downcast_mut::<super::scroll::SceneState>())
+            {
+                changed |= state.reveal(&ancestor.key, viewport, &mut bounds, physical);
+            }
+        }
+        Ok(changed)
     }
     pub(super) fn navigate_items(
         &mut self,
@@ -319,7 +349,11 @@ impl Presenter {
         let peers: Vec<_> = self
             .scene
             .iter()
-            .filter(|target| target.tab_index >= 0 && target.same_group(focus))
+            .filter(|target| {
+                target.tab_index >= 0
+                    && target.same_group(focus)
+                    && matches!(target.kind, super::paint::TargetKind::Item { .. })
+            })
             .collect();
         let Some(at) = peers.iter().position(|target| target.same(focus)) else {
             return Ok(false);

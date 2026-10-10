@@ -702,6 +702,17 @@ impl Presenter {
             });
         self.keyboard = scene.keyboard;
         self.scene = scene.targets;
+        if frames_current {
+            let mounts: Vec<_> = scene
+                .laid_out
+                .values()
+                .map(|painted| painted.mount.clone())
+                .collect();
+            if let Err(error) = self.apply_reading_focus(&mounts) {
+                self.report(&error);
+                return;
+            }
+        }
         if let Err(error) = self.track_focus_return() {
             self.report(&error);
         }

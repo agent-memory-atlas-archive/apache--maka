@@ -67,6 +67,12 @@ pub enum ReadingTarget {
         #[serde(default)]
         find_sequence: Option<u64>,
     },
+    /// TUI: focus and minimally reveal an enabled scene Item. Settlement waits
+    /// for its successful presentation; this never submits the item.
+    FocusItem {
+        #[schemars(length(min = 1, max = 128))]
+        key: String,
+    },
     RevealChild {
         #[schemars(length(min = 1, max = 128))]
         key: String,
@@ -101,6 +107,7 @@ impl ReadingCommand {
     pub fn valid_target(&self) -> bool {
         match &self.target {
             ReadingTarget::Find { query, .. } => query.len() <= 512,
+            ReadingTarget::FocusItem { key } => !key.is_empty() && key.len() <= 128,
             ReadingTarget::ScrollRows { rows } => (-65536..=65536).contains(rows),
             ReadingTarget::RevealSource {
                 path,

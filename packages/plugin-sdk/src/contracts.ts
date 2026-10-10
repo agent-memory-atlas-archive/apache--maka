@@ -2232,6 +2232,24 @@ export const contracts = {
                 required: ['kind', 'path', 'offset'],
               },
               {
+                description:
+                  'TUI: focus and minimally reveal an enabled scene Item. Settlement waits\nfor its successful presentation; this never submits the item.',
+                type: 'object',
+                properties: {
+                  key: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'focus_item',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'key'],
+              },
+              {
                 type: 'object',
                 properties: {
                   key: {

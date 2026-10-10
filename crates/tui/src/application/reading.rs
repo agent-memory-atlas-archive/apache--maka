@@ -53,6 +53,7 @@ pub(super) struct ReadingState {
     viewport: Option<ReadingViewport>,
     published: Option<ReadingObservation>,
     alive: bool,
+    focus_visible: bool,
     find: find::State,
     find_intent: Option<u64>,
 }
@@ -67,6 +68,7 @@ impl ReadingState {
             viewport: None,
             published: None,
             alive: true,
+            focus_visible: false,
             find: find::State::default(),
             find_intent: None,
         }
@@ -117,6 +119,17 @@ impl ReadingState {
             && self.viewport.as_ref().is_some_and(|viewport| {
                 viewport.reading_revision == self.scope.revision() && viewport.at_end
             })
+    }
+    pub(super) fn settle_focus(&mut self, sequence: u64, applied: bool) {
+        self.pending = None;
+        self.receipt = Some(ReadingReceipt {
+            sequence,
+            status: if applied {
+                ReadingStatus::Applied
+            } else {
+                ReadingStatus::Rejected
+            },
+        });
     }
     fn observe(&mut self) -> Option<NativeInput> {
         if self
@@ -188,7 +201,17 @@ impl Widget for Reading {
         Some(&self.node)
     }
     fn prepare_focus(&self, state: &mut dyn Any, visible: bool) {
-        state_mut(state).prepare_dialogs(&self.node, visible);
+        let state = state_mut(state);
+        state.prepare_dialogs(&self.node, visible);
+        let reading = state.reading.as_mut().unwrap();
+        reading.focus_visible = visible && self.node.visible();
+        if !reading.focus_visible
+            && reading.pending.as_ref().is_some_and(|pending| {
+                matches!(pending.command.target, ReadingTarget::FocusItem { .. })
+            })
+        {
+            reading.cancel();
+        }
     }
     fn same_presentation(&self, previous: &dyn Any) -> bool {
         previous
@@ -219,6 +242,11 @@ impl Widget for Reading {
             reading.find_intent = None;
         }
         if !self.node.visible() {
+            if reading.pending.as_ref().is_some_and(|pending| {
+                matches!(pending.command.target, ReadingTarget::FocusItem { .. })
+            }) {
+                reading.cancel();
+            }
             reading.scope.suspend();
             reading.viewport = None;
         }
@@ -249,7 +277,10 @@ impl Widget for Reading {
                 return Ok(None);
             }
             reading.scope.touch();
-            if self.node.visible() {
+            if self.node.visible()
+                && (!matches!(command.target, ReadingTarget::FocusItem { .. })
+                    || reading.focus_visible)
+            {
                 reading.pending = Some(Pending {
                     command: command.clone(),
                     intent: reading.scope.intent(),
@@ -669,4 +700,121 @@ pub(super) fn register(registry: &mut NativeRegistry<dyn Widget>) {
             )]))
         })
         .expect("unique native reading implementation");
+}
+
+impl super::Presenter {
+    pub(super) fn cancel_reading_focus_requests(&mut self, event: &crossterm::event::Event) {
+        use crossterm::event::{Event, KeyEventKind, MouseEventKind};
+        let supersedes = match event {
+            Event::Key(key) => key.kind != KeyEventKind::Release,
+            Event::Mouse(mouse) => {
+                !matches!(mouse.kind, MouseEventKind::Moved | MouseEventKind::Up(_))
+            }
+            Event::Paste(_) | Event::FocusLost => true,
+            _ => false,
+        };
+        if supersedes {
+            for owner in self.resources.owners.values_mut() {
+                if let Some(state) = owner.state.downcast_mut::<SceneState>()
+                    && let Some(reading) = state.reading.as_mut()
+                    && reading.pending.as_ref().is_some_and(|pending| {
+                        matches!(pending.command.target, ReadingTarget::FocusItem { .. })
+                    })
+                {
+                    reading.cancel();
+                }
+            }
+        }
+    }
+    /// Resolve focus requests against the scene just confirmed by the embedding.
+    /// Notifications are queued on the original owner; presentation never calls JS.
+    pub(super) fn apply_reading_focus(
+        &mut self,
+        mounts: &[maka_plugin_core::runtime::Mount],
+    ) -> maka_ui::Result<()> {
+        use super::paint::TargetKind;
+        let mut requests: Vec<_> = mounts
+            .iter()
+            .filter_map(|mount| {
+                let owner = self.resources.owners.get(&mount.id())?;
+                let state = owner.state.downcast_ref::<SceneState>()?;
+                let reading = state.reading.as_ref()?;
+                let pending = reading.pending.as_ref()?;
+                let ReadingTarget::FocusItem { key } = &pending.command.target else {
+                    return None;
+                };
+                if pending.intent != reading.scope.intent() {
+                    return None;
+                }
+                let target = self.scene.iter().position(|target| {
+                    target.mount == *mount
+                        && target.key == *key
+                        && matches!(target.kind, TargetKind::Item { .. })
+                        && target.ancestors.iter().any(|ancestor| {
+                            ancestor.mount == *mount
+                                && ancestor.key == reading.root_key
+                                && super::dialog::same_scope(&ancestor.scope, &target.scope)
+                        })
+                });
+                Some((target, mount.clone(), pending.command.sequence))
+            })
+            .collect();
+        requests.sort_by_key(|(target, _, _)| target.unwrap_or(usize::MAX));
+        let mut claimed = false;
+        for (target, mount, sequence) in requests {
+            let target = target.map(|at| self.scene[at].clone());
+            let admitted = !claimed
+                && target.as_ref().is_some_and(|target| {
+                    self.target_admitted(target)
+                        && self.resources.owns(target)
+                        && !self.application.is_retiring(&target.mount)
+                });
+            if admitted {
+                claimed = true;
+                let target = target.as_ref().unwrap();
+                if self.reveal_focus_target(target, false)? {
+                    // Wait for the requested viewport to actually be flushed.
+                    continue;
+                }
+            }
+            let applied = admitted
+                && target
+                    .as_ref()
+                    .is_some_and(|target| !target.area.is_empty());
+            self.resources
+                .owners
+                .get_mut(&mount.id())
+                .unwrap()
+                .state
+                .downcast_mut::<SceneState>()
+                .unwrap()
+                .reading
+                .as_mut()
+                .unwrap()
+                .settle_focus(sequence, applied);
+            if applied {
+                let target = target.unwrap();
+                let changed = !self.focus.as_ref().is_some_and(|old| old.same(&target));
+                self.clear_hover()?;
+                self.clear_item_selection(&target);
+                self.focus = Some(target.clone());
+                if let TargetKind::Item {
+                    current,
+                    follow_focus: true,
+                    ..
+                } = target.kind
+                    && (changed || !current)
+                {
+                    self.resources.observe(
+                        &target.mount,
+                        NativeInput {
+                            key: target.key.clone(),
+                            value: json!({"kind":"activate"}),
+                        },
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
 }

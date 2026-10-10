@@ -339,6 +339,7 @@ impl Widget for Reading {
                         ScrollCommand::RevealChild(SharedString::from(key.clone()).into()),
                     ),
                     ReadingTarget::RevealChild { .. }
+                    | ReadingTarget::FocusItem { .. }
                     | ReadingTarget::Find { .. }
                     | ReadingTarget::ScrollRows { .. }
                     | ReadingTarget::ClearFind

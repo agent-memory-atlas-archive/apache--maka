@@ -155,7 +155,8 @@ impl SceneState {
             .filter(|pending| {
                 !matches!(
                     pending.command.target,
-                    maka_ui::reading::ReadingTarget::Find { .. }
+                    maka_ui::reading::ReadingTarget::FocusItem { .. }
+                        | maka_ui::reading::ReadingTarget::Find { .. }
                         | maka_ui::reading::ReadingTarget::ClearFind
                         | maka_ui::reading::ReadingTarget::RevealSource { .. }
                 )
@@ -164,7 +165,8 @@ impl SceneState {
                 let command = &pending.command;
                 use maka_ui::reading::ReadingTarget;
                 let target = match &command.target {
-                    ReadingTarget::Find { .. }
+                    ReadingTarget::FocusItem { .. }
+                    | ReadingTarget::Find { .. }
                     | ReadingTarget::ClearFind
                     | ReadingTarget::RevealSource { .. } => unreachable!(),
                     ReadingTarget::Start => Some(0),
@@ -292,9 +294,15 @@ impl SceneState {
 impl SceneState {
     /// Original Surface reveal_offsets: expose the complete logical row with
     /// the least scroll, preserving the same native offset and intent owner.
-    pub fn reveal(&mut self, key: &str, viewport: &Viewport, row: &mut super::CellRect) {
+    pub fn reveal(
+        &mut self,
+        key: &str,
+        viewport: &Viewport,
+        row: &mut super::CellRect,
+        physical: bool,
+    ) -> bool {
         let Some(state) = self.scrolls.get_mut(key) else {
-            return;
+            return false;
         };
         // The allocated viewport, not its physical clip: an outer scroller can
         // hide this entire group. Carry the adjusted logical row outward.
@@ -304,15 +312,23 @@ impl SceneState {
         let delta = if above > 0 { -above } else { below.max(0) };
         let next = (i64::from(viewport.offset) + delta).clamp(0, i64::from(viewport.end())) as u32;
         row.y += i64::from(viewport.offset) - i64::from(next);
-        state.intent += 1;
-        state.offset = next;
-        if let Some(reading) = self
-            .reading
-            .as_mut()
-            .filter(|reading| reading.root_key == key)
-        {
-            reading.scope.touch();
-            reading.cancel();
+        let changed = next != viewport.offset;
+        if physical || changed {
+            state.intent += 1;
+            state.offset = next;
+            if let Some(reading) = self
+                .reading
+                .as_mut()
+                .filter(|reading| reading.root_key == key)
+            {
+                if physical {
+                    reading.scope.touch();
+                    reading.cancel();
+                } else {
+                    reading.scope.0.borrow_mut().revision += 1;
+                }
+            }
         }
+        changed
     }
 }

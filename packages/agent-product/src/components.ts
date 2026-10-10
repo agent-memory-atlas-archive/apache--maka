@@ -110,6 +110,7 @@ interface Draft extends Revision {
   entries: DraftEntry[];
 }
 interface Reading extends Revision {
+  browse: { request: number; id: string } | null;
   search: ConversationSearch | null;
   expanded: string[];
   observation: ReadingObservation | null;
@@ -482,11 +483,48 @@ export function components<N extends Node>(
       ),
     );
   };
+  const focusMessage = (state: Reading, id: string) => {
+    state.browse!.id = id;
+    state.command = {
+      sequence: (state.command?.sequence ?? 0) + 1,
+      target: { kind: 'focus_item', key: 'browse-' + id },
+    };
+  };
+  const syncBrowse = (state: Reading, props: TimelineProps) => {
+    if (target !== 'tui' || !props.browse || props.source || props.search || props.loading) {
+      state.browse = null;
+      return;
+    }
+    const rows = toolCards(props.messages);
+    if (
+      state.browse?.request === props.browse &&
+      rows.some(({ message }) => message.id === state.browse!.id)
+    )
+      return;
+    // Search owns its clear receipt before the next focus command is issued.
+    if (
+      state.command?.target.kind === 'clear_find' &&
+      (state.observation?.receipt?.sequence !== state.command.sequence ||
+        state.observation.receipt.status !== 'applied')
+    )
+      return;
+    const selected =
+      state.observation?.selectedChildKey ?? state.observation?.viewport?.visibleChildKeys[0];
+    const row = rows.find(({ message }) => 'message-' + message.id === selected) ?? rows[0];
+    if (!row) {
+      state.browse = null;
+      return;
+    }
+    state.browse = { request: props.browse, id: row.message.id };
+    focusMessage(state, row.message.id);
+  };
   const timelineFrame = (state: Reading, props: TimelineProps) => {
     const ui = presentation.paint(props.theme),
       text = copy(props.locale);
     const search = state.search?.closing ? null : state.search;
+    syncBrowse(state, props);
     const rows = toolCards(props.messages);
+    const browsing = state.browse;
     const validFile = (id: string, context: ToolFileContext) => {
       const message = rows.find(({ message }) => message.id === id)?.message;
       return (
@@ -566,6 +604,9 @@ export function components<N extends Node>(
             );
       const messageNode = messageView(presentation, target, props.theme, props.locale, {
         ...message,
+        browse: browsing
+          ? { key: 'browse-' + message.id, current: browsing.id === message.id }
+          : undefined,
         waiting: !!message.tool && props.waitingTools.includes(message.tool.toolUseId),
         live: !!message.tool && props.liveTools.includes(message.tool.toolUseId),
         expanded,
@@ -731,7 +772,8 @@ export function components<N extends Node>(
           align: 'center',
           padding: { top: 24, right: 24, bottom: 24, left: 24 },
         },
-        scroll: props.live ? 'follow_end' : 'anchor',
+        focusGroup: !!browsing,
+        scroll: props.live && !props.browse ? 'follow_end' : 'anchor',
         terminal: { grow: 1 },
       },
     );
@@ -950,6 +992,7 @@ export function components<N extends Node>(
                 })(),
               ]
             : []),
+          ...(browsing ? [ui.text('browse-hint', text.browseHint, 12, props.theme.muted)] : []),
           ...(!search?.history && controls.length
             ? [
                 ui.box('reading-controls', controls, {
@@ -988,7 +1031,17 @@ export function components<N extends Node>(
                 { key: 'f3', modifiers: ['shift'], input: 'find-previous', enabled: true },
                 { key: 'enter', modifiers: ['shift'], input: 'find-previous', enabled: true },
               ]
-            : [],
+            : browsing
+              ? [
+                  { key: 'escape', modifiers: [], input: 'browse-close', enabled: true },
+                  { key: 'tab', modifiers: [], input: 'browse-close', enabled: true },
+                  { key: 'tab', modifiers: ['shift'], input: 'browse-close', enabled: true },
+                  { key: 'up', modifiers: [], input: 'browse-previous', enabled: true },
+                  { key: 'down', modifiers: [], input: 'browse-next', enabled: true },
+                  { key: 'left', modifiers: [], input: 'browse-collapse', enabled: true },
+                  { key: 'right', modifiers: [], input: 'browse-expand', enabled: true },
+                ]
+              : [],
           gap: target === 'desktop' ? 8 : 1,
           style: { width: fill, height: fill },
           terminal: { grow: 1 },
@@ -996,7 +1049,8 @@ export function components<N extends Node>(
       ),
     );
     const selected =
-      state.observation?.selectedChildKey ?? state.observation?.viewport?.visibleChildKeys[0];
+      state.observation?.selectedChildKey ??
+      (browsing ? 'message-' + browsing.id : state.observation?.viewport?.visibleChildKeys[0]);
     const row = rows.find(
       ({ message }) =>
         'message-' + message.id === selected || 'time-' + message.contentKey === selected,
@@ -1011,6 +1065,14 @@ export function components<N extends Node>(
               : null,
         }
       : null;
+    if (
+      props.browse &&
+      (state.command?.target.kind === 'focus_item' ||
+        state.command?.target.kind === 'clear_find') &&
+      state.observation?.receipt?.sequence === state.command.sequence &&
+      state.observation.receipt.status !== 'applied'
+    )
+      out.events.push({ name: 'browseClosed', value: { request: props.browse } });
     if (!sameValue(state.fileContext, context)) {
       state.fileContext = context;
       out.events.push({ name: 'fileContext', value: context });
@@ -1157,6 +1219,7 @@ export function components<N extends Node>(
       mount: (props) => {
         const initial: Reading = {
           revision: 0,
+          browse: null,
           search: null,
           expanded: [],
           files: {},
@@ -1180,6 +1243,10 @@ export function components<N extends Node>(
           throw new Error('Invalid reading landing sequence');
         const next: Reading = {
           ...state,
+          browse:
+            state.landing.sequence === props.landing.sequence && state.browse
+              ? { ...state.browse }
+              : null,
           revision: state.revision + 1,
           command:
             state.landing.sequence !== props.landing.sequence
@@ -1195,7 +1262,11 @@ export function components<N extends Node>(
         return timelineFrame(next, props);
       },
       event(state, input, props) {
-        const next = { ...state, revision: state.revision + 1 };
+        const next = {
+          ...state,
+          browse: state.browse ? { ...state.browse } : null,
+          revision: state.revision + 1,
+        };
         if (
           input.kind === 'component' &&
           (['reading', 'source-reading', 'find-results-reading'].includes(input.child) ||
@@ -1214,6 +1285,50 @@ export function components<N extends Node>(
             ...state.files,
             [input.child.slice('tool-details-'.length)]: input.event as ToolFileContext,
           };
+        }
+        if (
+          next.browse &&
+          props.browse === next.browse.request &&
+          !props.source &&
+          !props.search &&
+          !props.loading &&
+          input.kind === 'raw'
+        ) {
+          const rows = toolCards(props.messages).map(({ message }) => message);
+          const selected = rows.find((message) => input.key === 'browse-' + message.id);
+          const at = rows.findIndex((message) => message.id === next.browse!.id);
+          let toggle = false;
+          if (selected) {
+            next.browse.id = selected.id;
+            // The original Item distinguishes focus-following activation from Enter.
+            toggle = (input.event as { kind?: string }).kind === 'submit';
+          } else if (input.key === 'browse-previous' || input.key === 'browse-next') {
+            const row =
+              rows[
+                Math.max(0, Math.min(rows.length - 1, at + (input.key === 'browse-next' ? 1 : -1)))
+              ];
+            if (row) focusMessage(next, row.id);
+          }
+          const row = rows.find((message) => message.id === next.browse!.id);
+          if (
+            row &&
+            (row.role === 'tool_call' || row.role === 'tool_result') &&
+            (row.source !== null || row.text)
+          ) {
+            const expanded = next.expanded.includes(row.id);
+            const open = input.key === 'browse-expand' || (toggle && !expanded);
+            if (toggle || input.key === 'browse-expand' || input.key === 'browse-collapse')
+              next.expanded = open
+                ? [...new Set([...next.expanded, row.id])]
+                : next.expanded.filter((id) => id !== row.id);
+          }
+          if (input.key === 'browse-close') {
+            const request = next.browse.request;
+            const out = timelineFrame(next, props);
+            out.events.push({ name: 'browseClosed', value: { request } });
+            out.decision = { preventDefault: true, stopPropagation: true };
+            return out;
+          }
         }
         const actions: Action[] = [];
         const handled = searchEvent(next, input, props, actions);
@@ -1249,6 +1364,7 @@ export function components<N extends Node>(
         const out = timelineFrame(next, props);
         if (
           !props.source &&
+          !props.browse &&
           !next.search &&
           input.kind === 'component' &&
           input.child === 'reading' &&

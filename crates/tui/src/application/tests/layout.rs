@@ -40,6 +40,7 @@ pub(super) enum View {
     Reading(Rc<std::cell::RefCell<Value>>),
     ReadingSlot(Rc<std::cell::RefCell<Value>>),
     OmittedReadingSlot(Rc<std::cell::RefCell<Value>>, Rc<Cell<bool>>),
+    HiddenReadingSlot(Rc<std::cell::RefCell<Value>>, Rc<Cell<bool>>),
     WrappedReadingSlot(Rc<std::cell::RefCell<Value>>, Rc<Cell<bool>>),
     Rows(Rc<std::cell::RefCell<Value>>, Rc<Cell<bool>>),
     NestedRows(Rc<std::cell::RefCell<Value>>, Rc<Cell<u8>>),
@@ -135,6 +136,7 @@ impl NativeComponent<dyn Widget> for Root {
                 .with_declaration(source.borrow().clone())?
             }
             View::ReadingSlot(props)
+            | View::HiddenReadingSlot(props, _)
             | View::OmittedReadingSlot(props, _)
             | View::WrappedReadingSlot(props, _) => {
                 let mut reader = json!({"kind":"component","key":"reader","binding":"reading","member":0,"props":props.borrow().clone(),"on":{"observed":"reading-observed"}});
@@ -195,6 +197,9 @@ impl NativeComponent<dyn Widget> for Root {
                 vec![],
             )?,
         };
+        if let View::HiddenReadingSlot(_, visible) = &self.view {
+            view = view.with_root_visibility(visible.get());
+        }
         if let View::OmittedReadingSlot(_, shown) = &self.view {
             view.view = Rc::new(ConditionalSlots {
                 scene: view.view.clone(),
@@ -254,6 +259,7 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
         View::Reading(_)
             | View::SourceScene(_)
             | View::ReadingSlot(_)
+            | View::HiddenReadingSlot(_, _)
             | View::OmittedReadingSlot(_, _)
             | View::WrappedReadingSlot(_, _)
             | View::PanicLayout(_)
@@ -334,6 +340,7 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
             view,
             View::Reading(_)
                 | View::ReadingSlot(_)
+                | View::HiddenReadingSlot(_, _)
                 | View::OmittedReadingSlot(_, _)
                 | View::WrappedReadingSlot(_, _)
                 | View::PanicLayout(_)
