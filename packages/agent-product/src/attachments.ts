@@ -24,10 +24,12 @@ import type {
   FileObservation,
   FilePasteCommand,
   FilePasteObservation,
+  ReadingCommand,
 } from '../../plugin-sdk/src/index.js';
 import { sameValue } from './value.js';
 import type { Theme } from './contracts.js';
 import { copy } from './locale.js';
+import { tuiText } from './tui-locale.js';
 import { fill, type Node, type Presentation } from './view.js';
 export type DraftFilePaste = FilePasteObservation & { dataSource: AgentDataSource };
 
@@ -38,6 +40,9 @@ export interface AttachmentDrafts {
     sessionId: string;
     dataSource: AgentDataSource;
     file: FileObservation | null;
+    browse: boolean;
+    selected: string | null;
+    focus: ReadingCommand | null;
   } | null;
   paste: {
     observed: DraftFilePaste;
@@ -150,6 +155,174 @@ export function attachmentView<N extends Node>(
   const observed = selection.file;
   const files = attachmentFiles(drafts, selection.sessionId, selection.dataSource);
   const capacity = attachmentCapacity(drafts, selection.sessionId, selection.dataSource);
+  const fileContent = [
+    presentation.slot(
+      attachmentChild(drafts),
+      'file',
+      {
+        appearance: theme.input,
+        label: text.attachmentChoose,
+        pathLabel: text.attachmentPath,
+        browseLabel: text.fileBrowse,
+        parentLabel: text.directoryParent,
+        emptyLabel: text.fileListEmpty,
+        truncatedLabel: text.fileListTruncated,
+        placeholder: text.attachmentPathPlaceholder,
+        disabled: busy || !enabled || !capacity,
+        tabIndex: 0,
+      },
+      { changed: 'attachment-file-changed' },
+    ),
+    ...(observed?.phase === 'choosing'
+      ? [ui.text('attachment-reading', text.deploymentFileLoading, 13, theme.muted)]
+      : []),
+    ...(observed?.phase === 'ready' && observed.file
+      ? [
+          ui.text(
+            'attachment-selected',
+            `${observed.file.name} · ${observed.file.bytes} B`,
+            13,
+            theme.text,
+          ),
+        ]
+      : []),
+    ...(observed?.phase === 'failed'
+      ? [
+          ui.text(
+            'attachment-file-error',
+            observed.error === 'limit_exceeded' ? text.attachmentTooLarge : text.attachmentFailed,
+            13,
+            theme.muted,
+          ),
+        ]
+      : []),
+    ...(notice ? [ui.text('attachment-notice', notice, 13, theme.muted)] : []),
+  ];
+  if (presentation.target === 'tui') {
+    const selected = files.find((file) => file.id === selection.selected);
+    const rows = files.map((file, index) =>
+      ui.item!(
+        'attachment-select-' + index,
+        ui.box(
+          'attachment-summary-' + index,
+          [
+            ui.text(
+              'attachment-name-' + index,
+              `${file.id === selection.selected ? (theme.ascii ? '>' : '›') : ' '} ${file.name}`,
+              14,
+              theme.text,
+              400,
+              { truncate: true },
+            ),
+            ui.text(
+              'attachment-status-' + index,
+              `  ${tuiText(locale, 'attachments-ready')} · ${attachmentSize(file.bytes)}`,
+              13,
+              theme.muted,
+              400,
+              { truncate: true },
+            ),
+          ],
+          { gap: 0 },
+        ),
+        file.id === selection.selected,
+        busy,
+        { followFocus: true, submit: true },
+      ),
+    );
+    rows.push(
+      ui.item!(
+        'attachment-browse',
+        ui.text(
+          'attachment-browse-label',
+          '+ ' + tuiText(locale, 'attachments-add'),
+          14,
+          theme.accent,
+          400,
+          { truncate: true },
+        ),
+        false,
+        busy || !enabled || !capacity,
+        { followFocus: false, submit: true },
+      ),
+    );
+    return ui.box(
+      'attachment-panel',
+      [
+        ui.box(
+          'attachment-list-view',
+          [
+            presentation.reading(
+              'attachment-list',
+              {
+                command: selection.focus,
+                content: ui.box('attachment-rows', rows, {
+                  scroll: 'manual',
+                  focusGroup: true,
+                  gap: 1,
+                  terminal: { grow: 1 },
+                }),
+              },
+              { input: 'attachment-input' },
+            ),
+            ...(!capacity
+              ? [ui.text('attachment-limit', text.attachmentLimit, 13, theme.muted)]
+              : []),
+            ...(notice ? [ui.text('attachment-list-notice', notice, 13, theme.muted)] : []),
+            ui.box(
+              'attachment-list-controls',
+              [
+                ui.button('attachment-close', text.closeModels),
+                ...(selected
+                  ? [
+                      ui.button(
+                        'attachment-remove-' + selected.id,
+                        tuiText(locale, 'attachments-remove'),
+                        busy,
+                      ),
+                    ]
+                  : []),
+                ...(recoverable ? [ui.button('attachment-check', text.check, checking)] : []),
+              ],
+              { row: true, gap: 1, terminal: { wrap: true } },
+            ),
+          ],
+          { visible: !selection.browse, autoFocus: true, terminal: { grow: 1 } },
+        ),
+        ui.box(
+          'attachment-browser-view',
+          [
+            ui.box(
+              'attachment-browser-body',
+              [ui.text('attachment-help', text.attachmentHelp, 13, theme.muted), ...fileContent],
+              { scroll: 'manual', terminal: { grow: 1 } },
+            ),
+            ui.box(
+              'attachment-browser-controls',
+              [
+                ui.button(
+                  files.length ? 'attachment-list-back' : 'attachment-browser-close',
+                  files.length ? text.back : text.closeModels,
+                ),
+                ...(recoverable
+                  ? [ui.button('attachment-browser-check', text.check, checking)]
+                  : []),
+                ui.button(
+                  'attachment-upload',
+                  text.attachmentAdd,
+                  busy || !enabled || !capacity || observed?.phase !== 'ready' || !observed.file,
+                  true,
+                ),
+              ],
+              { row: true, gap: 1, terminal: { wrap: true } },
+            ),
+          ],
+          { visible: selection.browse, autoFocus: true, terminal: { grow: 1 } },
+        ),
+      ],
+      { gap: 0, terminal: { grow: 1 } },
+    );
+  }
   return ui.box(
     'attachment-panel',
     [
@@ -177,49 +350,7 @@ export function attachmentView<N extends Node>(
           ...(!capacity
             ? [ui.text('attachment-limit', text.attachmentLimit, 13, theme.muted)]
             : []),
-          presentation.slot(
-            attachmentChild(drafts),
-            'file',
-            {
-              appearance: theme.input,
-              label: text.attachmentChoose,
-              pathLabel: text.attachmentPath,
-              browseLabel: text.fileBrowse,
-              parentLabel: text.directoryParent,
-              emptyLabel: text.fileListEmpty,
-              truncatedLabel: text.fileListTruncated,
-              placeholder: text.attachmentPathPlaceholder,
-              disabled: busy || !enabled || !capacity,
-              tabIndex: 0,
-            },
-            { changed: 'attachment-file-changed' },
-          ),
-          ...(observed?.phase === 'choosing'
-            ? [ui.text('attachment-reading', text.deploymentFileLoading, 13, theme.muted)]
-            : []),
-          ...(observed?.phase === 'ready' && observed.file
-            ? [
-                ui.text(
-                  'attachment-selected',
-                  `${observed.file.name} · ${observed.file.bytes} B`,
-                  13,
-                  theme.text,
-                ),
-              ]
-            : []),
-          ...(observed?.phase === 'failed'
-            ? [
-                ui.text(
-                  'attachment-file-error',
-                  observed.error === 'limit_exceeded'
-                    ? text.attachmentTooLarge
-                    : text.attachmentFailed,
-                  13,
-                  theme.muted,
-                ),
-              ]
-            : []),
-          ...(notice ? [ui.text('attachment-notice', notice, 13, theme.muted)] : []),
+          ...fileContent,
         ],
         {
           scroll: 'manual',
@@ -243,5 +374,53 @@ export function attachmentView<N extends Node>(
       ),
     ],
     { terminal: { grow: 1 }, style: { width: fill, height: fill } },
+  );
+}
+
+function attachmentSize(bytes: number) {
+  return bytes < 1024
+    ? `${bytes} B`
+    : bytes < 1024 * 1024
+      ? `${(bytes / 1024).toFixed(1)} KiB`
+      : `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+export function attachmentSummary<N extends Node>(
+  presentation: Presentation<N>,
+  theme: Theme,
+  locale: string,
+  files: AgentAttachment[],
+  disabled: boolean,
+) {
+  const ui = presentation.paint(theme);
+  return ui.item!(
+    'attachments-summary',
+    ui.box(
+      'attachment-summary',
+      [
+        ui.text('attachment-summary-icon', `${theme.ascii ? '+' : '✓'} `, 13, theme.accent),
+        ui.box(
+          'attachment-summary-name-region',
+          [
+            ui.text('attachment-summary-name', files[0]!.name, 13, theme.muted, 400, {
+              truncate: true,
+            }),
+          ],
+          { gap: 0, terminal: { grow: 1, basis: 0 } },
+        ),
+        ui.text(
+          'attachment-summary-status',
+          `${files.length > 1 ? '  +' + (files.length - 1) : ''} · ${tuiText(locale, 'attachments-ready')}`,
+          13,
+          theme.muted,
+          400,
+          { truncate: true },
+        ),
+      ],
+      { row: true, gap: 0 },
+    ),
+    false,
+    disabled,
+    { followFocus: false, submit: true },
   );
 }

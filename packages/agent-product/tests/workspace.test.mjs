@@ -11003,6 +11003,32 @@ for (const target of ['desktop', 'tui']) {
     client.raw('attachments-open');
     observeFile(client, child);
     assert.equal(client.state.attachments.selection.file, null);
+    if (target === 'tui') {
+      const item = (key, kind) =>
+        client.input({
+          kind: 'component',
+          child: 'attachment-list',
+          name: 'input',
+          event: { kind: 'raw', key, event: { kind } },
+        });
+      item('attachment-select-0', 'activate');
+      assert.equal(client.state.attachments.selection.selected, attachment.id);
+      assert.equal(client.output.actions.length, 0);
+      assert.equal(client.state.attachments.selection.browse, false);
+      item('attachment-browse', 'submit');
+      assert.equal(client.state.attachments.selection.browse, true);
+      const currentChild = 'attachment-file-' + client.state.attachments.selection.attempt;
+      observeFile(client, currentChild);
+      client.raw('workspace-dialog');
+      assert.equal(client.state.dialog, 'attachments');
+      assert.equal(client.state.attachments.selection.browse, false);
+      assert.deepEqual(client.state.attachments.selection.file, file);
+      assert.equal(
+        client.output.actions.length,
+        0,
+        'returning from browse neither uploads nor drops the native capture',
+      );
+    }
     client.raw('attachment-remove-artifact');
     assert.equal(client.state.attachments.files.length, 0);
     assert.equal(client.output.actions.length, 0, 'draft removal does not delete durable storage');

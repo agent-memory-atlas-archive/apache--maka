@@ -67,6 +67,7 @@ import type {
   RowActivated,
   CallerIntent,
   Component,
+  ComponentInput,
   ComponentValues,
   OperationReply,
   RecoveryRef,
@@ -98,6 +99,7 @@ import {
   attachmentCapacity,
   attachmentChild,
   attachmentView,
+  attachmentSummary,
   pastedFiles,
   type DraftFilePaste,
   pasteView,
@@ -1255,6 +1257,19 @@ function checkInteraction(state: State, actions: Action[]) {
     intent(state, actions, { kind: 'receipt' }, 'receipts', 'read', state.uncertain.reference);
   readInteraction(state, actions);
 }
+function focusAttachments(state: State) {
+  const selection = state.attachments.selection;
+  if (!selection || selection.browse) return;
+  const files = attachmentFiles(state.attachments, selection.sessionId, selection.dataSource);
+  const index = files.findIndex((file) => file.id === selection.selected);
+  selection.focus = {
+    sequence: ++state.serial,
+    target: {
+      kind: 'focus_item',
+      key: index < 0 ? 'attachment-browse' : 'attachment-select-' + index,
+    },
+  };
+}
 function closeDialog(state: State) {
   // Cancel follows the original queue sheet: discard this edit, not an accepted operation.
   if (state.dialog === 'queue') state.queueEdit = null;
@@ -2306,14 +2321,16 @@ function frame<N extends Node>(
     state.selected?.id,
     state.selected?.dataSource,
   );
+  const attachmentsDisabled =
+    !state.selected ||
+    !draftReady(state.drafts, state.selected) ||
+    busy ||
+    state.loading ||
+    !!state.attachments.paste;
   const attachmentsButton = ui.button(
     'attachments-open',
     `${text.attachmentTitle}${attached.length ? ` (${attached.length})` : ''}`,
-    !state.selected ||
-      !draftReady(state.drafts, state.selected) ||
-      busy ||
-      state.loading ||
-      !!state.attachments.paste,
+    attachmentsDisabled,
   );
   const composer = presentation.slot(
     'composer',
@@ -2722,7 +2739,7 @@ function frame<N extends Node>(
       ...(state.selected?.archived && attached.length && !state.source && !state.image
         ? [ui.box('archived-attachments', [attachmentsButton], { row: true })]
         : []),
-      ...(state.attachments.paste
+      ...(target === 'desktop' && state.attachments.paste
         ? [pasteView(presentation, theme, locale, state.attachments.paste, busy)]
         : []),
       ...(target === 'desktop'
@@ -2790,6 +2807,9 @@ function frame<N extends Node>(
                   ],
                   { terminal: { basis: 1, grow: 1 } },
                 ),
+                ...(state.attachments.paste
+                  ? [pasteView(presentation, theme, locale, state.attachments.paste, busy)]
+                  : []),
                 ui.box(
                   'retained-composer',
                   [
@@ -2827,11 +2847,12 @@ function frame<N extends Node>(
                       : []),
                     ...(attached.length
                       ? [
-                          ui.text(
-                            'attached-count',
-                            `${text.attachmentTitle} · ${attached.length}`,
-                            12,
-                            theme.muted,
+                          attachmentSummary(
+                            presentation,
+                            theme,
+                            locale,
+                            attached,
+                            attachmentsDisabled,
                           ),
                         ]
                       : []),
@@ -3011,7 +3032,9 @@ function frame<N extends Node>(
     ui.dialog(
       'workspace-dialog',
       state.dialog === 'attachments'
-        ? text.attachmentTitle
+        ? target === 'tui' && state.attachments.selection?.browse
+          ? tuiText(locale, 'attachments-local-files')
+          : text.attachmentTitle
         : state.dialog === 'terminal'
           ? text.terminalTitle
           : state.dialog === 'question'
@@ -3236,6 +3259,14 @@ function frame<N extends Node>(
       ),
       state.dialog !== null,
       state.dialog === 'terminal' ? { width: pixels(900) } : {},
+      state.dialog === 'attachments'
+        ? {
+            width: 64,
+            height: state.attachments.selection?.browse
+              ? 20
+              : Math.min(20, attached.length * 3 + 7),
+          }
+        : {},
     ),
   );
   if (target === 'tui')
@@ -3364,8 +3395,14 @@ export function workspace<N extends Node>(
       // Callbacks receive detached committed state. Mutations here belong only to
       // the candidate frame and publish with its intents in one UI transaction.
       const state = previous;
+      if (input.kind === 'component' && input.child === 'attachment-list' && input.name === 'input')
+        input = input.event as ComponentInput;
       if (input.kind === 'component' && input.child === 'composer' && input.name === 'attachments')
         input = { kind: 'raw', key: 'attachments-open', event: {} };
+      if (input.kind === 'raw' && input.key === 'attachments-summary')
+        input = { ...input, key: 'attachments-open' };
+      if (input.kind === 'raw' && input.key === 'attachment-browser-close')
+        input = { ...input, key: 'attachment-close' };
       state.revision++;
       const actions: Action[] = [];
       const locale =
@@ -4038,16 +4075,28 @@ export function workspace<N extends Node>(
           !state.image &&
           !mutationPending(state)
         ) {
+          const files = attachmentFiles(
+            state.attachments,
+            state.selected.id,
+            state.selected.dataSource,
+          );
           state.attachments.selection = {
             attempt: ++state.serial,
             sessionId: state.selected.id,
             dataSource: state.selected.dataSource,
             file: null,
+            browse: files.length === 0,
+            selected: files[0]?.id ?? null,
+            focus: null,
           };
+          focusAttachments(state);
           state.dialog = 'attachments';
         } else if (input.key === 'attachment-close' && state.dialog === 'attachments') {
           closeDialog(state);
-        } else if (input.key === 'attachment-check' && state.dialog === 'attachments') {
+        } else if (
+          (input.key === 'attachment-check' || input.key === 'attachment-browser-check') &&
+          state.dialog === 'attachments'
+        ) {
           if (
             state.uncertain &&
             !Object.values(state.pending).some((request) => request.kind === 'receipt')
@@ -4069,7 +4118,30 @@ export function workspace<N extends Node>(
           !mutationPending(state)
         ) {
           const selection = state.attachments.selection;
-          if (input.key.startsWith('attachment-remove-')) {
+          const files = attachmentFiles(
+            state.attachments,
+            selection.sessionId,
+            selection.dataSource,
+          );
+          if (input.key === 'attachment-list-back') {
+            selection.browse = false;
+            focusAttachments(state);
+          } else if (/^attachment-select-[0-7]$/.test(input.key)) {
+            selection.selected =
+              files[Number(input.key.slice('attachment-select-'.length))]?.id ?? selection.selected;
+          } else if (
+            input.key === 'attachment-browse' &&
+            !state.selected.archived &&
+            attachmentCapacity(state.attachments, selection.sessionId, selection.dataSource)
+          ) {
+            if (
+              ['activate', 'submit'].includes((input.event as { kind?: string } | null)?.kind ?? '')
+            ) {
+              selection.selected = null;
+              selection.browse = true;
+              selection.focus = null;
+            }
+          } else if (input.key.startsWith('attachment-remove-')) {
             const id = input.key.slice('attachment-remove-'.length);
             state.attachments.files = state.attachments.files.filter(
               (file) =>
@@ -4077,6 +4149,16 @@ export function workspace<N extends Node>(
                 !sameValue(file.dataSource, selection.dataSource) ||
                 file.id !== id,
             );
+            const remaining = attachmentFiles(
+              state.attachments,
+              selection.sessionId,
+              selection.dataSource,
+            );
+            const removed = files.findIndex((file) => file.id === id);
+            if (removed >= 0) {
+              selection.selected = remaining[Math.min(removed, remaining.length - 1)]?.id ?? null;
+              focusAttachments(state);
+            }
           } else if (
             input.key === 'attachment-upload' &&
             !state.selected.archived &&
@@ -4173,8 +4255,18 @@ export function workspace<N extends Node>(
           state.messageCopy = null;
         } else if (input.key === 'help-open') {
           if (state.dialog === null) rootCommand(state, actions, locale, 'help-open', target);
-        } else if (input.key === 'workspace-dialog') closeDialog(state);
-        else if (input.key === 'navigation-back' && state.dialog === null) {
+        } else if (input.key === 'workspace-dialog') {
+          const selection = state.attachments.selection;
+          if (
+            target === 'tui' &&
+            state.dialog === 'attachments' &&
+            selection?.browse &&
+            attachmentFiles(state.attachments, selection.sessionId, selection.dataSource).length
+          ) {
+            selection.browse = false;
+            focusAttachments(state);
+          } else closeDialog(state);
+        } else if (input.key === 'navigation-back' && state.dialog === null) {
           if ('open' in state.sidebar) state.sidebar.open = false;
           else controlSidebar(state, 'toggle');
         } else {

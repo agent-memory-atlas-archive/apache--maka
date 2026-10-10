@@ -413,6 +413,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       },
       {
         agent: [remote('agent', 'agent')],
+        reading: [local('reading-area', 'ReadingArea')],
         file: [local('file', 'FilePicker')],
         receipts: [remote('receipts', 'Receipts')],
         reader: [local('reader', 'Reader')],

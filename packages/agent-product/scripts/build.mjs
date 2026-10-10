@@ -119,6 +119,7 @@ const specifications = {
     module: 'workspace',
     imports: {
       agent: one(sdk.contracts.agent),
+      reading: one(sdk.contracts.readingArea),
       file: one(sdk.contracts.filePicker),
       models: one(own.modelsContract),
       connections: one(own.connectionsContract),
