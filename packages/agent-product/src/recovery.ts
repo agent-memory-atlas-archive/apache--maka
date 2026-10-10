@@ -26,6 +26,8 @@ import type {
   ComponentValues,
   OperationReply,
   RecoveryRef,
+  SkillLibraryOutcome,
+  SkillLibraryChangeResult,
 } from '../../plugin-sdk/src/index.js';
 import { recoveryContract, type Theme } from './contracts.js';
 import { copy, resolveLocale } from './locale.js';
@@ -34,7 +36,8 @@ import { compactLabel, fill, output, pixels, type Node, type Presentation } from
 
 type Request =
   | { kind: 'history'; after: number }
-  | { kind: 'receipt'; reference: RecoveryRef; manager: boolean };
+  | { kind: 'receipt'; reference: RecoveryRef; manager: boolean }
+  | { kind: 'skill-outcome'; reference: RecoveryRef };
 interface State {
   revision: number;
   serial: number;
@@ -44,6 +47,7 @@ interface State {
   next: number | null;
   selected: RecoveryRef | null;
   reply: OperationReply | null;
+  published: SkillLibraryChangeResult | null;
   page: number;
   failed: boolean;
 }
@@ -55,12 +59,28 @@ function query(state: State, actions: Action[], request: Request) {
   actions.push({
     key,
     binding:
-      request.kind === 'history' ? 'history' : request.manager ? 'managementReceipts' : 'receipts',
+      request.kind === 'history'
+        ? 'history'
+        : request.kind === 'skill-outcome'
+          ? 'skillOutcomes'
+          : request.manager
+            ? 'managementReceipts'
+            : 'receipts',
     member: 0,
     method: request.kind === 'history' ? 'page' : 'read',
     input: request.kind === 'history' ? { after: request.after, limit: 4 } : request.reference,
     resources: {},
   });
+}
+function receiptSource(state: State) {
+  if (state.reply?.receipt.kind !== 'recorded') return '';
+  return JSON.stringify(
+    state.published
+      ? { host: state.reply.receipt, publication: state.published }
+      : state.reply.receipt,
+    null,
+    2,
+  );
 }
 function boundary(text: string, page: number) {
   const at = Math.min(text.length, page * 16384);
@@ -79,7 +99,7 @@ export function recovery<N extends Node>(
     const desktop = presentation.target === 'desktop',
       busy = !!state.pending;
     const recorded = state.reply?.receipt.kind === 'recorded' ? state.reply.receipt : null;
-    const source = recorded ? JSON.stringify(recorded, null, 2) : '';
+    const source = receiptSource(state);
     const start = boundary(source, state.page),
       end = boundary(source, state.page + 1);
     const out = output(
@@ -132,6 +152,9 @@ export function recovery<N extends Node>(
                                 : text.recoveryUnknown,
                             14,
                           ),
+                          ...(state.published
+                            ? [ui.text('recovery-skill-result', text.skillsResultConfirmed, 14)]
+                            : []),
                           ...(recorded
                             ? [
                                 presentation.slot(
@@ -275,6 +298,7 @@ export function recovery<N extends Node>(
         next: null,
         selected: null,
         reply: null,
+        published: null,
         page: 0,
         failed: false,
       };
@@ -311,17 +335,36 @@ export function recovery<N extends Node>(
             state.next = entries.length ? entries[entries.length - 1].cursor : null;
             state.selected = null;
             state.reply = null;
+            state.published = null;
             state.page = 0;
           }
         } else if (state.selected && sameValue(state.selected, request.reference)) {
+          if (request.kind === 'skill-outcome') {
+            const outcome =
+              result.status === 'succeeded' ? (result.value as SkillLibraryOutcome) : null;
+            if (
+              outcome &&
+              sameValue(outcome.original.reference, request.reference) &&
+              outcome.original.receipt.kind === 'recorded'
+            ) {
+              state.reply = outcome.original;
+              if (outcome.published) state.published = outcome.published;
+            } else state.failed = true;
+            return frame(state, values, actions);
+          }
           const reply = result.status === 'succeeded' ? (result.value as OperationReply) : null;
           if (
             reply &&
             sameValue(reply.reference, request.reference) &&
             reply.receipt.kind === 'recorded'
-          )
+          ) {
             state.reply = reply;
-          else if (!request.manager) query(state, actions, { ...request, manager: true });
+            if (
+              reply.reference.contract.name === 'maka.skills.Library' &&
+              reply.reference.method === 'apply'
+            )
+              query(state, actions, { kind: 'skill-outcome', reference: request.reference });
+          } else if (!request.manager) query(state, actions, { ...request, manager: true });
           else state.failed = true;
         }
       } else if (event.kind === 'component' && event.key === 'closed') state.route = 'operations';
@@ -335,12 +378,14 @@ export function recovery<N extends Node>(
           else if (key === 'back') {
             state.selected = null;
             state.reply = null;
+            state.published = null;
             state.page = 0;
           } else if (key.startsWith('check-') && key !== 'check-again') {
             const entry = state.entries[Number(key.slice(6))];
             if (entry) {
               state.selected = entry.reference;
               state.reply = null;
+              state.published = null;
               state.page = 0;
               query(state, actions, {
                 kind: 'receipt',
@@ -352,7 +397,7 @@ export function recovery<N extends Node>(
             query(state, actions, { kind: 'receipt', reference: state.selected, manager: false });
           else if (key === 'previous-source') state.page = Math.max(0, state.page - 1);
           else if (key === 'next-source' && state.reply?.receipt.kind === 'recorded') {
-            const source = JSON.stringify(state.reply.receipt, null, 2);
+            const source = receiptSource(state);
             if (boundary(source, state.page + 1) < source.length) state.page++;
           }
         }

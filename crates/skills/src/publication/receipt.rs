@@ -101,18 +101,41 @@ pub(super) async fn read(
     operation.validate()?;
     let name = format!("{}.json", operation.id);
     match receipts.read(&name, 16 * 1024).await {
-        Ok((bytes, _)) => {
-            let record: Record = serde_json::from_slice(&bytes)?;
-            if record.operation != *operation {
-                return Err(Error::Invalid(
-                    "Skill operation receipt does not match its input".into(),
-                ));
-            }
-            Ok(Some(record.outcome))
-        }
+        Ok((bytes, _)) => decode(&bytes, operation).map(Some),
         Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }
+}
+/// Read only an original immutable receipt through an explicitly captured view.
+/// This neither reserves an operation nor recovers a publication intent.
+pub async fn read_view(
+    files: &maka_plugins::filesystem::ReadDirectory,
+    operation: &Operation,
+) -> Result<Option<Outcome>, Error> {
+    use maka_plugins::filesystem::{ReadError, entries::ReadFile};
+    operation.validate()?;
+    match files
+        .read(ReadFile {
+            path: format!("{}.json", operation.id),
+            offset: 0,
+            limit: 16 * 1024,
+        })
+        .await
+    {
+        Ok(page) if page.next_offset.is_none() => decode(&page.bytes, operation).map(Some),
+        Ok(_) => Err(Error::Invalid("Skill receipt exceeds limit".into())),
+        Err(ReadError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(Error::Invalid(error.to_string())),
+    }
+}
+fn decode(bytes: &[u8], operation: &Operation) -> Result<Outcome, Error> {
+    let record: Record = serde_json::from_slice(bytes)?;
+    if record.operation != *operation {
+        return Err(Error::Invalid(
+            "Skill operation receipt does not match its input".into(),
+        ));
+    }
+    Ok(record.outcome)
 }
 pub(super) async fn complete(
     receipts: &Directory,

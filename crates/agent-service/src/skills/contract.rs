@@ -207,16 +207,6 @@ pub fn contract() -> Contract {
         interface: Interface::Service {
             methods: BTreeMap::from([
                 (
-                    "outcome".into(),
-                    Method {
-                        mode: MethodMode::Query,
-                        input: schemars::schema_for!(maka_plugin_core::operation::RecoveryRef)
-                            .into(),
-                        output: schemars::schema_for!(Outcome).into(),
-                        resources: BTreeMap::new(),
-                    },
-                ),
-                (
                     "preview".into(),
                     Method {
                         mode: MethodMode::Query,

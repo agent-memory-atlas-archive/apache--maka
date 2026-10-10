@@ -89,6 +89,32 @@ fn packages(source: &Path) -> (Input, Vec<Package>) {
         ),
     ]))
     .unwrap();
+    let reader = Package::new(BTreeMap::from([(MANIFEST_FILE.into(), serde_json::to_vec(&json!({
+        "schemaVersion":2,"id":"outcomes","application":{"entries":{"host":{
+            "implementation":{"kind":"native","implementation":outcomes::IMPLEMENTATION},
+            "configuration":{"type":"object","additionalProperties":false},"imports":{},
+            "exports":{outcomes::EXPORT:{"contract":outcomes::contract(),"availability":"required"}}
+        }}}
+    })).unwrap())])).unwrap();
+    let mut files = consumer.files().clone();
+    let mut manifest = consumer.manifest().clone();
+    manifest.id = "recovery-consumer".into();
+    manifest
+        .application
+        .as_mut()
+        .unwrap()
+        .entries
+        .get_mut(&maka_plugin_core::package::EntryTarget::Host)
+        .unwrap()
+        .imports = BTreeMap::from([(
+        "outcomes".into(),
+        maka_plugin_core::contract::Import {
+            contract: outcomes::contract(),
+            cardinality: maka_plugin_core::contract::Cardinality::One,
+        },
+    )]);
+    files.insert(MANIFEST_FILE.into(), serde_json::to_vec(&manifest).unwrap());
+    let recovery_consumer = Package::new(files).unwrap();
     let node = |key, package: &Package, configuration, bindings| Node {
         key: Uuid::from_u128(key),
         package: package.application_ref().into(),
@@ -105,6 +131,25 @@ fn packages(source: &Path) -> (Input, Vec<Package>) {
             presentation: None,
         },
         instances: BTreeMap::from([
+            (
+                "outcomes".into(),
+                node(4, &reader, Default::default(), BTreeMap::new()),
+            ),
+            (
+                "recovery".into(),
+                node(
+                    3,
+                    &recovery_consumer,
+                    Default::default(),
+                    BTreeMap::from([(
+                        "outcomes".into(),
+                        vec![Target::Instance {
+                            path: vec!["outcomes".into()],
+                            export: outcomes::EXPORT.into(),
+                        }],
+                    )]),
+                ),
+            ),
             (
                 "skills".into(),
                 node(
@@ -142,7 +187,7 @@ fn packages(source: &Path) -> (Input, Vec<Package>) {
         recovery: None,
         launch: None,
     };
-    (input, vec![provider, consumer])
+    (input, vec![provider, consumer, reader, recovery_consumer])
 }
 struct Pause {
     inner: Arc<dyn Handler>,
@@ -232,6 +277,7 @@ impl Fixture {
                     }),
                 )
                 .unwrap();
+            outcomes::provide(&mut native).unwrap();
         } else {
             provide(&mut native).unwrap();
         }
@@ -269,10 +315,21 @@ impl Fixture {
             .remove(0)
     }
     async fn query(&self, method: &str, input: Value, recovery: bool) -> Result<Value, String> {
-        self.app
-            .client()
+        let client = self.app.client();
+        let (binding, method) = if method == "outcome" {
+            (
+                client
+                    .bind(client.activation(&id(3)).unwrap(), "outcomes".into())
+                    .await?
+                    .remove(0),
+                "read",
+            )
+        } else {
+            (self.binding().await, method)
+        };
+        client
             .start(
-                self.binding().await,
+                binding,
                 method.into(),
                 input,
                 self.scope(recovery),
@@ -410,23 +467,15 @@ async fn publication_results_survive_host_process_loss_without_replaying_or_weak
         if installed.exists() {
             std::fs::remove_dir_all(&installed).unwrap();
         }
-        // A later deployment activation can read the stable original namespace.
+        // Recovery must survive removal of the business provider and caller.
         let mut loaded = fixture
             .store
             .load_application(DEPLOYMENT)
             .await
             .unwrap()
             .unwrap();
-        loaded
-            .source
-            .input
-            .instances
-            .get_mut("skills")
-            .unwrap()
-            .configuration
-            .values
-            .get_mut("sources")
-            .unwrap()[0]["label"] = json!("Renamed collection");
+        loaded.source.input.instances.remove("skills");
+        loaded.source.input.instances.remove("caller");
         let next = fixture
             .store
             .commit_application(
@@ -440,6 +489,9 @@ async fn publication_results_survive_host_process_loss_without_replaying_or_weak
             .unwrap();
         fixture.app.adopt_committed(next).await.unwrap();
         fixture.app.ready().await.unwrap();
+        if cut == "before" {
+            std::fs::remove_dir_all(dir.join("host/skill-libraries")).unwrap();
+        }
         assert!(
             fixture
                 .query("outcome", json!(reference), false)
@@ -473,11 +525,24 @@ async fn publication_results_survive_host_process_loss_without_replaying_or_weak
             "outcome lookup cannot reinstall a removed result"
         );
         if cut == "before" {
-            assert_eq!(
-                std::fs::read_dir(data.join("operations")).unwrap().count(),
-                0,
-                "query cannot reserve an unexecuted publication"
+            assert!(
+                !dir.join("host/skill-libraries").exists(),
+                "read must not initialize a missing collection"
             );
+        }
+        #[cfg(unix)]
+        if cut == "after" {
+            std::fs::rename(data.join("receipts"), data.join("saved-receipts")).unwrap();
+            std::os::unix::fs::symlink("saved-receipts", data.join("receipts")).unwrap();
+            assert!(
+                fixture
+                    .query("outcome", json!(reference), true)
+                    .await
+                    .is_err(),
+                "private receipt directories must not follow links"
+            );
+            std::fs::remove_file(data.join("receipts")).unwrap();
+            std::fs::rename(data.join("saved-receipts"), data.join("receipts")).unwrap();
         }
         for field in ["stateDomain", "deployment", "namespace", "fingerprint"] {
             let mut wrong = json!(reference);
@@ -487,10 +552,14 @@ async fn publication_results_survive_host_process_loss_without_replaying_or_weak
                 "namespace" => wrong[field] = json!([Uuid::new_v4()]),
                 _ => wrong[field] = json!("sha256-".to_owned() + &"b".repeat(64)),
             }
-            assert!(
-                fixture.query("outcome", wrong, true).await.is_err(),
-                "must reject changed {field}"
-            );
+            if let Ok(value) = fixture.query("outcome", wrong, true).await {
+                let outcome: contract::Outcome = serde_json::from_value(value).unwrap();
+                assert!(matches!(outcome.original.receipt, Receipt::NotRecorded));
+                assert!(
+                    outcome.published.is_none(),
+                    "changed {field} cannot release another receipt"
+                );
+            }
         }
         let after = fixture
             .store
@@ -503,5 +572,17 @@ async fn publication_results_survive_host_process_loss_without_replaying_or_weak
             "domain evidence must not rewrite Host result or cleanup"
         );
         fixture.close().await;
+        std::fs::remove_dir_all(dir.join("source")).unwrap();
+        let reopened = Fixture::open(dir, None).await;
+        let value: contract::Outcome = serde_json::from_value(
+            reopened
+                .query("outcome", json!(reference), true)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(value.published.is_some(), cut == "after");
+        assert!(!installed.exists());
+        reopened.close().await;
     }
 }

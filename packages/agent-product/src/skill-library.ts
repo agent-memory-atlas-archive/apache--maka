@@ -207,9 +207,9 @@ function settle(
       return [
         {
           key,
-          binding: 'skills',
+          binding: 'outcomes',
           member: 0,
-          method: 'outcome',
+          method: 'read',
           resources: {},
           input: reply.reference,
         },

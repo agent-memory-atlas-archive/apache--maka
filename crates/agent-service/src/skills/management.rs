@@ -28,7 +28,6 @@ use tokio_util::sync::CancellationToken;
 
 pub(super) struct Managed {
     root: Arc<RootOwner>,
-    namespace: String,
     data: cap_std::fs::Dir,
     pub read: ReadRoot,
     serial: tokio::sync::Mutex<()>,
@@ -61,7 +60,6 @@ impl Managed {
             Ok::<_, String>((
                 Arc::new(Self {
                     root,
-                    namespace,
                     data,
                     read,
                     serial: Default::default(),
@@ -324,69 +322,6 @@ impl Library {
         let operation = operation(reference)?;
         self.apply_operation(input, &operation, scope).await
     }
-    pub(super) async fn outcome(
-        &self,
-        reference: maka_plugin_core::operation::RecoveryRef,
-        context: &Context,
-    ) -> Result<contract::Outcome, String> {
-        use maka_plugin_core::operation::{OperationReply, Receipt};
-        reference.validate().map_err(store_error)?;
-        let managed = self.managed.as_ref().ok_or("management_disabled")?;
-        let current = contract();
-        let compatible = match (&reference.contract.interface, &current.interface) {
-            (
-                maka_plugin_core::contract::Interface::Service { methods: original },
-                maka_plugin_core::contract::Interface::Service { methods: current },
-            ) => original.get("apply") == current.get("apply"),
-            _ => false,
-        };
-        if reference.export != EXPORT
-            || reference.method != "apply"
-            || reference.contract.name != current.name
-            || reference.contract.version != current.version
-            || reference.contract.transport != current.transport
-            || !compatible
-            || crate::owner::namespace(
-                &reference.source.state_domain,
-                reference.source.deployment,
-                &reference.namespace,
-            ) != managed.namespace
-        {
-            return Err("skills_original_owner_mismatch".into());
-        }
-        // The reference and current method grant do not authorize historical
-        // reads. Preserve the actual caller Scope and independent recovery policy.
-        let observation = context.recover(reference.clone())?.await?;
-        let (receipt, published) = match observation {
-            None => (Receipt::NotRecorded, None),
-            Some(observation) => {
-                let scope = context.scope();
-                let _serial = tokio::select! {
-                    biased;
-                    _ = scope.cancellation.cancelled() => return Err("skills_cancelled".into()),
-                    guard = managed.serial.lock() => guard,
-                };
-                let publisher = managed.publisher(scope).await?;
-                let published = publisher
-                    .outcome(&operation(&reference)?)
-                    .await
-                    .map_err(store_error)?
-                    .map(recorded)
-                    .transpose()?;
-                (
-                    Receipt::Recorded {
-                        outcome: observation.outcome,
-                        cleanup: observation.cleanup,
-                    },
-                    published,
-                )
-            }
-        };
-        Ok(contract::Outcome {
-            original: OperationReply { reference, receipt },
-            published,
-        })
-    }
     async fn apply_operation(
         &self,
         input: Review,
@@ -444,7 +379,9 @@ impl Library {
         recorded(outcome)
     }
 }
-fn operation(reference: &maka_plugin_core::operation::RecoveryRef) -> Result<Operation, String> {
+pub(super) fn operation(
+    reference: &maka_plugin_core::operation::RecoveryRef,
+) -> Result<Operation, String> {
     Ok(Operation {
         id: reference.operation,
         // Preserve the exact Host fingerprint in the publication domain’s digest format.
@@ -454,7 +391,7 @@ fn operation(reference: &maka_plugin_core::operation::RecoveryRef) -> Result<Ope
         ),
     })
 }
-fn recorded(outcome: Outcome) -> Result<ChangeResult, String> {
+pub(super) fn recorded(outcome: Outcome) -> Result<ChangeResult, String> {
     match outcome {
         Outcome::Applied {
             destination: Destination::Skill { reference },

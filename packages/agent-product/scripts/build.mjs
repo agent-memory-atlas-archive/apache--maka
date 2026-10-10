@@ -80,6 +80,7 @@ const specifications = {
       history: one(sdk.contracts.callerHistory),
       receipts: one(sdk.contracts.receiptReader),
       managementReceipts: one(sdk.contracts.receiptReader),
+      skillOutcomes: one(sdk.contracts.skillOutcomes),
       reading: one(sdk.contracts.readingArea),
       appearance: one(own.themeContract),
       locale: one(sdk.contracts.locale),
@@ -161,6 +162,7 @@ const specifications = {
     module: 'skill-library',
     imports: {
       skills: one(sdk.contracts.skillLibrary),
+      outcomes: one(sdk.contracts.skillOutcomes),
       receipts: one(sdk.contracts.receiptReader),
       input: one(sdk.contracts.textInput),
       reader: one(sdk.contracts.textReader),
@@ -488,6 +490,7 @@ const mechanical = {
         ...native('maka.application.gateway', {}),
         imports: {
           settings: one(sdk.contracts.settings),
+          skillOutcomes: one(sdk.contracts.skillOutcomes),
           receipts: one(sdk.contracts.receiptReader),
         },
       },
@@ -677,6 +680,11 @@ const mechanical = {
       host: native('maka.interactions.questions', { questions: required(sdk.contracts.questions) }),
     },
   },
+  'skill-outcomes': {
+    entries: {
+      host: native('maka.skills.outcomes', { Outcomes: required(sdk.contracts.skillOutcomes) }),
+    },
+  },
   receipts: {
     entries: {
       host: native('maka.operations.receipts', { Receipts: required(sdk.contracts.receiptReader) }),
@@ -691,6 +699,7 @@ const mechanical = {
           terminal: { contract: sdk.contracts.terminal, cardinality: { kind: 'optional' } },
           skills: { contract: sdk.contracts.skillLibrary, cardinality: { kind: 'optional' } },
           settings: one(sdk.contracts.settings),
+          skillOutcomes: one(sdk.contracts.skillOutcomes),
           receipts: one(sdk.contracts.receiptReader),
         },
       },

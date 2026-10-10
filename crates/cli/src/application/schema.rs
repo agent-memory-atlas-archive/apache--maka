@@ -272,6 +272,7 @@ pub(super) fn catalog() -> Value {
             "questions": maka_agent_service::questions::contract(),
             "forms": maka_agent_service::forms::contract(),
             "skillLibrary": maka_agent_service::skills::contract(),
+            "skillOutcomes": maka_agent_service::skills::outcomes::contract(),
             "workspaceFiles": maka_agent_service::files::contract(),
             "workspaceProcesses": maka_agent_service::processes::contract(),
             "terminal": maka_agent_service::processes::terminal::contract(),

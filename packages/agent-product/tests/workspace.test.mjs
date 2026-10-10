@@ -744,10 +744,28 @@ test('both product compositions use actual immutable package refs and check in t
           assert.equal(ui.instances.studio.key, keys.studio);
           for (const name of ['workspace', 'composer', 'timeline', 'navigation', 'agent'])
             assert.equal(name in ui.instances, false);
-          assert.deepEqual(Object.keys(host.instances).sort(), ['gateway', 'receipts', 'settings']);
+          assert.deepEqual(Object.keys(host.instances).sort(), [
+            'gateway',
+            'receipts',
+            'settings',
+            'skill-outcomes',
+          ]);
         }
         const business = connections.hosts.find((host) => host.name === 'local');
         const manager = connections.hosts.find((host) => host.name === 'manager');
+        assert.equal(host.instances['skill-outcomes'].key, keys['skill-outcomes']);
+        assert.deepEqual(host.instances.gateway.bindings.skillOutcomes, [
+          { kind: 'instance', path: ['skill-outcomes'], export: 'Outcomes' },
+        ]);
+        assert.deepEqual(business.imports.skillOutcomes, { methods: ['read'], recovery: true });
+        assert.deepEqual(ui.instances.recovery.bindings.skillOutcomes, [
+          {
+            kind: 'remote',
+            deployment: 'local',
+            instance: [keys['skill-outcomes']],
+            export: 'Outcomes',
+          },
+        ]);
         assert.deepEqual(manager.location, { kind: 'cohost' });
         assert.equal(manager.deployment, configuration.managementDeployment);
         assert.deepEqual(manager.imports.management.methods, [

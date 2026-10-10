@@ -36,6 +36,7 @@ export const packageNames = [
   'directory-picker',
   'skill-library',
   'skills',
+  'skill-outcomes',
   'session-details',
   'queue-editor',
   'question-editor',
@@ -125,7 +126,7 @@ function settingsComposition(
     export: exportName,
   });
   const remote = (
-    name: 'agent' | 'settings' | 'receipts' | 'workspace-processes' | 'skills',
+    name: 'agent' | 'settings' | 'receipts' | 'workspace-processes' | 'skills' | 'skill-outcomes',
     exportName: string,
   ): BindingTarget => ({
     kind: 'remote',
@@ -148,12 +149,14 @@ function settingsComposition(
     environment: { location: 'host' },
     instances: {
       settings: node('settings'),
+      'skill-outcomes': node('skill-outcomes'),
       receipts: node('receipts'),
       gateway: node(
         gateway,
         {},
         {
           settings: [local('settings', 'Settings')],
+          skillOutcomes: [local('skill-outcomes', 'Outcomes')],
           receipts: [local('receipts', 'Receipts')],
         },
       ),
@@ -183,6 +186,7 @@ function settingsComposition(
         {
           deployment: [local('deployment', 'Deployment')],
           history: [local('history', 'DeploymentHistory')],
+          skillOutcomes: [remote('skill-outcomes', 'Outcomes')],
           receipts: [remote('receipts', 'Receipts')],
           managementReceipts: [
             {
@@ -292,6 +296,10 @@ function settingsComposition(
   };
   const remoteExports: RemoteObservation[] = [
     {
+      capability: { deployment: 'local', instance: [keys['skill-outcomes']], export: 'Outcomes' },
+      declaration: { contract: contracts.skillOutcomes, availability: 'required' },
+    },
+    {
       capability: { deployment: 'local', instance: [keys.receipts], export: 'Receipts' },
       declaration: { contract: contracts.receiptReader, availability: 'required' },
     },
@@ -337,6 +345,7 @@ function settingsComposition(
         imports: {
           receipts: { methods: ['read'], recovery: true },
           settings: { methods: Object.keys(contracts.settings.interface.methods), recovery: true },
+          skillOutcomes: { methods: ['read'], recovery: true },
         },
       },
     ],
@@ -415,6 +424,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
       {},
       {
         skills: [remote('skills', 'skills')],
+        outcomes: [remote('skill-outcomes', 'Outcomes')],
         receipts: [remote('receipts', 'Receipts')],
         reading: [local('reading-area', 'ReadingArea')],
         source: [local('source-text', 'SourceText')],
@@ -429,7 +439,7 @@ export function composition(configuration: CompositionConfiguration): Applicatio
     Object.assign(connections.hosts.find((host) => host.name === 'local')!.imports, {
       skills: {
         methods: configuration.skills.manage
-          ? ['list', 'read', 'preview', 'apply', 'outcome']
+          ? ['list', 'read', 'preview', 'apply']
           : ['list', 'read'],
         recovery: !!configuration.skills.manage,
       },

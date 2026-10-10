@@ -710,4 +710,102 @@ fn skill_library_reads_selected_sources_and_rejects_changed_pages_in_the_real_pr
     for path in [&root, &host_root] {
         drop(RootOwner::open(path, &ns).unwrap());
     }
+    // Restart the actual UI into its independent recovery root after removing
+    // the library and source. Its durable caller intents still name the original
+    // provider; no current business role is used to find publication receipts.
+    runtime.block_on(async {
+        let host = EventLog::for_root(Arc::new(RootOwner::open(&host_root, &ns).unwrap()))
+            .await
+            .unwrap();
+        let mut loaded = host.load_application(host_id).await.unwrap().unwrap();
+        loaded.source.input.instances.remove("skills");
+        loaded
+            .source
+            .input
+            .instances
+            .get_mut("gateway")
+            .unwrap()
+            .bindings
+            .remove("skills");
+        host.commit_application(
+            host_id,
+            loaded.source.reference.revision,
+            loaded.source.input,
+            loaded.source.remote_exports,
+            loaded.packages,
+        )
+        .await
+        .unwrap();
+        host.shutdown().await.unwrap();
+        let ui = EventLog::for_root(Arc::new(RootOwner::open(&root, &ns).unwrap()))
+            .await
+            .unwrap();
+        let intents = ui
+            .application_deployment_intents(deployment, 0, 4)
+            .await
+            .unwrap();
+        assert!(!intents.is_empty());
+        assert_eq!(intents[0].reference.contract.name, "maka.skills.Library");
+        let mut loaded = ui.load_application(deployment).await.unwrap().unwrap();
+        loaded.source.input.instances.remove("skill-library");
+        let workspace = loaded.source.input.instances.get_mut("workspace").unwrap();
+        workspace.bindings.remove("skills");
+        workspace
+            .configuration
+            .values
+            .insert("skills".into(), json!(false));
+        loaded.source.input.launch = loaded.source.input.recovery.clone();
+        loaded
+            .source
+            .remote_exports
+            .retain(|remote| remote.declaration.contract.name != "maka.skills.Library");
+        ui.commit_application(
+            deployment,
+            loaded.source.reference.revision,
+            loaded.source.input,
+            loaded.source.remote_exports,
+            loaded.packages,
+        )
+        .await
+        .unwrap();
+        ui.shutdown().await.unwrap();
+    });
+    let mut connection: Value =
+        serde_json::from_slice(&std::fs::read(&connections).unwrap()).unwrap();
+    connection["hosts"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|host| host["name"] == "local")
+        .unwrap()["imports"]
+        .as_object_mut()
+        .unwrap()
+        .remove("skills");
+    std::fs::write(&connections, serde_json::to_vec(&connection).unwrap()).unwrap();
+    std::fs::remove_dir_all(&source).unwrap();
+    let mut recovered = Pty::spawn(&[
+        "application",
+        "run",
+        "--root",
+        root.to_str().unwrap(),
+        "--deployment",
+        &deployment.to_string(),
+        "--connections",
+        connections.to_str().unwrap(),
+    ]);
+    recovered.wait_until_with_timeout(
+        |screen| screen.contains("maka.skills.Library / apply"),
+        Duration::from_secs(30),
+    );
+    click(&mut recovered, "[ Check ]", accent);
+    recovered.wait_for("Original skill result confirmed.");
+    recovered.wait_for("installed:skill-39");
+    assert!(!installed.exists());
+    assert!(!source.exists());
+    recovered.send(b"\x11");
+    recovered.finish();
+    assert!(!recovered.screen.snapshot().unwrap().alternate_screen);
+    for path in [&root, &host_root] {
+        drop(RootOwner::open(path, &ns).unwrap());
+    }
 }

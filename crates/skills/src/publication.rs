@@ -137,14 +137,6 @@ impl Publisher {
         receipt::reserve(&self.requests, &self.receipts, operation).await
     }
 
-    /// Read the immutable original result without reserving or replaying work.
-    pub async fn outcome(
-        &self,
-        operation: &receipt::Operation,
-    ) -> Result<Option<receipt::Outcome>, Error> {
-        receipt::read(&self.receipts, operation).await
-    }
-
     pub async fn complete(
         &self,
         operation: &receipt::Operation,

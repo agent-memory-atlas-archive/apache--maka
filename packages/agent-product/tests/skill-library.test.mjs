@@ -76,7 +76,9 @@ async function client(target, writable = true) {
       return c.event({ kind: 'action', key: action.key, event: { status: 'succeeded', value } });
     },
     action(method) {
-      return out.actions.find((action) => action.method === method);
+      return out.actions.find((action) =>
+        method === 'outcome' ? action.binding === 'outcomes' : action.method === method,
+      );
     },
     open() {
       c.reply(c.action('list'), {
@@ -193,7 +195,7 @@ for (const target of ['tui', 'desktop']) {
     c.raw('check-change');
     c.reply(c.action('read'), { reference, receipt });
     let query = c.action('outcome');
-    assert.equal(query.binding, 'skills');
+    assert.equal(query.binding, 'outcomes');
     assert.deepEqual(query.input, reference);
     c.reply(query, { original: { reference, receipt }, published: null });
     assert.deepEqual(c.state.current.reference, reference);

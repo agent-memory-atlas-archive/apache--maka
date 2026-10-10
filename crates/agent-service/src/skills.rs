@@ -21,6 +21,7 @@
 //! Files are data; neither references nor declared tools authorize execution.
 pub mod contract;
 mod management;
+pub mod outcomes;
 use contract::*;
 pub use contract::{configuration_schema, contract};
 use futures_util::future::BoxFuture;
@@ -46,7 +47,8 @@ pub(crate) fn provide(registry: &mut NativeRegistry) -> Result<(), String> {
     registry.insert(
         IMPLEMENTATION.into(),
         Arc::new(|context, configuration| Box::pin(activate(context, configuration))),
-    )
+    )?;
+    outcomes::provide(registry)
 }
 async fn activate(context: NativeContext, configuration: Value) -> NativeActivation {
     let opened = async {
@@ -436,14 +438,6 @@ impl Handler for Library {
                         serde_json::from_value(input).map_err(|_| "skills_change_invalid")?;
                     let operation = context.operation().ok_or("skills_mutation_required")?;
                     encode(library.apply(input, operation, context.scope()).await?)
-                }
-                "outcome" => {
-                    let reference =
-                        serde_json::from_value(input).map_err(|_| "skills_recovery_invalid")?;
-                    // Original receipts use the Host's 1 MiB delivery ceiling;
-                    // their diagnostics need not fit a 48 KiB catalog page.
-                    serde_json::to_value(library.outcome(reference, &context).await?)
-                        .map_err(|_| "skills_encoding_failed".into())
                 }
                 _ => Err("skills_method_unavailable".into()),
             }

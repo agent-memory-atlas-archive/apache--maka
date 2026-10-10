@@ -195,4 +195,71 @@ for (const target of ['desktop', 'tui']) {
     assert.equal(actual, JSON.stringify(reply.receipt, null, 2));
     assert.deepEqual(c.out.actions, []);
   });
+  test(`${target} a fresh recovery root reads persisted skill publication evidence independently of the library`, async () => {
+    const entry = intent(1);
+    entry.reference = {
+      ...entry.reference,
+      export: 'skills',
+      method: 'apply',
+      contract: contracts.skillLibrary,
+    };
+    const c = await client(target);
+    c.reply([entry]).raw('check-0');
+    const original = {
+      reference: entry.reference,
+      receipt: {
+        kind: 'recorded',
+        outcome: { kind: 'unresolved' },
+        cleanup: { kind: 'unconfirmed' },
+      },
+    };
+    c.reply(original);
+    assert.equal(c.out.actions[0].binding, 'skillOutcomes');
+    assert.equal(c.out.actions[0].method, 'read');
+    assert.deepEqual(c.out.actions[0].input, entry.reference);
+    const published = { kind: 'applied', reference: 'installed:review' };
+    c.reply({ original, published });
+    assert.deepEqual(c.state.reply, original);
+    assert.deepEqual(c.state.published, published);
+    assert.deepEqual(JSON.parse(c.source()), { host: original.receipt, publication: published });
+    assert.match(JSON.stringify(c.out.frame.view), /Original skill result confirmed/);
+    assert.equal(c.out.actions.length, 0);
+    c.raw('check-again').reply(original);
+    c.reply({ original, published: null });
+    assert.deepEqual(
+      c.state.published,
+      published,
+      'a later missing observation cannot discard an immutable known result',
+    );
+  });
+  test(`${target} recovery does not replace original Host facts with a foreign or denied skill result`, async () => {
+    const entry = intent(1);
+    entry.reference = {
+      ...entry.reference,
+      export: 'skills',
+      method: 'apply',
+      contract: contracts.skillLibrary,
+    };
+    const original = recorded(entry.reference, { kind: 'applied', reference: 'installed:review' });
+    const c = await client(target);
+    c.reply([entry]).raw('check-0').reply(original);
+    assert.equal(c.out.actions[0].binding, 'skillOutcomes');
+    c.reply({
+      original: recorded(reference(99)),
+      published: { kind: 'applied', reference: 'installed:other' },
+    });
+    assert.deepEqual(c.state.reply, original);
+    assert.equal(c.state.published, null);
+    assert.equal(c.state.failed, true);
+    assert.equal(c.out.actions.length, 0);
+    c.raw('check-again').reply(original);
+    c.event({
+      kind: 'action',
+      key: c.state.pending.key,
+      event: { status: 'failed', diagnostic: 'recovery denied' },
+    });
+    assert.deepEqual(c.state.reply, original);
+    assert.equal(c.state.published, null);
+    assert.equal(c.out.actions.length, 0);
+  });
 }
