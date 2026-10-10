@@ -271,25 +271,78 @@ impl Presenter {
         }
         self.track_focus_return()
     }
-    pub(super) fn clear_item_selection(&self, target: &super::paint::Target) {
-        if matches!(target.kind, super::paint::TargetKind::Item { .. }) {
-            for ancestor in target.ancestors.iter().rev() {
-                if !self.target_admitted(ancestor) || !self.resources.owns(ancestor) {
-                    continue;
-                }
-                if let Some(reading) = self
-                    .resources
-                    .owners
-                    .get(&ancestor.mount.id())
-                    .and_then(|owner| owner.state.downcast_ref::<super::scroll::SceneState>())
-                    .and_then(|state| state.reading.as_ref())
-                    .filter(|reading| reading.root_key == ancestor.key)
-                {
-                    reading.scope.clear();
-                    break;
-                }
+    pub(super) fn item_reading_scope(
+        &self,
+        target: &super::paint::Target,
+    ) -> Option<(super::selection::SelectionScope, Option<String>)> {
+        if !matches!(target.kind, super::paint::TargetKind::Item { .. })
+            || !self.target_admitted(target)
+            || !self.resources.owns(target)
+        {
+            return None;
+        }
+        for ancestor in target.ancestors.iter().rev() {
+            if !self.target_admitted(ancestor) || !self.resources.owns(ancestor) {
+                continue;
+            }
+            if let Some(reading) = self
+                .resources
+                .owners
+                .get(&ancestor.mount.id())
+                .and_then(|owner| owner.state.downcast_ref::<super::scroll::SceneState>())
+                .and_then(|state| state.reading.as_ref())
+                .filter(|reading| reading.root_key == ancestor.key)
+            {
+                let super::paint::TargetKind::Item { reading_child, .. } = &target.kind else {
+                    return None;
+                };
+                return Some((reading.scope.clone(), reading_child.clone()));
             }
         }
+        None
+    }
+    pub(super) fn clear_item_selection(&self, target: &super::paint::Target) {
+        if let Some((scope, _)) = self.item_reading_scope(target) {
+            scope.clear();
+        }
+    }
+    pub(super) fn extend_item_selection(
+        &mut self,
+        event: &crossterm::event::Event,
+    ) -> maka_ui::Result<bool> {
+        use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+        let Event::Key(key) = event else {
+            return Ok(false);
+        };
+        if key.kind == KeyEventKind::Release
+            || key.modifiers != KeyModifiers::SHIFT
+            || !matches!(
+                key.code,
+                KeyCode::Left
+                    | KeyCode::Right
+                    | KeyCode::Up
+                    | KeyCode::Down
+                    | KeyCode::Home
+                    | KeyCode::End
+                    | KeyCode::PageUp
+                    | KeyCode::PageDown
+            )
+        {
+            return Ok(false);
+        }
+        let Some(focus) = self.focus.as_ref() else {
+            return Ok(false);
+        };
+        if self.application.is_retiring(&focus.mount)
+            || !self.application.mount_visible(&focus.mount)
+            || self.application.frame(&focus.mount)?.revision != focus.revision
+        {
+            return Ok(false);
+        }
+        let Some((scope, Some(child))) = self.item_reading_scope(focus) else {
+            return Ok(false);
+        };
+        Ok(scope.extend_child(&child, key.code))
     }
     pub(super) fn reveal_focus_target(
         &mut self,
@@ -383,8 +436,11 @@ impl Presenter {
         if !owner.live || !Rc::ptr_eq(&owner.identity, &old.owner) {
             return None;
         }
-        let source = owner.state.downcast_ref::<Owner>()?;
-        let scope = SelectionScope::active(&source.document)?;
+        let scope = owner
+            .state
+            .downcast_ref::<Owner>()
+            .and_then(|source| SelectionScope::active(&source.document))
+            .or_else(|| self.item_reading_scope(old).map(|(scope, _)| scope))?;
         let head = scope.keyboard_focus()?;
         let candidates = targets.iter().filter_map(|target| {
             let owner = self.resources.owners.get(&target.mount.id())?;
@@ -432,8 +488,11 @@ impl Presenter {
         if supersedes
             && let Some(focus) = &self.focus
             && let Some(owner) = self.resources.owners.get(&focus.mount.id())
-            && let Some(source) = owner.state.downcast_ref::<super::source::Owner>()
-            && let Some(scope) = super::selection::SelectionScope::active(&source.document)
+            && let Some(scope) = owner
+                .state
+                .downcast_ref::<super::source::Owner>()
+                .and_then(|source| super::selection::SelectionScope::active(&source.document))
+                .or_else(|| self.item_reading_scope(focus).map(|(scope, _)| scope))
         {
             scope.cancel_keyboard_reveal();
         }

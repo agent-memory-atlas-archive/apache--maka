@@ -547,7 +547,7 @@ impl Presenter {
             Some(target) => self.resources.handles_tab(target)?,
             None => false,
         };
-        if self.navigate_items(&event)? {
+        if self.extend_item_selection(&event)? || self.navigate_items(&event)? {
             return Ok(());
         }
         let target = if raw_pointer_target.is_some() {
@@ -760,7 +760,11 @@ impl Presenter {
             }
             self.clear_item_selection(&target);
             let kind = match target.kind {
-                paint::TargetKind::Item { submit: true, .. } if matches!(event, Event::Key(key) if key.code == KeyCode::Enter) => {
+                paint::TargetKind::Item {
+                    submit,
+                    submit_space,
+                    ..
+                } if matches!(event, Event::Key(key) if (submit && key.code == KeyCode::Enter) || (submit_space && key.code == KeyCode::Char(' '))) => {
                     "submit"
                 }
                 paint::TargetKind::Item { .. } => "activate",
@@ -886,7 +890,14 @@ impl Presenter {
         if !self.target_admitted(&target) {
             return Ok(false);
         }
-        let Some(text) = self.resources.copy(&target)? else {
+        let text = match self.resources.copy(&target)? {
+            Some(text) => Some(text),
+            None => match self.item_reading_scope(&target) {
+                Some((scope, _)) => scope.copy()?,
+                None => None,
+            },
+        };
+        let Some(text) = text else {
             return Ok(false);
         };
         crate::terminal::copy(writer, &text).map_err(|error| Error::Invalid(error.to_string()))?;

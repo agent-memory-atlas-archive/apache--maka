@@ -564,6 +564,11 @@ fn foreground_item_focus_does_not_clear_background_reading_selection() {
     p.input(key(KeyCode::Down)).unwrap();
     draw(&mut p, 40, 12);
     assert_eq!(p.focus.as_ref().unwrap().key, "item-1");
+    shift(&mut p, KeyCode::End);
+    assert!(
+        copied(&mut p).is_none(),
+        "modal item cannot copy the background"
+    );
     assert_eq!(scope.copy().unwrap().unwrap(), "retained selection");
     focus_command(&mut p, &props, 1, "item-0");
     draw(&mut p, 40, 12);
@@ -574,5 +579,154 @@ fn foreground_item_focus_does_not_clear_background_reading_selection() {
         json!({"sequence":1,"status":"rejected"})
     );
     assert_eq!(scope.copy().unwrap().unwrap(), "retained selection");
+    close(&mut p);
+}
+
+fn message(index: usize, text: &str) -> Value {
+    column(
+        &format!("message-{index}"),
+        vec![item(index), source(&format!("body-{index}"), text)],
+    )
+}
+fn shift(p: &mut Presenter, code: KeyCode) {
+    p.input(Event::Key(KeyEvent::new(code, KeyModifiers::SHIFT)))
+        .unwrap();
+}
+#[test]
+fn reading_header_shift_enters_the_original_body_and_extends_its_shared_range() {
+    let (_runtime, mut p, _) = native(vec![message(0, "abc\nxyz"), message(1, "next")]);
+    draw(&mut p, 24, 8);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
+    let scope = state(&p).reading.as_ref().unwrap().scope.clone();
+    shift(&mut p, KeyCode::Right);
+    assert_eq!(
+        copied(&mut p),
+        Some(b"a".to_vec()),
+        "copy works before the next paint"
+    );
+    assert_eq!(scope.selected_child().as_deref(), Some("message-0"));
+    draw(&mut p, 24, 8);
+    assert!(matches!(
+        p.focus.as_ref().unwrap().kind,
+        super::super::super::paint::TargetKind::Native
+    ));
+    shift(&mut p, KeyCode::Down);
+    draw(&mut p, 24, 8);
+    assert_eq!(copied(&mut p), Some(b"abc\nx".to_vec()));
+    shift(&mut p, KeyCode::End);
+    draw(&mut p, 24, 8);
+    shift(&mut p, KeyCode::Right);
+    shift(&mut p, KeyCode::End);
+    draw(&mut p, 24, 8);
+    assert_eq!(copied(&mut p), Some(b"abc\nxyz\nnext".to_vec()));
+    close(&mut p);
+}
+#[test]
+fn reading_header_shift_reveals_hidden_body_only_after_successful_flush() {
+    let (_runtime, mut p, _) = native(vec![message(0, "abc\nxyz")]);
+    draw(&mut p, 24, 2);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
+    shift(&mut p, KeyCode::End);
+    assert_eq!(copied(&mut p), Some(b"abc".to_vec()));
+    let mut buffer = Buffer::empty(Rect::new(0, 0, 24, 2));
+    let scene = p.paint(Rect::new(0, 0, 24, 2), &mut buffer).unwrap();
+    drop(scene);
+    assert_eq!(state(&p).scrolls["reading"].offset, 0);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
+    draw(&mut p, 24, 2);
+    draw(&mut p, 24, 2);
+    assert!(state(&p).scrolls["reading"].offset > 0);
+    assert!(matches!(
+        p.focus.as_ref().unwrap().kind,
+        super::super::super::paint::TargetKind::Native
+    ));
+    assert_eq!(copied(&mut p), Some(b"abc".to_vec()));
+    close(&mut p);
+}
+
+#[test]
+fn reading_header_shift_rejects_missing_disabled_and_unflushed_bodies() {
+    let mut disabled = message(0, "disabled");
+    disabled["children"][1]["props"]["disabled"] = json!(true);
+    for first in [column("message-0", vec![item(0)]), disabled] {
+        let (_runtime, mut p, _) = native(vec![first, message(1, "neighbor")]);
+        draw(&mut p, 24, 8);
+        shift(&mut p, KeyCode::End);
+        assert!(copied(&mut p).is_none());
+        assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
+        close(&mut p);
+    }
+    let (_runtime, mut p, props) = native(vec![message(0, "original")]);
+    draw(&mut p, 24, 8);
+    props.borrow_mut()["content"]["children"][0]["children"][1]["props"]["source"] =
+        json!("replacement");
+    refresh(&mut p);
+    shift(&mut p, KeyCode::End);
+    assert!(copied(&mut p).is_none());
+    draw(&mut p, 24, 8);
+    shift(&mut p, KeyCode::End);
+    assert_eq!(copied(&mut p), Some(b"replacement".to_vec()));
+    close(&mut p);
+}
+#[test]
+fn reading_header_shift_pending_focus_is_cancelled_by_tab() {
+    let (_runtime, mut p, _) = native(vec![message(0, "abc"), item(1)]);
+    draw(&mut p, 24, 3);
+    shift(&mut p, KeyCode::End);
+    assert_eq!(copied(&mut p), Some(b"abc".to_vec()));
+    p.input(key(KeyCode::Tab)).unwrap();
+    let focus = p.focus.clone().unwrap();
+    draw(&mut p, 24, 3);
+    draw(&mut p, 24, 3);
+    assert!(p.focus.as_ref().unwrap().same(&focus));
+    close(&mut p);
+}
+
+#[test]
+fn reading_header_shift_starts_at_the_first_visible_body_row() {
+    let (_runtime, mut p, _) = native(vec![message(0, "one\ntwo\nthree\nfour\nfive")]);
+    draw(&mut p, 24, 3);
+    mouse(&mut p, MouseEventKind::ScrollDown, 1, 1);
+    draw(&mut p, 24, 3);
+    assert_eq!(state(&p).scrolls["reading"].offset, 3);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-0");
+    shift(&mut p, KeyCode::End);
+    assert_eq!(copied(&mut p), Some(b"two".to_vec()));
+    close(&mut p);
+}
+
+#[test]
+fn item_space_submission_is_explicit_and_focus_remains_activation() {
+    let mut first = item(0);
+    first["submit_space"] = json!(true);
+    first["submit"] = json!(false);
+    let (_runtime, mut p) = layout::native(
+        layout::View::InteractiveScene(Rc::new(RefCell::new(column("root", vec![first, item(1)])))),
+        Rc::new(Cell::new(true)),
+    );
+    draw(&mut p, 24, 8);
+    p.input(key(KeyCode::Char(' '))).unwrap();
+    assert_eq!(observation(&p), json!({"kind":"submit"}));
+    draw(&mut p, 24, 8);
+    let revision = p.application.frame(&p.root).unwrap().revision;
+    p.input(Event::Key(KeyEvent::new_with_kind(
+        KeyCode::Char(' '),
+        KeyModifiers::NONE,
+        crossterm::event::KeyEventKind::Repeat,
+    )))
+    .unwrap();
+    assert_eq!(p.application.frame(&p.root).unwrap().revision, revision);
+    assert_eq!(observation(&p), json!({"kind":"submit"}));
+    p.input(key(KeyCode::Enter)).unwrap();
+    assert_eq!(observation(&p), json!({"kind":"activate"}));
+    draw(&mut p, 24, 8);
+    mouse(&mut p, MouseEventKind::Down(MouseButton::Left), 2, 0);
+    assert_eq!(observation(&p), json!({"kind":"activate"}));
+    draw(&mut p, 24, 8);
+    mouse(&mut p, MouseEventKind::Down(MouseButton::Left), 2, 2);
+    draw(&mut p, 24, 8);
+    assert_eq!(p.focus.as_ref().unwrap().key, "item-1");
+    p.input(key(KeyCode::Char(' '))).unwrap();
+    assert_eq!(observation(&p), json!({"kind":"activate"}));
     close(&mut p);
 }

@@ -85,7 +85,7 @@ interface Painter<N extends Node> {
     content: N,
     current: boolean,
     disabled: boolean,
-    interaction?: { followFocus?: boolean; submit?: boolean },
+    interaction?: { followFocus?: boolean; submit?: boolean; submitSpace?: boolean },
   ): N;
   focusButton?(key: string, label: string, child: string): N;
   adaptivePane?(
@@ -220,6 +220,7 @@ function terminalPaint(theme: Theme): Painter<TerminalNode> {
         selected_color: rgba(theme.selected),
         follow_focus: interaction.followFocus ?? false,
         submit: interaction.submit ?? false,
+        submit_space: interaction.submitSpace ?? false,
       }),
     choice: (key, label, options, current, disabled) =>
       ui.terminal.choice({

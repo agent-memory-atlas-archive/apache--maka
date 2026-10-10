@@ -132,6 +132,8 @@ pub(super) enum TargetKind {
         current: bool,
         follow_focus: bool,
         submit: bool,
+        submit_space: bool,
+        reading_child: Option<String>,
     },
     Focus(FocusChild),
     Native,
@@ -992,6 +994,7 @@ impl Presenter {
                 selected_color,
                 follow_focus,
                 submit,
+                submit_space,
             } => {
                 let target = Target {
                     identity: TargetIdentity {
@@ -1004,6 +1007,8 @@ impl Presenter {
                         current: *current,
                         follow_focus: *follow_focus,
                         submit: *submit,
+                        submit_space: *submit_space,
+                        reading_child: scene.scope.as_ref().and_then(|scope| scope.child.clone()),
                     },
                     ancestors: scene.ancestry.clone(),
                     revision: self.application.frame(mount)?.revision,

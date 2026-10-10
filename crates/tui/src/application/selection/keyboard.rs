@@ -51,6 +51,71 @@ fn layout(participant: &Participant) -> Option<Layout> {
     }
 }
 impl SelectionScope {
+    /// Start at the selected reading child's first visible text row, using only
+    /// the original documents and successful-flush geometry. Headers have no text owner.
+    pub(in super::super) fn extend_child(&self, child: &str, key: KeyCode) -> bool {
+        let scope = self.0.borrow();
+        if !scope.enabled {
+            return false;
+        }
+        let candidates: Vec<_> = scope
+            .documents
+            .iter()
+            .filter(|participant| {
+                participant.child.as_deref() == Some(child)
+                    && participant.upgrade().is_some_and(|document| {
+                        let doc = document.borrow();
+                        doc.alive
+                            && !doc.disabled
+                            && !doc.source.is_empty()
+                            && doc.binding.ptr_eq(&Rc::downgrade(&self.0))
+                            && participant
+                                .geometry
+                                .is_some_and(|(_, revision)| revision == doc.geometry_revision)
+                    })
+            })
+            .collect();
+        let Some(participant) = candidates
+            .iter()
+            .copied()
+            .find(|p| p.geometry.is_some_and(|(area, _)| !area.is_empty()))
+            .or_else(|| candidates.first().copied())
+        else {
+            return false;
+        };
+        let Some(document) = participant.upgrade() else {
+            return false;
+        };
+        let initial = if scope.selection.is_none() {
+            let Some(layout) = layout(participant) else {
+                return false;
+            };
+            let (area, _) = participant.geometry.unwrap();
+            let row = if area.is_empty() {
+                0
+            } else {
+                (i64::from(area.visible().y) - area.y).max(0) as usize
+            };
+            Some(Endpoint {
+                document: participant.document.clone(),
+                byte: layout.row_start(row),
+                trailing: false,
+            })
+        } else {
+            None
+        };
+        drop(scope);
+        let created = initial.is_some();
+        if let Some(cursor) = initial {
+            self.0.borrow_mut().selection = Some((cursor.clone(), cursor));
+        }
+        let accepted = self.extend_keyboard(&document, key);
+        if !accepted && created {
+            self.0.borrow_mut().selection = None;
+        }
+        accepted
+    }
+
     pub(super) fn extend_keyboard(&self, document: &DocumentRef, key: KeyCode) -> bool {
         if !matches!(
             key,

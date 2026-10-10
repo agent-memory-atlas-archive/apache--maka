@@ -13216,8 +13216,15 @@ test('TUI message browse uses native header items, retains draft focus intent, a
   assert.equal(first.children[0].kind, 'item');
   assert.equal(first.children[0].follow_focus, true);
   assert.notEqual(first.children[1].kind, 'item', 'body selection is outside the header highlight');
+  raw('browse-' + uuid(991), 'submit');
+  assert.deepEqual(out.frame.state.expanded, [], 'submit does not fold an ordinary user message');
   raw('browse-' + uuid(992));
   assert.deepEqual(out.frame.state.expanded, [], 'focus does not submit a tool');
+  raw('browse-' + uuid(992), 'submit');
+  assert.deepEqual(out.frame.state.expanded, [uuid(992)]);
+  raw('browse-' + uuid(992), 'submit');
+  assert.deepEqual(out.frame.state.expanded, []);
+  assert.equal(first.children[0].submit_space, true);
   raw('browse-' + uuid(992), 'submit');
   assert.deepEqual(out.frame.state.expanded, [uuid(992)]);
   raw('browse-collapse');
@@ -13249,6 +13256,7 @@ test('TUI message browse uses native header items, retains draft focus intent, a
   props = { ...props, browse: null };
   out = timeline.update(structuredClone(out.frame.state), props, {});
   assert.equal(out.frame.state.browse, null);
+  assert.ok(!out.frame.view.shortcuts.some((shortcut) => shortcut.key === 'space'));
   assert.equal(reading().props.content.children[0].children[0].kind, 'text');
 });
 

@@ -252,6 +252,9 @@ pub enum Node {
         follow_focus: bool,
         #[serde(default)]
         submit: bool,
+        /// Emit submit for physical Space; focus and pointer activation stay separate.
+        #[serde(default)]
+        submit_space: bool,
     },
     Dialog {
         key: String,
@@ -686,6 +689,7 @@ impl Node {
                 content,
                 disabled,
                 submit,
+                submit_space,
                 ..
             } => {
                 *input_count += 1;
@@ -693,7 +697,7 @@ impl Node {
                     return Err("scene input limit".into());
                 }
                 if visible && !disabled {
-                    let kinds = if *submit {
+                    let kinds = if *submit || *submit_space {
                         vec!["activate", "submit"]
                     } else {
                         vec!["activate"]

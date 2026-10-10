@@ -18,6 +18,7 @@
  */
 
 use super::*;
+use base64::Engine as _;
 use maka_runtime::{
     attachment::{AttachmentKind, AttachmentRef, StorageRef},
     event::{EventWrite, Fact, Invocation, InvocationInput, InvocationOutcome, RuntimeEvent},
@@ -184,6 +185,27 @@ pub(super) fn run(
             .contains(ratatui::style::Modifier::UNDERLINED)
     );
     presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::End, KeyModifiers::SHIFT)))
+        .unwrap();
+    draw(presenter);
+    let mut selection = Vec::new();
+    assert!(presenter.copy(&mut selection).unwrap());
+    let expected = b"Visible material prompt";
+    assert_eq!(
+        selection,
+        format!(
+            "\x1b]52;c;{}\x07",
+            base64::engine::general_purpose::STANDARD.encode(expected)
+        )
+        .as_bytes()
+    );
+    capture(presenter, "native-header-selection.txt");
+    // The first Escape clears the original native range; the second leaves Browse.
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+        .unwrap();
+    draw(presenter);
+    presenter
         .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
         .unwrap();
     await_screen(presenter, "File background draft");
@@ -200,4 +222,58 @@ fn directory_label(presenter: &mut maka_tui::application::Presenter) {
     let buffer = draw(presenter);
     assert_eq!(buffer[(column + 6, row)].symbol(), "中");
     assert_eq!(buffer[(column + 8, row)].symbol(), "文");
+}
+
+pub(super) fn tool_space(
+    presenter: &mut maka_tui::application::Presenter,
+    capture: &impl Fn(&mut maka_tui::application::Presenter, &str),
+) {
+    click(presenter, "native file contents");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('k'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    wait_for_target(presenter, "[ Close commands ]", 0);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+    presenter
+        .input(Event::Paste("Browse messages".into()))
+        .unwrap();
+    wait_for_target(presenter, "[ › Browse messages", 0);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    await_screen(presenter, "messages ·");
+    draw(presenter);
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char(' '),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    await_screen(presenter, "[ Show details ]");
+    assert!(!screen(&draw(presenter)).contains("Requested content"));
+    capture(presenter, "native-space-collapsed.txt");
+    presenter
+        .input(Event::Key(KeyEvent::new(
+            KeyCode::Char(' '),
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    await_screen(presenter, "Requested content");
+    await_screen(presenter, "native file contents");
+    capture(presenter, "native-space-expanded.txt");
+    presenter
+        .input(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+        .unwrap();
+    await_screen(presenter, "File background draft");
 }

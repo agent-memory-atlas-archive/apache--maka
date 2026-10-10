@@ -1968,6 +1968,9 @@ process.stdout.write(output.outputFiles[0].text);
                 assert!(!screen(&draw(&mut presenter)).contains("[ Close commands ]"));
             }
         }
+        if !process_permissions {
+            message_details::tool_space(&mut presenter, &capture);
+        }
         click(&mut presenter, "[ Tool arguments ]");
         await_screen(&mut presenter, "native-approved.txt");
         click(&mut presenter, "[ Back to conversation ]");

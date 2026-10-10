@@ -166,6 +166,7 @@ export function messageView<N extends Node>(
         ? ui.item(message.browse.key, heading, message.browse.current, false, {
             followFocus: true,
             submit: true,
+            submitSpace: true,
           })
         : heading,
       ...(status ? [ui.text('tool-status-' + message.id, status, 13, theme.muted)] : []),

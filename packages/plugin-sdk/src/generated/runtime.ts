@@ -406,6 +406,10 @@ export type TerminalScene =
       selected_color?: number | null;
       follow_focus?: boolean;
       submit?: boolean;
+      /**
+       * Emit submit for physical Space; focus and pointer activation stay separate.
+       */
+      submit_space?: boolean;
       kind: 'item';
     }
   | {

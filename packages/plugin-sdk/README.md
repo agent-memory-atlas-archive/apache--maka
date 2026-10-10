@@ -174,6 +174,10 @@ A newer physical input, structural hiding or retirement cancels a pending reques
 missing/disabled items are rejected. Desktop currently rejects this TUI command.
 Focusing a reading Item clears that reading scope's native text selection; a modal
 Item cannot clear a background scope's selection.
+Shift navigation from a TUI reading Item starts in its child's first visible body row
+and extends the original native range. Item `submit` opts Enter into the `submit` event;
+`submit_space` independently opts physical Space into the same event. Both default to
+false; focus-following and pointer clicks still emit `activate`.
 TUI additionally reports `selectedChildKey`, the direct content child containing
 the original native selection focus (including a collapsed caret). Geometry binds
 only after successful output; modal suspension retains context, while document

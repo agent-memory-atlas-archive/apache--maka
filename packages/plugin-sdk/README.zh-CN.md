@@ -142,6 +142,9 @@ TUI 还接受 `focus_item`，key 指向本 ReadingArea 场景中的可用 Item�
 等待实际呈现成功后聚焦，按条目声明发出 follow-focus activation，不提交条目。
 新的物理输入、结构隐藏或退休取消待处理请求；不存在或禁用的条目被拒绝。Desktop 目前拒绝此 TUI 命令。
 聚焦阅读区 Item 会清除该阅读区原生文本选区；modal 内的 Item 不清除背景阅读区选区。
+TUI 阅读区标题上的 Shift 导航从所属消息首个可见正文行开始，继续延伸原生选区。
+Item 的 `submit` 将 Enter 配置为 `submit` 事件，`submit_space` 独立将物理 Space 配置为同一事件；
+两者默认 false，焦点跟随与鼠标点击仍发出 `activate`。
 TUI 另报告 `selectedChildKey`，表示原生选区焦点（含折叠光标）所在的直接内容子节点。
 归属只在实际输出成功后提交；modal 暂停保留上下文，原文退休/转移则撤销。其它呈现器
 目前返回 null。它是展示观察，不授予原文读取能力，也不增加第二个选区 owner。
