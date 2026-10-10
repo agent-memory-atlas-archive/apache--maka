@@ -306,7 +306,7 @@ function frame<N extends Node>(
         scroll: 'manual',
         focusGroup: target === 'tui',
         gap: target === 'desktop' ? 2 : 0,
-        terminal: { grow: 1, basis: 0 },
+        terminal: { grow: 1 },
         style: { width: fill, height: pixels(160), minWidth: 0, minHeight: 0 },
       }),
       command: state.reveal,
@@ -547,7 +547,7 @@ function frame<N extends Node>(
     ],
     {
       visible: target === 'desktop' || state.open,
-      terminal: { grow: 1 },
+      terminal: { grow: state.defaultsOpen ? 1 : 0 },
       surface: target === 'desktop',
       padding: target === 'desktop' ? 12 : 0,
       style: { width: fill, minWidth: 0, background: 0 },
@@ -572,7 +572,7 @@ function frame<N extends Node>(
           radius: props.theme.menu.radius,
         },
       })
-    : ui.dialog('model-popup', text.models, trigger, content, state.open);
+    : ui.dialog('model-popup', text.models, trigger, content, state.open, undefined, { width: 64 });
   const out = output(state, view, events);
   out.actions = actions;
   return out;
